@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from src.contracts import CandidateRepository
 from src.models import (
+    EligibilityStatus,
     HeatLevel,
     HeatResult,
     NormalizedCandidate,
@@ -69,7 +70,10 @@ class SourceService:
             ):
                 if getattr(normalized.metrics, field) is None:
                     missing_fields[field] += 1
-            if self.repository.get_review(saved_id) is None:
+            if (
+                normalized.eligibility_status == EligibilityStatus.PENDING_REVIEW
+                and self.repository.get_review(saved_id) is None
+            ):
                 self.repository.save_review(RelevanceReview(candidate_id=saved_id))
 
         self.recompute_all()
@@ -117,6 +121,8 @@ class SourceService:
             source_type=item.source_type,
             rights_status=item.rights_status,
             matched_by=item.matched_by,
+            cohort_key=item.cohort_key,
+            eligibility_status=item.eligibility_status,
             evidence=item.evidence,
             official_hot=item.official_hot,
             official_rank=item.official_rank,
@@ -136,11 +142,14 @@ class SourceService:
         reviews = {
             review.candidate_id: review for review in self.repository.list_reviews()
         }
-        approved = [
+        eligible = [
             candidate
             for candidate in candidates
-            if reviews.get(candidate.video_id)
-            and reviews[candidate.video_id].status == ReviewStatus.APPROVED
+            if candidate.eligibility_status == EligibilityStatus.AUTO_MATCHED
+            or (
+                reviews.get(candidate.video_id)
+                and reviews[candidate.video_id].status == ReviewStatus.APPROVED
+            )
         ]
         histories = {
             candidate.video_id: self.repository.list_snapshots(candidate.video_id)
@@ -151,7 +160,12 @@ class SourceService:
             if not history:
                 continue
             review = reviews.get(candidate.video_id)
-            if review is None or review.status != ReviewStatus.APPROVED:
+            is_auto_matched = (
+                candidate.eligibility_status == EligibilityStatus.AUTO_MATCHED
+            )
+            if not is_auto_matched and (
+                review is None or review.status != ReviewStatus.APPROVED
+            ):
                 heat = HeatResult(
                     score=0,
                     level=HeatLevel.INSUFFICIENT,
@@ -165,7 +179,11 @@ class SourceService:
                     history[-1],
                     candidate=candidate,
                     snapshots=history,
-                    peers=approved,
+                    peers=[
+                        peer
+                        for peer in eligible
+                        if peer.cohort_key == candidate.cohort_key
+                    ],
                     peer_snapshots=histories,
                 )
             self.repository.save_candidate(candidate.model_copy(update={"heat": heat}))
@@ -196,5 +214,18 @@ class SourceService:
             else (exclusion_reason or "不满足首期三个入选条件"),
         )
         self.repository.save_review(review)
+        candidate = self.repository.get_candidate(candidate_id)
+        if candidate is not None:
+            self.repository.save_candidate(
+                candidate.model_copy(
+                    update={
+                        "eligibility_status": (
+                            EligibilityStatus.APPROVED
+                            if approved
+                            else EligibilityStatus.REJECTED
+                        )
+                    }
+                )
+            )
         self.recompute_all()
         return review

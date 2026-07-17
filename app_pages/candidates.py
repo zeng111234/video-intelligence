@@ -1,45 +1,208 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import pandas as pd
 import streamlit as st
 
-from src.adapters import (
-    DouyinHotBillboardAdapter,
-    DouyinKeywordAdapter,
-    ManualImportAdapter,
-    PublicMetadataResearchAdapter,
-)
 from src.app_state import (
+    get_keyword_discovery_service,
+    get_keyword_trend_service,
     get_repository,
     get_services,
     get_source_service,
     select_candidate,
     selected_candidate_id,
 )
-from src.models import DataSource, HeatLevel, Platform, SourceRequest, VideoCandidate
+from src.config import build_douyin_keyword_adapter
+from src.backup_import_ui import render_backup_imports
+from src.models import (
+    DiscoveryResult,
+    HeatLevel,
+    Platform,
+    VideoCandidate,
+)
 from src.ui import render_heat_badge, render_page_header
 
 render_page_header(
     "爆火视频检索",
-    "在已导入或已授权的数据范围内发现、复核并追踪数字人口播候选。",
+    "输入行业或内容关键词，从已获授权的平台能力获取候选并执行热点规则。",
     icon="trending_up",
 )
 
 candidate_service, _, _ = get_services()
 repository = get_repository()
 source_service = get_source_service()
-all_candidates = candidate_service.search(published_within_hours=720)
+discovery_service = get_keyword_discovery_service()
+trend_service = get_keyword_trend_service()
+douyin_adapter = build_douyin_keyword_adapter(st.secrets)
+douyin_capability = douyin_adapter.capabilities()
+
+with st.container(border=True):
+    st.subheader("低调用量关键词热门榜")
+    st.caption(
+        "平台综合排序只负责召回 10 条候选，系统再用近 7 天点赞增长、视频年龄、"
+        "综合名次和持续入榜次数计算自己的 Top 10。每次获取固定只调用 1 次搜索接口。"
+    )
+    with st.form("platform_keyword_discovery"):
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            platform_keyword = st.text_input(
+                "平台关键词",
+                placeholder="例如：二手车",
+                key="platform_keyword_input",
+            )
+            publish_window_label = st.selectbox(
+                "召回时间范围",
+                ["近 24 小时", "近 7 天"],
+                key="platform_publish_window",
+            )
+            discover_submitted = st.form_submit_button(
+                "获取综合候选10条（1次调用）",
+                type="primary",
+                icon=":material/travel_explore:",
+                disabled=not douyin_capability.enabled,
+            )
+            recompute_submitted = st.form_submit_button(
+                "仅重新计算本地7日榜（0次调用）",
+                icon=":material/calculate:",
+            )
+    if douyin_capability.enabled:
+        st.success(
+            "ClientKey/ClientSecret 已配置；首次调用后由抖音返回实际权限状态。",
+            icon=":material/key:",
+        )
+    else:
+        st.warning(
+            "功能已就绪，等待配置 DOUYIN_CLIENT_KEY 和 DOUYIN_CLIENT_SECRET。"
+            "当前不会发起任何平台请求。",
+            icon=":material/key_off:",
+        )
+        st.code(
+            'DOUYIN_CLIENT_KEY = ""\nDOUYIN_CLIENT_SECRET = ""',
+            language="toml",
+        )
+
+    if discover_submitted:
+        try:
+            publish_time = 1 if publish_window_label == "近 24 小时" else 7
+            with st.spinner("正在获取 10 条综合候选并计算近 7 天自有榜单……"):
+                discovery_result = discovery_service.discover(
+                    keyword=platform_keyword,
+                    adapter=douyin_adapter,
+                    publish_time=publish_time,
+                )
+                trend_service.recompute(platform_keyword)
+            st.session_state["last_discovery_result"] = discovery_result.model_dump(
+                mode="json"
+            )
+            st.session_state["candidate_local_query"] = platform_keyword.strip()
+            st.session_state["active_trend_keyword"] = platform_keyword.strip()
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc), icon=":material/error:")
+
+    if recompute_submitted:
+        try:
+            trend_service.recompute(platform_keyword)
+            st.session_state["active_trend_keyword"] = platform_keyword.strip()
+            st.toast("已使用本地数据重算，未调用平台接口。", icon=":material/check:")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc), icon=":material/error:")
+
+    raw_discovery = st.session_state.get("last_discovery_result")
+    if raw_discovery:
+        last_discovery = DiscoveryResult.model_validate(raw_discovery)
+        with st.container(horizontal=True):
+            st.metric(
+                "最近关键词",
+                last_discovery.keyword,
+                border=True,
+            )
+            st.metric(
+                "唯一候选",
+                f"{last_discovery.unique_count}/{last_discovery.requested_count}",
+                border=True,
+            )
+            st.metric(
+                "搜索调用",
+                f"{last_discovery.api_call_count} 次",
+                border=True,
+            )
+            st.metric(
+                "执行状态",
+                "部分完成" if last_discovery.partial else "完成",
+                border=True,
+            )
+            st.metric(
+                "最近调用",
+                last_discovery.finished_at.astimezone().strftime("%m-%d %H:%M"),
+                border=True,
+            )
+        if last_discovery.errors:
+            for error in last_discovery.errors:
+                st.warning(error.message)
+
+    trend_keyword = st.session_state.get("active_trend_keyword", "").strip()
+    trend_results = (
+        repository.list_keyword_trend_results(trend_keyword, limit=10)
+        if trend_keyword
+        else []
+    )
+    if trend_results:
+        candidate_lookup = {
+            candidate.video_id: candidate for candidate in repository.list_candidates()
+        }
+        trend_rows = []
+        for own_rank, trend in enumerate(trend_results, start=1):
+            candidate = candidate_lookup.get(trend.candidate_id)
+            if candidate is None:
+                continue
+            trend_rows.append(
+                {
+                    "自有排名": own_rank,
+                    "标题": candidate.title,
+                    "趋势分": trend.score,
+                    "状态": trend.level.value,
+                    "平台综合召回位置": trend.platform_rank,
+                    "点赞增长/小时": trend.like_growth_per_hour,
+                    "年龄归一化点赞/小时": trend.likes_per_hour,
+                    "近7天入榜次数": trend.appearance_count,
+                    "历史池": trend.pool_size,
+                    "置信度": trend.confidence,
+                    "异常": (
+                        "疑似异常待核验"
+                        if trend.anomaly_status.value == "suspected"
+                        else "正常"
+                    ),
+                    "为何入榜/异常说明": "；".join(trend.reasons),
+                }
+            )
+        st.markdown(f"**系统自有 Top 10 · {trend_keyword}**")
+        st.dataframe(
+            pd.DataFrame(trend_rows),
+            hide_index=True,
+            column_config={
+                "趋势分": st.column_config.ProgressColumn(
+                    "趋势分", min_value=0, max_value=100
+                ),
+                "置信度": st.column_config.NumberColumn("置信度", format="percent"),
+            },
+        )
+        st.caption(
+            "该排名由系统公式计算；平台综合位置仅是一个分量。样本池少于 30 条时只显示“观察中”。"
+        )
+
+st.subheader("搜索本地候选")
+all_candidates = candidate_service.search(
+    platforms=[Platform.DOUYIN], published_within_hours=720
+)
 categories = ["全部赛道", *sorted({item.category for item in all_candidates})]
 
 with st.form("candidate_filters"):
     with st.container(horizontal=True, vertical_alignment="bottom"):
-        query = st.text_input("关键词", placeholder="例如：防晒、探店、AI 工具")
-        platform_labels = st.multiselect(
-            "平台",
-            options=["抖音", "快手", "小红书"],
-            default=["抖音", "快手", "小红书"],
+        query = st.text_input(
+            "关键词",
+            placeholder="例如：二手车",
+            key="candidate_local_query",
         )
         category = st.selectbox("赛道", categories)
         published_hours = st.selectbox(
@@ -55,15 +218,9 @@ with st.form("candidate_filters"):
             "检索候选", type="primary", icon=":material/search:"
         )
 
-platform_map = {
-    "抖音": Platform.DOUYIN,
-    "快手": Platform.KUAISHOU,
-    "小红书": Platform.XIAOHONGSHU,
-}
-platforms = [platform_map[label] for label in platform_labels]
 items = candidate_service.search(
     query=query,
-    platforms=platforms,
+    platforms=[Platform.DOUYIN],
     category=category,
     published_within_hours=published_hours,
     min_interactions=int(min_interactions),
@@ -89,6 +246,15 @@ with st.container(horizontal=True):
 
 
 def to_row(candidate: VideoCandidate) -> dict[str, object]:
+    hotspot_status = {
+        HeatLevel.S: "是（S）",
+        HeatLevel.A: "是（A）",
+        HeatLevel.B: "是（B）",
+        HeatLevel.STATIC_HIGH: "静态高热",
+        HeatLevel.ANOMALOUS: "异常待核验",
+        HeatLevel.NORMAL: "否",
+        HeatLevel.INSUFFICIENT: "数据不足",
+    }[candidate.heat.level]
     metrics = candidate.metrics
     return {
         "video_id": candidate.video_id,
@@ -100,9 +266,12 @@ def to_row(candidate: VideoCandidate) -> dict[str, object]:
         }[candidate.platform],
         "作者": candidate.author_name,
         "赛道": candidate.category,
+        "命中关键词": "、".join(candidate.matched_by),
+        "匹配状态": candidate.eligibility_status.value,
         "发布时间": candidate.published_at,
         "热度分": candidate.heat.score,
         "等级": candidate.heat.level.value,
+        "是否热点": hotspot_status,
         "置信度": candidate.metrics.confidence,
         "快照": len(repository.list_snapshots(candidate.video_id)),
         "桶样本": candidate.heat.bucket_sample_size,
@@ -176,264 +345,9 @@ if selected:
                 "当前等级为 provisional 试运行判断；达到稳定样本与置信度门槛后才转为正式结论。",
                 icon=":material/warning:",
             )
-        if st.button(
-            "进入音视频转文案", type="primary", icon=":material/arrow_forward:"
-        ):
+        if st.button("将此视频转成文案", type="primary", icon=":material/transcribe:"):
             st.switch_page("app_pages/transcription.py")
 
 st.divider()
-st.subheader("候选导入与数据源同步")
-st.caption(
-    "首期默认使用 CSV/Excel、手工链接和显式公开 URL。官方热门榜与关键词搜索在权限获批前保持关闭。"
-)
-
-source_label = st.selectbox(
-    "数据源",
-    [
-        "CSV / Excel",
-        "手工链接与指标",
-        "显式抖音公开 URL",
-        "抖音官方热门榜（未启用）",
-        "抖音官方关键词（未启用）",
-    ],
-)
-
-if source_label == "CSV / Excel":
-    template = ManualImportAdapter.template().to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "下载导入模板",
-        template,
-        file_name="digital_human_candidates.csv",
-        mime="text/csv",
-        icon=":material/download:",
-    )
-    uploaded = st.file_uploader("上传候选或新一轮指标快照", type=["csv", "xlsx"])
-    if uploaded is not None:
-        adapter = ManualImportAdapter(uploaded.name, uploaded.getvalue())
-        request = SourceRequest(
-            source=DataSource.CSV,
-            keywords=[
-                "数字人口播",
-                "数字人营销",
-                "AI获客",
-                "企业服务",
-                "AI工具",
-                "SaaS",
-                "私域",
-                "线索",
-                "询盘",
-            ],
-        )
-        page = adapter.sync(request)
-        if page.items:
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "作品ID": item.platform_item_id,
-                            "标题": item.title,
-                            "作者": item.author_name,
-                            "发布时间": item.published_at,
-                            "采样时间": item.metrics.sampled_at,
-                            "播放": item.metrics.plays,
-                            "点赞": item.metrics.likes,
-                            "置信度": item.metrics.confidence,
-                        }
-                        for item in page.items
-                    ]
-                ),
-                hide_index=True,
-            )
-        if page.errors:
-            st.error(f"发现 {len(page.errors)} 个导入错误，错误行不会写入数据库。")
-            st.dataframe(
-                pd.DataFrame([error.model_dump() for error in page.errors]),
-                hide_index=True,
-            )
-        if st.button("确认导入有效行", type="primary", disabled=not page.items):
-            report = source_service.import_page(page)
-            st.success(
-                f"新增候选 {report.added_candidates}，更新候选 {report.updated_candidates}，"
-                f"新增快照 {report.added_snapshots}，重复快照 {report.duplicates}。"
-            )
-            st.rerun()
-elif source_label == "手工链接与指标":
-    with st.form("manual_candidate"):
-        manual_item_id = st.text_input("抖音作品 ID")
-        manual_title = st.text_input("标题")
-        manual_author = st.text_input("作者")
-        manual_url = st.text_input("公开分享链接")
-        published_date = st.date_input("发布时间日期")
-        published_time = st.time_input("发布时间时间")
-        with st.container(horizontal=True):
-            manual_plays = st.number_input("播放", min_value=0, value=None)
-            manual_likes = st.number_input("点赞", min_value=0, value=None)
-            manual_comments = st.number_input("评论", min_value=0, value=None)
-            manual_shares = st.number_input("分享", min_value=0, value=None)
-            manual_favorites = st.number_input("收藏", min_value=0, value=None)
-            manual_followers = st.number_input("作者粉丝", min_value=0, value=None)
-        manual_evidence = st.text_input("证据说明或截图编号")
-        manual_submit = st.form_submit_button("保存手工记录", type="primary")
-    if manual_submit:
-        page = ManualImportAdapter.from_manual(
-            platform_item_id=manual_item_id,
-            title=manual_title,
-            author_name=manual_author,
-            published_at=datetime.combine(published_date, published_time).astimezone(),
-            source_url=manual_url,
-            sampled_at=datetime.now().astimezone(),
-            plays=manual_plays,
-            likes=manual_likes,
-            comments=manual_comments,
-            shares=manual_shares,
-            favorites=manual_favorites,
-            followers=manual_followers,
-            evidence=manual_evidence or None,
-        )
-        if page.items:
-            report = source_service.import_page(page)
-            st.success(
-                f"已保存候选 {report.added_candidates + report.updated_candidates} 条，"
-                f"新增快照 {report.added_snapshots} 条。"
-            )
-            st.rerun()
-        else:
-            st.error(page.errors[0].message if page.errors else "手工记录校验失败。")
-elif source_label == "显式抖音公开 URL":
-    public_url = st.text_input(
-        "抖音公开分享链接", placeholder="https://www.douyin.com/video/..."
-    )
-    if st.button("读取公开元数据", type="primary", disabled=not public_url.strip()):
-        try:
-            request = SourceRequest(
-                source=DataSource.PUBLIC_RESEARCH,
-                urls=[public_url.strip()],
-                keywords=[
-                    "数字人口播",
-                    "数字人营销",
-                    "AI获客",
-                    "企业服务",
-                    "AI工具",
-                    "SaaS",
-                    "私域",
-                    "线索",
-                    "询盘",
-                ],
-            )
-            page = PublicMetadataResearchAdapter().sync(request)
-            if page.items:
-                report = source_service.import_page(page)
-                st.success(
-                    f"已保存 {report.added_candidates + report.updated_candidates} 条公开元数据。"
-                )
-                st.rerun()
-            else:
-                st.error(
-                    page.errors[0].message if page.errors else "没有读取到公开元数据。"
-                )
-        except Exception as exc:
-            st.error(str(exc))
-else:
-    adapter = (
-        DouyinHotBillboardAdapter()
-        if "热门榜" in source_label
-        else DouyinKeywordAdapter()
-    )
-    st.info("当前没有抖音正式权限，此入口不会发起网络请求。")
-    if st.button("检查权限状态"):
-        try:
-            adapter.sync(SourceRequest(source=DataSource.OFFICIAL))
-        except Exception as exc:
-            st.error(str(exc))
-
-st.subheader("人工复核队列")
-pending_reviews = {review.candidate_id: review for review in repository.list_reviews()}
-review_rows = []
-for candidate in candidate_service.search(published_within_hours=720):
-    review = pending_reviews.get(candidate.video_id)
-    review_rows.append(
-        {
-            "候选ID": candidate.video_id,
-            "标题": candidate.title,
-            "状态": review.status.value if review else "pending",
-            "复核人": review.reviewer if review else None,
-            "排除原因": review.exclusion_reason if review else None,
-        }
-    )
-st.dataframe(pd.DataFrame(review_rows), hide_index=True)
-
-if selected:
-    current_review = repository.get_review(selected.video_id)
-    with st.form("relevance_review"):
-        st.markdown(f"**当前复核：{selected.title}**")
-        is_digital_human = st.checkbox(
-            "数字人实际出镜",
-            value=bool(current_review and current_review.is_digital_human),
-        )
-        is_target_vertical = st.checkbox(
-            "属于 B2B/AI 企业服务",
-            value=bool(current_review and current_review.is_target_vertical),
-        )
-        has_marketing_cta = st.checkbox(
-            "存在营销获客 CTA",
-            value=bool(current_review and current_review.has_marketing_cta),
-        )
-        reviewer = st.text_input(
-            "复核人",
-            value=(
-                current_review.reviewer
-                if current_review and current_review.reviewer
-                else "运营复核员"
-            ),
-        )
-        review_evidence = st.text_input(
-            "证据说明",
-            value=(
-                current_review.evidence
-                if current_review and current_review.evidence
-                else ""
-            ),
-        )
-        exclusion_reason = st.text_input(
-            "排除原因（不满足时填写）",
-            value=(
-                current_review.exclusion_reason
-                if current_review and current_review.exclusion_reason
-                else ""
-            ),
-        )
-        if st.form_submit_button("保存复核结果", type="primary"):
-            result = source_service.review(
-                selected.video_id,
-                is_digital_human=is_digital_human,
-                is_target_vertical=is_target_vertical,
-                has_marketing_cta=has_marketing_cta,
-                reviewer=reviewer,
-                evidence=review_evidence or None,
-                exclusion_reason=exclusion_reason or None,
-            )
-            st.success(f"复核结果已保存：{result.status.value}")
-            st.rerun()
-
-reports = repository.list_sync_reports()
-if reports:
-    st.subheader("最近同步任务")
-    st.dataframe(
-        pd.DataFrame(
-            [
-                {
-                    "批次": report.run_id,
-                    "数据源": report.source.value,
-                    "完成时间": report.finished_at,
-                    "新增候选": report.added_candidates,
-                    "更新候选": report.updated_candidates,
-                    "新增快照": report.added_snapshots,
-                    "重复": report.duplicates,
-                    "错误": len(report.errors),
-                    "建议下次同步": report.next_suggested_sync_at,
-                }
-                for report in reports
-            ]
-        ),
-        hide_index=True,
-    )
+with st.expander("备用导入与数据同步", icon=":material/database:"):
+    render_backup_imports(source_service, repository)

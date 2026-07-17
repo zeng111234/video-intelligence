@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -35,6 +36,21 @@ class ReviewStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+class EligibilityStatus(StrEnum):
+    AUTO_MATCHED = "auto_matched"
+    PENDING_REVIEW = "pending_review"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class KeywordTrendLevel(StrEnum):
+    S = "S"
+    A = "A"
+    B = "B"
+    OBSERVING = "观察中"
+    NORMAL = "普通"
 
 
 class MomentumState(StrEnum):
@@ -120,6 +136,8 @@ class VideoCandidate(BaseModel):
     source_type: DataSource
     rights_status: str = "metadata_only"
     matched_by: list[str] = Field(default_factory=list)
+    cohort_key: str | None = None
+    eligibility_status: EligibilityStatus = EligibilityStatus.PENDING_REVIEW
     evidence: str | None = None
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
@@ -130,11 +148,27 @@ class VideoCandidate(BaseModel):
 
 class SourceRequest(BaseModel):
     source: DataSource
+    request_id: str = Field(default_factory=lambda: f"discover-{uuid4().hex[:12]}")
     category: str = "B2B/AI企业服务获客数字人口播"
     keywords: list[str] = Field(default_factory=list)
     urls: list[HttpUrl] = Field(default_factory=list)
     cursor: str | None = None
+    search_id: str | None = None
+    limit: int = Field(default=10, ge=1, le=100)
+    page_size: int = Field(default=10, ge=1, le=100)
+    publish_time: int = Field(default=1)
+    sort_type: int = Field(default=0)
     snapshot_policy_hours: list[int] = Field(default_factory=lambda: [0, 2, 6, 24])
+
+
+class SourceCapability(BaseModel):
+    provider_name: str
+    enabled: bool
+    supports_keyword_search: bool = False
+    metadata_only: bool = True
+    permission_status: str
+    max_page_size: int = Field(default=10, ge=1)
+    missing_configuration: list[str] = Field(default_factory=list)
 
 
 class NormalizedCandidate(BaseModel):
@@ -150,6 +184,8 @@ class NormalizedCandidate(BaseModel):
     metrics: VideoMetricSnapshot
     rights_status: str = "metadata_only"
     matched_by: list[str] = Field(default_factory=list)
+    cohort_key: str | None = None
+    eligibility_status: EligibilityStatus = EligibilityStatus.PENDING_REVIEW
     evidence: str | None = None
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
@@ -165,6 +201,8 @@ class ImportErrorDetail(BaseModel):
 class SourcePage(BaseModel):
     items: list[NormalizedCandidate] = Field(default_factory=list)
     cursor: str | None = None
+    search_id: str | None = None
+    has_more: bool = False
     errors: list[ImportErrorDetail] = Field(default_factory=list)
 
 
@@ -181,6 +219,61 @@ class SyncReport(BaseModel):
     errors: list[ImportErrorDetail] = Field(default_factory=list)
     next_suggested_sync_at: datetime | None = None
     permission_status: str = "not_required"
+
+
+class CandidateMatch(BaseModel):
+    request_id: str
+    video_id: str
+    keyword: str
+    cohort_key: str
+    platform_rank: int = Field(default=10, ge=1, le=10)
+    observed_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    publish_time: int = Field(default=1)
+    sort_type: int = Field(default=0)
+    evidence: str | None = None
+
+
+class DiscoveryResult(BaseModel):
+    request_id: str
+    keyword: str
+    provider_name: str
+    requested_count: int = Field(ge=1, le=100)
+    fetched_count: int = Field(default=0, ge=0)
+    unique_count: int = Field(default=0, ge=0)
+    duplicate_count: int = Field(default=0, ge=0)
+    exhausted: bool = False
+    partial: bool = False
+    permission_status: str
+    publish_time: int = Field(default=1)
+    sort_type: int = Field(default=0)
+    api_call_count: int = Field(default=0, ge=0, le=1)
+    started_at: datetime
+    finished_at: datetime
+    import_report: SyncReport | None = None
+    errors: list[ImportErrorDetail] = Field(default_factory=list)
+
+
+class KeywordTrendResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    keyword: str
+    candidate_id: str
+    computed_at: datetime
+    score: float = Field(ge=0, le=100)
+    level: KeywordTrendLevel
+    confidence: float = Field(ge=0, le=1)
+    provisional: bool = True
+    platform_rank: int = Field(ge=1, le=10)
+    likes_per_hour: float | None = None
+    like_growth_per_hour: float | None = None
+    appearance_count: int = Field(ge=1)
+    pool_size: int = Field(ge=1)
+    component_scores: dict[str, float | None] = Field(default_factory=dict)
+    percentiles: dict[str, float | None] = Field(default_factory=dict)
+    anomaly_status: AnomalyStatus = AnomalyStatus.NOT_EVALUATED
+    anomaly_penalty: float = Field(default=1.0, gt=0, le=1)
+    reasons: list[str] = Field(default_factory=list)
+    model_version: str = "keyword-trend-v1"
 
 
 class RelevanceReview(BaseModel):

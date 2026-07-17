@@ -17,16 +17,26 @@ candidate_service, _, transcription_service = get_services()
 candidate = candidate_service.get(selected_candidate_id())
 if candidate:
     with st.container(border=True):
-        st.markdown("**已关联热点候选**")
-        st.write(candidate.title)
+        st.markdown("**已从热点候选榜带入**")
+        st.write(f"### {candidate.title}")
         st.caption(
             f"{candidate.author_name} · {candidate.category} · 仅关联元数据，不自动下载原视频"
+        )
+        st.link_button(
+            "查看视频来源",
+            str(candidate.source_url),
+            icon=":material/open_in_new:",
         )
 
 left, right = st.columns([1, 1.45], vertical_alignment="top")
 with left:
     with st.container(border=True):
         st.subheader("创建演示任务")
+        if candidate:
+            st.info(
+                "请上传你有权处理的该视频媒体文件；系统不会自动抓取或下载抖音原视频。",
+                icon=":material/info:",
+            )
         use_demo_media = st.toggle("使用内置演示媒体", value=True)
         uploaded_file = st.file_uploader(
             "上传授权媒体",

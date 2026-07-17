@@ -12,6 +12,8 @@ from src.repositories import MockRepository, SQLiteRepository
 from src.services import (
     CandidateService,
     HeatService,
+    KeywordDiscoveryService,
+    KeywordTrendService,
     SourceService,
     TranscriptionService,
 )
@@ -41,6 +43,9 @@ def initialize_state(state: MutableMapping[str, Any] | None = None) -> None:
     target.setdefault("selected_candidate_id", None)
     target.setdefault("selected_task_id", None)
     target.setdefault("active_transcription_task_id", "transcript-demo-001")
+    target.setdefault("last_discovery_result", None)
+    target.setdefault("candidate_local_query", "")
+    target.setdefault("active_trend_keyword", "")
     if REPOSITORY_KEY not in target:
         target[REPOSITORY_KEY] = (
             MockRepository() if state is not None else _default_repository()
@@ -57,6 +62,16 @@ def get_source_service() -> SourceService:
     initialize_state()
     repository = st.session_state[REPOSITORY_KEY]
     return SourceService(repository, HeatService())
+
+
+def get_keyword_discovery_service() -> KeywordDiscoveryService:
+    source_service = get_source_service()
+    return KeywordDiscoveryService(source_service.repository, source_service)
+
+
+def get_keyword_trend_service() -> KeywordTrendService:
+    initialize_state()
+    return KeywordTrendService(st.session_state[REPOSITORY_KEY])
 
 
 def get_repository():

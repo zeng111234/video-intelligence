@@ -45,6 +45,13 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-当前候选检索不依赖真实平台权限；抖音官方热门榜和关键词适配器在权限获批前保持关闭。分享页只记录元数据，不自动下载媒体。转写模块仍为 Mock，且继续要求用户确认媒体处理权。
+页面顶部已提供低调用量关键词入口。每次手动点击固定使用一次综合排序搜索，召回 10 条候选；即使平台返回下一页也不会继续分页。系统保存近 7 天历史、平台召回位置和点赞快照，再用自有公式输出 Top 10。未配置凭证时获取按钮保持禁用且不会发起网络请求；获得抖音开放平台应用权限后，可复制 `.streamlit/secrets.toml.example` 为 `.streamlit/secrets.toml` 并填写：
+
+```toml
+DOUYIN_CLIENT_KEY = "你的 ClientKey"
+DOUYIN_CLIENT_SECRET = "你的 ClientSecret"
+```
+
+也可使用同名环境变量。应用通过官方 `client_token` 接口获取访问令牌，并调用 `aweme.dy.video_search_v2`。召回时间范围可选近 24 小时或近 7 天，默认近 24 小时；本地重算按钮不会调用平台。关键词趋势分使用点赞增长、年龄归一化点赞、平台综合名次、新鲜度和持续入榜次数；疑似异常只降权并标记待核验，不自动删除。官方接口当前可见指标只映射点赞数，因此历史池少于 30 条或缺少两小时间隔快照时只输出“观察中”，所有等级均为 provisional。分享页只记录元数据，不自动下载媒体。
 
 开发检查使用 `python -m pip install -r requirements-dev.txt` 和 `python -m pytest`。

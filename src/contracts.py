@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Protocol
 
 from src.models import (
+    CandidateMatch,
+    DiscoveryResult,
+    KeywordTrendResult,
     RelevanceReview,
     SourcePage,
+    SourceCapability,
     SourceRequest,
     SyncReport,
     TaskRecord,
@@ -14,6 +19,8 @@ from src.models import (
 
 
 class CrawlerAdapter(Protocol):
+    def capabilities(self) -> SourceCapability: ...
+
     def sync(self, request: SourceRequest) -> SourcePage: ...
 
 
@@ -37,6 +44,26 @@ class CandidateRepository(Protocol):
     def save_sync_report(self, report: SyncReport) -> None: ...
 
     def list_sync_reports(self, limit: int = 20) -> list[SyncReport]: ...
+
+    def save_discovery_result(self, result: DiscoveryResult) -> None: ...
+
+    def list_discovery_results(self, limit: int = 20) -> list[DiscoveryResult]: ...
+
+    def save_candidate_match(self, match: CandidateMatch) -> None: ...
+
+    def list_candidate_matches(self, request_id: str) -> list[CandidateMatch]: ...
+
+    def list_keyword_matches(
+        self, keyword: str, since: datetime
+    ) -> list[CandidateMatch]: ...
+
+    def save_keyword_trend_results(self, results: list[KeywordTrendResult]) -> None: ...
+
+    def clear_keyword_trend_results(self, keyword: str) -> None: ...
+
+    def list_keyword_trend_results(
+        self, keyword: str, limit: int = 10
+    ) -> list[KeywordTrendResult]: ...
 
 
 class TaskRepository(Protocol):
