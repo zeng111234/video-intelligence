@@ -34,13 +34,13 @@ pages = [
 capabilities = runtime_capabilities()
 with st.sidebar:
     st.markdown("**运行环境**")
-    st.badge("Mock 模式", color="blue", icon=":material/science:")
+    st.badge("SQLite 数据模式", color="green", icon=":material/database:")
     if capabilities["ffmpeg"]:
         st.badge("FFmpeg 已安装", color="green", icon=":material/check_circle:")
     else:
         st.badge("FFmpeg 未安装", color="orange", icon=":material/warning:")
-    st.caption("首版不调用真实平台、FFmpeg、ASR 或付费接口。")
-    st.caption("框架版本 0.1.0")
+    st.caption("官方平台适配器默认关闭；支持 CSV/Excel、手工链接与有限公开元数据。")
+    st.caption("框架版本 0.2.0")
 
 navigation = st.navigation(pages, position="top")
 navigation.run()

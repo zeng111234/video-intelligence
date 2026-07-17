@@ -30,6 +30,18 @@
 - `transcribe` skill：面向托管转写流程，与当前确定的本地 `faster-whisper` 路线重复。
 - TikTok/抖音批量下载、去水印项目：不符合产品合规边界。
 
+## 本轮采集与评分参考（不下载、不作为依赖）
+
+| 仓库 | 许可证 | 借鉴内容 | 明确不采用 |
+| --- | --- | --- | --- |
+| [tiktok/tiktok-research-api-wrapper](https://github.com/tiktok/tiktok-research-api-wrapper) | MIT | 官方客户端的字段白名单、分页、限流和审计边界 | 不假定商业项目可取得 Research API 权限 |
+| [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) | 主体 Unlicense，发行物许可证需单独核对 | extractor 协议、元数据归一化、站点变更测试 | 下载、Cookie、代理和绕过限制能力 |
+| [coleifer/sqlite-web](https://github.com/coleifer/sqlite-web) | MIT | 导入预览、事务、回滚和错误定位 | 任意 SQL 与不受控文件路径 |
+| [xai-org/x-algorithm](https://github.com/xai-org/x-algorithm) | Apache-2.0 | 候选、过滤、多信号评分、Top-K 管线 | 直接复用平台权重或个性化特征 |
+| [google-marketing-solutions/abcds-detector](https://github.com/google-marketing-solutions/abcds-detector) | Apache-2.0 | 后续授权媒体的可解释创意特征 | 将创意属性分数直接当作爆火概率 |
+
+以上项目只记录设计参考，不克隆到 `references/github/`，也不新增为运行时依赖。
+
 ## 当前方向
 
 保持既定首期切片：

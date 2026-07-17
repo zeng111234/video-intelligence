@@ -10,7 +10,7 @@ def render_page_header(title: str, description: str, *, icon: str) -> None:
         horizontal=True, horizontal_alignment="distribute", vertical_alignment="center"
     ):
         st.title(f":material/{icon}: {title}")
-        st.badge("Mock 框架", icon=":material/science:", color="blue")
+        st.badge("合规数据试点", icon=":material/database:", color="green")
     st.caption(description)
 
 
@@ -19,10 +19,13 @@ def render_heat_badge(level: HeatLevel) -> None:
         HeatLevel.S: "red",
         HeatLevel.A: "orange",
         HeatLevel.B: "blue",
+        HeatLevel.STATIC_HIGH: "violet",
+        HeatLevel.ANOMALOUS: "red",
         HeatLevel.NORMAL: "gray",
         HeatLevel.INSUFFICIENT: "gray",
     }
-    st.badge(f"{level.value} 级", color=colors[level])
+    suffix = " 级" if level in {HeatLevel.S, HeatLevel.A, HeatLevel.B} else ""
+    st.badge(f"{level.value}{suffix}", color=colors[level])
 
 
 def render_task_badge(status: TaskStatus) -> None:

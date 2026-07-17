@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-项目已完成首个可点击 Streamlit 框架，当前以 Mock 数据演示三页业务闭环。首期聚焦：
+项目已完成 Streamlit 三页业务框架，并接入 SQLite 候选库、合规导入、人工复核、多快照和可解释热度规则。首次启动会写入 Mock 种子数据，之后可通过 CSV/XLSX 或显式公开链接导入真实元数据。首期聚焦：
 
 - 手工链接、CSV/Excel 导入与统一候选字段
 - 热度计算、快照与排序
@@ -45,6 +45,6 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-当前框架不依赖本地 FFmpeg、Whisper 或真实平台 API；页面中的候选、转写和任务记录均明确标记为 Mock。
+当前候选检索不依赖真实平台权限；抖音官方热门榜和关键词适配器在权限获批前保持关闭。分享页只记录元数据，不自动下载媒体。转写模块仍为 Mock，且继续要求用户确认媒体处理权。
 
 开发检查使用 `python -m pip install -r requirements-dev.txt` 和 `python -m pytest`。

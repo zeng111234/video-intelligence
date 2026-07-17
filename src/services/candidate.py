@@ -21,10 +21,7 @@ class CandidateService:
         levels: list[HeatLevel] | None = None,
     ) -> list[VideoCandidate]:
         items = self.repository.list_candidates()
-        newest = max(
-            (item.published_at for item in items), default=datetime.now().astimezone()
-        )
-        cutoff = newest - timedelta(hours=published_within_hours)
+        cutoff = datetime.now().astimezone() - timedelta(hours=published_within_hours)
         normalized_query = query.strip().casefold()
 
         def matches(candidate: VideoCandidate) -> bool:
@@ -43,6 +40,10 @@ class CandidateService:
                     not normalized_query
                     or normalized_query in candidate.title.casefold()
                     or normalized_query in candidate.category.casefold()
+                    or any(
+                        normalized_query in value.casefold()
+                        for value in candidate.matched_by
+                    )
                 )
                 and (not platforms or candidate.platform in platforms)
                 and (

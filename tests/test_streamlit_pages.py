@@ -31,6 +31,17 @@ def test_candidate_page_renders_at_least_twenty_rows() -> None:
     assert len(app.dataframe[0].value) >= 20
 
 
+def test_candidate_page_can_open_manual_metrics_form() -> None:
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
+    source_select = next(item for item in app.selectbox if item.label == "数据源")
+
+    source_select.set_value("手工链接与指标").run(timeout=15)
+
+    assert not app.exception
+    assert any(item.label == "抖音作品 ID" for item in app.text_input)
+    assert any(button.label == "保存手工记录" for button in app.button)
+
+
 def test_transcription_creation_is_blocked_without_rights() -> None:
     app = AppTest.from_file(str(ROOT / "app_pages" / "transcription.py")).run(
         timeout=15

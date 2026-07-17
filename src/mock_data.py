@@ -73,6 +73,7 @@ def build_mock_candidates(count: int = 24) -> list[VideoCandidate]:
                     level=level,
                     confidence=confidence,
                     provisional=True,
+                    model_version="mock-rule-v1",
                     reasons=[
                         f"同赛道互动质量位于 P{max(82, 99 - index)}",
                         "当前样本桶少于 100 条，等级为临时判断",

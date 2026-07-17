@@ -25,7 +25,7 @@
 → 在线校对并导出 TXT / JSON / SRT
 ```
 
-当前里程碑只完成可点击的 Mock 纵向框架。真实 CSV/Excel 入库、SQLite 持久化、热度公式、FFmpeg、faster-whisper 和平台 API 尚未实现。
+当前里程碑已完成“SQLite + CSV/XLSX/手工导入 + 人工复核 + 多快照热度规则”纵向切片。FFmpeg、faster-whisper 和真实平台 API 尚未实现。
 
 数字人、文案改写、自动剪辑、React、FastAPI、Docker、Redis、PostgreSQL、付费 API、多用户鉴权和大规模采集均为当前非目标。
 
@@ -39,28 +39,32 @@
 - **统一领域层**：`VideoCandidate`、`VideoMetricSnapshot`、`HeatResult`、`TaskRecord`、`TranscriptionTask` 等 Pydantic 模型。
 - **接口隔离**：`CrawlerAdapter`、候选仓储、任务仓储、候选服务、热度服务和转写服务；页面不直接依赖平台返回字段。
 - **Mock 仓储**：保存在每个 Streamlit 会话的 `st.session_state` 中，不跨用户共享可变状态。
-- **资源预留**：SQLite 连接和 ASR 模型通过 `st.cache_resource` 延迟加载；当前启动不会导入或调用 faster-whisper。
+- **资源管理**：每个 Streamlit 会话持有独立 SQLite 仓储连接，数据库文件跨会话持久化；ASR 模型通过 `st.cache_resource` 延迟加载，当前启动不会导入或调用 faster-whisper。
 - **失败策略**：外部连接类操作最多执行两次，即首次失败后自动重试一次，再失败则返回用户可见错误。
+- **SQLite 持久化**：候选、指标快照、热度结果、来源批次、人工复核和任务均持久化；候选按平台作品 ID 去重，指标按采样时间追加。
+- **合规数据入口**：支持 CSV/XLSX、手工链接与可见指标、显式抖音公开 URL 元数据；官方热门榜和关键词入口在权限获批前保持关闭。
+- **人工复核**：候选必须确认数字人实际出镜、属于 B2B/AI 企业服务、存在营销获客 CTA，未通过复核时不输出爆火结论。
+- **热度规则 v1**：实现 EI、触达/互动质量/增长/账号穿透/时效分量、同桶分位、冷启动门禁、静态高热、缺失字段降级和 provisional 标记。
 - **UI**：顶部导航、原生 Streamlit 组件、Material Symbols 和中性浅色 B 端主题；未使用自定义 CSS 或第三方 UI 组件。
 
-当前 Git 状态（2026-07-17 验证）：
+实施前 Git 基线（2026-07-17 验证）：
 
 ```text
 branch: main
-HEAD: 5b09c7d Remove obsolete video project files
+HEAD: e8de387 Document current MVP handoff status and Windows startup instructions
 tracking: origin/main
 worktree: clean
 ```
 
 ## 4. 当前未实现状态
 
-- CSV/Excel 与手工链接的真实解析、校验和导入。
-- SQLite 表结构、迁移、候选持久化、指标快照与去重。
-- 文档定义的 EI、ER、APR、GV、分桶分位数及 S/A/B 阈值计算；当前 `HeatService` 仅用于 Mock UI。
+- SQLite 版本化迁移工具；当前使用幂等 `CREATE TABLE IF NOT EXISTS` 初始化 schema。
+- 后台定时调度；当前按页面提示在 T+2/T+6/T+24 小时手工或重新导入快照。
+- 已确认异常互动的自动检测；当前明确返回 `not_evaluated`，不伪造异常惩罚。
 - FFmpeg 媒体探测、16kHz 单声道 WAV 提取和临时文件清理。
 - faster-whisper tiny/base int8、VAD、时间戳和真实低置信度片段生成。
 - `speech.wav`、`review_items.json` 与真实处理结果包。
-- 抖音或其他平台的官方授权适配器。
+- 抖音或其他平台的真实官方授权调用；当前只有默认关闭且会明确报权限不足的适配器入口。
 - Streamlit Community Cloud 部署与云端降级验证。
 
 ## 5. 架构与数据流
@@ -72,7 +76,7 @@ CandidateService / HeatService / TranscriptionService
         ↓
 CandidateRepository / TaskRepository 协议
         ↓
-MockRepository（当前） → SQLiteRepository（下一阶段）
+SQLiteRepository（当前默认） / MockRepository（测试与演示降级）
 
 未来媒体路径：
 授权上传 → FFmpeg → faster-whisper → 校对 → TXT / JSON / SRT
@@ -84,9 +88,9 @@ MockRepository（当前） → SQLiteRepository（下一阶段）
 - `app_pages/`：候选检索、音视频转文案、任务记录三个 UI 页面。
 - `src/models.py`：统一领域模型与枚举。
 - `src/contracts.py`：采集器和仓储协议。
-- `src/repositories/mock.py`：当前会话级 Mock 仓储。
+- `src/repositories/sqlite.py`：当前默认仓储；`mock.py` 保留给测试和演示降级。
 - `src/services/`：候选、热度和转写服务。
-- `src/resources.py`：FFmpeg 能力检测及 SQLite/ASR 资源预留。
+- `src/resources.py`：FFmpeg 能力检测及 ASR 资源预留。
 - `tests/`：领域、仓储、服务、重试与 Streamlit 页面测试。
 - `docs/archive/video-intelligence-production-dev-doc-full-v1.6.md`：完整产品、技术、商业和合规设计。
 
@@ -127,7 +131,7 @@ python -m streamlit run app.py
 
 Windows 也可以直接双击仓库根目录的 `打开短视频系统.cmd`。该启动文件会检查依赖、后台启动 Streamlit、等待健康检查通过并打开默认浏览器。
 
-默认地址：`http://127.0.0.1:8501/`。当前 Mock 框架不需要模型文件或任何密钥。
+默认地址：`http://127.0.0.1:8501/`。当前候选导入与热度链路不需要模型文件或密钥；正式平台接口和真实转写仍需后续配置。
 
 安装开发依赖并验证：
 
@@ -139,7 +143,7 @@ python -m pytest -q
 python -m compileall -q app.py app_pages src tests
 ```
 
-最近一次验证结果：Ruff 通过、22 个 Python 文件格式通过、16 个测试通过。
+最近一次验证结果：Ruff 通过、29 个 Python 文件格式通过、26 个测试通过。
 
 ## 8. 数据、密钥与外部依赖
 
@@ -159,23 +163,23 @@ python -m compileall -q app.py app_pages src tests
 
 ## 10. 下一步与验收标准
 
-**下一项建议工作：实现 SQLite + CSV/手工导入纵向切片，不要同时接入真实平台或 ASR。**
+**下一项建议工作：用真实、经授权或人工提供的 300 条 B2B/AI 企业服务数字人口播候选完成四快照试点；不要通过非官方逆向绕过平台权限。**
 
 实施内容：
 
-1. 建立 SQLite schema 和 `SQLiteRepository`，保持当前仓储协议不变。
-2. 实现 `ManualImportAdapter`，支持 CSV/Excel 和手工链接/指标输入。
-3. 标准化字段并验证可空指标、来源、采样时间、置信度和授权范围。
-4. 保存同一作品的多次指标快照并按平台作品 ID 去重。
-5. 将候选页从 MockRepository 切换为可配置仓储，同时保留 Mock 演示模式。
+1. 用页面下载模板收集 300 条已人工确认的目标候选。
+2. 在首次导入后 2、6、24 小时重复导入可见指标，形成每条四快照目标。
+3. 抽检至少 50 条复核结果，确认数字人/赛道/CTA 判断一致率达到 90%。
+4. 复查 provisional Top 20 及入榜解释，记录运营认可结果。
+5. 同步申请抖音热门榜及与自身业务相关的关键词权限，获批后再实现真实官方客户端。
 
 该切片验收标准：
 
-- 可导入至少 20 条候选并在页面排序、筛选和导出。
+- 可导入 300 条经复核候选并在页面排序、筛选和追溯来源。
 - 缺失播放、分享或收藏时数据库和页面均保持 `null`。
 - 重复导入同一作品不会产生重复候选，但可新增指标快照。
 - 导入错误能定位到具体行和字段，不静默丢弃。
-- 新增单元、仓储集成和 Streamlit 页面测试，现有 16 个测试继续通过。
+- 单元、仓储集成和 Streamlit 页面测试全部通过。
 - 数据库、导入文件和运行产物不进入 Git。
 
 完成该切片后，再单独实施 FFmpeg + faster-whisper 真实转写切片。

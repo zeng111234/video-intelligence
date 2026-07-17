@@ -32,7 +32,7 @@ def test_candidate_filters_and_heat_contract() -> None:
 
     result = HeatService().analyze(repository.list_candidates()[0].metrics)
     assert result.level in set(HeatLevel)
-    assert result.model_version == "mock-rule-v1"
+    assert result.model_version == "rule-v1"
 
 
 def test_repository_save_round_trip() -> None:
