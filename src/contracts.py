@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from typing import Protocol
+
+from src.models import TaskRecord, VideoCandidate, VideoMetricSnapshot
+
+
+class CrawlerAdapter(Protocol):
+    def search(self, keyword: str, limit: int) -> list[VideoCandidate]: ...
+
+    def get_detail(self, url: str) -> VideoCandidate | None: ...
+
+    def refresh_metrics(self, item_id: str) -> VideoMetricSnapshot: ...
+
+
+class CandidateRepository(Protocol):
+    def list_candidates(self) -> list[VideoCandidate]: ...
+
+    def get_candidate(self, video_id: str) -> VideoCandidate | None: ...
+
+    def save_candidate(self, candidate: VideoCandidate) -> None: ...
+
+
+class TaskRepository(Protocol):
+    def list_tasks(self) -> list[TaskRecord]: ...
+
+    def get_task(self, task_id: str) -> TaskRecord | None: ...
+
+    def save_task(self, task: TaskRecord) -> None: ...

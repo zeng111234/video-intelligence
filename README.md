@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-项目目前处于协作开发准备阶段，首期聚焦：
+项目已完成首个可点击 Streamlit 框架，当前以 Mock 数据演示三页业务闭环。首期聚焦：
 
 - 手工链接、CSV/Excel 导入与统一候选字段
 - 热度计算、快照与排序
@@ -16,7 +16,7 @@
 详细范围与约束见：
 
 - [项目交接文档](PROJECT_HANDOFF.md)
-- [产品与开发文档](video-intelligence-production-dev-doc.md)
+- [产品与开发文档](docs/archive/video-intelligence-production-dev-doc-full-v1.6.md)
 - [外部参考仓库说明](references/README.md)
 
 ## 协作方式
@@ -34,3 +34,13 @@
 - 不提交密钥、Cookie、本地数据库、上传媒体、模型文件或生成物。
 - `references/github/` 仅作本地阅读参考，不纳入本仓库版本控制。
 
+## 本地启动
+
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+当前框架不依赖本地 FFmpeg、Whisper 或真实平台 API；页面中的候选、转写和任务记录均明确标记为 Mock。
+
+开发检查使用 `python -m pip install -r requirements-dev.txt` 和 `python -m pytest`。
