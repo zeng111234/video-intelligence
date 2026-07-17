@@ -1,0 +1,39 @@
+# Downloaded third-party reference repositories (see references/README.md)
+/references/github/
+
+# Local runtime data and secrets
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+data/
+uploads/
+outputs/
+models/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Media and generated transcription artifacts
+*.mp4
+*.mov
+*.mp3
+*.wav
+*.srt
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
