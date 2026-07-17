@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
     RelevanceReview,
+    SamplingCheckpoint,
     SyncReport,
     TaskRecord,
+    TranscriptRevision,
     VideoCandidate,
     VideoMetricSnapshot,
 )
@@ -34,6 +38,9 @@ class MockRepository:
         self._discovery_results: dict[str, DiscoveryResult] = {}
         self._candidate_matches: dict[tuple[str, str], CandidateMatch] = {}
         self._keyword_trends: dict[str, list[KeywordTrendResult]] = {}
+        self._transcript_revisions: dict[str, TranscriptRevision] = {}
+        self._sampling_checkpoints: dict[str, SamplingCheckpoint] = {}
+        self._discovery_request_guards: dict[str, tuple[str, datetime]] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
@@ -87,6 +94,19 @@ class MockRepository:
             reverse=True,
         )[:limit]
 
+    def claim_discovery_request(
+        self,
+        fingerprint: str,
+        request_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        previous = self._discovery_request_guards.get(fingerprint)
+        if previous and (claimed_at - previous[1]).total_seconds() < ttl_seconds:
+            return False
+        self._discovery_request_guards[fingerprint] = (request_id, claimed_at)
+        return True
+
     def save_candidate_match(self, match: CandidateMatch) -> None:
         self._candidate_matches[(match.request_id, match.video_id)] = match
 
@@ -130,3 +150,32 @@ class MockRepository:
 
     def save_task(self, task: TaskRecord) -> None:
         self._tasks[task.task_id] = task
+
+    def save_transcript_revision(self, revision: TranscriptRevision) -> None:
+        self._transcript_revisions[revision.revision_id] = revision
+
+    def list_transcript_revisions(self, task_id: str) -> list[TranscriptRevision]:
+        return sorted(
+            (
+                item
+                for item in self._transcript_revisions.values()
+                if item.task_id == task_id
+            ),
+            key=lambda item: item.revision_number,
+        )
+
+    def get_transcript_revision(self, revision_id: str) -> TranscriptRevision | None:
+        return self._transcript_revisions.get(revision_id)
+
+    def save_sampling_checkpoint(self, checkpoint: SamplingCheckpoint) -> None:
+        self._sampling_checkpoints[checkpoint.checkpoint_id] = checkpoint
+
+    def list_sampling_checkpoints(
+        self, keyword: str | None = None
+    ) -> list[SamplingCheckpoint]:
+        items = self._sampling_checkpoints.values()
+        if keyword:
+            items = (
+                item for item in items if item.keyword.casefold() == keyword.casefold()
+            )
+        return sorted(items, key=lambda item: item.due_at)

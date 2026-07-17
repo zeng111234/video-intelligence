@@ -108,6 +108,14 @@ class KeywordTrendService:
         computed_at = now or datetime.now().astimezone()
         since = computed_at - timedelta(days=WINDOW_DAYS)
         matches = self.repository.list_keyword_matches(keyword_key, since)
+        if matches:
+            latest_scope = max(matches, key=lambda item: item.observed_at)
+            matches = [
+                match
+                for match in matches
+                if match.publish_time == latest_scope.publish_time
+                and match.sort_type == latest_scope.sort_type
+            ]
         grouped: dict[str, list[CandidateMatch]] = defaultdict(list)
         for match in matches:
             grouped[match.video_id].append(match)
@@ -130,6 +138,9 @@ class KeywordTrendService:
             candidate_id: _growth(history, since, computed_at)
             for candidate_id, history in histories.items()
         }
+        growth_eligible_size = sum(
+            value[0] is not None for value in growth_data.values()
+        )
         growth_values = [value[0] for value in growth_data.values()]
         positive_growth_median = statistics.median(
             [value for value in growth_values if value is not None and value > 0]
@@ -153,7 +164,12 @@ class KeywordTrendService:
             growth, growth_hours = growth_data[candidate_id]
             age_likes = age_like_values[candidate_id]
             rank_score = _rank_score(candidate_matches)
-            appearance_count = len({item.request_id for item in candidate_matches})
+            appearance_count = len(
+                {
+                    int(item.observed_at.timestamp() // (2 * 3600))
+                    for item in candidate_matches
+                }
+            )
             age_hours = max(
                 0.0,
                 (computed_at - candidate.published_at).total_seconds() / 3600,
@@ -205,6 +221,8 @@ class KeywordTrendService:
                 growth_available=growth is not None,
                 appearance_count=appearance_count,
                 pool_size=pool_size,
+                source_confidence=self._source_confidence(history),
+                growth_eligible_size=growth_eligible_size,
             )
             level = self._level(
                 score=score,
@@ -213,6 +231,7 @@ class KeywordTrendService:
                 growth_percentile=growth_percentile,
                 appearance_count=appearance_count,
                 age_hours=age_hours,
+                anomaly_suspected=bool(anomaly_reasons),
             )
             latest_match = max(candidate_matches, key=lambda item: item.observed_at)
             reasons = [
@@ -227,6 +246,18 @@ class KeywordTrendService:
                 )
             if pool_size < 30:
                 reasons.append(f"关键词历史池仅 {pool_size} 条，当前只做描述性排序")
+            checkpoints = [
+                checkpoint
+                for checkpoint in self.repository.list_sampling_checkpoints(keyword_key)
+                if checkpoint.candidate_id == candidate_id
+            ]
+            missed_count = sum(
+                checkpoint.status.value == "missed" for checkpoint in checkpoints
+            )
+            if missed_count:
+                reasons.append(
+                    f"有 {missed_count} 个计划复采点未再次召回，增长判断受限"
+                )
             reasons.extend(anomaly_reasons)
             results.append(
                 KeywordTrendResult(
@@ -292,11 +323,13 @@ class KeywordTrendService:
         growth_available: bool,
         appearance_count: int,
         pool_size: int,
+        source_confidence: float,
+        growth_eligible_size: int,
     ) -> float:
         visible = _visible_likes(history, since, now)
-        confidence = 0.45
+        confidence = 0.20 + 0.25 * source_confidence
         if growth_available:
-            confidence += 0.20
+            confidence += 0.15
         if len(visible) >= 2 and visible[-1].sampled_at - visible[
             0
         ].sampled_at >= timedelta(hours=6):
@@ -307,7 +340,13 @@ class KeywordTrendService:
             confidence += 0.10
         if pool_size >= 100:
             confidence += 0.05
+        confidence += 0.05 * min(1.0, growth_eligible_size / max(pool_size, 1))
         return round(min(1.0, confidence), 2)
+
+    @staticmethod
+    def _source_confidence(history: list[VideoMetricSnapshot]) -> float:
+        visible = [item.confidence for item in history if item.likes is not None]
+        return sum(visible) / len(visible) if visible else 0.0
 
     @staticmethod
     def _level(
@@ -318,8 +357,14 @@ class KeywordTrendService:
         growth_percentile: float | None,
         appearance_count: int,
         age_hours: float,
+        anomaly_suspected: bool = False,
     ) -> KeywordTrendLevel:
-        if pool_size < 30 or confidence < 0.60 or growth_percentile is None:
+        if (
+            anomaly_suspected
+            or pool_size < 30
+            or confidence < 0.60
+            or growth_percentile is None
+        ):
             return KeywordTrendLevel.OBSERVING
         if (
             pool_size >= 100

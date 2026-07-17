@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -36,11 +38,72 @@ trend_service = get_keyword_trend_service()
 douyin_adapter = build_douyin_keyword_adapter(st.secrets)
 douyin_capability = douyin_adapter.capabilities()
 
+
+def duplicate_request_cooldown(keyword: str, publish_time: int, count: int) -> int:
+    for last in repository.list_discovery_results(limit=50):
+        same_request = (
+            last.keyword.casefold() == keyword.strip().casefold()
+            and last.publish_time == publish_time
+            and last.requested_count == count
+            and last.api_call_count == 1
+        )
+        if same_request:
+            elapsed = (datetime.now().astimezone() - last.finished_at).total_seconds()
+            return max(0, 60 - int(elapsed))
+    return 0
+
+
+@st.dialog("确认获取热门视频")
+def confirm_keyword_discovery(
+    keyword: str, publish_window_label: str, count: int
+) -> None:
+    publish_time = 1 if publish_window_label == "近 24 小时" else 7
+    st.write(f"关键词：**{keyword.strip() or '未填写'}**")
+    st.write(f"时间范围：**{publish_window_label}**")
+    st.write(f"获取数量：**{count} 条**")
+    st.warning(
+        "确认后将调用 1 次抖音搜索接口，系统不会自动翻页。",
+        icon=":material/paid:",
+    )
+    cooldown = duplicate_request_cooldown(keyword, publish_time, count)
+    if cooldown:
+        st.error(
+            f"相同请求刚刚执行过，请等待约 {cooldown} 秒后再试，防止重复计费。",
+            icon=":material/hourglass_top:",
+        )
+    with st.container(horizontal=True):
+        if st.button("取消", icon=":material/close:"):
+            st.rerun()
+        if st.button(
+            "确认并获取",
+            type="primary",
+            icon=":material/check:",
+            disabled=bool(cooldown),
+        ):
+            try:
+                with st.spinner(f"正在获取 {count} 条视频并计算近 7 天热门榜单……"):
+                    discovery_result = discovery_service.discover(
+                        keyword=keyword,
+                        adapter=douyin_adapter,
+                        publish_time=publish_time,
+                        count=count,
+                    )
+                    trend_service.recompute(keyword)
+                st.session_state["last_discovery_result"] = discovery_result.model_dump(
+                    mode="json"
+                )
+                st.session_state["candidate_local_query"] = keyword.strip()
+                st.session_state["active_trend_keyword"] = keyword.strip()
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc), icon=":material/error:")
+
+
 with st.container(border=True):
-    st.subheader("低调用量关键词热门榜")
+    st.subheader("抖音热门视频获取")
     st.caption(
-        "平台综合排序只负责召回 10 条候选，系统再用近 7 天点赞增长、视频年龄、"
-        "综合名次和持续入榜次数计算自己的 Top 10。每次获取固定只调用 1 次搜索接口。"
+        "输入关键词后，从抖音综合排序获取 1–10 条视频，并根据近 7 天数据生成系统热门排名。"
+        "每次确认只调用 1 次搜索接口，不自动翻页。"
     )
     with st.form("platform_keyword_discovery"):
         with st.container(horizontal=True, vertical_alignment="bottom"):
@@ -54,59 +117,40 @@ with st.container(border=True):
                 ["近 24 小时", "近 7 天"],
                 key="platform_publish_window",
             )
+            candidate_count = st.number_input(
+                "获取数量",
+                min_value=1,
+                max_value=10,
+                value=10,
+                step=1,
+                key="platform_candidate_count",
+            )
             discover_submitted = st.form_submit_button(
-                "获取综合候选10条（1次调用）",
+                "获取热门视频（调用1次）",
                 type="primary",
                 icon=":material/travel_explore:",
                 disabled=not douyin_capability.enabled,
             )
-            recompute_submitted = st.form_submit_button(
-                "仅重新计算本地7日榜（0次调用）",
-                icon=":material/calculate:",
-            )
     if douyin_capability.enabled:
         st.success(
-            "ClientKey/ClientSecret 已配置；首次调用后由抖音返回实际权限状态。",
+            "抖音接口凭证已配置；首次调用后由抖音返回实际权限状态。",
             icon=":material/key:",
         )
     else:
         st.warning(
-            "功能已就绪，等待配置 DOUYIN_CLIENT_KEY 和 DOUYIN_CLIENT_SECRET。"
-            "当前不会发起任何平台请求。",
+            "尚未配置抖音接口凭证，当前不会发起任何平台请求。请联系技术人员配置。",
             icon=":material/key_off:",
         )
-        st.code(
-            'DOUYIN_CLIENT_KEY = ""\nDOUYIN_CLIENT_SECRET = ""',
-            language="toml",
-        )
+        with st.expander("技术配置说明"):
+            st.code(
+                'DOUYIN_CLIENT_KEY = ""\nDOUYIN_CLIENT_SECRET = ""',
+                language="toml",
+            )
 
     if discover_submitted:
-        try:
-            publish_time = 1 if publish_window_label == "近 24 小时" else 7
-            with st.spinner("正在获取 10 条综合候选并计算近 7 天自有榜单……"):
-                discovery_result = discovery_service.discover(
-                    keyword=platform_keyword,
-                    adapter=douyin_adapter,
-                    publish_time=publish_time,
-                )
-                trend_service.recompute(platform_keyword)
-            st.session_state["last_discovery_result"] = discovery_result.model_dump(
-                mode="json"
-            )
-            st.session_state["candidate_local_query"] = platform_keyword.strip()
-            st.session_state["active_trend_keyword"] = platform_keyword.strip()
-            st.rerun()
-        except Exception as exc:
-            st.error(str(exc), icon=":material/error:")
-
-    if recompute_submitted:
-        try:
-            trend_service.recompute(platform_keyword)
-            st.session_state["active_trend_keyword"] = platform_keyword.strip()
-            st.toast("已使用本地数据重算，未调用平台接口。", icon=":material/check:")
-            st.rerun()
-        except Exception as exc:
-            st.error(str(exc), icon=":material/error:")
+        confirm_keyword_discovery(
+            platform_keyword, publish_window_label, int(candidate_count)
+        )
 
     raw_discovery = st.session_state.get("last_discovery_result")
     if raw_discovery:
@@ -147,6 +191,31 @@ with st.container(border=True):
         if trend_keyword
         else []
     )
+    checkpoints = (
+        repository.list_sampling_checkpoints(trend_keyword) if trend_keyword else []
+    )
+    if checkpoints:
+        status_labels = {
+            "pending": "待复采",
+            "observed": "已复采",
+            "missed": "未再次召回",
+        }
+        with st.expander("复采计划与增长数据完整度"):
+            st.caption("系统只提醒，不会自动调用付费接口。")
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "视频": checkpoint.candidate_id,
+                            "计划间隔": f"T+{checkpoint.offset_hours}小时",
+                            "计划时间": checkpoint.due_at,
+                            "状态": status_labels[checkpoint.status.value],
+                        }
+                        for checkpoint in checkpoints
+                    ]
+                ),
+                hide_index=True,
+            )
     if trend_results:
         candidate_lookup = {
             candidate.video_id: candidate for candidate in repository.list_candidates()
@@ -158,40 +227,61 @@ with st.container(border=True):
                 continue
             trend_rows.append(
                 {
+                    "candidate_id": candidate.video_id,
                     "自有排名": own_rank,
                     "标题": candidate.title,
+                    "热门程度": trend.level.value,
                     "趋势分": trend.score,
-                    "状态": trend.level.value,
-                    "平台综合召回位置": trend.platform_rank,
-                    "点赞增长/小时": trend.like_growth_per_hour,
-                    "年龄归一化点赞/小时": trend.likes_per_hour,
-                    "近7天入榜次数": trend.appearance_count,
-                    "历史池": trend.pool_size,
-                    "置信度": trend.confidence,
-                    "异常": (
-                        "疑似异常待核验"
-                        if trend.anomaly_status.value == "suspected"
-                        else "正常"
-                    ),
-                    "为何入榜/异常说明": "；".join(trend.reasons),
+                    "数据可靠性": f"{trend.confidence:.0%}",
+                    "为什么热门": "；".join(trend.reasons[:3]),
                 }
             )
         st.markdown(f"**系统自有 Top 10 · {trend_keyword}**")
-        st.dataframe(
-            pd.DataFrame(trend_rows),
+        trend_frame = pd.DataFrame(trend_rows)
+        trend_event = st.dataframe(
+            trend_frame,
             hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="keyword_trend_table",
             column_config={
+                "candidate_id": None,
                 "趋势分": st.column_config.ProgressColumn(
                     "趋势分", min_value=0, max_value=100
                 ),
-                "置信度": st.column_config.NumberColumn("置信度", format="percent"),
             },
         )
+        if trend_event.selection.rows:
+            select_candidate(
+                str(trend_frame.iloc[trend_event.selection.rows[0]]["candidate_id"])
+            )
+        with st.expander("查看计算依据"):
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "标题": candidate_lookup[item.candidate_id].title,
+                            "平台位置": item.platform_rank,
+                            "点赞增长/小时": item.like_growth_per_hour,
+                            "近7天入榜次数": item.appearance_count,
+                            "样本池": item.pool_size,
+                            "异常状态": (
+                                "待核验"
+                                if item.anomaly_status.value == "suspected"
+                                else "正常"
+                            ),
+                        }
+                        for item in trend_results
+                        if item.candidate_id in candidate_lookup
+                    ]
+                ),
+                hide_index=True,
+            )
         st.caption(
             "该排名由系统公式计算；平台综合位置仅是一个分量。样本池少于 30 条时只显示“观察中”。"
         )
 
-st.subheader("搜索本地候选")
+st.subheader("历史视频库")
 all_candidates = candidate_service.search(
     platforms=[Platform.DOUYIN], published_within_hours=720
 )
@@ -226,6 +316,7 @@ items = candidate_service.search(
     min_interactions=int(min_interactions),
 )
 if submitted:
+    select_candidate(None)
     st.toast(f"已找到 {len(items)} 条候选", icon=":material/check_circle:")
 
 with st.container(horizontal=True):
@@ -255,41 +346,21 @@ def to_row(candidate: VideoCandidate) -> dict[str, object]:
         HeatLevel.NORMAL: "否",
         HeatLevel.INSUFFICIENT: "数据不足",
     }[candidate.heat.level]
-    metrics = candidate.metrics
     return {
         "video_id": candidate.video_id,
         "标题": candidate.title,
-        "平台": {
-            Platform.DOUYIN: "抖音",
-            Platform.KUAISHOU: "快手",
-            Platform.XIAOHONGSHU: "小红书",
-        }[candidate.platform],
-        "作者": candidate.author_name,
-        "赛道": candidate.category,
-        "命中关键词": "、".join(candidate.matched_by),
-        "匹配状态": candidate.eligibility_status.value,
         "发布时间": candidate.published_at,
+        "热门判断": hotspot_status,
         "热度分": candidate.heat.score,
-        "等级": candidate.heat.level.value,
-        "是否热点": hotspot_status,
-        "置信度": candidate.metrics.confidence,
-        "快照": len(repository.list_snapshots(candidate.video_id)),
-        "桶样本": candidate.heat.bucket_sample_size,
-        "官方榜": "是" if candidate.official_hot else "否",
-        "点赞": metrics.likes,
-        "评论": metrics.comments,
-        "收藏": metrics.favorites,
-        "分享": metrics.shares,
-        "播放": metrics.plays,
+        "数据可靠性": f"{candidate.metrics.confidence:.0%}",
+        "判断依据": "；".join(candidate.heat.reasons[:2]),
         "来源": str(candidate.source_url),
     }
 
 
 with st.container(border=True):
     st.subheader("热点候选榜")
-    st.caption(
-        "选择一行查看入榜原因，并可将候选带入转写工作台。缺失指标保持为空，不会显示为 0。"
-    )
+    st.caption("单选一个视频，查看爆火依据并转成文案。")
     dataframe = pd.DataFrame([to_row(item) for item in items])
     if dataframe.empty:
         st.info("当前筛选条件没有匹配候选，请放宽条件后重试。", icon=":material/info:")
@@ -308,19 +379,21 @@ with st.container(border=True):
                 "热度分": st.column_config.ProgressColumn(
                     min_value=0, max_value=100, format="%.1f"
                 ),
-                "置信度": st.column_config.NumberColumn(format="percent"),
-                "点赞": st.column_config.NumberColumn(format="localized"),
-                "评论": st.column_config.NumberColumn(format="localized"),
-                "收藏": st.column_config.NumberColumn(format="localized"),
-                "分享": st.column_config.NumberColumn(format="localized"),
-                "播放": st.column_config.NumberColumn(format="localized"),
                 "来源": st.column_config.LinkColumn(display_text="查看来源"),
             },
         )
         if event.selection.rows:
             select_candidate(str(dataframe.iloc[event.selection.rows[0]]["video_id"]))
 
+visible_ids = {item.video_id for item in items}
 selected = candidate_service.get(selected_candidate_id())
+if (
+    selected
+    and selected.video_id not in visible_ids
+    and not any(result.candidate_id == selected.video_id for result in trend_results)
+):
+    select_candidate(None)
+    selected = None
 if selected:
     with st.container(border=True):
         with st.container(
@@ -342,7 +415,7 @@ if selected:
             st.markdown(f"- {reason}")
         if selected.heat.provisional:
             st.warning(
-                "当前等级为 provisional 试运行判断；达到稳定样本与置信度门槛后才转为正式结论。",
+                "当前为试运行判断；达到稳定样本与可靠性门槛后才转为正式结论。",
                 icon=":material/warning:",
             )
         if st.button("将此视频转成文案", type="primary", icon=":material/transcribe:"):

@@ -63,6 +63,7 @@ with st.container(border=True):
                 "任务": task.title,
                 "类型": kind_labels[task.kind],
                 "状态": status_labels[task.status],
+                "处理阶段": getattr(task, "stage", ""),
                 "进度": task.progress,
                 "创建时间": task.created_at,
                 "耗时（秒）": task.elapsed_seconds,
@@ -106,7 +107,7 @@ if selected_task:
             st.subheader(selected_task.title)
             render_task_badge(selected_task.status)
         st.caption(
-            f"任务编号 {selected_task.task_id} · {kind_labels[selected_task.kind]} · Mock"
+            f"任务编号 {selected_task.task_id} · {kind_labels[selected_task.kind]}"
         )
         st.progress(selected_task.progress, text=f"进度 {selected_task.progress}%")
         if selected_task.error_message:
@@ -114,7 +115,9 @@ if selected_task:
         if selected_task.outputs:
             st.json(selected_task.outputs, expanded=False)
         can_retry = (
-            selected_task.status == TaskStatus.FAILED and selected_task.retry_count < 1
+            selected_task.status == TaskStatus.FAILED
+            and selected_task.retry_count < 1
+            and getattr(selected_task, "is_mock", False)
         )
         if st.button(
             "重试失败任务",
@@ -125,3 +128,5 @@ if selected_task:
             transcription_service.retry_failed_task(selected_task.task_id)
             st.toast("任务已完成一次重试", icon=":material/check_circle:")
             st.rerun()
+        if selected_task.status == TaskStatus.FAILED and not can_retry:
+            st.info("媒体已在处理结束后安全清理，请返回转文案页重新上传。")

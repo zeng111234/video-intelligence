@@ -231,6 +231,27 @@ def test_discovery_accepts_seven_day_window_without_pagination(tmp_path) -> None
     assert result.api_call_count == 1
 
 
+def test_discovery_uses_selected_count_in_one_request(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "selected-count.db")
+    adapter = _PagedAdapter()
+    service = KeywordDiscoveryService(
+        repository,
+        SourceService(repository, HeatService()),
+    )
+
+    result = service.discover(keyword="二手车", adapter=adapter, count=4)
+
+    assert adapter.calls == 1
+    assert adapter.requests[0].limit == 4
+    assert adapter.requests[0].page_size == 4
+    assert result.requested_count == 4
+    assert result.unique_count == 4
+    assert len(repository.list_candidate_matches(result.request_id)) == 4
+
+    with pytest.raises(ValueError, match="1 到 10"):
+        service.discover(keyword="二手车", adapter=adapter, count=11)
+
+
 def test_discovery_without_credentials_makes_no_transport_call() -> None:
     transport_calls = 0
 
@@ -575,3 +596,13 @@ def test_sqlite_migrates_existing_candidate_matches(tmp_path) -> None:
     assert match.observed_at == now
     assert match.publish_time == 1
     assert match.sort_type == 0
+
+
+def test_sqlite_request_guard_is_shared_across_connections(tmp_path) -> None:
+    database = tmp_path / "shared-guard.sqlite3"
+    first = SQLiteRepository(database)
+    second = SQLiteRepository(database)
+    now = datetime.now().astimezone()
+
+    assert first.claim_discovery_request("same", "request-1", now) is True
+    assert second.claim_discovery_request("same", "request-2", now) is False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import importlib.util
 from typing import Any
 
 import streamlit as st
@@ -8,7 +9,11 @@ import streamlit as st
 
 @st.cache_resource
 def runtime_capabilities() -> dict[str, bool]:
-    return {"ffmpeg": shutil.which("ffmpeg") is not None, "mock_mode": True}
+    return {
+        "ffmpeg": shutil.which("ffmpeg") is not None
+        and shutil.which("ffprobe") is not None,
+        "asr": importlib.util.find_spec("faster_whisper") is not None,
+    }
 
 
 @st.cache_resource

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+from uuid import uuid4
 
 from src.contracts import CandidateRepository, CrawlerAdapter
 from src.models import (
@@ -9,6 +11,8 @@ from src.models import (
     DiscoveryResult,
     ImportErrorDetail,
     NormalizedCandidate,
+    SamplingCheckpoint,
+    SamplingStatus,
     SourcePage,
     SourceRequest,
 )
@@ -30,21 +34,36 @@ class KeywordDiscoveryService:
         keyword: str,
         adapter: CrawlerAdapter,
         publish_time: int = 1,
+        count: int = 10,
     ) -> DiscoveryResult:
         keyword = keyword.strip()
         if not 2 <= len(keyword) <= 50:
             raise ValueError("关键词长度必须为 2 到 50 个字符。")
         if publish_time not in {1, 7}:
             raise ValueError("发布时间范围只支持近 24 小时或近 7 天。")
+        if not 1 <= count <= 10:
+            raise ValueError("单次候选数量必须为 1 到 10 条。")
 
-        started_at = datetime.now().astimezone()
+        request_fingerprint = hashlib.sha256(
+            f"douyin|{keyword.casefold()}|{publish_time}|0|{count}".encode()
+        ).hexdigest()
+        now = datetime.now().astimezone()
+        for previous in self.repository.list_discovery_results(limit=50):
+            if (
+                previous.request_fingerprint == request_fingerprint
+                and previous.api_call_count == 1
+                and (now - previous.finished_at).total_seconds() < 60
+            ):
+                raise ValueError("相同请求刚刚执行过，请等待60秒，防止重复计费。")
+
+        started_at = now
         capability = adapter.capabilities()
         request = SourceRequest(
             source=DataSource.OFFICIAL,
             keywords=[keyword],
             category=f"关键词/{keyword}",
-            limit=10,
-            page_size=min(10, capability.max_page_size),
+            limit=count,
+            page_size=min(count, capability.max_page_size),
             publish_time=publish_time,
             sort_type=0,
         )
@@ -53,7 +72,7 @@ class KeywordDiscoveryService:
                 request_id=request.request_id,
                 keyword=keyword,
                 provider_name=capability.provider_name,
-                requested_count=10,
+                requested_count=count,
                 permission_status=capability.permission_status,
                 publish_time=publish_time,
                 sort_type=0,
@@ -71,9 +90,15 @@ class KeywordDiscoveryService:
                         ),
                     )
                 ],
+                request_fingerprint=request_fingerprint,
             )
             self.repository.save_discovery_result(result)
             return result
+
+        if not self.repository.claim_discovery_request(
+            request_fingerprint, request.request_id, now
+        ):
+            raise ValueError("相同请求正在执行或刚刚完成，请等待60秒，防止重复计费。")
 
         unique: dict[tuple[str, str], NormalizedCandidate] = {}
         duplicate_count = 0
@@ -84,7 +109,7 @@ class KeywordDiscoveryService:
             page = SourcePage()
             errors.append(ImportErrorDetail(row=1, field="provider", message=str(exc)))
         rank_by_key: dict[tuple[str, str], int] = {}
-        for platform_rank, item in enumerate(page.items[:10], start=1):
+        for platform_rank, item in enumerate(page.items[:count], start=1):
             key = (item.platform.value, item.platform_item_id)
             if key in unique:
                 duplicate_count += 1
@@ -92,7 +117,7 @@ class KeywordDiscoveryService:
             unique[key] = item
             rank_by_key[key] = platform_rank
         errors.extend(page.errors)
-        items = list(unique.values())[:10]
+        items = list(unique.values())[:count]
         report = None
         if items:
             report = self.source_service.import_page(
@@ -102,12 +127,12 @@ class KeywordDiscoveryService:
             request_id=request.request_id,
             keyword=keyword,
             provider_name=capability.provider_name,
-            requested_count=10,
+            requested_count=count,
             fetched_count=len(page.items),
             unique_count=len(items),
             duplicate_count=duplicate_count,
             exhausted=not page.has_more,
-            partial=bool(errors) or len(items) < 10,
+            partial=bool(errors) or len(items) < count,
             permission_status=capability.permission_status,
             publish_time=publish_time,
             sort_type=0,
@@ -116,6 +141,7 @@ class KeywordDiscoveryService:
             finished_at=datetime.now().astimezone(),
             import_report=report,
             errors=errors,
+            request_fingerprint=request_fingerprint,
         )
         self.repository.save_discovery_result(result)
         if items:
@@ -133,6 +159,7 @@ class KeywordDiscoveryService:
                     (item.platform.value, item.platform_item_id)
                 )
                 if video_id:
+                    observed_at = item.metrics.sampled_at
                     self.repository.save_candidate_match(
                         CandidateMatch(
                             request_id=request.request_id,
@@ -142,10 +169,51 @@ class KeywordDiscoveryService:
                             platform_rank=rank_by_key[
                                 (item.platform.value, item.platform_item_id)
                             ],
-                            observed_at=item.metrics.sampled_at,
+                            observed_at=observed_at,
                             publish_time=publish_time,
                             sort_type=0,
                             evidence=item.evidence,
                         )
                     )
+                    checkpoints = [
+                        checkpoint
+                        for checkpoint in self.repository.list_sampling_checkpoints(
+                            keyword_key
+                        )
+                        if checkpoint.candidate_id == video_id
+                    ]
+                    if not checkpoints:
+                        for offset in (2, 6, 24):
+                            self.repository.save_sampling_checkpoint(
+                                SamplingCheckpoint(
+                                    checkpoint_id=f"sample-{uuid4().hex[:12]}",
+                                    keyword=keyword_key,
+                                    candidate_id=video_id,
+                                    request_id=request.request_id,
+                                    offset_hours=offset,
+                                    due_at=observed_at + timedelta(hours=offset),
+                                )
+                            )
+                    else:
+                        for checkpoint in checkpoints:
+                            if (
+                                checkpoint.status == SamplingStatus.PENDING
+                                and observed_at >= checkpoint.due_at
+                            ):
+                                self.repository.save_sampling_checkpoint(
+                                    checkpoint.model_copy(
+                                        update={
+                                            "status": SamplingStatus.OBSERVED,
+                                            "observed_at": observed_at,
+                                        }
+                                    )
+                                )
+        for checkpoint in self.repository.list_sampling_checkpoints(keyword.casefold()):
+            if (
+                checkpoint.status == SamplingStatus.PENDING
+                and result.finished_at > checkpoint.due_at + timedelta(minutes=30)
+            ):
+                self.repository.save_sampling_checkpoint(
+                    checkpoint.model_copy(update={"status": SamplingStatus.MISSED})
+                )
         return result

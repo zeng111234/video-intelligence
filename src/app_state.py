@@ -42,7 +42,7 @@ def initialize_state(state: MutableMapping[str, Any] | None = None) -> None:
     target = st.session_state if state is None else state
     target.setdefault("selected_candidate_id", None)
     target.setdefault("selected_task_id", None)
-    target.setdefault("active_transcription_task_id", "transcript-demo-001")
+    target.setdefault("active_transcription_task_id", None)
     target.setdefault("last_discovery_result", None)
     target.setdefault("candidate_local_query", "")
     target.setdefault("active_trend_keyword", "")

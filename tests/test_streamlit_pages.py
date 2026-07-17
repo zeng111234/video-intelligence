@@ -31,13 +31,13 @@ def test_pages_render_without_exceptions(path: Path, expected_title: str) -> Non
     assert any(expected_title in title.value for title in app.title)
 
 
-def test_candidate_page_only_renders_douyin_rows() -> None:
+def test_candidate_page_is_douyin_only_and_hides_technical_platform_column() -> None:
     app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
 
     assert not app.exception
     rows = app.dataframe[0].value
     assert not rows.empty
-    assert set(rows["平台"]) == {"抖音"}
+    assert "平台" not in rows.columns
     assert "selection_mode: SINGLE_ROW" in str(app.dataframe[0].proto)
     assert not any(item.label == "平台" for item in app.text_input)
     assert not any(item.label == "平台" for item in app.multiselect)
@@ -49,31 +49,33 @@ def test_keyword_discovery_waits_for_credentials() -> None:
     assert not app.exception
     assert any(item.label == "平台关键词" for item in app.text_input)
     discover = next(
-        button for button in app.button if button.label == "获取综合候选10条（1次调用）"
+        button for button in app.button if button.label == "获取热门视频（调用1次）"
     )
     assert discover.disabled is True
-    local_recompute = next(
-        button
-        for button in app.button
-        if button.label == "仅重新计算本地7日榜（0次调用）"
-    )
-    assert local_recompute.disabled is False
     assert any(item.label == "召回时间范围" for item in app.selectbox)
+    count = next(item for item in app.number_input if item.label == "获取数量")
+    assert count.value == 10
+    assert count.min == 1
+    assert count.max == 10
+    assert not any("重新计算本地" in button.label for button in app.button)
 
 
-def test_local_keyword_recompute_does_not_require_credentials() -> None:
+def test_paid_discovery_requires_chinese_confirmation(monkeypatch) -> None:
+    monkeypatch.setenv("DOUYIN_CLIENT_KEY", "test-key")
+    monkeypatch.setenv("DOUYIN_CLIENT_SECRET", "test-secret")
     app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
     keyword = next(item for item in app.text_input if item.label == "平台关键词")
-    local_recompute = next(
-        button
-        for button in app.button
-        if button.label == "仅重新计算本地7日榜（0次调用）"
+    discover = next(
+        button for button in app.button if button.label == "获取热门视频（调用1次）"
     )
 
     keyword.set_value("二手车")
-    local_recompute.click().run(timeout=15)
+    discover.click().run(timeout=15)
 
     assert not app.exception
+    assert any(button.label == "确认并获取" for button in app.button)
+    assert any(button.label == "取消" for button in app.button)
+    assert any("将调用 1 次抖音搜索接口" in warning.value for warning in app.warning)
 
 
 def test_candidate_page_can_open_manual_metrics_form() -> None:
@@ -104,9 +106,10 @@ def test_transcription_creation_is_blocked_without_rights() -> None:
     )
 
     create_button = next(
-        button for button in app.button if "生成 Mock 转写" in button.label
+        button for button in app.button if button.label == "开始转成文案"
     )
     assert create_button.disabled is True
+    assert not any("Mock" in button.label for button in app.button)
 
 
 def test_task_page_shows_all_demo_statuses() -> None:

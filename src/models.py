@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
 class Platform(StrEnum):
@@ -78,6 +78,17 @@ class TaskStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+
+class TranscriptStatus(StrEnum):
+    DRAFT = "draft"
+    APPROVED = "approved"
+
+
+class SamplingStatus(StrEnum):
+    PENDING = "pending"
+    OBSERVED = "observed"
+    MISSED = "missed"
 
 
 class VideoMetricSnapshot(BaseModel):
@@ -251,6 +262,7 @@ class DiscoveryResult(BaseModel):
     finished_at: datetime
     import_report: SyncReport | None = None
     errors: list[ImportErrorDetail] = Field(default_factory=list)
+    request_fingerprint: str | None = None
 
 
 class KeywordTrendResult(BaseModel):
@@ -292,9 +304,41 @@ class RelevanceReview(BaseModel):
 class TranscriptSegment(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
-    text: str
+    text: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
     needs_review: bool = False
+
+    @model_validator(mode="after")
+    def validate_time_range(self):
+        if self.end <= self.start:
+            raise ValueError("片段结束时间必须晚于开始时间。")
+        return self
+
+
+class TranscriptRevision(BaseModel):
+    revision_id: str
+    task_id: str
+    revision_number: int = Field(ge=1)
+    status: TranscriptStatus = TranscriptStatus.DRAFT
+    created_at: datetime
+    updated_at: datetime
+    reviewer: str | None = None
+    language: str = "zh"
+    model_name: str = "base"
+    media_sha256: str
+    original_segments: list[TranscriptSegment]
+    corrected_segments: list[TranscriptSegment]
+
+
+class SamplingCheckpoint(BaseModel):
+    checkpoint_id: str
+    keyword: str
+    candidate_id: str
+    request_id: str
+    offset_hours: int = Field(gt=0)
+    due_at: datetime
+    status: SamplingStatus = SamplingStatus.PENDING
+    observed_at: datetime | None = None
 
 
 class TaskRecord(BaseModel):
@@ -317,5 +361,13 @@ class TranscriptionTask(TaskRecord):
     media_name: str
     media_type: str
     rights_confirmed: bool
+    rights_holder: str | None = None
+    rights_confirmed_at: datetime | None = None
+    rights_purpose: str = "仅用于本次私有文案转写"
     candidate_id: str | None = None
     segments: list[TranscriptSegment] = Field(default_factory=list)
+    stage: str = "等待处理"
+    media_sha256: str | None = None
+    model_name: str | None = None
+    language: str | None = None
+    approved_revision_id: str | None = None

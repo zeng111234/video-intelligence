@@ -70,12 +70,6 @@ class SourceService:
             ):
                 if getattr(normalized.metrics, field) is None:
                     missing_fields[field] += 1
-            if (
-                normalized.eligibility_status == EligibilityStatus.PENDING_REVIEW
-                and self.repository.get_review(saved_id) is None
-            ):
-                self.repository.save_review(RelevanceReview(candidate_id=saved_id))
-
         self.recompute_all()
         finished_at = datetime.now().astimezone()
         source = (
@@ -139,18 +133,6 @@ class SourceService:
 
     def recompute_all(self) -> None:
         candidates = self.repository.list_candidates()
-        reviews = {
-            review.candidate_id: review for review in self.repository.list_reviews()
-        }
-        eligible = [
-            candidate
-            for candidate in candidates
-            if candidate.eligibility_status == EligibilityStatus.AUTO_MATCHED
-            or (
-                reviews.get(candidate.video_id)
-                and reviews[candidate.video_id].status == ReviewStatus.APPROVED
-            )
-        ]
         histories = {
             candidate.video_id: self.repository.list_snapshots(candidate.video_id)
             for candidate in candidates
@@ -159,33 +141,17 @@ class SourceService:
             history = histories[candidate.video_id]
             if not history:
                 continue
-            review = reviews.get(candidate.video_id)
-            is_auto_matched = (
-                candidate.eligibility_status == EligibilityStatus.AUTO_MATCHED
+            heat = self.heat_service.analyze(
+                history[-1],
+                candidate=candidate,
+                snapshots=history,
+                peers=[
+                    peer
+                    for peer in candidates
+                    if peer.cohort_key == candidate.cohort_key
+                ],
+                peer_snapshots=histories,
             )
-            if not is_auto_matched and (
-                review is None or review.status != ReviewStatus.APPROVED
-            ):
-                heat = HeatResult(
-                    score=0,
-                    level=HeatLevel.INSUFFICIENT,
-                    confidence=history[-1].confidence,
-                    reasons=["尚未通过数字人口播、目标赛道和营销 CTA 人工复核"],
-                    model_version="rule-v1",
-                    snapshot_count=len(history),
-                )
-            else:
-                heat = self.heat_service.analyze(
-                    history[-1],
-                    candidate=candidate,
-                    snapshots=history,
-                    peers=[
-                        peer
-                        for peer in eligible
-                        if peer.cohort_key == candidate.cohort_key
-                    ],
-                    peer_snapshots=histories,
-                )
             self.repository.save_candidate(candidate.model_copy(update={"heat": heat}))
 
     def review(

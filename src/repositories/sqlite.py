@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.models import (
@@ -11,9 +12,11 @@ from src.models import (
     HeatResult,
     KeywordTrendResult,
     RelevanceReview,
+    SamplingCheckpoint,
     SyncReport,
     TaskKind,
     TaskRecord,
+    TranscriptRevision,
     TranscriptionTask,
     VideoCandidate,
     VideoMetricSnapshot,
@@ -94,6 +97,12 @@ class SQLiteRepository:
                 payload_json TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS discovery_request_guards (
+                fingerprint TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                claimed_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS candidate_matches (
                 request_id TEXT NOT NULL REFERENCES discovery_runs(request_id) ON DELETE CASCADE,
                 video_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
@@ -123,6 +132,26 @@ class SQLiteRepository:
                 created_at TEXT NOT NULL,
                 payload_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transcript_revisions (
+                revision_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                revision_number INTEGER NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                UNIQUE(task_id, revision_number)
+            );
+
+            CREATE TABLE IF NOT EXISTS sampling_checkpoints (
+                checkpoint_id TEXT PRIMARY KEY,
+                keyword TEXT NOT NULL,
+                candidate_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
+                due_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sampling_keyword_due
+            ON sampling_checkpoints(keyword, due_at);
             """
         )
         self._ensure_column("candidates", "cohort_key", "TEXT")
@@ -441,6 +470,29 @@ class SQLiteRepository:
             DiscoveryResult.model_validate_json(row["payload_json"]) for row in rows
         ]
 
+    def claim_discovery_request(
+        self,
+        fingerprint: str,
+        request_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        expires_before = claimed_at - timedelta(seconds=ttl_seconds)
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM discovery_request_guards WHERE claimed_at <= ?",
+                (expires_before.isoformat(),),
+            )
+            cursor = self.connection.execute(
+                """
+                INSERT OR IGNORE INTO discovery_request_guards(
+                    fingerprint, request_id, claimed_at
+                ) VALUES (?, ?, ?)
+                """,
+                (fingerprint, request_id, claimed_at.isoformat()),
+            )
+        return cursor.rowcount == 1
+
     def save_candidate_match(self, match: CandidateMatch) -> None:
         with self.connection:
             self.connection.execute(
@@ -491,10 +543,6 @@ class SQLiteRepository:
         if not results:
             return
         with self.connection:
-            self.connection.execute(
-                "DELETE FROM keyword_trend_results WHERE keyword = ?",
-                (results[0].keyword.casefold(),),
-            )
             self.connection.executemany(
                 """
                 INSERT OR REPLACE INTO keyword_trend_results(
@@ -578,11 +626,88 @@ class SQLiteRepository:
         with self.connection:
             self.connection.execute(
                 """
-                INSERT OR REPLACE INTO tasks(task_id, created_at, payload_json)
+                INSERT INTO tasks(task_id, created_at, payload_json)
                 VALUES (?, ?, ?)
+                ON CONFLICT(task_id) DO UPDATE SET
+                    created_at = excluded.created_at,
+                    payload_json = excluded.payload_json
                 """,
                 (task.task_id, task.created_at.isoformat(), task.model_dump_json()),
             )
+
+    def save_transcript_revision(self, revision: TranscriptRevision) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR REPLACE INTO transcript_revisions(
+                    revision_id, task_id, revision_number, updated_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    revision.revision_id,
+                    revision.task_id,
+                    revision.revision_number,
+                    revision.updated_at.isoformat(),
+                    revision.model_dump_json(),
+                ),
+            )
+
+    def list_transcript_revisions(self, task_id: str) -> list[TranscriptRevision]:
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM transcript_revisions
+            WHERE task_id = ? ORDER BY revision_number
+            """,
+            (task_id,),
+        ).fetchall()
+        return [
+            TranscriptRevision.model_validate_json(row["payload_json"]) for row in rows
+        ]
+
+    def get_transcript_revision(self, revision_id: str) -> TranscriptRevision | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM transcript_revisions WHERE revision_id = ?",
+            (revision_id,),
+        ).fetchone()
+        return (
+            TranscriptRevision.model_validate_json(row["payload_json"]) if row else None
+        )
+
+    def save_sampling_checkpoint(self, checkpoint: SamplingCheckpoint) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT OR REPLACE INTO sampling_checkpoints(
+                    checkpoint_id, keyword, candidate_id, due_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    checkpoint.checkpoint_id,
+                    checkpoint.keyword.casefold(),
+                    checkpoint.candidate_id,
+                    checkpoint.due_at.isoformat(),
+                    checkpoint.model_dump_json(),
+                ),
+            )
+
+    def list_sampling_checkpoints(
+        self, keyword: str | None = None
+    ) -> list[SamplingCheckpoint]:
+        if keyword:
+            rows = self.connection.execute(
+                """
+                SELECT payload_json FROM sampling_checkpoints
+                WHERE keyword = ? ORDER BY due_at
+                """,
+                (keyword.casefold(),),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                "SELECT payload_json FROM sampling_checkpoints ORDER BY due_at"
+            ).fetchall()
+        return [
+            SamplingCheckpoint.model_validate_json(row["payload_json"]) for row in rows
+        ]
 
     def seed(self, candidates: list[VideoCandidate], tasks: list[TaskRecord]) -> None:
         if (

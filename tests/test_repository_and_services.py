@@ -61,7 +61,9 @@ def test_transcription_requires_rights_and_exports_valid_formats() -> None:
     )
     assert task.status == TaskStatus.SUCCEEDED
     assert b"00:00:00,000 -->" in service.export_srt(task.segments)
-    assert b'"mock": true' in service.export_json(task.segments)
+    exported = service.export_json(task.segments)
+    assert b'"segments"' in exported
+    assert b'"mock"' not in exported
     assert service.export_txt(task.segments).decode("utf-8").startswith("很多人")
 
 

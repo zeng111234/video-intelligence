@@ -8,11 +8,13 @@ from src.models import (
     DiscoveryResult,
     KeywordTrendResult,
     RelevanceReview,
+    SamplingCheckpoint,
     SourcePage,
     SourceCapability,
     SourceRequest,
     SyncReport,
     TaskRecord,
+    TranscriptRevision,
     VideoCandidate,
     VideoMetricSnapshot,
 )
@@ -49,6 +51,14 @@ class CandidateRepository(Protocol):
 
     def list_discovery_results(self, limit: int = 20) -> list[DiscoveryResult]: ...
 
+    def claim_discovery_request(
+        self,
+        fingerprint: str,
+        request_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool: ...
+
     def save_candidate_match(self, match: CandidateMatch) -> None: ...
 
     def list_candidate_matches(self, request_id: str) -> list[CandidateMatch]: ...
@@ -65,6 +75,12 @@ class CandidateRepository(Protocol):
         self, keyword: str, limit: int = 10
     ) -> list[KeywordTrendResult]: ...
 
+    def save_sampling_checkpoint(self, checkpoint: SamplingCheckpoint) -> None: ...
+
+    def list_sampling_checkpoints(
+        self, keyword: str | None = None
+    ) -> list[SamplingCheckpoint]: ...
+
 
 class TaskRepository(Protocol):
     def list_tasks(self) -> list[TaskRecord]: ...
@@ -72,3 +88,11 @@ class TaskRepository(Protocol):
     def get_task(self, task_id: str) -> TaskRecord | None: ...
 
     def save_task(self, task: TaskRecord) -> None: ...
+
+    def save_transcript_revision(self, revision: TranscriptRevision) -> None: ...
+
+    def list_transcript_revisions(self, task_id: str) -> list[TranscriptRevision]: ...
+
+    def get_transcript_revision(
+        self, revision_id: str
+    ) -> TranscriptRevision | None: ...
