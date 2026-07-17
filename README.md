@@ -36,6 +36,10 @@
 
 ## 本地启动
 
+Windows 用户可以直接双击项目根目录的 `打开短视频系统.cmd`。启动文件会检查依赖、启动隐藏的 Streamlit 服务，并用默认浏览器打开网站。
+
+也可以通过 PowerShell 手动启动：
+
 ```powershell
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
