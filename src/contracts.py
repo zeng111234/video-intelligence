@@ -4,6 +4,10 @@ from datetime import datetime
 from typing import Protocol
 
 from src.models import (
+    AvatarAsset,
+    AvatarCapability,
+    AvatarJobSnapshot,
+    AvatarSubmitRequest,
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
@@ -24,6 +28,20 @@ from src.models import (
     VideoCandidate,
     VideoMetricSnapshot,
 )
+
+
+class AvatarProvider(Protocol):
+    def capabilities(self) -> AvatarCapability: ...
+
+    def list_assets(self) -> list[AvatarAsset]: ...
+
+    def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot: ...
+
+    def get_job(self, job_id: str) -> AvatarJobSnapshot: ...
+
+    def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None: ...
+
+    def download_result(self, job_id: str) -> tuple[bytes, str]: ...
 
 
 class CrawlerAdapter(Protocol):

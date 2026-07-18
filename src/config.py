@@ -8,6 +8,7 @@ from src.adapters.licensed import (
     DisabledLicensedSearchProvider,
     SandboxLicensedSearchProvider,
 )
+from src.adapters.oneapi import OneApiLicensedSearchProvider
 from src.adapters.official import DouyinKeywordAdapter
 
 
@@ -42,5 +43,9 @@ def build_licensed_search_provider(secrets: Mapping[str, Any] | None = None):
     mode = runtime_value("VIDEO_LICENSED_PROVIDER_MODE", secrets).casefold()
     if mode in {"", "sandbox"}:
         return SandboxLicensedSearchProvider()
+    if mode == "oneapi":
+        return OneApiLicensedSearchProvider(
+            runtime_value("ONEAPI_API_KEY", secrets),
+        )
     provider_name = runtime_value("VIDEO_LICENSED_PROVIDER_NAME", secrets)
     return DisabledLicensedSearchProvider(provider_name)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pandas as pd
 import streamlit as st
 
@@ -12,11 +10,8 @@ from src.app_state import (
     select_candidate,
     selected_candidate_id,
 )
-from src.adapters.licensed import (
-    DisabledLicensedSearchProvider,
-    SandboxLicensedSearchProvider,
-)
 from src.backup_import_ui import render_backup_imports
+from src.config import build_licensed_search_provider
 from src.models import (
     HeatLevel,
     PlatformRunStatus,
@@ -41,19 +36,7 @@ render_page_header(
 candidate_service, _, _ = get_services()
 repository = get_repository()
 source_service = get_source_service()
-try:
-    provider_mode = str(st.secrets["VIDEO_LICENSED_PROVIDER_MODE"]).strip().casefold()
-except Exception:
-    provider_mode = os.getenv("VIDEO_LICENSED_PROVIDER_MODE", "").strip().casefold()
-
-if provider_mode in {"", "sandbox"}:
-    provider = SandboxLicensedSearchProvider()
-else:
-    try:
-        provider_name = str(st.secrets["VIDEO_LICENSED_PROVIDER_NAME"]).strip()
-    except Exception:
-        provider_name = os.getenv("VIDEO_LICENSED_PROVIDER_NAME", "").strip()
-    provider = DisabledLicensedSearchProvider(provider_name)
+provider = build_licensed_search_provider(st.secrets)
 provider_capability = provider.capabilities()
 commercial_service = CommercialSearchService(
     repository,
@@ -166,8 +149,13 @@ with st.container(border=True):
         )
     elif not provider_capability.enabled:
         st.error(
-            "真实商业接口尚未完成签约、授权和生产验收，系统不会发起平台请求。",
+            "真实商业接口尚未配置完成，系统不会发起平台请求。请在密钥到位后由技术人员启用。",
             icon=":material/key_off:",
+        )
+    elif provider_capability.provider_name == "oneapi":
+        st.warning(
+            "当前为 OneAPI 小流量试点。接口字段和商业展示授权尚待真实验收，建议先用一个关键词核对结果。",
+            icon=":material/experiment:",
         )
 
     with st.form("three_platform_search"):
@@ -220,7 +208,11 @@ with st.container(border=True):
             "数据模式",
             "演示数据"
             if provider_capability.mode == ProviderMode.SANDBOX
-            else "商业接口",
+            else (
+                "OneAPI 试点"
+                if provider_capability.provider_name == "oneapi"
+                else "商业接口"
+            ),
             border=True,
         )
         st.metric("本月平台查询", f"{monthly_queries} / 450", border=True)
@@ -247,7 +239,7 @@ with st.container(border=True):
         )
         if provider_capability.missing_configuration:
             st.caption(
-                "真实上线仍需：" + "、".join(provider_capability.missing_configuration)
+                "仍需完成：" + "、".join(provider_capability.missing_configuration)
             )
 
 

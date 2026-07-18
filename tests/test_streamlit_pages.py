@@ -9,10 +9,85 @@ from streamlit.testing.v1 import AppTest
 ROOT = Path(__file__).parents[1]
 
 
+def _approved_transcription_repository():
+    from datetime import datetime, timezone
+
+    from src.models import (
+        TaskStatus,
+        TranscriptRevision,
+        TranscriptSegment,
+        TranscriptStatus,
+        TranscriptionTask,
+    )
+    from src.repositories import MockRepository
+
+    now = datetime.now(timezone.utc)
+    original = TranscriptSegment(
+        start=0,
+        end=2,
+        text="原始识别内容",
+        confidence=0.9,
+    )
+    approved_segment = TranscriptSegment(
+        start=0,
+        end=2,
+        text="只应显示批准版本",
+        confidence=0.9,
+        reviewed=True,
+    )
+    task = TranscriptionTask(
+        task_id="avatar-source-task",
+        title="owned.mp4",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        segments=[original],
+        stage="已完成",
+        media_sha256="a" * 64,
+        model_name="base",
+        language="zh",
+        duration_seconds=2,
+        approved_revision_id="approved-avatar-source",
+        is_mock=False,
+    )
+    revision = TranscriptRevision(
+        revision_id="approved-avatar-source",
+        task_id=task.task_id,
+        revision_number=2,
+        status=TranscriptStatus.APPROVED,
+        created_at=now,
+        updated_at=now,
+        reviewer="审核人",
+        language="zh",
+        model_name="base",
+        media_sha256="a" * 64,
+        original_segments=[original],
+        corrected_segments=[approved_segment],
+    )
+    repository = MockRepository(candidates=[], tasks=[task])
+    repository.save_transcript_revision(revision)
+    return repository, task, revision
+
+
 def test_business_ui_hides_streamlit_developer_toolbar() -> None:
     config = tomllib.loads((ROOT / ".streamlit" / "config.toml").read_text("utf-8"))
 
     assert config["client"]["toolbarMode"] == "minimal"
+
+
+def test_top_navigation_places_avatar_between_transcription_and_tasks() -> None:
+    source = (ROOT / "app.py").read_text("utf-8")
+
+    assert (
+        source.index("app_pages/transcription.py")
+        < source.index("app_pages/avatar_generation.py")
+        < source.index("app_pages/tasks.py")
+    )
 
 
 @pytest.mark.parametrize(
@@ -21,6 +96,7 @@ def test_business_ui_hides_streamlit_developer_toolbar() -> None:
         (ROOT / "app.py", "爆火视频检索"),
         (ROOT / "app_pages" / "candidates.py", "爆火视频检索"),
         (ROOT / "app_pages" / "transcription.py", "爆火视频音轨转文案"),
+        (ROOT / "app_pages" / "avatar_generation.py", "数字人生成"),
         (ROOT / "app_pages" / "tasks.py", "任务记录"),
     ],
 )
@@ -293,6 +369,151 @@ def test_transcription_page_can_switch_to_direct_video_url() -> None:
     direct_url = next(item for item in app.text_input if item.label == "视频直链")
     assert direct_url.value == ""
     assert "平台分享页暂不支持" in direct_url.help
+
+
+def test_avatar_page_falls_back_to_ephemeral_manual_script(monkeypatch) -> None:
+    from src.repositories import MockRepository
+
+    transport_calls = 0
+
+    def forbidden_transport(*args, **kwargs):
+        nonlocal transport_calls
+        transport_calls += 1
+        raise AssertionError("avatar skeleton must not call a network transport")
+
+    monkeypatch.setattr("src.adapters.official._default_transport", forbidden_transport)
+    repository = MockRepository(candidates=[], tasks=[])
+    tasks_before = repository.list_tasks()
+    app = AppTest.from_file(str(ROOT / "app_pages" / "avatar_generation.py"))
+    app.session_state["_repository"] = repository
+    app.run(timeout=15)
+
+    assert not app.exception
+    assert any(item.label == "临时手工文案" for item in app.text_area)
+    assert any("不会写入数据库" in (item.help or "") for item in app.text_area)
+    generate = next(button for button in app.button if button.label == "开始生成")
+    assert generate.disabled is True
+    assert repository.list_tasks() == tasks_before
+    assert transport_calls == 0
+
+
+def test_avatar_page_reads_only_approved_revision_and_honors_preselection() -> None:
+    repository, task, revision = _approved_transcription_repository()
+    tasks_before = repository.list_tasks()
+    app = AppTest.from_file(str(ROOT / "app_pages" / "avatar_generation.py"))
+    app.session_state["_repository"] = repository
+    app.session_state["avatar_source_task_id"] = task.task_id
+    app.session_state["avatar_source_revision_id"] = revision.revision_id
+    app.run(timeout=15)
+
+    assert not app.exception
+    preview = next(item for item in app.text_area if item.label == "已确认成稿预览")
+    assert preview.value == "只应显示批准版本"
+    assert "原始识别内容" not in preview.value
+    assert app.session_state["avatar_source_revision_id"] == revision.revision_id
+    generate = next(button for button in app.button if button.label == "开始生成")
+    assert generate.disabled is True
+    assert repository.list_tasks() == tasks_before
+
+
+def test_avatar_page_enables_submission_only_with_service_assets_and_rights() -> None:
+    from src.models import (
+        AvatarAsset,
+        AvatarAssetKind,
+        AvatarCapability,
+        AvatarJobSnapshot,
+        AvatarProviderStatus,
+        ProviderMode,
+    )
+    from src.repositories import MockRepository
+
+    class StubProvider:
+        def capabilities(self):
+            return AvatarCapability(
+                provider_name="stub",
+                display_name="测试服务",
+                mode=ProviderMode.SANDBOX,
+                enabled=True,
+                permission_status="authorized",
+            )
+
+        def list_assets(self):
+            return [
+                AvatarAsset(
+                    asset_id="avatar-1",
+                    kind=AvatarAssetKind.AVATAR,
+                    name="测试形象",
+                    authorized=True,
+                ),
+                AvatarAsset(
+                    asset_id="voice-1",
+                    kind=AvatarAssetKind.VOICE,
+                    name="测试音色",
+                    authorized=True,
+                ),
+            ]
+
+        def submit(self, request):
+            return AvatarJobSnapshot(
+                job_id="provider-1",
+                idempotency_key=request.idempotency_key,
+                status=AvatarProviderStatus.QUEUED,
+                progress=0,
+            )
+
+        def get_job(self, job_id):
+            raise AssertionError("not expected")
+
+        def find_job(self, idempotency_key):
+            raise AssertionError("not expected")
+
+        def download_result(self, job_id):
+            raise AssertionError("not expected")
+
+    repository = MockRepository(candidates=[], tasks=[])
+    app = AppTest.from_file(str(ROOT / "app_pages" / "avatar_generation.py"))
+    app.session_state["_repository"] = repository
+    app.session_state["_avatar_provider"] = StubProvider()
+    app.run(timeout=15)
+
+    generate = next(button for button in app.button if button.label == "开始生成")
+    assert generate.disabled is True
+
+    next(item for item in app.text_area if item.label == "临时手工文案").set_value(
+        "已授权测试文案"
+    )
+    next(item for item in app.text_input if item.label == "权利主体").set_value(
+        "测试公司"
+    )
+    for checkbox in app.checkbox:
+        checkbox.check()
+    app.run(timeout=15)
+
+    generate = next(button for button in app.button if button.label == "开始生成")
+    assert generate.disabled is False
+    generate.click().run(timeout=15)
+    assert any(task.kind.value == "avatar" for task in repository.list_tasks())
+
+
+def test_transcription_approved_revision_can_preselect_avatar_page(monkeypatch) -> None:
+    destinations: list[str] = []
+    monkeypatch.setattr("streamlit.switch_page", destinations.append)
+    repository, task, revision = _approved_transcription_repository()
+    app = AppTest.from_file(str(ROOT / "app_pages" / "transcription.py"))
+    app.session_state["_repository"] = repository
+    app.session_state["active_transcription_task_id"] = task.task_id
+    app.run(timeout=15)
+
+    assert not app.exception
+    open_avatar = next(
+        button for button in app.button if button.label == "用于数字人生成"
+    )
+    open_avatar.click().run(timeout=15)
+
+    assert not app.exception
+    assert destinations == ["app_pages/avatar_generation.py"]
+    assert app.session_state["avatar_source_task_id"] == task.task_id
+    assert app.session_state["avatar_source_revision_id"] == revision.revision_id
 
 
 def test_task_page_shows_all_demo_statuses() -> None:

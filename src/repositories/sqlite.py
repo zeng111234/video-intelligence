@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.models import (
+    AvatarTask,
     CandidateMatch,
     DiscoveryResult,
     HeatLevel,
@@ -939,11 +940,7 @@ class SQLiteRepository:
         tasks: list[TaskRecord] = []
         for row in rows:
             payload = json.loads(row["payload_json"])
-            model = (
-                TranscriptionTask
-                if payload["kind"] == TaskKind.TRANSCRIPTION
-                else TaskRecord
-            )
+            model = self._task_model(payload)
             tasks.append(model.model_validate(payload))
         return tasks
 
@@ -954,12 +951,16 @@ class SQLiteRepository:
         if not row:
             return None
         payload = json.loads(row["payload_json"])
-        model = (
-            TranscriptionTask
-            if payload["kind"] == TaskKind.TRANSCRIPTION
-            else TaskRecord
-        )
+        model = self._task_model(payload)
         return model.model_validate(payload)
+
+    @staticmethod
+    def _task_model(payload: dict):
+        if payload["kind"] == TaskKind.TRANSCRIPTION:
+            return TranscriptionTask
+        if payload["kind"] == TaskKind.AVATAR:
+            return AvatarTask
+        return TaskRecord
 
     def save_task(self, task: TaskRecord) -> None:
         with self.connection:

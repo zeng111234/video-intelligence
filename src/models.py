@@ -73,6 +73,7 @@ class AnomalyStatus(StrEnum):
 class TaskKind(StrEnum):
     SEARCH = "search"
     TRANSCRIPTION = "transcription"
+    AVATAR = "avatar"
 
 
 class TaskStatus(StrEnum):
@@ -122,6 +123,19 @@ class ProviderErrorKind(StrEnum):
     VALIDATION = "validation"
     CONNECTION = "connection"
     SERVICE = "service"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
+class AvatarAssetKind(StrEnum):
+    AVATAR = "avatar"
+    VOICE = "voice"
+
+
+class AvatarProviderStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
     OUTCOME_UNKNOWN = "outcome_unknown"
 
 
@@ -277,6 +291,71 @@ class ProviderUsage(BaseModel):
     billable_units: float | None = Field(default=None, ge=0)
     estimated_cost: float | None = Field(default=None, ge=0)
     currency: str = "CNY"
+
+
+class AvatarCapability(BaseModel):
+    provider_name: str
+    display_name: str
+    mode: ProviderMode = ProviderMode.SANDBOX
+    enabled: bool = False
+    permission_status: str
+    max_script_chars: int = Field(default=240, ge=1)
+    supported_aspect_ratios: list[str] = Field(default_factory=lambda: ["9:16"])
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    estimated_seconds: int | None = Field(default=None, ge=0)
+    missing_configuration: list[str] = Field(default_factory=list)
+
+
+class AvatarAsset(BaseModel):
+    asset_id: str = Field(min_length=1)
+    kind: AvatarAssetKind
+    name: str = Field(min_length=1)
+    preview_url: str | None = None
+    authorized: bool = False
+
+
+class AvatarSubmitRequest(BaseModel):
+    script_text: str = Field(min_length=1)
+    source_task_id: str | None = None
+    source_revision_id: str | None = None
+    avatar_id: str = Field(min_length=1)
+    voice_id: str = Field(min_length=1)
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080x1920"
+    background: str = "transparent"
+    rights_holder: str = Field(min_length=1)
+    script_rights_confirmed: bool
+    avatar_rights_confirmed: bool
+    voice_rights_confirmed: bool
+    idempotency_key: str = Field(min_length=8)
+
+    @model_validator(mode="after")
+    def validate_rights(self):
+        if not all(
+            [
+                self.script_rights_confirmed,
+                self.avatar_rights_confirmed,
+                self.voice_rights_confirmed,
+            ]
+        ):
+            raise ValueError("必须确认文案、肖像和声音授权。")
+        return self
+
+
+class AvatarJobSnapshot(BaseModel):
+    job_id: str
+    idempotency_key: str
+    status: AvatarProviderStatus
+    progress: int = Field(default=0, ge=0, le=100)
+    stage: str = "等待处理"
+    provider_job_id: str | None = None
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    estimated_seconds: int | None = Field(default=None, ge=0)
+    result_mime: str | None = None
+    result_size_bytes: int | None = Field(default=None, ge=0)
+    error_kind: ProviderErrorKind | None = None
+    error_message: str | None = None
 
 
 class PlatformCapability(BaseModel):
@@ -548,3 +627,32 @@ class TranscriptionTask(TaskRecord):
     language: str | None = None
     duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
     approved_revision_id: str | None = None
+
+
+class AvatarTask(TaskRecord):
+    kind: TaskKind = TaskKind.AVATAR
+    script_text: str
+    source_task_id: str | None = None
+    source_revision_id: str | None = None
+    avatar_id: str
+    avatar_name: str
+    voice_id: str
+    voice_name: str
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080x1920"
+    background: str = "transparent"
+    rights_holder: str
+    rights_confirmed_at: datetime
+    idempotency_key: str
+    provider_name: str
+    backend_job_id: str | None = None
+    provider_job_id: str | None = None
+    provider_status: AvatarProviderStatus = AvatarProviderStatus.QUEUED
+    stage: str = "等待提交"
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    estimated_seconds: int | None = Field(default=None, ge=0)
+    result_path: str | None = None
+    result_mime: str | None = None
+    result_size_bytes: int | None = Field(default=None, ge=0)
+    error_kind: ProviderErrorKind | None = None

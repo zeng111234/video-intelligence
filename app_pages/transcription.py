@@ -418,5 +418,13 @@ with st.container(border=True):
                 file_name="字幕.srt",
                 mime="application/x-subrip",
             )
+            if st.button(
+                "用于数字人生成",
+                icon=":material/arrow_forward:",
+                help="进入数字人页面骨架；当前不会调用供应商或生成视频。",
+            ):
+                st.session_state["avatar_source_task_id"] = active.task_id
+                st.session_state["avatar_source_revision_id"] = approved.revision_id
+                st.switch_page("app_pages/avatar_generation.py")
     else:
         st.caption("草稿不能导出；只有当前任务 approved_revision_id 指向的成稿可下载。")

@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-项目已完成 Streamlit 三页业务框架，并接入 SQLite 候选库、三平台商业 API 统一网关、离线沙箱、费用保护、平台独立热门排名和真实本地转写。首次启动会写入演示种子数据；在取得合规供应商文档、凭证和商业授权前，三平台一键查询只运行离线演示，不访问真实平台。首期聚焦：
+项目已完成 Streamlit 四页业务框架，并接入 SQLite 候选库、三平台商业 API 统一网关、离线沙箱、费用保护、平台独立热门排名、真实本地转写和公司数字人内部 API 适配层。首次启动会写入演示种子数据；未配置真实供应商时相关入口保持禁用，不伪造调用结果。首期聚焦：
 
 - 手工链接、CSV/Excel 导入与统一候选字段
 - 热度计算、快照与排序
@@ -13,7 +13,8 @@
 - 仅用 FFmpeg 提取视频音轨，再由 faster-whisper 转写；不做抽帧或画面分析
 - 转写支持“准确率优先”（`large-v3-turbo`）与“快速预览”（`base`）；当前准确率模式不做词汇改写或热词偏置
 - 校对版本持久化，以及确认成稿后导出 TXT、JSON、SRT
-- Streamlit 三页 Web MVP
+- 已批准成稿或临时授权文案进入异步数字人任务，结果经 MP4 与 FFprobe 验证后保存
+- Streamlit 四页 Web MVP
 
 详细范围与约束见：
 
@@ -61,6 +62,18 @@ DOUYIN_CLIENT_KEY = "你的 ClientKey"
 DOUYIN_CLIENT_SECRET = "你的 ClientSecret"
 DOUYIN_OFFICIAL_VERIFIED = "false"
 ```
+
+公司数字人服务单独使用环境变量，不把令牌写入 Streamlit Secrets 或 Git：
+
+```powershell
+$env:AVATAR_SERVICE_ENABLED="true"
+$env:AVATAR_SERVICE_BASE_URL="http://127.0.0.1:8080"
+$env:AVATAR_SERVICE_TOKEN="与 PHP_INTERNAL_AVATAR_SERVICE_TOKEN 相同的随机令牌"
+$env:AVATAR_SERVICE_TIMEOUT_SECONDS="20"
+$env:AVATAR_RESULT_TIMEOUT_SECONDS="120"
+```
+
+PHP 服务只有在私有网关、API code、已授权形象/音色清单、结果域名白名单和内部令牌全部配置后才报告可用。提交接口不自动重发；提交响应丢失时任务标记为 `outcome_unknown`，随后只按原幂等键核对，避免重复计费。
 
 生产模式不会因为填写供应商名称而自动启用。必须先完成供应商适配器、沙箱契约测试、B 端商业授权和小流量验收。系统对相同请求执行 60 秒数据库级防重，成功结果缓存 10 分钟；本月 360 次预警、450 次硬停止。费用未知时只显示“按供应商账户结算”，不会显示免费或 0 元。连接故障最多重试一次，401/403/429 不重试，响应状态不明确时锁定该请求等待人工核对。
 

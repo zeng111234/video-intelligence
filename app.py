@@ -24,6 +24,11 @@ pages = [
         icon=":material/transcribe:",
     ),
     st.Page(
+        "app_pages/avatar_generation.py",
+        title="数字人生成",
+        icon=":material/smart_toy:",
+    ),
+    st.Page(
         "app_pages/tasks.py",
         title="任务记录",
         icon=":material/history:",

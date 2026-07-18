@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
 from src.app_state import get_services
-from src.models import TaskKind, TaskStatus
+from src.models import AvatarTask, TaskKind, TaskStatus
 from src.ui import render_page_header, render_task_badge
 
 render_page_header(
     "任务记录",
-    "查看搜索与转写任务的状态、耗时、输出和明确错误；失败任务最多重试一次。",
+    "查看搜索、转写与数字人任务的状态、耗时、输出和明确错误。",
     icon="history",
 )
 
@@ -52,7 +54,11 @@ status_labels = {
     TaskStatus.SUCCEEDED: "已完成",
     TaskStatus.FAILED: "失败",
 }
-kind_labels = {TaskKind.SEARCH: "候选检索", TaskKind.TRANSCRIPTION: "视频音轨转写"}
+kind_labels = {
+    TaskKind.SEARCH: "候选检索",
+    TaskKind.TRANSCRIPTION: "视频音轨转写",
+    TaskKind.AVATAR: "数字人生成",
+}
 
 with st.container(border=True):
     st.subheader("任务列表")
@@ -114,6 +120,17 @@ if selected_task:
             st.error(selected_task.error_message, icon=":material/error:")
         if selected_task.outputs:
             st.json(selected_task.outputs, expanded=False)
+        if isinstance(selected_task, AvatarTask):
+            st.write(
+                f"**形象 / 音色：** {selected_task.avatar_name} / "
+                f"{selected_task.voice_name}"
+            )
+            st.write(
+                f"**权利主体：** {selected_task.rights_holder} · "
+                f"**供应商状态：** {selected_task.provider_status.value}"
+            )
+            if selected_task.result_path and Path(selected_task.result_path).is_file():
+                st.video(selected_task.result_path)
         can_retry = (
             selected_task.status == TaskStatus.FAILED
             and selected_task.retry_count < 1
@@ -128,5 +145,14 @@ if selected_task:
             transcription_service.retry_failed_task(selected_task.task_id)
             st.toast("任务已完成一次重试", icon=":material/check_circle:")
             st.rerun()
-        if selected_task.status == TaskStatus.FAILED and not can_retry:
+        if (
+            selected_task.status == TaskStatus.FAILED
+            and not can_retry
+            and not isinstance(selected_task, AvatarTask)
+        ):
             st.info("媒体已在处理结束后安全清理，请返回转文案页重新上传。")
+        elif (
+            isinstance(selected_task, AvatarTask)
+            and selected_task.status == TaskStatus.FAILED
+        ):
+            st.info("数字人任务不会自动重复提交；请返回数字人页面核对幂等任务状态。")
