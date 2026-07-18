@@ -5,6 +5,7 @@ import streamlit as st
 
 from src.app_state import get_services, selected_candidate_id
 from src.models import TranscriptSegment, TranscriptStatus, TranscriptionTask
+from src.platforms import platform_label
 from src.resources import runtime_capabilities
 from src.ui import render_page_header, render_task_badge
 
@@ -22,15 +23,23 @@ if candidate:
     with st.container(border=True):
         st.markdown("**当前已选热门视频**")
         st.write(f"### {candidate.title}")
-        st.caption(f"{candidate.author_name} · {candidate.category}")
+        st.caption(
+            f"{platform_label(candidate.platform)} · {candidate.author_name} · {candidate.category}"
+        )
         with st.container(horizontal=True):
-            st.link_button(
-                "查看视频来源",
-                str(candidate.source_url),
-                icon=":material/open_in_new:",
-            )
+            if candidate.source_url:
+                st.link_button(
+                    "查看视频来源",
+                    str(candidate.source_url),
+                    icon=":material/open_in_new:",
+                )
             if st.button("重新选择视频", icon=":material/arrow_back:"):
                 st.switch_page("app_pages/candidates.py")
+        if candidate.feed_id or candidate.finder_user_name:
+            st.caption(
+                f"视频号追溯字段：feedId={candidate.feed_id or '—'}；"
+                f"finderUserName={candidate.finder_user_name or '—'}"
+            )
 else:
     st.warning("请先在爆火视频检索页单选一个视频。", icon=":material/info:")
     if st.button("返回选择热门视频", icon=":material/arrow_back:"):

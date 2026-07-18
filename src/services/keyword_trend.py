@@ -10,6 +10,7 @@ from src.models import (
     CandidateMatch,
     KeywordTrendLevel,
     KeywordTrendResult,
+    Platform,
     VideoCandidate,
     VideoMetricSnapshot,
 )
@@ -17,11 +18,10 @@ from src.models import (
 MODEL_VERSION = "keyword-trend-v1"
 WINDOW_DAYS = 7
 COMPONENT_WEIGHTS = {
-    "like_growth": 0.35,
-    "age_adjusted_likes": 0.25,
-    "platform_rank": 0.20,
-    "freshness": 0.10,
-    "persistence": 0.10,
+    "age_adjusted_engagement": 0.35,
+    "platform_rank": 0.25,
+    "freshness": 0.20,
+    "growth_or_persistence": 0.20,
 }
 
 
@@ -100,14 +100,21 @@ class KeywordTrendService:
         self.repository = repository
 
     def recompute(
-        self, keyword: str, *, now: datetime | None = None
+        self,
+        keyword: str,
+        *,
+        platform: Platform = Platform.DOUYIN,
+        provider_name: str | None = None,
+        now: datetime | None = None,
     ) -> list[KeywordTrendResult]:
         keyword_key = keyword.strip().casefold()
         if not keyword_key:
             raise ValueError("请输入要计算的关键词。")
         computed_at = now or datetime.now().astimezone()
         since = computed_at - timedelta(days=WINDOW_DAYS)
-        matches = self.repository.list_keyword_matches(keyword_key, since)
+        matches = self.repository.list_keyword_matches(
+            keyword_key, since, platform, provider_name
+        )
         if matches:
             latest_scope = max(matches, key=lambda item: item.observed_at)
             matches = [
@@ -123,10 +130,10 @@ class KeywordTrendService:
         candidates = {
             candidate.video_id: candidate
             for candidate in self.repository.list_candidates()
-            if candidate.video_id in grouped
+            if candidate.video_id in grouped and candidate.platform == platform
         }
         if not candidates:
-            self.repository.clear_keyword_trend_results(keyword_key)
+            self.repository.clear_keyword_trend_results(keyword_key, platform)
             return []
 
         pool_size = len(candidates)
@@ -152,6 +159,12 @@ class KeywordTrendService:
             )
             for candidate_id, candidate in candidates.items()
         }
+        age_engagement_values = {
+            candidate_id: self._engagement_per_hour(
+                candidate, histories[candidate_id], computed_at
+            )
+            for candidate_id, candidate in candidates.items()
+        }
         latest_likes = {
             candidate_id: self._latest_likes(histories[candidate_id])
             for candidate_id in candidates
@@ -163,6 +176,7 @@ class KeywordTrendService:
             history = histories[candidate_id]
             growth, growth_hours = growth_data[candidate_id]
             age_likes = age_like_values[candidate_id]
+            age_engagement = age_engagement_values[candidate_id]
             rank_score = _rank_score(candidate_matches)
             appearance_count = len(
                 {
@@ -178,15 +192,19 @@ class KeywordTrendService:
             persistence = round(min(100.0, appearance_count / 3 * 100), 2)
             growth_percentile = _percentile(growth, growth_values)
             age_like_percentile = _percentile(age_likes, list(age_like_values.values()))
+            age_engagement_percentile = _percentile(
+                age_engagement, list(age_engagement_values.values())
+            )
             likes_percentile = _percentile(
                 latest_likes[candidate_id], list(latest_likes.values())
             )
             components = {
-                "like_growth": growth_percentile,
-                "age_adjusted_likes": age_like_percentile,
+                "age_adjusted_engagement": age_engagement_percentile,
                 "platform_rank": rank_score,
                 "freshness": freshness,
-                "persistence": persistence,
+                "growth_or_persistence": (
+                    growth_percentile if growth_percentile is not None else persistence
+                ),
             }
             available_weight = sum(
                 COMPONENT_WEIGHTS[name]
@@ -250,6 +268,8 @@ class KeywordTrendService:
                 checkpoint
                 for checkpoint in self.repository.list_sampling_checkpoints(keyword_key)
                 if checkpoint.candidate_id == candidate_id
+                and checkpoint.platform == platform
+                and (provider_name is None or checkpoint.provider_name == provider_name)
             ]
             missed_count = sum(
                 checkpoint.status.value == "missed" for checkpoint in checkpoints
@@ -262,6 +282,7 @@ class KeywordTrendService:
             results.append(
                 KeywordTrendResult(
                     keyword=keyword_key,
+                    platform=platform,
                     candidate_id=candidate_id,
                     computed_at=computed_at,
                     score=score,
@@ -269,13 +290,18 @@ class KeywordTrendService:
                     confidence=confidence,
                     platform_rank=latest_match.platform_rank,
                     likes_per_hour=age_likes,
+                    engagement_per_hour=age_engagement,
                     like_growth_per_hour=growth,
                     appearance_count=appearance_count,
                     pool_size=pool_size,
-                    component_scores=components,
+                    component_scores={
+                        **components,
+                        "age_adjusted_likes": age_like_percentile,
+                    },
                     percentiles={
                         "growth": growth_percentile,
                         "age_adjusted_likes": age_like_percentile,
+                        "age_adjusted_engagement": age_engagement_percentile,
                         "likes": likes_percentile,
                     },
                     anomaly_status=(
@@ -313,6 +339,32 @@ class KeywordTrendService:
             return None
         age_hours = max(1.0, (now - candidate.published_at).total_seconds() / 3600)
         return round(likes / age_hours, 4)
+
+    @staticmethod
+    def _engagement_per_hour(
+        candidate: VideoCandidate,
+        snapshots: list[VideoMetricSnapshot],
+        now: datetime,
+    ) -> float | None:
+        if not snapshots:
+            return None
+        latest = max(snapshots, key=lambda item: item.sampled_at)
+        visible = [
+            latest.likes,
+            latest.comments,
+            latest.shares,
+            latest.favorites,
+        ]
+        if all(value is None for value in visible):
+            return None
+        engagement = (
+            (latest.likes or 0)
+            + 3 * (latest.comments or 0)
+            + 4 * (latest.shares or 0)
+            + 4 * (latest.favorites or 0)
+        )
+        age_hours = max(1.0, (now - candidate.published_at).total_seconds() / 3600)
+        return round(engagement / age_hours, 4)
 
     @staticmethod
     def _confidence(

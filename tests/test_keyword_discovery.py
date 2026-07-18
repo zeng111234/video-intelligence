@@ -282,6 +282,7 @@ def _trend_candidate(
     now: datetime,
     likes: int,
     age_hours: float = 4,
+    platform: Platform = Platform.DOUYIN,
 ) -> VideoCandidate:
     metrics = VideoMetricSnapshot(
         item_id=item_id,
@@ -295,10 +296,14 @@ def _trend_candidate(
         title=f"趋势视频 {item_id}",
         author_id=f"author-{item_id}",
         author_name="趋势作者",
-        platform=Platform.DOUYIN,
+        platform=platform,
         category="关键词/二手车",
         published_at=now - timedelta(hours=age_hours),
-        source_url=f"https://www.douyin.com/video/{item_id}",
+        source_url=(
+            f"https://www.douyin.com/video/{item_id}"
+            if platform == Platform.DOUYIN
+            else f"https://www.xiaohongshu.com/explore/{item_id}"
+        ),
         source_type=DataSource.OFFICIAL,
         eligibility_status=EligibilityStatus.AUTO_MATCHED,
         metrics=metrics,
@@ -318,6 +323,7 @@ def _save_match(
     observed_at: datetime,
     rank: int,
     keyword: str = "二手车",
+    platform: Platform = Platform.DOUYIN,
 ) -> None:
     from src.models import CandidateMatch
 
@@ -327,6 +333,7 @@ def _save_match(
             video_id=candidate_id,
             keyword=keyword,
             cohort_key=f"douyin:keyword:{keyword}",
+            platform=platform,
             platform_rank=rank,
             observed_at=observed_at,
         )
@@ -397,6 +404,63 @@ def test_keyword_trend_uses_seven_day_window_and_isolates_keywords() -> None:
     )
     assert expired == []
     assert repository.list_keyword_trend_results("二手车") == []
+
+
+def test_keyword_trend_isolates_same_keyword_by_platform(tmp_path) -> None:
+    now = datetime(2026, 7, 17, 12, tzinfo=timezone.utc)
+    douyin = _trend_candidate("dy", now=now, likes=100, platform=Platform.DOUYIN)
+    xhs = _trend_candidate("xhs", now=now, likes=10_000, platform=Platform.XIAOHONGSHU)
+    repository = MockRepository(candidates=[douyin, xhs], tasks=[])
+    _save_match(
+        repository,
+        candidate_id=douyin.video_id,
+        request_id="dy-run",
+        observed_at=now,
+        rank=2,
+        platform=Platform.DOUYIN,
+    )
+    _save_match(
+        repository,
+        candidate_id=xhs.video_id,
+        request_id="xhs-run",
+        observed_at=now,
+        rank=1,
+        platform=Platform.XIAOHONGSHU,
+    )
+
+    douyin_results = KeywordTrendService(repository).recompute(
+        "二手车", platform=Platform.DOUYIN, now=now
+    )
+    xhs_results = KeywordTrendService(repository).recompute(
+        "二手车", platform=Platform.XIAOHONGSHU, now=now
+    )
+
+    assert [item.candidate_id for item in douyin_results] == ["dy"]
+    assert [item.candidate_id for item in xhs_results] == ["xhs"]
+    assert (
+        repository.list_keyword_trend_results("二手车", platform=Platform.DOUYIN)
+        == douyin_results
+    )
+    assert (
+        repository.list_keyword_trend_results("二手车", platform=Platform.XIAOHONGSHU)
+        == xhs_results
+    )
+
+    sqlite_repository = SQLiteRepository(tmp_path / "platform-trends.db")
+    sqlite_repository.save_candidate(douyin)
+    sqlite_repository.save_candidate(xhs)
+    sqlite_repository.save_keyword_trend_results(douyin_results)
+    sqlite_repository.save_keyword_trend_results(xhs_results)
+    assert (
+        sqlite_repository.list_keyword_trend_results("二手车", platform=Platform.DOUYIN)
+        == douyin_results
+    )
+    assert (
+        sqlite_repository.list_keyword_trend_results(
+            "二手车", platform=Platform.XIAOHONGSHU
+        )
+        == xhs_results
+    )
 
 
 def test_keyword_growth_can_emit_provisional_b_after_thirty_samples() -> None:

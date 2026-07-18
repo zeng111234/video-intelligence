@@ -118,6 +118,8 @@ class SourceService:
             cohort_key=item.cohort_key,
             eligibility_status=item.eligibility_status,
             evidence=item.evidence,
+            feed_id=item.feed_id,
+            finder_user_name=item.finder_user_name,
             official_hot=item.official_hot,
             official_rank=item.official_rank,
             official_hot_value=item.official_hot_value,

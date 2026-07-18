@@ -11,10 +11,12 @@ class Platform(StrEnum):
     DOUYIN = "douyin"
     KUAISHOU = "kuaishou"
     XIAOHONGSHU = "xiaohongshu"
+    WECHAT_CHANNELS = "wechat_channels"
 
 
 class DataSource(StrEnum):
     OFFICIAL = "official_authorized_api"
+    LICENSED_PROVIDER = "licensed_commercial_provider"
     OFFICIAL_HOT_BILLBOARD = "douyin_hot_billboard"
     PUBLIC_RESEARCH = "public_metadata_research"
     MANUAL = "manual"
@@ -91,6 +93,38 @@ class SamplingStatus(StrEnum):
     MISSED = "missed"
 
 
+class ProviderMode(StrEnum):
+    SANDBOX = "sandbox"
+    PRODUCTION = "production"
+
+
+class SearchBatchStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
+class PlatformRunStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    CACHED = "cached"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
+class ProviderErrorKind(StrEnum):
+    AUTHORIZATION = "authorization"
+    RATE_LIMIT = "rate_limit"
+    VALIDATION = "validation"
+    CONNECTION = "connection"
+    SERVICE = "service"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
 class VideoMetricSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -143,13 +177,15 @@ class VideoCandidate(BaseModel):
     platform: Platform
     category: str
     published_at: datetime
-    source_url: HttpUrl
+    source_url: HttpUrl | None = None
     source_type: DataSource
     rights_status: str = "metadata_only"
     matched_by: list[str] = Field(default_factory=list)
     cohort_key: str | None = None
     eligibility_status: EligibilityStatus = EligibilityStatus.PENDING_REVIEW
     evidence: str | None = None
+    feed_id: str | None = None
+    finder_user_name: str | None = None
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
@@ -159,6 +195,7 @@ class VideoCandidate(BaseModel):
 
 class SourceRequest(BaseModel):
     source: DataSource
+    platform: Platform = Platform.DOUYIN
     request_id: str = Field(default_factory=lambda: f"discover-{uuid4().hex[:12]}")
     category: str = "B2B/AI企业服务获客数字人口播"
     keywords: list[str] = Field(default_factory=list)
@@ -182,6 +219,77 @@ class SourceCapability(BaseModel):
     missing_configuration: list[str] = Field(default_factory=list)
 
 
+class ProviderCapability(BaseModel):
+    provider_name: str
+    display_name: str
+    mode: ProviderMode
+    enabled: bool
+    supported_platforms: list[Platform] = Field(default_factory=list)
+    max_page_size: int = Field(default=10, ge=1, le=10)
+    supports_published_after: bool = True
+    supports_metric_refresh: bool = False
+    supports_usage: bool = False
+    permission_status: str
+    credential_alias: str | None = None
+    missing_configuration: list[str] = Field(default_factory=list)
+
+
+class ProviderSearchError(BaseModel):
+    kind: ProviderErrorKind
+    message: str
+    code: str | None = None
+    item_index: int | None = Field(default=None, ge=0)
+    retryable: bool = False
+
+
+class ProviderSearchItem(BaseModel):
+    platform: Platform
+    platform_item_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    author_id: str = Field(min_length=1)
+    author_name: str = Field(min_length=1)
+    published_at: datetime
+    source_url: HttpUrl
+    provider_rank: int = Field(ge=1, le=10)
+    metrics: VideoMetricSnapshot
+    evidence: str | None = None
+
+
+class ProviderSearchPage(BaseModel):
+    platform: Platform
+    provider: str
+    items: list[ProviderSearchItem] = Field(default_factory=list)
+    observed_at: datetime
+    request_id: str
+    api_call_count: int = Field(default=0, ge=0, le=1)
+    quota_remaining: int | None = Field(default=None, ge=0)
+    billable_units: float | None = Field(default=None, ge=0)
+    has_more: bool = False
+    errors: list[ProviderSearchError] = Field(default_factory=list)
+
+
+class ProviderUsage(BaseModel):
+    provider: str
+    period_started_at: datetime
+    period_ends_at: datetime
+    platform_queries: int = Field(default=0, ge=0)
+    quota_remaining: int | None = Field(default=None, ge=0)
+    billable_units: float | None = Field(default=None, ge=0)
+    estimated_cost: float | None = Field(default=None, ge=0)
+    currency: str = "CNY"
+
+
+class PlatformCapability(BaseModel):
+    platform: Platform
+    label: str
+    status_label: str
+    description: str
+    supports_manual: bool = True
+    supports_csv: bool = True
+    supports_automatic_search: bool = False
+    automatic_search_enabled: bool = False
+
+
 class NormalizedCandidate(BaseModel):
     platform_item_id: str
     title: str = Field(min_length=1)
@@ -190,7 +298,7 @@ class NormalizedCandidate(BaseModel):
     platform: Platform = Platform.DOUYIN
     category: str = "B2B/AI企业服务获客数字人口播"
     published_at: datetime
-    source_url: HttpUrl
+    source_url: HttpUrl | None = None
     source_type: DataSource
     metrics: VideoMetricSnapshot
     rights_status: str = "metadata_only"
@@ -198,6 +306,8 @@ class NormalizedCandidate(BaseModel):
     cohort_key: str | None = None
     eligibility_status: EligibilityStatus = EligibilityStatus.PENDING_REVIEW
     evidence: str | None = None
+    feed_id: str | None = None
+    finder_user_name: str | None = None
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
@@ -237,6 +347,8 @@ class CandidateMatch(BaseModel):
     video_id: str
     keyword: str
     cohort_key: str
+    platform: Platform = Platform.DOUYIN
+    provider_name: str = "legacy"
     platform_rank: int = Field(default=10, ge=1, le=10)
     observed_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     publish_time: int = Field(default=1)
@@ -248,6 +360,8 @@ class DiscoveryResult(BaseModel):
     request_id: str
     keyword: str
     provider_name: str
+    platform: Platform = Platform.DOUYIN
+    batch_id: str | None = None
     requested_count: int = Field(ge=1, le=100)
     fetched_count: int = Field(default=0, ge=0)
     unique_count: int = Field(default=0, ge=0)
@@ -263,12 +377,68 @@ class DiscoveryResult(BaseModel):
     import_report: SyncReport | None = None
     errors: list[ImportErrorDetail] = Field(default_factory=list)
     request_fingerprint: str | None = None
+    provider_request_id: str | None = None
+    billable_units: float | None = Field(default=None, ge=0)
+    cache_hit: bool = False
+
+
+class SearchBatch(BaseModel):
+    batch_id: str = Field(default_factory=lambda: f"batch-{uuid4().hex[:12]}")
+    keyword: str = Field(min_length=2, max_length=50)
+    published_window_days: int = Field(default=7)
+    requested_count_per_platform: int = Field(default=10, ge=1, le=10)
+    provider: str
+    mode: ProviderMode
+    status: SearchBatchStatus = SearchBatchStatus.PENDING
+    platforms: list[Platform] = Field(
+        default_factory=lambda: [
+            Platform.DOUYIN,
+            Platform.XIAOHONGSHU,
+            Platform.WECHAT_CHANNELS,
+        ]
+    )
+    platform_run_ids: list[str] = Field(default_factory=list)
+    force_refresh: bool = False
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    finished_at: datetime | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.published_window_days not in {1, 7}:
+            raise ValueError("发布时间范围只支持近 1 天或近 7 天。")
+        return self
+
+
+class PlatformSearchRun(BaseModel):
+    run_id: str = Field(default_factory=lambda: f"platform-{uuid4().hex[:12]}")
+    batch_id: str
+    platform: Platform
+    provider: str
+    mode: ProviderMode
+    status: PlatformRunStatus = PlatformRunStatus.QUEUED
+    requested_count: int = Field(default=10, ge=1, le=10)
+    returned_count: int = Field(default=0, ge=0, le=10)
+    api_call_count: int = Field(default=0, ge=0, le=1)
+    billable_units: float | None = Field(default=None, ge=0)
+    quota_remaining: int | None = Field(default=None, ge=0)
+    cache_hit: bool = False
+    cached_from_run_id: str | None = None
+    idempotency_key: str
+    request_fingerprint: str
+    provider_request_id: str | None = None
+    credential_alias: str | None = None
+    started_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    finished_at: datetime | None = None
+    error: str | None = None
+    errors: list[ProviderSearchError] = Field(default_factory=list)
 
 
 class KeywordTrendResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     keyword: str
+    platform: Platform = Platform.DOUYIN
     candidate_id: str
     computed_at: datetime
     score: float = Field(ge=0, le=100)
@@ -277,6 +447,7 @@ class KeywordTrendResult(BaseModel):
     provisional: bool = True
     platform_rank: int = Field(ge=1, le=10)
     likes_per_hour: float | None = None
+    engagement_per_hour: float | None = None
     like_growth_per_hour: float | None = None
     appearance_count: int = Field(ge=1)
     pool_size: int = Field(ge=1)
@@ -335,6 +506,9 @@ class SamplingCheckpoint(BaseModel):
     keyword: str
     candidate_id: str
     request_id: str
+    platform: Platform = Platform.DOUYIN
+    provider_name: str = "legacy"
+    published_window_days: int = Field(default=1)
     offset_hours: int = Field(gt=0)
     due_at: datetime
     status: SamplingStatus = SamplingStatus.PENDING

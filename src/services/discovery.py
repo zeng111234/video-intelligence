@@ -15,6 +15,7 @@ from src.models import (
     SamplingStatus,
     SourcePage,
     SourceRequest,
+    Platform,
 )
 from src.services.source import SourceService
 
@@ -33,6 +34,7 @@ class KeywordDiscoveryService:
         *,
         keyword: str,
         adapter: CrawlerAdapter,
+        platform: Platform = Platform.DOUYIN,
         publish_time: int = 1,
         count: int = 10,
     ) -> DiscoveryResult:
@@ -44,8 +46,12 @@ class KeywordDiscoveryService:
         if not 1 <= count <= 10:
             raise ValueError("单次候选数量必须为 1 到 10 条。")
 
+        capability = adapter.capabilities()
         request_fingerprint = hashlib.sha256(
-            f"douyin|{keyword.casefold()}|{publish_time}|0|{count}".encode()
+            (
+                f"{capability.provider_name}|{platform.value}|{keyword.casefold()}|"
+                f"{publish_time}|0|{count}"
+            ).encode()
         ).hexdigest()
         now = datetime.now().astimezone()
         for previous in self.repository.list_discovery_results(limit=50):
@@ -57,9 +63,9 @@ class KeywordDiscoveryService:
                 raise ValueError("相同请求刚刚执行过，请等待60秒，防止重复计费。")
 
         started_at = now
-        capability = adapter.capabilities()
         request = SourceRequest(
             source=DataSource.OFFICIAL,
+            platform=platform,
             keywords=[keyword],
             category=f"关键词/{keyword}",
             limit=count,
@@ -72,6 +78,7 @@ class KeywordDiscoveryService:
                 request_id=request.request_id,
                 keyword=keyword,
                 provider_name=capability.provider_name,
+                platform=platform,
                 requested_count=count,
                 permission_status=capability.permission_status,
                 publish_time=publish_time,
@@ -127,6 +134,7 @@ class KeywordDiscoveryService:
             request_id=request.request_id,
             keyword=keyword,
             provider_name=capability.provider_name,
+            platform=platform,
             requested_count=count,
             fetched_count=len(page.items),
             unique_count=len(items),
@@ -153,7 +161,9 @@ class KeywordDiscoveryService:
                 for candidate in self.repository.list_candidates()
             }
             keyword_key = keyword.casefold()
-            cohort_key = f"douyin:keyword:{keyword_key}"
+            cohort_key = (
+                f"{capability.provider_name}:{platform.value}:keyword:{keyword_key}"
+            )
             for item in items:
                 video_id = candidate_ids.get(
                     (item.platform.value, item.platform_item_id)
@@ -166,6 +176,8 @@ class KeywordDiscoveryService:
                             video_id=video_id,
                             keyword=keyword_key,
                             cohort_key=cohort_key,
+                            platform=item.platform,
+                            provider_name=capability.provider_name,
                             platform_rank=rank_by_key[
                                 (item.platform.value, item.platform_item_id)
                             ],
@@ -190,6 +202,9 @@ class KeywordDiscoveryService:
                                     keyword=keyword_key,
                                     candidate_id=video_id,
                                     request_id=request.request_id,
+                                    platform=platform,
+                                    provider_name=capability.provider_name,
+                                    published_window_days=publish_time,
                                     offset_hours=offset,
                                     due_at=observed_at + timedelta(hours=offset),
                                 )

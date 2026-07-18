@@ -11,8 +11,11 @@ from src.models import (
     HeatLevel,
     HeatResult,
     KeywordTrendResult,
+    Platform,
+    PlatformSearchRun,
     RelevanceReview,
     SamplingCheckpoint,
+    SearchBatch,
     SyncReport,
     TaskKind,
     TaskRecord,
@@ -118,14 +121,12 @@ class SQLiteRepository:
 
             CREATE TABLE IF NOT EXISTS keyword_trend_results (
                 keyword TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT 'douyin',
                 video_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
                 computed_at TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
-                PRIMARY KEY(keyword, video_id, computed_at)
+                PRIMARY KEY(keyword, platform, video_id, computed_at)
             );
-
-            CREATE INDEX IF NOT EXISTS idx_keyword_trends_latest
-            ON keyword_trend_results(keyword, computed_at DESC);
 
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id TEXT PRIMARY KEY,
@@ -152,8 +153,47 @@ class SQLiteRepository:
 
             CREATE INDEX IF NOT EXISTS idx_sampling_keyword_due
             ON sampling_checkpoints(keyword, due_at);
+
+            CREATE TABLE IF NOT EXISTS search_batches (
+                batch_id TEXT PRIMARY KEY,
+                keyword TEXT NOT NULL,
+                published_window_days INTEGER NOT NULL,
+                requested_count_per_platform INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                finished_at TEXT,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS platform_search_runs (
+                run_id TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL REFERENCES search_batches(batch_id) ON DELETE CASCADE,
+                platform TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                request_fingerprint TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_platform_runs_batch
+            ON platform_search_runs(batch_id, platform);
+
+            CREATE INDEX IF NOT EXISTS idx_platform_runs_usage
+            ON platform_search_runs(started_at, api_call_count);
+
+            CREATE TABLE IF NOT EXISTS provider_request_guards (
+                fingerprint TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
             """
         )
+        self._migrate_keyword_trend_results_platform()
         self._ensure_column("candidates", "cohort_key", "TEXT")
         self._ensure_column(
             "candidates",
@@ -170,6 +210,17 @@ class SQLiteRepository:
         self._ensure_column(
             "candidate_matches", "sort_type", "INTEGER NOT NULL DEFAULT 0"
         )
+        self._ensure_column(
+            "candidate_matches", "platform", "TEXT NOT NULL DEFAULT 'douyin'"
+        )
+        self._ensure_column(
+            "candidate_matches", "provider_name", "TEXT NOT NULL DEFAULT 'legacy'"
+        )
+        self._ensure_column("candidates", "feed_id", "TEXT")
+        self._ensure_column("candidates", "finder_user_name", "TEXT")
+        self.connection.execute(
+            "DROP INDEX IF EXISTS idx_candidate_matches_keyword_observed"
+        )
         self.connection.execute(
             """
             UPDATE candidate_matches
@@ -184,10 +235,62 @@ class SQLiteRepository:
         self.connection.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_candidate_matches_keyword_observed
-            ON candidate_matches(keyword, observed_at)
+            ON candidate_matches(keyword, platform, provider_name, observed_at)
+            """
+        )
+        self.connection.execute("DROP INDEX IF EXISTS idx_keyword_trends_latest")
+        self.connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_keyword_trends_latest
+            ON keyword_trend_results(keyword, platform, computed_at DESC)
             """
         )
         self.connection.commit()
+
+    def _migrate_keyword_trend_results_platform(self) -> None:
+        columns = self.connection.execute(
+            "PRAGMA table_info(keyword_trend_results)"
+        ).fetchall()
+        names = {str(row["name"]) for row in columns}
+        primary_key = [
+            str(row["name"])
+            for row in sorted(columns, key=lambda row: int(row["pk"]))
+            if int(row["pk"]) > 0
+        ]
+        expected_key = ["keyword", "platform", "video_id", "computed_at"]
+        if "platform" in names and primary_key == expected_key:
+            return
+        with self.connection:
+            self.connection.executescript(
+                """
+                CREATE TABLE keyword_trend_results_v2 (
+                    keyword TEXT NOT NULL,
+                    platform TEXT NOT NULL DEFAULT 'douyin',
+                    video_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
+                    computed_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY(keyword, platform, video_id, computed_at)
+                );
+                """
+            )
+            self.connection.execute(
+                """
+                INSERT OR IGNORE INTO keyword_trend_results_v2(
+                    keyword, platform, video_id, computed_at, payload_json
+                )
+                SELECT keyword,
+                       COALESCE(json_extract(payload_json, '$.platform'), 'douyin'),
+                       video_id, computed_at, payload_json
+                FROM keyword_trend_results
+                """
+            )
+            self.connection.executescript(
+                """
+                DROP TABLE keyword_trend_results;
+                ALTER TABLE keyword_trend_results_v2
+                RENAME TO keyword_trend_results;
+                """
+            )
 
     def _ensure_column(self, table: str, column: str, definition: str) -> None:
         existing = {
@@ -228,8 +331,9 @@ class SQLiteRepository:
                     video_id, platform, platform_item_id, title, author_id, author_name,
                     category, published_at, source_url, source_type, rights_status,
                     matched_by_json, cohort_key, eligibility_status, evidence,
-                    official_hot, official_rank, official_hot_value
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    feed_id, finder_user_name, official_hot, official_rank,
+                    official_hot_value
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(platform, platform_item_id) DO UPDATE SET
                     title = excluded.title,
                     author_id = excluded.author_id,
@@ -243,6 +347,8 @@ class SQLiteRepository:
                     cohort_key = excluded.cohort_key,
                     eligibility_status = excluded.eligibility_status,
                     evidence = excluded.evidence,
+                    feed_id = excluded.feed_id,
+                    finder_user_name = excluded.finder_user_name,
                     official_hot = excluded.official_hot,
                     official_rank = excluded.official_rank,
                     official_hot_value = excluded.official_hot_value
@@ -256,13 +362,15 @@ class SQLiteRepository:
                     candidate.author_name,
                     candidate.category,
                     candidate.published_at.isoformat(),
-                    str(candidate.source_url),
+                    str(candidate.source_url) if candidate.source_url else "",
                     candidate.source_type.value,
                     candidate.rights_status,
                     json.dumps(candidate.matched_by, ensure_ascii=False),
                     candidate.cohort_key,
                     candidate.eligibility_status.value,
                     candidate.evidence,
+                    candidate.feed_id,
+                    candidate.finder_user_name,
                     int(candidate.official_hot),
                     candidate.official_rank,
                     candidate.official_hot_value,
@@ -369,13 +477,15 @@ class SQLiteRepository:
             platform=row["platform"],
             category=row["category"],
             published_at=row["published_at"],
-            source_url=row["source_url"],
+            source_url=row["source_url"] or None,
             source_type=row["source_type"],
             rights_status=row["rights_status"],
             matched_by=json.loads(row["matched_by_json"]),
             cohort_key=row["cohort_key"],
             eligibility_status=row["eligibility_status"],
             evidence=row["evidence"],
+            feed_id=row["feed_id"],
+            finder_user_name=row["finder_user_name"],
             official_hot=bool(row["official_hot"]),
             official_rank=row["official_rank"],
             official_hot_value=row["official_hot_value"],
@@ -499,8 +609,9 @@ class SQLiteRepository:
                 """
                 INSERT OR REPLACE INTO candidate_matches(
                     request_id, video_id, keyword, cohort_key, platform_rank,
-                    observed_at, publish_time, sort_type, evidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    observed_at, publish_time, sort_type, evidence, platform,
+                    provider_name
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match.request_id,
@@ -512,6 +623,8 @@ class SQLiteRepository:
                     match.publish_time,
                     match.sort_type,
                     match.evidence,
+                    match.platform.value,
+                    match.provider_name,
                 ),
             )
 
@@ -519,24 +632,38 @@ class SQLiteRepository:
         rows = self.connection.execute(
             """
             SELECT request_id, video_id, keyword, cohort_key, platform_rank,
-                   observed_at, publish_time, sort_type, evidence
+                   observed_at, publish_time, sort_type, evidence, platform,
+                   provider_name
             FROM candidate_matches WHERE request_id = ? ORDER BY video_id
             """,
             (request_id,),
         ).fetchall()
         return [CandidateMatch.model_validate(dict(row)) for row in rows]
 
-    def list_keyword_matches(self, keyword: str, since) -> list[CandidateMatch]:
-        rows = self.connection.execute(
-            """
+    def list_keyword_matches(
+        self,
+        keyword: str,
+        since,
+        platform: Platform = Platform.DOUYIN,
+        provider_name: str | None = None,
+    ) -> list[CandidateMatch]:
+        sql = """
             SELECT request_id, video_id, keyword, cohort_key, platform_rank,
-                   observed_at, publish_time, sort_type, evidence
+                   observed_at, publish_time, sort_type, evidence, platform,
+                   provider_name
             FROM candidate_matches
-            WHERE keyword = ? AND observed_at >= ?
-            ORDER BY observed_at, platform_rank
-            """,
-            (keyword.casefold(), since.isoformat()),
-        ).fetchall()
+            WHERE keyword = ? AND observed_at >= ? AND platform = ?
+        """
+        parameters: list[object] = [
+            keyword.casefold(),
+            since.isoformat(),
+            platform.value,
+        ]
+        if provider_name:
+            sql += " AND provider_name = ?"
+            parameters.append(provider_name)
+        sql += " ORDER BY observed_at, platform_rank"
+        rows = self.connection.execute(sql, parameters).fetchall()
         return [CandidateMatch.model_validate(dict(row)) for row in rows]
 
     def save_keyword_trend_results(self, results: list[KeywordTrendResult]) -> None:
@@ -546,12 +673,13 @@ class SQLiteRepository:
             self.connection.executemany(
                 """
                 INSERT OR REPLACE INTO keyword_trend_results(
-                    keyword, video_id, computed_at, payload_json
-                ) VALUES (?, ?, ?, ?)
+                    keyword, platform, video_id, computed_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
                 """,
                 [
                     (
                         result.keyword.casefold(),
+                        result.platform.value,
                         result.candidate_id,
                         result.computed_at.isoformat(),
                         result.model_dump_json(),
@@ -560,38 +688,249 @@ class SQLiteRepository:
                 ],
             )
 
-    def clear_keyword_trend_results(self, keyword: str) -> None:
+    def clear_keyword_trend_results(
+        self, keyword: str, platform: Platform = Platform.DOUYIN
+    ) -> None:
         with self.connection:
             self.connection.execute(
-                "DELETE FROM keyword_trend_results WHERE keyword = ?",
-                (keyword.casefold(),),
+                """DELETE FROM keyword_trend_results
+                   WHERE keyword = ? AND platform = ?""",
+                (keyword.casefold(), platform.value),
             )
 
     def list_keyword_trend_results(
-        self, keyword: str, limit: int = 10
+        self,
+        keyword: str,
+        limit: int = 10,
+        platform: Platform = Platform.DOUYIN,
     ) -> list[KeywordTrendResult]:
         latest = self.connection.execute(
             """
             SELECT MAX(computed_at) AS computed_at
-            FROM keyword_trend_results WHERE keyword = ?
+            FROM keyword_trend_results
+            WHERE keyword = ? AND platform = ?
             """,
-            (keyword.casefold(),),
+            (keyword.casefold(), platform.value),
         ).fetchone()
         if not latest or not latest["computed_at"]:
             return []
         rows = self.connection.execute(
             """
             SELECT payload_json FROM keyword_trend_results
-            WHERE keyword = ? AND computed_at = ?
+            WHERE keyword = ? AND platform = ? AND computed_at = ?
             ORDER BY json_extract(payload_json, '$.score') DESC,
                      json_extract(payload_json, '$.platform_rank') ASC
             LIMIT ?
             """,
-            (keyword.casefold(), latest["computed_at"], limit),
+            (keyword.casefold(), platform.value, latest["computed_at"], limit),
         ).fetchall()
         return [
             KeywordTrendResult.model_validate_json(row["payload_json"]) for row in rows
         ]
+
+    def save_search_batch(self, batch: SearchBatch) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO search_batches(
+                    batch_id, keyword, published_window_days,
+                    requested_count_per_platform, provider, status, created_at,
+                    finished_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(batch_id) DO UPDATE SET
+                    keyword = excluded.keyword,
+                    published_window_days = excluded.published_window_days,
+                    requested_count_per_platform = excluded.requested_count_per_platform,
+                    provider = excluded.provider,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    finished_at = excluded.finished_at,
+                    payload_json = excluded.payload_json
+                """,
+                (
+                    batch.batch_id,
+                    batch.keyword.casefold(),
+                    batch.published_window_days,
+                    batch.requested_count_per_platform,
+                    batch.provider,
+                    batch.status.value,
+                    batch.created_at.isoformat(),
+                    batch.finished_at.isoformat() if batch.finished_at else None,
+                    batch.model_dump_json(),
+                ),
+            )
+
+    def get_search_batch(self, batch_id: str) -> SearchBatch | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM search_batches WHERE batch_id = ?", (batch_id,)
+        ).fetchone()
+        return SearchBatch.model_validate_json(row["payload_json"]) if row else None
+
+    def list_search_batches(self, limit: int = 20) -> list[SearchBatch]:
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM search_batches
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [SearchBatch.model_validate_json(row["payload_json"]) for row in rows]
+
+    def save_platform_search_run(self, run: PlatformSearchRun) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO platform_search_runs(
+                    run_id, batch_id, platform, provider, status,
+                    request_fingerprint, started_at, finished_at,
+                    api_call_count, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    batch_id = excluded.batch_id,
+                    platform = excluded.platform,
+                    provider = excluded.provider,
+                    status = excluded.status,
+                    request_fingerprint = excluded.request_fingerprint,
+                    started_at = excluded.started_at,
+                    finished_at = excluded.finished_at,
+                    api_call_count = excluded.api_call_count,
+                    payload_json = excluded.payload_json
+                """,
+                (
+                    run.run_id,
+                    run.batch_id,
+                    run.platform.value,
+                    run.provider,
+                    run.status.value,
+                    run.request_fingerprint,
+                    run.started_at.isoformat(),
+                    run.finished_at.isoformat() if run.finished_at else None,
+                    run.api_call_count,
+                    run.model_dump_json(),
+                ),
+            )
+
+    def list_platform_search_runs(self, batch_id: str) -> list[PlatformSearchRun]:
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM platform_search_runs
+            WHERE batch_id = ? ORDER BY started_at, platform
+            """,
+            (batch_id,),
+        ).fetchall()
+        return [
+            PlatformSearchRun.model_validate_json(row["payload_json"]) for row in rows
+        ]
+
+    def find_cached_platform_search_run(
+        self,
+        *,
+        provider: str,
+        platform: Platform,
+        keyword: str,
+        published_window_days: int,
+        requested_count: int,
+        since: datetime,
+    ) -> PlatformSearchRun | None:
+        row = self.connection.execute(
+            """
+            SELECT run.payload_json
+            FROM platform_search_runs AS run
+            JOIN search_batches AS batch ON batch.batch_id = run.batch_id
+            WHERE run.provider = ? AND run.platform = ?
+              AND run.status = 'succeeded'
+              AND run.finished_at >= ?
+              AND batch.keyword = ?
+              AND batch.published_window_days = ?
+              AND batch.requested_count_per_platform = ?
+            ORDER BY run.finished_at DESC LIMIT 1
+            """,
+            (
+                provider,
+                platform.value,
+                since.isoformat(),
+                keyword.casefold(),
+                published_window_days,
+                requested_count,
+            ),
+        ).fetchone()
+        return (
+            PlatformSearchRun.model_validate_json(row["payload_json"]) if row else None
+        )
+
+    def monthly_platform_query_count(self, since: datetime) -> int:
+        row = self.connection.execute(
+            """
+            SELECT COALESCE(SUM(api_call_count), 0) AS query_count
+            FROM platform_search_runs WHERE started_at >= ?
+            """,
+            (since.isoformat(),),
+        ).fetchone()
+        return int(row["query_count"] if row else 0)
+
+    def claim_platform_search_request(
+        self,
+        fingerprint: str,
+        run_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT claimed_at, status FROM provider_request_guards
+            WHERE fingerprint = ?
+            """,
+            (fingerprint,),
+        ).fetchone()
+        if row:
+            if row["status"] == "outcome_unknown":
+                return False
+            previous = datetime.fromisoformat(str(row["claimed_at"]))
+            if (claimed_at - previous).total_seconds() < ttl_seconds:
+                return False
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO provider_request_guards(
+                    fingerprint, run_id, claimed_at, status
+                ) VALUES (?, ?, ?, 'claimed')
+                ON CONFLICT(fingerprint) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    claimed_at = excluded.claimed_at,
+                    status = excluded.status
+                """,
+                (fingerprint, run_id, claimed_at.isoformat()),
+            )
+        return True
+
+    def mark_platform_search_request(
+        self, fingerprint: str, status: str, updated_at: datetime
+    ) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE provider_request_guards
+                SET status = ?, claimed_at = ? WHERE fingerprint = ?
+                """,
+                (status, updated_at.isoformat(), fingerprint),
+            )
+
+    def has_unresolved_platform_search_request(self, fingerprint: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT 1 FROM provider_request_guards
+            WHERE fingerprint = ? AND status = 'outcome_unknown'
+            """,
+            (fingerprint,),
+        ).fetchone()
+        return row is not None
+
+    def resolve_platform_search_request(self, fingerprint: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM provider_request_guards WHERE fingerprint = ?",
+                (fingerprint,),
+            )
 
     def list_tasks(self) -> list[TaskRecord]:
         rows = self.connection.execute(

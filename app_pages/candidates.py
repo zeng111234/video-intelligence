@@ -1,426 +1,499 @@
 from __future__ import annotations
 
-from datetime import datetime
+import os
 
 import pandas as pd
 import streamlit as st
 
 from src.app_state import (
-    get_keyword_discovery_service,
-    get_keyword_trend_service,
     get_repository,
     get_services,
     get_source_service,
     select_candidate,
     selected_candidate_id,
 )
-from src.config import build_douyin_keyword_adapter
+from src.adapters.licensed import (
+    DisabledLicensedSearchProvider,
+    SandboxLicensedSearchProvider,
+)
 from src.backup_import_ui import render_backup_imports
 from src.models import (
-    DiscoveryResult,
     HeatLevel,
-    Platform,
+    PlatformRunStatus,
+    ProviderMode,
     VideoCandidate,
 )
-from src.ui import render_heat_badge, render_page_header
+from src.platforms import SUPPORTED_PLATFORMS, platform_label
+from src.services.commercial_search import (
+    CommercialSearchService,
+    MONTHLY_HARD_LIMIT_QUERIES,
+    MONTHLY_WARNING_QUERIES,
+)
+from src.services.keyword_trend import KeywordTrendService
+from src.ui import render_page_header
 
 render_page_header(
     "爆火视频检索",
-    "输入行业或内容关键词，从已获授权的平台能力获取候选并执行热点规则。",
+    "输入关键词，一次查看抖音、小红书和微信视频号的独立爆火候选榜。",
     icon="trending_up",
 )
 
 candidate_service, _, _ = get_services()
 repository = get_repository()
 source_service = get_source_service()
-discovery_service = get_keyword_discovery_service()
-trend_service = get_keyword_trend_service()
-douyin_adapter = build_douyin_keyword_adapter(st.secrets)
-douyin_capability = douyin_adapter.capabilities()
+try:
+    provider_mode = str(st.secrets["VIDEO_LICENSED_PROVIDER_MODE"]).strip().casefold()
+except Exception:
+    provider_mode = os.getenv("VIDEO_LICENSED_PROVIDER_MODE", "").strip().casefold()
+
+if provider_mode in {"", "sandbox"}:
+    provider = SandboxLicensedSearchProvider()
+else:
+    try:
+        provider_name = str(st.secrets["VIDEO_LICENSED_PROVIDER_NAME"]).strip()
+    except Exception:
+        provider_name = os.getenv("VIDEO_LICENSED_PROVIDER_NAME", "").strip()
+    provider = DisabledLicensedSearchProvider(provider_name)
+provider_capability = provider.capabilities()
+commercial_service = CommercialSearchService(
+    repository,
+    source_service,
+    KeywordTrendService(repository),
+    provider,
+)
+
+RUN_STATUS_LABELS = {
+    PlatformRunStatus.QUEUED: "等待执行",
+    PlatformRunStatus.RUNNING: "正在获取",
+    PlatformRunStatus.SUCCEEDED: "获取完成",
+    PlatformRunStatus.CACHED: "使用10分钟缓存",
+    PlatformRunStatus.FAILED: "获取失败",
+    PlatformRunStatus.BLOCKED: "已阻止调用",
+    PlatformRunStatus.OUTCOME_UNKNOWN: "费用状态待核对",
+}
 
 
-def duplicate_request_cooldown(keyword: str, publish_time: int, count: int) -> int:
-    for last in repository.list_discovery_results(limit=50):
-        same_request = (
-            last.keyword.casefold() == keyword.strip().casefold()
-            and last.publish_time == publish_time
-            and last.requested_count == count
-            and last.api_call_count == 1
-        )
-        if same_request:
-            elapsed = (datetime.now().astimezone() - last.finished_at).total_seconds()
-            return max(0, 60 - int(elapsed))
-    return 0
-
-
-@st.dialog("确认获取热门视频")
-def confirm_keyword_discovery(
-    keyword: str, publish_window_label: str, count: int
+@st.dialog("确认三平台查询")
+def confirm_three_platform_search(
+    keyword: str,
+    published_window_label: str,
+    count: int,
+    force_refresh: bool,
 ) -> None:
-    publish_time = 1 if publish_window_label == "近 24 小时" else 7
-    st.write(f"关键词：**{keyword.strip() or '未填写'}**")
-    st.write(f"时间范围：**{publish_window_label}**")
-    st.write(f"获取数量：**{count} 条**")
-    st.warning(
-        "确认后将调用 1 次抖音搜索接口，系统不会自动翻页。",
-        icon=":material/paid:",
-    )
-    cooldown = duplicate_request_cooldown(keyword, publish_time, count)
-    if cooldown:
-        st.error(
-            f"相同请求刚刚执行过，请等待约 {cooldown} 秒后再试，防止重复计费。",
-            icon=":material/hourglass_top:",
+    published_window_days = 1 if published_window_label == "近 24 小时" else 7
+    try:
+        previews = commercial_service.preview(
+            keyword=keyword,
+            published_window_days=published_window_days,
+            count=count,
+            force_refresh=force_refresh,
         )
+    except ValueError as exc:
+        st.error(str(exc), icon=":material/error:")
+        return
+
+    st.write(f"关键词：**{keyword.strip() or '未填写'}**")
+    st.write(f"时间范围：**{published_window_label}**")
+    st.write(f"每个平台：**最多 {count} 条**")
+    preview_rows = []
+    for preview in previews:
+        if preview.blocked_reason:
+            source_status = preview.blocked_reason
+        elif preview.cache_hit:
+            source_status = "读取10分钟缓存"
+        elif provider_capability.mode == ProviderMode.SANDBOX:
+            source_status = "生成离线演示数据"
+        else:
+            source_status = "调用商业数据接口"
+        preview_rows.append(
+            {
+                "平台": platform_label(preview.platform),
+                "本次数据来源": source_status,
+                "预计新增接口调用": preview.estimated_api_calls,
+            }
+        )
+    st.dataframe(pd.DataFrame(preview_rows), hide_index=True)
+    estimated_calls = sum(item.estimated_api_calls for item in previews)
+    blocked = any(item.blocked_reason for item in previews)
+    if provider_capability.mode == ProviderMode.SANDBOX:
+        st.info(
+            "当前为演示模式，不访问三个平台，也不会产生商业接口费用。",
+            icon=":material/science:",
+        )
+    else:
+        st.warning(
+            f"本次预计新增 {estimated_calls} 次平台查询；实际费用以供应商账户结算，系统不会显示为免费。",
+            icon=":material/paid:",
+        )
+    if force_refresh:
+        st.warning(
+            "已选择强制刷新，将忽略10分钟缓存；生产模式下可能产生新费用。",
+            icon=":material/refresh:",
+        )
+    if blocked:
+        st.error("当前存在不可执行的平台，请联系技术人员检查数据授权。")
+
     with st.container(horizontal=True):
         if st.button("取消", icon=":material/close:"):
             st.rerun()
         if st.button(
-            "确认并获取",
+            "确认并查询",
             type="primary",
             icon=":material/check:",
-            disabled=bool(cooldown),
+            disabled=blocked,
         ):
-            try:
-                with st.spinner(f"正在获取 {count} 条视频并计算近 7 天热门榜单……"):
-                    discovery_result = discovery_service.discover(
-                        keyword=keyword,
-                        adapter=douyin_adapter,
-                        publish_time=publish_time,
-                        count=count,
-                    )
-                    trend_service.recompute(keyword)
-                st.session_state["last_discovery_result"] = discovery_result.model_dump(
-                    mode="json"
+            with st.spinner("正在分别获取三个平台的候选并计算榜单……"):
+                batch = commercial_service.execute(
+                    keyword=keyword,
+                    published_window_days=published_window_days,
+                    count=count,
+                    force_refresh=force_refresh,
                 )
-                st.session_state["candidate_local_query"] = keyword.strip()
-                st.session_state["active_trend_keyword"] = keyword.strip()
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc), icon=":material/error:")
+            st.session_state["active_search_batch_id"] = batch.batch_id
+            st.session_state["active_trend_keyword"] = batch.keyword
+            st.session_state["candidate_local_query"] = batch.keyword
+            select_candidate(None)
+            st.rerun()
 
 
 with st.container(border=True):
-    st.subheader("抖音热门视频获取")
-    st.caption(
-        "输入关键词后，从抖音综合排序获取 1–10 条视频，并根据近 7 天数据生成系统热门排名。"
-        "每次确认只调用 1 次搜索接口，不自动翻页。"
-    )
-    with st.form("platform_keyword_discovery"):
+    st.subheader("三平台关键词爆款榜")
+    st.caption("每个平台独立排名，不把抖音、小红书和视频号的数据混在一起比较。")
+    if provider_capability.mode == ProviderMode.SANDBOX:
+        st.warning(
+            "当前显示演示数据，用于验证完整操作流程；尚未接入新榜或数说故事真实接口。",
+            icon=":material/science:",
+        )
+    elif not provider_capability.enabled:
+        st.error(
+            "真实商业接口尚未完成签约、授权和生产验收，系统不会发起平台请求。",
+            icon=":material/key_off:",
+        )
+
+    with st.form("three_platform_search"):
         with st.container(horizontal=True, vertical_alignment="bottom"):
-            platform_keyword = st.text_input(
-                "平台关键词",
+            keyword = st.text_input(
+                "关键词",
                 placeholder="例如：二手车",
-                key="platform_keyword_input",
+                key="three_platform_keyword_input",
             )
-            publish_window_label = st.selectbox(
-                "召回时间范围",
-                ["近 24 小时", "近 7 天"],
-                key="platform_publish_window",
+            published_window_label = st.selectbox(
+                "时间范围",
+                ["近 7 天", "近 24 小时"],
+                key="three_platform_publish_window",
             )
-            candidate_count = st.number_input(
-                "获取数量",
+            count = st.number_input(
+                "每平台数量",
                 min_value=1,
                 max_value=10,
                 value=10,
                 step=1,
-                key="platform_candidate_count",
+                key="three_platform_count",
             )
-            discover_submitted = st.form_submit_button(
-                "获取热门视频（调用1次）",
+            submitted = st.form_submit_button(
+                (
+                    "三平台一键查爆款（演示）"
+                    if provider_capability.mode == ProviderMode.SANDBOX
+                    else "三平台一键查爆款"
+                ),
                 type="primary",
                 icon=":material/travel_explore:",
-                disabled=not douyin_capability.enabled,
+                disabled=not provider_capability.enabled,
             )
-    if douyin_capability.enabled:
-        st.success(
-            "抖音接口凭证已配置；首次调用后由抖音返回实际权限状态。",
-            icon=":material/key:",
-        )
-    else:
-        st.warning(
-            "尚未配置抖音接口凭证，当前不会发起任何平台请求。请联系技术人员配置。",
-            icon=":material/key_off:",
-        )
-        with st.expander("技术配置说明"):
-            st.code(
-                'DOUYIN_CLIENT_KEY = ""\nDOUYIN_CLIENT_SECRET = ""',
-                language="toml",
-            )
-
-    if discover_submitted:
-        confirm_keyword_discovery(
-            platform_keyword, publish_window_label, int(candidate_count)
+        force_refresh = st.toggle(
+            "强制刷新（可能产生新费用）",
+            value=False,
+            help="默认优先读取10分钟内的成功结果。仅在确实需要更新时开启。",
         )
 
-    raw_discovery = st.session_state.get("last_discovery_result")
-    if raw_discovery:
-        last_discovery = DiscoveryResult.model_validate(raw_discovery)
-        with st.container(horizontal=True):
-            st.metric(
-                "最近关键词",
-                last_discovery.keyword,
-                border=True,
-            )
-            st.metric(
-                "唯一候选",
-                f"{last_discovery.unique_count}/{last_discovery.requested_count}",
-                border=True,
-            )
-            st.metric(
-                "搜索调用",
-                f"{last_discovery.api_call_count} 次",
-                border=True,
-            )
-            st.metric(
-                "执行状态",
-                "部分完成" if last_discovery.partial else "完成",
-                border=True,
-            )
-            st.metric(
-                "最近调用",
-                last_discovery.finished_at.astimezone().strftime("%m-%d %H:%M"),
-                border=True,
-            )
-        if last_discovery.errors:
-            for error in last_discovery.errors:
-                st.warning(error.message)
+    if submitted:
+        confirm_three_platform_search(
+            keyword,
+            published_window_label,
+            int(count),
+            force_refresh,
+        )
 
-    trend_keyword = st.session_state.get("active_trend_keyword", "").strip()
-    trend_results = (
-        repository.list_keyword_trend_results(trend_keyword, limit=10)
-        if trend_keyword
-        else []
-    )
-    checkpoints = (
-        repository.list_sampling_checkpoints(trend_keyword) if trend_keyword else []
-    )
-    if checkpoints:
-        status_labels = {
-            "pending": "待复采",
-            "observed": "已复采",
-            "missed": "未再次召回",
-        }
-        with st.expander("复采计划与增长数据完整度"):
-            st.caption("系统只提醒，不会自动调用付费接口。")
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "视频": checkpoint.candidate_id,
-                            "计划间隔": f"T+{checkpoint.offset_hours}小时",
-                            "计划时间": checkpoint.due_at,
-                            "状态": status_labels[checkpoint.status.value],
-                        }
-                        for checkpoint in checkpoints
-                    ]
-                ),
-                hide_index=True,
+    monthly_queries = commercial_service.monthly_query_count()
+    with st.container(horizontal=True):
+        st.metric(
+            "数据模式",
+            "演示数据"
+            if provider_capability.mode == ProviderMode.SANDBOX
+            else "商业接口",
+            border=True,
+        )
+        st.metric("本月平台查询", f"{monthly_queries} / 450", border=True)
+        st.metric(
+            "剩余安全额度",
+            max(0, MONTHLY_HARD_LIMIT_QUERIES - monthly_queries),
+            border=True,
+        )
+        st.metric("默认缓存", "10分钟", border=True)
+    if monthly_queries >= MONTHLY_HARD_LIMIT_QUERIES:
+        st.error("本月平台查询已达到硬上限，新的真实调用已停止。")
+    elif monthly_queries >= MONTHLY_WARNING_QUERIES:
+        st.warning("本月平台查询已超过80%，请留意供应商账单与剩余额度。")
+
+    with st.expander("数据接入状态"):
+        st.write(f"当前数据提供方：**{provider_capability.display_name}**")
+        st.write(
+            "支持平台："
+            + "、".join(
+                platform_label(item) for item in provider_capability.supported_platforms
             )
-    if trend_results:
-        candidate_lookup = {
-            candidate.video_id: candidate for candidate in repository.list_candidates()
-        }
-        trend_rows = []
-        for own_rank, trend in enumerate(trend_results, start=1):
-            candidate = candidate_lookup.get(trend.candidate_id)
-            if candidate is None:
+            if provider_capability.supported_platforms
+            else "支持平台：尚未启用"
+        )
+        if provider_capability.missing_configuration:
+            st.caption(
+                "真实上线仍需：" + "、".join(provider_capability.missing_configuration)
+            )
+
+
+active_batch_id = st.session_state.get("active_search_batch_id")
+active_batch = repository.get_search_batch(active_batch_id) if active_batch_id else None
+if active_batch is None:
+    recent_batches = repository.list_search_batches(limit=1)
+    active_batch = recent_batches[0] if recent_batches else None
+
+active_trend_results = []
+if active_batch:
+    runs = repository.list_platform_search_runs(active_batch.batch_id)
+    run_by_platform = {run.platform: run for run in runs}
+    with st.container(horizontal=True):
+        st.metric("最近关键词", active_batch.keyword, border=True)
+        st.metric(
+            "三平台状态",
+            {
+                "succeeded": "全部完成",
+                "partial": "部分完成",
+                "failed": "全部失败",
+            }.get(active_batch.status.value, "处理中"),
+            border=True,
+        )
+        st.metric(
+            "本批新增调用",
+            sum(run.api_call_count for run in runs),
+            border=True,
+        )
+        st.metric(
+            "缓存命中",
+            sum(run.cache_hit for run in runs),
+            border=True,
+        )
+
+    st.subheader(f"{active_batch.keyword} · 三平台独立 Top 10")
+    tabs = st.tabs([platform_label(platform) for platform in SUPPORTED_PLATFORMS])
+    candidate_lookup = {
+        candidate.video_id: candidate for candidate in repository.list_candidates()
+    }
+    for tab, platform in zip(tabs, SUPPORTED_PLATFORMS, strict=True):
+        with tab:
+            run = run_by_platform.get(platform)
+            if run is None:
+                st.info("该平台尚未执行。")
                 continue
-            trend_rows.append(
-                {
-                    "candidate_id": candidate.video_id,
-                    "自有排名": own_rank,
-                    "标题": candidate.title,
-                    "热门程度": trend.level.value,
-                    "趋势分": trend.score,
-                    "数据可靠性": f"{trend.confidence:.0%}",
-                    "为什么热门": "；".join(trend.reasons[:3]),
-                }
+            status_label = RUN_STATUS_LABELS[run.status]
+            if run.status in {
+                PlatformRunStatus.FAILED,
+                PlatformRunStatus.BLOCKED,
+                PlatformRunStatus.OUTCOME_UNKNOWN,
+            }:
+                st.error(f"{status_label}：{run.error or '未返回明确原因'}")
+                continue
+            st.caption(
+                f"{status_label} · 返回 {run.returned_count} 条 · "
+                f"新增接口调用 {run.api_call_count} 次"
             )
-        st.markdown(f"**系统自有 Top 10 · {trend_keyword}**")
-        trend_frame = pd.DataFrame(trend_rows)
-        trend_event = st.dataframe(
-            trend_frame,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            key="keyword_trend_table",
-            column_config={
-                "candidate_id": None,
-                "趋势分": st.column_config.ProgressColumn(
-                    "趋势分", min_value=0, max_value=100
-                ),
-            },
-        )
-        if trend_event.selection.rows:
-            select_candidate(
-                str(trend_frame.iloc[trend_event.selection.rows[0]]["candidate_id"])
+            trends = repository.list_keyword_trend_results(
+                active_batch.keyword,
+                limit=10,
+                platform=platform,
             )
-        with st.expander("查看计算依据"):
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "标题": candidate_lookup[item.candidate_id].title,
-                            "平台位置": item.platform_rank,
-                            "点赞增长/小时": item.like_growth_per_hour,
-                            "近7天入榜次数": item.appearance_count,
-                            "样本池": item.pool_size,
-                            "异常状态": (
-                                "待核验"
-                                if item.anomaly_status.value == "suspected"
-                                else "正常"
-                            ),
-                        }
-                        for item in trend_results
-                        if item.candidate_id in candidate_lookup
-                    ]
-                ),
+            active_trend_results.extend(trends)
+            trend_rows = []
+            for own_rank, trend in enumerate(trends, start=1):
+                candidate = candidate_lookup.get(trend.candidate_id)
+                if candidate is None:
+                    continue
+                trend_rows.append(
+                    {
+                        "candidate_id": candidate.video_id,
+                        "系统排名": own_rank,
+                        "标题": candidate.title,
+                        "发布时间": candidate.published_at,
+                        "热门程度": trend.level.value,
+                        "候选热度": trend.score,
+                        "数据可靠性": trend.confidence,
+                        "数据时间": candidate.metrics.sampled_at,
+                        "数据来源": (
+                            "商业接口演示数据"
+                            if active_batch.mode == ProviderMode.SANDBOX
+                            else provider_capability.display_name
+                        ),
+                        "为什么入榜": "；".join(trend.reasons[:3]),
+                    }
+                )
+            if not trend_rows:
+                st.info("该平台本次没有符合条件的候选，不会用演示数据补齐。")
+                continue
+            trend_frame = pd.DataFrame(trend_rows)
+            event = st.dataframe(
+                trend_frame,
                 hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=f"commercial_trend_{platform.value}",
+                column_config={
+                    "candidate_id": None,
+                    "标题": st.column_config.TextColumn(pinned=True),
+                    "发布时间": st.column_config.DatetimeColumn(format="MM-DD HH:mm"),
+                    "候选热度": st.column_config.ProgressColumn(
+                        min_value=0,
+                        max_value=100,
+                        format="%.1f",
+                    ),
+                    "数据可靠性": st.column_config.NumberColumn(format="percent"),
+                    "数据时间": st.column_config.DatetimeColumn(format="MM-DD HH:mm"),
+                },
             )
+            if event.selection.rows:
+                selected_row = trend_frame.iloc[event.selection.rows[0]]
+                select_candidate(str(selected_row["candidate_id"]))
+            with st.expander("查看数据依据"):
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "标题": candidate_lookup[item.candidate_id].title,
+                                "供应商召回位置": item.platform_rank,
+                                "年龄归一化互动": item.engagement_per_hour,
+                                "点赞增长/小时": item.like_growth_per_hour,
+                                "近7天有效入榜": item.appearance_count,
+                                "平台样本池": item.pool_size,
+                                "异常状态": (
+                                    "待核验"
+                                    if item.anomaly_status.value == "suspected"
+                                    else "正常"
+                                ),
+                            }
+                            for item in trends
+                            if item.candidate_id in candidate_lookup
+                        ]
+                    ),
+                    hide_index=True,
+                )
+            st.caption(
+                "单次观测只显示爆火候选排名；缺少可信增长数据时不会输出正式爆火等级。"
+            )
+
+
+selected = candidate_service.get(selected_candidate_id())
+selected_trend = next(
+    (
+        trend
+        for trend in active_trend_results
+        if selected and trend.candidate_id == selected.video_id
+    ),
+    None,
+)
+if selected:
+    with st.container(border=True):
+        st.subheader(selected.title)
         st.caption(
-            "该排名由系统公式计算；平台综合位置仅是一个分量。样本池少于 30 条时只显示“观察中”。"
+            f"{platform_label(selected.platform)} · {selected.author_name} · "
+            f"数据可靠性 "
+            f"{(selected_trend.confidence if selected_trend else selected.metrics.confidence):.0%}"
         )
-
-st.subheader("历史视频库")
-all_candidates = candidate_service.search(
-    platforms=[Platform.DOUYIN], published_within_hours=720
-)
-categories = ["全部赛道", *sorted({item.category for item in all_candidates})]
-
-with st.form("candidate_filters"):
-    with st.container(horizontal=True, vertical_alignment="bottom"):
-        query = st.text_input(
-            "关键词",
-            placeholder="例如：二手车",
-            key="candidate_local_query",
+        reasons = selected_trend.reasons if selected_trend else selected.heat.reasons
+        for reason in reasons:
+            st.markdown(f"- {reason}")
+        if selected.source_url:
+            st.link_button("查看平台来源", str(selected.source_url))
+        st.warning(
+            "系统不会自动下载平台视频。请仅上传自有或已取得处理授权的媒体。",
+            icon=":material/gavel:",
         )
-        category = st.selectbox("赛道", categories)
-        published_hours = st.selectbox(
-            "发布时间",
-            options=[24, 72, 168, 720],
-            index=3,
-            format_func=lambda value: (
-                "近 30 天" if value == 720 else f"近 {value} 小时"
-            ),
-        )
-        min_interactions = st.number_input("最低互动量", min_value=0, value=0, step=500)
-        submitted = st.form_submit_button(
-            "检索候选", type="primary", icon=":material/search:"
-        )
-
-items = candidate_service.search(
-    query=query,
-    platforms=[Platform.DOUYIN],
-    category=category,
-    published_within_hours=published_hours,
-    min_interactions=int(min_interactions),
-)
-if submitted:
-    select_candidate(None)
-    st.toast(f"已找到 {len(items)} 条候选", icon=":material/check_circle:")
-
-with st.container(horizontal=True):
-    st.metric("候选视频", len(items), border=True)
-    st.metric(
-        "S / A 级",
-        sum(item.heat.level in {HeatLevel.S, HeatLevel.A} for item in items),
-        border=True,
-    )
-    st.metric(
-        "平均热度",
-        f"{sum(item.heat.score for item in items) / len(items):.1f}" if items else "—",
-        border=True,
-    )
-    st.metric(
-        "低置信度", sum(item.metrics.confidence < 0.6 for item in items), border=True
-    )
+        if st.button(
+            "将此视频转成文案",
+            type="primary",
+            icon=":material/transcribe:",
+        ):
+            st.switch_page("app_pages/transcription.py")
 
 
-def to_row(candidate: VideoCandidate) -> dict[str, object]:
+def to_history_row(candidate: VideoCandidate) -> dict[str, object]:
     hotspot_status = {
-        HeatLevel.S: "是（S）",
-        HeatLevel.A: "是（A）",
-        HeatLevel.B: "是（B）",
+        HeatLevel.S: "S级",
+        HeatLevel.A: "A级",
+        HeatLevel.B: "B级",
         HeatLevel.STATIC_HIGH: "静态高热",
         HeatLevel.ANOMALOUS: "异常待核验",
-        HeatLevel.NORMAL: "否",
+        HeatLevel.NORMAL: "普通",
         HeatLevel.INSUFFICIENT: "数据不足",
     }[candidate.heat.level]
     return {
         "video_id": candidate.video_id,
+        "平台": platform_label(candidate.platform),
         "标题": candidate.title,
         "发布时间": candidate.published_at,
-        "热门判断": hotspot_status,
-        "热度分": candidate.heat.score,
-        "数据可靠性": f"{candidate.metrics.confidence:.0%}",
-        "判断依据": "；".join(candidate.heat.reasons[:2]),
-        "来源": str(candidate.source_url),
+        "历史判断": hotspot_status,
+        "数据可靠性": candidate.metrics.confidence,
+        "来源": str(candidate.source_url) if candidate.source_url else None,
     }
 
 
-with st.container(border=True):
-    st.subheader("热点候选榜")
-    st.caption("单选一个视频，查看爆火依据并转成文案。")
-    dataframe = pd.DataFrame([to_row(item) for item in items])
-    if dataframe.empty:
-        st.info("当前筛选条件没有匹配候选，请放宽条件后重试。", icon=":material/info:")
-        event = None
+with st.expander("历史视频库", icon=":material/history:"):
+    all_candidates = candidate_service.search(published_within_hours=720)
+    categories = ["全部赛道", *sorted({item.category for item in all_candidates})]
+    with st.form("candidate_history_filters"):
+        with st.container(horizontal=True, vertical_alignment="bottom"):
+            history_query = st.text_input(
+                "历史关键词",
+                placeholder="例如：二手车",
+                key="candidate_local_query",
+            )
+            selected_platforms = st.multiselect(
+                "历史平台",
+                SUPPORTED_PLATFORMS,
+                default=list(SUPPORTED_PLATFORMS),
+                format_func=platform_label,
+            )
+            category = st.selectbox("历史赛道", categories)
+            history_submitted = st.form_submit_button(
+                "检索历史视频",
+                icon=":material/search:",
+            )
+    history_items = candidate_service.search(
+        query=history_query,
+        platforms=selected_platforms,
+        category=category,
+        published_within_hours=720,
+    )
+    if history_submitted:
+        select_candidate(None)
+    history_frame = pd.DataFrame([to_history_row(item) for item in history_items])
+    if history_frame.empty:
+        st.info("历史视频库暂无匹配内容。")
     else:
-        event = st.dataframe(
-            dataframe,
+        history_event = st.dataframe(
+            history_frame,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
-            key="candidate_table",
+            key="candidate_history_table",
             column_config={
                 "video_id": None,
                 "标题": st.column_config.TextColumn(pinned=True),
                 "发布时间": st.column_config.DatetimeColumn(format="MM-DD HH:mm"),
-                "热度分": st.column_config.ProgressColumn(
-                    min_value=0, max_value=100, format="%.1f"
-                ),
+                "数据可靠性": st.column_config.NumberColumn(format="percent"),
                 "来源": st.column_config.LinkColumn(display_text="查看来源"),
             },
         )
-        if event.selection.rows:
-            select_candidate(str(dataframe.iloc[event.selection.rows[0]]["video_id"]))
+        if history_event.selection.rows:
+            selected_row = history_frame.iloc[history_event.selection.rows[0]]
+            select_candidate(str(selected_row["video_id"]))
 
-visible_ids = {item.video_id for item in items}
-selected = candidate_service.get(selected_candidate_id())
-if (
-    selected
-    and selected.video_id not in visible_ids
-    and not any(result.candidate_id == selected.video_id for result in trend_results)
-):
-    select_candidate(None)
-    selected = None
-if selected:
-    with st.container(border=True):
-        with st.container(
-            horizontal=True,
-            horizontal_alignment="distribute",
-            vertical_alignment="center",
-        ):
-            st.subheader(selected.title)
-            render_heat_badge(selected.heat.level)
-        st.caption(
-            f"{selected.author_name} · {selected.category} · 数据置信度 {selected.metrics.confidence:.0%}"
-        )
-        if selected.heat.bucket_definition:
-            st.caption(
-                f"对比桶：{selected.heat.bucket_definition} · 样本 {selected.heat.bucket_sample_size} · "
-                f"快照 {selected.heat.snapshot_count}"
-            )
-        for reason in selected.heat.reasons:
-            st.markdown(f"- {reason}")
-        if selected.heat.provisional:
-            st.warning(
-                "当前为试运行判断；达到稳定样本与可靠性门槛后才转为正式结论。",
-                icon=":material/warning:",
-            )
-        if st.button("将此视频转成文案", type="primary", icon=":material/transcribe:"):
-            st.switch_page("app_pages/transcription.py")
-
-st.divider()
 with st.expander("备用导入与数据同步", icon=":material/database:"):
     render_backup_imports(source_service, repository)

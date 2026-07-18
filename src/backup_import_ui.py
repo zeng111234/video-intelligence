@@ -11,10 +11,13 @@ from src.adapters import (
     PublicMetadataResearchAdapter,
 )
 from src.models import DataSource, SourceRequest
+from src.platforms import SUPPORTED_PLATFORMS, platform_label
 
 
 def render_backup_imports(source_service, repository) -> None:
-    st.caption("官方关键词搜索不可用时，可在这里补录抖音链接、候选和互动指标快照。")
+    st.caption(
+        "可补录抖音、小红书、微信视频号的公开链接或可追溯字段；不会自动抓取或下载媒体。"
+    )
     source_label = st.selectbox(
         "备用数据源",
         [
@@ -32,12 +35,12 @@ def render_backup_imports(source_service, repository) -> None:
         st.download_button(
             "下载导入模板",
             template,
-            file_name="douyin_candidates.csv",
+            file_name="multi_platform_candidates.csv",
             mime="text/csv",
             icon=":material/download:",
         )
         uploaded = st.file_uploader(
-            "上传抖音候选或新一轮指标快照", type=["csv", "xlsx"]
+            "上传三平台候选或新一轮指标快照", type=["csv", "xlsx"]
         )
         if uploaded is not None:
             adapter = ManualImportAdapter(uploaded.name, uploaded.getvalue())
@@ -47,6 +50,7 @@ def render_backup_imports(source_service, repository) -> None:
                     pd.DataFrame(
                         [
                             {
+                                "平台": platform_label(item.platform),
                                 "作品ID": item.platform_item_id,
                                 "标题": item.title,
                                 "作者": item.author_name,
@@ -75,11 +79,19 @@ def render_backup_imports(source_service, repository) -> None:
                 )
                 st.rerun()
     elif source_label == "手工链接与指标":
+        manual_platform = st.selectbox(
+            "平台",
+            SUPPORTED_PLATFORMS,
+            format_func=platform_label,
+            key="manual_platform",
+        )
         with st.form("manual_candidate"):
-            manual_item_id = st.text_input("抖音作品 ID")
+            manual_item_id = st.text_input("作品 ID（视频号可填 feedId）")
             manual_title = st.text_input("标题")
             manual_author = st.text_input("作者")
-            manual_url = st.text_input("公开分享链接")
+            manual_url = st.text_input("公开分享链接（视频号可留空）")
+            manual_feed_id = st.text_input("视频号 feedId")
+            manual_finder_user_name = st.text_input("视频号 finderUserName")
             published_date = st.date_input("发布时间日期")
             published_time = st.time_input("发布时间时间")
             with st.container(horizontal=True):
@@ -94,6 +106,7 @@ def render_backup_imports(source_service, repository) -> None:
         if manual_submit:
             page = ManualImportAdapter.from_manual(
                 platform_item_id=manual_item_id,
+                platform=manual_platform,
                 title=manual_title,
                 author_name=manual_author,
                 published_at=datetime.combine(
@@ -108,6 +121,8 @@ def render_backup_imports(source_service, repository) -> None:
                 favorites=manual_favorites,
                 followers=manual_followers,
                 evidence=manual_evidence or None,
+                feed_id=manual_feed_id or None,
+                finder_user_name=manual_finder_user_name or None,
             )
             if page.items:
                 report = source_service.import_page(page)

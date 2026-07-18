@@ -1,4 +1,9 @@
 from src.adapters.importers import ManualImportAdapter
+from src.adapters.licensed import (
+    DisabledLicensedSearchProvider,
+    LicensedProviderError,
+    SandboxLicensedSearchProvider,
+)
 from src.adapters.official import (
     DouyinHotBillboardAdapter,
     DouyinKeywordAdapter,
@@ -11,5 +16,8 @@ __all__ = [
     "DouyinKeywordAdapter",
     "OfficialApiError",
     "ManualImportAdapter",
+    "DisabledLicensedSearchProvider",
+    "LicensedProviderError",
     "PublicMetadataResearchAdapter",
+    "SandboxLicensedSearchProvider",
 ]

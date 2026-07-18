@@ -16,6 +16,7 @@ from src.models import (
     DataSource,
     HeatLevel,
     HeatResult,
+    Platform,
     RelevanceReview,
     ReviewStatus,
     SourceRequest,
@@ -70,8 +71,57 @@ def test_csv_import_reports_specific_missing_columns() -> None:
     )
 
     fields = {error.field for error in page.errors}
-    assert {"platform_item_id", "author_name", "published_at", "source_url"} <= fields
+    assert {"author_name", "published_at"} <= fields
     assert not page.items
+
+
+def test_csv_import_accepts_three_platforms_and_preserves_trace_and_nulls() -> None:
+    content = (
+        "platform,platform_item_id,title,author_name,published_at,source_url,"
+        "feed_id,finder_user_name,likes,shares,evidence\n"
+        "抖音,dy-1,抖音候选,作者甲,2026-07-17T08:00:00+08:00,"
+        "https://www.douyin.com/video/dy-1,,,12,,\n"
+        "小红书,xhs-1,小红书候选,作者乙,2026-07-17T08:00:00+08:00,"
+        "https://www.xiaohongshu.com/explore/xhs-1,,,8,,截图-1\n"
+        "微信视频号,,视频号候选,作者丙,2026-07-17T08:00:00+08:00,,"
+        "feed-1,finder-user,,,\n"
+    )
+
+    page = ManualImportAdapter("three.csv", content.encode("utf-8")).sync(
+        SourceRequest(source=DataSource.CSV)
+    )
+
+    assert not page.errors
+    assert [item.platform.value for item in page.items] == [
+        "douyin",
+        "xiaohongshu",
+        "wechat_channels",
+    ]
+    wechat = page.items[2]
+    assert wechat.platform_item_id == "feed-1"
+    assert wechat.source_url is None
+    assert wechat.feed_id == "feed-1"
+    assert wechat.finder_user_name == "finder-user"
+    assert wechat.metrics.likes is None
+    assert wechat.metrics.shares is None
+    assert wechat.evidence is None
+
+
+def test_csv_import_reports_domain_error_by_row_and_field() -> None:
+    content = (
+        "platform,platform_item_id,title,author_name,published_at,source_url\n"
+        "小红书,xhs-1,候选,作者,2026-07-17T08:00:00+08:00,"
+        "https://www.douyin.com/video/1\n"
+    )
+
+    page = ManualImportAdapter("bad-domain.csv", content.encode("utf-8")).sync(
+        SourceRequest(source=DataSource.CSV)
+    )
+
+    assert not page.items
+    assert page.errors[0].row == 2
+    assert page.errors[0].field == "source_url"
+    assert "小红书" in page.errors[0].message
 
 
 def test_csv_naive_datetimes_become_timezone_aware() -> None:
@@ -132,6 +182,31 @@ def test_manual_link_and_metrics_build_normalized_page() -> None:
     assert page.items[0].source_type == DataSource.MANUAL
     assert page.items[0].metrics.shares is None
     assert {"数字人口播", "企业服务"} & set(page.items[0].matched_by)
+
+
+def test_wechat_trace_fields_round_trip_without_fake_url(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "wechat.db")
+    service = SourceService(repository, HeatService())
+    now = datetime.now(timezone.utc)
+    page = ManualImportAdapter.from_manual(
+        platform=Platform.WECHAT_CHANNELS,
+        platform_item_id="",
+        title="视频号数字人口播",
+        author_name="测试企业",
+        published_at=now,
+        source_url=None,
+        sampled_at=now,
+        feed_id="feed-1",
+        finder_user_name="finder-user",
+    )
+
+    assert not page.errors
+    service.import_page(page)
+    candidate = repository.list_candidates()[0]
+    assert candidate.platform == Platform.WECHAT_CHANNELS
+    assert candidate.source_url is None
+    assert candidate.feed_id == "feed-1"
+    assert candidate.finder_user_name == "finder-user"
 
 
 def test_sqlite_review_round_trip(tmp_path) -> None:

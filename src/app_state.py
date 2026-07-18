@@ -7,10 +7,12 @@ from typing import Any
 
 import streamlit as st
 
+from src.contracts import LicensedSearchProvider
 from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.repositories import MockRepository, SQLiteRepository
 from src.services import (
     CandidateService,
+    CommercialSearchService,
     HeatService,
     KeywordDiscoveryService,
     KeywordTrendService,
@@ -46,6 +48,8 @@ def initialize_state(state: MutableMapping[str, Any] | None = None) -> None:
     target.setdefault("last_discovery_result", None)
     target.setdefault("candidate_local_query", "")
     target.setdefault("active_trend_keyword", "")
+    target.setdefault("active_trend_platform", "douyin")
+    target.setdefault("active_search_batch_id", None)
     if REPOSITORY_KEY not in target:
         target[REPOSITORY_KEY] = (
             MockRepository() if state is not None else _default_repository()
@@ -72,6 +76,19 @@ def get_keyword_discovery_service() -> KeywordDiscoveryService:
 def get_keyword_trend_service() -> KeywordTrendService:
     initialize_state()
     return KeywordTrendService(st.session_state[REPOSITORY_KEY])
+
+
+def get_commercial_search_service(
+    provider: LicensedSearchProvider,
+) -> CommercialSearchService:
+    source_service = get_source_service()
+    repository = source_service.repository
+    return CommercialSearchService(
+        repository,
+        source_service,
+        KeywordTrendService(repository),
+        provider,
+    )
 
 
 def get_repository():

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
+    Platform,
+    PlatformSearchRun,
     RelevanceReview,
     SamplingCheckpoint,
+    SearchBatch,
     SyncReport,
     TaskRecord,
     TranscriptRevision,
@@ -37,10 +40,13 @@ class MockRepository:
         self._sync_reports: dict[str, SyncReport] = {}
         self._discovery_results: dict[str, DiscoveryResult] = {}
         self._candidate_matches: dict[tuple[str, str], CandidateMatch] = {}
-        self._keyword_trends: dict[str, list[KeywordTrendResult]] = {}
+        self._keyword_trends: dict[tuple[str, Platform], list[KeywordTrendResult]] = {}
         self._transcript_revisions: dict[str, TranscriptRevision] = {}
         self._sampling_checkpoints: dict[str, SamplingCheckpoint] = {}
         self._discovery_request_guards: dict[str, tuple[str, datetime]] = {}
+        self._search_batches: dict[str, SearchBatch] = {}
+        self._platform_search_runs: dict[str, PlatformSearchRun] = {}
+        self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
@@ -117,26 +123,41 @@ class MockRepository:
             if stored_request_id == request_id
         ]
 
-    def list_keyword_matches(self, keyword: str, since) -> list[CandidateMatch]:
+    def list_keyword_matches(
+        self,
+        keyword: str,
+        since,
+        platform: Platform = Platform.DOUYIN,
+        provider_name: str | None = None,
+    ) -> list[CandidateMatch]:
         normalized = keyword.casefold()
         return [
             match
             for match in self._candidate_matches.values()
-            if match.keyword.casefold() == normalized and match.observed_at >= since
+            if match.keyword.casefold() == normalized
+            and match.observed_at >= since
+            and match.platform == platform
+            and (provider_name is None or match.provider_name == provider_name)
         ]
 
     def save_keyword_trend_results(self, results: list[KeywordTrendResult]) -> None:
         if results:
-            self._keyword_trends[results[0].keyword.casefold()] = list(results)
+            key = (results[0].keyword.casefold(), results[0].platform)
+            self._keyword_trends[key] = list(results)
 
-    def clear_keyword_trend_results(self, keyword: str) -> None:
-        self._keyword_trends.pop(keyword.casefold(), None)
+    def clear_keyword_trend_results(
+        self, keyword: str, platform: Platform = Platform.DOUYIN
+    ) -> None:
+        self._keyword_trends.pop((keyword.casefold(), platform), None)
 
     def list_keyword_trend_results(
-        self, keyword: str, limit: int = 10
+        self,
+        keyword: str,
+        limit: int = 10,
+        platform: Platform = Platform.DOUYIN,
     ) -> list[KeywordTrendResult]:
         return sorted(
-            self._keyword_trends.get(keyword.casefold(), []),
+            self._keyword_trends.get((keyword.casefold(), platform), []),
             key=lambda item: (-item.score, item.platform_rank),
         )[:limit]
 
@@ -179,3 +200,97 @@ class MockRepository:
                 item for item in items if item.keyword.casefold() == keyword.casefold()
             )
         return sorted(items, key=lambda item: item.due_at)
+
+    def save_search_batch(self, batch: SearchBatch) -> None:
+        self._search_batches[batch.batch_id] = batch
+
+    def get_search_batch(self, batch_id: str) -> SearchBatch | None:
+        return self._search_batches.get(batch_id)
+
+    def list_search_batches(self, limit: int = 20) -> list[SearchBatch]:
+        return sorted(
+            self._search_batches.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
+
+    def save_platform_search_run(self, run: PlatformSearchRun) -> None:
+        self._platform_search_runs[run.run_id] = run
+
+    def list_platform_search_runs(self, batch_id: str) -> list[PlatformSearchRun]:
+        return sorted(
+            (
+                run
+                for run in self._platform_search_runs.values()
+                if run.batch_id == batch_id
+            ),
+            key=lambda item: (item.started_at, item.platform.value),
+        )
+
+    def find_cached_platform_search_run(
+        self,
+        *,
+        provider: str,
+        platform: Platform,
+        keyword: str,
+        published_window_days: int,
+        requested_count: int,
+        since: datetime,
+    ) -> PlatformSearchRun | None:
+        candidates: list[PlatformSearchRun] = []
+        for run in self._platform_search_runs.values():
+            batch = self._search_batches.get(run.batch_id)
+            if (
+                batch
+                and run.provider == provider
+                and run.platform == platform
+                and run.status.value == "succeeded"
+                and run.finished_at is not None
+                and run.finished_at >= since
+                and batch.keyword.casefold() == keyword.casefold()
+                and batch.published_window_days == published_window_days
+                and batch.requested_count_per_platform == requested_count
+            ):
+                candidates.append(run)
+        return max(candidates, key=lambda item: item.finished_at or since, default=None)
+
+    def monthly_platform_query_count(self, since: datetime) -> int:
+        return sum(
+            run.api_call_count
+            for run in self._platform_search_runs.values()
+            if run.started_at >= since
+        )
+
+    def claim_platform_search_request(
+        self,
+        fingerprint: str,
+        run_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        previous = self._provider_request_guards.get(fingerprint)
+        if previous:
+            if previous[2] == "outcome_unknown":
+                return False
+            if claimed_at - previous[1] < timedelta(seconds=ttl_seconds):
+                return False
+        self._provider_request_guards[fingerprint] = (run_id, claimed_at, "claimed")
+        return True
+
+    def mark_platform_search_request(
+        self, fingerprint: str, status: str, updated_at: datetime
+    ) -> None:
+        previous = self._provider_request_guards.get(fingerprint)
+        if previous:
+            self._provider_request_guards[fingerprint] = (
+                previous[0],
+                updated_at,
+                status,
+            )
+
+    def has_unresolved_platform_search_request(self, fingerprint: str) -> bool:
+        guard = self._provider_request_guards.get(fingerprint)
+        return bool(guard and guard[2] == "outcome_unknown")
+
+    def resolve_platform_search_request(self, fingerprint: str) -> None:
+        self._provider_request_guards.pop(fingerprint, None)

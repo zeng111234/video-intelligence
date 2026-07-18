@@ -7,8 +7,14 @@ from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
+    PlatformSearchRun,
+    Platform,
+    ProviderCapability,
+    ProviderSearchPage,
+    ProviderUsage,
     RelevanceReview,
     SamplingCheckpoint,
+    SearchBatch,
     SourcePage,
     SourceCapability,
     SourceRequest,
@@ -24,6 +30,28 @@ class CrawlerAdapter(Protocol):
     def capabilities(self) -> SourceCapability: ...
 
     def sync(self, request: SourceRequest) -> SourcePage: ...
+
+
+class LicensedSearchProvider(Protocol):
+    def capabilities(self) -> ProviderCapability: ...
+
+    def search(
+        self,
+        platform: Platform,
+        keyword: str,
+        published_after: datetime,
+        limit: int,
+        idempotency_key: str,
+    ) -> ProviderSearchPage: ...
+
+    def refresh_metrics(
+        self,
+        platform: Platform,
+        platform_item_ids: list[str],
+        idempotency_key: str,
+    ) -> ProviderSearchPage: ...
+
+    def usage(self) -> ProviderUsage | None: ...
 
 
 class CandidateRepository(Protocol):
@@ -64,15 +92,24 @@ class CandidateRepository(Protocol):
     def list_candidate_matches(self, request_id: str) -> list[CandidateMatch]: ...
 
     def list_keyword_matches(
-        self, keyword: str, since: datetime
+        self,
+        keyword: str,
+        since: datetime,
+        platform: Platform = Platform.DOUYIN,
+        provider_name: str | None = None,
     ) -> list[CandidateMatch]: ...
 
     def save_keyword_trend_results(self, results: list[KeywordTrendResult]) -> None: ...
 
-    def clear_keyword_trend_results(self, keyword: str) -> None: ...
+    def clear_keyword_trend_results(
+        self, keyword: str, platform: Platform = Platform.DOUYIN
+    ) -> None: ...
 
     def list_keyword_trend_results(
-        self, keyword: str, limit: int = 10
+        self,
+        keyword: str,
+        limit: int = 10,
+        platform: Platform = Platform.DOUYIN,
     ) -> list[KeywordTrendResult]: ...
 
     def save_sampling_checkpoint(self, checkpoint: SamplingCheckpoint) -> None: ...
@@ -80,6 +117,45 @@ class CandidateRepository(Protocol):
     def list_sampling_checkpoints(
         self, keyword: str | None = None
     ) -> list[SamplingCheckpoint]: ...
+
+    def save_search_batch(self, batch: SearchBatch) -> None: ...
+
+    def get_search_batch(self, batch_id: str) -> SearchBatch | None: ...
+
+    def list_search_batches(self, limit: int = 20) -> list[SearchBatch]: ...
+
+    def save_platform_search_run(self, run: PlatformSearchRun) -> None: ...
+
+    def list_platform_search_runs(self, batch_id: str) -> list[PlatformSearchRun]: ...
+
+    def find_cached_platform_search_run(
+        self,
+        *,
+        provider: str,
+        platform: Platform,
+        keyword: str,
+        published_window_days: int,
+        requested_count: int,
+        since: datetime,
+    ) -> PlatformSearchRun | None: ...
+
+    def monthly_platform_query_count(self, since: datetime) -> int: ...
+
+    def claim_platform_search_request(
+        self,
+        fingerprint: str,
+        run_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool: ...
+
+    def mark_platform_search_request(
+        self, fingerprint: str, status: str, updated_at: datetime
+    ) -> None: ...
+
+    def has_unresolved_platform_search_request(self, fingerprint: str) -> bool: ...
+
+    def resolve_platform_search_request(self, fingerprint: str) -> None: ...
 
 
 class TaskRepository(Protocol):

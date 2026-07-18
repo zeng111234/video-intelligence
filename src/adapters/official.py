@@ -125,6 +125,8 @@ class DouyinKeywordAdapter:
             )
         if len(request.keywords) != 1 or not request.keywords[0].strip():
             raise ValueError("抖音视频垂搜每次请求必须包含一个关键词。")
+        if request.platform != Platform.DOUYIN:
+            raise ValueError("抖音官方适配器只能处理抖音平台请求。")
 
         keyword = request.keywords[0].strip()
         query: dict[str, str | int] = {
