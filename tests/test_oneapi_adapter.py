@@ -340,9 +340,10 @@ def test_oneapi_page_stays_disabled_until_key_is_configured(
     monkeypatch.setenv("VIDEO_LICENSED_PROVIDER_MODE", "oneapi")
     monkeypatch.delenv("ONEAPI_API_KEY", raising=False)
 
-    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(
-        timeout=15
-    )
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "oneapi"
+    app.secrets["ONEAPI_API_KEY"] = ""
+    app.run(timeout=15)
 
     assert not app.exception
     discover = next(
@@ -351,3 +352,9 @@ def test_oneapi_page_stays_disabled_until_key_is_configured(
     assert discover.disabled is True
     assert any("不会发起平台请求" in item.value for item in app.error)
     assert any("OneAPI API Key" in item.value for item in app.caption)
+
+
+def test_paid_search_form_disables_enter_to_submit() -> None:
+    source = (ROOT / "app_pages" / "candidates.py").read_text(encoding="utf-8")
+
+    assert 'st.form("three_platform_search", enter_to_submit=False)' in source

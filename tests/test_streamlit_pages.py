@@ -108,7 +108,9 @@ def test_pages_render_without_exceptions(path: Path, expected_title: str) -> Non
 
 
 def test_candidate_page_shows_three_platform_entry_and_platform_history() -> None:
-    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "sandbox"
+    app.run(timeout=15)
 
     assert not app.exception
     candidate_frame = next(
@@ -135,7 +137,9 @@ def test_candidate_page_shows_three_platform_entry_and_platform_history() -> Non
 
 
 def test_three_platform_search_defaults_to_sandbox_ten_and_seven_days() -> None:
-    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "sandbox"
+    app.run(timeout=15)
 
     assert not app.exception
     assert any(item.label == "关键词" for item in app.text_input)
@@ -153,7 +157,9 @@ def test_three_platform_search_defaults_to_sandbox_ten_and_seven_days() -> None:
 
 
 def test_three_platform_search_requires_chinese_confirmation() -> None:
-    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "sandbox"
+    app.run(timeout=15)
     keyword = next(item for item in app.text_input if item.label == "关键词")
     discover = next(
         button for button in app.button if button.label == "三平台一键查爆款（演示）"
@@ -207,7 +213,10 @@ def test_sandbox_search_renders_three_independent_top_ten() -> None:
 def test_production_mode_stays_disabled_without_approved_adapter(monkeypatch) -> None:
     monkeypatch.setenv("VIDEO_LICENSED_PROVIDER_MODE", "production")
     monkeypatch.setenv("VIDEO_LICENSED_PROVIDER_NAME", "newrank_pending")
-    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
+    app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "production"
+    app.secrets["VIDEO_LICENSED_PROVIDER_NAME"] = "newrank_pending"
+    app.run(timeout=15)
 
     discover = next(
         button for button in app.button if button.label == "三平台一键查爆款"

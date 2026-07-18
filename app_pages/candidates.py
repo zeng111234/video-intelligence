@@ -158,7 +158,7 @@ with st.container(border=True):
             icon=":material/experiment:",
         )
 
-    with st.form("three_platform_search"):
+    with st.form("three_platform_search", enter_to_submit=False):
         with st.container(horizontal=True, vertical_alignment="bottom"):
             keyword = st.text_input(
                 "关键词",
