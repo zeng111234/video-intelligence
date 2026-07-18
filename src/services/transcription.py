@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from time import monotonic
+from typing import Callable
 from uuid import uuid4
 
 from src.contracts import TaskRepository
@@ -26,8 +27,31 @@ MAX_DURATION_SECONDS = 15 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4a", ".mp3", ".wav"}
 
 
-class MediaValidationError(ValueError):
-    pass
+class TranscriptionError(RuntimeError):
+    """A user-safe transcription error that never exposes internal details."""
+
+    def __init__(
+        self,
+        user_message: str,
+        *,
+        code: str = "transcription_failed",
+        task_id: str | None = None,
+    ) -> None:
+        super().__init__(user_message)
+        self.code = code
+        self.user_message = user_message
+        self.task_id = task_id
+
+
+class MediaValidationError(TranscriptionError):
+    def __init__(
+        self,
+        user_message: str,
+        *,
+        code: str = "invalid_media",
+        task_id: str | None = None,
+    ) -> None:
+        super().__init__(user_message, code=code, task_id=task_id)
 
 
 def _has_valid_signature(extension: str, content: bytes) -> bool:
@@ -66,11 +90,17 @@ class TranscriptionService:
         rights_holder: str,
         candidate_id: str | None = None,
         model_name: str = "base",
+        on_progress: Callable[[TranscriptionTask], None] | None = None,
     ) -> TranscriptionTask:
         if not rights_confirmed:
-            raise ValueError("必须确认拥有媒体处理权后才能创建转写任务。")
+            raise TranscriptionError(
+                "必须确认拥有媒体处理权后才能创建转写任务。",
+                code="rights_not_confirmed",
+            )
         if not rights_holder.strip():
-            raise ValueError("请填写媒体权利主体。")
+            raise TranscriptionError(
+                "请填写媒体权利主体。", code="rights_holder_required"
+            )
         self._validate_upload(media_name, media_bytes)
         now = datetime.now().astimezone()
         task = TranscriptionTask(
@@ -91,7 +121,14 @@ class TranscriptionService:
             model_name=model_name,
             is_mock=False,
         )
-        self.repository.save_task(task)
+        try:
+            self._save_task(task, on_progress)
+        except Exception as exc:
+            raise TranscriptionError(
+                "任务记录无法保存，请稍后重新上传。",
+                code="task_save_failed",
+                task_id=task.task_id,
+            ) from exc
         started = monotonic()
         extension = Path(media_name).suffix.casefold()
         try:
@@ -100,11 +137,20 @@ class TranscriptionService:
                 wav_path = Path(temp) / "audio.wav"
                 input_path.write_bytes(media_bytes)
                 duration = self._probe(input_path)
-                if duration > MAX_DURATION_SECONDS:
-                    raise MediaValidationError("媒体时长不能超过15分钟。")
-                task = self._update_task(task, stage="音频提取", progress=25)
+                task = self._update_task(
+                    task,
+                    stage="音频提取",
+                    progress=25,
+                    duration_seconds=duration,
+                    on_progress=on_progress,
+                )
                 self._extract_audio(input_path, wav_path)
-                task = self._update_task(task, stage="语音识别", progress=50)
+                task = self._update_task(
+                    task,
+                    stage="语音识别",
+                    progress=50,
+                    on_progress=on_progress,
+                )
                 segments, language = self._transcribe(wav_path, model_name)
                 self._validate_segments(segments)
             task = task.model_copy(
@@ -118,21 +164,31 @@ class TranscriptionService:
                     "language": language,
                 }
             )
-            self.repository.save_task(task)
+            self._save_task(task, on_progress)
             self.save_revision(task.task_id, segments, reviewer=rights_holder)
             return task
         except Exception as exc:
+            safe_error = self._safe_error(exc, task.task_id)
             failed = task.model_copy(
                 update={
                     "status": TaskStatus.FAILED,
                     "stage": "处理失败",
                     "updated_at": datetime.now().astimezone(),
                     "elapsed_seconds": round(monotonic() - started, 2),
-                    "error_message": str(exc),
+                    "error_message": safe_error.user_message,
                 }
             )
-            self.repository.save_task(failed)
-            raise
+            try:
+                self._save_task(failed, on_progress)
+            except Exception as save_exc:
+                raise TranscriptionError(
+                    "处理失败，且任务状态无法保存；请稍后重新上传。",
+                    code="failed_task_save_failed",
+                    task_id=task.task_id,
+                ) from save_exc
+            if safe_error is exc:
+                raise safe_error
+            raise safe_error from exc
 
     @staticmethod
     def _validate_upload(media_name: str, content: bytes) -> None:
@@ -165,15 +221,23 @@ class TranscriptionService:
         )
         if result.returncode != 0:
             raise MediaValidationError("媒体文件无法解析或已经损坏。")
-        payload = json.loads(result.stdout or "{}")
+        try:
+            payload = json.loads(result.stdout or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise MediaValidationError("媒体文件无法解析或已经损坏。") from exc
         if not any(
             stream.get("codec_type") == "audio" for stream in payload.get("streams", [])
         ):
             raise MediaValidationError("媒体中没有可识别的音轨。")
         try:
-            return float(payload.get("format", {}).get("duration", 0))
+            duration = float(payload.get("format", {}).get("duration", 0))
         except (TypeError, ValueError) as exc:
             raise MediaValidationError("无法读取媒体时长。") from exc
+        if not math.isfinite(duration) or duration <= 0:
+            raise MediaValidationError("媒体时长无效，请检查文件后重新上传。")
+        if duration > MAX_DURATION_SECONDS:
+            raise MediaValidationError("媒体时长不能超过15分钟。")
+        return duration
 
     def _extract_audio(self, input_path: Path, wav_path: Path) -> None:
         result = self.command_runner(
@@ -213,12 +277,19 @@ class TranscriptionService:
             except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
                 last_error = exc
         if model is None:
-            raise RuntimeError(
-                f"识别模型加载失败，已自动重试一次：{last_error}"
+            raise TranscriptionError(
+                "识别模型加载失败，已自动重试一次；请稍后重新上传。",
+                code="model_unavailable",
             ) from last_error
-        raw_segments, info = model.transcribe(
-            str(wav_path), language="zh", vad_filter=True, beam_size=5
-        )
+        try:
+            raw_segments, info = model.transcribe(
+                str(wav_path), language="zh", vad_filter=True, beam_size=5
+            )
+        except Exception as exc:
+            raise TranscriptionError(
+                "语音识别失败，请检查音轨后重新上传。",
+                code="asr_failed",
+            ) from exc
         segments = []
         for item in raw_segments:
             text = str(item.text).strip()
@@ -239,26 +310,64 @@ class TranscriptionService:
         return segments, str(getattr(info, "language", "zh"))
 
     def _update_task(
-        self, task: TranscriptionTask, *, stage: str, progress: int
+        self,
+        task: TranscriptionTask,
+        *,
+        stage: str,
+        progress: int,
+        duration_seconds: float | None = None,
+        on_progress: Callable[[TranscriptionTask], None] | None = None,
     ) -> TranscriptionTask:
-        updated = task.model_copy(
-            update={
-                "stage": stage,
-                "progress": progress,
-                "updated_at": datetime.now().astimezone(),
-            }
-        )
-        self.repository.save_task(updated)
+        update = {
+            "stage": stage,
+            "progress": progress,
+            "updated_at": datetime.now().astimezone(),
+        }
+        if duration_seconds is not None:
+            update["duration_seconds"] = duration_seconds
+        updated = task.model_copy(update=update)
+        self._save_task(updated, on_progress)
         return updated
+
+    def _save_task(
+        self,
+        task: TranscriptionTask,
+        on_progress: Callable[[TranscriptionTask], None] | None,
+    ) -> None:
+        self.repository.save_task(task)
+        if on_progress is not None:
+            try:
+                on_progress(task)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _safe_error(exc: Exception, task_id: str) -> TranscriptionError:
+        if isinstance(exc, TranscriptionError):
+            exc.task_id = task_id
+            return exc
+        return TranscriptionError(
+            "本地转写处理失败，请重新上传后再试。",
+            code="processing_failed",
+            task_id=task_id,
+        )
 
     @staticmethod
     def _validate_segments(segments: list[TranscriptSegment]) -> None:
         if not segments:
-            raise ValueError("转写结果不能为空。")
+            raise TranscriptionError("转写结果不能为空。", code="empty_transcript")
         previous_end = 0.0
         for segment in segments:
+            if not math.isfinite(segment.start) or not math.isfinite(segment.end):
+                raise TranscriptionError(
+                    "片段时间无效，请刷新后重新校对。",
+                    code="invalid_segment_time",
+                )
             if segment.start < previous_end:
-                raise ValueError("转写片段时间发生重叠。")
+                raise TranscriptionError(
+                    "转写片段时间发生重叠，请刷新后重新校对。",
+                    code="overlapping_segments",
+                )
             previous_end = segment.end
 
     def save_revision(
@@ -271,8 +380,24 @@ class TranscriptionService:
     ) -> TranscriptRevision:
         task = self.repository.get_task(task_id)
         if not isinstance(task, TranscriptionTask) or task.is_mock:
-            raise ValueError("未找到可保存的真实转写任务。")
+            raise TranscriptionError(
+                "未找到可保存的真实转写任务。", code="task_not_found"
+            )
         self._validate_segments(segments)
+        reviewer = reviewer.strip()
+        if not reviewer:
+            raise TranscriptionError(
+                "请填写校对人后再保存。", code="reviewer_required", task_id=task_id
+            )
+        if approve and any(
+            (segment.confidence < 0.75 or segment.needs_review) and not segment.reviewed
+            for segment in segments
+        ):
+            raise TranscriptionError(
+                "仍有低置信度片段未标记“已复核”，暂不能确认成稿。",
+                code="review_required",
+                task_id=task_id,
+            )
         revisions = self.repository.list_transcript_revisions(task_id)
         now = datetime.now().astimezone()
         revision = TranscriptRevision(
@@ -282,14 +407,21 @@ class TranscriptionService:
             status=TranscriptStatus.APPROVED if approve else TranscriptStatus.DRAFT,
             created_at=now,
             updated_at=now,
-            reviewer=reviewer.strip() or "内容审核员",
+            reviewer=reviewer,
             language=task.language or "zh",
             model_name=task.model_name or "base",
             media_sha256=task.media_sha256 or "",
             original_segments=task.segments,
             corrected_segments=segments,
         )
-        self.repository.save_transcript_revision(revision)
+        try:
+            self.repository.save_transcript_revision(revision)
+        except ValueError as exc:
+            raise TranscriptionError(
+                "校对版本发生冲突，请刷新页面后基于最新版本继续校对。",
+                code="revision_conflict",
+                task_id=task_id,
+            ) from exc
         if approve:
             self.repository.save_task(
                 task.model_copy(
@@ -361,6 +493,19 @@ class TranscriptionService:
         )
         self.repository.save_task(updated)
         return updated
+
+    def get_approved_revision(self, task_id: str) -> TranscriptRevision | None:
+        task = self.repository.get_task(task_id)
+        if not isinstance(task, TranscriptionTask) or not task.approved_revision_id:
+            return None
+        revision = self.repository.get_transcript_revision(task.approved_revision_id)
+        if (
+            revision is None
+            or revision.task_id != task.task_id
+            or revision.status != TranscriptStatus.APPROVED
+        ):
+            return None
+        return revision
 
     def list_tasks(self):
         return self.repository.list_tasks()

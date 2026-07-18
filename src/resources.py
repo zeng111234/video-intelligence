@@ -18,11 +18,11 @@ def runtime_capabilities() -> dict[str, bool]:
 
 @st.cache_resource
 def load_asr_model(model_name: str = "base") -> Any:
-    """Reserved ASR resource, imported lazily so the framework starts without it."""
+    """Load the local ASR model lazily so normal page startup stays lightweight."""
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise RuntimeError(
-            "faster-whisper 尚未安装；当前转写模块仍运行在 Mock 模式。"
+            "faster-whisper 尚未安装，暂时无法执行真实本地转写。"
         ) from exc
     return WhisperModel(model_name, device="cpu", compute_type="int8")

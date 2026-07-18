@@ -173,6 +173,12 @@ class MockRepository:
         self._tasks[task.task_id] = task
 
     def save_transcript_revision(self, revision: TranscriptRevision) -> None:
+        if revision.revision_id in self._transcript_revisions or any(
+            item.task_id == revision.task_id
+            and item.revision_number == revision.revision_number
+            for item in self._transcript_revisions.values()
+        ):
+            raise ValueError("该校对版本号已经存在，请刷新页面后基于最新版本继续校对。")
         self._transcript_revisions[revision.revision_id] = revision
 
     def list_transcript_revisions(self, task_id: str) -> list[TranscriptRevision]:

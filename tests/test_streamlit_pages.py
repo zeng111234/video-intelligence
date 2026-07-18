@@ -20,7 +20,7 @@ def test_business_ui_hides_streamlit_developer_toolbar() -> None:
     [
         (ROOT / "app.py", "爆火视频检索"),
         (ROOT / "app_pages" / "candidates.py", "爆火视频检索"),
-        (ROOT / "app_pages" / "transcription.py", "音视频转文案"),
+        (ROOT / "app_pages" / "transcription.py", "音频转文字文案"),
         (ROOT / "app_pages" / "tasks.py", "任务记录"),
     ],
 )
@@ -35,10 +35,17 @@ def test_candidate_page_shows_three_platform_entry_and_platform_history() -> Non
     app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py")).run(timeout=15)
 
     assert not app.exception
-    rows = app.dataframe[0].value
+    candidate_frame = next(
+        frame
+        for frame in app.dataframe
+        if "平台" in frame.value.columns
+        and "标题" in frame.value.columns
+        and "selection_mode: SINGLE_ROW" in str(frame.proto)
+    )
+    rows = candidate_frame.value
     assert not rows.empty
     assert "平台" in rows.columns
-    assert "selection_mode: SINGLE_ROW" in str(app.dataframe[0].proto)
+    assert "selection_mode: SINGLE_ROW" in str(candidate_frame.proto)
     assert any(item.label == "历史平台" for item in app.multiselect)
     visible_text = " ".join(
         [item.value for item in app.markdown]
@@ -182,6 +189,60 @@ def test_transcription_page_shows_selected_candidate_platform() -> None:
 
     assert not app.exception
     assert any("小红书" in item.value for item in app.caption)
+    create = next(button for button in app.button if button.label == "开始转成文案")
+    assert create.disabled is True
+
+
+def test_transcription_pending_review_only_blocks_approval() -> None:
+    from datetime import datetime, timezone
+
+    from src.models import TaskStatus, TranscriptSegment, TranscriptionTask
+    from src.repositories import MockRepository
+
+    candidate = MockRepository().list_candidates()[0]
+    now = datetime.now(timezone.utc)
+    task = TranscriptionTask(
+        task_id="real-review-task",
+        title="owned.mp3",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="owned.mp3",
+        media_type="audio/mpeg",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        candidate_id=candidate.video_id,
+        segments=[
+            TranscriptSegment(
+                start=0,
+                end=1,
+                text="需要人工复核。",
+                confidence=0.5,
+                needs_review=True,
+                reviewed=False,
+            )
+        ],
+        stage="待校对",
+        media_sha256="a" * 64,
+        model_name="base",
+        language="zh",
+        duration_seconds=1,
+        is_mock=False,
+    )
+    repository = MockRepository(candidates=[candidate], tasks=[task])
+    app = AppTest.from_file(str(ROOT / "app_pages" / "transcription.py"))
+    app.session_state["_repository"] = repository
+    app.session_state["selected_candidate_id"] = candidate.video_id
+    app.session_state["active_transcription_task_id"] = task.task_id
+    app.run(timeout=15)
+
+    assert not app.exception
+    assert any("待复核 1" in item.value for item in app.caption)
+    save_draft = next(button for button in app.button if button.label == "保存校对草稿")
+    approve = next(button for button in app.button if button.label == "确认成稿")
+    assert save_draft.disabled is False
+    assert approve.disabled is True
 
 
 def test_candidate_page_focuses_on_hotspot_to_transcript_flow() -> None:
@@ -200,11 +261,10 @@ def test_transcription_creation_is_blocked_without_rights() -> None:
         timeout=15
     )
 
-    create_button = next(
-        button for button in app.button if button.label == "开始转成文案"
-    )
-    assert create_button.disabled is True
-    assert not any("Mock" in button.label for button in app.button)
+    assert not app.exception
+    assert any("尚未选择爆火候选" in item.value for item in app.warning)
+    assert not app.file_uploader
+    assert not any(button.label == "开始转成文案" for button in app.button)
 
 
 def test_task_page_shows_all_demo_statuses() -> None:

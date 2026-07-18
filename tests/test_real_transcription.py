@@ -6,9 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.models import TaskStatus, TranscriptSegment, TranscriptStatus
+from src.models import (
+    TaskStatus,
+    TranscriptRevision,
+    TranscriptSegment,
+    TranscriptStatus,
+)
 from src.repositories import MockRepository, SQLiteRepository
-from src.services.transcription import MediaValidationError, TranscriptionService
+from src.services.transcription import (
+    MediaValidationError,
+    TranscriptionError,
+    TranscriptionService,
+)
 
 
 class FakeModel:
@@ -58,6 +67,7 @@ def test_uploaded_media_is_processed_and_temp_files_are_removed() -> None:
         command_runner=fake_media_runner(seen_paths),
     )
 
+    progress_updates = []
     task = service.create_task(
         media_name="owned.mp3",
         media_type="audio/mpeg",
@@ -65,16 +75,54 @@ def test_uploaded_media_is_processed_and_temp_files_are_removed() -> None:
         rights_confirmed=True,
         rights_holder="测试公司",
         candidate_id="douyin-1",
+        on_progress=progress_updates.append,
     )
 
     assert task.status == TaskStatus.SUCCEEDED
     assert task.is_mock is False
     assert task.segments[0].text == "这是当前上传媒体的内容。"
     assert task.media_sha256
+    assert task.duration_seconds == 8.5
+    assert [update.stage for update in progress_updates] == [
+        "文件检查",
+        "音频提取",
+        "语音识别",
+        "待校对",
+    ]
     revisions = repository.list_transcript_revisions(task.task_id)
     assert len(revisions) == 1
     assert revisions[0].status == TranscriptStatus.DRAFT
     assert all(not path.exists() for path in seen_paths)
+
+
+def test_progress_callback_failure_does_not_change_task_lifecycle() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    callback_attempts = 0
+
+    def failing_callback(_task) -> None:
+        nonlocal callback_attempts
+        callback_attempts += 1
+        raise RuntimeError("UI observer failed")
+
+    service = TranscriptionService(
+        repository,
+        model_loader=lambda _name: FakeModel(),
+        command_runner=fake_media_runner([]),
+    )
+    task = service.create_task(
+        media_name="owned.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"ID3authorized-media",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        on_progress=failing_callback,
+    )
+
+    saved = repository.get_task(task.task_id)
+    assert task.status == TaskStatus.SUCCEEDED
+    assert saved is not None
+    assert saved.status == TaskStatus.SUCCEEDED
+    assert callback_attempts == 4
 
 
 def test_correction_approval_persists_after_sqlite_restart(tmp_path: Path) -> None:
@@ -166,3 +214,165 @@ def test_model_loading_retries_once_then_reports_failure() -> None:
             rights_holder="测试公司",
         )
     assert attempts == 2
+
+
+@pytest.mark.parametrize("duration", ["0", "-1", "NaN", "Infinity", "901"])
+def test_invalid_or_excessive_duration_is_rejected(duration: str) -> None:
+    def invalid_duration(args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "streams": [{"codec_type": "audio"}],
+                    "format": {"duration": duration},
+                }
+            ),
+        )
+
+    service = TranscriptionService(
+        MockRepository(candidates=[], tasks=[]), command_runner=invalid_duration
+    )
+    with pytest.raises(MediaValidationError):
+        service.create_task(
+            media_name="owned.mp3",
+            media_type="audio/mpeg",
+            media_bytes=b"ID3authorized-media",
+            rights_confirmed=True,
+            rights_holder="测试公司",
+        )
+
+
+def test_failure_callback_and_error_are_user_safe() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    updates = []
+
+    class BrokenModel(FakeModel):
+        def transcribe(self, path: str, **options):
+            raise RuntimeError(f"secret path: {path}")
+
+    service = TranscriptionService(
+        repository,
+        model_loader=lambda _name: BrokenModel(),
+        command_runner=fake_media_runner([]),
+    )
+    with pytest.raises(TranscriptionError) as caught:
+        service.create_task(
+            media_name="owned.mp3",
+            media_type="audio/mpeg",
+            media_bytes=b"ID3authorized-media",
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            on_progress=updates.append,
+        )
+
+    assert caught.value.code == "asr_failed"
+    assert caught.value.task_id == updates[0].task_id
+    assert "secret path" not in caught.value.user_message
+    assert updates[-1].status == TaskStatus.FAILED
+    assert updates[-1].error_message == caught.value.user_message
+
+
+def test_low_confidence_segments_require_explicit_review_before_new_approval() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    service = TranscriptionService(
+        repository,
+        model_loader=lambda _name: FakeModel(),
+        command_runner=fake_media_runner([]),
+    )
+    task = service.create_task(
+        media_name="owned.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"ID3authorized-media",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    low_confidence = [
+        TranscriptSegment(
+            start=0,
+            end=1,
+            text="需要人工复核。",
+            confidence=0.5,
+            needs_review=False,
+        )
+    ]
+
+    draft = service.save_revision(
+        task.task_id, low_confidence, reviewer="校对员", approve=False
+    )
+    assert draft.status == TranscriptStatus.DRAFT
+    with pytest.raises(TranscriptionError) as caught:
+        service.save_revision(
+            task.task_id, low_confidence, reviewer="校对员", approve=True
+        )
+    assert caught.value.code == "review_required"
+
+    approved = service.save_revision(
+        task.task_id,
+        [low_confidence[0].model_copy(update={"reviewed": True})],
+        reviewer="校对员",
+        approve=True,
+    )
+    assert approved.status == TranscriptStatus.APPROVED
+    assert approved.corrected_segments[0].reviewed is True
+
+
+def test_export_revision_lookup_strictly_follows_task_pointer() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    service = TranscriptionService(
+        repository,
+        model_loader=lambda _name: FakeModel(),
+        command_runner=fake_media_runner([]),
+    )
+    task = service.create_task(
+        media_name="owned.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"ID3authorized-media",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    draft = repository.list_transcript_revisions(task.task_id)[0]
+    approved = TranscriptRevision(
+        **draft.model_dump(
+            exclude={"revision_id", "revision_number", "status", "reviewer"}
+        ),
+        revision_id="approved-but-not-selected",
+        revision_number=2,
+        status=TranscriptStatus.APPROVED,
+        reviewer="历史校对员",
+    )
+    repository.save_transcript_revision(approved)
+
+    assert service.get_approved_revision(task.task_id) is None
+    repository.save_task(
+        task.model_copy(update={"approved_revision_id": approved.revision_id})
+    )
+    assert service.get_approved_revision(task.task_id) == approved
+
+
+def test_sqlite_revision_insert_rejects_version_overwrite(tmp_path: Path) -> None:
+    repository = SQLiteRepository(tmp_path / "append-only.sqlite3")
+    task = TranscriptionService(
+        repository,
+        model_loader=lambda _name: FakeModel(),
+        command_runner=fake_media_runner([]),
+    ).create_task(
+        media_name="owned.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"ID3authorized-media",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    original = repository.list_transcript_revisions(task.task_id)[0]
+    conflicting = TranscriptRevision(
+        **original.model_dump(exclude={"revision_id", "corrected_segments"}),
+        revision_id="different-id",
+        corrected_segments=[
+            original.corrected_segments[0].model_copy(update={"text": "覆盖内容"})
+        ],
+    )
+
+    with pytest.raises(ValueError, match="版本号已经存在"):
+        repository.save_transcript_revision(conflicting)
+    saved = repository.get_transcript_revision(original.revision_id)
+    assert saved is not None
+    assert saved.corrected_segments[0].text != "覆盖内容"

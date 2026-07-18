@@ -975,21 +975,26 @@ class SQLiteRepository:
             )
 
     def save_transcript_revision(self, revision: TranscriptRevision) -> None:
-        with self.connection:
-            self.connection.execute(
-                """
-                INSERT OR REPLACE INTO transcript_revisions(
-                    revision_id, task_id, revision_number, updated_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    revision.revision_id,
-                    revision.task_id,
-                    revision.revision_number,
-                    revision.updated_at.isoformat(),
-                    revision.model_dump_json(),
-                ),
-            )
+        try:
+            with self.connection:
+                self.connection.execute(
+                    """
+                    INSERT INTO transcript_revisions(
+                        revision_id, task_id, revision_number, updated_at, payload_json
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        revision.revision_id,
+                        revision.task_id,
+                        revision.revision_number,
+                        revision.updated_at.isoformat(),
+                        revision.model_dump_json(),
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                "该校对版本号已经存在，请刷新页面后基于最新版本继续校对。"
+            ) from exc
 
     def list_transcript_revisions(self, task_id: str) -> list[TranscriptRevision]:
         rows = self.connection.execute(

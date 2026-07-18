@@ -1,6 +1,6 @@
 # 短视频热点洞察与智能生产系统
 
-面向品牌营销团队的短视频热点发现、候选管理与授权音视频转写 MVP。
+面向品牌营销团队的短视频热点发现、候选管理与授权音频转文案 MVP。
 
 ## 当前阶段
 
@@ -9,7 +9,7 @@
 - 手工链接、CSV/Excel 导入与统一候选字段
 - 热度计算、快照与排序
 - 抖音、小红书、微信视频号三平台批次、缓存、配额和独立 Top 10
-- 用户上传有权处理的媒体
+- 先选择爆火候选，再上传有权处理的音频（兼容视频文件）
 - FFmpeg 音频提取与 faster-whisper 转写
 - 校对版本持久化，以及确认成稿后导出 TXT、JSON、SRT
 - Streamlit 三页 Web MVP
@@ -67,6 +67,8 @@ DOUYIN_OFFICIAL_VERIFIED = "false"
 
 CSV/XLSX 和手工入口支持 `douyin`、`xiaohongshu`、`wechat_channels`（也接受中文平台名）。抖音/小红书必须提供匹配平台常见域名的公开 URL；视频号可提供公开 URL，或同时提供 `feed_id` 与 `finder_user_name`。缺失互动指标保持空值，不伪造为 0。
 
-转文案只接受用户主动上传且确认有权处理的 MP4、MOV、M4A、MP3、WAV，单文件不超过 50MB、15 分钟。系统用 FFmpeg 在随机临时目录提取 16kHz 单声道音频，再用本机 `faster-whisper base/int8` 识别；原媒体与临时音频在成功或失败后均清理。转写结果先保存为待校对版本，只有“确认成稿”的版本才能导出。
+“音频转文案”必须先关联一个爆火候选。输入优先支持 MP3、M4A、WAV，并兼容用户主动上传且确认有权处理的 MP4、MOV；单文件不超过 50MB、15 分钟。系统先用 FFprobe 验证有限且大于 0 的时长，再由 FFmpeg 在随机临时目录提取 16kHz 单声道音频，最后用本机 `faster-whisper base/int8` 识别；原媒体与临时音频在成功或失败后均清理，不会从候选来源下载媒体。
 
-开发检查使用 `python -m pip install -r requirements-dev.txt` 和 `python -m pytest`。当前商业 API 网关增量验证为 67 项测试通过。
+页面同步显示文件检查、音频提取和语音识别的真实阶段，不提供后台任务或预计完成时间。识别结果以追加版本保存；低于 0.75 的片段在新确认成稿时必须人工勾选“已复核”，草稿可随时保存。下载严格使用任务 `approved_revision_id` 指向的成稿，支持 TXT、JSON、SRT；历史已批准版本保持可导出。
+
+开发检查使用 `python -m pip install -r requirements-dev.txt`、`python -m ruff check .`、`python -m ruff format --check .` 和 `python -m pytest`。

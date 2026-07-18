@@ -478,6 +478,7 @@ class TranscriptSegment(BaseModel):
     text: str = Field(min_length=1)
     confidence: float = Field(ge=0, le=1)
     needs_review: bool = False
+    reviewed: bool = False
 
     @model_validator(mode="after")
     def validate_time_range(self):
@@ -544,4 +545,5 @@ class TranscriptionTask(TaskRecord):
     media_sha256: str | None = None
     model_name: str | None = None
     language: str | None = None
+    duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
     approved_revision_id: str | None = None

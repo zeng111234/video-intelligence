@@ -20,7 +20,7 @@ pages = [
     ),
     st.Page(
         "app_pages/transcription.py",
-        title="音视频转文案",
+        title="音频转文案",
         icon=":material/transcribe:",
     ),
     st.Page(
