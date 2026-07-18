@@ -544,6 +544,7 @@ class TranscriptionTask(TaskRecord):
     stage: str = "等待处理"
     media_sha256: str | None = None
     model_name: str | None = None
+    asr_hotwords: str | None = None
     language: str | None = None
     duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
     approved_revision_id: str | None = None

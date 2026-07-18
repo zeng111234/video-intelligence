@@ -412,7 +412,8 @@ if selected:
         if selected.source_url:
             st.link_button("查看平台来源", str(selected.source_url))
         st.warning(
-            "系统不会自动下载平台视频。请仅上传自有或已取得处理授权的媒体。",
+            "第一页接口未就绪时也可直接进入下一页体验。系统只接受授权上传，"
+            "或直接返回 MP4/MOV 的 HTTPS 视频直链；不下载平台分享页，只提取视频音轨。",
             icon=":material/gavel:",
         )
         if st.button(

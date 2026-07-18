@@ -20,7 +20,7 @@ def test_business_ui_hides_streamlit_developer_toolbar() -> None:
     [
         (ROOT / "app.py", "爆火视频检索"),
         (ROOT / "app_pages" / "candidates.py", "爆火视频检索"),
-        (ROOT / "app_pages" / "transcription.py", "音频转文字文案"),
+        (ROOT / "app_pages" / "transcription.py", "爆火视频音轨转文案"),
         (ROOT / "app_pages" / "tasks.py", "任务记录"),
     ],
 )
@@ -189,8 +189,16 @@ def test_transcription_page_shows_selected_candidate_platform() -> None:
 
     assert not app.exception
     assert any("小红书" in item.value for item in app.caption)
-    create = next(button for button in app.button if button.label == "开始转成文案")
+    assert app.file_uploader[0].label == "上传授权视频"
+    create = next(
+        button for button in app.button if button.label == "提取音轨并转成文案"
+    )
     assert create.disabled is True
+    quality_mode = next(
+        item for item in app.segmented_control if item.label == "转写模式"
+    )
+    assert quality_mode.value == "准确率优先"
+    assert not any(item.label == "专有词提示（可选）" for item in app.text_area)
 
 
 def test_transcription_pending_review_only_blocks_approval() -> None:
@@ -203,13 +211,13 @@ def test_transcription_pending_review_only_blocks_approval() -> None:
     now = datetime.now(timezone.utc)
     task = TranscriptionTask(
         task_id="real-review-task",
-        title="owned.mp3",
+        title="owned.mp4",
         status=TaskStatus.SUCCEEDED,
         progress=100,
         created_at=now,
         updated_at=now,
-        media_name="owned.mp3",
-        media_type="audio/mpeg",
+        media_name="owned.mp4",
+        media_type="video/mp4",
         rights_confirmed=True,
         rights_holder="测试公司",
         candidate_id=candidate.video_id,
@@ -262,9 +270,29 @@ def test_transcription_creation_is_blocked_without_rights() -> None:
     )
 
     assert not app.exception
-    assert any("尚未选择爆火候选" in item.value for item in app.warning)
+    assert any("独立体验模式" in item.value for item in app.caption)
+    assert app.file_uploader[0].label == "上传授权视频"
+    create = next(
+        button for button in app.button if button.label == "提取音轨并转成文案"
+    )
+    assert create.disabled is True
+
+
+def test_transcription_page_can_switch_to_direct_video_url() -> None:
+    app = AppTest.from_file(str(ROOT / "app_pages" / "transcription.py")).run(
+        timeout=15
+    )
+
+    input_mode = next(
+        item for item in app.segmented_control if item.label == "输入方式"
+    )
+    input_mode.set_value("视频直链").run(timeout=15)
+
+    assert not app.exception
     assert not app.file_uploader
-    assert not any(button.label == "开始转成文案" for button in app.button)
+    direct_url = next(item for item in app.text_input if item.label == "视频直链")
+    assert direct_url.value == ""
+    assert "平台分享页暂不支持" in direct_url.help
 
 
 def test_task_page_shows_all_demo_statuses() -> None:

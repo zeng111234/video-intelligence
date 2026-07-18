@@ -24,7 +24,9 @@ from src.resources import load_asr_model
 
 MAX_MEDIA_BYTES = 50 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
-ALLOWED_EXTENSIONS = {".mp4", ".mov", ".m4a", ".mp3", ".wav"}
+ALLOWED_EXTENSIONS = {".mp4", ".mov"}
+ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo"}
+MAX_HOTWORDS_LENGTH = 500
 
 
 class TranscriptionError(RuntimeError):
@@ -55,16 +57,8 @@ class MediaValidationError(TranscriptionError):
 
 
 def _has_valid_signature(extension: str, content: bytes) -> bool:
-    if extension in {".mp4", ".mov", ".m4a"}:
+    if extension in ALLOWED_EXTENSIONS:
         return len(content) >= 12 and content[4:8] == b"ftyp"
-    if extension == ".wav":
-        return (
-            len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WAVE"
-        )
-    if extension == ".mp3":
-        return content.startswith(b"ID3") or (
-            len(content) >= 2 and content[0] == 0xFF and content[1] & 0xE0 == 0xE0
-        )
     return False
 
 
@@ -90,6 +84,7 @@ class TranscriptionService:
         rights_holder: str,
         candidate_id: str | None = None,
         model_name: str = "base",
+        hotwords: str | None = None,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
     ) -> TranscriptionTask:
         if not rights_confirmed:
@@ -100,6 +95,17 @@ class TranscriptionService:
         if not rights_holder.strip():
             raise TranscriptionError(
                 "请填写媒体权利主体。", code="rights_holder_required"
+            )
+        if model_name not in ALLOWED_ASR_MODELS:
+            raise TranscriptionError(
+                "不支持所选识别模型，请刷新页面后重试。",
+                code="asr_model_invalid",
+            )
+        normalized_hotwords = " ".join((hotwords or "").split())
+        if len(normalized_hotwords) > MAX_HOTWORDS_LENGTH:
+            raise TranscriptionError(
+                "专有词提示不能超过 500 个字符。",
+                code="asr_hotwords_too_long",
             )
         self._validate_upload(media_name, media_bytes)
         now = datetime.now().astimezone()
@@ -116,9 +122,10 @@ class TranscriptionService:
             rights_holder=rights_holder.strip(),
             rights_confirmed_at=now,
             candidate_id=candidate_id,
-            stage="文件检查",
+            stage="视频检查",
             media_sha256=hashlib.sha256(media_bytes).hexdigest(),
             model_name=model_name,
+            asr_hotwords=normalized_hotwords or None,
             is_mock=False,
         )
         try:
@@ -151,7 +158,11 @@ class TranscriptionService:
                     progress=50,
                     on_progress=on_progress,
                 )
-                segments, language = self._transcribe(wav_path, model_name)
+                segments, language = self._transcribe(
+                    wav_path,
+                    model_name,
+                    normalized_hotwords,
+                )
                 self._validate_segments(segments)
             task = task.model_copy(
                 update={
@@ -194,7 +205,9 @@ class TranscriptionService:
     def _validate_upload(media_name: str, content: bytes) -> None:
         extension = Path(media_name).suffix.casefold()
         if extension not in ALLOWED_EXTENSIONS:
-            raise MediaValidationError("仅支持 MP4、MOV、M4A、MP3、WAV 文件。")
+            raise MediaValidationError(
+                "仅支持 MP4、MOV 视频文件；系统会从视频中提取音轨转写。"
+            )
         if not content:
             raise MediaValidationError("上传文件为空。")
         if len(content) > MAX_MEDIA_BYTES:
@@ -266,7 +279,10 @@ class TranscriptionService:
             raise MediaValidationError("音频提取失败，请检查媒体文件。")
 
     def _transcribe(
-        self, wav_path: Path, model_name: str
+        self,
+        wav_path: Path,
+        model_name: str,
+        hotwords: str = "",
     ) -> tuple[list[TranscriptSegment], str]:
         model = None
         last_error: BaseException | None = None
@@ -282,9 +298,14 @@ class TranscriptionService:
                 code="model_unavailable",
             ) from last_error
         try:
-            raw_segments, info = model.transcribe(
-                str(wav_path), language="zh", vad_filter=True, beam_size=5
-            )
+            options = {
+                "language": "zh",
+                "vad_filter": True,
+                "beam_size": 5,
+            }
+            if hotwords:
+                options["hotwords"] = hotwords
+            raw_segments, info = model.transcribe(str(wav_path), **options)
         except Exception as exc:
             raise TranscriptionError(
                 "语音识别失败，请检查音轨后重新上传。",

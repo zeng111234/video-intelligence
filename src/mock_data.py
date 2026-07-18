@@ -156,15 +156,15 @@ def build_mock_tasks() -> list[TaskRecord]:
         ),
         TranscriptionTask(
             task_id="transcript-demo-003",
-            title="门店活动.mp3",
+            title="门店活动.mp4",
             status=TaskStatus.FAILED,
             progress=24,
             created_at=NOW - timedelta(minutes=7),
             updated_at=NOW - timedelta(minutes=6),
             elapsed_seconds=5.2,
             error_message="演示错误：媒体格式探测失败。请检查文件后重试。",
-            media_name="门店活动.mp3",
-            media_type="audio/mpeg",
+            media_name="门店活动.mp4",
+            media_type="video/mp4",
             rights_confirmed=True,
         ),
     ]

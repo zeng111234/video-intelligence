@@ -52,7 +52,7 @@ status_labels = {
     TaskStatus.SUCCEEDED: "已完成",
     TaskStatus.FAILED: "失败",
 }
-kind_labels = {TaskKind.SEARCH: "候选检索", TaskKind.TRANSCRIPTION: "音视频转写"}
+kind_labels = {TaskKind.SEARCH: "候选检索", TaskKind.TRANSCRIPTION: "视频音轨转写"}
 
 with st.container(border=True):
     st.subheader("任务列表")

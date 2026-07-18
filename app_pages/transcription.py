@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -15,6 +14,7 @@ from src.models import (
 from src.platforms import platform_label
 from src.resources import runtime_capabilities
 from src.services.transcription import TranscriptionError
+from src.services.video_source import VideoSourceError, fetch_authorized_video
 from src.ui import render_page_header, render_task_badge
 
 
@@ -68,70 +68,96 @@ def _build_segments(
 
 
 render_page_header(
-    "音频转文字文案",
-    "先选择爆火候选，再上传有权处理的音频；视频文件仅作兼容输入。",
+    "爆火视频音轨转文案",
+    "直接上传视频或填写视频直链；系统只提取音轨转写，不做抽帧或画面分析。",
     icon="transcribe",
 )
 
 candidate_service, _, transcription_service = get_services()
 candidate = candidate_service.get(selected_candidate_id())
 capabilities = runtime_capabilities()
-
-if not candidate:
-    st.warning(
-        "尚未选择爆火候选。请先返回检索页单选一个候选，再开始上传。",
-        icon=":material/info:",
-    )
-    if st.button("返回选择爆火候选", icon=":material/arrow_back:"):
-        st.switch_page("app_pages/candidates.py")
-    st.stop()
-
-failure_key = f"transcription_attempt_failed_{candidate.video_id}"
+candidate_id = candidate.video_id if candidate else None
+scope_id = candidate_id or "standalone"
+failure_key = f"transcription_attempt_failed_{scope_id}"
+selector_key = f"transcription_task_selector_{scope_id}"
 
 with st.container(border=True):
-    st.subheader("1. 确认爆火候选")
-    st.markdown(f"**{candidate.title}**")
-    st.caption(
-        f"{platform_label(candidate.platform)} · {candidate.author_name} · "
-        f"{candidate.category}"
-    )
-    with st.container(horizontal=True):
-        if candidate.source_url:
-            st.link_button(
-                "查看候选来源",
-                str(candidate.source_url),
-                icon=":material/open_in_new:",
-            )
-        if st.button("重新选择候选", icon=":material/arrow_back:"):
-            st.switch_page("app_pages/candidates.py")
-    if candidate.feed_id or candidate.finder_user_name:
+    st.subheader("1. 候选关联（可选）")
+    if candidate:
+        st.markdown(f"**{candidate.title}**")
         st.caption(
-            f"视频号追溯字段：feedId={candidate.feed_id or '—'}；"
-            f"finderUserName={candidate.finder_user_name or '—'}"
+            f"{platform_label(candidate.platform)} · {candidate.author_name} · "
+            f"{candidate.category}"
         )
+        with st.container(horizontal=True):
+            if candidate.source_url:
+                st.link_button(
+                    "查看候选来源",
+                    str(candidate.source_url),
+                    icon=":material/open_in_new:",
+                )
+            if st.button("重新选择候选", icon=":material/arrow_back:"):
+                st.switch_page("app_pages/candidates.py")
+        if candidate.feed_id or candidate.finder_user_name:
+            st.caption(
+                f"视频号追溯字段：feedId={candidate.feed_id or '—'}；"
+                f"finderUserName={candidate.finder_user_name or '—'}"
+            )
+    else:
+        st.caption("当前为独立体验模式，无需等待第一页接口或先确认爆火候选。")
+        if st.button("也可以去选择候选", icon=":material/arrow_back:"):
+            st.switch_page("app_pages/candidates.py")
 
 with st.container(border=True):
-    st.subheader("2. 上传授权音频")
-    st.caption("优先使用 MP3、M4A、WAV；兼容 MP4、MOV。单文件不超过 50MB、15 分钟。")
-    uploaded_file = st.file_uploader(
-        "上传授权媒体",
-        type=["mp3", "m4a", "wav", "mp4", "mov"],
-        help="只处理本次主动上传的文件；原媒体与临时音频处理后立即清理。",
+    st.subheader("2. 提供有权处理的视频")
+    st.caption(
+        "仅支持 MP4、MOV；系统不会分析画面，只提取视频中的音轨。"
+        "单文件不超过 50MB、15 分钟。"
     )
-    if uploaded_file is not None:
-        extension = Path(uploaded_file.name).suffix.casefold()
-        media_bytes = uploaded_file.getvalue()
-        if extension in {".mp3", ".m4a", ".wav"}:
-            st.audio(media_bytes, format=uploaded_file.type or None)
-        else:
-            st.video(media_bytes, format=uploaded_file.type or None)
+    input_mode = st.segmented_control(
+        "输入方式",
+        ["上传视频", "视频直链"],
+        default="上传视频",
+    )
+    uploaded_file = None
+    direct_url = ""
+    if input_mode == "上传视频":
+        uploaded_file = st.file_uploader(
+            "上传授权视频",
+            type=["mp4", "mov"],
+            help="只处理本次主动上传的视频，原视频与临时音频处理后立即清理。",
+        )
+        if uploaded_file is not None:
+            st.video(uploaded_file.getvalue(), format=uploaded_file.type or None)
+    else:
+        direct_url = st.text_input(
+            "视频直链",
+            placeholder="https://example.com/authorized-video.mp4",
+            help=(
+                "只接受直接返回 MP4/MOV 文件的 HTTPS 公网地址；"
+                "抖音、小红书、视频号等平台分享页暂不支持。"
+            ),
+        ).strip()
+        st.caption("链接只在点击开始后读取，不保存链接，也不使用平台下载器。")
+    quality_mode = st.segmented_control(
+        "转写模式",
+        ["准确率优先", "快速预览"],
+        default="准确率优先",
+        help="准确率优先使用更大的本地模型；快速预览保留原来的 base 模型。",
+    )
+    model_name = "large-v3-turbo" if quality_mode == "准确率优先" else "base"
+    if quality_mode == "准确率优先":
+        st.caption("使用 large-v3-turbo；首次运行需要下载模型，速度会慢于快速预览。")
+        st.caption("本地热词实验会增加漏句风险，当前不启用词汇改写或偏置。")
     rights_holder = st.text_input("媒体权利主体", placeholder="例如：本公司自有账号")
     rights_confirmed = st.checkbox(
         "我确认拥有该媒体的处理权，并同意仅用于本次私有文案转写"
     )
     missing_conditions = []
-    if uploaded_file is None:
-        missing_conditions.append("上传媒体")
+    if input_mode == "上传视频" and uploaded_file is None:
+        missing_conditions.append("上传视频")
+    if input_mode == "视频直链" and not direct_url:
+        missing_conditions.append("填写视频直链")
     if not rights_holder.strip():
         missing_conditions.append("填写媒体权利主体")
     if not rights_confirmed:
@@ -143,7 +169,7 @@ with st.container(border=True):
     if not capabilities["asr"]:
         st.error("本机尚未安装 faster-whisper，暂时无法执行真实本地转写。")
     submitted = st.button(
-        "开始转成文案",
+        "提取音轨并转成文案",
         type="primary",
         icon=":material/play_arrow:",
         disabled=bool(
@@ -155,12 +181,12 @@ with st.container(border=True):
     st.subheader("3. 查看真实处理状态")
     progress_rendered = False
     if submitted:
-        if uploaded_file is None or not rights_holder.strip() or not rights_confirmed:
-            st.error("请完成上传、权利主体和处理权确认后再开始。")
+        has_video_input = uploaded_file is not None or bool(direct_url)
+        if not has_video_input or not rights_holder.strip() or not rights_confirmed:
+            st.error("请完成视频输入、权利主体和处理权确认后再开始。")
         else:
             st.session_state["active_transcription_task_id"] = None
             st.session_state[failure_key] = False
-            selector_key = f"transcription_task_selector_{candidate.video_id}"
             locked_task_id: list[str] = []
             status_box = st.status("正在创建本地转写任务……", expanded=True)
             progress_bar = st.progress(0, text="等待处理")
@@ -180,18 +206,36 @@ with st.container(border=True):
                 status_box.update(label=task.stage, state=state)
 
             try:
+                if input_mode == "视频直链":
+                    status_box.update(label="正在读取视频直链……", state="running")
+                    progress_bar.progress(5, text="读取视频直链")
+                    direct_video = fetch_authorized_video(direct_url)
+                    media_name = direct_video.name
+                    media_type = direct_video.media_type
+                    media_bytes = direct_video.content
+                else:
+                    if uploaded_file is None:
+                        raise VideoSourceError("请先上传视频文件。")
+                    media_name = uploaded_file.name
+                    media_type = uploaded_file.type or "application/octet-stream"
+                    media_bytes = uploaded_file.getvalue()
                 task = transcription_service.create_task(
-                    media_name=uploaded_file.name,
-                    media_type=uploaded_file.type or "application/octet-stream",
-                    media_bytes=uploaded_file.getvalue(),
+                    media_name=media_name,
+                    media_type=media_type,
+                    media_bytes=media_bytes,
                     rights_confirmed=rights_confirmed,
                     rights_holder=rights_holder,
-                    candidate_id=candidate.video_id,
+                    candidate_id=candidate_id,
+                    model_name=model_name,
                     on_progress=on_progress,
                 )
                 st.session_state["active_transcription_task_id"] = task.task_id
                 st.session_state[failure_key] = False
                 st.success("识别完成，请在下一步校对并确认成稿。")
+            except VideoSourceError as exc:
+                st.session_state[failure_key] = True
+                status_box.update(label="视频读取失败", state="error")
+                st.error(exc.user_message, icon=":material/error:")
             except TranscriptionError as exc:
                 st.session_state[failure_key] = True
                 st.error(exc.user_message, icon=":material/error:")
@@ -208,7 +252,7 @@ with st.container(border=True):
     )
     if (
         isinstance(active_status, TranscriptionTask)
-        and active_status.candidate_id != candidate.video_id
+        and active_status.candidate_id != candidate_id
     ):
         active_status = None
         st.session_state["active_transcription_task_id"] = None
@@ -218,7 +262,7 @@ with st.container(border=True):
         if active_status.error_message:
             st.error("处理失败，媒体已清理，请重新上传。")
     elif not progress_rendered:
-        st.caption("提交授权媒体后，这里会同步显示文件检查、音频提取和语音识别阶段。")
+        st.caption("提交授权视频后，这里会同步显示视频检查、音轨提取和语音识别阶段。")
 
 with st.container(border=True):
     st.subheader("4. 校对与导出")
@@ -231,13 +275,13 @@ with st.container(border=True):
         for task in transcription_service.repository.list_tasks()
         if isinstance(task, TranscriptionTask)
         and not task.is_mock
-        and task.candidate_id == candidate.video_id
+        and task.candidate_id == candidate_id
     ]
     if not real_tasks:
-        st.info("当前候选还没有真实转写任务。")
+        empty_label = "当前候选" if candidate else "独立体验"
+        st.info(f"{empty_label}还没有真实转写任务。")
         st.stop()
 
-    selector_key = f"transcription_task_selector_{candidate.video_id}"
     active_id = st.session_state.get("active_transcription_task_id")
     task_ids = [task.task_id for task in real_tasks]
     if st.session_state.get(selector_key) not in task_ids:
@@ -255,7 +299,7 @@ with st.container(border=True):
     st.session_state["active_transcription_task_id"] = selected_task_id
     active = transcription_service.repository.get_task(selected_task_id)
     if not isinstance(active, TranscriptionTask) or not active.segments:
-        st.info("该任务没有可校对的转写片段；失败任务需重新上传媒体。")
+        st.info("该任务没有可校对的转写片段；失败任务需重新上传视频。")
         st.stop()
 
     revisions = transcription_service.repository.list_transcript_revisions(
