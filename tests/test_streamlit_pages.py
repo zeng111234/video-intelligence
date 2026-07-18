@@ -208,6 +208,14 @@ def test_sandbox_search_renders_three_independent_top_ten() -> None:
     ]
     assert len(ranking_frames) == 3
     assert all(len(frame) == 10 for frame in ranking_frames)
+    assert all("原始作品" in frame.columns for frame in ranking_frames)
+    assert all("判断状态" in frame.columns for frame in ranking_frames)
+    assert all(
+        frame["数据可靠性"].str.contains("初次观测").all() for frame in ranking_frames
+    )
+    assert all(
+        frame["为什么入榜"].str.contains("互动速度").all() for frame in ranking_frames
+    )
 
 
 def test_production_mode_stays_disabled_without_approved_adapter(monkeypatch) -> None:
@@ -339,7 +347,10 @@ def test_transcription_pending_review_only_blocks_approval() -> None:
 
 
 def test_candidate_page_focuses_on_hotspot_to_transcript_flow() -> None:
+    from src.repositories import MockRepository
+
     app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
+    app.session_state["_repository"] = MockRepository()
     app.session_state["selected_candidate_id"] = "mock-001"
     app.run(timeout=15)
 
@@ -526,7 +537,11 @@ def test_transcription_approved_revision_can_preselect_avatar_page(monkeypatch) 
 
 
 def test_task_page_shows_all_demo_statuses() -> None:
-    app = AppTest.from_file(str(ROOT / "app_pages" / "tasks.py")).run(timeout=15)
+    from src.repositories import MockRepository
+
+    app = AppTest.from_file(str(ROOT / "app_pages" / "tasks.py"))
+    app.session_state["_repository"] = MockRepository()
+    app.run(timeout=15)
 
     statuses = set(app.dataframe[0].value["状态"].tolist())
     assert {"处理中", "已完成", "失败"} <= statuses

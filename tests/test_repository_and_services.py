@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.app_state import initialize_state, select_candidate, selected_candidate_id
+from src.app_state import (
+    _sqlite_repository,
+    initialize_state,
+    select_candidate,
+    selected_candidate_id,
+)
 from src.models import HeatLevel, Platform, TaskStatus, TranscriptionTask
 from src.repositories import MockRepository
 from src.retry import ExternalServiceError, run_with_single_retry
@@ -102,3 +107,14 @@ def test_selected_candidate_survives_page_state_boundary() -> None:
     select_candidate("mock-007", state)
 
     assert selected_candidate_id(state) == "mock-007"
+
+
+def test_sqlite_runtime_does_not_seed_demo_data_by_default(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.delenv("VIDEO_SEED_DEMO_DATA", raising=False)
+
+    repository = _sqlite_repository(str(tmp_path / "runtime.db"))
+
+    assert repository.list_candidates() == []
+    assert repository.list_tasks() == []

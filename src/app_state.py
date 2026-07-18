@@ -28,7 +28,13 @@ AVATAR_PROVIDER_KEY = "_avatar_provider"
 
 def _sqlite_repository(database_path: str) -> SQLiteRepository:
     repository = SQLiteRepository(database_path)
-    repository.seed(build_mock_candidates(), build_mock_tasks())
+    seed_demo_data = os.getenv("VIDEO_SEED_DEMO_DATA", "").casefold() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if seed_demo_data:
+        repository.seed(build_mock_candidates(), build_mock_tasks())
     SourceService(repository, HeatService()).recompute_all()
     return repository
 

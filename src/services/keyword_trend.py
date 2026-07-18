@@ -253,17 +253,24 @@ class KeywordTrendService:
             )
             latest_match = max(candidate_matches, key=lambda item: item.observed_at)
             reasons = [
-                f"平台综合召回第 {latest_match.platform_rank} 名",
-                f"近 7 天进入候选 {appearance_count} 次",
+                f"本次平台搜索排第 {latest_match.platform_rank} 名（共 {pool_size} 条）",
             ]
+            if age_engagement_percentile is not None:
+                leading_percent = max(1, round(100 - age_engagement_percentile))
+                reasons.append(
+                    f"按发布时间折算的互动速度位于本平台候选前 {leading_percent}%"
+                )
+            reasons.append(f"近 7 天有效入榜 {appearance_count} 次")
             if growth is None:
-                reasons.append("缺少间隔至少 2 小时的点赞快照，增长分暂不可用")
+                reasons.append("这是首次观测；至少 2 小时后再次查询才能判断增长")
             else:
                 reasons.append(
                     f"{growth_hours:.1f} 小时点赞增长 {growth:.1f}/小时，分位 P{growth_percentile:.0f}"
                 )
             if pool_size < 30:
-                reasons.append(f"关键词历史池仅 {pool_size} 条，当前只做描述性排序")
+                reasons.append(
+                    f"当前仅有 {pool_size} 条同平台样本，暂不输出正式爆火等级"
+                )
             checkpoints = [
                 checkpoint
                 for checkpoint in self.repository.list_sampling_checkpoints(keyword_key)

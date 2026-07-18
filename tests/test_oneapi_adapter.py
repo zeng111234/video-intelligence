@@ -191,7 +191,68 @@ def test_search_request_defaults_to_general_sort_and_seven_day_window() -> None:
     assert xhs["time_filter"] == "一周内"
     assert wechat["offset"] == 0
     assert wechat["sort"] == 0
-    assert wechat["publish_time"] == 7
+    assert wechat["publish_time"] == 0
+
+
+def test_xhs_camel_case_nested_card_is_selected_over_filter_lists() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "data": {
+                    "filters": [{"name": f"筛选{i}"} for i in range(10)],
+                    "feeds": [
+                        {
+                            "noteCard": {
+                                "noteId": "xhs-camel-1",
+                                "displayTitle": "二手车避坑清单",
+                                "userInfo": {
+                                    "userId": "xhs-user-1",
+                                    "nickName": "小红书作者",
+                                },
+                                "publishTime": int(NOW.timestamp()) - 3600,
+                                "interactInfo": {
+                                    "likedCount": "3200",
+                                    "commentCount": "88",
+                                    "collectedCount": "510",
+                                },
+                            }
+                        }
+                    ],
+                },
+            }
+        ]
+    )
+
+    page = build_provider(transport).search(
+        Platform.XIAOHONGSHU,
+        "二手车",
+        NOW - timedelta(days=7),
+        10,
+        "idem-xhs-camel",
+    )
+
+    assert [item.platform_item_id for item in page.items] == ["xhs-camel-1"]
+    assert page.items[0].metrics.likes == 3200
+    assert page.items[0].metrics.favorites == 510
+    assert not page.errors
+
+
+def test_wechat_business_code_zero_uses_chinese_parameter_message() -> None:
+    transport = FixedTransport([{"code": 0, "message": "Request failed, Please retry"}])
+
+    with pytest.raises(LicensedProviderError) as caught:
+        build_provider(transport).search(
+            Platform.WECHAT_CHANNELS,
+            "二手车",
+            NOW - timedelta(days=7),
+            10,
+            "idem-wechat-invalid",
+        )
+
+    assert caught.value.kind == ProviderErrorKind.VALIDATION
+    assert "视频号查询参数" in str(caught.value)
+    assert "Request failed" not in str(caught.value)
 
 
 def test_missing_metrics_remain_none_and_bad_items_are_reported() -> None:

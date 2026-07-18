@@ -81,9 +81,7 @@ class OneApiLicensedSearchProvider:
             supports_metric_refresh=False,
             supports_usage=True,
             permission_status=(
-                "trial_unverified_commercial_rights"
-                if enabled
-                else "api_key_missing"
+                "trial_unverified_commercial_rights" if enabled else "api_key_missing"
             ),
             credential_alias="ONEAPI_API_KEY" if enabled else None,
             missing_configuration=(
@@ -118,15 +116,15 @@ class OneApiLicensedSearchProvider:
         errors: list[ProviderSearchError] = []
         for index, raw_item in enumerate(raw_items[:limit]):
             try:
-                items.append(
-                    self._normalize_item(
-                        platform,
-                        raw_item,
-                        rank=index + 1,
-                        observed_at=observed_at,
-                        request_id=request_id,
-                    )
+                normalized = self._normalize_item(
+                    platform,
+                    raw_item,
+                    rank=index + 1,
+                    observed_at=observed_at,
+                    request_id=request_id,
                 )
+                if normalized.published_at >= published_after:
+                    items.append(normalized)
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
                 errors.append(
                     ProviderSearchError(
@@ -144,9 +142,7 @@ class OneApiLicensedSearchProvider:
             request_id=request_id,
             api_call_count=1,
             billable_units=self.endpoint_prices_cny[platform],
-            has_more=self._as_bool(
-                self._first(data, "has_more", "hasMore", "more")
-            ),
+            has_more=self._as_bool(self._first(data, "has_more", "hasMore", "more")),
             errors=errors,
         )
 
@@ -191,8 +187,7 @@ class OneApiLicensedSearchProvider:
         platform_queries = sum(
             max(
                 0,
-                self._to_int(self._first(item, "count", "request_count", "times"))
-                or 1,
+                self._to_int(self._first(item, "count", "request_count", "times")) or 1,
             )
             for item in records
         )
@@ -281,7 +276,10 @@ class OneApiLicensedSearchProvider:
             "keyword": keyword,
             "duration": 0,
             "sort": 0,
-            "publish_time": 1 if window_days == 1 else 7,
+            # This legacy endpoint uses its own enum rather than day counts.
+            # ``0`` means no upstream time filter; the adapter enforces the
+            # requested seven-day window locally after normalization.
+            "publish_time": 1 if window_days == 1 else 0,
             "offset": 0,
             "raw": False,
         }
@@ -362,7 +360,7 @@ class OneApiLicensedSearchProvider:
             self._raise_http_error(status)
         code = str(body.get("code", "")).strip()
         if code != "200":
-            self._raise_business_error(code, body)
+            self._raise_business_error(code, body, endpoint)
         return body
 
     @staticmethod
@@ -419,9 +417,9 @@ class OneApiLicensedSearchProvider:
         raise LicensedProviderError(message, kind=kind, code=str(status))
 
     @staticmethod
-    def _raise_business_error(code: str, body: Mapping[str, Any]) -> None:
-        message = str(body.get("message") or body.get("msg") or "请求失败")
-        safe_detail = message[:120]
+    def _raise_business_error(
+        code: str, body: Mapping[str, Any], endpoint: str = ""
+    ) -> None:
         if code == "401":
             error = (ProviderErrorKind.AUTHORIZATION, "OneAPI API Key 无效。")
         elif code == "403":
@@ -432,8 +430,16 @@ class OneApiLicensedSearchProvider:
             error = (ProviderErrorKind.RATE_LIMIT, "OneAPI 当前限制请求频率。")
         elif code == "404":
             error = (ProviderErrorKind.SERVICE, "OneAPI 接口不可用或已变更。")
+        elif code == "0" and "wechat-search" in endpoint:
+            error = (
+                ProviderErrorKind.VALIDATION,
+                "视频号查询参数未通过供应商校验，本次没有有效结果。",
+            )
         else:
-            error = (ProviderErrorKind.VALIDATION, f"OneAPI 请求失败：{safe_detail}")
+            error = (
+                ProviderErrorKind.VALIDATION,
+                "OneAPI 未接受本次查询参数，请查看页面中的平台诊断信息。",
+            )
         raise LicensedProviderError(error[1], kind=error[0], code=code or "missing")
 
     def _normalize_item(
@@ -450,18 +456,33 @@ class OneApiLicensedSearchProvider:
             self._first(
                 item,
                 "aweme_id",
+                "awemeId",
                 "note_id",
+                "noteId",
                 "object_id",
+                "objectId",
                 "finder_feed_id",
+                "finderFeedId",
                 "feed_id",
+                "feedId",
                 "video_id",
+                "videoId",
                 "item_id",
+                "itemId",
                 "id",
             ),
             "作品ID",
         )
         title = self._required_text(
-            self._first(item, "desc", "title", "display_title", "description"),
+            self._first(
+                item,
+                "desc",
+                "title",
+                "display_title",
+                "displayTitle",
+                "description",
+                "content",
+            ),
             "标题",
         )
         author = self._first_mapping(
@@ -469,8 +490,10 @@ class OneApiLicensedSearchProvider:
             "author",
             "user",
             "user_info",
+            "userInfo",
             "contact",
             "finder_info",
+            "finderInfo",
         )
         author_id = self._required_text(
             self._first(
@@ -478,25 +501,46 @@ class OneApiLicensedSearchProvider:
                 "sec_uid",
                 "uid",
                 "user_id",
+                "userId",
                 "author_id",
+                "authorId",
                 "finder_username",
+                "finderUsername",
                 "username",
                 "id",
             )
-            or self._first(item, "author_id", "user_id", "finder_username"),
+            or self._first(
+                item,
+                "author_id",
+                "authorId",
+                "user_id",
+                "userId",
+                "finder_username",
+                "finderUsername",
+            ),
             "作者ID",
         )
         author_name = self._required_text(
-            self._first(author, "nickname", "nick_name", "name", "username")
-            or self._first(item, "author_name", "nickname"),
+            self._first(
+                author,
+                "nickname",
+                "nick_name",
+                "nickName",
+                "name",
+                "username",
+            )
+            or self._first(item, "author_name", "authorName", "nickname"),
             "作者名称",
         )
         published_at = self._to_datetime(
             self._first(
                 item,
                 "create_time",
+                "createTime",
                 "publish_time",
+                "publishTime",
                 "published_at",
+                "publishedAt",
                 "timestamp",
                 "time",
             )
@@ -509,15 +553,20 @@ class OneApiLicensedSearchProvider:
             "statistics",
             "stats",
             "interact_info",
+            "interactInfo",
             "interaction",
         )
         metrics_source = {**item, **statistics}
         source_url = self._first(
             item,
             "share_url",
+            "shareUrl",
             "note_url",
+            "noteUrl",
             "source_url",
+            "sourceUrl",
             "web_url",
+            "webUrl",
             "url",
         ) or self._source_url(platform, item_id)
         return ProviderSearchItem(
@@ -533,32 +582,85 @@ class OneApiLicensedSearchProvider:
                 item_id=item_id,
                 sampled_at=observed_at,
                 plays=self._to_int(
-                    self._first(metrics_source, "play_count", "view_count", "read_count", "plays")
+                    self._first(
+                        metrics_source,
+                        "play_count",
+                        "playCount",
+                        "view_count",
+                        "viewCount",
+                        "read_count",
+                        "readCount",
+                        "plays",
+                    )
                 ),
                 likes=self._to_int(
-                    self._first(metrics_source, "digg_count", "like_count", "liked_count", "likes")
+                    self._first(
+                        metrics_source,
+                        "digg_count",
+                        "diggCount",
+                        "like_count",
+                        "likeCount",
+                        "liked_count",
+                        "likedCount",
+                        "likes",
+                    )
                 ),
                 comments=self._to_int(
-                    self._first(metrics_source, "comment_count", "comments")
+                    self._first(
+                        metrics_source, "comment_count", "commentCount", "comments"
+                    )
                 ),
                 shares=self._to_int(
-                    self._first(metrics_source, "share_count", "forward_count", "shares")
+                    self._first(
+                        metrics_source,
+                        "share_count",
+                        "shareCount",
+                        "forward_count",
+                        "forwardCount",
+                        "shares",
+                    )
                 ),
                 favorites=self._to_int(
-                    self._first(metrics_source, "collect_count", "collected_count", "favorite_count", "favorites")
+                    self._first(
+                        metrics_source,
+                        "collect_count",
+                        "collectCount",
+                        "collected_count",
+                        "collectedCount",
+                        "favorite_count",
+                        "favoriteCount",
+                        "favorites",
+                    )
                 ),
                 confidence=0.7,
             ),
             evidence=f"oneapi:{request_id}",
         )
 
-    @staticmethod
-    def _unwrap_item(raw_item: Mapping[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _unwrap_item(cls, raw_item: Mapping[str, Any]) -> dict[str, Any]:
         merged = dict(raw_item)
-        for key in ("note_card", "aweme_info", "video", "object", "item"):
-            nested = raw_item.get(key)
-            if isinstance(nested, Mapping):
-                merged.update(nested)
+
+        def merge_known(current: Mapping[str, Any], depth: int) -> None:
+            if depth > 4:
+                return
+            for key in (
+                "note_card",
+                "noteCard",
+                "note",
+                "aweme_info",
+                "awemeInfo",
+                "video",
+                "object",
+                "item",
+                "feed",
+            ):
+                nested = current.get(key)
+                if isinstance(nested, Mapping):
+                    merged.update(nested)
+                    merge_known(nested, depth + 1)
+
+        merge_known(raw_item, 0)
         return merged
 
     @classmethod
@@ -597,18 +699,34 @@ class OneApiLicensedSearchProvider:
             return []
         id_keys = {
             "aweme_id",
+            "awemeId",
             "note_id",
+            "noteId",
             "object_id",
+            "objectId",
             "finder_feed_id",
+            "finderFeedId",
             "feed_id",
+            "feedId",
             "video_id",
+            "videoId",
             "item_id",
+            "itemId",
             "id",
         }
+        title_keys = {
+            "desc",
+            "title",
+            "display_title",
+            "displayTitle",
+            "description",
+        }
 
-        def score(items: list[Mapping[str, Any]]) -> tuple[int, int]:
-            hits = sum(bool(id_keys.intersection(cls._unwrap_item(item))) for item in items)
-            return hits, len(items)
+        def score(items: list[Mapping[str, Any]]) -> tuple[int, int, int]:
+            unwrapped = [cls._unwrap_item(item) for item in items]
+            id_hits = sum(bool(id_keys.intersection(item)) for item in unwrapped)
+            title_hits = sum(bool(title_keys.intersection(item)) for item in unwrapped)
+            return id_hits, title_hits, len(items)
 
         return max(candidates, key=score)
 

@@ -14,6 +14,9 @@ from src.backup_import_ui import render_backup_imports
 from src.config import build_licensed_search_provider
 from src.models import (
     HeatLevel,
+    KeywordTrendLevel,
+    KeywordTrendResult,
+    Platform,
     PlatformRunStatus,
     ProviderMode,
     VideoCandidate,
@@ -54,6 +57,49 @@ RUN_STATUS_LABELS = {
     PlatformRunStatus.BLOCKED: "已阻止调用",
     PlatformRunStatus.OUTCOME_UNKNOWN: "费用状态待核对",
 }
+
+
+def candidate_status_label(trend: KeywordTrendResult) -> str:
+    if trend.level != KeywordTrendLevel.OBSERVING:
+        return trend.level.value
+    if trend.score >= 75:
+        return "高潜候选"
+    if trend.score >= 60:
+        return "值得关注"
+    return "一般候选"
+
+
+def reliability_label(confidence: float) -> str:
+    if confidence < 0.60:
+        return f"初次观测（{confidence:.0%}）"
+    if confidence < 0.80:
+        return f"持续观察（{confidence:.0%}）"
+    return f"数据较充分（{confidence:.0%}）"
+
+
+def display_reasons(trend: KeywordTrendResult) -> list[str]:
+    reasons = [f"本次平台搜索排第 {trend.platform_rank} 名（共 {trend.pool_size} 条）"]
+    engagement_percentile = trend.percentiles.get("age_adjusted_engagement")
+    if engagement_percentile is not None:
+        leading_percent = max(1, round(100 - engagement_percentile))
+        reasons.append(f"按发布时间折算的互动速度位于本平台候选前 {leading_percent}%")
+    reasons.append(f"近 7 天有效入榜 {trend.appearance_count} 次")
+    if trend.like_growth_per_hour is None:
+        reasons.append("这是首次观测；至少 2 小时后再次查询才能判断增长")
+    else:
+        reasons.append(f"点赞增长约 {trend.like_growth_per_hour:.1f} 次/小时")
+    if trend.pool_size < 30:
+        reasons.append(f"当前仅有 {trend.pool_size} 条同平台样本，暂不输出正式爆火等级")
+    return reasons
+
+
+def run_error_message(platform: Platform, error: str | None) -> str:
+    detail = error or "未返回明确原因"
+    if platform == Platform.WECHAT_CHANNELS and (
+        "Request failed" in detail or "parameters are correct" in detail
+    ):
+        return "供应商拒绝了旧版视频号时间参数；参数已修正，下次查询生效。"
+    return detail
 
 
 @st.dialog("确认三平台查询")
@@ -292,7 +338,7 @@ if active_batch:
                 PlatformRunStatus.BLOCKED,
                 PlatformRunStatus.OUTCOME_UNKNOWN,
             }:
-                st.error(f"{status_label}：{run.error or '未返回明确原因'}")
+                st.error(f"{status_label}：{run_error_message(platform, run.error)}")
                 continue
             st.caption(
                 f"{status_label} · 返回 {run.returned_count} 条 · "
@@ -309,26 +355,40 @@ if active_batch:
                 candidate = candidate_lookup.get(trend.candidate_id)
                 if candidate is None:
                     continue
+                reasons = display_reasons(trend)
+                data_source = (
+                    "商业接口演示数据"
+                    if active_batch.mode == ProviderMode.SANDBOX
+                    else provider_capability.display_name
+                )
                 trend_rows.append(
                     {
                         "candidate_id": candidate.video_id,
                         "系统排名": own_rank,
                         "标题": candidate.title,
                         "发布时间": candidate.published_at,
-                        "热门程度": trend.level.value,
+                        "判断状态": candidate_status_label(trend),
                         "候选热度": trend.score,
-                        "数据可靠性": trend.confidence,
+                        "数据可靠性": reliability_label(trend.confidence),
                         "数据时间": candidate.metrics.sampled_at,
-                        "数据来源": (
-                            "商业接口演示数据"
-                            if active_batch.mode == ProviderMode.SANDBOX
-                            else provider_capability.display_name
+                        "数据来源": data_source,
+                        "原始作品": (
+                            str(candidate.source_url) if candidate.source_url else None
                         ),
-                        "为什么入榜": "；".join(trend.reasons[:3]),
+                        "为什么入榜": "；".join(reasons[:3]),
                     }
                 )
             if not trend_rows:
-                st.info("该平台本次没有符合条件的候选，不会用演示数据补齐。")
+                if run.errors:
+                    st.warning(
+                        f"供应商返回内容已收到，但有 {len(run.errors)} 条因字段结构不匹配未入库。"
+                        "解析兼容已修复，请在下次已确认查询时验证。"
+                    )
+                    with st.expander("查看本次字段诊断"):
+                        for error in run.errors[:10]:
+                            st.write(f"- {error.message}")
+                else:
+                    st.info("该平台本次没有符合条件的候选，不会用演示数据补齐。")
                 continue
             trend_frame = pd.DataFrame(trend_rows)
             event = st.dataframe(
@@ -346,8 +406,10 @@ if active_batch:
                         max_value=100,
                         format="%.1f",
                     ),
-                    "数据可靠性": st.column_config.NumberColumn(format="percent"),
                     "数据时间": st.column_config.DatetimeColumn(format="MM-DD HH:mm"),
+                    "原始作品": st.column_config.LinkColumn(
+                        "原始作品", display_text="查看原视频"
+                    ),
                 },
             )
             if event.selection.rows:
@@ -377,7 +439,8 @@ if active_batch:
                     hide_index=True,
                 )
             st.caption(
-                "单次观测只显示爆火候选排名；缺少可信增长数据时不会输出正式爆火等级。"
+                "高潜候选/值得关注是本次平台内的相对排序，不是正式爆火等级；"
+                "至少间隔2小时复采后才能判断增长。"
             )
 
 
@@ -395,10 +458,15 @@ if selected:
         st.subheader(selected.title)
         st.caption(
             f"{platform_label(selected.platform)} · {selected.author_name} · "
-            f"数据可靠性 "
-            f"{(selected_trend.confidence if selected_trend else selected.metrics.confidence):.0%}"
+            + reliability_label(
+                selected_trend.confidence
+                if selected_trend
+                else selected.metrics.confidence
+            )
         )
-        reasons = selected_trend.reasons if selected_trend else selected.heat.reasons
+        reasons = (
+            display_reasons(selected_trend) if selected_trend else selected.heat.reasons
+        )
         for reason in reasons:
             st.markdown(f"- {reason}")
         if selected.source_url:
