@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from src.app_state import get_services
-from src.models import AvatarTask, TaskKind, TaskStatus
+from src.models import AvatarTask, TaskKind, TaskStatus, AvatarProviderStatus
 from src.ui import render_page_header, render_task_badge
 
 render_page_header(
@@ -129,6 +129,31 @@ if selected_task:
                 f"**权利主体：** {selected_task.rights_holder} · "
                 f"**供应商状态：** {selected_task.provider_status.value}"
             )
+            # 检查OUTCOME_UNKNOWN状态
+            if selected_task.provider_status == AvatarProviderStatus.OUTCOME_UNKNOWN:
+                st.warning(
+                    "**任务状态未知**\n\n"
+                    "此任务的供应商状态为 `OUTCOME_UNKNOWN`，可能被阻断。\n\n"
+                    "您可以强制解锁此任务，将其标记为失败状态。",
+                    icon=":material/warning:",
+                )
+                if st.button(
+                    "强制解锁",
+                    key=f"force_unlock_{selected_task.task_id}",
+                    icon=":material/lock_open:",
+                    help="强制解锁此任务，将其标记为失败状态",
+                ):
+                    try:
+                        from datetime import datetime
+                        # 更新provider_status为FAILED
+                        selected_task.provider_status = AvatarProviderStatus.FAILED
+                        selected_task.updated_at = datetime.now().astimezone()
+                        selected_task.error_message = "手动强制解锁"
+                        transcription_service.repository.save_task(selected_task)
+                        st.toast("已强制解锁任务", icon=":material/check_circle:")
+                        st.rerun()
+                    except Exception as e:
+                        st.toast(f"强制解锁失败: {e}", icon=":material/error:")
             if selected_task.result_path and Path(selected_task.result_path).is_file():
                 st.video(selected_task.result_path)
         can_retry = (

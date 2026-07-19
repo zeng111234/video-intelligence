@@ -8,12 +8,15 @@ from pathlib import Path
 from src.models import (
     AvatarTask,
     CandidateMatch,
+    CopywritingTask,
     DiscoveryResult,
     HeatLevel,
     HeatResult,
     KeywordTrendResult,
+    PipelineRun,
     Platform,
     PlatformSearchRun,
+    PublishTask,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -23,6 +26,7 @@ from src.models import (
     TranscriptRevision,
     TranscriptionTask,
     VideoCandidate,
+    VideoEditTask,
     VideoMetricSnapshot,
 )
 
@@ -192,6 +196,18 @@ class SQLiteRepository:
                 claimed_at TEXT NOT NULL,
                 status TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                run_id TEXT PRIMARY KEY,
+                keyword TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status
+            ON pipeline_runs(status, created_at);
             """
         )
         self._migrate_keyword_trend_results_platform()
@@ -1052,6 +1068,44 @@ class SQLiteRepository:
             ).fetchall()
         return [
             SamplingCheckpoint.model_validate_json(row["payload_json"]) for row in rows
+        ]
+
+    # -- 流水线运行记录 --
+
+    def save_pipeline_run(self, run: PipelineRun) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO pipeline_runs
+            (run_id, keyword, status, created_at, updated_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run.run_id,
+                run.keyword,
+                run.status.value,
+                run.created_at.isoformat(),
+                run.updated_at.isoformat(),
+                run.model_dump_json(),
+            ),
+        )
+        self.connection.commit()
+
+    def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM pipeline_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return PipelineRun.model_validate_json(row["payload_json"])
+
+    def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]:
+        rows = self.connection.execute(
+            "SELECT payload_json FROM pipeline_runs ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            PipelineRun.model_validate_json(row["payload_json"]) for row in rows
         ]
 
     def seed(self, candidates: list[VideoCandidate], tasks: list[TaskRecord]) -> None:

@@ -7,6 +7,7 @@ from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
+    PipelineRun,
     Platform,
     PlatformSearchRun,
     RelevanceReview,
@@ -47,6 +48,7 @@ class MockRepository:
         self._search_batches: dict[str, SearchBatch] = {}
         self._platform_search_runs: dict[str, PlatformSearchRun] = {}
         self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
+        self._pipeline_runs: dict[str, PipelineRun] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
@@ -300,3 +302,18 @@ class MockRepository:
 
     def resolve_platform_search_request(self, fingerprint: str) -> None:
         self._provider_request_guards.pop(fingerprint, None)
+
+    # -- 流水线运行记录 --
+
+    def save_pipeline_run(self, run: PipelineRun) -> None:
+        self._pipeline_runs[run.run_id] = run
+
+    def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
+        return self._pipeline_runs.get(run_id)
+
+    def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]:
+        return sorted(
+            self._pipeline_runs.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]

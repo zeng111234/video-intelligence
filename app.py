@@ -1,6 +1,6 @@
 import streamlit as st
 
-from src.app_state import initialize_state
+from src.app_state import initialize_state, get_context_budget
 
 st.set_page_config(
     page_title="短视频热点洞察与智能生产",
@@ -10,6 +10,20 @@ st.set_page_config(
 )
 
 initialize_state()
+
+# 预算检查：在页面导航执行前检查内存预算
+context_budget = get_context_budget()
+# 将SessionStateProxy转换为普通字典以满足类型检查
+session_state_dict = dict(st.session_state)
+is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(session_state_dict)
+if not is_within_budget:
+    st.error(
+        f"**内存预算超限警告**\n\n"
+        f"当前会话状态内存占用 {current_mb:.1f}MB 已超过预算 {budget_mb:.1f}MB。\n\n"
+        f"为防止应用崩溃，已停止页面渲染。请刷新页面或联系管理员。",
+        icon=":material/warning:",
+    )
+    st.stop()
 
 pages = [
     st.Page(
@@ -29,9 +43,19 @@ pages = [
         icon=":material/smart_toy:",
     ),
     st.Page(
+        "app_pages/pipeline.py",
+        title="批量生产流水线",
+        icon=":material/auto_awesome:",
+    ),
+    st.Page(
         "app_pages/tasks.py",
         title="任务记录",
         icon=":material/history:",
+    ),
+    st.Page(
+        "app_pages/admin.py",
+        title="系统管理",
+        icon=":material/admin_panel_settings:",
     ),
 ]
 

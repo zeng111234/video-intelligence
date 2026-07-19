@@ -21,9 +21,11 @@ from src.services import (
     TranscriptionService,
 )
 from src.services.avatar import AvatarService
+from src.context_budget import ContextBudget
 
 REPOSITORY_KEY = "_repository"
 AVATAR_PROVIDER_KEY = "_avatar_provider"
+CONTEXT_BUDGET_KEY = "_context_budget"
 
 
 def _sqlite_repository(database_path: str) -> SQLiteRepository:
@@ -66,6 +68,8 @@ def initialize_state(state: MutableMapping[str, Any] | None = None) -> None:
         target[REPOSITORY_KEY] = (
             MockRepository() if state is not None else _default_repository()
         )
+    if CONTEXT_BUDGET_KEY not in target:
+        target[CONTEXT_BUDGET_KEY] = ContextBudget()
 
 
 def get_services() -> tuple[CandidateService, HeatService, TranscriptionService]:
@@ -126,3 +130,8 @@ def select_candidate(
 def selected_candidate_id(state: MutableMapping[str, Any] | None = None) -> str | None:
     target = st.session_state if state is None else state
     return target.get("selected_candidate_id")
+
+
+def get_context_budget() -> ContextBudget:
+    initialize_state()
+    return st.session_state[CONTEXT_BUDGET_KEY]

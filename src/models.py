@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -74,6 +75,9 @@ class TaskKind(StrEnum):
     SEARCH = "search"
     TRANSCRIPTION = "transcription"
     AVATAR = "avatar"
+    COPYWRITING = "copywriting"
+    VIDEO_EDITING = "video_editing"
+    PUBLISHING = "publishing"
 
 
 class TaskStatus(StrEnum):
@@ -699,3 +703,140 @@ class AvatarTask(TaskRecord):
     result_mime: str | None = None
     result_size_bytes: int | None = Field(default=None, ge=0)
     error_kind: ProviderErrorKind | None = None
+
+
+# ---------------------------------------------------------------------------
+# 文案改写
+# ---------------------------------------------------------------------------
+
+
+class CopywritingTask(TaskRecord):
+    """基于 LLM 的文案改写 / 复刻任务。"""
+
+    kind: TaskKind = TaskKind.COPYWRITING
+    source_text: str
+    style_prompt: str = ""
+    target_length: int = Field(default=300, ge=50, le=2000)
+    tone: str = "professional"
+    provider_name: str = "local_llm"
+    model_name: str = ""
+    result_text: str | None = None
+    result_variants: list[str] = Field(default_factory=list)
+    source_task_id: str | None = None
+    source_revision_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 视频剪辑
+# ---------------------------------------------------------------------------
+
+
+class VideoEditStep(BaseModel):
+    """单个剪辑步骤。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    step_id: str = Field(default_factory=lambda: f"step-{uuid4().hex[:8]}")
+    kind: VideoEditStepKind
+    params: dict[str, Any] = Field(default_factory=dict)
+    order: int = Field(default=0, ge=0)
+
+
+class VideoEditConfig(BaseModel):
+    """剪辑配置：由多个有序步骤组成。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    steps: list[VideoEditStep] = Field(default_factory=list)
+    output_format: str = "mp4"
+    output_resolution: str = "1080x1920"
+    output_fps: int = Field(default=30, ge=15, le=60)
+    output_bitrate: str = "4M"
+
+
+class VideoEditTask(TaskRecord):
+    """视频剪辑任务。"""
+
+    kind: TaskKind = TaskKind.VIDEO_EDITING
+    source_video_path: str
+    subtitle_text: str | None = None
+    subtitle_style: str = "default"
+    edit_config: VideoEditConfig = Field(default_factory=VideoEditConfig)
+    result_path: str | None = None
+    result_mime: str | None = None
+    result_size_bytes: int | None = Field(default=None, ge=0)
+    source_task_id: str | None = None
+    source_avatar_task_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 发布
+# ---------------------------------------------------------------------------
+
+
+class PublishTarget(BaseModel):
+    """发布目标平台配置。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    platform: PublishPlatform
+    title: str = Field(min_length=1, max_length=100)
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    cover_image_path: str | None = None
+    scheduled_at: datetime | None = None
+    visibility: str = "public"
+
+
+class PublishTask(TaskRecord):
+    """发布任务。"""
+
+    kind: TaskKind = TaskKind.PUBLISHING
+    video_path: str
+    target: PublishTarget
+    publish_status: PublishStatus = PublishStatus.PENDING
+    platform_video_id: str | None = None
+    platform_url: str | None = None
+    provider_name: str = ""
+    source_pipeline_run_id: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 端到端流水线
+# ---------------------------------------------------------------------------
+
+
+class PipelineStepResult(BaseModel):
+    """流水线单步骤结果。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    stage: PipelineStage
+    status: TaskStatus
+    task_id: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error_message: str | None = None
+    outputs: dict[str, str] = Field(default_factory=dict)
+
+
+class PipelineRun(BaseModel):
+    """端到端流水线执行记录。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str = Field(default_factory=lambda: f"pipeline-{uuid4().hex[:12]}")
+    keyword: str
+    status: PipelineRunStatus = PipelineRunStatus.PENDING
+    stages: list[PipelineStepResult] = Field(default_factory=list)
+    current_stage: PipelineStage | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    finished_at: datetime | None = None
+    candidate_video_id: str | None = None
+    copywriting_task_id: str | None = None
+    avatar_task_id: str | None = None
+    edit_task_id: str | None = None
+    publish_task_ids: list[str] = Field(default_factory=list)
+    config: dict[str, Any] = Field(default_factory=dict)
+    error_message: str | None = None

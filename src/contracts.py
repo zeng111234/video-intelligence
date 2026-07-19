@@ -9,13 +9,18 @@ from src.models import (
     AvatarJobSnapshot,
     AvatarSubmitRequest,
     CandidateMatch,
+    CopywritingTask,
     DiscoveryResult,
     KeywordTrendResult,
+    PipelineRun,
     PlatformSearchRun,
     Platform,
     ProviderCapability,
     ProviderSearchPage,
     ProviderUsage,
+    PublishStatus,
+    PublishTask,
+    PublishTarget,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -26,6 +31,8 @@ from src.models import (
     TaskRecord,
     TranscriptRevision,
     VideoCandidate,
+    VideoEditConfig,
+    VideoEditTask,
     VideoMetricSnapshot,
 )
 
@@ -190,3 +197,93 @@ class TaskRepository(Protocol):
     def get_transcript_revision(
         self, revision_id: str
     ) -> TranscriptRevision | None: ...
+
+    # -- 流水线 & 新增任务存储 --
+
+    def save_pipeline_run(self, run: PipelineRun) -> None: ...
+
+    def get_pipeline_run(self, run_id: str) -> PipelineRun | None: ...
+
+    def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]: ...
+
+
+# ---------------------------------------------------------------------------
+# 文案改写引擎协议
+# ---------------------------------------------------------------------------
+
+
+class CopywritingEngine(Protocol):
+    """基于 LLM 的文案改写 / 复刻接口。"""
+
+    def capabilities(self) -> dict[str, str | bool | int]: ...
+
+    def rewrite(
+        self,
+        source_text: str,
+        *,
+        style_prompt: str = "",
+        target_length: int = 300,
+        tone: str = "professional",
+        variant_count: int = 1,
+    ) -> list[str]: ...
+
+
+# ---------------------------------------------------------------------------
+# 视频编辑器协议
+# ---------------------------------------------------------------------------
+
+
+class VideoEditor(Protocol):
+    """FFmpeg 视频编辑流水线接口。"""
+
+    def capabilities(self) -> dict[str, str | bool]: ...
+
+    def apply_edit(
+        self,
+        source_video_path: str,
+        config: VideoEditConfig,
+        *,
+        output_path: str | None = None,
+    ) -> str: ...
+
+    def add_subtitles(
+        self,
+        video_path: str,
+        srt_path: str,
+        *,
+        style: str = "default",
+        output_path: str | None = None,
+    ) -> str: ...
+
+    def add_watermark(
+        self,
+        video_path: str,
+        watermark_path: str,
+        *,
+        position: str = "bottom_right",
+        opacity: float = 0.5,
+        output_path: str | None = None,
+    ) -> str: ...
+
+
+# ---------------------------------------------------------------------------
+# 发布适配器协议
+# ---------------------------------------------------------------------------
+
+
+class Publisher(Protocol):
+    """单平台发布适配器接口。"""
+
+    def platform(self) -> str: ...
+
+    def capabilities(self) -> dict[str, str | bool]: ...
+
+    def publish(
+        self,
+        video_path: str,
+        target: PublishTarget,
+    ) -> PublishTask: ...
+
+    def check_status(self, task_id: str) -> PublishStatus: ...
+
+    def get_published_url(self, task_id: str) -> str | None: ...

@@ -133,7 +133,7 @@ class ContextBudget:
             self.release_task_slot()
 
     def check_session_budget(
-        self, state: MutableMapping[str, Any]
+        self, state: MutableMapping[str, Any] | dict[str, Any]
     ) -> tuple[bool, float, float]:
         """检查 session_state 是否超出内存预算。
 
