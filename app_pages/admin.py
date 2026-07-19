@@ -5,11 +5,9 @@ from datetime import datetime
 
 from src.app_state import get_repository, get_context_budget
 from src.models import (
-    PlatformSearchRun,
     AvatarTask,
     PlatformRunStatus,
     AvatarProviderStatus,
-    TaskStatus,
 )
 
 # 页面标题
@@ -50,7 +48,9 @@ with col4:
     )
 
 # 检查当前内存使用
-is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(dict(st.session_state))
+is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(
+    dict(st.session_state)
+)
 if not is_within_budget:
     st.error(
         f"当前内存使用 {current_mb:.1f}MB 已超过预算 {budget_mb:.1f}MB",
@@ -81,8 +81,7 @@ except Exception as e:
 
 # 筛选OUTCOME_UNKNOWN状态
 unknown_runs = [
-    run for run in all_platform_runs
-    if run.status == PlatformRunStatus.OUTCOME_UNKNOWN
+    run for run in all_platform_runs if run.status == PlatformRunStatus.OUTCOME_UNKNOWN
 ]
 
 st.metric("OUTCOME_UNKNOWN 任务", len(unknown_runs), border=True)
@@ -99,11 +98,13 @@ if unknown_runs:
                 st.write(f"**运行ID:** {run.run_id}")
                 st.write(f"**请求计数:** {run.requested_count}")
                 st.write(f"**返回计数:** {run.returned_count}")
-                st.write(f"**开始时间:** {run.started_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                st.write(
+                    f"**开始时间:** {run.started_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
             with col3:
                 st.write(f"**状态:** {run.status.value}")
                 st.write(f"**指纹:** {run.request_fingerprint[:16]}...")
-                
+
                 # 解除阻断按钮
                 if st.button(
                     "解除阻断",
@@ -112,7 +113,9 @@ if unknown_runs:
                     help="解除此任务的阻断状态",
                 ):
                     try:
-                        repository.resolve_platform_search_request(run.request_fingerprint)
+                        repository.resolve_platform_search_request(
+                            run.request_fingerprint
+                        )
                         st.toast("已成功解除阻断状态", icon=":material/check_circle:")
                         st.rerun()
                     except Exception as e:
@@ -136,7 +139,8 @@ except Exception as e:
 
 # 筛选OUTCOME_UNKNOWN状态
 unknown_avatar_tasks = [
-    task for task in avatar_tasks
+    task
+    for task in avatar_tasks
     if task.provider_status == AvatarProviderStatus.OUTCOME_UNKNOWN
 ]
 
@@ -153,13 +157,15 @@ if unknown_avatar_tasks:
                 st.write(f"**音色:** {task.voice_name}")
             with col2:
                 st.write(f"**供应商状态:** {task.provider_status.value}")
-                st.write(f"**创建时间:** {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+                st.write(
+                    f"**创建时间:** {task.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
                 st.write(f"**重试次数:** {task.retry_count}")
                 if task.error_message:
                     st.write(f"**错误:** {task.error_message}")
             with col3:
                 st.write(f"**任务状态:** {task.status.value}")
-                
+
                 # 标记为失败并解锁按钮
                 if st.button(
                     "标记为失败并解锁",
@@ -190,12 +196,12 @@ col1, col2 = st.columns(2)
 with col1:
     st.metric(
         "总搜索批次",
-        len(search_batches) if 'search_batches' in locals() else 0,
+        len(search_batches) if "search_batches" in locals() else 0,
         border=True,
     )
 with col2:
     st.metric(
         "总数字人任务",
-        len(avatar_tasks) if 'avatar_tasks' in locals() else 0,
+        len(avatar_tasks) if "avatar_tasks" in locals() else 0,
         border=True,
     )

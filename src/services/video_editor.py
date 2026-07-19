@@ -94,7 +94,9 @@ class VideoEditingService:
                 )
                 task = task.model_copy(update={"edit_config": edit_config})
 
-            task = self._update(task, stage="处理中", progress=40, on_progress=on_progress)
+            task = self._update(
+                task, stage="处理中", progress=40, on_progress=on_progress
+            )
 
             result_path = self.editor.apply_edit(
                 str(source), edit_config, output_path=str(output_path)
@@ -149,11 +151,7 @@ class VideoEditingService:
         return tasks
 
     def list_tasks(self) -> list[VideoEditTask]:
-        return [
-            t
-            for t in self.repository.list_tasks()
-            if isinstance(t, VideoEditTask)
-        ]
+        return [t for t in self.repository.list_tasks() if isinstance(t, VideoEditTask)]
 
     def get_task(self, task_id: str) -> VideoEditTask | None:
         task = self.repository.get_task(task_id)
@@ -217,9 +215,7 @@ class VideoEditingService:
         for i, seg in enumerate(segments):
             start = i * time_per_seg
             end = start + time_per_seg
-            srt_blocks.append(
-                f"{i + 1}\n{_srt_ts(start)} --> {_srt_ts(end)}\n{seg}"
-            )
+            srt_blocks.append(f"{i + 1}\n{_srt_ts(start)} --> {_srt_ts(end)}\n{seg}")
         return "\n\n".join(srt_blocks) + "\n"
 
 

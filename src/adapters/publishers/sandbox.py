@@ -10,7 +10,6 @@ from src.models import (
     PublishStatus,
     PublishTask,
     PublishTarget,
-    TaskKind,
     TaskStatus,
 )
 
@@ -114,13 +113,11 @@ class PlatformPublisherAdapter:
     ) -> PublishTask:
         if not self._enabled:
             raise RuntimeError(
-                f"{self._platform.value} 发布适配器尚未配置。"
-                "请配置相关环境变量后重试。"
+                f"{self._platform.value} 发布适配器尚未配置。请配置相关环境变量后重试。"
             )
         # TODO: 实现真实发布逻辑
         raise NotImplementedError(
-            f"{self._platform.value} 真实发布尚未实现，"
-            "需要接入平台开放 API。"
+            f"{self._platform.value} 真实发布尚未实现，需要接入平台开放 API。"
         )
 
     def check_status(self, task_id: str) -> PublishStatus:

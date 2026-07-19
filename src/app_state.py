@@ -10,6 +10,7 @@ import streamlit as st
 from src.adapters.avatar import InternalAvatarProvider
 from src.adapters.licensed import SandboxLicensedSearchProvider
 from src.adapters.publishers.sandbox import SandboxPublisher
+from src.contracts import Publisher
 from src.adapters.video_editor import SandboxVideoEditor
 from src.contracts import LicensedSearchProvider
 from src.mock_data import build_mock_candidates, build_mock_tasks
@@ -165,7 +166,10 @@ def get_pipeline_service() -> PipelineService:
     source_service = SourceService(repository, HeatService())
     trend_service = KeywordTrendService(repository)
     search_service = CommercialSearchService(
-        repository, source_service, trend_service, provider,
+        repository,
+        source_service,
+        trend_service,
+        provider,
     )
 
     # 文案服务
@@ -177,7 +181,7 @@ def get_pipeline_service() -> PipelineService:
     edit_service = VideoEditingService(repository, video_editor)
 
     # 发布服务——三平台沙箱发布
-    publishers = {
+    publishers: dict[str, Publisher] = {
         "douyin": SandboxPublisher(PublishPlatform.DOUYIN),
         "kuaishou": SandboxPublisher(PublishPlatform.KUAISHOU),
         "wechat_channels": SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),

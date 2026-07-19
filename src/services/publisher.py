@@ -11,13 +11,13 @@ from pathlib import Path
 from typing import Callable
 from uuid import uuid4
 
+from collections.abc import Mapping
+
 from src.contracts import Publisher, TaskRepository
 from src.models import (
-    PublishPlatform,
     PublishStatus,
     PublishTask,
     PublishTarget,
-    TaskKind,
     TaskStatus,
 )
 
@@ -26,7 +26,7 @@ class PublishService:
     def __init__(
         self,
         repository: TaskRepository,
-        publishers: dict[str, Publisher],
+        publishers: Mapping[str, Publisher],
     ) -> None:
         self.repository = repository
         self.publishers = publishers
@@ -35,11 +35,13 @@ class PublishService:
         result: list[dict[str, str | bool]] = []
         for pub in self.publishers.values():
             cap = pub.capabilities()
-            result.append({
-                "platform": pub.platform(),
-                "enabled": bool(cap.get("enabled", False)),
-                "display_name": str(cap.get("display_name", pub.platform())),
-            })
+            result.append(
+                {
+                    "platform": pub.platform(),
+                    "enabled": bool(cap.get("enabled", False)),
+                    "display_name": str(cap.get("display_name", pub.platform())),
+                }
+            )
         return result
 
     def publish(
@@ -130,11 +132,7 @@ class PublishService:
         return tasks
 
     def list_tasks(self) -> list[PublishTask]:
-        return [
-            t
-            for t in self.repository.list_tasks()
-            if isinstance(t, PublishTask)
-        ]
+        return [t for t in self.repository.list_tasks() if isinstance(t, PublishTask)]
 
     def get_task(self, task_id: str) -> PublishTask | None:
         task = self.repository.get_task(task_id)

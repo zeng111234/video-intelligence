@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -114,15 +113,23 @@ class FFmpegVideoEditor:
             raise VideoEditorError("视频文件不存在。")
         if not srt.exists():
             raise VideoEditorError("字幕文件不存在。")
-        output = Path(output_path) if output_path else video.parent / f"{video.stem}_subtitled.mp4"
+        output = (
+            Path(output_path)
+            if output_path
+            else video.parent / f"{video.stem}_subtitled.mp4"
+        )
         subtitle_filter = self._build_subtitle_filter(srt, style)
         cmd = [
             self.ffmpeg,
             "-nostdin",
-            "-v", "error",
-            "-i", str(video),
-            "-vf", subtitle_filter,
-            "-c:a", "copy",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-vf",
+            subtitle_filter,
+            "-c:a",
+            "copy",
             "-y",
             str(output),
         ]
@@ -145,7 +152,11 @@ class FFmpegVideoEditor:
             raise VideoEditorError("视频文件不存在。")
         if not wm.exists():
             raise VideoEditorError("水印文件不存在。")
-        output = Path(output_path) if output_path else video.parent / f"{video.stem}_watermarked.mp4"
+        output = (
+            Path(output_path)
+            if output_path
+            else video.parent / f"{video.stem}_watermarked.mp4"
+        )
         pos_filter = self._build_watermark_position(position)
         filter_complex = (
             f"[1:v]format=rgba,colorchannelmixer=aa={opacity}[wm];"
@@ -154,13 +165,20 @@ class FFmpegVideoEditor:
         cmd = [
             self.ffmpeg,
             "-nostdin",
-            "-v", "error",
-            "-i", str(video),
-            "-i", str(wm),
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-map", "0:a?",
-            "-c:a", "copy",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-i",
+            str(wm),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[out]",
+            "-map",
+            "0:a?",
+            "-c:a",
+            "copy",
             "-y",
             str(output),
         ]
@@ -185,14 +203,22 @@ class FFmpegVideoEditor:
             srt_path = params.get("srt_path", "")
             if not srt_path:
                 raise VideoEditorError("字幕步骤缺少 srt_path 参数。")
-            self.add_subtitles(str(input_path), srt_path, style=style, output_path=str(output_path))
+            self.add_subtitles(
+                str(input_path), srt_path, style=style, output_path=str(output_path)
+            )
         elif kind == VideoEditStepKind.WATERMARK:
             wm_path = params.get("watermark_path", "")
             position = params.get("position", "bottom_right")
             opacity = float(params.get("opacity", 0.5))
             if not wm_path:
                 raise VideoEditorError("水印步骤缺少 watermark_path 参数。")
-            self.add_watermark(str(input_path), wm_path, position=position, opacity=opacity, output_path=str(output_path))
+            self.add_watermark(
+                str(input_path),
+                wm_path,
+                position=position,
+                opacity=opacity,
+                output_path=str(output_path),
+            )
         elif kind == VideoEditStepKind.SPEED:
             self._apply_speed(input_path, output_path, params, config)
         elif kind == VideoEditStepKind.RESIZE:
@@ -248,11 +274,20 @@ class FFmpegVideoEditor:
             chain.append(f"atempo={remaining}")
             audio_filter = ",".join(chain)
         cmd = [
-            self.ffmpeg, "-nostdin", "-v", "error",
-            "-i", str(input_path),
-            "-filter_complex", f"[0:v]{video_filter}[v];[0:a]{audio_filter}[a]",
-            "-map", "[v]", "-map", "[a]",
-            "-y", str(output_path),
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-filter_complex",
+            f"[0:v]{video_filter}[v];[0:a]{audio_filter}[a]",
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-y",
+            str(output_path),
         ]
         self._run(cmd, "速度调整失败。")
 
@@ -266,11 +301,18 @@ class FFmpegVideoEditor:
         resolution = params.get("resolution", config.output_resolution)
         w, h = resolution.split("x")
         cmd = [
-            self.ffmpeg, "-nostdin", "-v", "error",
-            "-i", str(input_path),
-            "-vf", f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
-            "-c:a", "copy",
-            "-y", str(output_path),
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-vf",
+            f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2",
+            "-c:a",
+            "copy",
+            "-y",
+            str(output_path),
         ]
         self._run(cmd, "分辨率调整失败。")
 
@@ -307,15 +349,25 @@ class FFmpegVideoEditor:
             f"[a0][a1]amix=inputs=2:duration=first[aout]"
         )
         cmd = [
-            self.ffmpeg, "-nostdin", "-v", "error",
-            "-i", str(input_path),
-            "-i", str(bgm),
-            "-filter_complex", filter_complex,
-            "-map", "0:v",
-            "-map", "[aout]",
-            "-c:v", "copy",
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-i",
+            str(bgm),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "0:v",
+            "-map",
+            "[aout]",
+            "-c:v",
+            "copy",
             "-shortest",
-            "-y", str(output_path),
+            "-y",
+            str(output_path),
         ]
         self._run(cmd, "添加背景音乐失败。")
 
@@ -323,13 +375,24 @@ class FFmpegVideoEditor:
         self, input_path: Path, output_path: Path, config: VideoEditConfig
     ) -> None:
         cmd = [
-            self.ffmpeg, "-nostdin", "-v", "error",
-            "-i", str(input_path),
-            "-c:v", "libx264", "-preset", "fast",
-            "-b:v", config.output_bitrate,
-            "-r", str(config.output_fps),
-            "-c:a", "aac",
-            "-y", str(output_path),
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-b:v",
+            config.output_bitrate,
+            "-r",
+            str(config.output_fps),
+            "-c:a",
+            "aac",
+            "-y",
+            str(output_path),
         ]
         self._run(cmd, "视频转码失败。")
 
@@ -360,18 +423,27 @@ class FFmpegVideoEditor:
 
     def _validate_video(self, path: Path) -> None:
         cmd = [
-            self.ffprobe, "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=codec_type",
-            "-of", "default=nw=1:nk=1",
+            self.ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=nw=1:nk=1",
             str(path),
         ]
-        result = self.command_runner(cmd, capture_output=True, text=True, timeout=30, check=False)
+        result = self.command_runner(
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
         if result.returncode != 0 or "video" not in result.stdout:
             raise VideoEditorError("输入文件不是有效的视频。")
 
     def _run(self, cmd: list[str], error_msg: str) -> None:
-        result = self.command_runner(cmd, capture_output=True, text=True, timeout=600, check=False)
+        result = self.command_runner(
+            cmd, capture_output=True, text=True, timeout=600, check=False
+        )
         if result.returncode != 0:
             detail = (result.stderr or "")[:200]
             raise VideoEditorError(f"{error_msg} {detail}")

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import sys
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 T = TypeVar("T")
@@ -105,7 +104,8 @@ def retry_with_policy(
                 time.sleep(delay)
 
     raise ExternalServiceError(
-        error_message or f"连接失败，已自动重试 {policy.max_attempts - 1} 次：{last_error}"
+        error_message
+        or f"连接失败，已自动重试 {policy.max_attempts - 1} 次：{last_error}"
     ) from last_error
 
 

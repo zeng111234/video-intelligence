@@ -118,7 +118,9 @@ with tab_new:
         subtitle_style = st.selectbox(
             "字幕样式",
             ["default", "highlight"],
-            format_func=lambda x: {"default": "标准白字", "highlight": "高亮黄字"}.get(x, x),
+            format_func=lambda x: {"default": "标准白字", "highlight": "高亮黄字"}.get(
+                x, x
+            ),
             key="sub_style",
         )
         trim_start = st.number_input("裁剪起始(秒)", min_value=0.0, value=0.0, step=0.5)
@@ -127,7 +129,12 @@ with tab_new:
         )
         speed = st.slider("播放速度", 0.5, 2.0, 1.0, 0.1, key="speed")
 
-    if st.button("启动流水线", type="primary", use_container_width=True, disabled=not keyword.strip()):
+    if st.button(
+        "启动流水线",
+        type="primary",
+        use_container_width=True,
+        disabled=not keyword.strip(),
+    ):
         # 创建流水线
         platforms_list: list[PublishPlatform] = []
         if pub_douyin:
@@ -147,10 +154,16 @@ with tab_new:
             params: dict = {"start": trim_start}
             if trim_duration > 0:
                 params["duration"] = trim_duration
-            steps.append(VideoEditStep(kind=VideoEditStepKind.TRIM, params=params, order=order))
+            steps.append(
+                VideoEditStep(kind=VideoEditStepKind.TRIM, params=params, order=order)
+            )
             order += 1
         if speed != 1.0:
-            steps.append(VideoEditStep(kind=VideoEditStepKind.SPEED, params={"speed": speed}, order=order))
+            steps.append(
+                VideoEditStep(
+                    kind=VideoEditStepKind.SPEED, params={"speed": speed}, order=order
+                )
+            )
             order += 1
         edit_config = VideoEditConfig(steps=steps)
 
@@ -231,7 +244,13 @@ with tab_new:
             for label, stage in stages_display:
                 step = next((s for s in run.stages if s.stage == stage), None)
                 if step:
-                    icon = "✅" if step.status == TaskStatus.SUCCEEDED else "🔄" if step.status == TaskStatus.RUNNING else "❌"
+                    icon = (
+                        "✅"
+                        if step.status == TaskStatus.SUCCEEDED
+                        else "🔄"
+                        if step.status == TaskStatus.RUNNING
+                        else "❌"
+                    )
                     st.markdown(f"{icon} **{label}**: {step.status.value}")
                     if step.error_message:
                         st.caption(f"  错误: {step.error_message}")

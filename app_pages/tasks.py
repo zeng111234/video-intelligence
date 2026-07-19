@@ -145,6 +145,7 @@ if selected_task:
                 ):
                     try:
                         from datetime import datetime
+
                         # 更新provider_status为FAILED
                         selected_task.provider_status = AvatarProviderStatus.FAILED
                         selected_task.updated_at = datetime.now().astimezone()

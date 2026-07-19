@@ -9,7 +9,6 @@ from src.models import (
     AvatarJobSnapshot,
     AvatarSubmitRequest,
     CandidateMatch,
-    CopywritingTask,
     DiscoveryResult,
     KeywordTrendResult,
     PipelineRun,
@@ -32,7 +31,6 @@ from src.models import (
     TranscriptRevision,
     VideoCandidate,
     VideoEditConfig,
-    VideoEditTask,
     VideoMetricSnapshot,
 )
 

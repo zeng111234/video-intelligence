@@ -11,7 +11,7 @@ from typing import Callable
 from uuid import uuid4
 
 from src.contracts import CopywritingEngine, TaskRepository
-from src.models import CopywritingTask, TaskKind, TaskStatus
+from src.models import CopywritingTask, TaskStatus
 
 
 class CopywritingService:
@@ -122,9 +122,7 @@ class CopywritingService:
 
     def list_tasks(self) -> list[CopywritingTask]:
         return [
-            t
-            for t in self.repository.list_tasks()
-            if isinstance(t, CopywritingTask)
+            t for t in self.repository.list_tasks() if isinstance(t, CopywritingTask)
         ]
 
     def get_task(self, task_id: str) -> CopywritingTask | None:

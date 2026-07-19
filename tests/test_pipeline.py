@@ -5,13 +5,12 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from src.adapters.llm import SandboxCopywritingEngine, LLMAdapterError
+from src.adapters.llm import SandboxCopywritingEngine
 from src.adapters.publishers.sandbox import SandboxPublisher, PlatformPublisherAdapter
 from src.adapters.video_editor import FFmpegVideoEditor, VideoEditorError
 from src.models import (
@@ -28,11 +27,8 @@ from src.models import (
     VideoEditConfig,
     VideoEditStep,
     VideoEditStepKind,
-    VideoEditTask,
 )
-from src.adapters.llm import SandboxCopywritingEngine
 from src.adapters.licensed import SandboxLicensedSearchProvider
-from src.adapters.publishers.sandbox import SandboxPublisher
 from src.adapters.video_editor import SandboxVideoEditor
 from src.repositories.mock import MockRepository
 from src.services.commercial_search import CommercialSearchService
@@ -192,6 +188,7 @@ class TestPublishService:
         self.svc = PublishService(self.repo, self.publishers)
         # 创建临时视频文件用于测试
         import tempfile
+
         self._temp_files: list[Path] = []
         tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
         tmp.write(b"\x00" * 100)
@@ -279,6 +276,7 @@ class TestFFmpegVideoEditor:
     def test_add_subtitles_nonexistent_srt_raises(self):
         # 创建一个假的视频文件
         import tempfile
+
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f:
             f.write(b"\x00" * 100)
             video_path = f.name
@@ -303,7 +301,9 @@ class TestVideoEditingService:
     def test_edit_nonexistent_video_raises(self):
         config = VideoEditConfig()
         with pytest.raises(ValueError, match="源视频文件不存在"):
-            self.svc.edit_video(source_video_path="/nonexistent.mp4", edit_config=config)
+            self.svc.edit_video(
+                source_video_path="/nonexistent.mp4", edit_config=config
+            )
 
     def test_list_tasks_empty(self):
         tasks = self.svc.list_tasks()
@@ -331,9 +331,7 @@ class TestPipelineService:
             "wechat_channels": SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),
         }
         pub_svc = PublishService(self.repo, pub_publishers)
-        self.svc = PipelineService(
-            self.repo, search_svc, copy_svc, edit_svc, pub_svc
-        )
+        self.svc = PipelineService(self.repo, search_svc, copy_svc, edit_svc, pub_svc)
 
     def test_create_run(self):
         run = self.svc.create_run(keyword="二手车")

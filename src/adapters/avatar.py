@@ -244,9 +244,7 @@ class InternalAvatarProvider:
                     body,
                     timeout or self.timeout_seconds,
                 ),
-                policy=RetryPolicy(
-                    max_attempts=2 if retry_safe else 1, base_delay=0
-                ),
+                policy=RetryPolicy(max_attempts=2 if retry_safe else 1, base_delay=0),
                 retry_for=(AvatarProviderError,),
                 retryable=_is_retryable,
             )

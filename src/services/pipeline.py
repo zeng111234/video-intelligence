@@ -9,8 +9,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
-from uuid import uuid4
+from typing import Any
 
 from src.contracts import TaskRepository
 from src.models import (
@@ -81,9 +80,9 @@ class PipelineService:
             status=status,
             task_id=task_id,
             started_at=now,
-            finished_at=now if status in {
-                TaskStatus.SUCCEEDED, TaskStatus.FAILED
-            } else None,
+            finished_at=now
+            if status in {TaskStatus.SUCCEEDED, TaskStatus.FAILED}
+            else None,
             error_message=error_message,
             outputs=outputs or {},
         )
@@ -98,7 +97,8 @@ class PipelineService:
         elif status == TaskStatus.RUNNING:
             pipeline_status = PipelineRunStatus.RUNNING
         elif status == TaskStatus.SUCCEEDED and run.status in {
-            PipelineRunStatus.PENDING, PipelineRunStatus.RUNNING
+            PipelineRunStatus.PENDING,
+            PipelineRunStatus.RUNNING,
         }:
             pipeline_status = PipelineRunStatus.RUNNING
 
@@ -142,7 +142,9 @@ class PipelineService:
         now = datetime.now().astimezone()
         updated = run.model_copy(
             update={
-                "status": PipelineRunStatus.SUCCEEDED if success else PipelineRunStatus.FAILED,
+                "status": PipelineRunStatus.SUCCEEDED
+                if success
+                else PipelineRunStatus.FAILED,
                 "finished_at": now,
                 "updated_at": now,
                 "error_message": error_message,
@@ -230,9 +232,7 @@ class PipelineService:
         result_text = ""
         try:
             logger.info("流水线 %s → 阶段 2: 文案改写", run_id)
-            run = self.update_stage(
-                run, PipelineStage.COPYWRITING, TaskStatus.RUNNING
-            )
+            run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
 
             # 使用关键词生成源文案
             source_text = style_prompt if style_prompt else f"{keyword}相关短视频文案"
@@ -312,9 +312,7 @@ class PipelineService:
                     "result_path": result_video_path,
                 },
             )
-            logger.info(
-                "流水线 %s → 阶段 3 完成，任务: %s", run_id, edit_task_id
-            )
+            logger.info("流水线 %s → 阶段 3 完成，任务: %s", run_id, edit_task_id)
         except Exception as exc:
             error_msg = f"视频剪辑失败: {exc}"
             logger.error("流水线 %s → %s", run_id, error_msg)
@@ -331,9 +329,7 @@ class PipelineService:
         # ========================
         try:
             logger.info("流水线 %s → 阶段 4: 多平台发布", run_id)
-            run = self.update_stage(
-                run, PipelineStage.PUBLISHING, TaskStatus.RUNNING
-            )
+            run = self.update_stage(run, PipelineStage.PUBLISHING, TaskStatus.RUNNING)
 
             # 构建发布目标
             targets = self.build_publish_targets(
@@ -352,7 +348,9 @@ class PipelineService:
             failed_tasks = [t for t in publish_tasks if t.status == TaskStatus.FAILED]
             if len(failed_tasks) == len(publish_tasks):
                 # 全部失败
-                error_msg = f"所有平台发布失败 ({len(failed_tasks)}/{len(publish_tasks)})"
+                error_msg = (
+                    f"所有平台发布失败 ({len(failed_tasks)}/{len(publish_tasks)})"
+                )
                 raise RuntimeError(error_msg)
 
             # 记录发布任务 ID
@@ -400,7 +398,6 @@ class PipelineService:
         在沙箱模式下生成一个临时占位文件用于演示，
         实际生产环境中应从候选素材中选取或由数字人生成。
         """
-        from tempfile import NamedTemporaryFile
 
         data_dir = Path("data/video_edits")
         data_dir.mkdir(parents=True, exist_ok=True)

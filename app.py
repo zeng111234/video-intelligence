@@ -15,7 +15,9 @@ initialize_state()
 context_budget = get_context_budget()
 # 将SessionStateProxy转换为普通字典以满足类型检查
 session_state_dict = dict(st.session_state)
-is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(session_state_dict)
+is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(
+    session_state_dict
+)
 if not is_within_budget:
     st.error(
         f"**内存预算超限警告**\n\n"

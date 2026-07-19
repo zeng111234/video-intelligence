@@ -8,7 +8,6 @@ from pathlib import Path
 from src.models import (
     AvatarTask,
     CandidateMatch,
-    CopywritingTask,
     DiscoveryResult,
     HeatLevel,
     HeatResult,
@@ -16,7 +15,6 @@ from src.models import (
     PipelineRun,
     Platform,
     PlatformSearchRun,
-    PublishTask,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -26,7 +24,6 @@ from src.models import (
     TranscriptRevision,
     TranscriptionTask,
     VideoCandidate,
-    VideoEditTask,
     VideoMetricSnapshot,
 )
 
@@ -1104,9 +1101,7 @@ class SQLiteRepository:
             "SELECT payload_json FROM pipeline_runs ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [
-            PipelineRun.model_validate_json(row["payload_json"]) for row in rows
-        ]
+        return [PipelineRun.model_validate_json(row["payload_json"]) for row in rows]
 
     def seed(self, candidates: list[VideoCandidate], tasks: list[TaskRecord]) -> None:
         if (
