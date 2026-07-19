@@ -83,8 +83,21 @@ class PublishService:
         self._save(task, on_progress)
         try:
             result = publisher.publish(str(video), target)
-            self._save(result, on_progress)
-            return result
+            # 更新初始任务为结果状态，而非保存新任务
+            updated = task.model_copy(
+                update={
+                    "status": result.status,
+                    "progress": result.progress,
+                    "publish_status": result.publish_status,
+                    "platform_video_id": result.platform_video_id,
+                    "platform_url": result.platform_url,
+                    "stage": result.stage,
+                    "updated_at": datetime.now().astimezone(),
+                    "is_mock": result.is_mock,
+                }
+            )
+            self._save(updated, on_progress)
+            return updated
         except Exception as exc:
             failed = task.model_copy(
                 update={

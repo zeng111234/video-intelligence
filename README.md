@@ -1,6 +1,7 @@
 # 短视频热点洞察与智能生产系统
 
-面向品牌营销团队的短视频热点发现、候选管理与授权视频音轨转文案 MVP。
+面向品牌营销团队的短视频热点发现、候选管理、批量内容生产与多平台发布系统。
+本仓库保留原有 `Streamlit MVP` 能力，同时新增独立前后端工程骨架，便于后续继续扩展任务队列、数字人、AI 剪辑与发布模块。
 
 ## 当前阶段
 
@@ -18,11 +19,76 @@
 - **AI 剪辑**：支持字幕嵌入、水印、裁剪、变速等步骤的自动化视频处理。
 - **多平台发布**：支持抖音、快手、视频号的一键发布，具备状态追踪与回滚能力。
 
+## 技术栈
+
+- **现有 MVP**：Streamlit、Python、SQLite、FFmpeg、faster-whisper
+- **新增前端骨架**：React、Vite、Ant Design
+- **新增后端骨架**：Python、FastAPI、Uvicorn
+- **计划扩展**：任务队列、LLM 文案引擎、数字人流水线、多平台发布适配器
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- Node.js 18+
+- FFmpeg（视频处理）
+
+### 默认服务端口
+
+| 服务 | 端口 | 说明 |
+|---|---:|---|
+| 前端 | 1001 | `project/frontend` 开发服务 |
+| 后端 | 2001 | `project/backend` API 服务 |
+| Streamlit MVP | 8501 | 原有系统，保持兼容 |
+
+### 默认数据库配置
+
+- 默认继续使用 SQLite：`data/video_intelligence.db`
+- 若后续切换 PostgreSQL，可在 `.env` 中配置：
+  - `POSTGRES_HOST=localhost`
+  - `POSTGRES_PORT=5432`
+  - `POSTGRES_DB=video`
+  - `POSTGRES_USER=postgres`
+  - `POSTGRES_PASSWORD=postgres`
+
+### 安装与启动
+
+```powershell
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+新增骨架后续可用：
+
+```powershell
+cd project/backend
+python -m pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
+
+cd project/frontend
+npm install
+npm run dev
+```
+
 详细范围与约束见：
 
 - [项目交接文档](PROJECT_HANDOFF.md)
 - [产品与开发文档](docs/archive/video-intelligence-production-dev-doc-full-v1.6.md)
 - [外部参考仓库说明](references/README.md)
+
+## 项目结构
+
+```text
+app_pages/                 Streamlit 原有页面
+docs/                      文档目录
+src/                       现有系统源代码
+project/frontend/          新增前端工程骨架
+project/backend/           新增后端工程骨架
+database/                  数据库脚本
+utils/                     项目工具包
+tests/                     测试目录
+```
 
 ## 协作方式
 

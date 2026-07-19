@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from src.models import VideoEditConfig, VideoEditStep, VideoEditStepKind
 
@@ -374,3 +375,62 @@ class FFmpegVideoEditor:
         if result.returncode != 0:
             detail = (result.stderr or "")[:200]
             raise VideoEditorError(f"{error_msg} {detail}")
+
+
+class SandboxVideoEditor:
+    """离线沙箱视频编辑器——不调用 FFmpeg，仅生成占位文件用于演示。"""
+
+    def __init__(self, *, output_directory: str | Path | None = None) -> None:
+        self.output_directory = Path(output_directory or "data/video_edits")
+
+    def capabilities(self) -> dict[str, str | bool]:
+        return {
+            "provider_name": "sandbox_video_editor",
+            "display_name": "视频剪辑（演示）",
+            "enabled": True,
+            "mode": "sandbox",
+            "supports_trim": True,
+            "supports_subtitle": True,
+            "supports_watermark": True,
+            "supports_speed": True,
+            "supports_resize": True,
+            "supports_filter": True,
+        }
+
+    def apply_edit(
+        self,
+        source_video_path: str,
+        config: VideoEditConfig,
+        *,
+        output_path: str | None = None,
+    ) -> str:
+        """生成一个占位 MP4 文件，用于演示流水线流程。"""
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        if output_path:
+            output = Path(output_path)
+        else:
+            output = self.output_directory / f"sandbox_{uuid4().hex[:8]}.mp4"
+        # 写入最小合法 MP4 占位文件（不会实际播放，仅用于流水线流转）
+        output.write_bytes(b"\x00" * 64)
+        return str(output)
+
+    def add_subtitles(
+        self,
+        video_path: str,
+        srt_path: str,
+        *,
+        style: str = "default",
+        output_path: str | None = None,
+    ) -> str:
+        return self.apply_edit(video_path, VideoEditConfig(), output_path=output_path)
+
+    def add_watermark(
+        self,
+        video_path: str,
+        watermark_path: str,
+        *,
+        position: str = "bottom_right",
+        opacity: float = 0.5,
+        output_path: str | None = None,
+    ) -> str:
+        return self.apply_edit(video_path, VideoEditConfig(), output_path=output_path)

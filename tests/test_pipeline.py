@@ -30,10 +30,18 @@ from src.models import (
     VideoEditStepKind,
     VideoEditTask,
 )
+from src.adapters.llm import SandboxCopywritingEngine
+from src.adapters.licensed import SandboxLicensedSearchProvider
+from src.adapters.publishers.sandbox import SandboxPublisher
+from src.adapters.video_editor import SandboxVideoEditor
 from src.repositories.mock import MockRepository
+from src.services.commercial_search import CommercialSearchService
 from src.services.copywriting import CopywritingService
+from src.services.keyword_trend import KeywordTrendService
 from src.services.pipeline import PipelineService
 from src.services.publisher import PublishService
+from src.services.source import SourceService
+from src.services.heat import HeatService
 from src.services.video_editor import VideoEditingService
 
 
@@ -310,7 +318,22 @@ class TestVideoEditingService:
 class TestPipelineService:
     def setup_method(self):
         self.repo = MockRepository()
-        self.svc = PipelineService(self.repo)
+        source_svc = SourceService(self.repo, HeatService())
+        trend_svc = KeywordTrendService(self.repo)
+        search_svc = CommercialSearchService(
+            self.repo, source_svc, trend_svc, SandboxLicensedSearchProvider()
+        )
+        copy_svc = CopywritingService(self.repo, SandboxCopywritingEngine())
+        edit_svc = VideoEditingService(self.repo, SandboxVideoEditor())
+        pub_publishers = {
+            "douyin": SandboxPublisher(PublishPlatform.DOUYIN),
+            "kuaishou": SandboxPublisher(PublishPlatform.KUAISHOU),
+            "wechat_channels": SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),
+        }
+        pub_svc = PublishService(self.repo, pub_publishers)
+        self.svc = PipelineService(
+            self.repo, search_svc, copy_svc, edit_svc, pub_svc
+        )
 
     def test_create_run(self):
         run = self.svc.create_run(keyword="二手车")

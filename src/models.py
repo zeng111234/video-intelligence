@@ -799,6 +799,7 @@ class PublishTask(TaskRecord):
     platform_url: str | None = None
     provider_name: str = ""
     source_pipeline_run_id: str | None = None
+    stage: str = "等待发布"
 
 
 # ---------------------------------------------------------------------------

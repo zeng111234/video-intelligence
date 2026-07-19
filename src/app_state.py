@@ -8,19 +8,28 @@ from typing import Any
 import streamlit as st
 
 from src.adapters.avatar import InternalAvatarProvider
+from src.adapters.licensed import SandboxLicensedSearchProvider
+from src.adapters.publishers.sandbox import SandboxPublisher
+from src.adapters.video_editor import SandboxVideoEditor
 from src.contracts import LicensedSearchProvider
 from src.mock_data import build_mock_candidates, build_mock_tasks
+from src.models import PublishPlatform
 from src.repositories import MockRepository, SQLiteRepository
 from src.services import (
     CandidateService,
     CommercialSearchService,
+    CopywritingService,
     HeatService,
     KeywordDiscoveryService,
     KeywordTrendService,
+    PipelineService,
+    PublishService,
     SourceService,
     TranscriptionService,
+    VideoEditingService,
 )
 from src.services.avatar import AvatarService
+from src.adapters.llm import build_copywriting_engine
 from src.context_budget import ContextBudget
 
 REPOSITORY_KEY = "_repository"
@@ -135,3 +144,52 @@ def selected_candidate_id(state: MutableMapping[str, Any] | None = None) -> str 
 def get_context_budget() -> ContextBudget:
     initialize_state()
     return st.session_state[CONTEXT_BUDGET_KEY]
+
+
+PIPELINE_SERVICE_KEY = "_pipeline_service"
+
+
+def get_pipeline_service() -> PipelineService:
+    """组装完整的流水线服务，注入所有依赖。
+
+    使用 session_state 缓存实例，避免重复创建。
+    """
+    initialize_state()
+    if PIPELINE_SERVICE_KEY in st.session_state:
+        return st.session_state[PIPELINE_SERVICE_KEY]
+
+    repository = st.session_state[REPOSITORY_KEY]
+
+    # 搜索服务——使用沙箱商业接口
+    provider: LicensedSearchProvider = SandboxLicensedSearchProvider()
+    source_service = SourceService(repository, HeatService())
+    trend_service = KeywordTrendService(repository)
+    search_service = CommercialSearchService(
+        repository, source_service, trend_service, provider,
+    )
+
+    # 文案服务
+    engine = build_copywriting_engine()
+    copy_service = CopywritingService(repository, engine)
+
+    # 视频剪辑服务——使用沙箱编辑器
+    video_editor = SandboxVideoEditor()
+    edit_service = VideoEditingService(repository, video_editor)
+
+    # 发布服务——三平台沙箱发布
+    publishers = {
+        "douyin": SandboxPublisher(PublishPlatform.DOUYIN),
+        "kuaishou": SandboxPublisher(PublishPlatform.KUAISHOU),
+        "wechat_channels": SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),
+    }
+    pub_service = PublishService(repository, publishers)
+
+    pipeline = PipelineService(
+        repository=repository,
+        commercial_search_service=search_service,
+        copywriting_service=copy_service,
+        video_editing_service=edit_service,
+        publish_service=pub_service,
+    )
+    st.session_state[PIPELINE_SERVICE_KEY] = pipeline
+    return pipeline

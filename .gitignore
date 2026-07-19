@@ -37,3 +37,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# New project scaffold
+project/frontend/node_modules/
+project/frontend/dist/
