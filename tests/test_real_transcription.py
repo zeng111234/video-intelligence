@@ -277,7 +277,7 @@ def test_model_loading_retries_once_then_reports_failure() -> None:
         model_loader=unavailable_model,
         command_runner=fake_media_runner([]),
     )
-    with pytest.raises(RuntimeError, match="已自动重试一次"):
+    with pytest.raises(RuntimeError, match="已自动重试"):
         service.create_task(
             media_name="owned.mp4",
             media_type="video/mp4",
@@ -285,7 +285,7 @@ def test_model_loading_retries_once_then_reports_failure() -> None:
             rights_confirmed=True,
             rights_holder="测试公司",
         )
-    assert attempts == 2
+    assert attempts == 3
 
 
 @pytest.mark.parametrize("duration", ["0", "-1", "NaN", "Infinity", "901"])

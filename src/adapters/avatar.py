@@ -16,6 +16,7 @@ from src.models import (
     ProviderErrorKind,
     ProviderMode,
 )
+from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 
 JsonTransport = Callable[
     [str, str, dict[str, str], bytes | None, float], tuple[bytes, str]
@@ -224,24 +225,36 @@ class InternalAvatarProvider:
         }
         if body is not None:
             headers["Content-Type"] = "application/json; charset=utf-8"
-        attempts = 2 if retry_safe else 1
-        last_error: AvatarProviderError | None = None
-        for _ in range(attempts):
-            try:
-                return self.transport(
+
+        def _is_retryable(exc: BaseException) -> bool:
+            if isinstance(exc, AvatarProviderError):
+                return exc.kind in {
+                    ProviderErrorKind.CONNECTION,
+                    ProviderErrorKind.RATE_LIMIT,
+                    ProviderErrorKind.SERVICE,
+                }
+            return False
+
+        try:
+            return retry_with_policy(
+                lambda: self.transport(
                     method,
                     f"{self.base_url}{path}",
                     headers,
                     body,
                     timeout or self.timeout_seconds,
-                )
-            except AvatarProviderError as exc:
-                last_error = exc
-                if exc.kind not in {
-                    ProviderErrorKind.CONNECTION,
-                    ProviderErrorKind.RATE_LIMIT,
-                    ProviderErrorKind.SERVICE,
-                }:
-                    break
-        assert last_error is not None
-        raise last_error
+                ),
+                policy=RetryPolicy(
+                    max_attempts=2 if retry_safe else 1, base_delay=0
+                ),
+                retry_for=(AvatarProviderError,),
+                retryable=_is_retryable,
+            )
+        except ExternalServiceError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, AvatarProviderError):
+                raise cause
+            raise AvatarProviderError(
+                str(exc),
+                kind=ProviderErrorKind.SERVICE,
+            ) from exc

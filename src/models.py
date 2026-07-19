@@ -126,6 +126,49 @@ class ProviderErrorKind(StrEnum):
     OUTCOME_UNKNOWN = "outcome_unknown"
 
 
+class VideoEditStepKind(StrEnum):
+    TRIM = "trim"
+    SUBTITLE = "subtitle"
+    WATERMARK = "watermark"
+    TRANSITION = "transition"
+    BACKGROUND_MUSIC = "background_music"
+    SPEED = "speed"
+    RESIZE = "resize"
+    FILTER = "filter"
+    CONCAT = "concat"
+
+
+class PublishPlatform(StrEnum):
+    DOUYIN = "douyin"
+    KUAISHOU = "kuaishou"
+    WECHAT_CHANNELS = "wechat_channels"
+
+
+class PublishStatus(StrEnum):
+    PENDING = "pending"
+    UPLOADING = "uploading"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class PipelineStage(StrEnum):
+    KEYWORD_SEARCH = "keyword_search"
+    COPYWRITING = "copywriting"
+    AVATAR_GENERATION = "avatar_generation"
+    VIDEO_EDITING = "video_editing"
+    PUBLISHING = "publishing"
+
+
+class PipelineRunStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
 class AvatarAssetKind(StrEnum):
     AVATAR = "avatar"
     VOICE = "voice"

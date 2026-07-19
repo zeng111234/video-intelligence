@@ -10,7 +10,7 @@ from urllib.error import URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from src.retry import ExternalServiceError, run_with_single_retry
+from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 from src.services.transcription import MAX_MEDIA_BYTES
 
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov"}
@@ -156,8 +156,9 @@ def fetch_authorized_video(
             )
 
     try:
-        return run_with_single_retry(
+        return retry_with_policy(
             fetch_once,
+            policy=RetryPolicy(max_attempts=2, base_delay=0.5, max_delay=5.0),
             retry_for=(ConnectionError, TimeoutError, URLError, OSError),
         )
     except ExternalServiceError as exc:

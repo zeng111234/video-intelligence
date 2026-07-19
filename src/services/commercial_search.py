@@ -26,6 +26,7 @@ from src.models import (
     SourcePage,
 )
 from src.platforms import SUPPORTED_PLATFORMS
+from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 from src.services.keyword_trend import KeywordTrendService
 from src.services.source import SourceService
 
@@ -403,30 +404,39 @@ class CommercialSearchService:
             return finished
 
     def _search_with_retry(self, **kwargs) -> ProviderSearchPage:
-        last_error: LicensedProviderError | None = None
-        for attempt in range(2):
-            try:
-                return self.provider.search(**kwargs)
-            except LicensedProviderError as exc:
-                can_retry = (
+        def _is_retryable(exc: BaseException) -> bool:
+            if isinstance(exc, LicensedProviderError):
+                return (
                     exc.retryable
                     and not exc.outcome_unknown
                     and exc.kind
                     in {ProviderErrorKind.CONNECTION, ProviderErrorKind.SERVICE}
                 )
-                if not can_retry or attempt == 1:
-                    raise
-                last_error = exc
-            except (ConnectionError, TimeoutError) as exc:
-                last_error = LicensedProviderError(
-                    f"连接商业数据接口失败：{exc}",
+            return isinstance(exc, (ConnectionError, TimeoutError))
+
+        try:
+            return retry_with_policy(
+                lambda: self.provider.search(**kwargs),
+                policy=RetryPolicy(max_attempts=2, base_delay=0),
+                retry_for=(LicensedProviderError, ConnectionError, TimeoutError),
+                retryable=_is_retryable,
+                error_message="商业数据接口调用失败。",
+            )
+        except ExternalServiceError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, LicensedProviderError):
+                raise cause
+            if isinstance(cause, (ConnectionError, TimeoutError)):
+                raise LicensedProviderError(
+                    f"连接商业数据接口失败：{cause}",
                     kind=ProviderErrorKind.CONNECTION,
-                    retryable=True,
-                    outcome_unknown=attempt == 1,
-                )
-                if attempt == 1:
-                    raise last_error from exc
-        raise last_error or RuntimeError("商业数据接口调用失败。")
+                    retryable=False,
+                    outcome_unknown=True,
+                ) from cause
+            raise LicensedProviderError(
+                "商业数据接口调用失败。",
+                kind=ProviderErrorKind.SERVICE,
+            ) from exc
 
     @staticmethod
     def _normalize_page(

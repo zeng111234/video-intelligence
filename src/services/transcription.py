@@ -21,6 +21,7 @@ from src.models import (
     TranscriptionTask,
 )
 from src.resources import load_asr_model
+from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 
 MAX_MEDIA_BYTES = 50 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
@@ -284,19 +285,18 @@ class TranscriptionService:
         model_name: str,
         hotwords: str = "",
     ) -> tuple[list[TranscriptSegment], str]:
-        model = None
-        last_error: BaseException | None = None
-        for _ in range(2):
-            try:
-                model = self.model_loader(model_name)
-                break
-            except (ConnectionError, TimeoutError, OSError, RuntimeError) as exc:
-                last_error = exc
-        if model is None:
+        try:
+            model = retry_with_policy(
+                lambda: self.model_loader(model_name),
+                policy=RetryPolicy(max_attempts=3, base_delay=1.0),
+                retry_for=(ConnectionError, TimeoutError, OSError, RuntimeError),
+                error_message="识别模型加载失败，已自动重试 2 次；请稍后重新上传。",
+            )
+        except ExternalServiceError as exc:
             raise TranscriptionError(
-                "识别模型加载失败，已自动重试一次；请稍后重新上传。",
+                "识别模型加载失败，已自动重试 2 次；请稍后重新上传。",
                 code="model_unavailable",
-            ) from last_error
+            ) from exc.__cause__
         try:
             options = {
                 "language": "zh",
