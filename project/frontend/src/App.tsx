@@ -19,6 +19,7 @@ import TasksPage from "./pages/TasksPage";
 import AdminPage from "./pages/AdminPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AiCopyPage from "./pages/AiCopyPage";
+import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ErrorBoundary from "./components/ErrorBoundary";
 
@@ -61,6 +62,9 @@ export default function App() {
             {/* Pro 功能页面 */}
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/ai-copy" element={<AiCopyPage />} />
+
+            {/* 关键词爬虫 */}
+            <Route path="/crawler" element={<KeywordCrawlerPage />} />
 
             {/* 待实现功能占位 */}
             <Route path="/publish" element={<ComingSoonPlaceholder title="多平台发布" />} />
