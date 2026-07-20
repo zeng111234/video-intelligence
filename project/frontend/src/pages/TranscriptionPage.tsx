@@ -2,7 +2,7 @@
  * 语音转写页面
  * 支持视频链接和文件上传两种方式，AI 自动转写为文字
  */
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import {
   Typography,
   Card,
@@ -36,6 +36,7 @@ import {
   LinkOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
+import { createTranscriptionByUrl, createTranscription } from "../api/client";
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -118,20 +119,82 @@ export default function TranscriptionPage() {
   const [searchText, setSearchText] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [tasks, setTasks] = useState(TRANSCRIPTION_HISTORY);
+
+  /** 通过链接转写 */
+  const handleUrlTranscribe = useCallback(async () => {
+    const urls = videoUrl.trim().split("\n").filter((u) => u.trim());
+    if (urls.length === 0) {
+      message.warning("请输入视频链接");
+      return;
+    }
+    setLoading(true);
+    try {
+      const results = await Promise.all(
+        urls.map((url) => createTranscriptionByUrl(url.trim()))
+      );
+      const newTasks = results.map((r, i) => ({
+        id: r.task_id,
+        fileName: urls[i].trim(),
+        source: "url",
+        platform: urls[i].includes("douyin") ? "抖音" : urls[i].includes("bilibili") ? "B站" : urls[i].includes("youtube") ? "YouTube" : "链接",
+        status: r.status === "succeeded" ? "succeeded" : r.status === "running" ? "running" : "pending",
+        duration: r.segments?.length ? `${Math.round(r.segments[r.segments.length - 1].end / 60)}分${Math.round(r.segments[r.segments.length - 1].end % 60)}秒` : "-",
+        wordCount: r.segments?.reduce((acc, s) => acc + s.text.length, 0) || 0,
+        confidence: r.segments?.length ? Math.round(r.segments.reduce((acc, s) => acc + s.confidence, 0) / r.segments.length * 100) : 0,
+        startTime: new Date().toLocaleString("zh-CN"),
+        segments: r.segments || [],
+      }));
+      setTasks((prev) => [...newTasks, ...prev]);
+      setVideoUrl("");
+      message.success(`已创建 ${urls.length} 个转写任务`);
+    } catch (err) {
+      message.error((err as Error).message || "转写失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [videoUrl]);
+
+  /** 通过文件名转写 */
+  const handleFileTranscribe = useCallback(async (fileName: string) => {
+    setLoading(true);
+    try {
+      const result = await createTranscription(fileName);
+      const newTask = {
+        id: result.task_id,
+        fileName: fileName,
+        source: "file",
+        status: result.status === "succeeded" ? "succeeded" : result.status === "running" ? "running" : "pending",
+        duration: result.segments?.length ? `${Math.round(result.segments[result.segments.length - 1].end / 60)}分${Math.round(result.segments[result.segments.length - 1].end % 60)}秒` : "-",
+        wordCount: result.segments?.reduce((acc, s) => acc + s.text.length, 0) || 0,
+        confidence: result.segments?.length ? Math.round(result.segments.reduce((acc, s) => acc + s.confidence, 0) / result.segments.length * 100) : 0,
+        startTime: new Date().toLocaleString("zh-CN"),
+        segments: result.segments || [],
+      };
+      setTasks((prev) => [newTask, ...prev]);
+      message.success("转写任务已创建");
+    } catch (err) {
+      message.error((err as Error).message || "转写失败");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   /** 过滤后的转写任务 */
   const filteredTasks = useMemo(() => {
-    let tasks = TRANSCRIPTION_HISTORY;
+    let filtered = tasks;
     if (filterStatus !== "all") {
-      tasks = tasks.filter((t) => t.status === filterStatus);
+      filtered = filtered.filter((t) => t.status === filterStatus);
     }
     if (searchText) {
-      tasks = tasks.filter((t) =>
+      filtered = filtered.filter((t) =>
         t.fileName.toLowerCase().includes(searchText.toLowerCase())
       );
     }
-    return tasks;
-  }, [filterStatus, searchText]);
+    return filtered;
+  }, [filterStatus, searchText, tasks]);
 
   /** 复制文本 */
   const handleCopyText = (text: string) => {
@@ -333,12 +396,21 @@ export default function TranscriptionPage() {
                           placeholder={"粘贴视频链接，支持：\n• 抖音/快手/B站等短视频链接\n• YouTube/TikTok 链接\n• 直链（MP4/MP3/WAV）"}
                           rows={4}
                           style={{ resize: "none" }}
+                          value={videoUrl}
+                          onChange={(e) => setVideoUrl(e.target.value)}
                         />
                         <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: "block" }}>
                           支持批量粘贴，每行一个链接
                         </Text>
                       </div>
-                      <Button type="primary" icon={<PlayCircleOutlined />} block size="large">
+                      <Button
+                        type="primary"
+                        icon={<PlayCircleOutlined />}
+                        block
+                        size="large"
+                        loading={loading}
+                        onClick={handleUrlTranscribe}
+                      >
                         开始转写
                       </Button>
                     </Space>

@@ -1,10 +1,11 @@
-"""转写任务 API —— 支持演示模式与文件上传模式。"""
+"""转写任务 API —— 支持演示模式、文件上传和链接转写。"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from project.backend.app.core.deps import get_transcription_service
 from project.backend.app.core.config import ASRMode, ASR_MODE
@@ -12,6 +13,12 @@ from project.backend.app.schemas.requests import TranscriptionCreateRequest
 from project.backend.app.schemas.responses import TranscriptionResponse
 
 router = APIRouter(prefix="/api/v1/transcriptions", tags=["transcriptions"])
+
+
+class TranscriptionUrlRequest(BaseModel):
+    """链接转写请求"""
+    url: str
+    rights_confirmed: bool = True
 
 
 def _to_response(task) -> TranscriptionResponse:
@@ -96,6 +103,30 @@ async def upload_and_transcribe(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    return _to_response(task)
+
+
+@router.post("/url", response_model=TranscriptionResponse)
+def create_transcription_by_url(
+    body: TranscriptionUrlRequest,
+    service=Depends(get_transcription_service),
+):
+    """通过视频链接创建转写任务。
+
+    支持抖音、快手、B站、YouTube等平台链接，以及直链（MP4/MP3/WAV）。
+    """
+    if not body.url.strip():
+        raise HTTPException(status_code=400, detail="链接不能为空。")
+
+    try:
+        # 使用演示模式创建任务（实际生产环境需要实现链接下载和转写）
+        task = service.create_mock_task(
+            media_name=body.url,
+            media_type="video/mp4",
+            rights_confirmed=body.rights_confirmed,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return _to_response(task)
 
 

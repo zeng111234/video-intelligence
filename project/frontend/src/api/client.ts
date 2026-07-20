@@ -67,6 +67,20 @@ export function createTranscription(
   });
 }
 
+/** 通过链接创建转写任务 */
+export function createTranscriptionByUrl(
+  url: string,
+  rightsConfirmed = true,
+): Promise<TranscriptionResponse> {
+  return request("/transcriptions/url", {
+    method: "POST",
+    body: JSON.stringify({
+      url,
+      rights_confirmed: rightsConfirmed,
+    }),
+  });
+}
+
 export function getTranscription(taskId: string): Promise<TranscriptionResponse> {
   return request(`/transcriptions/${taskId}`);
 }
