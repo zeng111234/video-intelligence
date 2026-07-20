@@ -1,162 +1,165 @@
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Typography,
-  Card,
-  Input,
+  Alert,
   Button,
+  Card,
+  Checkbox,
+  Descriptions,
+  Empty,
+  Input,
+  InputNumber,
+  List,
+  Modal,
+  Select,
   Space,
   Table,
   Tag,
-  Select,
-  InputNumber,
-  List,
-  Empty,
+  Typography,
 } from "antd";
-import { useToast } from "../components/Toast";
-import {
-  SearchOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  CheckCircleOutlined,
-  SyncOutlined,
-  CloseCircleOutlined,
-  ClockCircleOutlined,
-} from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
-  createCrawlerTask,
-  listCrawlerTasks,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  EyeOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  WarningOutlined,
+} from "@ant-design/icons";
+import {
+  createCrawlerBatch,
+  getCrawlerBatch,
+  getCrawlerCapabilities,
+  listCrawlerBatches,
+  previewCrawlerBatch,
 } from "../api/client";
-import type { CrawlerTaskResponse, CrawlerResult } from "../api/types";
+import type {
+  CrawlerBatchResponse,
+  CrawlerCandidateResult,
+  CrawlerCapabilitiesResponse,
+  CrawlerPlatformRun,
+  CrawlerPreviewResponse,
+  CrawlerSearchRequest,
+} from "../api/types";
+import { useToast } from "../components/Toast";
 
-const STATUS_CONFIG: Record<
-  string,
-  { color: string; icon: React.ReactNode; label: string }
-> = {
-  pending: {
-    color: "default",
-    icon: <ClockCircleOutlined />,
-    label: "等待中",
-  },
-  running: {
-    color: "processing",
-    icon: <SyncOutlined spin />,
-    label: "执行中",
-  },
-  succeeded: {
-    color: "success",
-    icon: <CheckCircleOutlined />,
-    label: "已完成",
-  },
-  failed: {
-    color: "error",
-    icon: <CloseCircleOutlined />,
-    label: "失败",
-  },
+const { Text, Title, Paragraph } = Typography;
+
+const STATUS_COLOR: Record<string, string> = {
+  pending: "default",
+  running: "processing",
+  succeeded: "success",
+  partial: "warning",
+  failed: "error",
+  cached: "cyan",
+  blocked: "warning",
+  outcome_unknown: "error",
 };
 
-const PLATFORM_OPTIONS = [
-  { value: "douyin", label: "抖音" },
-  { value: "xiaohongshu", label: "小红书" },
-  { value: "wechat_channels", label: "视频号" },
-];
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    pending: "等待中",
+    running: "执行中",
+    succeeded: "成功",
+    partial: "部分成功",
+    failed: "失败",
+    cached: "缓存命中",
+    blocked: "已阻断",
+    outcome_unknown: "结果未知",
+  };
+  return labels[status] || status;
+}
 
 export default function KeywordCrawlerPage() {
   const toast = useToast();
+  const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
-  const [platform, setPlatform] = useState("douyin");
-  const [maxResults, setMaxResults] = useState(10);
-  const [tasks, setTasks] = useState<CrawlerTaskResponse[]>([]);
+  const [publishedWindowDays, setPublishedWindowDays] = useState<1 | 7>(7);
+  const [countPerPlatform, setCountPerPlatform] = useState(10);
+  const [forceRefresh, setForceRefresh] = useState(false);
+  const [preview, setPreview] = useState<CrawlerPreviewResponse | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [batches, setBatches] = useState<CrawlerBatchResponse[]>([]);
+  const [selectedBatch, setSelectedBatch] = useState<CrawlerBatchResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const fetchTasks = useCallback(async () => {
+  const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
+    keyword: keyword.trim(),
+    published_window_days: publishedWindowDays,
+    count_per_platform: countPerPlatform,
+    force_refresh: forceRefresh,
+  }), [keyword, publishedWindowDays, countPerPlatform, forceRefresh]);
+
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await listCrawlerTasks();
-      setTasks(resp.items);
-    } catch (err) {
-      if ((err as Error).message?.includes("网络连接失败")) {
-        console.warn("后端服务未启动");
-      } else {
-        toast.error((err as Error).message);
+      const [caps, list] = await Promise.all([
+        getCrawlerCapabilities(),
+        listCrawlerBatches(),
+      ]);
+      setCapabilities(caps);
+      setBatches(list.items);
+      if (selectedBatch) {
+        const detail = await getCrawlerBatch(selectedBatch.batch_id);
+        setSelectedBatch(detail);
       }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchTasks();
-  }, [fetchTasks]);
-
-  const handleCreate = async () => {
-    if (!keyword.trim()) {
-      toast.warning("请输入关键词");
-      return;
-    }
-    setCreating(true);
-    try {
-      await createCrawlerTask(keyword.trim(), platform, maxResults);
-      toast.success("爬虫任务已创建");
-      setKeyword("");
-      await fetchTasks();
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
-      setCreating(false);
+      setLoading(false);
+    }
+  }, [selectedBatch?.batch_id, toast]);
+
+  useEffect(() => {
+    refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePreview = async () => {
+    if (requestPayload.keyword.length < 2) {
+      toast.warning("关键词需为 2–50 个字符");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const resp = await previewCrawlerBatch(requestPayload);
+      setPreview(resp);
+      setPreviewOpen(true);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  const columns: ColumnsType<CrawlerTaskResponse> = [
-    {
-      title: "任务ID",
-      dataIndex: "task_id",
-      width: 180,
-      ellipsis: true,
-    },
-    {
-      title: "关键词",
-      dataIndex: "keyword",
-      width: 150,
-    },
-    {
-      title: "平台",
-      dataIndex: "platform",
-      width: 100,
-      render: (v: string) => {
-        const labels: Record<string, string> = {
-          douyin: "抖音",
-          xiaohongshu: "小红书",
-          wechat_channels: "视频号",
-        };
-        return <Tag color="blue">{labels[v] || v}</Tag>;
-      },
-    },
+  const handleExecute = async () => {
+    if (!preview) return;
+    setSubmitting(true);
+    try {
+      const batch = await createCrawlerBatch(requestPayload);
+      setSelectedBatch(batch);
+      setPreviewOpen(false);
+      setKeyword("");
+      toast.success("三平台关键词批次已写入 SQLite");
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const batchColumns: ColumnsType<CrawlerBatchResponse> = [
+    { title: "批次ID", dataIndex: "batch_id", width: 170, render: (v) => <Text code>{v}</Text> },
+    { title: "关键词", dataIndex: "keyword", width: 140 },
     {
       title: "状态",
       dataIndex: "status",
-      width: 120,
-      render: (v: string) => {
-        const cfg = STATUS_CONFIG[v] || STATUS_CONFIG.pending;
-        return (
-          <Tag color={cfg.color} icon={cfg.icon}>
-            {cfg.label}
-          </Tag>
-        );
-      },
+      width: 110,
+      render: (v: string) => <Tag color={STATUS_COLOR[v]}>{statusLabel(v)}</Tag>,
     },
-    {
-      title: "结果数",
-      dataIndex: "result_count",
-      width: 80,
-      render: (v: number) => <Tag color="green">{v}</Tag>,
-    },
-    {
-      title: "最大抓取数",
-      dataIndex: "max_results",
-      width: 100,
-    },
+    { title: "模式", dataIndex: "mode", width: 100, render: (v: string) => <Tag color={v === "sandbox" ? "orange" : "blue"}>{v}</Tag> },
+    { title: "API调用", dataIndex: "total_api_calls", width: 90 },
+    { title: "候选数", dataIndex: "total_candidates", width: 90 },
     {
       title: "创建时间",
       dataIndex: "created_at",
@@ -164,121 +167,244 @@ export default function KeywordCrawlerPage() {
       render: (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN") : "-"),
     },
     {
-      title: "错误信息",
-      dataIndex: "error_message",
-      ellipsis: true,
-      render: (v: string | null) =>
-        v ? (
-          <Typography.Text type="danger">{v}</Typography.Text>
-        ) : (
-          "-"
-        ),
+      title: "操作",
+      width: 90,
+      render: (_, record) => (
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={async () => {
+            try {
+              setSelectedBatch(await getCrawlerBatch(record.batch_id));
+            } catch (err) {
+              toast.error((err as Error).message);
+            }
+          }}
+        >
+          详情
+        </Button>
+      ),
     },
   ];
 
-  // Build expandable row content: show crawl results
-  const expandedRowRender = (record: CrawlerTaskResponse) => {
-    if (!record.results || record.results.length === 0) {
-      return <Empty description="暂无抓取结果" image={Empty.PRESENTED_IMAGE_SIMPLE} />;
-    }
-    return (
-      <List
-        size="small"
-        dataSource={record.results}
-        renderItem={(item: CrawlerResult, idx: number) => (
-          <List.Item>
-            <Space>
-              <Tag>{idx + 1}</Tag>
-              <Typography.Text strong>{item.title}</Typography.Text>
-              <Typography.Text type="secondary">作者: {item.author}</Typography.Text>
-              <Typography.Text type="secondary">
-                点赞: {item.likes.toLocaleString()}
-              </Typography.Text>
-            </Space>
-          </List.Item>
-        )}
-      />
-    );
-  };
-
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Typography.Title level={4}>关键词爬虫</Typography.Title>
+      <div>
+        <Title level={4} style={{ margin: 0 }}>三平台关键词爆款榜</Title>
+        <Text type="secondary">
+          通过 FastAPI 调用 CommercialSearchService，结果持久化到 SQLite；Sandbox 不代表真实平台生产数据。
+        </Text>
+      </div>
 
-      {/* 创建任务卡片 */}
-      <Card title="创建抓取任务">
+      {capabilities && (
+        <Card title="供应商与额度状态">
+          <Descriptions size="small" column={{ xs: 1, md: 3 }}>
+            <Descriptions.Item label="供应商">{capabilities.display_name}</Descriptions.Item>
+            <Descriptions.Item label="模式">
+              <Tag color={capabilities.mode === "sandbox" ? "orange" : capabilities.enabled ? "blue" : "red"}>
+                {capabilities.mode === "sandbox" ? "Sandbox" : capabilities.enabled ? "Production" : "未配置"}
+              </Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="支持平台">
+              {capabilities.supported_platform_labels.length
+                ? capabilities.supported_platform_labels.join(" / ")
+                : "未开放"}
+            </Descriptions.Item>
+            <Descriptions.Item label="月度调用量">
+              {capabilities.monthly_query_count} / {capabilities.monthly_hard_limit_queries}
+            </Descriptions.Item>
+            <Descriptions.Item label="缓存 TTL">{capabilities.cache_ttl_minutes} 分钟</Descriptions.Item>
+            <Descriptions.Item label="权限状态">{capabilities.permission_status}</Descriptions.Item>
+          </Descriptions>
+          {capabilities.missing_configuration.length > 0 && (
+            <Alert
+              style={{ marginTop: 12 }}
+              type="warning"
+              showIcon
+              message="供应商未配置完整"
+              description={capabilities.missing_configuration.join("；")}
+            />
+          )}
+        </Card>
+      )}
+
+      <Card title="创建搜索批次">
         <Space wrap align="end">
           <div>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
-              关键词
-            </Typography.Text>
+            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>关键词</Text>
             <Input
-              placeholder="输入关键词，如：二手车、美食"
               prefix={<SearchOutlined />}
               value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              onPressEnter={handleCreate}
-              style={{ width: 240 }}
+              onChange={(event) => setKeyword(event.target.value)}
+              onPressEnter={handlePreview}
+              placeholder="例如：二手车"
               allowClear
+              style={{ width: 260 }}
             />
           </div>
           <div>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
-              目标平台
-            </Typography.Text>
+            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>时间范围</Text>
             <Select
-              value={platform}
-              onChange={setPlatform}
+              value={publishedWindowDays}
+              onChange={setPublishedWindowDays}
               style={{ width: 140 }}
-              options={PLATFORM_OPTIONS}
+              options={[
+                { value: 1, label: "近 24 小时" },
+                { value: 7, label: "近 7 天" },
+              ]}
             />
           </div>
           <div>
-            <Typography.Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
-              最大结果数
-            </Typography.Text>
+            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>每平台条数</Text>
             <InputNumber
               min={1}
-              max={100}
-              value={maxResults}
-              onChange={(v) => setMaxResults(v || 10)}
-              style={{ width: 100 }}
+              max={10}
+              value={countPerPlatform}
+              onChange={(value) => setCountPerPlatform(value || 10)}
+              style={{ width: 120 }}
             />
           </div>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleCreate}
-            loading={creating}
-          >
-            创建任务
+          <Checkbox checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)}>
+            强制刷新
+          </Checkbox>
+          <Button type="primary" loading={submitting} onClick={handlePreview}>
+            预览并确认
           </Button>
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={fetchTasks}
-            loading={loading}
-          >
-            刷新列表
+          <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>
+            刷新
           </Button>
         </Space>
       </Card>
 
-      {/* 任务列表 */}
-      <Card title={`抓取任务列表（共 ${tasks.length} 个）`}>
+      {selectedBatch && <BatchDetail batch={selectedBatch} />}
+
+      <Card title={`历史批次（${batches.length}）`}>
         <Table
-          rowKey="task_id"
-          columns={columns}
-          dataSource={tasks}
+          rowKey="batch_id"
+          columns={batchColumns}
+          dataSource={batches}
           loading={loading}
           pagination={{ pageSize: 10, showSizeChanger: false }}
-          size="middle"
-          expandable={{
-            expandedRowRender,
-            rowExpandable: (record) =>
-              record.results !== undefined && record.results.length > 0,
-          }}
         />
       </Card>
+
+      <Modal
+        title="确认三平台搜索计划"
+        open={previewOpen}
+        onCancel={() => setPreviewOpen(false)}
+        onOk={handleExecute}
+        okText="确认执行"
+        cancelText="取消"
+        confirmLoading={submitting}
+        okButtonProps={{ disabled: !preview || preview.blocked }}
+      >
+        {preview && (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Alert
+              type={preview.provider_mode === "sandbox" ? "warning" : "info"}
+              showIcon
+              message={`当前模式：${preview.provider_mode === "sandbox" ? "Sandbox 演示" : preview.provider_mode}`}
+              description={`预计新增调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；本月已用 ${preview.monthly_query_count}/${preview.monthly_hard_limit_queries}`}
+            />
+            <List
+              dataSource={preview.platforms}
+              renderItem={(item) => (
+                <List.Item>
+                  <Space direction="vertical" size={2}>
+                    <Space>
+                      <Tag color="blue">{item.platform_label}</Tag>
+                      {item.cache_hit ? <Tag color="cyan">缓存命中</Tag> : <Tag>需查询</Tag>}
+                      <Tag>预计调用 {item.estimated_api_calls}</Tag>
+                    </Space>
+                    {item.blocked_reason && (
+                      <Text type="danger"><WarningOutlined /> {item.blocked_reason}</Text>
+                    )}
+                  </Space>
+                </List.Item>
+              )}
+            />
+          </Space>
+        )}
+      </Modal>
     </Space>
+  );
+}
+
+function BatchDetail({ batch }: { batch: CrawlerBatchResponse }) {
+  return (
+    <Card title={`批次详情：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
+      <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
+        <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>
+        <Descriptions.Item label="范围">{batch.published_window_days === 1 ? "近 24 小时" : "近 7 天"}</Descriptions.Item>
+        <Descriptions.Item label="每平台">{batch.count_per_platform} 条</Descriptions.Item>
+        <Descriptions.Item label="强制刷新">{batch.force_refresh ? "是" : "否"}</Descriptions.Item>
+      </Descriptions>
+      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+        {batch.platform_runs.map((run) => <PlatformRunDetail key={run.run_id} run={run} />)}
+      </Space>
+    </Card>
+  );
+}
+
+function PlatformRunDetail({ run }: { run: CrawlerPlatformRun }) {
+  return (
+    <Card
+      size="small"
+      title={<Space><Tag color="blue">{run.platform_label}</Tag><Tag color={STATUS_COLOR[run.status]}>{statusLabel(run.status)}</Tag>{run.cache_hit && <Tag color="cyan">缓存</Tag>}</Space>}
+    >
+      <Descriptions size="small" column={{ xs: 1, md: 4 }}>
+        <Descriptions.Item label="返回">{run.returned_count}/{run.requested_count}</Descriptions.Item>
+        <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
+        <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
+        <Descriptions.Item label="计费单元">{run.billable_units ?? 0}</Descriptions.Item>
+      </Descriptions>
+      {run.error && <Alert style={{ marginTop: 12 }} type="error" showIcon message={run.error} />}
+      {run.candidates.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无候选结果" />
+      ) : (
+        <List
+          style={{ marginTop: 12 }}
+          dataSource={run.candidates}
+          renderItem={(item) => <CandidateListItem item={item} />}
+        />
+      )}
+    </Card>
+  );
+}
+
+function CandidateListItem({ item }: { item: CrawlerCandidateResult }) {
+  return (
+    <List.Item
+      actions={[
+        item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无链接</Text>,
+        <a href={`/transcription?candidate=${encodeURIComponent(item.video_id)}`}>去转写</a>,
+      ]}
+    >
+      <List.Item.Meta
+        avatar={item.platform_rank ? <Tag color="purple">#{item.platform_rank}</Tag> : undefined}
+        title={
+          <Space wrap>
+            <Text strong>{item.title}</Text>
+            {item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
+            {item.anomaly_status && item.anomaly_status !== "normal" && <Tag color="warning">异常：{item.anomaly_status}</Tag>}
+          </Space>
+        }
+        description={
+          <Space direction="vertical" size={2}>
+            <Text type="secondary">
+              作者：{item.author_name}；趋势分：{item.trend_score ?? "暂无"}；置信度：{item.confidence ?? "暂无"}；样本池：{item.pool_size ?? "暂无"}；增长：{item.like_growth_per_hour ?? "待复采"}
+            </Text>
+            {item.evidence && <Text type="secondary">依据：{item.evidence}</Text>}
+            {item.reasons.length > 0 && (
+              <Paragraph style={{ margin: 0 }}>
+                {item.reasons.map((reason, index) => (
+                  <Tag key={`${reason}-${index}`} icon={index === 0 ? <CheckCircleOutlined /> : undefined}>{reason}</Tag>
+                ))}
+              </Paragraph>
+            )}
+          </Space>
+        }
+      />
+    </List.Item>
   );
 }

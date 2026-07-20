@@ -44,3 +44,19 @@ ASR_CLOUD_PROVIDER: ASRCloudProvider = ASRCloudProvider(
 ALIYUN_ASR_ACCESS_KEY_ID: str = _env("ALIYUN_ASR_ACCESS_KEY_ID")
 ALIYUN_ASR_ACCESS_KEY_SECRET: str = _env("ALIYUN_ASR_ACCESS_KEY_SECRET")
 ALIYUN_ASR_APP_KEY: str = _env("ALIYUN_ASR_APP_KEY")
+
+
+# ---------------------------------------------------------------------------
+# 关键词商业搜索配置
+# ---------------------------------------------------------------------------
+
+class CrawlerProviderMode(StrEnum):
+    """关键词商业搜索供应商模式。"""
+    SANDBOX = "sandbox"
+    PRODUCTION = "production"
+
+
+CRAWLER_PROVIDER_MODE: CrawlerProviderMode = CrawlerProviderMode(
+    _env("CRAWLER_PROVIDER_MODE", "sandbox") or "sandbox"
+)
+CRAWLER_PROVIDER_NAME: str = _env("CRAWLER_PROVIDER_NAME", "commercial_provider_pending")

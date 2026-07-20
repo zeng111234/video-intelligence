@@ -14,7 +14,6 @@
 
 ### 后端技术
 - **Python 3.12+**：主要编程语言
-- **Streamlit 1.58**：Web 应用框架（MVP 版本）
 - **FastAPI**：REST API 服务框架
 - **SQLite**：本地数据库（开发环境）
 - **PostgreSQL**：生产数据库（可选）
@@ -60,16 +59,7 @@ start.bat
 
 ### 手动启动
 
-#### 1. 启动 Streamlit MVP（主应用）
-```powershell
-# 安装依赖
-python -m pip install -r requirements.txt
-
-# 启动服务
-python -m streamlit run app.py --server.port 8501
-```
-
-#### 2. 启动 FastAPI 后端
+#### 1. 启动 FastAPI 后端
 ```powershell
 # 设置 PYTHONPATH（后端需要访问 src/ 目录）
 $env:PYTHONPATH = "C:\Users\zeng\Desktop\video"
@@ -84,7 +74,7 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 2001
 ```
 
-#### 3. 启动 React 前端
+#### 2. 启动 React 前端
 ```powershell
 # 进入前端目录
 cd project/frontend
@@ -100,9 +90,8 @@ npm run dev
 
 | 服务 | 端口 | 说明 | 访问地址 |
 |------|------|------|----------|
-| **React 前端** | 1001 | 前端界面 | http://localhost:1001 |
-| **FastAPI 后端** | 2001 | REST API 服务 | http://localhost:2001 |
-| **Streamlit MVP** | 8501 | 原有系统 | http://localhost:8501 |
+| **React 前端** | 1001 | 正式前端界面 | http://localhost:1001 |
+| **FastAPI 后端** | 2001 | 正式 REST API 服务 | http://localhost:2001 |
 
 ### 端口冲突处理
 
@@ -110,7 +99,7 @@ npm run dev
 
 ```powershell
 # 查看端口占用情况
-netstat -ano | findstr "8501 2001 1001"
+netstat -ano | findstr "2001 1001"
 
 # 停止占用端口的进程（替换 <PID> 为实际进程ID）
 taskkill /PID <PID> /F
@@ -150,8 +139,8 @@ psql -U postgres -d video -f database/scripts/init.postgres.sql
 
 ```
 video/
-├── app.py                    # Streamlit 主应用入口
-├── app_pages/                # Streamlit 页面模块（候选、转写、数字人、任务、管理）
+├── app.py                    # legacy Streamlit 源码，仅供追溯，不再作为正式入口
+├── app_pages/                # legacy Streamlit 页面模块
 ├── src/                      # 核心业务逻辑
 │   ├── models.py             # 数据模型定义（VideoCandidate、TaskRecord 等）
 │   ├── contracts.py          # 接口协议定义（CrawlerAdapter、Repository 等）
@@ -357,7 +346,7 @@ chore: 构建/工具相关
 docker build -t video-intelligence .
 
 # 运行容器
-docker run -p 1001:1001 -p 2001:2001 -p 8501:8501 video-intelligence
+docker run -p 1001:1001 -p 2001:2001 video-intelligence
 ```
 
 ## 常见问题

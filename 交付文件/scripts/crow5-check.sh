@@ -21,4 +21,4 @@ else
 fi
 
 echo "[Crow5] 预计启动命令：npm run dev"
-echo "[Crow5] 已登记端口：1001, 2001, 8501, 443"
+echo "[Crow5] 已登记端口：1001, 2001, 443"

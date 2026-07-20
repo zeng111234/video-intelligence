@@ -8,8 +8,10 @@ import {
   Card,
   Typography,
   Select,
+  Alert,
 } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
+import { Link } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
 import { searchCandidates } from "../api/client";
 import type { CandidateItem } from "../api/types";
@@ -33,6 +35,8 @@ export default function CandidatesPage() {
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [limit, setLimit] = useState(10);
+  const [platforms, setPlatforms] = useState<string[]>([]);
+  const [category, setCategory] = useState<string | undefined>();
   const [data, setData] = useState<CandidateItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -40,7 +44,7 @@ export default function CandidatesPage() {
   const doSearch = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await searchCandidates(keyword, limit);
+      const resp = await searchCandidates(keyword, limit, platforms, category);
       setData(resp.items);
       setTotal(resp.total);
     } catch (err) {
@@ -53,7 +57,11 @@ export default function CandidatesPage() {
     } finally {
       setLoading(false);
     }
-  }, [keyword, limit]);
+  }, [keyword, limit, platforms, category]);
+
+  const categoryOptions = Array.from(
+    new Set(data.map((item) => item.category).filter(Boolean)),
+  ).map((value) => ({ value, label: value }));
 
   useEffect(() => {
     doSearch();
@@ -105,11 +113,26 @@ export default function CandidatesPage() {
           "-"
         ),
     },
+    {
+      title: "转写",
+      width: 90,
+      render: (_, record) => (
+        <Link to={`/transcription?candidate=${encodeURIComponent(record.video_id)}`}>
+          去确认
+        </Link>
+      ),
+    },
   ];
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Title level={4}>爆火视频候选检索</Typography.Title>
+      <Alert
+        type="info"
+        showIcon
+        message="这是本地候选库检索"
+        description="搜索只读取 SQLite 已入库候选，不暗示每次都会调用外部平台。候选跳转转写页后，仍需重新确认权利并上传文件或填写授权 MP4/MOV 直链；不会自动下载平台分享页。"
+      />
       <Card>
         <Space wrap>
           <Input
@@ -126,6 +149,23 @@ export default function CandidatesPage() {
             onChange={setLimit}
             style={{ width: 100 }}
             options={[5, 10, 20, 50].map((n) => ({ value: n, label: `${n} 条` }))}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            placeholder="平台筛选"
+            value={platforms}
+            onChange={setPlatforms}
+            style={{ width: 240 }}
+            options={Object.entries(PLATFORM_LABELS).map(([value, label]) => ({ value, label }))}
+          />
+          <Select
+            allowClear
+            placeholder="分类筛选"
+            value={category}
+            onChange={setCategory}
+            style={{ width: 220 }}
+            options={categoryOptions}
           />
           <Button type="primary" onClick={doSearch} loading={loading}>
             搜索

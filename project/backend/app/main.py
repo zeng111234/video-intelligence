@@ -105,7 +105,7 @@ async def validation_exception_handler(request, exc):
     """统一请求参数校验异常响应格式。"""
     errors = []
     for err in exc.errors():
-        loc = " -> ".join(str(l) for l in err.get("loc", []))
+        loc = " -> ".join(str(part) for part in err.get("loc", []))
         errors.append({"field": loc, "message": err.get("msg", "")})
     return JSONResponse(
         status_code=422,
@@ -221,7 +221,6 @@ _LANDING_HTML = """<!DOCTYPE html>
   </div>
   <div class="links">
     <a href="http://localhost:1001">前端应用 (1001)</a>
-    <a href="http://localhost:8501">Streamlit MVP (8501)</a>
   </div>
   <footer>Powered by FastAPI &middot; NZSK Tech</footer>
 </div>

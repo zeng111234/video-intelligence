@@ -17,15 +17,6 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 # Service configuration
 $services = @(
     @{
-        Name = "Streamlit MVP"
-        Port = 8501
-        HealthUrl = "http://localhost:8501/_stcore/health"
-        StartCommand = "python"
-        StartArgs = @("-m", "streamlit", "run", "app.py", "--server.port", "8501", "--server.headless", "true")
-        WorkingDirectory = $projectRoot
-        WindowStyle = "Hidden"
-    },
-    @{
         Name = "FastAPI Backend"
         Port = 2001
         HealthUrl = "http://localhost:2001/health"
@@ -142,25 +133,6 @@ function Install-Dependencies {
         Write-Log "FFmpeg not installed, video processing may be limited" "WARN"
     }
     
-    # Install Python dependencies (incremental check)
-    Write-Log "Checking Python dependencies..." "INFO"
-    $pipCheck = python -c "import streamlit, pandas, pydantic" 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Log "Python dependencies already installed" "SUCCESS"
-    } else {
-        Write-Log "Installing Python dependencies..." "INFO"
-        Push-Location $projectRoot
-        python -m pip install -r requirements.txt -q
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Python dependencies installed" "SUCCESS"
-        } else {
-            Write-Log "Python dependencies installation failed" "ERROR"
-            Pop-Location
-            return $false
-        }
-        Pop-Location
-    }
-    
     # Install backend dependencies (incremental check)
     Write-Log "Checking backend dependencies..." "INFO"
     $backendCheck = python -c "import fastapi, uvicorn" 2>&1
@@ -266,7 +238,6 @@ function Show-ServiceInfo {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Service URLs:" -ForegroundColor White
-    Write-Host "  Streamlit MVP: http://localhost:8501" -ForegroundColor Green
     Write-Host "  FastAPI Backend: http://localhost:2001" -ForegroundColor Green
     Write-Host "  React Frontend: http://localhost:1001" -ForegroundColor Green
     Write-Host ""

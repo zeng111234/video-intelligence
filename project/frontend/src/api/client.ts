@@ -7,8 +7,11 @@ import type {
   AnalyticsResponse,
   CandidateListResponse,
   CopywritingResponse,
-  CrawlerTaskListResponse,
-  CrawlerTaskResponse,
+  CrawlerBatchListResponse,
+  CrawlerBatchResponse,
+  CrawlerCapabilitiesResponse,
+  CrawlerPreviewResponse,
+  CrawlerSearchRequest,
   PipelineResponse,
   PublishPlatformsResponse,
   PublishResponse,
@@ -19,14 +22,28 @@ import type {
 const BASE = "/api/v1";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let resp: Response;
-  try {
-    resp = await fetch(`${BASE}${path}`, {
+  const method = (init?.method || "GET").toUpperCase();
+  const canRetry = method === "GET";
+  const run = () =>
+    fetch(`${BASE}${path}`, {
       headers: { "Content-Type": "application/json" },
       ...init,
     });
+  let resp: Response;
+  try {
+    resp = await run();
+    if (canRetry && [502, 503].includes(resp.status)) {
+      resp = await run();
+    }
   } catch {
-    throw new Error("网络连接失败，请检查后端服务是否已启动。");
+    if (!canRetry) {
+      throw new Error("网络连接失败，请检查后端服务是否已启动。");
+    }
+    try {
+      resp = await run();
+    } catch {
+      throw new Error("网络连接失败，请检查后端服务是否已启动。");
+    }
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
@@ -49,10 +66,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function searchCandidates(
   keyword: string,
   limit = 10,
+  platforms: string[] = [],
+  category?: string,
 ): Promise<CandidateListResponse> {
   return request("/candidates/search", {
     method: "POST",
-    body: JSON.stringify({ keyword, limit }),
+    body: JSON.stringify({ keyword, limit, platforms, category }),
   });
 }
 
@@ -89,6 +108,45 @@ export function getTranscription(taskId: string): Promise<TranscriptionResponse>
   return request(`/transcriptions/${taskId}`);
 }
 
+export function listTranscriptions(): Promise<TranscriptionResponse[]> {
+  return request("/transcriptions");
+}
+
+export function saveTranscriptionRevision(params: {
+  taskId: string;
+  segments: Array<{
+    start: number;
+    end: number;
+    text: string;
+    confidence: number;
+    needs_review: boolean;
+    reviewed: boolean;
+  }>;
+  reviewer: string;
+  approve: boolean;
+}): Promise<Record<string, unknown>> {
+  return request(`/transcriptions/${params.taskId}/revisions`, {
+    method: "POST",
+    body: JSON.stringify({
+      segments: params.segments,
+      reviewer: params.reviewer,
+      approve: params.approve,
+    }),
+  });
+}
+
+export async function exportTranscription(
+  taskId: string,
+  format: "txt" | "json" | "srt",
+): Promise<Blob> {
+  const resp = await fetch(`${BASE}/transcriptions/${taskId}/export?format=${format}`);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || "导出失败");
+  }
+  return resp.blob();
+}
+
 /** 上传文件并转写 */
 export async function uploadAndTranscribe(file: File): Promise<TranscriptionResponse> {
   const formData = new FormData();
@@ -123,6 +181,10 @@ export function getPipeline(runId: string): Promise<PipelineResponse> {
   return request(`/pipelines/${runId}`);
 }
 
+export function listPipelines(): Promise<PipelineResponse[]> {
+  return request("/pipelines");
+}
+
 /* ---- 任务列表 ---- */
 
 export function listTasks(): Promise<TaskListResponse> {
@@ -137,27 +199,34 @@ export function getAdminStatus(): Promise<AdminStatusResponse> {
 
 /* ---- 关键词爬虫 ---- */
 
-export function createCrawlerTask(
-  keyword: string,
-  platform = "douyin",
-  maxResults = 10,
-): Promise<CrawlerTaskResponse> {
-  return request("/crawler/tasks", {
+export function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesResponse> {
+  return request("/crawler/capabilities");
+}
+
+export function previewCrawlerBatch(
+  params: CrawlerSearchRequest,
+): Promise<CrawlerPreviewResponse> {
+  return request("/crawler/preview", {
     method: "POST",
-    body: JSON.stringify({
-      keyword,
-      platform,
-      max_results: maxResults,
-    }),
+    body: JSON.stringify(params),
   });
 }
 
-export function listCrawlerTasks(): Promise<CrawlerTaskListResponse> {
-  return request("/crawler/tasks");
+export function createCrawlerBatch(
+  params: CrawlerSearchRequest,
+): Promise<CrawlerBatchResponse> {
+  return request("/crawler/batches", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
-export function getCrawlerTask(taskId: string): Promise<CrawlerTaskResponse> {
-  return request(`/crawler/tasks/${taskId}`);
+export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
+  return request("/crawler/batches");
+}
+
+export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> {
+  return request(`/crawler/batches/${batchId}`);
 }
 
 /* ---- 文案生成 ---- */

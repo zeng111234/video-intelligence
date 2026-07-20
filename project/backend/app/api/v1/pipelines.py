@@ -56,3 +56,13 @@ def get_pipeline(
     if run is None:
         raise HTTPException(status_code=404, detail="流水线不存在。")
     return _to_response(run)
+
+
+@router.get("", response_model=list[PipelineResponse])
+def list_pipelines(
+    limit: int = 20,
+    service=Depends(get_pipeline_service),
+):
+    """列出 SQLite 中的流水线记录。"""
+    safe_limit = max(1, min(limit, 100))
+    return [_to_response(run) for run in service.list_runs(limit=safe_limit)]

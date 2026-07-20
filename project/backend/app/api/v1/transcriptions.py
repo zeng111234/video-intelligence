@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from project.backend.app.core.deps import get_transcription_service
 from project.backend.app.core.config import ASRMode, ASR_MODE
-from project.backend.app.schemas.requests import TranscriptionCreateRequest
+from project.backend.app.schemas.requests import (
+    TranscriptionCreateRequest,
+    TranscriptionRevisionRequest,
+)
 from project.backend.app.schemas.responses import TranscriptionResponse
+from src.models import TaskKind, TranscriptSegment, TranscriptionTask
+from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/transcriptions", tags=["transcriptions"])
 
@@ -153,6 +158,21 @@ def get_asr_config() -> dict[str, Any]:
     }
 
 
+@router.get("", response_model=list[TranscriptionResponse])
+def list_transcriptions(
+    limit: int = 50,
+    service=Depends(get_transcription_service),
+):
+    """从 SQLite 加载转写历史。"""
+    safe_limit = max(1, min(limit, 100))
+    tasks = [
+        task
+        for task in service.repository.list_tasks()
+        if getattr(task, "kind", None) == TaskKind.TRANSCRIPTION
+    ][:safe_limit]
+    return [_to_response(task) for task in tasks]
+
+
 @router.get("/{task_id}", response_model=TranscriptionResponse)
 def get_transcription(
     task_id: str,
@@ -163,3 +183,67 @@ def get_transcription(
     if task is None:
         raise HTTPException(status_code=404, detail="转写任务不存在。")
     return _to_response(task)
+
+
+@router.post("/{task_id}/revisions", response_model=dict[str, Any])
+def save_transcription_revision(
+    task_id: str,
+    body: TranscriptionRevisionRequest,
+    service=Depends(get_transcription_service),
+):
+    """保存校对版本；approve=true 时确认成稿。"""
+    segments = [
+        TranscriptSegment(
+            start=item.start,
+            end=item.end,
+            text=item.text,
+            confidence=item.confidence,
+            needs_review=item.needs_review,
+            reviewed=item.reviewed,
+        )
+        for item in body.segments
+    ]
+    try:
+        revision = service.save_revision(
+            task_id,
+            segments,
+            reviewer=body.reviewer,
+            approve=body.approve,
+        )
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return revision.model_dump(mode="json")
+
+
+@router.get("/{task_id}/export")
+def export_transcription(
+    task_id: str,
+    format: str = "txt",
+    service=Depends(get_transcription_service),
+):
+    """导出 TXT/JSON/SRT。真实转写必须先确认成稿，演示任务可直接导出。"""
+    if format not in {"txt", "json", "srt"}:
+        raise HTTPException(status_code=400, detail="导出格式只支持 txt/json/srt。")
+    task = service.repository.get_task(task_id)
+    if not isinstance(task, TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+    if task.is_mock:
+        segments = task.segments
+    else:
+        revision = service.get_approved_revision(task_id)
+        if revision is None:
+            raise HTTPException(status_code=400, detail="真实转写需确认成稿后才能导出。")
+        segments = revision.corrected_segments
+    exporter = {
+        "txt": service.export_txt,
+        "json": service.export_json,
+        "srt": service.export_srt,
+    }[format]
+    content = exporter(segments)
+    media_type = "application/json" if format == "json" else "text/plain"
+    filename = f"{task_id}.{format}"
+    return Response(
+        content=content,
+        media_type=f"{media_type}; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

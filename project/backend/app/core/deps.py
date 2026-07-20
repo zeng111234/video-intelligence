@@ -12,13 +12,19 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from src.repositories.sqlite import SQLiteRepository  # noqa: E402
+from src.adapters.licensed import (  # noqa: E402
+    DisabledLicensedSearchProvider,
+    SandboxLicensedSearchProvider,
+)
 from src.services.candidate import CandidateService  # noqa: E402
+from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
 from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
 from src.services.heat import HeatService  # noqa: E402
+from src.services.keyword_trend import KeywordTrendService  # noqa: E402
 from src.services.source import SourceService  # noqa: E402
 from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
 from src.adapters.video_editor import SandboxVideoEditor  # noqa: E402
@@ -33,6 +39,9 @@ from project.backend.app.core.config import (  # noqa: E402
     ALIYUN_ASR_ACCESS_KEY_ID,
     ALIYUN_ASR_ACCESS_KEY_SECRET,
     ALIYUN_ASR_APP_KEY,
+    CRAWLER_PROVIDER_MODE,
+    CRAWLER_PROVIDER_NAME,
+    CrawlerProviderMode,
 )
 
 
@@ -44,6 +53,38 @@ def get_repository() -> SQLiteRepository:
 @lru_cache
 def get_candidate_service() -> CandidateService:
     return CandidateService(get_repository())
+
+
+@lru_cache
+def get_heat_service() -> HeatService:
+    return HeatService()
+
+
+@lru_cache
+def get_source_service() -> SourceService:
+    return SourceService(get_repository(), get_heat_service())
+
+
+@lru_cache
+def get_keyword_trend_service() -> KeywordTrendService:
+    return KeywordTrendService(get_repository())
+
+
+@lru_cache
+def get_licensed_search_provider():
+    if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.SANDBOX:
+        return SandboxLicensedSearchProvider()
+    return DisabledLicensedSearchProvider(CRAWLER_PROVIDER_NAME)
+
+
+@lru_cache
+def get_commercial_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_licensed_search_provider(),
+    )
 
 
 def _build_asr_model_loader():
@@ -170,7 +211,7 @@ def get_publish_service() -> PublishService:
 def get_pipeline_service() -> PipelineService:
     return PipelineService(
         repository=get_repository(),
-        commercial_search_service=None,  # 仅 create_run / get_run 不依赖此字段
+        commercial_search_service=get_commercial_search_service(),
         copywriting_service=get_copywriting_service(),
         video_editing_service=get_video_editing_service(),
         publish_service=get_publish_service(),

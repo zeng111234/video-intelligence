@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from project.backend.app.core.deps import get_candidate_service
 from project.backend.app.schemas.requests import CandidateSearchRequest
 from project.backend.app.schemas.responses import CandidateItem, CandidateListResponse
+from src.models import Platform
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,17 @@ def search_candidates(
     """搜索视频候选。"""
     logger.info(f"候选搜索请求: keyword='{body.keyword}', limit={body.limit}")
     try:
-        # 使用 CandidateService.search() 而非 repository.list_candidates()
-        candidates = service.search(query=body.keyword)
+        platforms = []
+        for value in body.platforms:
+            try:
+                platforms.append(Platform(value))
+            except ValueError:
+                continue
+        candidates = service.search(
+            query=body.keyword,
+            platforms=platforms or None,
+            category=body.category,
+        )
         # 限制数量
         candidates = candidates[: body.limit]
         items = [

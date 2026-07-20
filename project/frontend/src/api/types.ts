@@ -23,6 +23,7 @@ export interface TranscriptSegment {
   text: string;
   confidence: number;
   needs_review: boolean;
+  reviewed?: boolean;
 }
 
 export interface TranscriptionResponse {
@@ -86,28 +87,108 @@ export interface AdminStatusResponse {
 
 /* ---- 关键词爬虫 ---- */
 
-export interface CrawlerResult {
-  title: string;
-  author: string;
-  likes: number;
-  platform: string;
+export interface CrawlerCapabilitiesResponse {
+  provider_name: string;
+  display_name: string;
+  mode: string;
+  enabled: boolean;
+  supported_platforms: string[];
+  supported_platform_labels: string[];
+  missing_configuration: string[];
+  permission_status: string;
+  monthly_query_count: number;
+  monthly_warning_queries: number;
+  monthly_hard_limit_queries: number;
+  cache_ttl_minutes: number;
+  supports_usage: boolean;
+  usage: Record<string, unknown> | null;
 }
 
-export interface CrawlerTaskResponse {
-  task_id: string;
+export interface CrawlerSearchRequest {
   keyword: string;
-  status: string;
-  platform: string;
-  max_results: number;
-  result_count: number;
-  results: CrawlerResult[];
-  error_message: string | null;
-  created_at: string | null;
-  updated_at: string | null;
+  published_window_days: 1 | 7;
+  count_per_platform: number;
+  force_refresh: boolean;
 }
 
-export interface CrawlerTaskListResponse {
-  items: CrawlerTaskResponse[];
+export interface CrawlerPlatformPreview {
+  platform: string;
+  platform_label: string;
+  cache_hit: boolean;
+  estimated_api_calls: number;
+  blocked_reason: string | null;
+}
+
+export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
+  provider_mode: string;
+  provider_name: string;
+  monthly_query_count: number;
+  monthly_warning_queries: number;
+  monthly_hard_limit_queries: number;
+  cache_ttl_minutes: number;
+  platforms: CrawlerPlatformPreview[];
+  blocked: boolean;
+}
+
+export interface CrawlerCandidateResult {
+  video_id: string;
+  title: string;
+  author_name: string;
+  platform: string;
+  platform_label: string;
+  source_url: string | null;
+  published_at: string | null;
+  trend_score: number | null;
+  trend_level: string | null;
+  confidence: number | null;
+  pool_size: number | null;
+  like_growth_per_hour: number | null;
+  anomaly_status: string | null;
+  platform_rank: number | null;
+  evidence: string | null;
+  reasons: string[];
+}
+
+export interface CrawlerPlatformRun {
+  run_id: string;
+  platform: string;
+  platform_label: string;
+  provider: string;
+  mode: string;
+  status: string;
+  requested_count: number;
+  returned_count: number;
+  cache_hit: boolean;
+  cached_from_run_id: string | null;
+  api_call_count: number;
+  billable_units: number | null;
+  quota_remaining: number | null;
+  error: string | null;
+  errors: Record<string, unknown>[];
+  started_at: string | null;
+  finished_at: string | null;
+  candidates: CrawlerCandidateResult[];
+}
+
+export interface CrawlerBatchResponse {
+  batch_id: string;
+  keyword: string;
+  published_window_days: number;
+  count_per_platform: number;
+  provider: string;
+  mode: string;
+  status: string;
+  force_refresh: boolean;
+  created_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  platform_runs: CrawlerPlatformRun[];
+  total_api_calls: number;
+  total_candidates: number;
+}
+
+export interface CrawlerBatchListResponse {
+  items: CrawlerBatchResponse[];
   total: number;
 }
 

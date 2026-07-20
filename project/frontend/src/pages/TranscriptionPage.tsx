@@ -1,659 +1,426 @@
-/**
- * 语音转写页面
- * 支持视频链接和文件上传两种方式，AI 自动转写为文字
- */
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Typography,
-  Card,
-  Input,
+  Alert,
   Button,
+  Card,
+  Checkbox,
+  Empty,
+  Input,
+  Progress,
+  Select,
   Space,
   Table,
-  Tag,
-  Row,
-  Col,
-  Statistic,
-  Select,
-  Progress,
-  Empty,
-  Upload,
   Tabs,
+  Tag,
+  Typography,
+  Upload,
 } from "antd";
-import { useToast } from "../components/Toast";
+import type { ColumnsType } from "antd/es/table";
 import {
-  AudioOutlined,
-  PlayCircleOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-  ReloadOutlined,
-  UploadOutlined,
-  FileTextOutlined,
-  SoundOutlined,
   DownloadOutlined,
-  CopyOutlined,
-  SearchOutlined,
+  FileTextOutlined,
   LinkOutlined,
+  ReloadOutlined,
+  SaveOutlined,
+  UploadOutlined,
 } from "@ant-design/icons";
-import { createTranscriptionByUrl, uploadAndTranscribe } from "../api/client";
+import {
+  createTranscriptionByUrl,
+  exportTranscription,
+  listTranscriptions,
+  saveTranscriptionRevision,
+  uploadAndTranscribe,
+} from "../api/client";
+import type { TranscriptSegment, TranscriptionResponse } from "../api/types";
+import { useToast } from "../components/Toast";
 
 const { Title, Text, Paragraph } = Typography;
-const { Option } = Select;
 const { TextArea } = Input;
 
-/** 转写状态颜色 */
 const STATUS_COLOR: Record<string, string> = {
-  succeeded: "success",
-  running: "processing",
-  failed: "error",
+  queued: "default",
   pending: "default",
+  running: "processing",
+  succeeded: "success",
+  failed: "error",
 };
 
-/** 模拟转写历史数据 */
-const TRANSCRIPTION_HISTORY = [
-  {
-    id: "TR-20260720-001",
-    fileName: "https://www.douyin.com/video/7663788033606503706",
-    source: "url",
-    platform: "抖音",
-    status: "succeeded",
-    duration: "5分32秒",
-    wordCount: 1256,
-    confidence: 92,
-    startTime: "2026-07-20 15:30:00",
-    segments: [
-      { start: 0, end: 15.5, text: "大家好，欢迎来到今天的二手车测评节目", confidence: 0.95 },
-      { start: 15.5, end: 32.8, text: "今天给大家带来的是一款非常热门的车型", confidence: 0.93 },
-      { start: 32.8, end: 48.2, text: "这款车就是丰田凯美瑞，省油耐用是它的代名词", confidence: 0.91 },
-      { start: 48.2, end: 65.0, text: "我们先来看看外观，这款车的前脸设计非常大气", confidence: 0.89 },
-      { start: 65.0, end: 82.5, text: "车身线条流畅，整体造型时尚动感", confidence: 0.94 },
-    ],
-  },
-  {
-    id: "TR-20260720-002",
-    fileName: "https://www.bilibili.com/video/BV1xx411c7mD",
-    source: "url",
-    platform: "B站",
-    status: "succeeded",
-    duration: "8分15秒",
-    wordCount: 1842,
-    confidence: 88,
-    startTime: "2026-07-20 14:20:00",
-    segments: [
-      { start: 0, end: 18.3, text: "今天我们来对比两款豪华品牌的中型轿车", confidence: 0.92 },
-      { start: 18.3, end: 35.6, text: "宝马3系和奔驰C级，看看谁更值得购买", confidence: 0.90 },
-    ],
-  },
-  {
-    id: "TR-20260719-003",
-    fileName: "汽车保养技巧_机油选择.mp3",
-    status: "running",
-    duration: "3分45秒",
-    wordCount: 0,
-    confidence: 0,
-    startTime: "2026-07-19 16:10:00",
-    segments: [],
-  },
-  {
-    id: "TR-20260719-004",
-    fileName: "新能源汽车_续航测试.mp4",
-    status: "failed",
-    duration: "12分20秒",
-    wordCount: 0,
-    confidence: 0,
-    startTime: "2026-07-19 11:05:00",
-    segments: [],
-  },
-];
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    pending: "等待中",
+    running: "转写中",
+    succeeded: "已完成",
+    failed: "失败",
+  };
+  return labels[status] || status;
+}
 
-/** 模拟统计数据 */
-const STATS = {
-  totalFiles: 89,
-  totalWords: 45680,
-  avgConfidence: 91.5,
-  avgDuration: "6分15秒",
-};
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function TranscriptionPage() {
   const toast = useToast();
-  const [searchText, setSearchText] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [selectedTask, setSelectedTask] = useState<any>(null);
+  const [tasks, setTasks] = useState<TranscriptionResponse[]>([]);
+  const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
+  const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [videoUrl, setVideoUrl] = useState("");
+  const [reviewer, setReviewer] = useState("校对员");
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [searchText, setSearchText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [tasks, setTasks] = useState(TRANSCRIPTION_HISTORY);
-  const [asrConfig, setAsrConfig] = useState<{ mode: string; description: string }>({
-    mode: "sandbox",
-    description: "演示模式 —— 返回模拟数据",
-  });
+  const [submitting, setSubmitting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // 获取 ASR 配置
-  useEffect(() => {
-    fetch("/api/v1/transcriptions/config")
-      .then((res) => res.json())
-      .then((data) => {
-        setAsrConfig({
-          mode: data.asr_mode,
-          description: data.description,
-        });
-      })
-      .catch(() => {});
-  }, []);
-
-  /** 通过链接转写 */
-  const handleUrlTranscribe = useCallback(async () => {
-    const urls = videoUrl.trim().split("\n").filter((u) => u.trim());
-    if (urls.length === 0) {
-      toast.warning("请输入视频链接");
-      return;
-    }
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const results = await Promise.all(
-        urls.map((url) => createTranscriptionByUrl(url.trim()))
-      );
-      const newTasks = results.map((r, i) => ({
-        id: r.task_id,
-        fileName: urls[i].trim(),
-        source: "url",
-        platform: urls[i].includes("douyin") ? "抖音" : urls[i].includes("bilibili") ? "B站" : urls[i].includes("youtube") ? "YouTube" : "链接",
-        status: r.status === "succeeded" ? "succeeded" : r.status === "running" ? "running" : "pending",
-        duration: r.segments?.length ? `${Math.round(r.segments[r.segments.length - 1].end / 60)}分${Math.round(r.segments[r.segments.length - 1].end % 60)}秒` : "-",
-        wordCount: r.segments?.reduce((acc, s) => acc + s.text.length, 0) || 0,
-        confidence: r.segments?.length ? Math.round(r.segments.reduce((acc, s) => acc + s.confidence, 0) / r.segments.length * 100) : 0,
-        startTime: new Date().toLocaleString("zh-CN"),
-        segments: r.segments || [],
-      }));
-      setTasks((prev) => [...newTasks, ...prev]);
-      setVideoUrl("");
-      // 自动选中第一个任务显示结果
-      if (newTasks.length > 0) {
-        setSelectedTask(newTasks[0]);
+      const items = await listTranscriptions();
+      setTasks(items);
+      if (selected) {
+        const next = items.find((item) => item.task_id === selected.task_id) || null;
+        setSelected(next);
+        setSegments(next?.segments || []);
       }
-      toast.success(`已创建 ${urls.length} 个转写任务`);
     } catch (err) {
-      toast.error((err as Error).message || "转写失败");
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [videoUrl]);
+  }, [selected?.task_id, toast]);
 
-  /** 通过文件上传转写 */
-  const handleFileUpload = useCallback(async (file: File) => {
-    setLoading(true);
-    try {
-      const result = await uploadAndTranscribe(file);
-      const newTask = {
-        id: result.task_id,
-        fileName: file.name,
-        source: "file" as const,
-        platform: "本地文件",
-        status: result.status === "succeeded" ? "succeeded" : result.status === "running" ? "running" : "pending",
-        duration: result.segments?.length ? `${Math.round(result.segments[result.segments.length - 1].end / 60)}分${Math.round(result.segments[result.segments.length - 1].end % 60)}秒` : "-",
-        wordCount: result.segments?.reduce((acc, s) => acc + s.text.length, 0) || 0,
-        confidence: result.segments?.length ? Math.round(result.segments.reduce((acc, s) => acc + s.confidence, 0) / result.segments.length * 100) : 0,
-        startTime: new Date().toLocaleString("zh-CN"),
-        segments: result.segments || [],
-      };
-      setTasks((prev) => [newTask, ...prev]);
-      setSelectedTask(newTask);
-      toast.success("转写完成");
-    } catch (err) {
-      toast.error((err as Error).message || "转写失败");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  useEffect(() => {
+    refresh();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 过滤后的转写任务 */
   const filteredTasks = useMemo(() => {
-    let filtered = tasks;
-    if (filterStatus !== "all") {
-      filtered = filtered.filter((t) => t.status === filterStatus);
-    }
-    if (searchText) {
-      filtered = filtered.filter((t) =>
-        t.fileName.toLowerCase().includes(searchText.toLowerCase())
-      );
-    }
-    return filtered;
-  }, [filterStatus, searchText, tasks]);
+    const normalized = searchText.trim().toLowerCase();
+    return tasks.filter((task) => {
+      const statusOk = filterStatus === "all" || task.status === filterStatus;
+      const searchOk =
+        !normalized ||
+        task.media_name.toLowerCase().includes(normalized) ||
+        task.title.toLowerCase().includes(normalized);
+      return statusOk && searchOk;
+    });
+  }, [tasks, filterStatus, searchText]);
 
-  /** 复制文本 */
-  const handleCopyText = (text: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success("已复制到剪贴板");
+  const selectTask = (task: TranscriptionResponse) => {
+    setSelected(task);
+    setSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
   };
 
-  /** 导出转写结果 */
-  const handleExport = useCallback((task: any, format: string = "txt") => {
-    if (!task || !task.segments || task.segments.length === 0) {
-      toast.warning("没有可导出的内容");
+  const handleUrlTranscribe = async () => {
+    const url = videoUrl.trim();
+    if (!url) {
+      toast.warning("请输入授权 MP4/MOV 直链");
       return;
     }
-    let content = "";
-    const filename = `${task.fileName || "转写结果"}.${format}`;
-    if (format === "txt") {
-      content = task.segments.map((s: any) => s.text).join("\n");
-    } else if (format === "srt") {
-      content = task.segments.map((s: any, i: number) => {
-        const start = new Date(s.start * 1000).toISOString().substr(11, 12).replace(".", ",");
-        const end = new Date(s.end * 1000).toISOString().substr(11, 12).replace(".", ",");
-        return `${i + 1}\n${start} --> ${end}\n${s.text}\n`;
-      }).join("\n");
-    } else if (format === "json") {
-      content = JSON.stringify(task.segments, null, 2);
+    setSubmitting(true);
+    try {
+      const created = await createTranscriptionByUrl(url, true);
+      toast.success("转写任务已创建");
+      setVideoUrl("");
+      setSelected(created);
+      setSegments(created.segments);
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
     }
-    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`已导出 ${filename}`);
-  }, [toast]);
+  };
 
-  /** 刷新转写列表 */
-  const handleRefresh = useCallback(() => {
-    toast.success("转写列表已刷新");
-  }, [toast]);
+  const handleFileUpload = async (file: File) => {
+    setSubmitting(true);
+    try {
+      const created = await uploadAndTranscribe(file);
+      toast.success("文件已上传并创建转写任务");
+      setSelected(created);
+      setSegments(created.segments);
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-  /** 表格列定义 */
-  const columns = [
-    {
-      title: "来源",
-      dataIndex: "source",
-      width: 80,
-      render: (source: string, record: any) => (
-        <Tag color={source === "url" ? "blue" : "default"} icon={source === "url" ? <LinkOutlined /> : <FileTextOutlined />}>
-          {source === "url" ? record.platform || "链接" : "文件"}
-        </Tag>
-      ),
-    },
-    {
-      title: "文件名/链接",
-      dataIndex: "fileName",
-      render: (name: string, record: any) => (
-        <Space>
-          {record.source === "url" ? <LinkOutlined style={{ color: "#6366f1" }} /> : <SoundOutlined style={{ color: "#6366f1" }} />}
-          <Text ellipsis style={{ maxWidth: 250 }}>{name}</Text>
-        </Space>
-      ),
-    },
+  const updateSegment = (index: number, patch: Partial<TranscriptSegment>) => {
+    setSegments((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+
+  const saveRevision = async (approve: boolean) => {
+    if (!selected) return;
+    setSaving(true);
+    try {
+      await saveTranscriptionRevision({
+        taskId: selected.task_id,
+        segments: segments.map((segment) => ({
+          start: segment.start,
+          end: segment.end,
+          text: segment.text,
+          confidence: segment.confidence,
+          needs_review: segment.needs_review,
+          reviewed: Boolean(segment.reviewed),
+        })),
+        reviewer,
+        approve,
+      });
+      toast.success(approve ? "已确认成稿" : "校对版本已保存");
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExport = async (format: "txt" | "json" | "srt") => {
+    if (!selected) return;
+    try {
+      const blob = await exportTranscription(selected.task_id, format);
+      downloadBlob(blob, `${selected.task_id}.${format}`);
+      toast.success(`已导出 ${format.toUpperCase()}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const columns: ColumnsType<TranscriptionResponse> = [
+    { title: "任务ID", dataIndex: "task_id", width: 170, render: (value) => <Text code>{value}</Text> },
+    { title: "媒体", dataIndex: "media_name", ellipsis: true },
     {
       title: "状态",
       dataIndex: "status",
-      width: 100,
-      render: (status: string) => (
-        <Tag color={STATUS_COLOR[status]}>
-          {status === "succeeded" ? "已完成" : status === "running" ? "转写中" : status === "failed" ? "失败" : "等待中"}
-        </Tag>
+      width: 110,
+      render: (value: string) => <Tag color={STATUS_COLOR[value]}>{statusLabel(value)}</Tag>,
+    },
+    {
+      title: "进度",
+      dataIndex: "progress",
+      width: 130,
+      render: (value: number, record) => (
+        <Progress
+          percent={value}
+          size="small"
+          status={record.status === "failed" ? "exception" : record.status === "succeeded" ? "success" : "active"}
+        />
       ),
     },
     {
-      title: "时长",
-      dataIndex: "duration",
-      width: 100,
-    },
-    {
-      title: "字数",
-      dataIndex: "wordCount",
-      width: 100,
-      render: (count: number) => count > 0 ? <Text strong>{count.toLocaleString()}</Text> : "-",
-    },
-    {
-      title: "置信度",
-      dataIndex: "confidence",
-      width: 120,
-      render: (confidence: number, record: any) =>
-        record.status === "succeeded" ? (
-          <Progress
-            percent={confidence}
-            size="small"
-            status={confidence >= 85 ? "success" : "normal"}
-          />
-        ) : (
-          "-"
-        ),
-    },
-    {
-      title: "开始时间",
-      dataIndex: "startTime",
-      width: 160,
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 180,
+      render: (value: string | null) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
     },
     {
       title: "操作",
-      width: 120,
-      render: (_: any, record: any) => (
-        <Space>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => setSelectedTask(record)}
-            disabled={record.status !== "succeeded"}
-          >
-            查看
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            icon={<DownloadOutlined />}
-            disabled={record.status !== "succeeded"}
-            onClick={() => handleExport(record)}
-          >
-            导出
-          </Button>
-        </Space>
+      width: 90,
+      render: (_, record) => (
+        <Button type="link" onClick={() => selectTask(record)}>
+          查看
+        </Button>
       ),
     },
   ];
 
-  /** 片段表格列 */
-  const segmentColumns = [
+  const segmentColumns: ColumnsType<TranscriptSegment> = [
     {
       title: "时间",
       width: 150,
-      render: (_: any, record: any) => (
-        <Text code>{record.start.toFixed(1)}s - {record.end.toFixed(1)}s</Text>
-      ),
+      render: (_, record) => <Text code>{record.start.toFixed(1)}s - {record.end.toFixed(1)}s</Text>,
     },
     {
-      title: "文本内容",
+      title: "文本",
       dataIndex: "text",
-      render: (text: string) => <Paragraph style={{ margin: 0 }}>{text}</Paragraph>,
+      render: (value: string, _record, index) => (
+        <TextArea
+          value={value}
+          autoSize
+          onChange={(event) => updateSegment(index, { text: event.target.value })}
+        />
+      ),
     },
     {
       title: "置信度",
       dataIndex: "confidence",
-      width: 120,
-      render: (confidence: number) => (
-        <Progress
-          percent={Math.round(confidence * 100)}
-          size="small"
-          status={confidence >= 0.85 ? "success" : confidence >= 0.7 ? "normal" : "exception"}
-        />
+      width: 110,
+      render: (value: number) => `${Math.round(value * 100)}%`,
+    },
+    {
+      title: "复核",
+      width: 100,
+      render: (_, record, index) => (
+        <Checkbox
+          checked={!record.needs_review || Boolean(record.reviewed)}
+          disabled={!record.needs_review}
+          onChange={(event) => updateSegment(index, { reviewed: event.target.checked })}
+        >
+          已复核
+        </Checkbox>
       ),
     },
   ];
 
   return (
-    <div>
-      {/* 页面头部 */}
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <AudioOutlined /> 语音转写
-        </Title>
-        <Text type="secondary">AI 驱动的语音识别，自动将视频/音频转为文字</Text>
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <div>
+        <Title level={4} style={{ margin: 0 }}>语音转写</Title>
+        <Text type="secondary">转写历史从后端 SQLite 加载；真实转写必须确认成稿后才能导出。</Text>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="已处理文件"
-              value={STATS.totalFiles}
-              prefix={<FileTextOutlined style={{ color: "#6366f1" }} />}
-              valueStyle={{ color: "#6366f1" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="总字数"
-              value={STATS.totalWords}
-              prefix={<SoundOutlined style={{ color: "#10b981" }} />}
-              valueStyle={{ color: "#10b981" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="平均置信度"
-              value={STATS.avgConfidence}
-              suffix="%"
-              prefix={<CheckCircleOutlined style={{ color: "#f59e0b" }} />}
-              valueStyle={{ color: "#f59e0b" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="平均时长"
-              value={STATS.avgDuration}
-              prefix={<ClockCircleOutlined style={{ color: "#8b5cf6" }} />}
-              valueStyle={{ color: "#8b5cf6" }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Alert
+        type="warning"
+        showIcon
+        message="权利确认边界"
+        description="候选或爬虫结果跳转到此页后，不会自动下载平台分享页。请上传你有权处理的文件，或填写已授权的 MP4/MOV 直链。"
+      />
 
-      {/* ASR 状态提示 */}
-      <Card style={{ marginBottom: 24, background: "linear-gradient(135deg, #f5f3ff, #ede9fe)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <Space>
-            <SoundOutlined style={{ fontSize: 20, color: "#6366f1" }} />
-            <div>
-              <Text strong>语音识别引擎</Text>
-              <br />
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {asrConfig.description} | 支持格式：MP4, MP3, WAV, M4A, AVI
-              </Text>
-            </div>
-          </Space>
-          <Tag color={asrConfig.mode === "local" ? "green" : asrConfig.mode === "cloud" ? "blue" : "orange"}>
-            {asrConfig.mode === "local" ? "本地模式" : asrConfig.mode === "cloud" ? "云端模式" : "演示模式"}
-          </Tag>
-        </div>
-      </Card>
-
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        {/* 输入区域 */}
-        <Col xs={24} lg={8}>
-          <Card title={<Space><SoundOutlined /> 创建转写任务</Space>}>
-            <Tabs
-              defaultActiveKey="url"
-              items={[
-                {
-                  key: "url",
-                  label: (
-                    <span>
-                      <LinkOutlined /> 链接转写
-                    </span>
-                  ),
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <div>
-                        <Text strong style={{ display: "block", marginBottom: 8 }}>视频链接</Text>
-                        <TextArea
-                          placeholder={"粘贴视频链接，支持：\n• 抖音/快手/B站等短视频链接\n• YouTube/TikTok 链接\n• 直链（MP4/MP3/WAV）"}
-                          rows={4}
-                          style={{ resize: "none" }}
-                          value={videoUrl}
-                          onChange={(e) => setVideoUrl(e.target.value)}
-                        />
-                        <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: "block" }}>
-                          支持批量粘贴，每行一个链接
-                        </Text>
-                      </div>
-                      <Button
-                        type="primary"
-                        icon={<PlayCircleOutlined />}
-                        block
-                        size="large"
-                        loading={loading}
-                        onClick={handleUrlTranscribe}
-                      >
-                        开始转写
-                      </Button>
-                    </Space>
-                  ),
-                },
-                {
-                  key: "file",
-                  label: (
-                    <span>
-                      <UploadOutlined /> 文件上传
-                    </span>
-                  ),
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Upload.Dragger
-                        name="file"
-                        multiple={false}
-                        accept=".mp4,.mp3,.wav,.m4a,.avi"
-                        showUploadList={true}
-                        beforeUpload={(file) => {
-                          handleFileUpload(file);
-                          return false; // 阻止自动上传
-                        }}
-                        style={{ padding: "20px 0" }}
-                      >
-                        <p style={{ marginBottom: 8 }}>
-                          <UploadOutlined style={{ fontSize: 32, color: "#6366f1" }} />
-                        </p>
-                        <p style={{ marginBottom: 4 }}>点击或拖拽文件到此区域上传</p>
-                        <p style={{ color: "#94a3b8", fontSize: 12 }}>
-                          支持 MP4、MP3、WAV、M4A、AVI 格式
-                        </p>
-                      </Upload.Dragger>
-                    </Space>
-                  ),
-                },
-              ]}
-            />
-
-            {/* 转写设置 */}
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f0f0f0" }}>
-              <Text strong style={{ display: "block", marginBottom: 8 }}>转写设置</Text>
-              <Space direction="vertical" style={{ width: "100%" }}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>识别语言</Text>
-                  <Select defaultValue="zh" style={{ width: "100%", marginTop: 4 }}>
-                    <Option value="zh">中文</Option>
-                    <Option value="en">英文</Option>
-                    <Option value="auto">自动检测</Option>
-                  </Select>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>输出格式</Text>
-                  <Select defaultValue="txt" style={{ width: "100%", marginTop: 4 }}>
-                    <Option value="txt">纯文本 (TXT)</Option>
-                    <Option value="srt">字幕文件 (SRT)</Option>
-                    <Option value="json">结构化 (JSON)</Option>
-                  </Select>
-                </div>
-              </Space>
-            </div>
-          </Card>
-        </Col>
-
-        {/* 转写结果 */}
-        <Col xs={24} lg={16}>
-          <Card
-            title={<Space><FileTextOutlined /> 转写结果</Space>}
-            extra={
-              selectedTask && (
-                <Space>
-                  <Button
-                    icon={<CopyOutlined />}
-                    size="small"
-                    onClick={() =>
-                      handleCopyText(
-                        selectedTask.segments.map((s: any) => s.text).join("\n")
-                      )
-                    }
-                  >
-                    复制全文
-                  </Button>
-                  <Button icon={<DownloadOutlined />} size="small" onClick={() => handleExport(selectedTask)}>
-                    导出
+      <Card title="创建转写任务">
+        <Tabs
+          items={[
+            {
+              key: "url",
+              label: <span><LinkOutlined /> 授权直链</span>,
+              children: (
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <TextArea
+                    value={videoUrl}
+                    onChange={(event) => setVideoUrl(event.target.value)}
+                    placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载"
+                    rows={3}
+                  />
+                  <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>
+                    确认权利并创建转写
                   </Button>
                 </Space>
-              )
-            }
-          >
-            {selectedTask && selectedTask.status === "succeeded" ? (
-              <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                {/* 文件信息 */}
-                <Row gutter={16}>
-                  <Col span={6}>
-                    <Statistic title="文件名" value={selectedTask.fileName} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                  <Col span={6}>
-                    <Statistic title="时长" value={selectedTask.duration} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                  <Col span={6}>
-                    <Statistic title="字数" value={selectedTask.wordCount} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                  <Col span={6}>
-                    <Statistic
-                      title="置信度"
-                      value={selectedTask.confidence}
-                      suffix="%"
-                      valueStyle={{ fontSize: 14, color: selectedTask.confidence >= 85 ? "#10b981" : "#f59e0b" }}
-                    />
-                  </Col>
-                </Row>
+              ),
+            },
+            {
+              key: "file",
+              label: <span><UploadOutlined /> 上传文件</span>,
+              children: (
+                <Upload.Dragger
+                  accept=".mp4,.mov"
+                  beforeUpload={(file) => {
+                    handleFileUpload(file);
+                    return false;
+                  }}
+                  multiple={false}
+                  showUploadList={false}
+                  disabled={submitting}
+                >
+                  <p><UploadOutlined style={{ fontSize: 28 }} /></p>
+                  <p>点击或拖拽 MP4/MOV 文件上传</p>
+                </Upload.Dragger>
+              ),
+            },
+          ]}
+        />
+      </Card>
 
-                {/* 片段列表 */}
+      <Card
+        title={<Space><FileTextOutlined /> 校对与导出</Space>}
+        extra={selected && (
+          <Space>
+            <Select
+              value="txt"
+              style={{ width: 90 }}
+              options={[
+                { value: "txt", label: "TXT" },
+                { value: "json", label: "JSON" },
+                { value: "srt", label: "SRT" },
+              ]}
+              onSelect={(value) => handleExport(value as "txt" | "json" | "srt")}
+            />
+            <Button icon={<DownloadOutlined />} onClick={() => handleExport("txt")}>导出</Button>
+          </Space>
+        )}
+      >
+        {selected ? (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Space wrap>
+              <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
+              <Text strong>{selected.media_name}</Text>
+              <Text type="secondary">{selected.stage}</Text>
+            </Space>
+            {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
+            {segments.length > 0 ? (
+              <>
+                <Space>
+                  <Input value={reviewer} onChange={(event) => setReviewer(event.target.value)} addonBefore="校对人" />
+                  <Button icon={<SaveOutlined />} loading={saving} onClick={() => saveRevision(false)}>
+                    保存校对版本
+                  </Button>
+                  <Button type="primary" loading={saving} onClick={() => saveRevision(true)}>
+                    确认成稿
+                  </Button>
+                </Space>
                 <Table
+                  rowKey={(_, index) => String(index)}
                   columns={segmentColumns}
-                  dataSource={selectedTask.segments}
-                  rowKey={(_, i) => String(i)}
+                  dataSource={segments}
                   pagination={false}
                   size="small"
                 />
-              </Space>
+              </>
             ) : (
-              <Empty description="选择一个已完成的转写任务查看结果" />
+              <Empty description="该任务暂无可校对片段" />
             )}
-          </Card>
-        </Col>
-      </Row>
+          </Space>
+        ) : (
+          <Empty description="选择一个转写任务查看和校对" />
+        )}
+      </Card>
 
-      {/* 转写历史 */}
       <Card
-        title={<Space><ClockCircleOutlined /> 转写历史</Space>}
+        title="转写历史"
         extra={
           <Space>
             <Input
-              placeholder="搜索文件名..."
-              prefix={<SearchOutlined />}
               value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="搜索媒体"
               style={{ width: 200 }}
-              size="small"
             />
             <Select
               value={filterStatus}
               onChange={setFilterStatus}
-              style={{ width: 120 }}
-              size="small"
-            >
-              <Option value="all">全部状态</Option>
-              <Option value="running">转写中</Option>
-              <Option value="succeeded">已完成</Option>
-              <Option value="failed">失败</Option>
-            </Select>
-            <Button icon={<ReloadOutlined />} size="small" onClick={handleRefresh}>
-              刷新
-            </Button>
+              style={{ width: 130 }}
+              options={[
+                { value: "all", label: "全部" },
+                { value: "running", label: "转写中" },
+                { value: "succeeded", label: "已完成" },
+                { value: "failed", label: "失败" },
+              ]}
+            />
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>
           </Space>
         }
       >
         <Table
+          rowKey="task_id"
           columns={columns}
           dataSource={filteredTasks}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-          size="middle"
+          loading={loading}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
         />
       </Card>
-    </div>
+
+      {selected?.segments?.length ? (
+        <Card title="纯文本预览">
+          <Paragraph style={{ whiteSpace: "pre-wrap" }}>
+            {segments.map((segment) => segment.text).join("\n")}
+          </Paragraph>
+        </Card>
+      ) : null}
+    </Space>
   );
 }

@@ -48,6 +48,5 @@ echo.
 echo [DONE] All services started successfully.
 echo [URL] Frontend:        http://localhost:1001
 echo [URL] Backend API:     http://localhost:2001
-echo [URL] Streamlit MVP:   http://localhost:8501
 echo.
 pause

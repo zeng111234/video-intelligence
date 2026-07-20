@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
 
 from project.backend.app.services.avatar_service import get_avatar_provider
@@ -92,6 +90,13 @@ async def upload_audio_file(file: UploadFile = File(...)) -> dict[str, str]:
     # 保存文件
     file_id = f"audio-{uuid.uuid4().hex[:10]}"
     return {"file_id": file_id, "filename": file.filename, "status": "uploaded"}
+
+
+@router.get("/tasks", response_model=list[AvatarTask])
+async def list_avatar_tasks() -> list[AvatarTask]:
+    """获取数字人任务列表。"""
+    tasks = getattr(avatar_provider, "tasks", {})
+    return [AvatarTask(**task.to_dict()) for task in tasks.values()]
 
 
 @router.get("/tasks/{task_id}", response_model=AvatarTask)

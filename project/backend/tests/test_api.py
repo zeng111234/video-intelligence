@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -186,6 +187,21 @@ class TestTranscriptions:
         )
         assert resp.status_code == 200
 
+    def test_list_transcriptions_and_export_mock(self, client: TestClient):
+        create_resp = client.post(
+            "/api/v1/transcriptions",
+            json={"media_name": "exportable.mp4", "rights_confirmed": True},
+        )
+        task_id = create_resp.json()["task_id"]
+
+        list_resp = client.get("/api/v1/transcriptions")
+        assert list_resp.status_code == 200
+        assert any(item["task_id"] == task_id for item in list_resp.json())
+
+        export_resp = client.get(f"/api/v1/transcriptions/{task_id}/export?format=srt")
+        assert export_resp.status_code == 200
+        assert b"00:00:00,000 -->" in export_resp.content
+
 
 # ---------------------------------------------------------------------------
 # /api/v1/pipelines
@@ -229,6 +245,14 @@ class TestPipelines:
         resp = client.post("/api/v1/pipelines", json={"keyword": ""})
         assert resp.status_code == 422  # min_length=1
 
+    def test_list_pipelines(self, client: TestClient):
+        client.post("/api/v1/pipelines", json={"keyword": "列表检查"})
+        resp = client.get("/api/v1/pipelines")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+        assert any(item["keyword"] == "列表检查" for item in data)
+
 
 # ---------------------------------------------------------------------------
 # /api/v1/tasks
@@ -269,6 +293,67 @@ class TestTasks:
         )
         after = client.get("/api/v1/tasks").json()["total"]
         assert after >= before
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/crawler
+# ---------------------------------------------------------------------------
+
+
+class TestCrawlerBatches:
+    def test_capabilities(self, client: TestClient):
+        resp = client.get("/api/v1/crawler/capabilities")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mode"] in {"sandbox", "production"}
+        assert "monthly_query_count" in data
+        assert "supported_platforms" in data
+
+    def test_preview_three_platforms(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/crawler/preview",
+            json={
+                "keyword": "二手车",
+                "published_window_days": 7,
+                "count_per_platform": 2,
+                "force_refresh": False,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["platforms"]) == 3
+        assert all("estimated_api_calls" in item for item in data["platforms"])
+
+    def test_create_and_read_persistent_batch(self, client: TestClient):
+        keyword = f"露营{uuid4().hex[:6]}"
+        create_resp = client.post(
+            "/api/v1/crawler/batches",
+            json={
+                "keyword": keyword,
+                "published_window_days": 1,
+                "count_per_platform": 2,
+                "force_refresh": True,
+            },
+        )
+        assert create_resp.status_code == 200
+        created = create_resp.json()
+        assert created["status"] in {"succeeded", "partial", "failed"}
+        assert len(created["platform_runs"]) == 3
+
+        batch_id = created["batch_id"]
+        detail_resp = client.get(f"/api/v1/crawler/batches/{batch_id}")
+        assert detail_resp.status_code == 200
+        detail = detail_resp.json()
+        assert detail["batch_id"] == batch_id
+        assert sum(len(run["candidates"]) for run in detail["platform_runs"]) >= 1
+
+        list_resp = client.get("/api/v1/crawler/batches")
+        assert list_resp.status_code == 200
+        assert any(item["batch_id"] == batch_id for item in list_resp.json()["items"])
+
+    def test_old_crawler_tasks_contract_removed(self, client: TestClient):
+        resp = client.get("/api/v1/crawler/tasks")
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
