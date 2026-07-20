@@ -25,7 +25,6 @@ import {
   AudioOutlined,
   UploadOutlined,
   PlayCircleOutlined,
-  PauseCircleOutlined,
   StopOutlined,
   SoundOutlined,
   UserOutlined,
@@ -36,7 +35,7 @@ import {
   ClockCircleOutlined,
 } from "@ant-design/icons";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { Option } = Select;
 const { TextArea } = Input;
 

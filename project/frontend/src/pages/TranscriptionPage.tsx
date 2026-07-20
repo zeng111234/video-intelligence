@@ -169,7 +169,8 @@ export default function TranscriptionPage() {
       const newTask = {
         id: result.task_id,
         fileName: file.name,
-        source: "file",
+        source: "file" as const,
+        platform: "本地文件",
         status: result.status === "succeeded" ? "succeeded" : result.status === "running" ? "running" : "pending",
         duration: result.segments?.length ? `${Math.round(result.segments[result.segments.length - 1].end / 60)}分${Math.round(result.segments[result.segments.length - 1].end % 60)}秒` : "-",
         wordCount: result.segments?.reduce((acc, s) => acc + s.text.length, 0) || 0,
