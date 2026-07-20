@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
-import { Typography, Card, Descriptions, Tag, Space, Button, message } from "antd";
+import { Typography, Card, Descriptions, Tag, Space, Button } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { getAdminStatus } from "../api/client";
+import { useToast } from "../components/Toast";
 import type { AdminStatusResponse } from "../api/types";
 
 export default function AdminPage() {
+  const toast = useToast();
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -14,7 +16,7 @@ export default function AdminPage() {
       const resp = await getAdminStatus();
       setStatus(resp);
     } catch (err) {
-      message.error((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }

@@ -10,9 +10,9 @@ import {
   Select,
   InputNumber,
   List,
-  message,
   Empty,
 } from "antd";
+import { useToast } from "../components/Toast";
 import {
   SearchOutlined,
   PlusOutlined,
@@ -62,6 +62,7 @@ const PLATFORM_OPTIONS = [
 ];
 
 export default function KeywordCrawlerPage() {
+  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [platform, setPlatform] = useState("douyin");
   const [maxResults, setMaxResults] = useState(10);
@@ -75,7 +76,7 @@ export default function KeywordCrawlerPage() {
       const resp = await listCrawlerTasks();
       setTasks(resp.items);
     } catch (err) {
-      message.error((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -87,17 +88,17 @@ export default function KeywordCrawlerPage() {
 
   const handleCreate = async () => {
     if (!keyword.trim()) {
-      message.warning("请输入关键词");
+      toast.warning("请输入关键词");
       return;
     }
     setCreating(true);
     try {
       await createCrawlerTask(keyword.trim(), platform, maxResults);
-      message.success("爬虫任务已创建");
+      toast.success("爬虫任务已创建");
       setKeyword("");
       await fetchTasks();
     } catch (err) {
-      message.error((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setCreating(false);
     }

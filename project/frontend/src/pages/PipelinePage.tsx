@@ -19,8 +19,8 @@ import {
   Progress,
   Timeline,
   Empty,
-  message,
 } from "antd";
+import { useToast } from "../components/Toast";
 import {
   ThunderboltOutlined,
   PlayCircleOutlined,
@@ -129,6 +129,7 @@ const STATS = {
 };
 
 export default function PipelinePage() {
+  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -139,11 +140,11 @@ export default function PipelinePage() {
   const handleAddKeyword = () => {
     const trimmed = keyword.trim();
     if (!trimmed) {
-      message.warning("请输入关键词");
+      toast.warning("请输入关键词");
       return;
     }
     if (keywords.includes(trimmed)) {
-      message.warning("关键词已存在");
+      toast.warning("关键词已存在");
       return;
     }
     setKeywords([...keywords, trimmed]);
@@ -158,13 +159,13 @@ export default function PipelinePage() {
   /** 创建流水线 */
   const handleCreate = async () => {
     if (keywords.length === 0) {
-      message.warning("请至少添加一个关键词");
+      toast.warning("请至少添加一个关键词");
       return;
     }
     setLoading(true);
     // 模拟创建
     setTimeout(() => {
-      message.success(`已创建 ${keywords.length} 个关键词的批量生产任务`);
+      toast.success(`已创建 ${keywords.length} 个关键词的批量生产任务`);
       setKeywords([]);
       setLoading(false);
     }, 1500);

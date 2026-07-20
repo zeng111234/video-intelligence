@@ -15,11 +15,11 @@ import {
   Input,
   Select,
   Slider,
-  message,
   Progress,
   Tag,
   Empty,
 } from "antd";
+import { useToast } from "../components/Toast";
 import {
   VideoCameraOutlined,
   AudioOutlined,
@@ -74,6 +74,7 @@ const GENERATION_HISTORY = [
 ];
 
 export default function AvatarPage() {
+  const toast = useToast();
   // 形象相关
   const [avatarImage, setAvatarImage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -103,9 +104,9 @@ export default function AvatarPage() {
         videoRef.current.srcObject = stream;
       }
       setIsRecording(true);
-      message.info("开始录制形象，点击停止结束");
+      toast.info("开始录制形象，点击停止结束");
     } catch (err) {
-      message.error("无法访问摄像头，请检查权限");
+      toast.error("无法访问摄像头，请检查权限");
     }
   }, []);
 
@@ -117,7 +118,7 @@ export default function AvatarPage() {
     }
     setIsRecording(false);
     setAvatarImage("/avatar-placeholder.png"); // 模拟截图
-    message.success("形象录制完成");
+    toast.success("形象录制完成");
   }, []);
 
   /** 开始录制音频 */
@@ -128,9 +129,9 @@ export default function AvatarPage() {
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start();
       setIsRecordingAudio(true);
-      message.info("开始录制音频，点击停止结束");
+      toast.info("开始录制音频，点击停止结束");
     } catch (err) {
-      message.error("无法访问麦克风，请检查权限");
+      toast.error("无法访问麦克风，请检查权限");
     }
   }, []);
 
@@ -141,13 +142,13 @@ export default function AvatarPage() {
       mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
     }
     setIsRecordingAudio(false);
-    message.success("音频录制完成");
+    toast.success("音频录制完成");
   }, []);
 
   /** 开始生成视频 */
   const handleGenerate = useCallback(() => {
     if (!avatarImage && !audioFile && !ttsText) {
-      message.warning("请先录制/上传形象和音频");
+      toast.warning("请先录制/上传形象和音频");
       return;
     }
     setGenerating(true);
@@ -160,7 +161,7 @@ export default function AvatarPage() {
           clearInterval(interval);
           setGenerating(false);
           setGeneratedVideo("/generated-video.mp4");
-          message.success("数字人视频生成完成！");
+          toast.success("数字人视频生成完成！");
           return 100;
         }
         return prev + 10;
@@ -256,7 +257,7 @@ export default function AvatarPage() {
                           const reader = new FileReader();
                           reader.onload = (e) => {
                             setAvatarImage(e.target?.result as string);
-                            message.success("形象照片已上传");
+                            toast.success("形象照片已上传");
                           };
                           reader.readAsDataURL(file);
                           return false;
@@ -383,7 +384,7 @@ export default function AvatarPage() {
                       showUploadList={false}
                       beforeUpload={(file) => {
                         setAudioFile(file);
-                        message.success(`音频 "${file.name}" 已添加`);
+                        toast.success(`音频 "${file.name}" 已添加`);
                         return false;
                       }}
                       style={{ padding: "30px 0" }}

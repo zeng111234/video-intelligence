@@ -19,8 +19,8 @@ import {
   Empty,
   Upload,
   Tabs,
-  message,
 } from "antd";
+import { useToast } from "../components/Toast";
 import {
   AudioOutlined,
   PlayCircleOutlined,
@@ -115,6 +115,7 @@ const STATS = {
 };
 
 export default function TranscriptionPage() {
+  const toast = useToast();
   const [searchText, setSearchText] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedTask, setSelectedTask] = useState<any>(null);
@@ -126,7 +127,7 @@ export default function TranscriptionPage() {
   const handleUrlTranscribe = useCallback(async () => {
     const urls = videoUrl.trim().split("\n").filter((u) => u.trim());
     if (urls.length === 0) {
-      message.warning("请输入视频链接");
+      toast.warning("请输入视频链接");
       return;
     }
     setLoading(true);
@@ -152,9 +153,9 @@ export default function TranscriptionPage() {
       if (newTasks.length > 0) {
         setSelectedTask(newTasks[0]);
       }
-      message.success(`已创建 ${urls.length} 个转写任务`);
+      toast.success(`已创建 ${urls.length} 个转写任务`);
     } catch (err) {
-      message.error((err as Error).message || "转写失败");
+      toast.error((err as Error).message || "转写失败");
     } finally {
       setLoading(false);
     }
@@ -179,9 +180,9 @@ export default function TranscriptionPage() {
       };
       setTasks((prev) => [newTask, ...prev]);
       setSelectedTask(newTask);
-      message.success("转写完成");
+      toast.success("转写完成");
     } catch (err) {
-      message.error((err as Error).message || "转写失败");
+      toast.error((err as Error).message || "转写失败");
     } finally {
       setLoading(false);
     }
@@ -204,7 +205,7 @@ export default function TranscriptionPage() {
   /** 复制文本 */
   const handleCopyText = (text: string) => {
     navigator.clipboard.writeText(text);
-    message.success("已复制到剪贴板");
+    toast.success("已复制到剪贴板");
   };
 
   /** 表格列定义 */
