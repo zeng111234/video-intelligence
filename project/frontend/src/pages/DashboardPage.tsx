@@ -19,7 +19,6 @@ import {
   Select,
 } from "antd";
 import {
-  PlayCircleOutlined,
   FileTextOutlined,
   ThunderboltOutlined,
   CheckCircleOutlined,
@@ -28,7 +27,6 @@ import {
   VideoCameraOutlined,
   AudioOutlined,
   RocketOutlined,
-  FallOutlined,
 } from "@ant-design/icons";
 import {
   BarChart,

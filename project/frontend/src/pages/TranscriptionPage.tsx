@@ -34,7 +34,6 @@ import {
   CopyOutlined,
   SearchOutlined,
   LinkOutlined,
-  VideoCameraOutlined,
 } from "@ant-design/icons";
 import { createTranscriptionByUrl, uploadAndTranscribe } from "../api/client";
 
