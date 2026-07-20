@@ -82,7 +82,11 @@ export default function AnalyticsPage() {
       const resp = await getAnalyticsData(timeRange);
       setData(resp);
     } catch (err) {
-      toast.error((err as Error).message || "数据加载失败");
+      if ((err as Error).message?.includes("网络连接失败")) {
+        console.warn("后端服务未启动，使用本地缓存数据");
+      } else {
+        toast.error((err as Error).message || "数据加载失败");
+      }
     } finally {
       setLoading(false);
     }

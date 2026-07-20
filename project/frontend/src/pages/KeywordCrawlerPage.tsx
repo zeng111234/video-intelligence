@@ -76,7 +76,11 @@ export default function KeywordCrawlerPage() {
       const resp = await listCrawlerTasks();
       setTasks(resp.items);
     } catch (err) {
-      toast.error((err as Error).message);
+      if ((err as Error).message?.includes("网络连接失败")) {
+        console.warn("后端服务未启动");
+      } else {
+        toast.error((err as Error).message);
+      }
     } finally {
       setLoading(false);
     }

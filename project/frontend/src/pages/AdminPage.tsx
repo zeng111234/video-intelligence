@@ -16,7 +16,11 @@ export default function AdminPage() {
       const resp = await getAdminStatus();
       setStatus(resp);
     } catch (err) {
-      toast.error((err as Error).message);
+      if ((err as Error).message?.includes("网络连接失败")) {
+        console.warn("后端服务未启动");
+      } else {
+        toast.error((err as Error).message);
+      }
     } finally {
       setLoading(false);
     }
