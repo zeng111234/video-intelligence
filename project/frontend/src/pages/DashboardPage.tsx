@@ -3,7 +3,7 @@
  * 直观展示业务数据概览、趋势、任务状态
  * 使用 recharts 渲染图表，替代纯 CSS 手绘
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Typography,
   Card,

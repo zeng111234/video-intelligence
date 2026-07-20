@@ -66,7 +66,7 @@ export default function GlobalSearchModal({ open, onClose }: Props) {
         e.preventDefault();
         setSelectedIndex((prev) => Math.max(prev - 1, 0));
       } else if (e.key === "Enter" && results[selectedIndex]) {
-        navigate(results[selectedIndex].path);
+        window.location.href = results[selectedIndex].path;
         onClose();
       } else if (e.key === "Escape") {
         onClose();
@@ -119,7 +119,7 @@ export default function GlobalSearchModal({ open, onClose }: Props) {
                     key={item.key}
                     className={`gs-item${idx === selectedIndex ? " active" : ""}`}
                     onClick={() => {
-                      navigate(item.path);
+                      window.location.href = item.path;
                       onClose();
                     }}
                     onMouseEnter={() => setSelectedIndex(idx)}
