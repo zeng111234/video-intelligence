@@ -67,16 +67,15 @@ export function createTranscription(
   });
 }
 
-/** 通过链接创建转写任务（使用 mock 端点） */
+/** 通过视频直链创建转写任务 */
 export function createTranscriptionByUrl(
   url: string,
   rightsConfirmed = true,
 ): Promise<TranscriptionResponse> {
-  return request("/transcriptions", {
+  return request("/transcriptions/url", {
     method: "POST",
     body: JSON.stringify({
-      media_name: url,
-      media_type: "video/mp4",
+      url,
       rights_confirmed: rightsConfirmed,
     }),
   });

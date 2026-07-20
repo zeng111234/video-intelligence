@@ -107,23 +107,32 @@ async def upload_and_transcribe(
 
 
 @router.post("/url", response_model=TranscriptionResponse)
-def create_transcription_by_url(
+async def create_transcription_by_url(
     body: TranscriptionUrlRequest,
     service=Depends(get_transcription_service),
 ):
-    """通过视频链接创建转写任务。
+    """通过视频直链创建转写任务。
 
-    支持抖音、快手、B站、YouTube等平台链接，以及直链（MP4/MP3/WAV）。
+    支持 MP4/MOV 格式的 HTTPS 直链。
+    抖音、快手等平台分享链接需要先获取视频直链。
     """
     if not body.url.strip():
         raise HTTPException(status_code=400, detail="链接不能为空。")
 
     try:
-        # 使用演示模式创建任务（实际生产环境需要实现链接下载和转写）
-        task = service.create_mock_task(
-            media_name=body.url,
-            media_type="video/mp4",
+        from src.services.video_source import fetch_authorized_video
+
+        # 下载视频
+        video = fetch_authorized_video(body.url)
+
+        # 创建真实转写任务
+        task = service.create_task(
+            media_name=video.name,
+            media_type=video.media_type,
+            media_bytes=video.content,
             rights_confirmed=body.rights_confirmed,
+            rights_holder="API用户",
+            model_name="base",
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
