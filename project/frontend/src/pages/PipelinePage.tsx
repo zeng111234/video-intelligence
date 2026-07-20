@@ -21,6 +21,7 @@ import {
   Empty,
 } from "antd";
 import { useToast } from "../components/Toast";
+import { createPipeline } from "../api/client";
 import {
   ThunderboltOutlined,
   PlayCircleOutlined,
@@ -138,6 +139,7 @@ export default function PipelinePage() {
   const [videoCount, setVideoCount] = useState<string>("10");
   const [videoStyle, setVideoStyle] = useState<string>("engaging");
   const [refreshing, setRefreshing] = useState(false);
+  const [pipelineHistory, setPipelineHistory] = useState(PIPELINE_HISTORY);
 
   /** 刷新任务列表 */
   const handleRefresh = useCallback(() => {
@@ -175,19 +177,37 @@ export default function PipelinePage() {
       return;
     }
     setLoading(true);
-    // 模拟创建
-    setTimeout(() => {
-      toast.success(`已创建 ${keywords.length} 个关键词的批量生产任务`);
+    try {
+      // 调用真实 API
+      const results = await Promise.all(
+        keywords.map((kw) => createPipeline(kw, { count: videoCount, style: videoStyle }))
+      );
+      toast.success(`已创建 ${keywords.length} 个批量生产任务`);
+      // 添加到任务列表
+      const newTasks = results.map((r, i) => ({
+        id: r.run_id || `PL-${Date.now()}-${i}`,
+        keyword: keywords[i],
+        status: r.status || "running",
+        videos: 0,
+        progress: 0,
+        startTime: new Date().toLocaleString("zh-CN"),
+        duration: "进行中",
+        stages: r.stages || [],
+      }));
+      setPipelineHistory((prev) => [...newTasks, ...prev]);
       setKeywords([]);
+    } catch (err) {
+      toast.error((err as Error).message || "创建失败");
+    } finally {
       setLoading(false);
-    }, 1500);
+    }
   };
 
   /** 过滤后的流水线 */
   const filteredPipelines = useMemo(() => {
-    if (filterStatus === "all") return PIPELINE_HISTORY;
-    return PIPELINE_HISTORY.filter((p) => p.status === filterStatus);
-  }, [filterStatus]);
+    if (filterStatus === "all") return pipelineHistory;
+    return pipelineHistory.filter((p) => p.status === filterStatus);
+  }, [filterStatus, pipelineHistory]);
 
   /** 表格列定义 */
   const columns = [
