@@ -1,8 +1,9 @@
 /**
  * 数据仪表盘
  * 直观展示业务数据概览、趋势、任务状态
+ * 使用 recharts 渲染图表，替代纯 CSS 手绘
  */
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
   Typography,
   Card,
@@ -27,9 +28,21 @@ import {
   VideoCameraOutlined,
   AudioOutlined,
   RocketOutlined,
-  RiseOutlined as TrendUp,
-  FallOutlined as TrendDown,
+  FallOutlined,
 } from "@ant-design/icons";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -74,13 +87,25 @@ const TOP_CANDIDATES = [
   { title: "丰田霸道4.0的故事", score: 56.8, views: "45.6万" },
 ];
 
+/** 任务类型分布数据（recharts 饼图） */
+const TASK_TYPE_DATA = [
+  { name: "批量生产", value: 456 },
+  { name: "候选采集", value: 312 },
+  { name: "语音转写", value: 156 },
+  { name: "AI文案", value: 89 },
+];
+
 /** 任务类型图标 */
 const taskTypeIcon: Record<string, React.ReactNode> = {
-  pipeline: <ThunderboltOutlined style={{ color: "#6366f1" }} />,
-  transcription: <AudioOutlined style={{ color: "#10b981" }} />,
-  candidate: <FileTextOutlined style={{ color: "#f59e0b" }} />,
-  "ai-copy": <RocketOutlined style={{ color: "#ef4444" }} />,
+  pipeline: <ThunderboltOutlined style={{ color: "var(--primary-500)" }} />,
+  transcription: <AudioOutlined style={{ color: "var(--success)" }} />,
+  candidate: <FileTextOutlined style={{ color: "var(--warning)" }} />,
+  "ai-copy": <RocketOutlined style={{ color: "var(--error)" }} />,
 };
+
+/** recharts 饼图颜色 */
+const PIE_COLORS = ["var(--primary-500)", "var(--success)", "var(--warning)", "var(--error)"];
+const PIE_COLORS_HEX = ["#8b5cf6", "#10b981", "#f59e0b", "#ef4444"];
 
 /** 任务状态标签 */
 const taskStatusTag: Record<string, React.ReactNode> = {
@@ -92,9 +117,6 @@ const taskStatusTag: Record<string, React.ReactNode> = {
 
 export default function DashboardPage() {
   const [timeRange, setTimeRange] = useState("today");
-
-  /** 计算趋势柱状图最大值 */
-  const maxVideos = useMemo(() => Math.max(...WEEKLY_TREND.map((d) => d.videos)), []);
 
   return (
     <div>
@@ -120,13 +142,13 @@ export default function DashboardPage() {
             <Statistic
               title="已生产视频"
               value={PRODUCTION_STATS.totalVideos}
-              prefix={<VideoCameraOutlined style={{ color: "#6366f1" }} />}
+              prefix={<VideoCameraOutlined style={{ color: "var(--primary-500)" }} />}
               suffix={
                 <Text type="success" style={{ fontSize: 14 }}>
-                  <TrendUp /> +{PRODUCTION_STATS.todayProduced}
+                  <RiseOutlined /> +{PRODUCTION_STATS.todayProduced}
                 </Text>
               }
-              valueStyle={{ color: "#6366f1" }}
+              valueStyle={{ color: "var(--primary-500)" }}
             />
           </Card>
         </Col>
@@ -135,13 +157,13 @@ export default function DashboardPage() {
             <Statistic
               title="候选素材"
               value={PRODUCTION_STATS.totalCandidates}
-              prefix={<FileTextOutlined style={{ color: "#10b981" }} />}
+              prefix={<FileTextOutlined style={{ color: "var(--success)" }} />}
               suffix={
                 <Text type="success" style={{ fontSize: 14 }}>
-                  <TrendUp /> +{PRODUCTION_STATS.todayCandidates}
+                  <RiseOutlined /> +{PRODUCTION_STATS.todayCandidates}
                 </Text>
               }
-              valueStyle={{ color: "#10b981" }}
+              valueStyle={{ color: "var(--success)" }}
             />
           </Card>
         </Col>
@@ -150,8 +172,8 @@ export default function DashboardPage() {
             <Statistic
               title="进行中任务"
               value={PRODUCTION_STATS.activeTasks}
-              prefix={<ClockCircleOutlined style={{ color: "#f59e0b" }} />}
-              valueStyle={{ color: "#f59e0b" }}
+              prefix={<ClockCircleOutlined style={{ color: "var(--warning)" }} />}
+              valueStyle={{ color: "var(--warning)" }}
             />
           </Card>
         </Col>
@@ -161,61 +183,60 @@ export default function DashboardPage() {
               title="成功率"
               value={PRODUCTION_STATS.successRate}
               suffix="%"
-              prefix={<CheckCircleOutlined style={{ color: "#10b981" }} />}
-              valueStyle={{ color: "#10b981" }}
+              prefix={<CheckCircleOutlined style={{ color: "var(--success)" }} />}
+              valueStyle={{ color: "var(--success)" }}
             />
           </Card>
         </Col>
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        {/* 生产趋势 */}
+        {/* 生产趋势 - recharts 柱状图 */}
         <Col xs={24} lg={14}>
           <Card title="本周生产趋势" extra={<Text type="secondary">单位：条</Text>}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 200, padding: "0 8px" }}>
-              {WEEKLY_TREND.map((item) => (
-                <div key={item.day} style={{ flex: 1, textAlign: "center" }}>
-                  <div
-                    style={{
-                      height: `${(item.videos / maxVideos) * 160}px`,
-                      background: "linear-gradient(180deg, #6366f1, #818cf8)",
-                      borderRadius: "6px 6px 0 0",
-                      marginBottom: 4,
-                      transition: "height 0.3s",
-                      minHeight: 20,
-                    }}
-                  />
-                  <Text style={{ fontSize: 12 }}>{item.day}</Text>
-                  <br />
-                  <Text strong style={{ fontSize: 13, color: "#6366f1" }}>{item.videos}</Text>
-                </div>
-              ))}
-            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={WEEKLY_TREND} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--gray-200)" vertical={false} />
+                <XAxis dataKey="day" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis fontSize={12} tickLine={false} axisLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: 8,
+                    border: "1px solid var(--gray-200)",
+                    boxShadow: "var(--shadow-md)",
+                  }}
+                />
+                <Bar dataKey="videos" name="生产视频" fill="#8b5cf6" radius={[6, 6, 0, 0]} maxBarSize={40} />
+                <Bar dataKey="candidates" name="候选素材" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
           </Card>
         </Col>
 
-        {/* 任务类型分布 */}
+        {/* 任务类型分布 - recharts 饼图 */}
         <Col xs={24} lg={10}>
           <Card title="任务类型分布">
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              {[
-                { label: "批量生产", count: 456, percent: 45, color: "#6366f1" },
-                { label: "候选采集", count: 312, percent: 31, color: "#10b981" },
-                { label: "语音转写", count: 156, percent: 15, color: "#f59e0b" },
-                { label: "AI文案", count: 89, percent: 9, color: "#ef4444" },
-              ].map((item) => (
-                <div key={item.label}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <Space>
-                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: item.color }} />
-                      <Text>{item.label}</Text>
-                    </Space>
-                    <Text strong>{item.count}</Text>
-                  </div>
-                  <Progress percent={item.percent} showInfo={false} strokeColor={item.color} />
-                </div>
-              ))}
-            </Space>
+            <ResponsiveContainer width="100%" height={220}>
+              <PieChart>
+                <Pie
+                  data={TASK_TYPE_DATA}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={80}
+                  paddingAngle={4}
+                  dataKey="value"
+                >
+                  {TASK_TYPE_DATA.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={PIE_COLORS_HEX[index % PIE_COLORS_HEX.length]} />
+                  ))}
+                </Pie>
+                <Tooltip />
+                <Legend
+                  formatter={(value: string) => <span style={{ color: "var(--text-primary)" }}>{value}</span>}
+                />
+              </PieChart>
+            </ResponsiveContainer>
           </Card>
         </Col>
       </Row>
