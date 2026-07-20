@@ -1,6 +1,9 @@
 # Downloaded third-party reference repositories (see references/README.md)
 /references/github/
 
+# Windows reserved device name
+nul
+
 # Local runtime data and secrets
 .env
 .env.*
