@@ -5,7 +5,7 @@ import html
 import re
 from datetime import datetime
 from urllib.parse import urlparse
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from pydantic import HttpUrl
@@ -55,14 +55,23 @@ class PublicMetadataResearchAdapter:
                 url,
                 headers={"User-Agent": "Mozilla/5.0 metadata-research/1.0"},
             )
-            with urlopen(req, timeout=10) as response:  # noqa: S310 - allowlisted hosts above
-                final_host = (urlparse(response.geturl()).hostname or "").lower()
-                if not any(
-                    final_host == suffix or final_host.endswith(f".{suffix}")
-                    for suffix in ALLOWED_HOST_SUFFIXES
-                ):
-                    raise ValueError("公开链接重定向到了未允许的域名。")
-                return response.read(2_000_000).decode("utf-8", errors="replace")
+            try:
+                with urlopen(req, timeout=10) as response:  # noqa: S310 - allowlisted hosts above
+                    final_host = (urlparse(response.geturl()).hostname or "").lower()
+                    if not any(
+                        final_host == suffix or final_host.endswith(f".{suffix}")
+                        for suffix in ALLOWED_HOST_SUFFIXES
+                    ):
+                        raise ValueError("公开链接重定向到了未允许的域名。")
+                    return response.read(2_000_000).decode("utf-8", errors="replace")
+            except HTTPError as exc:
+                # HTTP 404 是永久性错误，不应重试；429/5xx 可重试
+                if exc.code == 404:
+                    raise ValueError(
+                        f"公开链接返回 HTTP 404，页面不存在：{url}"
+                    ) from exc
+                # 其他 HTTP 错误（429/5xx）包装为 URLError 以触发重试
+                raise URLError(f"HTTP {exc.code}") from exc
 
         document = run_with_single_retry(
             fetch, retry_for=(ConnectionError, TimeoutError, URLError)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -21,6 +22,11 @@ from src.models import (
     SourcePage,
     SourceRequest,
     VideoMetricSnapshot,
+)
+from utils.common.errors import (
+    analyze_404_error,
+    create_error_context,
+    log_http_request_response,
 )
 
 TOKEN_URL = "https://open.douyin.com/oauth/client_token/"
@@ -52,16 +58,97 @@ def _default_transport(
     body: bytes | None,
 ) -> dict[str, Any]:
     request = Request(url, data=body, headers=headers, method=method)
+    
+    # 记录请求详情
+    logger = logging.getLogger(__name__)
+    log_http_request_response(
+        url=url,
+        method=method,
+        request_headers=headers,
+        request_body=body,
+    )
+    
     try:
         with urlopen(request, timeout=15) as response:  # noqa: S310 - fixed official URLs
-            return json.loads(response.read().decode("utf-8"))
+            response_body = response.read().decode("utf-8")
+            
+            # 记录响应详情
+            log_http_request_response(
+                url=url,
+                method=method,
+                request_headers=headers,
+                request_body=body,
+                response_status=response.status,
+                response_body=response_body[:500],  # 截断过长的响应
+            )
+            
+            return json.loads(response_body)
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
+        
+        # 增强404错误处理逻辑
+        if exc.code == 404:
+            # 分析404错误原因
+            error_analysis = analyze_404_error(
+                url=url,
+                response_body=detail,
+                headers=headers,
+            )
+            
+            # 创建详细的错误上下文
+            error_context = create_error_context(
+                error=exc,
+                request_url=url,
+                request_method=method,
+                request_headers=headers,
+                request_body=body,
+                response_status=exc.code,
+                response_body=detail,
+                additional_info={
+                    "error_analysis": error_analysis,
+                    "platform": "douyin",
+                },
+            )
+            
+            # 记录错误
+            error_context.log_error()
+            
+            # 根据分析结果决定是否重试
+            retryable = error_analysis.get("is_retryable", False)
+            
+            raise OfficialApiError(
+                f"抖音接口 HTTP 404：资源未找到 - {detail[:300]}",
+                code=exc.code,
+                retryable=retryable,
+            ) from exc
+        
+        # 记录其他HTTP错误
+        log_http_request_response(
+            url=url,
+            method=method,
+            request_headers=headers,
+            request_body=body,
+            response_status=exc.code,
+            response_body=detail[:500],
+            error=exc,
+        )
+        
+        # 原有错误处理逻辑
         raise OfficialApiError(
             f"抖音接口 HTTP {exc.code}：{detail[:300]}",
             code=exc.code,
             retryable=exc.code == 429 or exc.code >= 500,
         ) from exc
+    except (URLError, OSError) as exc:
+        # 记录网络错误
+        log_http_request_response(
+            url=url,
+            method=method,
+            request_headers=headers,
+            request_body=body,
+            error=exc,
+        )
+        raise
 
 
 class _DisabledOfficialAdapter:
@@ -194,6 +281,7 @@ class DouyinKeywordAdapter:
     @staticmethod
     def _run_once_with_retry(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         last_error: BaseException | None = None
+        retryable = False
         for _ in range(2):
             try:
                 return operation()
@@ -201,10 +289,12 @@ class DouyinKeywordAdapter:
                 if not exc.retryable:
                     raise
                 last_error = exc
+                retryable = True
             except (ConnectionError, TimeoutError, URLError) as exc:
                 last_error = exc
         raise OfficialApiError(
-            f"连接抖音开放平台失败，已自动重试一次：{last_error}"
+            f"连接抖音开放平台失败，已自动重试一次：{last_error}",
+            retryable=retryable,
         ) from last_error
 
     @staticmethod

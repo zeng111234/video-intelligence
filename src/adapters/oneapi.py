@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import socket
 
 from pydantic import HttpUrl
@@ -24,6 +25,11 @@ from src.models import (
     ProviderSearchPage,
     ProviderUsage,
     VideoMetricSnapshot,
+)
+from utils.common.errors import (
+    analyze_404_error,
+    create_error_context,
+    log_http_request_response,
 )
 
 OneApiTransport = Callable[
@@ -300,6 +306,17 @@ class OneApiLicensedSearchProvider:
             "User-Agent": "video-intelligence-oneapi/1.0",
         }
         url = f"{self._base_url}{endpoint}"
+        
+        # 记录请求详情
+        logger = logging.getLogger(__name__)
+        log_http_request_response(
+            url=url,
+            method="POST",
+            request_headers=headers,
+            request_body=payload,
+            additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+        )
+        
         status: int = 0
         body: Mapping[str, Any] = {}
         try:
@@ -309,9 +326,44 @@ class OneApiLicensedSearchProvider:
                 headers,
                 self._timeout_seconds,
             )
+            
+            # 记录响应详情
+            log_http_request_response(
+                url=url,
+                method="POST",
+                request_headers=headers,
+                request_body=payload,
+                response_status=status,
+                response_body=body,
+                additional_info={"endpoint": endpoint},
+            )
+            
         except HTTPError as exc:
+            # 记录HTTP错误详情
+            error_context = create_error_context(
+                error=exc,
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                response_status=exc.code,
+                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+            )
+            error_context.log_error()
+            
             self._raise_http_error(exc.code)
         except (socket.timeout, TimeoutError) as exc:
+            # 记录超时错误
+            error_context = create_error_context(
+                error=exc,
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+            )
+            error_context.log_error()
+            
             kind = (
                 ProviderErrorKind.OUTCOME_UNKNOWN
                 if timeout_unknown
@@ -329,6 +381,17 @@ class OneApiLicensedSearchProvider:
                 retryable=not timeout_unknown,
             ) from exc
         except URLError as exc:
+            # 记录URL错误
+            error_context = create_error_context(
+                error=exc,
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+            )
+            error_context.log_error()
+            
             if isinstance(exc.reason, (socket.timeout, TimeoutError)):
                 kind = (
                     ProviderErrorKind.OUTCOME_UNKNOWN
@@ -353,6 +416,17 @@ class OneApiLicensedSearchProvider:
                 retryable=True,
             ) from exc
         except OSError as exc:
+            # 记录操作系统错误
+            error_context = create_error_context(
+                error=exc,
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                additional_info={"endpoint": endpoint},
+            )
+            error_context.log_error()
+            
             raise LicensedProviderError(
                 "无法连接 OneAPI，最多只会自动重试一次。",
                 kind=ProviderErrorKind.CONNECTION,
@@ -361,9 +435,35 @@ class OneApiLicensedSearchProvider:
             ) from exc
 
         if not 200 <= status < 300:
+            # 记录HTTP状态码错误
+            error_context = create_error_context(
+                error=Exception(f"HTTP 状态码错误: {status}"),
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                response_status=status,
+                response_body=body,
+                additional_info={"endpoint": endpoint},
+            )
+            error_context.log_error()
+            
             self._raise_http_error(status)
         code = str(body.get("code", "")).strip()
         if code != "200":
+            # 记录业务逻辑错误
+            error_context = create_error_context(
+                error=Exception(f"业务逻辑错误: {code}"),
+                request_url=url,
+                request_method="POST",
+                request_headers=headers,
+                request_body=payload,
+                response_status=status,
+                response_body=body,
+                additional_info={"endpoint": endpoint, "business_code": code},
+            )
+            error_context.log_error()
+            
             self._raise_business_error(code, body, endpoint)
         return body
 
@@ -408,7 +508,48 @@ class OneApiLicensedSearchProvider:
         elif status == 429:
             kind = ProviderErrorKind.RATE_LIMIT
             message = "OneAPI 当前限制请求频率，本次不会自动重试。"
+        elif status == 404:
+            # 分析 404 错误原因（端点变更、资源不存在等）
+            error_analysis = analyze_404_error(
+                url=f"OneAPI HTTP 404 错误",
+                response_body=None,
+                headers=None,
+            )
+            
+            # 创建错误上下文
+            error_context = create_error_context(
+                error=Exception(f"HTTP 404 错误"),
+                additional_info={
+                    "status_code": status,
+                    "error_analysis": error_analysis,
+                    "service": "oneapi",
+                },
+            )
+            
+            # 记录错误
+            error_context.log_error()
+            
+            # 404 是服务层错误（端点不存在或已变更），不是参数校验错误
+            # 根据分析结果决定是否可重试
+            raise LicensedProviderError(
+                "OneAPI 请求的资源未找到(404)，接口可能已变更。",
+                kind=ProviderErrorKind.SERVICE,
+                code=str(status),
+                retryable=error_analysis.get("is_retryable", False),
+            )
         elif status >= 500:
+            # 创建错误上下文
+            error_context = create_error_context(
+                error=Exception(f"HTTP {status} 服务错误"),
+                additional_info={
+                    "status_code": status,
+                    "service": "oneapi",
+                },
+            )
+            
+            # 记录错误
+            error_context.log_error()
+            
             raise LicensedProviderError(
                 "OneAPI 服务暂时不可用，系统最多自动重试一次。",
                 kind=ProviderErrorKind.SERVICE,
@@ -416,6 +557,18 @@ class OneApiLicensedSearchProvider:
                 retryable=True,
             )
         else:
+            # 创建错误上下文
+            error_context = create_error_context(
+                error=Exception(f"HTTP {status} 错误"),
+                additional_info={
+                    "status_code": status,
+                    "service": "oneapi",
+                },
+            )
+            
+            # 记录错误
+            error_context.log_error()
+            
             kind = ProviderErrorKind.VALIDATION
             message = "OneAPI 拒绝了本次请求，请检查查询参数。"
         raise LicensedProviderError(message, kind=kind, code=str(status))

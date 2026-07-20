@@ -130,6 +130,45 @@ def test_official_keyword_permission_error_is_not_retried() -> None:
     assert search_attempts == 1
 
 
+def test_official_keyword_404_retryable_propagation() -> None:
+    """HTTP 404 时 transport 抛出的 OfficialApiError.retryable 应传递到上层。"""
+    search_attempts = 0
+
+    def transport(method, url, headers, body):
+        nonlocal search_attempts
+        if method == "POST":
+            return {"data": {"access_token": "token", "expires_in": 7200}}
+        search_attempts += 1
+        raise OfficialApiError("404: Not Found", code=404, retryable=False)
+
+    adapter = DouyinKeywordAdapter("key", "secret", transport=transport)
+    with pytest.raises(OfficialApiError) as exc_info:
+        adapter.sync(SourceRequest(source=DataSource.OFFICIAL, keywords=["二手车"]))
+
+    # retryable=False 时不应重试
+    assert exc_info.value.retryable is False
+    assert search_attempts == 1
+
+
+def test_official_keyword_404_retryable_endpoint_change() -> None:
+    """当 transport 标记 retryable=True 时，adapter 应重试一次。"""
+    search_attempts = 0
+
+    def transport(method, url, headers, body):
+        nonlocal search_attempts
+        if method == "POST":
+            return {"data": {"access_token": "token", "expires_in": 7200}}
+        search_attempts += 1
+        raise OfficialApiError("404: endpoint changed", code=404, retryable=True)
+
+    adapter = DouyinKeywordAdapter("key", "secret", transport=transport)
+    with pytest.raises(OfficialApiError) as exc_info:
+        adapter.sync(SourceRequest(source=DataSource.OFFICIAL, keywords=["二手车"]))
+
+    assert exc_info.value.retryable is True
+    assert search_attempts == 2  # 应重试一次
+
+
 class _PagedAdapter:
     def __init__(self) -> None:
         self.calls = 0
