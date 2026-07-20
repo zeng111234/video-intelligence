@@ -4,7 +4,7 @@
  */
 import { useMemo, useState, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Badge, Dropdown, Tooltip, Drawer, Avatar, Tag, List, Button, Empty, Space, Typography } from "antd";
+import { Badge, Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
 import {
   SunOutlined,
   MoonOutlined,
@@ -24,7 +24,7 @@ import {
 } from "@ant-design/icons";
 import { useTheme } from "../contexts/ThemeContext";
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 /** 路由到页面标题映射 */
 const PAGE_TITLE_MAP: Record<string, string> = {

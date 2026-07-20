@@ -1,0 +1,274 @@
+/* === UTF-8 编码保障 === */
+@charset "UTF-8";
+
+/*
+ * 全局 CSS 变量体系
+ * 从原型 dashboard-prototype.html 提取，保持一致性
+ * 支持深色模式通过 [data-theme="dark"] 切换
+ */
+
+/* ============================================
+   基础变量 - 亮色模式（默认）
+   ============================================ */
+:root {
+  /* 主色调 - 蓝紫渐变 */
+  --primary-50: #f5f3ff;
+  --primary-100: #ede9fe;
+  --primary-200: #ddd6fe;
+  --primary-300: #c4b5fd;
+  --primary-400: #a78bfa;
+  --primary-500: #8b5cf6;
+  --primary-600: #7c3aed;
+  --primary-700: #6d28d9;
+  --primary-800: #5b21b6;
+  --primary-900: #4c1d95;
+
+  /* 辅助色 */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --info: #3b82f6;
+
+  /* 中性色 */
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1e293b;
+  --gray-900: #0f172a;
+
+  /* 间距系统 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* 圆角 */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* 阴影 */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+  /* 过渡 */
+  --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* 布局 */
+  --sidebar-width: 260px;
+  --sidebar-collapsed-width: 72px;
+  --header-height: 64px;
+
+  /* 语义化背景色 */
+  --bg-body: var(--gray-50);
+  --bg-card: #ffffff;
+  --bg-sidebar: var(--gray-900);
+  --bg-header: #ffffff;
+  --bg-input: #ffffff;
+
+  /* 语义化文字色 */
+  --text-primary: var(--gray-800);
+  --text-secondary: var(--gray-500);
+  --text-tertiary: var(--gray-400);
+  --text-on-dark: #ffffff;
+  --text-on-sidebar: var(--gray-300);
+
+  /* 语义化边框色 */
+  --border-default: var(--gray-200);
+  --border-light: rgba(255, 255, 255, 0.1);
+
+  /* 功能色背景 */
+  --bg-blue-light: #dbeafe;
+  --bg-green-light: #dcfce7;
+  --bg-orange-light: #fef3c7;
+  --bg-purple-light: #f3e8ff;
+  --bg-red-light: #fee2e2;
+
+  /* 功能色文字 */
+  --text-blue: #2563eb;
+  --text-green: #16a34a;
+  --text-orange: #d97706;
+  --text-purple: #9333ea;
+  --text-red: #dc2626;
+}
+
+/* ============================================
+   深色模式变量覆盖
+   ============================================ */
+[data-theme="dark"] {
+  /* 中性色反转 */
+  --gray-50: #0f172a;
+  --gray-100: #1e293b;
+  --gray-200: #334155;
+  --gray-300: #475569;
+  --gray-400: #64748b;
+  --gray-500: #94a3b8;
+  --gray-600: #cbd5e1;
+  --gray-700: #e2e8f0;
+  --gray-800: #f1f5f9;
+  --gray-900: #f8fafc;
+
+  /* 主色调深色适配 */
+  --primary-50: #1e1b4b;
+  --primary-100: #312e81;
+  --primary-200: #3730a3;
+  --primary-300: #4f46e5;
+  --primary-400: #6366f1;
+  --primary-500: #818cf8;
+  --primary-600: #a5b4fc;
+  --primary-700: #c7d2fe;
+  --primary-800: #e0e7ff;
+  --primary-900: #eef2ff;
+
+  /* 深色模式语义化背景色 */
+  --bg-body: var(--gray-50);
+  --bg-card: var(--gray-100);
+  --bg-sidebar: var(--gray-100);
+  --bg-header: var(--gray-100);
+  --bg-input: var(--gray-200);
+
+  /* 深色模式语义化文字色 */
+  --text-primary: var(--gray-900);
+  --text-secondary: var(--gray-500);
+  --text-tertiary: var(--gray-400);
+  --text-on-dark: var(--gray-900);
+  --text-on-sidebar: var(--gray-300);
+
+  /* 深色模式语义化边框色 */
+  --border-default: var(--gray-200);
+  --border-light: var(--gray-200);
+
+  /* 深色模式功能色背景 */
+  --bg-blue-light: #1e3a5f;
+  --bg-green-light: #14532d;
+  --bg-orange-light: #451a03;
+  --bg-purple-light: #2e1065;
+  --bg-red-light: #450a0a;
+}
+
+/* ============================================
+   全局基础样式
+   ============================================ */
+
+/* 滚动条样式 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--gray-100);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--gray-300);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-400);
+}
+
+/* 入场动画 */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 脉冲动画 */
+.animate-pulse {
+  animation: pulse 2s infinite;
+}
+
+/* 骨架屏 */
+.skeleton {
+  background: linear-gradient(90deg, var(--gray-200) 25%, var(--gray-100) 50%, var(--gray-200) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* 渐变文字 */
+.gradient-text {
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-700));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* 卡片悬停效果 */
+.card-hover {
+  transition: var(--transition);
+}
+
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* 响应式工具类 */
+@media (max-width: 768px) {
+  .md-hidden { display: none; }
+  .md-block { display: block; }
+  .md-flex { display: flex; }
+}
+
+@media (max-width: 1024px) {
+  .lg-hidden { display: none; }
+  .lg-block { display: block; }
+  .lg-flex { display: flex; }
+}
+
+/* 打印样式 */
+@media print {
+  .sidebar,
+  .top-header,
+  .no-print {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+  }
+
+  .page-content {
+    padding: 0 !important;
+  }
+}

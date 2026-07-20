@@ -5,6 +5,8 @@
 import type {
   AdminStatusResponse,
   CandidateListResponse,
+  CrawlerTaskListResponse,
+  CrawlerTaskResponse,
   PipelineResponse,
   TaskListResponse,
   TranscriptionResponse,
@@ -95,4 +97,29 @@ export function listTasks(): Promise<TaskListResponse> {
 
 export function getAdminStatus(): Promise<AdminStatusResponse> {
   return request("/admin/status");
+}
+
+/* ---- 关键词爬虫 ---- */
+
+export function createCrawlerTask(
+  keyword: string,
+  platform = "douyin",
+  maxResults = 10,
+): Promise<CrawlerTaskResponse> {
+  return request("/crawler/tasks", {
+    method: "POST",
+    body: JSON.stringify({
+      keyword,
+      platform,
+      max_results: maxResults,
+    }),
+  });
+}
+
+export function listCrawlerTasks(): Promise<CrawlerTaskListResponse> {
+  return request("/crawler/tasks");
+}
+
+export function getCrawlerTask(taskId: string): Promise<CrawlerTaskResponse> {
+  return request(`/crawler/tasks/${taskId}`);
 }
