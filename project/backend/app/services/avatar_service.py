@@ -22,7 +22,7 @@ class AvatarMode(StrEnum):
     """数字人运行模式"""
     MOCK = "mock"           # 演示模式
     LOCAL = "local"         # 本地 Duix-Avatar
-    REMOTE = "remote"       # 远程 API
+    CLOUD = "cloud"         # 云端 API（推荐生产环境）
 
 
 class AvatarTask:
@@ -142,20 +142,39 @@ class MockAvatarProvider(BaseAvatarProvider):
 class DuixAvatarProvider(BaseAvatarProvider):
     """Duix-Avatar 提供者
 
-    集成 Duix-Avatar 的 API：
-    - 音频合成: http://127.0.0.1:18180/v1/invoke
-    - 视频合成: http://127.0.0.1:8383/easy/submit
-    - 进度查询: http://127.0.0.1:8383/easy/query
+    支持两种部署方式：
+    1. 本地部署：需要 Docker + GPU
+    2. 云端 API：使用 Duix 官方 API 服务（推荐生产环境）
+
+    API 端点：
+    - 音频合成: /v1/invoke
+    - 视频合成: /easy/submit
+    - 进度查询: /easy/query
     """
 
     def __init__(
         self,
-        tts_url: str = "http://127.0.0.1:18180",
-        video_url: str = "http://127.0.0.1:8383",
+        api_base_url: str = "https://api.duix.com",
+        api_key: str = "",
+        tts_url: str = "",
+        video_url: str = "",
     ):
-        self.tts_url = tts_url
-        self.video_url = video_url
+        # 云端 API 模式
+        self.api_base_url = api_base_url.rstrip("/")
+        self.api_key = api_key
+
+        # 本地部署模式（兼容旧配置）
+        self.tts_url = tts_url or f"{self.api_base_url}/tts"
+        self.video_url = video_url or f"{self.api_base_url}/video"
+
         self.tasks: dict[str, AvatarTask] = {}
+
+    def _get_headers(self) -> dict[str, str]:
+        """获取请求头"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
     async def generate_video(
         self,
@@ -289,16 +308,27 @@ class DuixAvatarProvider(BaseAvatarProvider):
 
 
 def get_avatar_provider() -> BaseAvatarProvider:
-    """获取数字人提供者"""
+    """获取数字人提供者
+
+    环境变量：
+    - AVATAR_MODE: mock / local / cloud
+    - AVATAR_API_URL: 云端 API 地址（cloud 模式）
+    - AVATAR_API_KEY: 云端 API 密钥（cloud 模式）
+    - DUIX_TTS_URL: 本地 TTS 地址（local 模式）
+    - DUIX_VIDEO_URL: 本地视频合成地址（local 模式）
+    """
     mode = os.getenv("AVATAR_MODE", "mock").lower()
 
-    if mode == "local":
+    if mode == "cloud":
+        # 云端 API 模式（推荐生产环境）
+        api_url = os.getenv("AVATAR_API_URL", "https://api.duix.com")
+        api_key = os.getenv("AVATAR_API_KEY", "")
+        return DuixAvatarProvider(api_base_url=api_url, api_key=api_key)
+    elif mode == "local":
+        # 本地部署模式（需要 Docker + GPU）
         tts_url = os.getenv("DUIX_TTS_URL", "http://127.0.0.1:18180")
         video_url = os.getenv("DUIX_VIDEO_URL", "http://127.0.0.1:8383")
-        return DuixAvatarProvider(tts_url, video_url)
-    elif mode == "remote":
-        tts_url = os.getenv("DUIX_TTS_URL", "http://127.0.0.1:18180")
-        video_url = os.getenv("DUIX_VIDEO_URL", "http://127.0.0.1:8383")
-        return DuixAvatarProvider(tts_url, video_url)
+        return DuixAvatarProvider(tts_url=tts_url, video_url=video_url)
     else:
+        # 演示模式
         return MockAvatarProvider()
