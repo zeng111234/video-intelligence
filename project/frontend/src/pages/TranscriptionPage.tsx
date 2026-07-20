@@ -1,6 +1,6 @@
 /**
  * 语音转写页面
- * 上传视频/音频文件，AI 自动转写为文字
+ * 支持视频链接和文件上传两种方式，AI 自动转写为文字
  */
 import { useState, useMemo } from "react";
 import {
@@ -18,6 +18,7 @@ import {
   Progress,
   Empty,
   Upload,
+  Tabs,
   message,
 } from "antd";
 import {
@@ -32,10 +33,13 @@ import {
   DownloadOutlined,
   CopyOutlined,
   SearchOutlined,
+  LinkOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
+const { TextArea } = Input;
 
 /** 转写状态颜色 */
 const STATUS_COLOR: Record<string, string> = {
@@ -49,7 +53,9 @@ const STATUS_COLOR: Record<string, string> = {
 const TRANSCRIPTION_HISTORY = [
   {
     id: "TR-20260720-001",
-    fileName: "二手车测评_李老司.mp4",
+    fileName: "https://www.douyin.com/video/7663788033606503706",
+    source: "url",
+    platform: "抖音",
     status: "succeeded",
     duration: "5分32秒",
     wordCount: 1256,
@@ -65,7 +71,9 @@ const TRANSCRIPTION_HISTORY = [
   },
   {
     id: "TR-20260720-002",
-    fileName: "新车对比_宝马vs奔驰.mp4",
+    fileName: "https://www.bilibili.com/video/BV1xx411c7mD",
+    source: "url",
+    platform: "B站",
     status: "succeeded",
     duration: "8分15秒",
     wordCount: 1842,
@@ -134,11 +142,21 @@ export default function TranscriptionPage() {
   /** 表格列定义 */
   const columns = [
     {
-      title: "文件名",
+      title: "来源",
+      dataIndex: "source",
+      width: 80,
+      render: (source: string, record: any) => (
+        <Tag color={source === "url" ? "blue" : "default"} icon={source === "url" ? <LinkOutlined /> : <FileTextOutlined />}>
+          {source === "url" ? record.platform || "链接" : "文件"}
+        </Tag>
+      ),
+    },
+    {
+      title: "文件名/链接",
       dataIndex: "fileName",
-      render: (name: string) => (
+      render: (name: string, record: any) => (
         <Space>
-          <SoundOutlined style={{ color: "#6366f1" }} />
+          {record.source === "url" ? <LinkOutlined style={{ color: "#6366f1" }} /> : <SoundOutlined style={{ color: "#6366f1" }} />}
           <Text ellipsis style={{ maxWidth: 250 }}>{name}</Text>
         </Space>
       ),
@@ -294,55 +312,96 @@ export default function TranscriptionPage() {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        {/* 上传区域 */}
+        {/* 输入区域 */}
         <Col xs={24} lg={8}>
-          <Card title={<Space><UploadOutlined /> 上传文件</Space>}>
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              <Upload.Dragger
-                name="file"
-                multiple={false}
-                accept=".mp4,.mp3,.wav,.m4a,.avi"
-                beforeUpload={() => {
-                  message.success("文件已添加，点击「开始转写」处理");
-                  return false;
-                }}
-                style={{ padding: "20px 0" }}
-              >
-                <p style={{ marginBottom: 8 }}>
-                  <UploadOutlined style={{ fontSize: 32, color: "#6366f1" }} />
-                </p>
-                <p style={{ marginBottom: 4 }}>点击或拖拽文件到此区域上传</p>
-                <p style={{ color: "#94a3b8", fontSize: 12 }}>
-                  支持 MP4、MP3、WAV、M4A、AVI 格式
-                </p>
-              </Upload.Dragger>
+          <Card title={<Space><SoundOutlined /> 创建转写任务</Space>}>
+            <Tabs
+              defaultActiveKey="url"
+              items={[
+                {
+                  key: "url",
+                  label: (
+                    <span>
+                      <LinkOutlined /> 链接转写
+                    </span>
+                  ),
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <div>
+                        <Text strong style={{ display: "block", marginBottom: 8 }}>视频链接</Text>
+                        <TextArea
+                          placeholder={"粘贴视频链接，支持：\n• 抖音/快手/B站等短视频链接\n• YouTube/TikTok 链接\n• 直链（MP4/MP3/WAV）"}
+                          rows={4}
+                          style={{ resize: "none" }}
+                        />
+                        <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: "block" }}>
+                          支持批量粘贴，每行一个链接
+                        </Text>
+                      </div>
+                      <Button type="primary" icon={<PlayCircleOutlined />} block size="large">
+                        开始转写
+                      </Button>
+                    </Space>
+                  ),
+                },
+                {
+                  key: "file",
+                  label: (
+                    <span>
+                      <UploadOutlined /> 文件上传
+                    </span>
+                  ),
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <Upload.Dragger
+                        name="file"
+                        multiple={false}
+                        accept=".mp4,.mp3,.wav,.m4a,.avi"
+                        beforeUpload={() => {
+                          message.success("文件已添加，点击「开始转写」处理");
+                          return false;
+                        }}
+                        style={{ padding: "20px 0" }}
+                      >
+                        <p style={{ marginBottom: 8 }}>
+                          <UploadOutlined style={{ fontSize: 32, color: "#6366f1" }} />
+                        </p>
+                        <p style={{ marginBottom: 4 }}>点击或拖拽文件到此区域上传</p>
+                        <p style={{ color: "#94a3b8", fontSize: 12 }}>
+                          支持 MP4、MP3、WAV、M4A、AVI 格式
+                        </p>
+                      </Upload.Dragger>
+                      <Button type="primary" icon={<PlayCircleOutlined />} block size="large">
+                        开始转写
+                      </Button>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
 
-              <Button type="primary" icon={<PlayCircleOutlined />} block size="large">
-                开始转写
-              </Button>
-
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>转写设置</Text>
-                <Space direction="vertical" style={{ width: "100%" }}>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>识别语言</Text>
-                    <Select defaultValue="zh" style={{ width: "100%", marginTop: 4 }}>
-                      <Option value="zh">中文</Option>
-                      <Option value="en">英文</Option>
-                      <Option value="auto">自动检测</Option>
-                    </Select>
-                  </div>
-                  <div>
-                    <Text type="secondary" style={{ fontSize: 12 }}>输出格式</Text>
-                    <Select defaultValue="txt" style={{ width: "100%", marginTop: 4 }}>
-                      <Option value="txt">纯文本 (TXT)</Option>
-                      <Option value="srt">字幕文件 (SRT)</Option>
-                      <Option value="json">结构化 (JSON)</Option>
-                    </Select>
-                  </div>
-                </Space>
-              </div>
-            </Space>
+            {/* 转写设置 */}
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #f0f0f0" }}>
+              <Text strong style={{ display: "block", marginBottom: 8 }}>转写设置</Text>
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>识别语言</Text>
+                  <Select defaultValue="zh" style={{ width: "100%", marginTop: 4 }}>
+                    <Option value="zh">中文</Option>
+                    <Option value="en">英文</Option>
+                    <Option value="auto">自动检测</Option>
+                  </Select>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: 12 }}>输出格式</Text>
+                  <Select defaultValue="txt" style={{ width: "100%", marginTop: 4 }}>
+                    <Option value="txt">纯文本 (TXT)</Option>
+                    <Option value="srt">字幕文件 (SRT)</Option>
+                    <Option value="json">结构化 (JSON)</Option>
+                  </Select>
+                </div>
+              </Space>
+            </div>
           </Card>
         </Col>
 
