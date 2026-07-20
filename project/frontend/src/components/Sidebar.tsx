@@ -20,6 +20,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   BugOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 
 /** 导航项类型 */
@@ -71,6 +72,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: [
           { key: "/analytics", label: "深度分析", icon: <LineChartOutlined />, isPro: true },
           { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined />, isPro: true },
+          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
           { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
         ],

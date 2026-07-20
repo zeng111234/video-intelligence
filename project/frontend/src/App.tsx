@@ -2,6 +2,8 @@
  * 应用入口组件
  * 使用新的 DashboardLayout 替代原有 antd Layout
  * 保留所有现有页面和路由
+ * Phase 3: 新增 PublishPage
+ * Phase 4: 集成 Toast、全局搜索、快捷键帮助
  */
 import {
   BrowserRouter,
@@ -19,95 +21,77 @@ import TasksPage from "./pages/TasksPage";
 import AdminPage from "./pages/AdminPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import AiCopyPage from "./pages/AiCopyPage";
+import PublishPage from "./pages/PublishPage";
+import AvatarPage from "./pages/AvatarPage";
 import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { ToastProvider } from "./components/Toast";
+import GlobalSearchModal from "./components/GlobalSearchModal";
+import ShortcutHelpModal from "./components/ShortcutHelpModal";
+import { useGlobalShortcuts } from "./hooks/useKeyboardShortcuts";
 
 /**
- * 应用根组件
- * 路由结构：
- *   /             → 重定向到 /candidates
- *   /dashboard    → 数据仪表盘（待实现）
- *   /candidates   → 候选检索
- *   /pipeline     → 批量生产流水线
- *   /transcription → 语音转写
- *   /tasks        → 任务中心
- *   /admin        → 系统管理
- *   /analytics    → 深度分析（PRO 占位）
- *   /ai-copy      → AI文案生成（PRO 占位）
- *   /publish      → 多平台发布（占位）
- *   /help         → 帮助中心（占位）
- *   *             → 404 页面
+ * 应用内部组件（使用 hooks 需在 ToastProvider 内）
  */
-export default function App() {
+function AppInner() {
+  const { searchOpen, setSearchOpen, helpOpen, setHelpOpen } = useGlobalShortcuts();
+
   return (
-    <BrowserRouter>
-      <ErrorBoundary>
-        <Routes>
-          {/* DashboardLayout 包裹所有需要侧边栏的页面 */}
-          <Route element={<DashboardLayout />}>
-            {/* 默认重定向到候选检索 */}
-            <Route path="/" element={<Navigate to="/candidates" replace />} />
+    <>
+      <BrowserRouter>
+        <ErrorBoundary>
+          <Routes>
+            {/* DashboardLayout 包裹所有需要侧边栏的页面 */}
+            <Route element={<DashboardLayout />}>
+              {/* 默认重定向到候选检索 */}
+              <Route path="/" element={<Navigate to="/candidates" replace />} />
 
-            {/* 核心功能页面 - 保留现有页面 */}
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/candidates" element={<CandidatesPage />} />
-            <Route path="/pipeline" element={<PipelinePage />} />
-            <Route path="/transcription" element={<TranscriptionPage />} />
-            <Route path="/tasks" element={<TasksPage />} />
+              {/* 核心功能页面 - 保留现有页面 */}
+              <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/candidates" element={<CandidatesPage />} />
+              <Route path="/pipeline" element={<PipelinePage />} />
+              <Route path="/transcription" element={<TranscriptionPage />} />
+              <Route path="/tasks" element={<TasksPage />} />
 
-            {/* 系统管理 */}
-            <Route path="/admin" element={<AdminPage />} />
+              {/* 系统管理 */}
+              <Route path="/admin" element={<AdminPage />} />
 
-            {/* Pro 功能页面 */}
-            <Route path="/analytics" element={<AnalyticsPage />} />
-            <Route path="/ai-copy" element={<AiCopyPage />} />
+              {/* Phase 3 功能页面 */}
+              <Route path="/analytics" element={<AnalyticsPage />} />
+              <Route path="/ai-copy" element={<AiCopyPage />} />
+              <Route path="/publish" element={<PublishPage />} />
+              <Route path="/avatar" element={<AvatarPage />} />
 
-            {/* 关键词爬虫 */}
-            <Route path="/crawler" element={<KeywordCrawlerPage />} />
+              {/* 关键词爬虫 */}
+              <Route path="/crawler" element={<KeywordCrawlerPage />} />
 
-            {/* 待实现功能占位 */}
-            <Route path="/publish" element={<ComingSoonPlaceholder title="多平台发布" />} />
-            <Route path="/help" element={<ComingSoonPlaceholder title="帮助中心" />} />
+              {/* 待实现功能占位 */}
+              <Route path="/help" element={<ComingSoonPlaceholder title="帮助中心" />} />
 
-            {/* 404 */}
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
-      </ErrorBoundary>
-    </BrowserRouter>
+              {/* 404 */}
+              <Route path="*" element={<NotFoundPage />} />
+            </Route>
+          </Routes>
+        </ErrorBoundary>
+      </BrowserRouter>
+
+      {/* Phase 4 全局组件 */}
+      <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <ShortcutHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+    </>
   );
 }
 
 /**
- * PRO 功能占位组件
- * 点击时引导用户升级
+ * 应用根组件
+ * ToastProvider 包裹全局，提供统一 Toast 能力
  */
-function ProPlaceholder({ title }: { title: string }) {
+export default function App() {
   return (
-    <div style={{ textAlign: "center", padding: "80px 24px" }}>
-      <div style={{ fontSize: 64, marginBottom: 24 }}>🔒</div>
-      <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
-        {title}
-      </h2>
-      <p style={{ color: "var(--text-secondary)", fontSize: 14, marginBottom: 24 }}>
-        此功能为 Pro 专属，升级后即可解锁
-      </p>
-      <span
-        style={{
-          display: "inline-block",
-          background: "linear-gradient(135deg, var(--primary-500), var(--primary-700))",
-          color: "white",
-          padding: "10px 24px",
-          borderRadius: 8,
-          fontSize: 14,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        🚀 升级到 Pro
-      </span>
-    </div>
+    <ToastProvider>
+      <AppInner />
+    </ToastProvider>
   );
 }
 
