@@ -102,7 +102,6 @@ const taskTypeIcon: Record<string, React.ReactNode> = {
 };
 
 /** recharts 饼图颜色 */
-const PIE_COLORS = ["var(--primary-500)", "var(--success)", "var(--warning)", "var(--error)"];
 const PIE_COLORS_HEX = ["#8b5cf6", "#10b981", "#f59e0b", "#ef4444"];
 
 /** 任务状态标签 */
