@@ -1,205 +1,366 @@
 /**
- * 深度分析页面 - Pro 功能
- * 提供视频数据分析、趋势洞察、竞品对比等
+ * 深度分析页面（Phase 3）
+ * 接入后端 candidates API 获取真实数据
+ * 使用 recharts 渲染图表
  */
-import { useState } from "react";
-import { Card, Row, Col, Statistic, Select, Table, Tag, Progress, Space, Typography } from "antd";
+import { useState, useEffect, useCallback } from "react";
 import {
-  RiseOutlined,
-  FallOutlined,
-  PlayCircleOutlined,
-  EyeOutlined,
-  LikeOutlined,
-  ShareAltOutlined,
-  BarChartOutlined,
+  Typography,
+  Card,
+  Row,
+  Col,
+  Select,
+  Tag,
+  Progress,
+  Statistic,
+  Space,
+  Table,
+  Spin,
+  Button,
+} from "antd";
+import {
   LineChartOutlined,
-  PieChartOutlined,
+  RiseOutlined,
+  TeamOutlined,
+  TrophyOutlined,
+  ReloadOutlined,
+  PlayCircleOutlined,
+  ShareAltOutlined,
+  HeartOutlined,
+  ClockCircleOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
+import { getAnalyticsData } from "../api/client";
+import { useToast } from "../components/Toast";
+import { SkeletonPage } from "../components/SkeletonLoader";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-/** 模拟趋势数据 */
-const TREND_DATA = [
-  { key: "1", topic: "二手车测评", views: "125.8万", growth: 23.5, hot: "飙升" },
-  { key: "2", topic: "汽车改装", views: "89.2万", growth: 15.2, hot: "上升" },
-  { key: "3", topic: "新手买车攻略", views: "67.4万", growth: -5.3, hot: "下降" },
-  { key: "4", topic: "新能源对比", views: "156.1万", growth: 45.8, hot: "飙升" },
-  { key: "5", topic: "汽车保养技巧", views: "42.3万", growth: 8.1, hot: "平稳" },
-];
-
-/** 模拟竞品数据 */
-const COMPETITOR_DATA = [
-  { key: "1", name: "李老司讲车", fans: "320万", avgViews: "45.2万", engagement: 8.5 },
-  { key: "2", name: "汽车之家", fans: "1200万", avgViews: "120万", engagement: 6.2 },
-  { key: "3", name: "懂车帝", fans: "890万", avgViews: "85万", engagement: 7.1 },
-  { key: "4", name: "二手车小胖", fans: "156万", avgViews: "28.5万", engagement: 9.3 },
-];
-
-const trendColumns = [
-  { title: "话题", dataIndex: "topic", key: "topic" },
-  { title: "播放量", dataIndex: "views", key: "views" },
-  {
-    title: "增长率",
-    dataIndex: "growth",
-    key: "growth",
-    render: (val: number) => (
-      <span style={{ color: val >= 0 ? "#10b981" : "#ef4444" }}>
-        {val >= 0 ? <RiseOutlined /> : <FallOutlined />} {Math.abs(val)}%
-      </span>
-    ),
-  },
-  {
-    title: "热度",
-    dataIndex: "hot",
-    key: "hot",
-    render: (val: string) => {
-      const color = val === "飙升" ? "red" : val === "上升" ? "orange" : val === "下降" ? "blue" : "default";
-      return <Tag color={color}>{val}</Tag>;
-    },
-  },
-];
-
-const competitorColumns = [
-  { title: "账号", dataIndex: "name", key: "name" },
-  { title: "粉丝", dataIndex: "fans", key: "fans" },
-  { title: "平均播放", dataIndex: "avgViews", key: "avgViews" },
-  {
-    title: "互动率",
-    dataIndex: "engagement",
-    key: "engagement",
-    render: (val: number) => (
-      <Space>
-        <Progress percent={val * 10} size="small" style={{ width: 80 }} showInfo={false} />
-        <Text>{val}%</Text>
-      </Space>
-    ),
-  },
+/** 饼图配色 */
+const PIE_COLORS = [
+  "var(--primary-500)",
+  "var(--success)",
+  "var(--warning)",
+  "var(--info)",
+  "#ec4899",
+  "#8b5cf6",
 ];
 
 export default function AnalyticsPage() {
+  const toast = useToast();
   const [timeRange, setTimeRange] = useState("7d");
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<{
+    overview: {
+      totalViews: number;
+      totalWatchHours: number;
+      engagementRate: number;
+      shareCount: number;
+    };
+    trends: { topic: string; views: string; growth: number; hot: string }[];
+    competitors: { name: string; fans: string; avgViews: string; engagement: number }[];
+    contentDistribution: { label: string; percent: number }[];
+  } | null>(null);
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await getAnalyticsData(timeRange);
+      setData(resp);
+    } catch (err) {
+      toast.error((err as Error).message || "数据加载失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [timeRange, toast]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  if (loading && !data) {
+    return <SkeletonPage />;
+  }
+
+  const overview = data?.overview;
+  const trends = data?.trends || [];
+  const competitors = data?.competitors || [];
+  const contentDistribution = data?.contentDistribution || [];
+
+  /** 柱状图数据 */
+  const barData = trends.map((t) => ({
+    name: t.topic.length > 8 ? t.topic.slice(0, 8) + "..." : t.topic,
+    views: parseInt(t.views) || 0,
+  }));
+
+  /** 饼图数据 */
+  const pieData = contentDistribution.map((d) => ({
+    name: d.label,
+    value: d.percent,
+  }));
+
+  /** 竞品分析表格列 */
+  const competitorColumns = [
+    {
+      title: "排名",
+      width: 60,
+      render: (_: unknown, __: unknown, idx: number) => (
+        <Tag color={idx < 3 ? "gold" : "default"}>
+          {idx < 3 ? <TrophyOutlined /> : null} {idx + 1}
+        </Tag>
+      ),
+    },
+    { title: "账号名称", dataIndex: "name" },
+    { title: "粉丝数", dataIndex: "fans" },
+    { title: "平均播放", dataIndex: "avgViews" },
+    {
+      title: "互动率",
+      dataIndex: "engagement",
+      render: (v: number) => (
+        <Progress
+          percent={v * 10}
+          size="small"
+          status={v >= 8 ? "success" : "normal"}
+          format={() => `${v}%`}
+        />
+      ),
+    },
+  ];
 
   return (
     <div>
       {/* 页面头部 */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+      <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>
-            <BarChartOutlined /> 深度分析
+            <LineChartOutlined /> 深度分析
           </Title>
-          <Text type="secondary">Pro 专属 - 数据驱动的内容策略</Text>
+          <Text type="secondary">实时追踪内容表现，洞察行业趋势</Text>
         </div>
-        <Select value={timeRange} onChange={setTimeRange} style={{ width: 120 }}>
-          <Option value="7d">近 7 天</Option>
-          <Option value="30d">近 30 天</Option>
-          <Option value="90d">近 90 天</Option>
-        </Select>
+        <Space>
+          <Select value={timeRange} onChange={setTimeRange} style={{ width: 140 }}>
+            <Option value="24h">最近 24 小时</Option>
+            <Option value="7d">最近 7 天</Option>
+            <Option value="30d">最近 30 天</Option>
+            <Option value="90d">最近 90 天</Option>
+          </Select>
+          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+            刷新
+          </Button>
+        </Space>
       </div>
 
-      {/* 数据概览 */}
+      {/* 核心指标卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
+        <Col xs={12} sm={6}>
+          <Card hoverable>
             <Statistic
               title="总播放量"
-              value={2856.3}
-              suffix="万"
-              prefix={<PlayCircleOutlined style={{ color: "#6366f1" }} />}
-              valueStyle={{ color: "#6366f1" }}
+              value={overview?.totalViews || 0}
+              prefix={<PlayCircleOutlined style={{ color: "var(--primary-500)" }} />}
+              valueStyle={{ color: "var(--primary-500)" }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
+        <Col xs={12} sm={6}>
+          <Card hoverable>
             <Statistic
-              title="总观看时长"
-              value={1847.2}
-              suffix="小时"
-              prefix={<EyeOutlined style={{ color: "#10b981" }} />}
-              valueStyle={{ color: "#10b981" }}
+              title="观看时长(h)"
+              value={overview?.totalWatchHours || 0}
+              precision={1}
+              prefix={<ClockCircleOutlined style={{ color: "var(--success)" }} />}
+              valueStyle={{ color: "var(--success)" }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
+        <Col xs={12} sm={6}>
+          <Card hoverable>
             <Statistic
               title="互动率"
-              value={7.8}
+              value={overview?.engagementRate || 0}
               suffix="%"
-              prefix={<LikeOutlined style={{ color: "#f59e0b" }} />}
-              valueStyle={{ color: "#f59e0b" }}
+              prefix={<HeartOutlined style={{ color: "var(--warning)" }} />}
+              valueStyle={{ color: "var(--warning)" }}
             />
           </Card>
         </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
+        <Col xs={12} sm={6}>
+          <Card hoverable>
             <Statistic
               title="分享次数"
-              value={12580}
-              prefix={<ShareAltOutlined style={{ color: "#ef4444" }} />}
-              valueStyle={{ color: "#ef4444" }}
+              value={overview?.shareCount || 0}
+              prefix={<ShareAltOutlined style={{ color: "var(--info)" }} />}
+              valueStyle={{ color: "var(--info)" }}
             />
           </Card>
         </Col>
       </Row>
 
-      {/* 趋势分析 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      {/* 图表区 */}
+      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+        {/* 热门话题柱状图 */}
         <Col xs={24} lg={14}>
           <Card
             title={
               <Space>
-                <LineChartOutlined /> 热门话题趋势
+                <ThunderboltOutlined /> 热门话题趋势
+              </Space>
+            }
+          >
+            <Spin spinning={loading}>
+              {barData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={barData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-default)" />
+                    <XAxis dataKey="name" tick={{ fontSize: 12, fill: "var(--text-secondary)" }} />
+                    <YAxis tick={{ fontSize: 12, fill: "var(--text-secondary)" }} />
+                    <RechartsTooltip
+                      contentStyle={{
+                        background: "var(--bg-card)",
+                        border: "1px solid var(--border-default)",
+                        borderRadius: "var(--radius-sm)",
+                      }}
+                    />
+                    <Bar dataKey="views" fill="var(--primary-500)" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Text type="secondary">暂无数据</Text>
+                </div>
+              )}
+            </Spin>
+          </Card>
+        </Col>
+
+        {/* 内容分布饼图 */}
+        <Col xs={24} lg={10}>
+          <Card
+            title={
+              <Space>
+                <RiseOutlined /> 内容分布
+              </Space>
+            }
+          >
+            <Spin spinning={loading}>
+              {pieData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={100}
+                      paddingAngle={3}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
+                    >
+                      {pieData.map((_, idx) => (
+                        <Cell key={idx} fill={PIE_COLORS[idx % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Legend />
+                    <RechartsTooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Text type="secondary">暂无数据</Text>
+                </div>
+              )}
+            </Spin>
+          </Card>
+        </Col>
+      </Row>
+
+      {/* 趋势数据表 + 竞品分析 */}
+      <Row gutter={[24, 24]}>
+        {/* 趋势数据 */}
+        <Col xs={24} lg={14}>
+          <Card
+            title={
+              <Space>
+                <RiseOutlined /> 趋势数据
               </Space>
             }
           >
             <Table
-              columns={trendColumns}
-              dataSource={TREND_DATA}
+              rowKey="topic"
+              dataSource={trends}
+              pagination={false}
+              size="small"
+              columns={[
+                { title: "话题", dataIndex: "topic", ellipsis: true },
+                {
+                  title: "播放量",
+                  dataIndex: "views",
+                  width: 120,
+                  render: (v: string) => <Text strong>{parseInt(v).toLocaleString()}</Text>,
+                },
+                {
+                  title: "增长",
+                  dataIndex: "growth",
+                  width: 100,
+                  render: (v: number) => (
+                    <Text style={{ color: v >= 0 ? "var(--success)" : "var(--error)" }}>
+                      {v >= 0 ? "+" : ""}
+                      {v}%
+                    </Text>
+                  ),
+                },
+                {
+                  title: "热度",
+                  dataIndex: "hot",
+                  width: 80,
+                  render: (v: string) => {
+                    const colorMap: Record<string, string> = {
+                      飙升: "red",
+                      上升: "orange",
+                      平稳: "blue",
+                      下降: "default",
+                    };
+                    return <Tag color={colorMap[v] || "default"}>{v}</Tag>;
+                  },
+                },
+              ]}
+            />
+          </Card>
+        </Col>
+
+        {/* 竞品分析 */}
+        <Col xs={24} lg={10}>
+          <Card
+            title={
+              <Space>
+                <TeamOutlined /> 竞品分析
+              </Space>
+            }
+          >
+            <Table
+              rowKey="name"
+              dataSource={competitors}
+              columns={competitorColumns}
               pagination={false}
               size="small"
             />
           </Card>
         </Col>
-        <Col xs={24} lg={10}>
-          <Card
-            title={
-              <Space>
-                <PieChartOutlined /> 内容类型分布
-              </Space>
-            }
-          >
-            <div style={{ padding: "20px 0" }}>
-              {[
-                { label: "测评类", percent: 35, color: "#6366f1" },
-                { label: "教程类", percent: 28, color: "#10b981" },
-                { label: "Vlog类", percent: 20, color: "#f59e0b" },
-                { label: "其他", percent: 17, color: "#94a3b8" },
-              ].map((item) => (
-                <div key={item.label} style={{ marginBottom: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                    <Text>{item.label}</Text>
-                    <Text strong>{item.percent}%</Text>
-                  </div>
-                  <Progress percent={item.percent} showInfo={false} strokeColor={item.color} />
-                </div>
-              ))}
-            </div>
-          </Card>
-        </Col>
       </Row>
-
-      {/* 竞品分析 */}
-      <Card
-        title={
-          <Space>
-            <BarChartOutlined /> 竞品账号分析
-          </Space>
-        }
-      >
-        <Table columns={competitorColumns} dataSource={COMPETITOR_DATA} pagination={false} size="small" />
-      </Card>
     </div>
   );
 }

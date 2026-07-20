@@ -7,13 +7,14 @@ import {
   Tag,
   Card,
   Typography,
-  message,
   Select,
 } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { searchCandidates } from "../api/client";
 import type { CandidateItem } from "../api/types";
+import { useToast } from "../components/Toast";
+import { SkeletonTable } from "../components/SkeletonLoader";
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -29,6 +30,7 @@ const HEAT_COLORS: Record<string, string> = {
 };
 
 export default function CandidatesPage() {
+  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [limit, setLimit] = useState(10);
   const [data, setData] = useState<CandidateItem[]>([]);
@@ -42,7 +44,7 @@ export default function CandidatesPage() {
       setData(resp.items);
       setTotal(resp.total);
     } catch (err) {
-      message.error((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -126,14 +128,20 @@ export default function CandidatesPage() {
           <Typography.Text type="secondary">共 {total} 条结果</Typography.Text>
         </Space>
       </Card>
-      <Table
-        rowKey="video_id"
-        columns={columns}
-        dataSource={data}
-        loading={loading}
-        pagination={{ pageSize: 10, showSizeChanger: false }}
-        size="middle"
-      />
+      <Card>
+        {loading && data.length === 0 ? (
+          <SkeletonTable rows={5} cols={7} />
+        ) : (
+          <Table
+            rowKey="video_id"
+            columns={columns}
+            dataSource={data}
+            loading={loading}
+            pagination={{ pageSize: 10, showSizeChanger: false }}
+            size="middle"
+          />
+        )}
+      </Card>
     </Space>
   );
 }

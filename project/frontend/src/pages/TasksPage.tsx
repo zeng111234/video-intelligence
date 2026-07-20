@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { Typography, Card, Table, Tag, Space, Button, message, Spin } from "antd";
+import { Typography, Card, Table, Tag, Space, Button } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { listTasks } from "../api/client";
 import type { TaskItem } from "../api/types";
+import { useToast } from "../components/Toast";
+import { SkeletonTable } from "../components/SkeletonLoader";
 
 const STATUS_COLOR: Record<string, string> = {
   succeeded: "green",
@@ -23,6 +25,7 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 export default function TasksPage() {
+  const toast = useToast();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -34,7 +37,7 @@ export default function TasksPage() {
       setTasks(resp.items);
       setTotal(resp.total);
     } catch (err) {
-      message.error((err as Error).message);
+      toast.error((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -42,7 +45,7 @@ export default function TasksPage() {
 
   useEffect(() => {
     fetchTasks();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const columns: ColumnsType<TaskItem> = [
     {
@@ -91,15 +94,18 @@ export default function TasksPage() {
         </Button>
       </Space>
       <Card>
-        <Spin spinning={loading}>
+        {loading && tasks.length === 0 ? (
+          <SkeletonTable rows={5} cols={5} />
+        ) : (
           <Table
             rowKey="task_id"
             columns={columns}
             dataSource={tasks}
+            loading={loading}
             pagination={{ pageSize: 20, showTotal: () => `共 ${total} 条` }}
             size="middle"
           />
-        </Spin>
+        )}
       </Card>
     </Space>
   );

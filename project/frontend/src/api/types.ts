@@ -110,3 +110,56 @@ export interface CrawlerTaskListResponse {
   items: CrawlerTaskResponse[];
   total: number;
 }
+
+/* ---- 文案生成 ---- */
+
+export interface CopywritingResponse {
+  task_id: string;
+  status: string;
+  result_text: string | null;
+  result_variants: string[];
+  error_message: string | null;
+}
+
+/* ---- 多平台发布 ---- */
+
+export interface PublishResponse {
+  task_id: string;
+  status: string;
+  platform: string;
+  error_message: string | null;
+}
+
+export interface PublishPlatformsResponse {
+  platforms: string[];
+}
+
+/* ---- 深度分析 ---- */
+
+export interface AnalyticsTrendItem {
+  topic: string;
+  views: string;
+  growth: number;
+  hot: string;
+}
+
+export interface AnalyticsCompetitorItem {
+  name: string;
+  fans: string;
+  avgViews: string;
+  engagement: number;
+}
+
+export interface AnalyticsOverview {
+  totalViews: number;
+  totalWatchHours: number;
+  engagementRate: number;
+  shareCount: number;
+}
+
+export interface AnalyticsResponse {
+  overview: AnalyticsOverview;
+  trends: AnalyticsTrendItem[];
+  competitors: AnalyticsCompetitorItem[];
+  contentDistribution: { label: string; percent: number }[];
+}

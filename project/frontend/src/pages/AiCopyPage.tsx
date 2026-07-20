@@ -1,82 +1,123 @@
 /**
- * AI 文案生成页面 - Pro 功能
- * 基于 AI 自动生成短视频文案、标题、标签
+ * AI 文案生成页面（Phase 3）
+ * 接入后端 /api/v1/copywriting/rewrite 接口
+ * 支持多风格、多变体生成、实时预览
  */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
+  Typography,
   Card,
   Input,
   Button,
-  Select,
   Space,
-  Tag,
-  Typography,
+  Select,
   Row,
   Col,
+  Tag,
   Divider,
-  message,
+  Slider,
   Spin,
+  Empty,
 } from "antd";
 import {
   EditOutlined,
   CopyOutlined,
-  ThunderboltOutlined,
-  TagsOutlined,
-  FontSizeOutlined,
   ReloadOutlined,
+  FileTextOutlined,
+  ThunderboltOutlined,
+  HeartOutlined,
+  BankOutlined,
+  SmileOutlined,
+  StarOutlined,
 } from "@ant-design/icons";
+import { rewriteCopywriting } from "../api/client";
+import { useToast } from "../components/Toast";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
-const { Option } = Select;
 
-/** 预设模板 */
-const TEMPLATES = [
-  { label: "二手车测评", value: "二手车测评，突出车况和性价比" },
-  { label: "新车对比", value: "两款热门新车全方位对比评测" },
-  { label: "用车技巧", value: "分享实用的汽车保养和驾驶技巧" },
-  { label: "汽车Vlog", value: "日常用车生活记录，轻松有趣的风格" },
+/** 风格预设 */
+const STYLE_PRESETS = [
+  { key: "engaging", label: "吸引眼球", icon: <ThunderboltOutlined />, color: "orange", desc: "制造悬念、引发好奇" },
+  { key: "professional", label: "专业权威", icon: <BankOutlined />, color: "blue", desc: "数据支撑、理性分析" },
+  { key: "emotional", label: "情感共鸣", icon: <HeartOutlined />, color: "red", desc: "触动人心、引发共情" },
+  { key: "humorous", label: "幽默风趣", icon: <SmileOutlined />, color: "green", desc: "轻松诙谐、趣味表达" },
+  { key: "storytelling", label: "故事叙述", icon: <StarOutlined />, color: "purple", desc: "悬念铺垫、引人入胜" },
 ];
 
-/** 生成的文案示例 */
-const SAMPLE_RESULTS = [
-  {
-    title: "🔥 20万以内最值得买的3款二手车，第3款让人心动！",
-    content: "二手车市场水太深？别慌！今天给大家盘点3款20万以内性价比超高的二手车。第一款丰田凯美瑞，省油耐用保值率高；第二款本田雅阁，空间大配置丰富；第三款宝马3系，操控一流驾驶乐趣满满。想知道哪款最适合你？看完这个视频你就明白了！",
-    tags: ["二手车", "买车攻略", "性价比", "丰田凯美瑞", "本田雅阁", "宝马3系"],
-  },
-  {
-    title: "💡 二手车验车必看的5个细节，学会不再被坑！",
-    content: "买二手车最怕遇到事故车、泡水车。今天教大家5个验车绝招：看漆面是否均匀、查螺丝有无拧动痕迹、检查轮胎磨损程度、测试空调制冷效果、查看保养记录。学会这几招，小白也能买到好车！",
-    tags: ["验车技巧", "二手车避坑", "买车必看", "汽车知识"],
-  },
+/** 语调选项 */
+const TONE_OPTIONS = [
+  { value: "formal", label: "正式" },
+  { value: "casual", label: "轻松" },
+  { value: "energetic", label: "活力" },
+  { value: "calm", label: "沉稳" },
+  { value: "urgent", label: "紧迫" },
 ];
 
 export default function AiCopyPage() {
-  const [topic, setTopic] = useState("");
-  const [style, setStyle] = useState("engaging");
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState(SAMPLE_RESULTS);
+  const toast = useToast();
 
-  /** 模拟 AI 生成 */
-  const handleGenerate = () => {
-    if (!topic.trim()) {
-      message.warning("请输入视频主题");
+  /* ---- 状态 ---- */
+  const [sourceText, setSourceText] = useState("");
+  const [stylePreset, setStylePreset] = useState("engaging");
+  const [tone, setTone] = useState("casual");
+  const [targetLength, setTargetLength] = useState(200);
+  const [variantCount, setVariantCount] = useState(3);
+  const [loading, setLoading] = useState(false);
+  const [variants, setVariants] = useState<string[]>([]);
+  const [activeVariant, setActiveVariant] = useState(0);
+  const [taskId, setTaskId] = useState<string | null>(null);
+
+  /* ---- 生成文案 ---- */
+  const handleGenerate = useCallback(async () => {
+    if (!sourceText.trim()) {
+      toast.warning("请输入原始文案内容");
       return;
     }
     setLoading(true);
-    setTimeout(() => {
-      setResults(SAMPLE_RESULTS);
-      setLoading(false);
-      message.success("文案生成完成！");
-    }, 1500);
-  };
+    setVariants([]);
+    try {
+      const styleMap: Record<string, string> = {
+        engaging: "吸引眼球，制造悬念，引发好奇",
+        professional: "专业权威，数据支撑，理性分析",
+        emotional: "情感共鸣，触动人心，引发共情",
+        humorous: "幽默风趣，轻松诙谐，趣味表达",
+        storytelling: "故事叙述，悬念铺垫，引人入胜",
+      };
+      const resp = await rewriteCopywriting({
+        source_text: sourceText,
+        style_prompt: styleMap[stylePreset] || styleMap.engaging,
+        target_length: targetLength,
+        tone,
+        variant_count: variantCount,
+      });
 
-  /** 复制文案 */
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-    message.success("已复制到剪贴板");
-  };
+      if (resp.result_variants && resp.result_variants.length > 0) {
+        setVariants(resp.result_variants);
+        setActiveVariant(0);
+        setTaskId(resp.task_id);
+        toast.success(`已生成 ${resp.result_variants.length} 个文案变体`);
+      } else if (resp.result_text) {
+        setVariants([resp.result_text]);
+        setActiveVariant(0);
+        setTaskId(resp.task_id);
+        toast.success("文案生成成功");
+      } else {
+        toast.warning("后端未返回有效文案，请检查输入内容");
+      }
+    } catch (err) {
+      toast.error((err as Error).message || "文案生成失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [sourceText, stylePreset, tone, targetLength, variantCount, toast]);
+
+  /* ---- 复制文案 ---- */
+  const handleCopy = useCallback((text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success("已复制到剪贴板");
+    });
+  }, [toast]);
 
   return (
     <div>
@@ -85,143 +126,246 @@ export default function AiCopyPage() {
         <Title level={4} style={{ margin: 0 }}>
           <EditOutlined /> AI 文案生成
         </Title>
-        <Text type="secondary">Pro 专属 - AI 驱动的创意文案引擎</Text>
+        <Text type="secondary">
+          输入原始文案，AI 将根据风格偏好智能改写为多版本短视频文案
+        </Text>
       </div>
 
       <Row gutter={[24, 24]}>
         {/* 左侧：输入区 */}
         <Col xs={24} lg={10}>
-          <Card title="生成设置">
-            {/* 视频主题 */}
-            <div style={{ marginBottom: 16 }}>
-              <Text strong style={{ display: "block", marginBottom: 8 }}>
-                视频主题
-              </Text>
-              <TextArea
-                placeholder="描述你的视频内容，例如：二手车测评、新车对比、用车技巧..."
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                rows={3}
-              />
-            </div>
-
-            {/* 快捷模板 */}
-            <div style={{ marginBottom: 16 }}>
-              <Text strong style={{ display: "block", marginBottom: 8 }}>
-                快捷模板
-              </Text>
-              <Space wrap>
-                {TEMPLATES.map((t) => (
-                  <Tag
-                    key={t.label}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => setTopic(t.value)}
-                  >
-                    {t.label}
-                  </Tag>
-                ))}
+          <Card
+            title={
+              <Space>
+                <FileTextOutlined /> 原始文案
               </Space>
-            </div>
+            }
+            style={{ height: "100%" }}
+          >
+            <Space direction="vertical" style={{ width: "100%" }} size={16}>
+              {/* 文案输入 */}
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  原始内容
+                </Text>
+                <TextArea
+                  placeholder="粘贴你的原始文案、脚本或内容概要..."
+                  rows={6}
+                  value={sourceText}
+                  onChange={(e) => setSourceText(e.target.value)}
+                  style={{ resize: "none" }}
+                  showCount
+                  maxLength={5000}
+                />
+              </div>
 
-            {/* 文案风格 */}
-            <div style={{ marginBottom: 16 }}>
-              <Text strong style={{ display: "block", marginBottom: 8 }}>
-                文案风格
-              </Text>
-              <Select value={style} onChange={setStyle} style={{ width: "100%" }}>
-                <Option value="engaging">吸引眼球</Option>
-                <Option value="professional">专业权威</Option>
-                <Option value="humorous">幽默风趣</Option>
-                <Option value="storytelling">故事叙述</Option>
-                <Option value="educational">知识科普</Option>
-              </Select>
-            </div>
+              {/* 风格预设 */}
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  风格预设
+                </Text>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {STYLE_PRESETS.map((preset) => (
+                    <Tag
+                      key={preset.key}
+                      color={stylePreset === preset.key ? preset.color : undefined}
+                      style={{
+                        cursor: "pointer",
+                        padding: "6px 12px",
+                        fontSize: 13,
+                        borderRadius: 8,
+                        border: stylePreset === preset.key ? undefined : "1px solid var(--border-default)",
+                      }}
+                      onClick={() => setStylePreset(preset.key)}
+                    >
+                      {preset.icon} {preset.label}
+                    </Tag>
+                  ))}
+                </div>
+                <Text
+                  type="secondary"
+                  style={{ fontSize: 12, marginTop: 4, display: "block" }}
+                >
+                  {STYLE_PRESETS.find((p) => p.key === stylePreset)?.desc}
+                </Text>
+              </div>
 
-            {/* 生成按钮 */}
-            <Button
-              type="primary"
-              icon={<ThunderboltOutlined />}
-              size="large"
-              block
-              loading={loading}
-              onClick={handleGenerate}
-            >
-              AI 一键生成
-            </Button>
+              {/* 语调选择 */}
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  语调风格
+                </Text>
+                <Select
+                  value={tone}
+                  onChange={setTone}
+                  style={{ width: "100%" }}
+                  options={TONE_OPTIONS}
+                />
+              </div>
+
+              {/* 目标长度 */}
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  目标字数：{targetLength} 字
+                </Text>
+                <Slider
+                  min={50}
+                  max={800}
+                  step={50}
+                  value={targetLength}
+                  onChange={setTargetLength}
+                  marks={{ 50: "50", 200: "200", 500: "500", 800: "800" }}
+                />
+              </div>
+
+              {/* 变体数量 */}
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  生成变体数
+                </Text>
+                <Select
+                  value={variantCount}
+                  onChange={setVariantCount}
+                  style={{ width: "100%" }}
+                  options={[
+                    { value: 1, label: "1 个变体" },
+                    { value: 2, label: "2 个变体" },
+                    { value: 3, label: "3 个变体（推荐）" },
+                    { value: 5, label: "5 个变体" },
+                  ]}
+                />
+              </div>
+
+              {/* 生成按钮 */}
+              <Button
+                type="primary"
+                icon={<EditOutlined />}
+                size="large"
+                block
+                loading={loading}
+                onClick={handleGenerate}
+                disabled={!sourceText.trim()}
+              >
+                AI 智能改写
+              </Button>
+            </Space>
           </Card>
         </Col>
 
         {/* 右侧：结果区 */}
         <Col xs={24} lg={14}>
-          <Spin spinning={loading} tip="AI 正在创作中...">
-            {results.map((item, index) => (
-              <Card
-                key={index}
-                style={{ marginBottom: 16 }}
-                title={
-                  <Space>
-                    <FontSizeOutlined />
-                    <Text strong>方案 {index + 1}</Text>
-                  </Space>
-                }
-                extra={
+          <Card
+            title={
+              <Space>
+                <EditOutlined /> 生成结果
+                {taskId && (
+                  <Tag color="blue" style={{ fontSize: 11 }}>
+                    任务 {taskId}
+                  </Tag>
+                )}
+              </Space>
+            }
+            extra={
+              variants.length > 0 && (
+                <Button
+                  icon={<ReloadOutlined />}
+                  size="small"
+                  onClick={handleGenerate}
+                  loading={loading}
+                >
+                  重新生成
+                </Button>
+              )
+            }
+            style={{ height: "100%" }}
+          >
+            <Spin spinning={loading} tip="AI 正在生成文案...">
+              {variants.length > 0 ? (
+                <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                  {/* 变体切换标签 */}
+                  {variants.length > 1 && (
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {variants.map((_, idx) => (
+                        <Tag
+                          key={idx}
+                          color={activeVariant === idx ? "purple" : undefined}
+                          style={{
+                            cursor: "pointer",
+                            padding: "6px 16px",
+                            fontSize: 13,
+                            borderRadius: 8,
+                            border: activeVariant === idx ? undefined : "1px solid var(--border-default)",
+                          }}
+                          onClick={() => setActiveVariant(idx)}
+                        >
+                          变体 {idx + 1}
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 文案内容 */}
+                  <div
+                    style={{
+                      background: "var(--gray-50)",
+                      borderRadius: "var(--radius-md)",
+                      padding: 20,
+                      border: "1px solid var(--border-default)",
+                      minHeight: 200,
+                    }}
+                  >
+                    <Paragraph
+                      style={{
+                        fontSize: 15,
+                        lineHeight: 1.8,
+                        color: "var(--text-primary)",
+                        margin: 0,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {variants[activeVariant]}
+                    </Paragraph>
+                  </div>
+
+                  {/* 操作按钮 */}
                   <Space>
                     <Button
-                      type="text"
                       icon={<CopyOutlined />}
-                      onClick={() => handleCopy(`${item.title}\n\n${item.content}`)}
+                      onClick={() => handleCopy(variants[activeVariant])}
                     >
-                      复制
+                      复制当前变体
                     </Button>
-                    <Button type="text" icon={<ReloadOutlined />} onClick={handleGenerate}>
-                      换一个
+                    <Button
+                      onClick={() =>
+                        handleCopy(variants.join("\n\n---\n\n"))
+                      }
+                    >
+                      复制全部变体
                     </Button>
                   </Space>
-                }
-              >
-                {/* 标题 */}
-                <div style={{ marginBottom: 12 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    推荐标题
-                  </Text>
-                  <Paragraph
-                    strong
-                    style={{ fontSize: 16, margin: "4px 0 0", lineHeight: 1.6 }}
-                  >
-                    {item.title}
-                  </Paragraph>
-                </div>
 
-                <Divider style={{ margin: "12px 0" }} />
-
-                {/* 正文 */}
-                <div style={{ marginBottom: 12 }}>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    视频文案
-                  </Text>
-                  <Paragraph style={{ margin: "4px 0 0", lineHeight: 1.8 }}>
-                    {item.content}
-                  </Paragraph>
-                </div>
-
-                <Divider style={{ margin: "12px 0" }} />
-
-                {/* 标签 */}
-                <div>
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    <TagsOutlined /> 推荐标签
-                  </Text>
-                  <div style={{ marginTop: 8 }}>
-                    {item.tags.map((tag) => (
-                      <Tag key={tag} color="blue" style={{ marginBottom: 4 }}>
-                        #{tag}
-                      </Tag>
-                    ))}
+                  {/* 统计信息 */}
+                  <Divider style={{ margin: "8px 0" }} />
+                  <div style={{ display: "flex", gap: 24 }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      字数：{variants[activeVariant].length}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      变体数：{variants.length}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      风格：{STYLE_PRESETS.find((p) => p.key === stylePreset)?.label}
+                    </Text>
                   </div>
-                </div>
-              </Card>
-            ))}
-          </Spin>
+                </Space>
+              ) : (
+                <Empty
+                  description="输入原始文案并点击「AI 智能改写」开始生成"
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                />
+              )}
+            </Spin>
+          </Card>
         </Col>
       </Row>
     </div>
