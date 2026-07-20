@@ -23,6 +23,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { useTheme } from "../contexts/ThemeContext";
+import { getNotifications, getMessages, getUserProfile } from "../api/client";
 
 const { Text } = Typography;
 
@@ -146,6 +147,16 @@ const MOCK_MESSAGES: MessageItem[] = [
 export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const [notifications, setNotifications] = useState<NotificationItem[]>(MOCK_NOTIFICATIONS);
+  const [messages, setMessages] = useState<MessageItem[]>(MOCK_MESSAGES);
+  const [userProfile, setUserProfile] = useState<any>(null);
+
+  // 组件挂载时获取数据
+  useState(() => {
+    getNotifications().then(setNotifications).catch(() => {});
+    getMessages().then(setMessages).catch(() => {});
+    getUserProfile().then(setUserProfile).catch(() => {});
+  });
   const { isDark, toggleTheme } = useTheme();
 
   /** 抽屉状态 */

@@ -194,6 +194,42 @@ export function listPublishPlatforms(): Promise<PublishPlatformsResponse> {
   return request("/publish/platforms");
 }
 
+/* ---- 通知/消息 ---- */
+
+export function getNotifications(): Promise<any[]> {
+  return request("/notifications").catch(() => {
+    // 后端暂未实现，返回 mock 数据
+    return [
+      { id: "1", title: "批量生产任务完成", description: "您提交的批量生产任务已完成", time: "5 分钟前", read: false, type: "task" },
+      { id: "2", title: "系统更新通知", description: "系统将于今晚进行维护升级", time: "1 小时前", read: false, type: "system" },
+      { id: "3", title: "Pro 会员即将到期", description: "您的 Pro 会员将于下月到期", time: "2 小时前", read: true, type: "pro" },
+    ];
+  });
+}
+
+export function getMessages(): Promise<any[]> {
+  return request("/messages").catch(() => {
+    // 后端暂未实现，返回 mock 数据
+    return [
+      { id: "1", sender: "系统助手", avatar: "🤖", content: "您的批量生产任务已排队", time: "10 分钟前", read: false },
+      { id: "2", sender: "运营小助手", avatar: "💡", content: "新功能上线！AI 文案生成支持自定义风格模板", time: "2 小时前", read: false },
+    ];
+  });
+}
+
+export function getUserProfile(): Promise<any> {
+  return request("/user/profile").catch(() => {
+    // 后端暂未实现，返回 mock 数据
+    return {
+      username: "Admin",
+      email: "admin@videoinsight.com",
+      phone: "138****8888",
+      role: "Pro 会员",
+      twoFactorEnabled: true,
+    };
+  });
+}
+
 /* ---- 深度分析 ---- */
 
 export function getAnalyticsData(
