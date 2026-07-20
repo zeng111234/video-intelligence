@@ -55,9 +55,11 @@ def _reach(snapshot: VideoMetricSnapshot) -> float:
 def _account_outperformance(snapshot: VideoMetricSnapshot) -> float | None:
     if snapshot.followers is None or snapshot.followers <= 0:
         return None
-    numerator = snapshot.plays
+    numerator: float | None = snapshot.plays
     if numerator is None:
         numerator = effective_interactions(snapshot)
+    if numerator is None:
+        return None
     return numerator / snapshot.followers
 
 

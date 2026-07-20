@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务决策引导 - Crow5智能开发助手</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* === UTF-8 编码保障 === */
+        @charset "UTF-8";
+        
+        /* 基础变量 */
+        :root {
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --secondary: #10b981;
+            --secondary-light: #34d399;
+            --accent: #f59e0b;
+            --accent-light: #fbbf24;
+            --bug: #ef4444;
+            --bug-light: #f87171;
+            --feature: #3b82f6;
+            --feature-light: #60a5fa;
+            --refactor: #8b5cf6;
+            --refactor-light: #a78bfa;
+            --gray-50: #f8fafc;
+            --gray-100: #f1f5f9;
+            --gray-200: #e2e8f0;
+            --gray-300: #cbd5e1;
+            --gray-400: #94a3b8;
+            --gray-500: #64748b;
+            --gray-600: #475569;
+            --gray-700: #334155;
+            --gray-800: #1e293b;
+            --gray-900: #0f172a;
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --radius-xl: 24px;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            --shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+            --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            --transition-fast: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        /* 重置与基础 */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            color: var(--gray-800);
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* 容器 */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* 头部 */
+        .header {
+            text-align: center;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 200px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, transparent 70%);
+            border-radius: 50%;
+            z-index: -1;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 1.25rem;
+            color: var(--gray-600);
+            font-weight: 400;
+            margin-bottom: 0.5rem;
+        }
+
+        .description {
+            color: var(--gray-500);
+            max-width: 600px;
+            margin: 0 auto;
+            font-size: 0.95rem;
+        }
+
+        /* 步骤指示器 */
+        .steps {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 3rem;
+            position: relative;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem 1.5rem;
+            background: white;
+            border-radius: var(--radius-xl);
+            box-shadow: var(--shadow-sm);
+            position: relative;
+            z-index: 1;
+            transition: var(--transition);
+        }
+
+        .step.active {
+            background: var(--primary);
+            color: white;
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-2px);
+        }
+
+        .step.completed {
+            background: var(--secondary);
+            color: white;
+        }
+
+        .step-number {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: var(--gray-200);
+            color: var(--gray-600);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-right: 0.75rem;
+            transition: var(--transition);
+        }
+
+        .step.active .step-number {
+            background: white;
+            color: var(--primary);
+        }
+
+        .step.completed .step-number {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+
+        .step-text {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .step-connector {
+            width: 60px;
+            height: 2px;
+            background: var(--gray-200);
+            margin: 0 0.5rem;
+            position: relative;
+        }
+
+        .step-connector.active {
+            background: var(--primary);
+        }
+
+        /* 卡片网格 */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+
+        .card {
+            background: white;
+            border-radius: var(--radius-lg);
+            padding: 2rem;
+            box-shadow: var(--shadow-md);
+            transition: var(--transition);
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            border: 2px solid transparent;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-xl);
+        }
+
+        .card.selected {
+            border-color: var(--primary);
+            box-shadow: var(--shadow-xl), 0 0 0 4px rgba(99, 102, 241, 0.1);
+        }
+
+        .card.selected::after {
+            content: '✓';
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--secondary);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+            font-weight: 700;
+            box-shadow: var(--shadow-md);
+            animation: checkIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        @keyframes checkIn {
+            from {
+                transform: scale(0) rotate(-180deg);
+                opacity: 0;
+            }
+            to {
+                transform: scale(1) rotate(0);
+                opacity: 1;
+            }
+        }
+
+        .card.bug-card:hover, .card.bug-card.selected {
+            border-color: var(--bug);
+            box-shadow: var(--shadow-xl), 0 0 0 4px rgba(239, 68, 68, 0.1);
+        }
+
+        .card.bug-card.selected::after {
+            background: var(--bug);
+        }
+
+        .card.feature-card:hover, .card.feature-card.selected {
+            border-color: var(--feature);
+            box-shadow: var(--shadow-xl), 0 0 0 4px rgba(59, 130, 246, 0.1);
+        }
+
+        .card.feature-card.selected::after {
+            background: var(--feature);
+        }
+
+        .card.refactor-card:hover, .card.refactor-card.selected {
+            border-color: var(--refactor);
+            box-shadow: var(--shadow-xl), 0 0 0 4px rgba(139, 92, 246, 0.1);
+        }
+
+        .card.refactor-card.selected::after {
+            background: var(--refactor);
+        }
+
+        .card-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+            font-size: 2rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .bug-card .card-icon {
+            background: linear-gradient(135deg, #fef2f2, #fecaca);
+            color: var(--bug);
+        }
+
+        .feature-card .card-icon {
+            background: linear-gradient(135deg, #eff6ff, #bfdbfe);
+            color: var(--feature);
+        }
+
+        .refactor-card .card-icon {
+            background: linear-gradient(135deg, #f5f3ff, #ddd6fe);
+            color: var(--refactor);
+        }
+
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+            color: var(--gray-800);
+        }
+
+        .card-description {
+            color: var(--gray-600);
+            margin-bottom: 1.5rem;
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        .examples-title {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--gray-500);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+
+        .examples-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .example-tag {
+            padding: 0.5rem 1rem;
+            background: var(--gray-100);
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            color: var(--gray-600);
+            cursor: pointer;
+            transition: var(--transition-fast);
+            border: 1px solid transparent;
+        }
+
+        .example-tag:hover {
+            background: var(--primary-light);
+            color: white;
+            transform: translateY(-1px);
+        }
+
+        .bug-card .example-tag:hover {
+            background: var(--bug-light);
+        }
+
+        .feature-card .example-tag:hover {
+            background: var(--feature-light);
+        }
+
+        .refactor-card .example-tag:hover {
+            background: var(--refactor-light);
+        }
+
+        /* 表单区域 */
+        .form-section {
+            background: white;
+            border-radius: var(--radius-lg);
+            padding: 2.5rem;
+            box-shadow: var(--shadow-md);
+            margin-bottom: 2rem;
+            display: none;
+            animation: fadeInUp 0.5s ease-out;
+        }
+
+        .form-section.visible {
+            display: block;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .form-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .form-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-right: 1rem;
+            background: linear-gradient(135deg, var(--primary-light), var(--primary));
+            color: white;
+        }
+
+        .form-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--gray-800);
+        }
+
+        .form-subtitle {
+            color: var(--gray-500);
+            font-size: 0.9rem;
+            margin-top: 0.25rem;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .input-label {
+            display: block;
+            font-weight: 500;
+            color: var(--gray-700);
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+        }
+
+        .input-hint {
+            font-size: 0.8rem;
+            color: var(--gray-400);
+            margin-bottom: 0.75rem;
+        }
+
+        .text-input {
+            width: 100%;
+            padding: 1rem 1.25rem;
+            border: 2px solid var(--gray-200);
+            border-radius: var(--radius-md);
+            font-size: 1rem;
+            font-family: inherit;
+            transition: var(--transition);
+            resize: vertical;
+            min-height: 120px;
+        }
+
+        .text-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+        }
+
+        .text-input::placeholder {
+            color: var(--gray-400);
+        }
+
+        .example-fill {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            background: var(--gray-100);
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            color: var(--gray-600);
+            cursor: pointer;
+            transition: var(--transition-fast);
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .example-fill:hover {
+            background: var(--primary-light);
+            color: white;
+        }
+
+        .example-fill::before {
+            content: '💡';
+            margin-right: 0.5rem;
+        }
+
+        /* 按钮 */
+        .btn-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 0.875rem 2rem;
+            border-radius: var(--radius-md);
+            font-weight: 600;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            color: white;
+            box-shadow: var(--shadow-md);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: white;
+            color: var(--gray-700);
+            border: 2px solid var(--gray-200);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--gray-300);
+            background: var(--gray-50);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        /* 字符计数器 */
+        .char-counter {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 0.5rem;
+        }
+
+        .char-count {
+            font-size: 0.85rem;
+            color: var(--gray-500);
+            font-weight: 500;
+            transition: var(--transition-fast);
+        }
+
+        .char-count.error {
+            color: var(--bug);
+        }
+
+        .char-count.warning {
+            color: var(--accent);
+        }
+
+        .char-count.success {
+            color: var(--secondary);
+        }
+
+        .char-hint {
+            font-size: 0.8rem;
+            color: var(--gray-400);
+            transition: var(--transition-fast);
+        }
+
+        .char-hint.error {
+            color: var(--bug);
+            font-weight: 500;
+        }
+
+        .char-hint.success {
+            color: var(--secondary);
+            font-weight: 500;
+        }
+
+        /* 验证错误 */
+        .error-message {
+            color: var(--bug);
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        .error-message.visible {
+            display: block;
+        }
+
+        .text-input.error {
+            border-color: var(--bug);
+            box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+        }
+
+        /* 成功反馈 */
+        .success-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: var(--transition);
+        }
+
+        .success-overlay.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .success-modal {
+            background: white;
+            border-radius: var(--radius-xl);
+            padding: 3rem;
+            max-width: 500px;
+            width: 90%;
+            text-align: center;
+            transform: scale(0.9);
+            transition: var(--transition);
+        }
+
+        .success-overlay.visible .success-modal {
+            transform: scale(1);
+        }
+
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, var(--secondary), var(--secondary-light));
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            margin: 0 auto 1.5rem;
+        }
+
+        .success-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+            color: var(--gray-800);
+            margin-bottom: 0.75rem;
+        }
+
+        .success-message {
+            color: var(--gray-600);
+            margin-bottom: 2rem;
+            line-height: 1.7;
+        }
+
+        .success-details {
+            background: var(--gray-50);
+            border-radius: var(--radius-md);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            text-align: left;
+        }
+
+        .success-details h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--gray-700);
+            margin-bottom: 0.75rem;
+            display: flex;
+            align-items: center;
+        }
+
+        .success-details h4::before {
+            content: '📋';
+            margin-right: 0.5rem;
+        }
+
+        .success-details pre {
+            background: var(--gray-800);
+            color: var(--gray-100);
+            padding: 1rem;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            overflow-x: auto;
+            font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+        }
+
+        .btn-group-center {
+            justify-content: center;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 1024px) {
+            .container {
+                padding: 1.5rem;
+            }
+            
+            .cards-grid {
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 1.5rem;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+            
+            .header {
+                margin-bottom: 2rem;
+            }
+            
+            .logo {
+                font-size: 2rem;
+            }
+            
+            .subtitle {
+                font-size: 1.1rem;
+            }
+            
+            .steps {
+                flex-direction: column;
+                gap: 1rem;
+                margin-bottom: 2rem;
+            }
+            
+            .step {
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .step-connector {
+                width: 2px;
+                height: 20px;
+                margin: 0;
+            }
+            
+            .cards-grid {
+                grid-template-columns: 1fr;
+                gap: 1rem;
+            }
+            
+            .card {
+                padding: 1.25rem;
+            }
+            
+            .card-icon {
+                width: 48px;
+                height: 48px;
+                font-size: 1.5rem;
+                margin-bottom: 1rem;
+            }
+            
+            .card-title {
+                font-size: 1.25rem;
+                margin-bottom: 0.5rem;
+            }
+            
+            .card-description {
+                font-size: 0.875rem;
+                margin-bottom: 1rem;
+                line-height: 1.6;
+            }
+            
+            .examples-title {
+                font-size: 0.8rem;
+                margin-bottom: 0.5rem;
+            }
+            
+            .example-tag {
+                padding: 0.375rem 0.75rem;
+                font-size: 0.8rem;
+            }
+            
+            .form-section {
+                padding: 1.5rem;
+            }
+            
+            .form-header {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .form-icon {
+                margin-right: 0;
+                margin-bottom: 1rem;
+            }
+            
+            .btn-group {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+            
+            .success-modal {
+                padding: 2rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 0.75rem;
+            }
+            
+            .header {
+                margin-bottom: 1.5rem;
+            }
+            
+            .logo {
+                font-size: 1.75rem;
+            }
+            
+            .subtitle {
+                font-size: 1rem;
+            }
+            
+            .description {
+                font-size: 0.85rem;
+            }
+            
+            .card {
+                padding: 1.25rem;
+            }
+            
+            .card-title {
+                font-size: 1.25rem;
+            }
+            
+            .card-description {
+                font-size: 0.9rem;
+            }
+            
+            .example-tag {
+                padding: 0.375rem 0.75rem;
+                font-size: 0.8rem;
+            }
+            
+            .form-section {
+                padding: 1.25rem;
+            }
+            
+            .form-title {
+                font-size: 1.25rem;
+            }
+            
+            .text-input {
+                padding: 0.875rem 1rem;
+                min-height: 100px;
+            }
+            
+            .btn {
+                padding: 0.75rem 1.5rem;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* 动画 */
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes float {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .float {
+            animation: float 3s ease-in-out infinite;
+        }
+
+        /* 工具提示 */
+        .tooltip {
+            position: relative;
+        }
+
+        .tooltip::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--gray-800);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: var(--transition-fast);
+            margin-bottom: 0.5rem;
+        }
+
+        .tooltip:hover::after {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* 加载状态 */
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <header class="header">
+            <h1 class="logo">Crow5 智能开发助手</h1>
+            <h2 class="subtitle">任务决策引导</h2>
+            <p class="description">快速选择您的任务方向，获取精准的开发支持。无论修Bug、加功能还是代码整理，我都能帮您高效完成。</p>
+        </header>
+
+        <!-- 步骤指示器 -->
+        <div class="steps">
+            <div class="step active" data-step="1">
+                <div class="step-number">1</div>
+                <div class="step-text">选择方向</div>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="2">
+                <div class="step-number">2</div>
+                <div class="step-text">描述需求</div>
+            </div>
+            <div class="step-connector"></div>
+            <div class="step" data-step="3">
+                <div class="step-number">3</div>
+                <div class="step-text">提交任务</div>
+            </div>
+        </div>
+
+        <!-- 卡片网格 -->
+        <div class="cards-grid">
+            <!-- 修Bug卡片 -->
+            <div class="card bug-card" data-type="bug">
+                <div class="card-icon">🐛</div>
+                <h3 class="card-title">修复Bug</h3>
+                <p class="card-description">系统出现异常、错误或不符合预期的行为？描述问题现象，我将帮您快速定位并修复。</p>
+                <div class="examples-title">常见示例</div>
+                <div class="examples-list">
+                    <span class="example-tag" data-example="登录页面点击提交按钮无反应，控制台报404错误">登录提交无响应</span>
+                    <span class="example-tag" data-example="用户列表分页切换时，数据重复加载，出现重复条目">分页数据重复</span>
+                    <span class="example-tag" data-example="上传视频文件后，进度条卡在99%不再更新">上传进度卡住</span>
+                </div>
+            </div>
+
+            <!-- 加功能卡片 -->
+            <div class="card feature-card" data-type="feature">
+                <div class="card-icon">✨</div>
+                <h3 class="card-title">添加功能</h3>
+                <p class="card-description">需要新特性、新页面或新交互？描述您想要的功能，我将为您设计并实现。</p>
+                <div class="examples-title">常见示例</div>
+                <div class="examples-list">
+                    <span class="example-tag" data-example="在用户个人中心添加‘修改密码’功能，需要验证原密码">修改密码功能</span>
+                    <span class="example-tag" data-example="视频列表页增加按热度、发布时间、点赞数排序的功能">视频排序功能</span>
+                    <span class="example-tag" data-example="添加数据导出功能，支持将报表导出为Excel格式">数据导出功能</span>
+                </div>
+            </div>
+
+            <!-- 代码整理卡片 -->
+            <div class="card refactor-card" data-type="refactor">
+                <div class="card-icon">🔧</div>
+                <h3 class="card-title">代码整理</h3>
+                <p class="card-description">代码结构混乱、性能需要优化或需要重构？描述当前状况，我将帮您改善代码质量。</p>
+                <div class="examples-title">常见示例</div>
+                <div class="examples-list">
+                    <span class="example-tag" data-example="用户服务类超过2000行，需要拆分为多个职责单一的服务">服务类拆分</span>
+                    <span class="example-tag" data-example="数据库查询没有索引，列表页加载超过3秒，需要优化查询性能">查询性能优化</span>
+                    <span class="example-tag" data-example="前端组件重复代码多，需要提取公共组件，提高复用性">组件复用重构</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 表单区域 -->
+        <div class="form-section" id="form-section">
+            <div class="form-header">
+                <div class="form-icon" id="form-icon">🐛</div>
+                <div>
+                    <h3 class="form-title" id="form-title">描述您的Bug</h3>
+                    <p class="form-subtitle" id="form-subtitle">请详细描述问题现象、复现步骤和预期结果</p>
+                </div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label" for="task-input">任务描述</label>
+                <p class="input-hint">点击下方示例可快速填充，或直接输入您的需求</p>
+                <div class="examples-fill" id="examples-fill">
+                    <!-- 示例标签将通过JS动态生成 -->
+                </div>
+                <textarea class="text-input" id="task-input" placeholder="请详细描述您的任务需求..."></textarea>
+                <div class="char-counter">
+                    <span class="char-hint" id="char-hint">最少需要10个字符</span>
+                    <span class="char-count" id="char-count">0/10</span>
+                </div>
+                <div class="error-message" id="error-message">请输入至少10个字符的任务描述</div>
+            </div>
+
+            <div class="input-group">
+                <label class="input-label" for="context-input">补充信息（可选）</label>
+                <p class="input-hint">如有相关文件路径、错误日志或截图链接，请在此补充</p>
+                <textarea class="text-input" id="context-input" placeholder="例如：相关文件 src/services/user.js，错误日志见附件..." style="min-height: 80px;"></textarea>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-secondary" id="btn-back">返回选择</button>
+                <button class="btn btn-primary" id="btn-submit">
+                    <span class="btn-text">提交任务</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 成功反馈弹窗 -->
+    <div class="success-overlay" id="success-overlay">
+        <div class="success-modal">
+            <div class="success-icon">✓</div>
+            <h3 class="success-title">任务提交成功！</h3>
+            <p class="success-message">您的任务已记录，Crow5智能助手将立即开始处理。请稍候查看结果。</p>
+            <div class="success-details">
+                <h4>任务摘要</h4>
+                <pre id="task-summary">任务类型：修复Bug
+任务描述：登录页面点击提交按钮无反应，控制台报404错误
+提交时间：2026-07-19 14:30:25</pre>
+            </div>
+            <div class="btn-group btn-group-center">
+                <button class="btn btn-secondary" id="btn-new-task">创建新任务</button>
+                <button class="btn btn-primary" id="btn-close">完成</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === UTF-8 编码保障 ===
+        document.addEventListener('DOMContentLoaded', function() {
+            // 状态管理
+            const state = {
+                selectedType: null,
+                currentStep: 1,
+                taskData: {}
+            };
+
+            // DOM元素
+            const elements = {
+                cards: document.querySelectorAll('.card'),
+                steps: document.querySelectorAll('.step'),
+                stepConnectors: document.querySelectorAll('.step-connector'),
+                formSection: document.getElementById('form-section'),
+                formIcon: document.getElementById('form-icon'),
+                formTitle: document.getElementById('form-title'),
+                formSubtitle: document.getElementById('form-subtitle'),
+                examplesFill: document.getElementById('examples-fill'),
+                taskInput: document.getElementById('task-input'),
+                contextInput: document.getElementById('context-input'),
+                charCount: document.getElementById('char-count'),
+                charHint: document.getElementById('char-hint'),
+                errorMessage: document.getElementById('error-message'),
+                btnBack: document.getElementById('btn-back'),
+                btnSubmit: document.getElementById('btn-submit'),
+                successOverlay: document.getElementById('success-overlay'),
+                taskSummary: document.getElementById('task-summary'),
+                btnNewTask: document.getElementById('btn-new-task'),
+                btnClose: document.getElementById('btn-close')
+            };
+
+            // 配置数据
+            const config = {
+                bug: {
+                    icon: '🐛',
+                    title: '描述您的Bug',
+                    subtitle: '请详细描述问题现象、复现步骤和预期结果',
+                    placeholder: '请详细描述您遇到的Bug...\n\n例如：\n1. 问题现象：点击登录按钮后页面无反应\n2. 复现步骤：打开登录页 → 输入账号密码 → 点击登录\n3. 预期结果：应跳转到首页\n4. 实际结果：页面无反应，控制台报错',
+                    examples: [
+                        '登录页面点击提交按钮无反应，控制台报404错误',
+                        '用户列表分页切换时，数据重复加载，出现重复条目',
+                        '上传视频文件后，进度条卡在99%不再更新',
+                        '搜索功能输入关键词后，搜索结果为空但实际有匹配数据',
+                        '表单提交后，页面刷新但数据未保存到数据库'
+                    ]
+                },
+                feature: {
+                    icon: '✨',
+                    title: '描述您想要的功能',
+                    subtitle: '请详细描述功能需求、使用场景和预期效果',
+                    placeholder: '请详细描述您想要添加的功能...\n\n例如：\n1. 功能名称：用户修改密码\n2. 使用场景：用户在个人中心需要修改密码\n3. 具体需求：需要验证原密码，新密码需要强度校验\n4. 预期效果：修改成功后提示用户重新登录',
+                    examples: [
+                        '在用户个人中心添加"修改密码"功能，需要验证原密码',
+                        '视频列表页增加按热度、发布时间、点赞数排序的功能',
+                        '添加数据导出功能，支持将报表导出为Excel格式',
+                        '实现消息通知系统，支持站内信和邮件通知',
+                        '添加用户权限管理，支持角色分配和菜单权限控制'
+                    ]
+                },
+                refactor: {
+                    icon: '🔧',
+                    title: '描述需要整理的代码',
+                    subtitle: '请描述当前代码问题、优化目标和约束条件',
+                    placeholder: '请详细描述代码整理需求...\n\n例如：\n1. 当前问题：用户服务类超过2000行，职责不清晰\n2. 优化目标：拆分为多个职责单一的服务类\n3. 约束条件：需要保持现有API接口不变\n4. 验收标准：每个服务类不超过500行，单元测试覆盖率>80%',
+                    examples: [
+                        '用户服务类超过2000行，需要拆分为多个职责单一的服务',
+                        '数据库查询没有索引，列表页加载超过3秒，需要优化查询性能',
+                        '前端组件重复代码多，需要提取公共组件，提高复用性',
+                        'API接口没有统一错误处理，需要添加全局异常处理中间件',
+                        '配置文件硬编码多，需要改为环境变量配置，提高可维护性'
+                    ]
+                }
+            };
+
+            // 卡片点击事件
+            elements.cards.forEach(card => {
+                card.addEventListener('click', function() {
+                    const type = this.dataset.type;
+                    selectCard(type);
+                });
+            });
+
+            // 示例标签点击事件
+            document.addEventListener('click', function(e) {
+                if (e.target.classList.contains('example-tag')) {
+                    const example = e.target.dataset.example;
+                    const type = e.target.closest('.card').dataset.type;
+                    selectCard(type);
+                    setTimeout(() => {
+                        elements.taskInput.value = example;
+                        elements.taskInput.classList.remove('error');
+                        elements.errorMessage.classList.remove('visible');
+                        updateCharCount();
+                        // 滚动到输入框位置
+                        elements.taskInput.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'center' 
+                        });
+                    }, 300);
+                }
+            });
+
+            // 返回按钮
+            elements.btnBack.addEventListener('click', function() {
+                showStep(1);
+            });
+
+            // 提交按钮
+            elements.btnSubmit.addEventListener('click', function() {
+                submitTask();
+            });
+
+            // 新任务按钮
+            elements.btnNewTask.addEventListener('click', function() {
+                resetForm();
+                elements.successOverlay.classList.remove('visible');
+            });
+
+            // 关闭按钮
+            elements.btnClose.addEventListener('click', function() {
+                elements.successOverlay.classList.remove('visible');
+            });
+
+            // 输入验证和字符计数
+            elements.taskInput.addEventListener('input', function() {
+                updateCharCount();
+                if (this.value.length >= 10) {
+                    this.classList.remove('error');
+                    elements.errorMessage.classList.remove('visible');
+                }
+            });
+
+            // 选择卡片
+            function selectCard(type) {
+                state.selectedType = type;
+                
+                // 更新卡片样式
+                elements.cards.forEach(card => {
+                    card.classList.remove('selected');
+                    if (card.dataset.type === type) {
+                        card.classList.add('selected');
+                    }
+                });
+
+                // 更新表单内容
+                updateFormContent(type);
+                
+                // 显示表单
+                showStep(2);
+            }
+
+            // 更新表单内容
+            function updateFormContent(type) {
+                const configData = config[type];
+                
+                elements.formIcon.textContent = configData.icon;
+                elements.formTitle.textContent = configData.title;
+                elements.formSubtitle.textContent = configData.subtitle;
+                elements.taskInput.placeholder = configData.placeholder;
+                
+                // 更新示例标签
+                elements.examplesFill.innerHTML = '';
+                configData.examples.forEach(example => {
+                    const tag = document.createElement('span');
+                    tag.className = 'example-fill';
+                    tag.textContent = example.length > 20 ? example.substring(0, 20) + '...' : example;
+                    tag.title = example;
+                    tag.addEventListener('click', function() {
+                        elements.taskInput.value = example;
+                        elements.taskInput.classList.remove('error');
+                        elements.errorMessage.classList.remove('visible');
+                        updateCharCount();
+                        elements.taskInput.focus();
+                        // 滚动到输入框位置
+                        elements.taskInput.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'center' 
+                        });
+                    });
+                    elements.examplesFill.appendChild(tag);
+                });
+                
+                // 重置字符计数
+                updateCharCount();
+            }
+
+            // 更新字符计数
+            function updateCharCount() {
+                const currentLength = elements.taskInput.value.length;
+                const minLength = 10;
+                const remaining = Math.max(0, minLength - currentLength);
+                
+                elements.charCount.textContent = `${currentLength}/${minLength}`;
+                
+                if (currentLength >= minLength) {
+                    elements.charCount.classList.remove('error', 'warning');
+                    elements.charCount.classList.add('success');
+                    elements.charHint.textContent = '已达到最低要求';
+                    elements.charHint.classList.remove('error');
+                } else if (remaining <= 3 && remaining > 0) {
+                    elements.charCount.classList.remove('error', 'success');
+                    elements.charCount.classList.add('warning');
+                    elements.charHint.textContent = `还需要输入 ${remaining} 个字符`;
+                    elements.charHint.classList.remove('error');
+                } else {
+                    elements.charCount.classList.remove('success', 'warning');
+                    elements.charCount.classList.add('error');
+                    elements.charHint.textContent = `还需要输入 ${remaining} 个字符`;
+                    elements.charHint.classList.add('error');
+                }
+            }
+
+            // 显示步骤
+            function showStep(step) {
+                state.currentStep = step;
+                
+                // 更新步骤指示器
+                elements.steps.forEach((stepEl, index) => {
+                    const stepNum = index + 1;
+                    stepEl.classList.remove('active', 'completed');
+                    
+                    if (stepNum < step) {
+                        stepEl.classList.add('completed');
+                    } else if (stepNum === step) {
+                        stepEl.classList.add('active');
+                    }
+                });
+
+                // 更新连接线
+                elements.stepConnectors.forEach((connector, index) => {
+                    connector.classList.remove('active');
+                    if (index < step - 1) {
+                        connector.classList.add('active');
+                    }
+                });
+
+                // 显示/隐藏表单
+                if (step === 2) {
+                    elements.formSection.classList.add('visible');
+                    // 滚动到表单位置
+                    setTimeout(() => {
+                        elements.formSection.scrollIntoView({ 
+                            behavior: 'smooth', 
+                            block: 'start' 
+                        });
+                    }, 100);
+                } else {
+                    elements.formSection.classList.remove('visible');
+                }
+            }
+
+            // 提交任务
+            function submitTask() {
+                const taskText = elements.taskInput.value.trim();
+                const contextText = elements.contextInput.value.trim();
+                
+                // 验证
+                if (taskText.length < 10) {
+                    elements.taskInput.classList.add('error');
+                    elements.errorMessage.classList.add('visible');
+                    elements.taskInput.focus();
+                    updateCharCount();
+                    return;
+                }
+
+                // 准备提交数据
+                const now = new Date();
+                const submitData = {
+                    type: state.selectedType,
+                    typeName: config[state.selectedType].title.replace('描述您的', '').replace('描述您想要的', '').replace('描述需要整理的', ''),
+                    task: taskText,
+                    context: contextText || null,
+                    timestamp: now.toISOString()
+                };
+
+                // 模拟提交
+                elements.btnSubmit.disabled = true;
+                elements.btnSubmit.innerHTML = '<span class="loading"></span> 提交中...';
+
+                setTimeout(() => {
+                    // 显示成功弹窗
+                    showSuccessModal(submitData);
+                    
+                    // 在控制台输出标准JSON对象
+                    console.log('%c[Crow5 任务决策] 任务提交成功', 'color: #10b981; font-weight: bold;');
+                    console.log(JSON.stringify(submitData, null, 2));
+                    
+                    // 重置按钮状态
+                    elements.btnSubmit.disabled = false;
+                    elements.btnSubmit.innerHTML = '<span class="btn-text">提交任务</span>';
+                }, 1500);
+            }
+
+            // 显示成功弹窗
+            function showSuccessModal(data) {
+                const displayTime = new Date(data.timestamp).toLocaleString('zh-CN');
+                const summary = `任务类型：${data.typeName}
+任务描述：${data.task}
+${data.context ? '补充信息：' + data.context : ''}
+提交时间：${displayTime}`;
+                
+                elements.taskSummary.textContent = summary;
+                elements.successOverlay.classList.add('visible');
+            }
+
+            // 重置表单
+            function resetForm() {
+                state.selectedType = null;
+                state.currentStep = 1;
+                
+                // 重置卡片选择
+                elements.cards.forEach(card => {
+                    card.classList.remove('selected');
+                });
+                
+                // 重置表单输入
+                elements.taskInput.value = '';
+                elements.contextInput.value = '';
+                elements.taskInput.classList.remove('error');
+                elements.errorMessage.classList.remove('visible');
+                
+                // 重置字符计数
+                updateCharCount();
+                
+                // 返回第一步
+                showStep(1);
+                
+                // 滚动到顶部
+                window.scrollTo({ 
+                    top: 0, 
+                    behavior: 'smooth' 
+                });
+            }
+
+            // 键盘快捷键
+            document.addEventListener('keydown', function(e) {
+                // Enter键提交（当焦点在输入框时）
+                if (e.key === 'Enter' && e.ctrlKey && document.activeElement === elements.taskInput) {
+                    e.preventDefault();
+                    submitTask();
+                }
+                
+                // Escape键关闭弹窗
+                if (e.key === 'Escape' && elements.successOverlay.classList.contains('visible')) {
+                    elements.successOverlay.classList.remove('visible');
+                }
+            });
+
+            // 初始化
+            showStep(1);
+            updateCharCount();
+            
+            // 添加一些动画效果
+            setTimeout(() => {
+                document.querySelectorAll('.card').forEach((card, index) => {
+                    setTimeout(() => {
+                        card.style.opacity = '1';
+                        card.style.transform = 'translateY(0)';
+                    }, index * 100);
+                });
+            }, 300);
+
+            console.log('Crow5 任务决策引导界面已加载完成');
+        });
+    </script>
+</body>
+</html>

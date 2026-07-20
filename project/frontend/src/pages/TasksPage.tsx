@@ -1,0 +1,106 @@
+import { useEffect, useState } from "react";
+import { Typography, Card, Table, Tag, Space, Button, message, Spin } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
+import type { ColumnsType } from "antd/es/table";
+import { listTasks } from "../api/client";
+import type { TaskItem } from "../api/types";
+
+const STATUS_COLOR: Record<string, string> = {
+  succeeded: "green",
+  running: "blue",
+  failed: "red",
+  pending: "default",
+  queued: "default",
+};
+
+const KIND_LABELS: Record<string, string> = {
+  search: "搜索",
+  transcription: "转写",
+  avatar: "数字人",
+  copywriting: "文案",
+  video_editing: "视频编辑",
+  publishing: "发布",
+};
+
+export default function TasksPage() {
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  const fetchTasks = async () => {
+    setLoading(true);
+    try {
+      const resp = await listTasks();
+      setTasks(resp.items);
+      setTotal(resp.total);
+    } catch (err) {
+      message.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTasks();
+  }, []);
+
+  const columns: ColumnsType<TaskItem> = [
+    {
+      title: "任务类型",
+      dataIndex: "kind",
+      width: 120,
+      render: (v: string) => (
+        <Tag color="geekblue">{KIND_LABELS[v] || v}</Tag>
+      ),
+    },
+    { title: "标题", dataIndex: "title", ellipsis: true },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 120,
+      render: (v: string) => (
+        <Tag color={STATUS_COLOR[v] || "default"}>{v}</Tag>
+      ),
+    },
+    {
+      title: "进度",
+      dataIndex: "progress",
+      width: 100,
+      render: (v: number) => `${v}%`,
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 200,
+      render: (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN") : "-"),
+    },
+  ];
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Space>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          任务中心
+        </Typography.Title>
+        <Button
+          icon={<ReloadOutlined />}
+          onClick={fetchTasks}
+          loading={loading}
+        >
+          刷新
+        </Button>
+      </Space>
+      <Card>
+        <Spin spinning={loading}>
+          <Table
+            rowKey="task_id"
+            columns={columns}
+            dataSource={tasks}
+            pagination={{ pageSize: 20, showTotal: () => `共 ${total} 条` }}
+            size="middle"
+          />
+        </Spin>
+      </Card>
+    </Space>
+  );
+}

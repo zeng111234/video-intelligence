@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from pydantic import HttpUrl
+
 from src.models import (
     DataSource,
     HeatLevel,
@@ -65,7 +67,7 @@ def build_mock_candidates(count: int = 24) -> list[VideoCandidate]:
                 platform=platform,
                 category=categories[index % len(categories)],
                 published_at=NOW - timedelta(hours=2 + index * 2),
-                source_url=f"https://example.com/videos/{video_id}",
+                source_url=HttpUrl(f"https://example.com/videos/{video_id}"),
                 source_type=DataSource.MOCK,
                 metrics=metrics,
                 heat=HeatResult(

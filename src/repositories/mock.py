@@ -202,11 +202,11 @@ class MockRepository:
     def list_sampling_checkpoints(
         self, keyword: str | None = None
     ) -> list[SamplingCheckpoint]:
-        items = self._sampling_checkpoints.values()
+        items: list[SamplingCheckpoint] = list(self._sampling_checkpoints.values())
         if keyword:
-            items = (
+            items = [
                 item for item in items if item.keyword.casefold() == keyword.casefold()
-            )
+            ]
         return sorted(items, key=lambda item: item.due_at)
 
     def save_search_batch(self, batch: SearchBatch) -> None:

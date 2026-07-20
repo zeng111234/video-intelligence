@@ -1,5 +1,8 @@
 import streamlit as st
 
+from collections.abc import MutableMapping
+from typing import Any
+
 from src.app_state import initialize_state, get_context_budget
 
 st.set_page_config(
@@ -13,8 +16,8 @@ initialize_state()
 
 # 预算检查：在页面导航执行前检查内存预算
 context_budget = get_context_budget()
-# 将SessionStateProxy转换为普通字典以满足类型检查
-session_state_dict = dict(st.session_state)
+# 将SessionStateProxy转换为类型安全的字典
+session_state_dict: MutableMapping[str, Any] = {str(k): v for k, v in st.session_state.items()}
 is_within_budget, current_mb, budget_mb = context_budget.check_session_budget(
     session_state_dict
 )

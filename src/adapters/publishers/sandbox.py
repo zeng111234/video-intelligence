@@ -87,7 +87,7 @@ class PlatformPublisherAdapter:
     def platform(self) -> str:
         return self._platform.value
 
-    def capabilities(self) -> dict[str, str | bool]:
+    def capabilities(self) -> dict[str, str | bool | list[str]]:
         return {
             "provider_name": self._platform.value,
             "display_name": f"{self._platform.value} 发布",

@@ -332,7 +332,10 @@ class KeywordTrendService:
             (item for item in snapshots if item.likes is not None),
             key=lambda item: item.sampled_at,
         )
-        return float(visible[-1].likes) if visible else None
+        if not visible:
+            return None
+        latest_likes = visible[-1].likes
+        return float(latest_likes) if latest_likes is not None else None
 
     @classmethod
     def _likes_per_hour(

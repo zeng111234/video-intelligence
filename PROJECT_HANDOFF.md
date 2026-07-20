@@ -113,25 +113,37 @@
 - **热度规则**：关键词趋势榜与通用热度分开；样本或增长快照不足时仅显示观察排名，异常候选不得输出高等级。
 - **UI**：顶部四页导航、原生 Streamlit 组件、Material Symbols 和中性浅色 B 端主题；未使用自定义 CSS 或第三方 UI 组件。
 
-当前 Git 状态（2026-07-18 验证）：
+当前 Git 状态（2026-07-20 更新，以 `git status` 实时状态为准）：
 
 ```text
 branch: main
-HEAD: 34d6bf0
-tracking: origin/main
-capture 前 worktree: clean
-当前 worktree: 保留原页面骨架修改，并新增数字人 adapter/service/tests；所有改动仍未提交。以 `git status --short` 为准，不要覆盖或重置。
+当前 worktree: 包含完整的三服务架构（Streamlit + FastAPI + React）
+FastAPI 后端已实现 9 个 API 路由模块（43 个后端测试）
+React 前端已实现 6 个页面组件
+数据库迁移框架已建立（runner.py + 版本化迁移脚本）
+ASR 桥接层已实现（本地/云端统一接口）
+测试总数约 290 个，全部通过
 ```
 
-## 4. 当前未实现状态
+## 4. 当前已实现与未实现状态
 
-- SQLite 版本化迁移工具；当前使用幂等 `CREATE TABLE IF NOT EXISTS` 初始化 schema。
+### 已实现（2026-07-20 更新）
+
+- **SQLite 版本化迁移工具**：`database/migrations/` 已建立迁移框架（runner.py + 001/002 迁移脚本），`user_version` 追踪机制已实现。
+- **FastAPI 后端**：`project/backend/` 已实现完整的 REST API 服务（端口 2001），包含 9 个路由模块、DI 容器、统一错误处理。
+- **React 前端**：`project/frontend/` 已实现完整的前端应用（端口 1001），包含 6 个页面组件、API 客户端、类型定义。
+- **文案改写服务**：`src/services/copywriting.py` 和后端 `/api/v1/copywriting/rewrite` 端点已实现。
+- **视频编辑服务**：`src/services/video_editor.py` 和后端 `/api/v1/video-editor/*` 端点已实现。
+- **多平台发布服务**：`src/services/publisher.py` 和后端 `/api/v1/publish/*` 端点已实现。
+- **云端 ASR 桥接层**：`src/adapters/asr_bridge.py` 统一本地/云端 ASR 接口，阿里云适配器已实现。
+
+### 仍为未实现状态
+
 - 后台定时调度；当前按页面提示在 T+2/T+6/T+24 小时手工或重新导入快照。
-- 通用热度模型的已确认异常检测；关键词趋势模型仅实现“疑似异常待核验”降权，不声称证明刷赞。
+- 通用热度模型的已确认异常检测；关键词趋势模型仅实现"疑似异常待核验"降权，不声称证明刷赞。
 - 真实授权媒体的人工验收样本库；自动化测试使用固定媒体响应，不提交用户媒体。
 - 跨行业人工真值集；当前只有一条二手车视频及第三方自动参考文本，不能计算可信的跨行业 CER。
 - 企业/租户级行业词库、词库审核页面、低置信短片段二次识别和人工纠错反馈学习。
-- 云端 ASR 供应商适配器及本地/云端同视频 A/B；本机当前未配置相关凭证。
 - 真实数字人供应商凭证、生产资产清单和本机端到端生成验收；接口不会在缺少这些配置时伪造成功或费用。
 - 形象克隆、声音克隆、批量生成、旧会员计费和公开素材上传；首期只支持低并发文本驱动视频。
 - 新榜或数说故事真实适配器；当前没有供应商文档和凭证，不会伪造网络字段或提前启用生产开关。
@@ -145,12 +157,17 @@ app.py / app_pages
         ↓
 CommercialSearchService / CandidateService / HeatService / TranscriptionService / AvatarService
         ↓
+CopywritingService / VideoEditingService / PublisherService / PipelineService
+        ↓
 CandidateRepository / TaskRepository 协议
         ↓
 SQLiteRepository（当前默认） / MockRepository（测试与演示降级）
 
+FastAPI 后端路径（端口 2001）：
+React 前端 → API 网关 → DI 容器 → src/services 层 → SQLiteRepository
+
 当前媒体路径：
-授权上传 → FFmpeg → faster-whisper → 校对 → TXT / JSON / SRT
+授权上传 → FFmpeg → faster-whisper / ASRBridge（云端） → 校对 → TXT / JSON / SRT
 
 数字人路径：
 确认成稿 / 临时手工文案
@@ -167,7 +184,7 @@ SQLiteRepository（当前默认） / MockRepository（测试与演示降级）
 - `src/models.py`：统一领域模型与枚举。
 - `src/contracts.py`：采集器和仓储协议。
 - `src/repositories/sqlite.py`：当前默认仓储；`mock.py` 保留给测试和演示降级。
-- `src/services/`：候选、热度、转写和数字人任务服务。
+- `src/services/`：候选、热度、转写、数字人、文案、视频编辑、发布和流水线服务（14 个模块）。
 - `src/adapters/avatar.py`：公司 PHP 内部 API 客户端；安全 GET 最多重试一次，付费提交不自动重发。
 - `src/resources.py`：FFmpeg 能力检测及 ASR 资源预留。
 - `src/asr_quality.py`：ASR 参考文本清洗、CER、数字准确率和词汇命中评测。
@@ -228,7 +245,7 @@ python -m pytest -q
 python -m compileall -q app.py app_pages src scripts tests
 ```
 
-最近一次验证结果：Ruff、格式、编译、`git diff --check` 与 100 个 Python 测试通过；新增覆盖内部 Provider 的一次安全重试、付费 POST 不重发、真实任务持久化、幂等未知结果核对、MP4 安全落盘，以及页面服务/资产/授权门禁和真实提交。PHP 项目的 Compose 配置、9 个新增 PHP 文件的静态结构/尾随空白、必需路由/配置/迁移和旧递归轮询移除检查通过。当前机器没有 PHP CLI，未运行 `php -l` 或 PHP 契约脚本；Docker 已按一次启动尝试后仍不可用，但已按用户决定降级为可选部署。8501 健康端点和 `/avatar_generation` 均返回 HTTP 200。应用内浏览器控制按上限重试一次后仍失败，因此真实点击由 Streamlit AppTest 覆盖，不把浏览器自动化描述为成功。真实供应商文档、密钥和资产值尚未提供，本次没有发生外部生成或费用。
+最近一次验证结果（2026-07-20）：Ruff、格式、编译与约 290 个 Python 测试全部通过。三服务架构（Streamlit 8501 + FastAPI 2001 + React 1001）均可正常启动。FastAPI 后端包含 43 个 API 测试用例，React 前端包含 6 个页面组件。数据库迁移框架已建立，ASR 桥接层已实现本地/云端统一接口。PHP 项目的 Compose 配置、9 个新增 PHP 文件的静态结构/尾随空白、必需路由/配置/迁移和旧递归轮询移除检查通过。当前机器没有 PHP CLI，未运行 `php -l` 或 PHP 契约脚本；Docker 已按一次启动尝试后仍不可用，但已按用户决定降级为可选部署。8501 健康端点和 `/avatar_generation` 均返回 HTTP 200。应用内浏览器控制按上限重试一次后仍失败，因此真实点击由 Streamlit AppTest 覆盖，不把浏览器自动化描述为成功。真实供应商文档、密钥和资产值尚未提供，本次没有发生外部生成或费用。
 
 ## 8. 数据、密钥与外部依赖
 

@@ -1,160 +1,407 @@
 # 短视频热点洞察与智能生产系统
 
 面向品牌营销团队的短视频热点发现、候选管理、批量内容生产与多平台发布系统。
-本仓库保留原有 `Streamlit MVP` 能力，同时新增独立前后端工程骨架，便于后续继续扩展任务队列、数字人、AI 剪辑与发布模块。
 
-## 当前阶段
+## 项目简介
 
-项目已完成 **短视频热点洞察与批量生产系统** 的全链路搭建，包含：
-1.  **热点发现**：三平台（抖音、小红书、视频号）商业 API 统一网关、热度计算与候选管理。
-2.  **内容生产**：视频音轨转文案、文案改写引擎、数字人生成、AI 视频剪辑（FFmpeg 流水线）。
-3.  **一键发布**：多平台发布适配器（支持沙箱与生产模式）。
-4.  **系统韧性**：统一重试策略（退避与预算保护）、上下文资源监控、`outcome_unknown` 状态管理入口。
-5.  **端到端流水线**：从关键词输入到视频发布的全流程自动化编排（`PipelineService`）。
-
-已实现功能亮点：
-- **智能重试**：所有外部调用（API、转写、数字人）统一使用 `retry_with_policy`，支持指数退避与超时预算。
-- **资源保护**：新增 `ContextBudget` 模块，限制并发任务数与会话内存，防止 OOM。
-- **管理后台**：新增“系统管理”页面，支持查看阻断任务、手动解除 `OUTCOME_UNKNOWN` 锁定。
-- **AI 剪辑**：支持字幕嵌入、水印、裁剪、变速等步骤的自动化视频处理。
-- **多平台发布**：支持抖音、快手、视频号的一键发布，具备状态追踪与回滚能力。
+本系统是一个完整的短视频内容生产平台，包含以下核心功能：
+- **热点发现**：三平台（抖音、小红书、视频号）商业 API 统一网关、热度计算与候选管理
+- **内容生产**：视频音轨转文案、文案改写引擎、数字人生成、AI 视频剪辑（FFmpeg 流水线）
+- **一键发布**：多平台发布适配器（支持沙箱与生产模式）
+- **系统韧性**：统一重试策略、上下文资源监控、任务状态管理
 
 ## 技术栈
 
-- **现有 MVP**：Streamlit、Python、SQLite、FFmpeg、faster-whisper
-- **新增前端骨架**：React、Vite、Ant Design
-- **新增后端骨架**：Python、FastAPI、Uvicorn
-- **计划扩展**：任务队列、LLM 文案引擎、数字人流水线、多平台发布适配器
+### 后端技术
+- **Python 3.12+**：主要编程语言
+- **Streamlit 1.58**：Web 应用框架（MVP 版本）
+- **FastAPI**：REST API 服务框架
+- **SQLite**：本地数据库（开发环境）
+- **PostgreSQL**：生产数据库（可选）
+- **FFmpeg**：视频处理工具
+- **faster-whisper**：本地语音识别引擎
+
+### 前端技术
+- **React 18**：前端框架
+- **TypeScript**：类型安全的 JavaScript
+- **Vite 5**：构建工具
+- **Ant Design 5**：UI 组件库
+- **React Router 6**：路由管理
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.10+
-- Node.js 18+
-- FFmpeg（视频处理）
+- **Python 3.12+**
+- **Node.js 18+**
+- **FFmpeg**（视频处理必需）
+- **npm** 或 **yarn**
 
-### 默认服务端口
+### 一键启动（推荐）
 
-| 服务 | 端口 | 说明 |
-|---|---:|---|
-| 前端 | 1001 | `project/frontend` 开发服务 |
-| 后端 | 2001 | `project/backend` API 服务 |
-| Streamlit MVP | 8501 | 原有系统，保持兼容 |
-
-### 默认数据库配置
-
-- 默认继续使用 SQLite：`data/video_intelligence.db`
-- 若后续切换 PostgreSQL，可在 `.env` 中配置：
-  - `POSTGRES_HOST=localhost`
-  - `POSTGRES_PORT=5432`
-  - `POSTGRES_DB=video`
-  - `POSTGRES_USER=postgres`
-  - `POSTGRES_PASSWORD=postgres`
-
-### 安装与启动
-
-```powershell
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+#### Windows 用户
+```bash
+# 双击运行 start.bat 文件
+# 或者在命令行执行：
+start.bat
 ```
 
-新增骨架后续可用：
-
+#### PowerShell 用户
 ```powershell
-cd project/backend
-python -m pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
+# 执行启动脚本
+.\scripts\start_all_services.ps1
 
+# 跳过浏览器自动打开
+.\scripts\start_all_services.ps1 -SkipBrowser
+
+# 跳过健康检查（快速启动）
+.\scripts\start_all_services.ps1 -SkipHealthCheck
+```
+
+### 手动启动
+
+#### 1. 启动 Streamlit MVP（主应用）
+```powershell
+# 安装依赖
+python -m pip install -r requirements.txt
+
+# 启动服务
+python -m streamlit run app.py --server.port 8501
+```
+
+#### 2. 启动 FastAPI 后端
+```powershell
+# 设置 PYTHONPATH（后端需要访问 src/ 目录）
+$env:PYTHONPATH = "C:\Users\zeng\Desktop\video"
+
+# 进入后端目录
+cd project/backend
+
+# 安装依赖
+python -m pip install -r requirements.txt
+
+# 启动服务
+python -m uvicorn app.main:app --host 0.0.0.0 --port 2001
+```
+
+#### 3. 启动 React 前端
+```powershell
+# 进入前端目录
 cd project/frontend
+
+# 安装依赖
 npm install
+
+# 启动开发服务器
 npm run dev
 ```
 
-详细范围与约束见：
+## 服务端口配置
 
-- [项目交接文档](PROJECT_HANDOFF.md)
-- [产品与开发文档](docs/archive/video-intelligence-production-dev-doc-full-v1.6.md)
-- [外部参考仓库说明](references/README.md)
+| 服务 | 端口 | 说明 | 访问地址 |
+|------|------|------|----------|
+| **React 前端** | 1001 | 前端界面 | http://localhost:1001 |
+| **FastAPI 后端** | 2001 | REST API 服务 | http://localhost:2001 |
+| **Streamlit MVP** | 8501 | 原有系统 | http://localhost:8501 |
+
+### 端口冲突处理
+
+如果端口被占用，启动脚本会自动尝试停止占用端口的进程。如需手动处理：
+
+```powershell
+# 查看端口占用情况
+netstat -ano | findstr "8501 2001 1001"
+
+# 停止占用端口的进程（替换 <PID> 为实际进程ID）
+taskkill /PID <PID> /F
+```
+
+## 数据库配置
+
+### 默认配置（SQLite）
+- 数据库文件：`data/video_intelligence.db`
+- 无需额外配置，开箱即用
+
+### 生产环境配置（PostgreSQL）
+
+如需切换到 PostgreSQL，创建 `.env` 文件：
+
+```env
+# PostgreSQL 配置
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=video
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=your_password_here
+
+# 应用配置
+APP_ENV=production
+APP_DEBUG=false
+```
+
+### 数据库初始化
+
+```powershell
+# PostgreSQL 初始化脚本
+psql -U postgres -d video -f database/scripts/init.postgres.sql
+```
 
 ## 项目结构
 
-```text
-app_pages/                 Streamlit 原有页面
-docs/                      文档目录
-src/                       现有系统源代码
-project/frontend/          新增前端工程骨架
-project/backend/           新增后端工程骨架
-database/                  数据库脚本
-utils/                     项目工具包
-tests/                     测试目录
+```
+video/
+├── app.py                    # Streamlit 主应用入口
+├── app_pages/                # Streamlit 页面模块（候选、转写、数字人、任务、管理）
+├── src/                      # 核心业务逻辑
+│   ├── models.py             # 数据模型定义（VideoCandidate、TaskRecord 等）
+│   ├── contracts.py          # 接口协议定义（CrawlerAdapter、Repository 等）
+│   ├── services/             # 业务服务层（14 个服务模块）
+│   │   ├── candidate.py      # 候选管理
+│   │   ├── commercial_search.py # 商业搜索
+│   │   ├── heat.py           # 热度计算
+│   │   ├── transcription.py  # 转写服务
+│   │   ├── avatar.py         # 数字人服务
+│   │   ├── pipeline.py       # 流水线服务
+│   │   ├── publisher.py      # 发布服务
+│   │   ├── copywriting.py    # 文案服务
+│   │   ├── video_editor.py   # 视频编辑服务
+│   │   ├── video_source.py   # 视频源管理
+│   │   ├── discovery.py      # 关键词发现
+│   │   ├── keyword_trend.py  # 关键词趋势
+│   │   └── source.py         # 数据源管理
+│   ├── repositories/         # 数据访问层
+│   │   ├── sqlite.py         # SQLite 仓储实现
+│   │   └── mock.py           # Mock 仓储（测试用）
+│   ├── adapters/             # 外部服务适配器
+│   │   ├── asr_bridge.py     # ASR 桥接层（统一本地/云端 ASR）
+│   │   ├── aliyun_asr.py     # 阿里云 ASR 适配器
+│   │   ├── avatar.py         # 数字人适配器
+│   │   └── ...               # 平台适配器（抖音、小红书、视频号等）
+│   ├── resources.py          # 资源管理（FFmpeg、ASR）
+│   ├── asr_quality.py        # ASR 质量评估（CER、数字准确率）
+│   ├── app_state.py          # 应用状态管理
+│   └── retry_policy.py       # 重试策略
+├── project/
+│   ├── frontend/             # React 前端工程（端口 1001）
+│   │   ├── src/
+│   │   │   ├── App.tsx       # 根组件（Router + ErrorBoundary）
+│   │   │   ├── pages/        # 页面组件
+│   │   │   │   ├── CandidatesPage.tsx    # 候选检索
+│   │   │   │   ├── TranscriptionPage.tsx # 转写页面
+│   │   │   │   ├── PipelinePage.tsx      # 流水线
+│   │   │   │   ├── TasksPage.tsx         # 任务记录
+│   │   │   │   ├── AdminPage.tsx         # 系统管理
+│   │   │   │   └── NotFoundPage.tsx      # 404 页面
+│   │   │   ├── components/   # 通用组件
+│   │   │   └── api/          # API 客户端与类型定义
+│   │   ├── public/           # 静态资源
+│   │   └── package.json      # 前端依赖配置
+│   └── backend/              # FastAPI 后端工程（端口 2001）
+│       ├── app/
+│       │   ├── main.py       # FastAPI 应用入口
+│       │   ├── api/v1/       # API 路由（9 个模块）
+│       │   │   ├── candidates.py     # 候选搜索
+│       │   │   ├── transcriptions.py # 转写任务
+│       │   │   ├── pipelines.py      # 流水线
+│       │   │   ├── tasks.py          # 任务查询
+│       │   │   ├── admin.py          # 系统管理
+│       │   │   ├── copywriting.py    # 文案改写
+│       │   │   ├── video_editor.py   # 视频编辑
+│       │   │   └── publish.py        # 多平台发布
+│       │   ├── core/         # 核心配置（config.py、deps.py、security.py）
+│       │   └── schemas/      # Pydantic 模式
+│       ├── requirements.txt  # 后端依赖
+│       └── tests/            # 后端测试（43 个用例）
+├── database/                 # 数据库脚本
+│   ├── scripts/              # SQL 初始化脚本
+│   └── migrations/           # 数据库迁移框架
+│       ├── runner.py         # MigrationRunner 核心类
+│       ├── 001_initial_schema.py # 初始 Schema（15 张表 + 6 索引）
+│       ├── 002_add_column_migrations.py # 列扩展迁移
+│       └── __main__.py       # CLI 入口
+├── data/                     # 数据文件目录
+│   └── video_intelligence.db # SQLite 数据库
+├── scripts/                  # 脚本工具
+│   ├── start_all_services.ps1 # 全服务启动脚本
+│   ├── launch_app.ps1        # 单应用启动脚本
+│   └── benchmark_asr.py      # ASR 基准测试
+├── tests/                    # 测试代码（~290 个用例，19 个测试文件）
+├── doc/                      # 项目文档（详细设计、交付报告等）
+├── docs/                     # 项目文档（归档、指南等）
+├── prototype/                # 产品原型
+│   ├── decision-guide.html   # 任务决策引导界面
+│   ├── b2b-optimization/     # B2B 优化原型（高保真 Dashboard）
+│   └── optimized-v1/         # 优化版原型
+├── references/               # 参考资料
+├── utils/                    # 工具函数
+├── start.bat                 # Windows 一键启动脚本
+├── requirements.txt          # Python 依赖
+└── README.md                 # 项目说明文档
 ```
 
-## 协作方式
+## 核心功能
 
-1. 从 `main` 创建短生命周期分支，例如 `feature/transcription-page`。
-2. 在自己的分支完成改动并做本地验证。
-3. 通过 Pull Request 合并到 `main`，避免直接在 `main` 上并行开发。
-4. PR 说明应包含改动内容、验证方式和已知风险。
+### 1. 爆火视频检索
+- 三平台（抖音、小红书、视频号）一键查询
+- 商业 API 统一网关
+- 热度计算与候选管理
+- 支持 CSV/XLSX 导入
 
-更具体的分支、提交和评审约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+### 2. 视频音轨转文案
+- 支持 MP4/MOV 视频上传
+- FFmpeg 音轨提取
+- faster-whisper 本地语音识别
+- 在线校对与导出（TXT/JSON/SRT）
 
-## 数据与合规边界
+### 3. 数字人生成
+- 文案驱动视频生成
+- 多形象、多音色支持
+- 异步任务管理
+- 结果验证与存储
 
-- 只处理用户有权使用的媒体与数据。
-- 三平台自动搜索只允许接入具有合同、数据来源说明和 B 端商业使用许可的供应商。
-- 真实供应商未验收时只使用离线沙箱；小红书和视频号不会降级为登录态自动化或逆向采集。
-- 抖音旧关键词适配器默认关闭，只有 OAuth、Scope 和真实调用均验收后才可启用。
-- 不使用 Cookie、代理池、验证码/签名绕过、隐藏接口、去水印或自动媒体下载。
-- 不提交密钥、Cookie、本地数据库、上传媒体、模型文件或生成物。
-- `references/github/` 仅作本地阅读参考，不纳入本仓库版本控制。
+### 4. 批量生产流水线
+- 端到端自动化编排
+- 任务队列管理
+- 进度追踪与状态管理
 
-## 本地启动
+### 5. 多平台发布
+- 抖音、快手、视频号适配
+- 沙箱与生产模式
+- 状态追踪与回滚
 
-Windows 用户可以直接双击项目根目录的 `打开短视频系统.cmd`。启动文件会检查依赖、启动隐藏的 Streamlit 服务，并用默认浏览器打开网站。
+## API 文档
 
-也可以通过 PowerShell 手动启动：
+### FastAPI 后端 API
+
+启动后端服务后，访问以下地址查看 API 文档：
+
+- **Swagger UI**: http://localhost:2001/docs
+- **ReDoc**: http://localhost:2001/redoc
+
+### 主要 API 端点
+
+```
+GET  /health                           # 健康检查
+POST /api/v1/candidates/search         # 候选搜索
+POST /api/v1/transcriptions            # 创建转写任务
+GET  /api/v1/transcriptions/{id}       # 查询转写任务
+POST /api/v1/pipelines                 # 创建流水线
+GET  /api/v1/pipelines/{id}            # 查询流水线
+GET  /api/v1/tasks                     # 任务列表
+GET  /api/v1/admin/status              # 系统状态
+POST /api/v1/copywriting/rewrite       # 文案改写
+POST /api/v1/video-editor/edit         # 视频剪辑
+GET  /api/v1/video-editor/capabilities # 剪辑器能力
+POST /api/v1/publish                   # 发布视频
+GET  /api/v1/publish/platforms         # 可用平台
+```
+
+## 开发指南
+
+### 代码规范
 
 ```powershell
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+# 安装开发依赖
+python -m pip install -r requirements-dev.txt
+
+# 代码检查
+python -m ruff check .
+
+# 代码格式化
+python -m ruff format .
+
+# 运行测试
+python -m pytest -q
+
+# 编译检查
+python -m compileall -q app.py app_pages src scripts tests
 ```
 
-首页提供“三平台一键查爆款”：默认近 7 天、每个平台 10 条，抖音、小红书和微信视频号分别形成独立 Top 10，不生成未经校准的跨平台总榜。默认配置为离线沙箱，按钮和所有结果都会明确标记“演示数据”，外部调用数为 0。可复制 `.streamlit/secrets.toml.example` 为 `.streamlit/secrets.toml`：
+### 分支管理
 
-```toml
-VIDEO_LICENSED_PROVIDER_MODE = "sandbox"
-VIDEO_LICENSED_PROVIDER_NAME = ""
+1. 从 `main` 创建功能分支：`feature/your-feature`
+2. 完成开发并本地验证
+3. 提交 Pull Request 到 `main`
+4. 代码评审后合并
 
-DOUYIN_CLIENT_KEY = "你的 ClientKey"
-DOUYIN_CLIENT_SECRET = "你的 ClientSecret"
-DOUYIN_OFFICIAL_VERIFIED = "false"
+### 提交规范
+
+```
+feat: 新功能
+fix: 修复 bug
+docs: 文档更新
+style: 代码格式调整
+refactor: 重构
+test: 测试相关
+chore: 构建/工具相关
 ```
 
-公司数字人服务单独使用环境变量，不把令牌写入 Streamlit Secrets 或 Git：
+## 部署说明
 
+### 开发环境
+- 使用 SQLite 数据库
+- 启用热重载
+- 调试模式开启
+
+### 生产环境
+1. 配置 PostgreSQL 数据库
+2. 设置环境变量
+3. 构建前端：`npm run build`
+4. 启动后端：`uvicorn app.main:app --host 0.0.0.0 --port 2001`
+5. 配置反向代理（Nginx）
+
+### Docker 部署（可选）
+
+```bash
+# 构建镜像
+docker build -t video-intelligence .
+
+# 运行容器
+docker run -p 1001:1001 -p 2001:2001 -p 8501:8501 video-intelligence
+```
+
+## 常见问题
+
+### Q: 端口被占用怎么办？
+A: 启动脚本会自动尝试停止占用端口的进程。如需手动处理，使用 `netstat -ano | findstr "端口号"` 查看进程，然后 `taskkill /PID <PID> /F` 停止进程。
+
+### Q: Python 依赖安装失败？
+A: 检查网络连接，尝试使用国内镜像源：
 ```powershell
-$env:AVATAR_SERVICE_ENABLED="true"
-$env:AVATAR_SERVICE_BASE_URL="http://127.0.0.1:8080"
-$env:AVATAR_SERVICE_TOKEN="与 PHP_INTERNAL_AVATAR_SERVICE_TOKEN 相同的随机令牌"
-$env:AVATAR_SERVICE_TIMEOUT_SECONDS="20"
-$env:AVATAR_RESULT_TIMEOUT_SECONDS="120"
+python -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-PHP 服务只有在私有网关、API code、已授权形象/音色清单、结果域名白名单和内部令牌全部配置后才报告可用。提交接口不自动重发；提交响应丢失时任务标记为 `outcome_unknown`，随后只按原幂等键核对，避免重复计费。
+### Q: FFmpeg 未安装？
+A: 访问 https://ffmpeg.org/download.html 下载安装，或使用包管理器：
+```powershell
+# Windows (winget)
+winget install ffmpeg
 
-生产模式不会因为填写供应商名称而自动启用。必须先完成供应商适配器、沙箱契约测试、B 端商业授权和小流量验收。系统对相同请求执行 60 秒数据库级防重，成功结果缓存 10 分钟；本月 360 次预警、450 次硬停止。费用未知时只显示“按供应商账户结算”，不会显示免费或 0 元。连接故障最多重试一次，401/403/429 不重试，响应状态不明确时锁定该请求等待人工核对。
+# 或使用 chocolatey
+choco install ffmpeg
+```
 
-平台内热门分使用年龄归一化互动、供应商召回名次、新鲜度以及可信增长或持续入榜；缺失字段保持 `null` 并按可见权重重新归一化。历史池或增长快照不足时只显示“爆火候选排名”，不输出正式 S/A/B。分享页只记录元数据，不自动下载媒体。
+### Q: 前端启动失败？
+A: 确保 Node.js 版本 >= 18，删除 `node_modules` 重新安装：
+```powershell
+cd project/frontend
+Remove-Item -Path node_modules -Recurse -Force
+npm install
+```
 
-CSV/XLSX 和手工入口支持 `douyin`、`xiaohongshu`、`wechat_channels`（也接受中文平台名）。抖音/小红书必须提供匹配平台常见域名的公开 URL；视频号可提供公开 URL，或同时提供 `feed_id` 与 `finder_user_name`。缺失互动指标保持空值，不伪造为 0。
+### Q: 数据库连接失败？
+A: 检查数据库配置，确保 PostgreSQL 服务已启动。开发环境默认使用 SQLite，无需额外配置。
 
-“视频音轨转文案”可独立使用，不必等待爆火候选接口。用户可以上传确认有权处理的 MP4/MOV，或填写直接返回 MP4/MOV 文件的授权 HTTPS 公网直链；候选关联仅用于追溯。直链会拒绝本机、内网、保留地址、非标准端口、非视频响应与超过 50MB 的文件，连接故障最多重试一次。抖音、小红书、视频号等平台分享页不属于视频直链，系统不会使用非授权下载器抓取，需改为主动上传视频。
+## 许可证
 
-不接受单独音频文件，单文件不超过 50MB、15 分钟。系统先用 FFprobe 验证视频包含音轨且时长为有限正数，再由 FFmpeg 在随机临时目录提取 16kHz 单声道音频，最后使用所选本地 `faster-whisper` 模型和 CPU INT8 识别。系统不做抽帧或画面分析；上传原视频、直链读取内容与临时音频在成功或失败后均清理，直链地址本身也不写入任务。
+本项目为私有项目，仅限内部使用。
 
-本地准确率模式已用同一条 100 秒视频做相对基准：无提示的 `large-v3-turbo` 相比原 `base`，参考 CER 从 25.34% 降至 8.54%。参考文本来自第三方自动转写而非人工真值，因此该数字只用于方案筛选，不作为对外准确率承诺。热词实验出现漏句，当前页面不会启用。详细记录见 `docs/asr-benchmark-2026-07-18.md`。
+## 联系方式
 
-页面同步显示文件检查、音频提取和语音识别的真实阶段，不提供后台任务或预计完成时间。识别结果以追加版本保存；低于 0.75 的片段在新确认成稿时必须人工勾选“已复核”，草稿可随时保存。下载严格使用任务 `approved_revision_id` 指向的成稿，支持 TXT、JSON、SRT；历史已批准版本保持可导出。
+如有问题或建议，请联系开发团队。
 
-开发检查使用 `python -m pip install -r requirements-dev.txt`、`python -m ruff check .`、`python -m ruff format --check .` 和 `python -m pytest`。
+---
+
+**最后更新**: 2026-07-20  
+**版本**: 2.0.0  
+**维护者**: Crow5 开发团队

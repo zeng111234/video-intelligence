@@ -58,6 +58,9 @@ kind_labels = {
     TaskKind.SEARCH: "候选检索",
     TaskKind.TRANSCRIPTION: "视频音轨转写",
     TaskKind.AVATAR: "数字人生成",
+    TaskKind.COPYWRITING: "文案改写",
+    TaskKind.VIDEO_EDITING: "视频剪辑",
+    TaskKind.PUBLISHING: "内容发布",
 }
 
 with st.container(border=True):

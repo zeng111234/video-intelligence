@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import socket
+
+from pydantic import HttpUrl
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
@@ -298,6 +300,8 @@ class OneApiLicensedSearchProvider:
             "User-Agent": "video-intelligence-oneapi/1.0",
         }
         url = f"{self._base_url}{endpoint}"
+        status: int = 0
+        body: Mapping[str, Any] = {}
         try:
             status, body = self._transport(
                 url,
@@ -576,7 +580,7 @@ class OneApiLicensedSearchProvider:
             author_id=author_id,
             author_name=author_name,
             published_at=published_at,
-            source_url=str(source_url),
+            source_url=HttpUrl(str(source_url)),
             provider_rank=rank,
             metrics=VideoMetricSnapshot(
                 item_id=item_id,

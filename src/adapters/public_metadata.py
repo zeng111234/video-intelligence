@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from pydantic import HttpUrl
+
 from src.models import (
     DataSource,
     ImportErrorDetail,
@@ -95,7 +97,7 @@ class PublicMetadataResearchAdapter:
             platform=Platform.DOUYIN,
             category=request.category,
             published_at=now,
-            source_url=url,
+            source_url=HttpUrl(url),
             source_type=DataSource.PUBLIC_RESEARCH,
             metrics=VideoMetricSnapshot(
                 item_id=item_id, sampled_at=now, confidence=0.55

@@ -4,6 +4,8 @@ import hashlib
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
+from pydantic import HttpUrl
+
 from src.models import (
     Platform,
     ProviderCapability,
@@ -233,9 +235,9 @@ class SandboxLicensedSearchProvider:
         )
 
     @staticmethod
-    def _source_url(platform: Platform, item_id: str) -> str:
+    def _source_url(platform: Platform, item_id: str) -> HttpUrl:
         if platform == Platform.DOUYIN:
-            return f"https://www.douyin.com/video/{item_id}"
+            return HttpUrl(f"https://www.douyin.com/video/{item_id}")
         if platform == Platform.XIAOHONGSHU:
-            return f"https://www.xiaohongshu.com/explore/{item_id}"
-        return f"https://channels.weixin.qq.com/platform/post/{item_id}"
+            return HttpUrl(f"https://www.xiaohongshu.com/explore/{item_id}")
+        return HttpUrl(f"https://channels.weixin.qq.com/platform/post/{item_id}")

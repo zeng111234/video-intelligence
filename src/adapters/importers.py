@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+
+from pydantic import HttpUrl
 from typing import Any
 from urllib.parse import urlparse
 
@@ -294,7 +296,7 @@ class ManualImportAdapter:
                         published_at=_aware_datetime(
                             row["published_at"], "published_at"
                         ),
-                        source_url=source_url,
+                        source_url=HttpUrl(source_url) if source_url else None,
                         source_type=DataSource.CSV,
                         metrics=VideoMetricSnapshot(
                             item_id=item_id,
@@ -366,7 +368,7 @@ class ManualImportAdapter:
                 platform=platform,
                 category=TARGET_CATEGORY,
                 published_at=published_at,
-                source_url=source_url,
+                source_url=HttpUrl(source_url) if source_url else None,
                 source_type=DataSource.MANUAL,
                 metrics=VideoMetricSnapshot(
                     item_id=item_id,

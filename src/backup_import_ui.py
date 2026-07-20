@@ -4,6 +4,7 @@ from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from pydantic import HttpUrl
 
 from src.adapters import (
     DouyinHotBillboardAdapter,
@@ -143,7 +144,8 @@ def render_backup_imports(source_service, repository) -> None:
             try:
                 page = PublicMetadataResearchAdapter().sync(
                     SourceRequest(
-                        source=DataSource.PUBLIC_RESEARCH, urls=[public_url.strip()]
+                        source=DataSource.PUBLIC_RESEARCH,
+                        urls=[HttpUrl(public_url.strip())],
                     )
                 )
                 if page.items:
@@ -161,11 +163,11 @@ def render_backup_imports(source_service, repository) -> None:
             except Exception as exc:
                 st.error(str(exc))
     else:
-        adapter = DouyinHotBillboardAdapter()
+        billboard_adapter = DouyinHotBillboardAdapter()
         st.info("当前没有抖音正式权限，此入口不会发起网络请求。")
         if st.button("检查权限状态"):
             try:
-                adapter.sync(SourceRequest(source=DataSource.OFFICIAL))
+                billboard_adapter.sync(SourceRequest(source=DataSource.OFFICIAL))
             except Exception as exc:
                 st.error(str(exc))
 

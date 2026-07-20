@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
+
+from pydantic import HttpUrl
 from urllib.request import Request, urlopen
 
 from src.models import (
@@ -243,7 +245,7 @@ class DouyinKeywordAdapter:
                     platform=Platform.DOUYIN,
                     category=f"关键词/{keyword}",
                     published_at=published_at,
-                    source_url=link,
+                    source_url=HttpUrl(link),
                     source_type=DataSource.OFFICIAL,
                     metrics=VideoMetricSnapshot(
                         item_id=item_id,

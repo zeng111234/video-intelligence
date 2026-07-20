@@ -655,6 +655,7 @@ class TaskRecord(BaseModel):
     retry_count: int = Field(default=0, ge=0, le=1)
     outputs: dict[str, str] = Field(default_factory=dict)
     is_mock: bool = True
+    stage: str = "等待处理"
 
 
 class TranscriptionTask(TaskRecord):

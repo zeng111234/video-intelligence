@@ -36,7 +36,8 @@ class AvatarService:
         self.provider = provider
         self.result_directory = Path(
             result_directory
-            or os.getenv(
+            if result_directory is not None
+            else os.getenv(
                 "AVATAR_RESULT_DIRECTORY", str(Path("data") / "avatar_results")
             )
         )
