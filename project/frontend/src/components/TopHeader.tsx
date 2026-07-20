@@ -38,6 +38,8 @@ const PAGE_TITLE_MAP: Record<string, string> = {
   "/analytics": "深度分析",
   "/ai-copy": "AI文案生成",
   "/publish": "多平台发布",
+  "/crawler": "关键词爬虫",
+  "/avatar": "数字人生成",
   "/help": "帮助中心",
 };
 

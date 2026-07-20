@@ -529,6 +529,33 @@ class TestPublish:
 
 
 # ---------------------------------------------------------------------------
+# /api/v1/analytics
+# ---------------------------------------------------------------------------
+
+
+class TestAnalytics:
+    def test_summary_returns_stable_aggregation(self, client: TestClient):
+        resp = client.get("/api/v1/analytics/summary?time_range=7d")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "overview" in data
+        assert "trends" in data
+        assert "competitors" in data
+        assert "contentDistribution" in data
+        assert isinstance(data["trends"], list)
+        assert isinstance(data["competitors"], list)
+
+    def test_summary_accepts_empty_result_keyword(self, client: TestClient):
+        resp = client.get(
+            "/api/v1/analytics/summary?time_range=24h&keyword=no-such-keyword-xyz"
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["overview"]["totalViews"] == 0
+        assert data["trends"] == []
+
+
+# ---------------------------------------------------------------------------
 # 统一错误处理
 # ---------------------------------------------------------------------------
 

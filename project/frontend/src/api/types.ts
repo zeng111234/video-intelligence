@@ -220,7 +220,7 @@ export interface PublishPlatformsResponse {
 export interface AnalyticsTrendItem {
   topic: string;
   views: string;
-  growth: number;
+  growth: number | null;
   hot: string;
 }
 

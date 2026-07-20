@@ -28,6 +28,7 @@ from project.backend.app.api.v1.copywriting import router as copywriting_router 
 from project.backend.app.api.v1.video_editor import router as video_editor_router  # noqa: E402
 from project.backend.app.api.v1.publish import router as publish_router  # noqa: E402
 from project.backend.app.api.v1.crawler import router as crawler_router  # noqa: E402
+from project.backend.app.api.v1.analytics import router as analytics_router  # noqa: E402
 from project.backend.app.api.v1.notifications import router as notifications_router  # noqa: E402
 from project.backend.app.api.v1.avatar import router as avatar_router  # noqa: E402
 
@@ -238,5 +239,6 @@ app.include_router(copywriting_router)
 app.include_router(video_editor_router)
 app.include_router(publish_router)
 app.include_router(crawler_router)
+app.include_router(analytics_router)
 app.include_router(notifications_router)
 app.include_router(avatar_router)

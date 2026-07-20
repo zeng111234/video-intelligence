@@ -17,6 +17,8 @@ import {
   Table,
   Spin,
   Button,
+  Empty,
+  Alert,
 } from "antd";
 import {
   LineChartOutlined,
@@ -71,7 +73,7 @@ export default function AnalyticsPage() {
       engagementRate: number;
       shareCount: number;
     };
-    trends: { topic: string; views: string; growth: number; hot: string }[];
+    trends: { topic: string; views: string; growth: number | null; hot: string }[];
     competitors: { name: string; fans: string; avgViews: string; engagement: number }[];
     contentDistribution: { label: string; percent: number }[];
   } | null>(null);
@@ -153,7 +155,7 @@ export default function AnalyticsPage() {
           <Title level={4} style={{ margin: 0 }}>
             <LineChartOutlined /> 深度分析
           </Title>
-          <Text type="secondary">实时追踪内容表现，洞察行业趋势</Text>
+          <Text type="secondary">基于 SQLite 中候选和指标快照聚合；数据不足时显示观察中/暂无依据</Text>
         </div>
         <Space>
           <Select value={timeRange} onChange={setTimeRange} style={{ width: 140 }}>
@@ -162,11 +164,19 @@ export default function AnalyticsPage() {
             <Option value="30d">最近 30 天</Option>
             <Option value="90d">最近 90 天</Option>
           </Select>
-          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={fetchData} loading={loading} disabled={loading}>
             刷新
           </Button>
         </Space>
       </div>
+
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 24 }}
+        message="数据口径"
+        description="深度分析不再使用固定统计、随机增长率或预置竞品数据；当前展示来自本地候选库和已记录快照。"
+      />
 
       {/* 核心指标卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -320,10 +330,9 @@ export default function AnalyticsPage() {
                   title: "增长",
                   dataIndex: "growth",
                   width: 100,
-                  render: (v: number) => (
-                    <Text style={{ color: v >= 0 ? "var(--success)" : "var(--error)" }}>
-                      {v >= 0 ? "+" : ""}
-                      {v}%
+                  render: (v: number | null) => (
+                    <Text style={{ color: v === null || v >= 0 ? "var(--success)" : "var(--error)" }}>
+                      {v === null ? "观察中" : `${v >= 0 ? "+" : ""}${v}/h`}
                     </Text>
                   ),
                 },
@@ -361,6 +370,7 @@ export default function AnalyticsPage() {
               columns={competitorColumns}
               pagination={false}
               size="small"
+              locale={{ emptyText: <Empty description="暂无真实竞品依据" /> }}
             />
           </Card>
         </Col>
