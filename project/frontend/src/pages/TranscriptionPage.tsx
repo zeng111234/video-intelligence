@@ -429,9 +429,16 @@ export default function TranscriptionPage() {
                         name="file"
                         multiple={false}
                         accept=".mp4,.mp3,.wav,.m4a,.avi"
-                        beforeUpload={() => {
-                          message.success("文件已添加，点击「开始转写」处理");
-                          return false;
+                        customRequest={({ file, onSuccess }) => {
+                          // 模拟上传成功
+                          setTimeout(() => {
+                            onSuccess?.("ok");
+                          }, 1000);
+                        }}
+                        onChange={(info) => {
+                          if (info.file.status === "done") {
+                            handleFileTranscribe(info.file.name);
+                          }
                         }}
                         style={{ padding: "20px 0" }}
                       >
@@ -443,9 +450,6 @@ export default function TranscriptionPage() {
                           支持 MP4、MP3、WAV、M4A、AVI 格式
                         </p>
                       </Upload.Dragger>
-                      <Button type="primary" icon={<PlayCircleOutlined />} block size="large">
-                        开始转写
-                      </Button>
                     </Space>
                   ),
                 },
