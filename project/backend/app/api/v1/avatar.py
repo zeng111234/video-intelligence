@@ -9,7 +9,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
+from project.backend.app.services.avatar_service import get_avatar_provider
+
 router = APIRouter(prefix="/api/v1/avatar", tags=["avatar"])
+
+# 获取数字人提供者
+avatar_provider = get_avatar_provider()
 
 
 class AvatarGenerateRequest(BaseModel):
@@ -39,46 +44,22 @@ MOCK_TASKS: dict[str, AvatarTask] = {}
 
 @router.post("/generate", response_model=AvatarTask)
 async def generate_avatar_video(body: AvatarGenerateRequest) -> AvatarTask:
-    """生成数字人视频
-
-    当前为演示模式，返回模拟任务。
-    真实模式需要集成：
-    - Duix-Avatar: https://github.com/duixcom/Duix-Avatar
-    - Linly-Talker: https://github.com/Kedreamix/Linly-Talker
-    - 或其他数字人服务
-    """
-    task_id = f"avatar-{uuid.uuid4().hex[:10]}"
-
+    """生成数字人视频"""
     # 验证输入
     if body.audio_type == "tts" and not body.tts_text.strip():
         raise HTTPException(status_code=400, detail="TTS 模式需要输入文案")
 
-    # 创建模拟任务
-    task = AvatarTask(
-        task_id=task_id,
-        status="running",
-        progress=0,
-        created_at=datetime.now().isoformat(),
-        avatar_type=body.avatar_type,
-        audio_type=body.audio_type,
-    )
-    MOCK_TASKS[task_id] = task
-
-    # 模拟进度更新（实际应由后台任务处理）
-    import asyncio
-
-    async def simulate_progress():
-        for i in range(10, 101, 10):
-            await asyncio.sleep(0.5)
-            if task_id in MOCK_TASKS:
-                MOCK_TASKS[task_id].progress = i
-                if i == 100:
-                    MOCK_TASKS[task_id].status = "succeeded"
-                    MOCK_TASKS[task_id].video_url = f"/api/v1/avatar/download/{task_id}"
-
-    asyncio.create_task(simulate_progress())
-
-    return task
+    try:
+        task = await avatar_provider.generate_video(
+            avatar_image="",  # 需要先上传形象
+            audio="",  # 需要先上传音频或使用 TTS
+            text=body.tts_text,
+            voice=body.tts_voice,
+            speech_rate=body.speech_rate,
+        )
+        return AvatarTask(**task.to_dict())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/upload-avatar")
@@ -116,15 +97,13 @@ async def upload_audio_file(file: UploadFile = File(...)) -> dict[str, str]:
 @router.get("/tasks/{task_id}", response_model=AvatarTask)
 async def get_task_status(task_id: str) -> AvatarTask:
     """获取任务状态"""
-    if task_id not in MOCK_TASKS:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    return MOCK_TASKS[task_id]
-
-
-@router.get("/tasks")
-async def list_tasks() -> list[AvatarTask]:
-    """获取所有任务"""
-    return list(MOCK_TASKS.values())
+    try:
+        task = await avatar_provider.get_task_status(task_id)
+        return AvatarTask(**task.to_dict())
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/download/{task_id}")
@@ -144,10 +123,7 @@ async def download_video(task_id: str):
 @router.get("/voices")
 async def list_voices() -> list[dict[str, str]]:
     """获取可用音色列表"""
-    return [
-        {"id": "sweet_female", "name": "甜美女声", "gender": "female", "style": "sweet"},
-        {"id": "magnetic_male", "name": "磁性男声", "gender": "male", "style": "magnetic"},
-        {"id": "youth", "name": "活力青年", "gender": "neutral", "style": "energetic"},
-        {"id": "broadcast", "name": "专业播音", "gender": "neutral", "style": "professional"},
-        {"id": "customer_service", "name": "亲切客服", "gender": "female", "style": "friendly"},
-    ]
+    try:
+        return await avatar_provider.list_voices()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
