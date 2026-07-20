@@ -415,6 +415,23 @@ export default function TranscriptionPage() {
         </Col>
       </Row>
 
+      {/* ASR 状态提示 */}
+      <Card style={{ marginBottom: 24, background: "linear-gradient(135deg, #f5f3ff, #ede9fe)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <Space>
+            <SoundOutlined style={{ fontSize: 20, color: "#6366f1" }} />
+            <div>
+              <Text strong>语音识别引擎</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                当前模式：演示模式（返回模拟数据）| 支持格式：MP4, MP3, WAV, M4A, AVI
+              </Text>
+            </div>
+          </Space>
+          <Tag color="orange">演示模式</Tag>
+        </div>
+      </Card>
+
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         {/* 输入区域 */}
         <Col xs={24} lg={8}>
