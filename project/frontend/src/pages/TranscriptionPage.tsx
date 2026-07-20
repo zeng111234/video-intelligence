@@ -36,7 +36,7 @@ import {
   LinkOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
-import { createTranscriptionByUrl, createTranscription } from "../api/client";
+import { createTranscriptionByUrl, uploadAndTranscribe } from "../api/client";
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -161,14 +161,14 @@ export default function TranscriptionPage() {
     }
   }, [videoUrl]);
 
-  /** 通过文件名转写 */
-  const handleFileTranscribe = useCallback(async (fileName: string) => {
+  /** 通过文件上传转写 */
+  const handleFileUpload = useCallback(async (file: File) => {
     setLoading(true);
     try {
-      const result = await createTranscription(fileName);
+      const result = await uploadAndTranscribe(file);
       const newTask = {
         id: result.task_id,
-        fileName: fileName,
+        fileName: file.name,
         source: "file",
         status: result.status === "succeeded" ? "succeeded" : result.status === "running" ? "running" : "pending",
         duration: result.segments?.length ? `${Math.round(result.segments[result.segments.length - 1].end / 60)}分${Math.round(result.segments[result.segments.length - 1].end % 60)}秒` : "-",
@@ -179,7 +179,7 @@ export default function TranscriptionPage() {
       };
       setTasks((prev) => [newTask, ...prev]);
       setSelectedTask(newTask);
-      message.success("转写任务已创建");
+      message.success("转写完成");
     } catch (err) {
       message.error((err as Error).message || "转写失败");
     } finally {
@@ -434,16 +434,10 @@ export default function TranscriptionPage() {
                         name="file"
                         multiple={false}
                         accept=".mp4,.mp3,.wav,.m4a,.avi"
-                        customRequest={({ file, onSuccess }) => {
-                          // 模拟上传成功
-                          setTimeout(() => {
-                            onSuccess?.("ok");
-                          }, 1000);
-                        }}
-                        onChange={(info) => {
-                          if (info.file.status === "done") {
-                            handleFileTranscribe(info.file.name);
-                          }
+                        showUploadList={true}
+                        beforeUpload={(file) => {
+                          handleFileUpload(file);
+                          return false; // 阻止自动上传
                         }}
                         style={{ padding: "20px 0" }}
                       >
@@ -455,16 +449,6 @@ export default function TranscriptionPage() {
                           支持 MP4、MP3、WAV、M4A、AVI 格式
                         </p>
                       </Upload.Dragger>
-                      <Button
-                        type="primary"
-                        icon={<PlayCircleOutlined />}
-                        block
-                        size="large"
-                        loading={loading}
-                        onClick={() => message.info("请先上传文件")}
-                      >
-                        开始转写
-                      </Button>
                     </Space>
                   ),
                 },
