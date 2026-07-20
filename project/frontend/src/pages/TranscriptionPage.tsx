@@ -149,6 +149,10 @@ export default function TranscriptionPage() {
       }));
       setTasks((prev) => [...newTasks, ...prev]);
       setVideoUrl("");
+      // 自动选中第一个任务显示结果
+      if (newTasks.length > 0) {
+        setSelectedTask(newTasks[0]);
+      }
       message.success(`已创建 ${urls.length} 个转写任务`);
     } catch (err) {
       message.error((err as Error).message || "转写失败");
@@ -174,6 +178,7 @@ export default function TranscriptionPage() {
         segments: result.segments || [],
       };
       setTasks((prev) => [newTask, ...prev]);
+      setSelectedTask(newTask);
       message.success("转写任务已创建");
     } catch (err) {
       message.error((err as Error).message || "转写失败");
@@ -450,6 +455,16 @@ export default function TranscriptionPage() {
                           支持 MP4、MP3、WAV、M4A、AVI 格式
                         </p>
                       </Upload.Dragger>
+                      <Button
+                        type="primary"
+                        icon={<PlayCircleOutlined />}
+                        block
+                        size="large"
+                        loading={loading}
+                        onClick={() => message.info("请先上传文件")}
+                      >
+                        开始转写
+                      </Button>
                     </Space>
                   ),
                 },
