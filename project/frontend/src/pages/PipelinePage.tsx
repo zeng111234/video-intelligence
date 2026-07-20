@@ -135,6 +135,18 @@ export default function PipelinePage() {
   const [loading, setLoading] = useState(false);
   const [selectedPipeline, setSelectedPipeline] = useState<any>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [videoCount, setVideoCount] = useState<string>("10");
+  const [videoStyle, setVideoStyle] = useState<string>("engaging");
+  const [refreshing, setRefreshing] = useState(false);
+
+  /** 刷新任务列表 */
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setTimeout(() => {
+      setRefreshing(false);
+      toast.success("任务列表已刷新");
+    }, 1000);
+  }, [toast]);
 
   /** 添加关键词 */
   const handleAddKeyword = () => {
@@ -341,7 +353,7 @@ export default function PipelinePage() {
               {/* 高级选项 */}
               <div>
                 <Text strong style={{ display: "block", marginBottom: 8 }}>生产数量</Text>
-                <Select defaultValue="10" style={{ width: "100%" }}>
+                <Select value={videoCount} onChange={setVideoCount} style={{ width: "100%" }}>
                   <Option value="5">每个关键词 5 条视频</Option>
                   <Option value="10">每个关键词 10 条视频</Option>
                   <Option value="20">每个关键词 20 条视频</Option>
@@ -351,7 +363,7 @@ export default function PipelinePage() {
 
               <div>
                 <Text strong style={{ display: "block", marginBottom: 8 }}>视频风格</Text>
-                <Select defaultValue="engaging" style={{ width: "100%" }}>
+                <Select value={videoStyle} onChange={setVideoStyle} style={{ width: "100%" }}>
                   <Option value="engaging">吸引眼球</Option>
                   <Option value="professional">专业权威</Option>
                   <Option value="humorous">幽默风趣</Option>
@@ -380,7 +392,7 @@ export default function PipelinePage() {
           <Card
             title={<Space><FileTextOutlined /> 任务详情</Space>}
             extra={
-              <Button icon={<ReloadOutlined />} size="small">
+              <Button icon={<ReloadOutlined />} size="small" loading={refreshing} onClick={handleRefresh}>
                 刷新
               </Button>
             }

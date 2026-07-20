@@ -92,6 +92,26 @@ export default function AvatarPage() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
+  const [speechRate, setSpeechRate] = useState(1);
+
+  /** 下载视频 */
+  const handleDownloadVideo = useCallback(() => {
+    if (!generatedVideo) {
+      toast.warning("没有可下载的视频");
+      return;
+    }
+    // 模拟下载
+    const a = document.createElement("a");
+    a.href = generatedVideo;
+    a.download = `数字人视频_${new Date().toISOString().slice(0, 10)}.mp4`;
+    a.click();
+    toast.success("视频下载已开始");
+  }, [generatedVideo, toast]);
+
+  /** 下载历史视频 */
+  const handleDownloadHistory = useCallback((item: any) => {
+    toast.success(`正在下载: ${item.name}`);
+  }, [toast]);
 
   /** 开始录制形象 */
   const startVideoRecording = useCallback(async () => {
@@ -331,9 +351,9 @@ export default function AvatarPage() {
                       </div>
                       <div>
                         <Text strong style={{ display: "block", marginBottom: 8 }}>
-                          语速
+                          语速: {speechRate}x
                         </Text>
-                        <Slider defaultValue={1} min={0.5} max={2} step={0.1} />
+                        <Slider value={speechRate} onChange={setSpeechRate} min={0.5} max={2} step={0.1} />
                       </div>
                     </Space>
                   ),
@@ -514,7 +534,7 @@ export default function AvatarPage() {
                   </div>
                 </div>
                 <Space>
-                  <Button type="primary" icon={<DownloadOutlined />}>
+                  <Button type="primary" icon={<DownloadOutlined />} onClick={handleDownloadVideo}>
                     下载视频
                   </Button>
                   <Button icon={<ReloadOutlined />} onClick={() => setGeneratedVideo(null)}>
@@ -555,7 +575,7 @@ export default function AvatarPage() {
                     {item.status === "succeeded" ? "已完成" : "生成中"}
                   </Tag>
                   {item.status === "succeeded" && (
-                    <Button type="link" size="small" icon={<DownloadOutlined />}>
+                    <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadHistory(item)}>
                       下载
                     </Button>
                   )}

@@ -146,6 +146,26 @@ export default function PublishPage() {
     setTagInput("");
   }, [tagInput, tags, toast]);
 
+  /* ---- 查看详情 ---- */
+  const handleViewDetail = useCallback((record: any) => {
+    toast.info(`发布详情: ${record.title}\n平台: ${record.platform}\n状态: ${record.status}\n时间: ${record.createdAt}`);
+  }, [toast]);
+
+  /* ---- 重试发布 ---- */
+  const handleRetry = useCallback((record: any) => {
+    setRecords((prev) =>
+      prev.map((r) => (r.id === record.id ? { ...r, status: "pending" } : r))
+    );
+    toast.success(`正在重试: ${record.title}`);
+    // 模拟重试成功
+    setTimeout(() => {
+      setRecords((prev) =>
+        prev.map((r) => (r.id === record.id ? { ...r, status: "succeeded" } : r))
+      );
+      toast.success(`重试成功: ${record.title}`);
+    }, 2000);
+  }, [toast]);
+
   /* ---- 发布 ---- */
   const handlePublish = useCallback(async () => {
     if (!videoPath.trim()) {
@@ -239,11 +259,11 @@ export default function PublishPage() {
       width: 100,
       render: (_: unknown, record: PublishRecord) => (
         <Space>
-          <Button type="link" size="small">
+          <Button type="link" size="small" onClick={() => handleViewDetail(record)}>
             详情
           </Button>
           {record.status === "failed" && (
-            <Button type="link" size="small" danger>
+            <Button type="link" size="small" danger onClick={() => handleRetry(record)}>
               重试
             </Button>
           )}

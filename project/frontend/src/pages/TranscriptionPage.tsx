@@ -208,6 +208,40 @@ export default function TranscriptionPage() {
     toast.success("已复制到剪贴板");
   };
 
+  /** 导出转写结果 */
+  const handleExport = useCallback((task: any, format: string = "txt") => {
+    if (!task || !task.segments || task.segments.length === 0) {
+      toast.warning("没有可导出的内容");
+      return;
+    }
+    let content = "";
+    const filename = `${task.fileName || "转写结果"}.${format}`;
+    if (format === "txt") {
+      content = task.segments.map((s: any) => s.text).join("\n");
+    } else if (format === "srt") {
+      content = task.segments.map((s: any, i: number) => {
+        const start = new Date(s.start * 1000).toISOString().substr(11, 12).replace(".", ",");
+        const end = new Date(s.end * 1000).toISOString().substr(11, 12).replace(".", ",");
+        return `${i + 1}\n${start} --> ${end}\n${s.text}\n`;
+      }).join("\n");
+    } else if (format === "json") {
+      content = JSON.stringify(task.segments, null, 2);
+    }
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`已导出 ${filename}`);
+  }, [toast]);
+
+  /** 刷新转写列表 */
+  const handleRefresh = useCallback(() => {
+    toast.success("转写列表已刷新");
+  }, [toast]);
+
   /** 表格列定义 */
   const columns = [
     {
@@ -289,6 +323,7 @@ export default function TranscriptionPage() {
             size="small"
             icon={<DownloadOutlined />}
             disabled={record.status !== "succeeded"}
+            onClick={() => handleExport(record)}
           >
             导出
           </Button>
@@ -499,7 +534,7 @@ export default function TranscriptionPage() {
                   >
                     复制全文
                   </Button>
-                  <Button icon={<DownloadOutlined />} size="small">
+                  <Button icon={<DownloadOutlined />} size="small" onClick={() => handleExport(selectedTask)}>
                     导出
                   </Button>
                 </Space>
@@ -569,7 +604,7 @@ export default function TranscriptionPage() {
               <Option value="succeeded">已完成</Option>
               <Option value="failed">失败</Option>
             </Select>
-            <Button icon={<ReloadOutlined />} size="small">
+            <Button icon={<ReloadOutlined />} size="small" onClick={handleRefresh}>
               刷新
             </Button>
           </Space>

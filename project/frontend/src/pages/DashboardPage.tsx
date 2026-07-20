@@ -114,6 +114,17 @@ const taskStatusTag: Record<string, React.ReactNode> = {
 
 export default function DashboardPage() {
   const [timeRange, setTimeRange] = useState("today");
+  const [loading, setLoading] = useState(false);
+
+  /** 时间范围变化时刷新数据 */
+  const handleTimeRangeChange = useCallback((value: string) => {
+    setTimeRange(value);
+    setLoading(true);
+    // 模拟数据加载
+    setTimeout(() => {
+      setLoading(false);
+    }, 500);
+  }, []);
 
   return (
     <div>
@@ -125,7 +136,7 @@ export default function DashboardPage() {
           </Title>
           <Text type="secondary">实时监控短视频生产全链路数据</Text>
         </div>
-        <Select value={timeRange} onChange={setTimeRange} style={{ width: 120 }}>
+        <Select value={timeRange} onChange={handleTimeRangeChange} style={{ width: 120 }} loading={loading}>
           <Option value="today">今日</Option>
           <Option value="week">本周</Option>
           <Option value="month">本月</Option>
