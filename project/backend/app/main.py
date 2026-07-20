@@ -27,6 +27,7 @@ from project.backend.app.api.v1.admin import router as admin_router  # noqa: E40
 from project.backend.app.api.v1.copywriting import router as copywriting_router  # noqa: E402
 from project.backend.app.api.v1.video_editor import router as video_editor_router  # noqa: E402
 from project.backend.app.api.v1.publish import router as publish_router  # noqa: E402
+from project.backend.app.api.v1.crawler import router as crawler_router  # noqa: E402
 
 # Swagger UI 静态资源（使用 unpkg CDN 替代 jsdelivr，国内可达性更好）
 _SWAGGER_CSS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
@@ -235,3 +236,4 @@ app.include_router(admin_router)
 app.include_router(copywriting_router)
 app.include_router(video_editor_router)
 app.include_router(publish_router)
+app.include_router(crawler_router)
