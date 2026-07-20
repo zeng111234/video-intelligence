@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.contracts import CandidateRepository
 from src.models import HeatLevel, Platform, VideoCandidate
+
+
+def _strip_tz(dt: datetime) -> datetime:
+    """Strip timezone info to produce a naive datetime for safe comparison."""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
 
 
 class CandidateService:
@@ -21,7 +28,9 @@ class CandidateService:
         levels: list[HeatLevel] | None = None,
     ) -> list[VideoCandidate]:
         items = self.repository.list_candidates()
-        cutoff = datetime.now().astimezone() - timedelta(hours=published_within_hours)
+        # Use naive datetime to avoid TypeError when comparing with
+        # timezone-naive datetimes stored in SQLite.
+        cutoff = _strip_tz(datetime.now() - timedelta(hours=published_within_hours))
         normalized_query = query.strip().casefold()
 
         def matches(candidate: VideoCandidate) -> bool:
@@ -35,6 +44,7 @@ class CandidateService:
                     metrics.favorites,
                 )
             )
+            pub_at = _strip_tz(candidate.published_at)
             return (
                 (
                     not normalized_query
@@ -51,7 +61,7 @@ class CandidateService:
                     or category == "全部赛道"
                     or candidate.category == category
                 )
-                and candidate.published_at >= cutoff
+                and pub_at >= cutoff
                 and interactions >= min_interactions
                 and (not levels or candidate.heat.level in levels)
             )
