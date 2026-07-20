@@ -2,7 +2,7 @@
  * 语音转写页面
  * 支持视频链接和文件上传两种方式，AI 自动转写为文字
  */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   Typography,
   Card,
@@ -122,6 +122,23 @@ export default function TranscriptionPage() {
   const [videoUrl, setVideoUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [tasks, setTasks] = useState(TRANSCRIPTION_HISTORY);
+  const [asrConfig, setAsrConfig] = useState<{ mode: string; description: string }>({
+    mode: "sandbox",
+    description: "演示模式 —— 返回模拟数据",
+  });
+
+  // 获取 ASR 配置
+  useEffect(() => {
+    fetch("/api/v1/transcriptions/config")
+      .then((res) => res.json())
+      .then((data) => {
+        setAsrConfig({
+          mode: data.asr_mode,
+          description: data.description,
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   /** 通过链接转写 */
   const handleUrlTranscribe = useCallback(async () => {
@@ -424,11 +441,13 @@ export default function TranscriptionPage() {
               <Text strong>语音识别引擎</Text>
               <br />
               <Text type="secondary" style={{ fontSize: 12 }}>
-                当前模式：演示模式（返回模拟数据）| 支持格式：MP4, MP3, WAV, M4A, AVI
+                {asrConfig.description} | 支持格式：MP4, MP3, WAV, M4A, AVI
               </Text>
             </div>
           </Space>
-          <Tag color="orange">演示模式</Tag>
+          <Tag color={asrConfig.mode === "local" ? "green" : asrConfig.mode === "cloud" ? "blue" : "orange"}>
+            {asrConfig.mode === "local" ? "本地模式" : asrConfig.mode === "cloud" ? "云端模式" : "演示模式"}
+          </Tag>
         </div>
       </Card>
 
