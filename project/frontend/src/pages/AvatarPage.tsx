@@ -19,8 +19,10 @@ import {
   Space,
   Tag,
   Typography,
+  Upload,
 } from "antd";
 import {
+  AudioOutlined,
   CheckCircleOutlined,
   CloudSyncOutlined,
   DownloadOutlined,
@@ -28,7 +30,9 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   RocketOutlined,
+  UploadOutlined,
   UserOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import {
   createAvatarJob,
@@ -40,6 +44,7 @@ import {
 } from "../api/client";
 import type { AvatarAsset, AvatarCapability, AvatarJob } from "../api/types";
 import { useToast } from "../components/Toast";
+import { useSearchParams } from "react-router-dom";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -87,6 +92,10 @@ function statusLabel(status: string) {
 
 export default function AvatarPage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
+  const sourceTaskId = searchParams.get("sourceTask")?.trim() || null;
+  const sourceRevisionId = searchParams.get("sourceRevision")?.trim() || null;
+  const scriptFromQuery = searchParams.get("script")?.trim() || "";
   const [capability, setCapability] = useState<AvatarCapability | null>(null);
   const [assets, setAssets] = useState<AvatarAsset[]>([]);
   const [jobs, setJobs] = useState<AvatarJob[]>([]);
@@ -143,6 +152,12 @@ export default function AvatarPage() {
   }, [refresh, toast]);
 
   useEffect(() => {
+    if (scriptFromQuery) {
+      setScriptText(scriptFromQuery);
+    }
+  }, [scriptFromQuery]);
+
+  useEffect(() => {
     if (!activeJob || TERMINAL_STATUSES.has(activeJob.status)) return;
     const timer = window.setTimeout(async () => {
       try {
@@ -173,6 +188,8 @@ export default function AvatarPage() {
     setSubmitting(true);
     try {
       const job = await createAvatarJob({
+        source_task_id: sourceTaskId,
+        source_revision_id: sourceRevisionId,
         script_text: scriptText.trim(),
         avatar_id: avatarId,
         voice_id: voiceId,
@@ -197,6 +214,8 @@ export default function AvatarPage() {
     capability,
     scriptText,
     speechRate,
+    sourceRevisionId,
+    sourceTaskId,
     targetPlatforms,
     targetSeconds,
     toast,
@@ -245,12 +264,69 @@ export default function AvatarPage() {
           description={
             serviceUnavailable && capability.missing_configuration.length
               ? `缺少配置：${capability.missing_configuration.join("、")}`
-              : "首版只开放公共形象和文本转口播。摄像头录制、照片上传、录音上传会在供应商能力接通后再开放。"
+              : "支持公共形象快速生成，也可上传自己的形象和声音进行克隆。"
           }
         />
       )}
 
-      <Row gutter={[24, 24]}>
+      {/* 形象与声音录入 */}
+      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={6}>
+          <Card title={<Space><UserOutlined /> 我的形象</Space>}>
+            <Space direction="vertical" style={{ width: "100%" }} size={12}>
+              <div
+                style={{
+                  width: "100%",
+                  aspectRatio: "3/4",
+                  borderRadius: 12,
+                  background: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "2px dashed var(--border-default)",
+                  cursor: "pointer",
+                }}
+              >
+                <UserOutlined style={{ fontSize: 48, color: "#6366f1", marginBottom: 12 }} />
+                <Text strong>上传形象照片</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>支持 JPG/PNG，正面免冠照</Text>
+              </div>
+              <Upload accept="image/*" showUploadList={false}>
+                <Button block icon={<UploadOutlined />}>选择照片</Button>
+              </Upload>
+              <Button block icon={<VideoCameraOutlined />}>摄像头录制</Button>
+            </Space>
+          </Card>
+        </Col>
+        <Col xs={24} lg={6}>
+          <Card title={<Space><AudioOutlined /> 我的声音</Space>}>
+            <Space direction="vertical" style={{ width: "100%" }} size={12}>
+              <div
+                style={{
+                  width: "100%",
+                  height: 160,
+                  borderRadius: 12,
+                  background: "linear-gradient(135deg, #f0fdf4, #dcfce7)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "2px dashed var(--border-default)",
+                  cursor: "pointer",
+                }}
+              >
+                <AudioOutlined style={{ fontSize: 48, color: "#10b981", marginBottom: 12 }} />
+                <Text strong>上传录音文件</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>支持 MP3/WAV，3-10秒清晰语音</Text>
+              </div>
+              <Upload accept="audio/*" showUploadList={false}>
+                <Button block icon={<UploadOutlined />}>选择音频</Button>
+              </Upload>
+              <Button block icon={<AudioOutlined />}>开始录音</Button>
+            </Space>
+          </Card>
+        </Col>
         <Col xs={24} lg={12}>
           <Card title={<Space><RocketOutlined /> 生成配置</Space>} loading={loading}>
             <Space direction="vertical" size={16} style={{ width: "100%" }}>
@@ -265,6 +341,19 @@ export default function AvatarPage() {
                   placeholder="输入数字人要说的内容，建议 15–60 秒内说完。"
                   style={{ marginTop: 8 }}
                 />
+                {sourceTaskId && (
+                  <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
+                    已带入人工确认后的 LLM 口播稿，来源任务：{sourceTaskId}
+                  </Text>
+                )}
+                {scriptText.length > targetSeconds * 5 && (
+                  <Alert
+                    style={{ marginTop: 8 }}
+                    type="warning"
+                    showIcon
+                    message={`当前 ${scriptText.length} 字，可能超过 ${targetSeconds} 秒；建议返回转写页继续压缩。`}
+                  />
+                )}
               </div>
 
               <Row gutter={12}>
