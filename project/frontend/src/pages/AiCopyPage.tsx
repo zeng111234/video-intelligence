@@ -75,7 +75,7 @@ type CopyMode = "generate" | "rewrite";
 
 export default function AiCopyPage() {
   const toast = useToast();
-  const [mode, setMode] = useState<CopyMode>("generate");
+  const [mode, setMode] = useState<CopyMode>("rewrite");
   const [capability, setCapability] = useState<CopywritingCapabilitiesResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
 
@@ -240,8 +240,8 @@ export default function AiCopyPage() {
                 value={mode}
                 onChange={(value) => setMode(value as CopyMode)}
                 options={[
-                  { label: "从需求生成", value: "generate" },
                   { label: "改写已有文案", value: "rewrite" },
+                  { label: "从需求生成", value: "generate" },
                 ]}
               />
 
