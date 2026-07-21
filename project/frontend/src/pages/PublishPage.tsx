@@ -1,6 +1,6 @@
 /**
  * 多平台发布页面（Phase 3）
- * 支持抖音/快手/视频号三平台发布
+ * 支持抖音/小红书/视频号三平台发布
  * 接入后端 /api/v1/publish 和 /api/v1/publish/platforms
  */
 import { useState, useCallback, useEffect } from "react";
@@ -50,12 +50,12 @@ const PLATFORMS = [
     desc: "日活 7 亿+，短视频首选平台",
   },
   {
-    key: "kuaishou",
-    name: "快手",
-    icon: "🎬",
-    color: "#ff4906",
-    bgColor: "#fff5f0",
-    desc: "下沉市场覆盖广，直播带货强",
+    key: "xiaohongshu",
+    name: "小红书",
+    icon: "📕",
+    color: "#ff2442",
+    bgColor: "#fff0f3",
+    desc: "种草社区，女性用户为主",
   },
   {
     key: "wechat_channels",
