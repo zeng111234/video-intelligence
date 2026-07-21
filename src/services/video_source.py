@@ -39,7 +39,12 @@ Resolver = Callable[..., list[tuple[Any, ...]]]
 OpenUrl = Callable[..., Any]
 
 
-def _validate_direct_video_url(url: str, resolver: Resolver) -> str:
+def _validate_direct_video_url(
+    url: str,
+    resolver: Resolver,
+    *,
+    require_extension: bool = True,
+) -> str:
     parsed = urlparse(url.strip())
     if parsed.scheme.casefold() != "https" or not parsed.hostname:
         raise VideoSourceError("视频直链必须是完整的 HTTPS 地址。")
@@ -51,7 +56,7 @@ def _validate_direct_video_url(url: str, resolver: Resolver) -> str:
         raise VideoSourceError("视频直链不能包含账号信息或非标准端口。")
 
     extension = PurePosixPath(unquote(parsed.path)).suffix.casefold()
-    if extension not in ALLOWED_VIDEO_EXTENSIONS:
+    if require_extension and extension not in ALLOWED_VIDEO_EXTENSIONS:
         raise VideoSourceError(
             "当前只支持直接指向 MP4/MOV 文件的 HTTPS 视频直链；"
             "平台分享页暂不支持，请改为上传视频文件。"
@@ -79,17 +84,24 @@ def _validate_direct_video_url(url: str, resolver: Resolver) -> str:
 
 
 class _ValidatingRedirectHandler(HTTPRedirectHandler):
-    def __init__(self, resolver: Resolver):
+    def __init__(self, resolver: Resolver, *, require_extension: bool):
         super().__init__()
         self._resolver = resolver
+        self._require_extension = require_extension
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _validate_direct_video_url(newurl, self._resolver)
+        _validate_direct_video_url(
+            newurl,
+            self._resolver,
+            require_extension=self._require_extension,
+        )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _default_open_url(resolver: Resolver) -> OpenUrl:
-    return build_opener(_ValidatingRedirectHandler(resolver)).open
+def _default_open_url(resolver: Resolver, *, require_extension: bool) -> OpenUrl:
+    return build_opener(
+        _ValidatingRedirectHandler(resolver, require_extension=require_extension)
+    ).open
 
 
 def fetch_authorized_video(
@@ -99,11 +111,20 @@ def fetch_authorized_video(
     open_url: OpenUrl | None = None,
     timeout_seconds: float = 15,
     max_bytes: int = MAX_MEDIA_BYTES,
+    require_extension: bool = True,
+    fallback_name: str = "provider-video.mp4",
 ) -> DirectVideo:
     """Read an authorized public direct video URL without persisting the URL."""
 
-    normalized_url = _validate_direct_video_url(url, resolver)
-    opener = open_url or _default_open_url(resolver)
+    normalized_url = _validate_direct_video_url(
+        url,
+        resolver,
+        require_extension=require_extension,
+    )
+    opener = open_url or _default_open_url(
+        resolver,
+        require_extension=require_extension,
+    )
 
     def fetch_once() -> DirectVideo:
         request = Request(
@@ -114,7 +135,11 @@ def fetch_authorized_video(
             },
         )
         with opener(request, timeout=timeout_seconds) as response:
-            final_url = _validate_direct_video_url(response.geturl(), resolver)
+            final_url = _validate_direct_video_url(
+                response.geturl(),
+                resolver,
+                require_extension=require_extension,
+            )
             content_type = response.headers.get("Content-Type", "")
             media_type = content_type.split(";", 1)[0].strip().casefold()
             if media_type not in ALLOWED_CONTENT_TYPES:
@@ -146,8 +171,11 @@ def fetch_authorized_video(
             if not content:
                 raise VideoSourceError("视频直链返回了空文件。")
             parsed = urlparse(final_url)
-            name = PurePosixPath(unquote(parsed.path)).name
+            name = PurePosixPath(unquote(parsed.path)).name or fallback_name
             extension = PurePosixPath(name).suffix.casefold()
+            if extension not in ALLOWED_VIDEO_EXTENSIONS:
+                name = fallback_name
+                extension = ".mp4"
             fallback_type = "video/mp4" if extension == ".mp4" else "video/quicktime"
             return DirectVideo(
                 name=name,

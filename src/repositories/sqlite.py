@@ -12,6 +12,7 @@ from src.models import (
     HeatLevel,
     HeatResult,
     KeywordTrendResult,
+    MediaResolutionAttempt,
     PipelineRun,
     Platform,
     PlatformSearchRun,
@@ -42,16 +43,16 @@ class SQLiteRepository:
 
     def _bootstrap_schema(self) -> None:
         """智能启动：如果数据库已由迁移框架管理则跳过内联迁移。"""
-        current_version = self.connection.execute(
-            "PRAGMA user_version"
-        ).fetchone()[0]
+        current_version = self.connection.execute("PRAGMA user_version").fetchone()[0]
         if current_version > 0:
             # 已由迁移框架管理，只确保基础表存在（幂等 CREATE IF NOT EXISTS）
             self._create_schema_tables_only()
             self._ensure_runtime_columns()
+            self._ensure_media_resolution_tables()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
+        self._ensure_media_resolution_tables()
 
     def _create_schema_tables_only(self) -> None:
         """仅创建表（不执行列迁移），幂等安全。"""
@@ -238,6 +239,43 @@ class SQLiteRepository:
             "candidates",
             "data_quality_warnings_json",
             "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self.connection.commit()
+
+    def _ensure_media_resolution_tables(self) -> None:
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS media_resolution_attempts (
+                resolution_id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                candidate_id TEXT NOT NULL REFERENCES candidates(video_id) ON DELETE CASCADE,
+                platform TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                api_call_count INTEGER NOT NULL DEFAULT 0,
+                billable_units REAL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_media_resolution_candidate
+            ON media_resolution_attempts(candidate_id, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_media_resolution_usage
+            ON media_resolution_attempts(created_at, api_call_count);
+
+            CREATE TABLE IF NOT EXISTS media_resolution_guards (
+                idempotency_key TEXT PRIMARY KEY,
+                resolution_id TEXT NOT NULL,
+                candidate_id TEXT NOT NULL,
+                claimed_at TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_media_resolution_guards_candidate
+            ON media_resolution_guards(candidate_id, status);
+            """
         )
         self.connection.commit()
 
@@ -1103,6 +1141,20 @@ class SQLiteRepository:
         for row in rows:
             payload = json.loads(row["payload_json"])
             total += float(payload.get("billable_units") or 0.0)
+        media_rows = self.connection.execute(
+            """
+            SELECT payload_json FROM media_resolution_attempts
+            WHERE created_at >= ? AND status IN ('succeeded', 'outcome_unknown')
+            """,
+            (since.isoformat(),),
+        ).fetchall()
+        for row in media_rows:
+            payload = json.loads(row["payload_json"])
+            total += float(
+                payload.get("billable_units")
+                or payload.get("estimated_cost_cny")
+                or 0.0
+            )
         return round(total, 4)
 
     def claim_platform_search_request(
@@ -1168,6 +1220,151 @@ class SQLiteRepository:
                 "DELETE FROM provider_request_guards WHERE fingerprint = ?",
                 (fingerprint,),
             )
+
+    def save_media_resolution_attempt(self, attempt: MediaResolutionAttempt) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO media_resolution_attempts(
+                    resolution_id, idempotency_key, candidate_id, platform, provider,
+                    status, created_at, updated_at, api_call_count, billable_units,
+                    payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(resolution_id) DO UPDATE SET
+                    idempotency_key = excluded.idempotency_key,
+                    candidate_id = excluded.candidate_id,
+                    platform = excluded.platform,
+                    provider = excluded.provider,
+                    status = excluded.status,
+                    created_at = excluded.created_at,
+                    updated_at = excluded.updated_at,
+                    api_call_count = excluded.api_call_count,
+                    billable_units = excluded.billable_units,
+                    payload_json = excluded.payload_json
+                """,
+                (
+                    attempt.resolution_id,
+                    attempt.idempotency_key,
+                    attempt.candidate_id,
+                    attempt.platform.value,
+                    attempt.provider,
+                    attempt.status.value,
+                    attempt.created_at.isoformat(),
+                    attempt.updated_at.isoformat(),
+                    attempt.api_call_count,
+                    attempt.billable_units,
+                    attempt.model_dump_json(),
+                ),
+            )
+
+    def get_media_resolution_attempt(
+        self, resolution_id: str
+    ) -> MediaResolutionAttempt | None:
+        row = self.connection.execute(
+            """
+            SELECT payload_json FROM media_resolution_attempts
+            WHERE resolution_id = ?
+            """,
+            (resolution_id,),
+        ).fetchone()
+        return (
+            MediaResolutionAttempt.model_validate_json(row["payload_json"])
+            if row
+            else None
+        )
+
+    def find_media_resolution_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> MediaResolutionAttempt | None:
+        row = self.connection.execute(
+            """
+            SELECT payload_json FROM media_resolution_attempts
+            WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        return (
+            MediaResolutionAttempt.model_validate_json(row["payload_json"])
+            if row
+            else None
+        )
+
+    def find_latest_media_resolution_for_candidate(
+        self, candidate_id: str
+    ) -> MediaResolutionAttempt | None:
+        row = self.connection.execute(
+            """
+            SELECT payload_json FROM media_resolution_attempts
+            WHERE candidate_id = ?
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (candidate_id,),
+        ).fetchone()
+        return (
+            MediaResolutionAttempt.model_validate_json(row["payload_json"])
+            if row
+            else None
+        )
+
+    def claim_media_resolution_request(
+        self,
+        idempotency_key: str,
+        resolution_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT claimed_at, status FROM media_resolution_guards
+            WHERE idempotency_key = ?
+            """,
+            (idempotency_key,),
+        ).fetchone()
+        if row:
+            if row["status"] == "outcome_unknown":
+                return False
+            previous = datetime.fromisoformat(str(row["claimed_at"]))
+            if (claimed_at - previous).total_seconds() < ttl_seconds:
+                return False
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO media_resolution_guards(
+                    idempotency_key, resolution_id, candidate_id, claimed_at, status
+                ) VALUES (?, ?, '', ?, 'claimed')
+                ON CONFLICT(idempotency_key) DO UPDATE SET
+                    resolution_id = excluded.resolution_id,
+                    claimed_at = excluded.claimed_at,
+                    status = excluded.status
+                """,
+                (idempotency_key, resolution_id, claimed_at.isoformat()),
+            )
+        return True
+
+    def mark_media_resolution_request(
+        self, idempotency_key: str, status: str, updated_at: datetime
+    ) -> None:
+        attempt = self.find_media_resolution_by_idempotency_key(idempotency_key)
+        candidate_id = attempt.candidate_id if attempt else ""
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE media_resolution_guards
+                SET status = ?, claimed_at = ?, candidate_id = ?
+                WHERE idempotency_key = ?
+                """,
+                (status, updated_at.isoformat(), candidate_id, idempotency_key),
+            )
+
+    def has_unresolved_media_resolution(self, candidate_id: str) -> bool:
+        row = self.connection.execute(
+            """
+            SELECT 1 FROM media_resolution_attempts
+            WHERE candidate_id = ? AND status = 'outcome_unknown'
+            """,
+            (candidate_id,),
+        ).fetchone()
+        return row is not None
 
     def list_tasks(self) -> list[TaskRecord]:
         rows = self.connection.execute(

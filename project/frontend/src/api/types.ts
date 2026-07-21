@@ -103,7 +103,15 @@ export interface CrawlerCapabilitiesResponse {
   monthly_hard_limit_cost_cny: number;
   cache_ttl_minutes: number;
   supports_usage: boolean;
-  usage: Record<string, unknown> | null;
+  usage: CrawlerProviderUsage | null;
+}
+
+export interface CrawlerProviderUsage {
+  provider?: string;
+  platform_queries?: number;
+  billable_units?: number | null;
+  estimated_cost?: number | null;
+  currency?: string;
 }
 
 export interface CrawlerSearchRequest {
@@ -165,6 +173,25 @@ export interface CrawlerCandidateResult {
   model_version: string | null;
   evidence: string | null;
   reasons: string[];
+  media_resolution_status: string | null;
+  media_transcription_task_id: string | null;
+}
+
+export interface CrawlerCandidateMediaPreviewResponse {
+  candidate_id: string;
+  resolvable: boolean;
+  mode: string;
+  provider: string;
+  platform: string;
+  platform_label: string;
+  platform_item_id: string | null;
+  estimated_cost_cny: number | null;
+  monthly_budget_used_cny: number;
+  monthly_budget_limit_cny: number;
+  existing_task_id: string | null;
+  last_resolution_status: string | null;
+  block_reason: string | null;
+  source: string;
 }
 
 export interface CrawlerPlatformRun {

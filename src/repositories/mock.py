@@ -7,6 +7,8 @@ from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
+    MediaResolutionAttempt,
+    MediaResolutionStatus,
     PipelineRun,
     Platform,
     PlatformSearchRun,
@@ -48,6 +50,8 @@ class MockRepository:
         self._search_batches: dict[str, SearchBatch] = {}
         self._platform_search_runs: dict[str, PlatformSearchRun] = {}
         self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
+        self._media_resolution_attempts: dict[str, MediaResolutionAttempt] = {}
+        self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
@@ -270,11 +274,19 @@ class MockRepository:
         )
 
     def monthly_platform_query_cost(self, since: datetime) -> float:
-        return sum(
+        search_cost = sum(
             run.billable_units or 0.0
             for run in self._platform_search_runs.values()
             if run.started_at >= since
         )
+        media_cost = sum(
+            attempt.billable_units or attempt.estimated_cost_cny or 0.0
+            for attempt in self._media_resolution_attempts.values()
+            if attempt.created_at >= since
+            and attempt.status
+            in {MediaResolutionStatus.SUCCEEDED, MediaResolutionStatus.OUTCOME_UNKNOWN}
+        )
+        return search_cost + media_cost
 
     def claim_platform_search_request(
         self,
@@ -309,6 +321,73 @@ class MockRepository:
 
     def resolve_platform_search_request(self, fingerprint: str) -> None:
         self._provider_request_guards.pop(fingerprint, None)
+
+    def save_media_resolution_attempt(self, attempt: MediaResolutionAttempt) -> None:
+        self._media_resolution_attempts[attempt.resolution_id] = attempt
+
+    def get_media_resolution_attempt(
+        self, resolution_id: str
+    ) -> MediaResolutionAttempt | None:
+        return self._media_resolution_attempts.get(resolution_id)
+
+    def find_media_resolution_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> MediaResolutionAttempt | None:
+        for attempt in self._media_resolution_attempts.values():
+            if attempt.idempotency_key == idempotency_key:
+                return attempt
+        return None
+
+    def find_latest_media_resolution_for_candidate(
+        self, candidate_id: str
+    ) -> MediaResolutionAttempt | None:
+        attempts = [
+            attempt
+            for attempt in self._media_resolution_attempts.values()
+            if attempt.candidate_id == candidate_id
+        ]
+        return max(attempts, key=lambda item: item.updated_at, default=None)
+
+    def claim_media_resolution_request(
+        self,
+        idempotency_key: str,
+        resolution_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool:
+        previous = self._media_resolution_guards.get(idempotency_key)
+        if previous:
+            if previous[3] == "outcome_unknown":
+                return False
+            if claimed_at - previous[2] < timedelta(seconds=ttl_seconds):
+                return False
+        self._media_resolution_guards[idempotency_key] = (
+            resolution_id,
+            "",
+            claimed_at,
+            "claimed",
+        )
+        return True
+
+    def mark_media_resolution_request(
+        self, idempotency_key: str, status: str, updated_at: datetime
+    ) -> None:
+        previous = self._media_resolution_guards.get(idempotency_key)
+        attempt = self.find_media_resolution_by_idempotency_key(idempotency_key)
+        if previous:
+            self._media_resolution_guards[idempotency_key] = (
+                previous[0],
+                attempt.candidate_id if attempt else previous[1],
+                updated_at,
+                status,
+            )
+
+    def has_unresolved_media_resolution(self, candidate_id: str) -> bool:
+        return any(
+            attempt.candidate_id == candidate_id
+            and attempt.status == MediaResolutionStatus.OUTCOME_UNKNOWN
+            for attempt in self._media_resolution_attempts.values()
+        )
 
     # -- 流水线运行记录 --
 

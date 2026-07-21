@@ -16,6 +16,7 @@ import type {
   CopywritingRewriteRequest,
   CrawlerBatchListResponse,
   CrawlerBatchResponse,
+  CrawlerCandidateMediaPreviewResponse,
   CrawlerCapabilitiesResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
@@ -234,6 +235,35 @@ export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
 
 export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> {
   return request(`/crawler/batches/${batchId}`);
+}
+
+export function previewCrawlerCandidateMedia(
+  candidateId: string,
+): Promise<CrawlerCandidateMediaPreviewResponse> {
+  return request(`/crawler/candidates/${candidateId}/media-preview`);
+}
+
+export function createCrawlerCandidateTranscription(params: {
+  candidateId: string;
+  rightsHolder: string;
+  rightsConfirmed: boolean;
+  modelName?: string;
+  hotwords?: string;
+  idempotencyKey: string;
+}): Promise<TranscriptionResponse> {
+  return request(`/crawler/candidates/${params.candidateId}/transcriptions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": params.idempotencyKey,
+    },
+    body: JSON.stringify({
+      rights_confirmed: params.rightsConfirmed,
+      rights_holder: params.rightsHolder,
+      model_name: params.modelName || "base",
+      hotwords: params.hotwords || "",
+    }),
+  });
 }
 
 /* ---- 文案生成 ---- */

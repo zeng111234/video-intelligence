@@ -5,16 +5,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
     get_commercial_search_service,
     get_licensed_search_provider,
+    get_media_resolution_service,
     get_repository,
+    get_transcription_service,
 )
+from project.backend.app.core import config as backend_config
+from project.backend.app.core.config import ASRMode
+from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import PlatformRunStatus, SearchBatch
 from src.adapters.licensed import LicensedProviderError
+from src.services.media_resolution import MediaResolutionError
 from src.services.commercial_search import (
     CACHE_TTL_MINUTES,
     MONTHLY_HARD_LIMIT_COST_CNY,
@@ -22,6 +28,7 @@ from src.services.commercial_search import (
     MONTHLY_WARNING_QUERIES,
     RANKING_MODE,
 )
+from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
 
@@ -114,6 +121,32 @@ class CrawlerCandidateResult(BaseModel):
     model_version: str | None = None
     evidence: str | None = None
     reasons: list[str] = Field(default_factory=list)
+    media_resolution_status: str | None = None
+    media_transcription_task_id: str | None = None
+
+
+class CrawlerCandidateMediaPreviewResponse(BaseModel):
+    candidate_id: str
+    resolvable: bool
+    mode: str
+    provider: str
+    platform: str
+    platform_label: str
+    platform_item_id: str | None = None
+    estimated_cost_cny: float | None = None
+    monthly_budget_used_cny: float
+    monthly_budget_limit_cny: float
+    existing_task_id: str | None = None
+    last_resolution_status: str | None = None
+    block_reason: str | None = None
+    source: str
+
+
+class CrawlerCandidateTranscriptionRequest(BaseModel):
+    rights_confirmed: bool = Field(False, description="确认拥有媒体处理权")
+    rights_holder: str = Field(..., min_length=1, max_length=80)
+    model_name: str = Field("base", description="转写模型")
+    hotwords: str = Field("", max_length=500)
 
 
 class CrawlerPlatformRunResponse(BaseModel):
@@ -282,7 +315,10 @@ def list_crawler_batches(
     safe_limit = max(1, min(limit, 100))
     batches = repo.list_search_batches(limit=safe_limit)
     return CrawlerBatchListResponse(
-        items=[_batch_to_response(batch, repo, include_candidates=False) for batch in batches],
+        items=[
+            _batch_to_response(batch, repo, include_candidates=False)
+            for batch in batches
+        ],
         total=len(batches),
     )
 
@@ -297,6 +333,122 @@ def get_crawler_batch(
     if batch is None:
         raise HTTPException(status_code=404, detail="搜索批次不存在。")
     return _batch_to_response(batch, repo)
+
+
+@router.get(
+    "/candidates/{candidate_id}/media-preview",
+    response_model=CrawlerCandidateMediaPreviewResponse,
+)
+def preview_candidate_media_resolution(
+    candidate_id: str,
+    repo=Depends(get_repository),
+    service=Depends(get_media_resolution_service),
+):
+    """预览单条候选补媒体直链的成本、预算和阻断原因。"""
+    candidate = repo.get_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在。")
+    preview = service.preview(candidate)
+    return CrawlerCandidateMediaPreviewResponse(
+        candidate_id=preview.candidate_id,
+        resolvable=preview.resolvable,
+        mode=preview.mode,
+        provider=preview.provider,
+        platform=preview.platform.value,
+        platform_label=_platform_label(preview.platform.value),
+        platform_item_id=preview.platform_item_id,
+        estimated_cost_cny=preview.estimated_cost_cny,
+        monthly_budget_used_cny=preview.monthly_budget_used_cny,
+        monthly_budget_limit_cny=preview.monthly_budget_limit_cny,
+        existing_task_id=preview.existing_task_id,
+        last_resolution_status=(
+            preview.last_resolution_status.value
+            if preview.last_resolution_status
+            else None
+        ),
+        block_reason=preview.block_reason,
+        source=preview.source,
+    )
+
+
+@router.post(
+    "/candidates/{candidate_id}/transcriptions",
+    response_model=TranscriptionResponse,
+)
+def transcribe_candidate_media(
+    candidate_id: str,
+    body: CrawlerCandidateTranscriptionRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8),
+    repo=Depends(get_repository),
+    media_service=Depends(get_media_resolution_service),
+    transcription_service=Depends(get_transcription_service),
+):
+    """授权后按单条候选补媒体并创建真实转写任务。"""
+    if backend_config.ASR_MODE == ASRMode.SANDBOX:
+        raise HTTPException(
+            status_code=400,
+            detail="当前转写仍是 Sandbox 模式，未发起 OneAPI 媒体解析；请先启用真实 ASR。",
+        )
+    if not body.rights_confirmed:
+        raise HTTPException(status_code=400, detail="必须确认拥有媒体处理权。")
+    candidate = repo.get_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在。")
+
+    previous = repo.find_media_resolution_by_idempotency_key(idempotency_key)
+    if previous and previous.task_id:
+        task = repo.get_task(previous.task_id)
+        if task is not None:
+            return _transcription_to_response(task)
+
+    try:
+        resolved = media_service.resolve_video(
+            candidate,
+            idempotency_key=idempotency_key,
+        )
+        task = transcription_service.create_task(
+            media_name=resolved.video.name,
+            media_type=resolved.video.media_type,
+            media_bytes=resolved.video.content,
+            rights_confirmed=body.rights_confirmed,
+            rights_holder=body.rights_holder,
+            candidate_id=candidate.video_id,
+            model_name=body.model_name,
+            hotwords=body.hotwords or None,
+        )
+        media_service.attach_task(resolved.attempt, task)
+    except MediaResolutionError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=400, detail=exc.user_message) from exc
+    return _transcription_to_response(task)
+
+
+def _transcription_to_response(task) -> TranscriptionResponse:
+    segments = [
+        {
+            "start": s.start,
+            "end": s.end,
+            "text": s.text,
+            "confidence": s.confidence,
+            "needs_review": s.needs_review,
+        }
+        for s in (task.segments or [])
+    ]
+    return TranscriptionResponse(
+        task_id=task.task_id,
+        title=task.title,
+        status=task.status.value,
+        progress=task.progress,
+        stage=task.stage,
+        media_name=task.media_name,
+        segments=segments,
+        error_message=task.error_message,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
 
 
 def _batch_to_response(
@@ -361,6 +513,9 @@ def _run_to_response(
             if candidate is None:
                 continue
             trend = trend_by_candidate.get(candidate.video_id)
+            media_resolution = repo.find_latest_media_resolution_for_candidate(
+                candidate.video_id
+            )
             candidates.append(
                 CrawlerCandidateResult(
                     video_id=candidate.video_id,
@@ -368,7 +523,9 @@ def _run_to_response(
                     author_name=candidate.author_name,
                     platform=candidate.platform.value,
                     platform_label=_platform_label(candidate.platform.value),
-                    source_url=str(candidate.source_url) if candidate.source_url else None,
+                    source_url=str(candidate.source_url)
+                    if candidate.source_url
+                    else None,
                     published_at=candidate.published_at,
                     trend_score=trend.score if trend else None,
                     trend_level=trend.level.value if trend else None,
@@ -389,6 +546,12 @@ def _run_to_response(
                     model_version=trend.model_version if trend else None,
                     evidence=match.evidence or candidate.evidence,
                     reasons=trend.reasons if trend else [],
+                    media_resolution_status=(
+                        media_resolution.status.value if media_resolution else None
+                    ),
+                    media_transcription_task_id=(
+                        media_resolution.task_id if media_resolution else None
+                    ),
                 )
             )
     return CrawlerPlatformRunResponse(

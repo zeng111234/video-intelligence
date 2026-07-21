@@ -20,6 +20,7 @@ from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from src.services.candidate import CandidateService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
+from src.services.media_resolution import MediaResolutionService  # noqa: E402
 from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
@@ -123,10 +124,13 @@ def _build_cloud_asr_loader():
     from src.adapters.asr_bridge import ASRBridge
 
     if ASR_CLOUD_PROVIDER.value == "aliyun":
-        if not all([ALIYUN_ASR_ACCESS_KEY_ID, ALIYUN_ASR_ACCESS_KEY_SECRET, ALIYUN_ASR_APP_KEY]):
+        if not all(
+            [ALIYUN_ASR_ACCESS_KEY_ID, ALIYUN_ASR_ACCESS_KEY_SECRET, ALIYUN_ASR_APP_KEY]
+        ):
             # 凭证不完整，降级为 sandbox
             return lambda _: ASRBridge(SandboxCloudASR())
         from src.adapters.aliyun_asr import AliyunASRProvider
+
         provider = AliyunASRProvider(
             access_key_id=ALIYUN_ASR_ACCESS_KEY_ID,
             access_key_secret=ALIYUN_ASR_ACCESS_KEY_SECRET,
@@ -141,6 +145,7 @@ def _build_cloud_asr_loader():
 def _local_model_loader(model_name: str):
     """加载本地 faster-whisper 模型。"""
     from src.resources import load_asr_model
+
     return load_asr_model(model_name)
 
 
@@ -153,6 +158,14 @@ def _sandbox_model_loader(*args, **kwargs):
 def get_transcription_service() -> TranscriptionService:
     model_loader = _build_asr_model_loader()
     return TranscriptionService(get_repository(), model_loader=model_loader)
+
+
+@lru_cache
+def get_media_resolution_service() -> MediaResolutionService:
+    return MediaResolutionService(
+        get_repository(),
+        get_licensed_search_provider(),
+    )
 
 
 # ---------------------------------------------------------------------------

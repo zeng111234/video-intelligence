@@ -125,6 +125,15 @@ class PlatformRunStatus(StrEnum):
     OUTCOME_UNKNOWN = "outcome_unknown"
 
 
+class MediaResolutionStatus(StrEnum):
+    PREVIEW = "preview"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    OUTCOME_UNKNOWN = "outcome_unknown"
+
+
 class ProviderErrorKind(StrEnum):
     AUTHORIZATION = "authorization"
     RATE_LIMIT = "rate_limit"
@@ -347,6 +356,38 @@ class ProviderUsage(BaseModel):
     billable_units: float | None = Field(default=None, ge=0)
     estimated_cost: float | None = Field(default=None, ge=0)
     currency: str = "CNY"
+
+
+class ProviderMediaResult(BaseModel):
+    platform: Platform
+    provider: str
+    platform_item_id: str
+    media_url: HttpUrl
+    observed_at: datetime
+    request_id: str
+    api_call_count: int = Field(default=1, ge=0, le=1)
+    billable_units: float = Field(ge=0)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class MediaResolutionAttempt(BaseModel):
+    resolution_id: str = Field(default_factory=lambda: f"media-{uuid4().hex[:12]}")
+    idempotency_key: str = Field(min_length=8)
+    candidate_id: str
+    platform: Platform
+    platform_item_id: str
+    provider: str
+    status: MediaResolutionStatus = MediaResolutionStatus.RUNNING
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    billable_units: float | None = Field(default=None, ge=0)
+    api_call_count: int = Field(default=0, ge=0, le=1)
+    provider_request_id: str | None = None
+    task_id: str | None = None
+    error_kind: ProviderErrorKind | None = None
+    error_message: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 
 
 class AvatarCapability(BaseModel):

@@ -11,6 +11,7 @@ from src.models import (
     CandidateMatch,
     DiscoveryResult,
     KeywordTrendResult,
+    MediaResolutionAttempt,
     PipelineRun,
     PlatformSearchRun,
     Platform,
@@ -181,6 +182,36 @@ class CandidateRepository(Protocol):
     def has_unresolved_platform_search_request(self, fingerprint: str) -> bool: ...
 
     def resolve_platform_search_request(self, fingerprint: str) -> None: ...
+
+    def save_media_resolution_attempt(
+        self, attempt: MediaResolutionAttempt
+    ) -> None: ...
+
+    def get_media_resolution_attempt(
+        self, resolution_id: str
+    ) -> MediaResolutionAttempt | None: ...
+
+    def find_media_resolution_by_idempotency_key(
+        self, idempotency_key: str
+    ) -> MediaResolutionAttempt | None: ...
+
+    def find_latest_media_resolution_for_candidate(
+        self, candidate_id: str
+    ) -> MediaResolutionAttempt | None: ...
+
+    def claim_media_resolution_request(
+        self,
+        idempotency_key: str,
+        resolution_id: str,
+        claimed_at: datetime,
+        ttl_seconds: int = 60,
+    ) -> bool: ...
+
+    def mark_media_resolution_request(
+        self, idempotency_key: str, status: str, updated_at: datetime
+    ) -> None: ...
+
+    def has_unresolved_media_resolution(self, candidate_id: str) -> bool: ...
 
 
 class TaskRepository(Protocol):

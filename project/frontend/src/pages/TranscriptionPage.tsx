@@ -27,12 +27,14 @@ import {
 import {
   createTranscriptionByUrl,
   exportTranscription,
+  getTranscription,
   listTranscriptions,
   saveTranscriptionRevision,
   uploadAndTranscribe,
 } from "../api/client";
 import type { TranscriptSegment, TranscriptionResponse } from "../api/types";
 import { useToast } from "../components/Toast";
+import { useSearchParams } from "react-router-dom";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -67,6 +69,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function TranscriptionPage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
   const [tasks, setTasks] = useState<TranscriptionResponse[]>([]);
   const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
@@ -77,13 +80,23 @@ export default function TranscriptionPage() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
+  const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
+  const urlFromQuery = searchParams.get("url")?.trim() || "";
+  const taskFromQuery = searchParams.get("task")?.trim() || "";
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
       const items = await listTranscriptions();
       setTasks(items);
-      if (selected) {
+      if (taskFromQuery) {
+        const task =
+          items.find((item) => item.task_id === taskFromQuery)
+          || await getTranscription(taskFromQuery);
+        setSelected(task);
+        setSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
+      } else if (selected) {
         const next = items.find((item) => item.task_id === selected.task_id) || null;
         setSelected(next);
         setSegments(next?.segments || []);
@@ -93,11 +106,17 @@ export default function TranscriptionPage() {
     } finally {
       setLoading(false);
     }
-  }, [selected?.task_id, toast]);
+  }, [selected?.task_id, taskFromQuery, toast]);
 
   useEffect(() => {
     refresh();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (urlFromQuery) {
+      setVideoUrl(urlFromQuery);
+    }
+  }, [urlFromQuery]);
 
   const filteredTasks = useMemo(() => {
     const normalized = searchText.trim().toLowerCase();
@@ -282,6 +301,15 @@ export default function TranscriptionPage() {
         message="权利确认边界"
         description="候选或爬虫结果跳转到此页后，不会自动下载平台分享页。请上传你有权处理的文件，或填写已授权的 MP4/MOV 直链。"
       />
+
+      {candidateFromQuery && !urlFromQuery && (
+        <Alert
+          type="info"
+          showIcon
+          message="需要补充可转写媒体"
+          description={`已从候选 ${candidateTitleFromQuery || candidateFromQuery} 跳转；当前供应商没有返回原视频直链。请粘贴已授权 MP4/MOV 直链，或切换到“上传文件”上传你有权处理的视频。`}
+        />
+      )}
 
       <Card title="创建转写任务">
         <Tabs

@@ -156,6 +156,87 @@ def test_search_maps_three_platforms_without_pagination(
     assert page.items[0].platform == platform
 
 
+def test_resolve_douyin_media_uses_high_quality_endpoint() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "play_url": "https://v3-dy.example.com/media/video.mp4",
+                },
+            }
+        ]
+    )
+    provider = build_provider(transport)
+
+    result = provider.resolve_media_url(
+        Platform.DOUYIN,
+        "7584380037021830400",
+        "idem-media-douyin",
+    )
+
+    assert transport.calls[0][0].endswith(
+        "/api/douyin-app/fetch_video_high_quality_play_url"
+    )
+    assert transport.calls[0][1]["aweme_id"] == "7584380037021830400"
+    assert result.billable_units == pytest.approx(0.08)
+    assert str(result.media_url).startswith("https://v3-dy.example.com/media/video.mp4")
+
+
+def test_resolve_xhs_media_uses_video_note_detail_endpoint() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "video_info": {
+                        "master_url": "https://sns-video-qc.xhscdn.com/item-play",
+                    },
+                },
+            }
+        ]
+    )
+    provider = build_provider(transport)
+
+    result = provider.resolve_media_url(
+        Platform.XIAOHONGSHU,
+        "68bebd21000000001b03315d",
+        "idem-media-xhs",
+    )
+
+    assert transport.calls[0][0].endswith("/api/xiaohongshu-v2/fetch_video_note_detail")
+    assert transport.calls[0][1]["note_id"] == "68bebd21000000001b03315d"
+    assert result.billable_units == pytest.approx(0.12)
+
+
+def test_wechat_share_url_is_not_treated_as_transcribable_media() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "message": "success",
+                "data": {
+                    "object_id": "14943822173652851063",
+                    "share_url": "https://weixin.qq.com/sph/example",
+                },
+            }
+        ]
+    )
+    provider = build_provider(transport)
+
+    with pytest.raises(LicensedProviderError) as caught:
+        provider.resolve_media_url(
+            Platform.WECHAT_CHANNELS,
+            "14943822173652851063",
+            "idem-media-wechat",
+        )
+
+    assert caught.value.code == "media_url_missing"
+    assert transport.calls[0][0].endswith("/api/wechat-channels-v2/fetch_video_detail")
+
+
 def test_search_request_uses_keyword_hot_sort_and_seven_day_window() -> None:
     responses = [{"code": 200, "data": []} for _ in range(3)]
     transport = FixedTransport(responses)
@@ -363,7 +444,9 @@ def test_missing_publish_time_uses_observed_time_with_warning() -> None:
 
     assert len(page.items) == 1
     assert page.items[0].published_at == NOW
-    assert any("时间窗无法核验" in warning for warning in page.items[0].data_quality_warnings)
+    assert any(
+        "时间窗无法核验" in warning for warning in page.items[0].data_quality_warnings
+    )
 
 
 def test_business_authorization_error_is_not_retryable_or_secret_bearing() -> None:

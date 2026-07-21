@@ -5,7 +5,6 @@ import {
   Card,
   Checkbox,
   Descriptions,
-  Empty,
   Input,
   InputNumber,
   List,
@@ -28,13 +27,16 @@ import {
 } from "@ant-design/icons";
 import {
   createCrawlerBatch,
+  createCrawlerCandidateTranscription,
   getCrawlerBatch,
   getCrawlerCapabilities,
   listCrawlerBatches,
+  previewCrawlerCandidateMedia,
   previewCrawlerBatch,
 } from "../api/client";
 import type {
   CrawlerBatchResponse,
+  CrawlerCandidateMediaPreviewResponse,
   CrawlerCandidateResult,
   CrawlerCapabilitiesResponse,
   CrawlerPlatformRun,
@@ -42,6 +44,7 @@ import type {
   CrawlerSearchRequest,
 } from "../api/types";
 import { useToast } from "../components/Toast";
+import { useNavigate } from "react-router-dom";
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -80,8 +83,44 @@ function formatScore(value: number | null | undefined) {
   return value === null || value === undefined ? "暂无" : value.toFixed(1);
 }
 
+function formatCurrency(value: number | null | undefined, currency = "CNY") {
+  if (value === null || value === undefined) {
+    return "未返回";
+  }
+  return currency === "CNY" ? `¥${value.toFixed(2)}` : `${value.toFixed(2)} ${currency}`;
+}
+
+function isDirectVideoUrl(url: string | null) {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return /\.(mp4|mov)(\?|$)/i.test(parsed.pathname + parsed.search);
+  } catch {
+    return false;
+  }
+}
+
+function metricEntries(item: CrawlerCandidateResult) {
+  const entries: Array<[string, number]> = [];
+  if (item.plays !== null && item.plays !== undefined && item.plays > 0) {
+    entries.push(["播放", item.plays]);
+  }
+  for (const [label, value] of [
+    ["点赞", item.likes],
+    ["评论", item.comments],
+    ["分享", item.shares],
+    ["收藏", item.favorites],
+  ] as const) {
+    if (value !== null && value !== undefined) {
+      entries.push([label, value]);
+    }
+  }
+  return entries;
+}
+
 export default function KeywordCrawlerPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
   const [publishedWindowDays, setPublishedWindowDays] = useState<1 | 7>(7);
@@ -93,6 +132,12 @@ export default function KeywordCrawlerPage() {
   const [selectedBatch, setSelectedBatch] = useState<CrawlerBatchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
+  const [mediaPreview, setMediaPreview] = useState<CrawlerCandidateMediaPreviewResponse | null>(null);
+  const [mediaPreviewOpen, setMediaPreviewOpen] = useState(false);
+  const [mediaSubmitting, setMediaSubmitting] = useState(false);
+  const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
+  const [mediaRightsConfirmed, setMediaRightsConfirmed] = useState(false);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
@@ -176,6 +221,55 @@ export default function KeywordCrawlerPage() {
     }
   };
 
+  const handleOpenCandidateMedia = async (candidate: CrawlerCandidateResult) => {
+    if (candidate.media_transcription_task_id) {
+      navigate(`/transcription?task=${encodeURIComponent(candidate.media_transcription_task_id)}`);
+      return;
+    }
+    setMediaSubmitting(true);
+    setMediaCandidate(candidate);
+    setMediaRightsConfirmed(false);
+    try {
+      const resp = await previewCrawlerCandidateMedia(candidate.video_id);
+      setMediaPreview(resp);
+      setMediaPreviewOpen(true);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setMediaSubmitting(false);
+    }
+  };
+
+  const handleCreateCandidateTranscription = async () => {
+    if (!mediaCandidate || !mediaPreview) return;
+    if (!mediaRightsConfirmed) {
+      toast.warning("请先确认拥有媒体处理权");
+      return;
+    }
+    setMediaSubmitting(true);
+    try {
+      const task = await createCrawlerCandidateTranscription({
+        candidateId: mediaCandidate.video_id,
+        rightsHolder,
+        rightsConfirmed: mediaRightsConfirmed,
+        idempotencyKey: [
+          "media",
+          mediaCandidate.video_id,
+          Date.now(),
+          Math.random().toString(16).slice(2),
+        ].join("-"),
+      });
+      toast.success("转写任务已创建");
+      setMediaPreviewOpen(false);
+      await refresh();
+      navigate(`/transcription?task=${encodeURIComponent(task.task_id)}`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setMediaSubmitting(false);
+    }
+  };
+
   const batchColumns: ColumnsType<CrawlerBatchResponse> = [
     { title: "批次ID", dataIndex: "batch_id", width: 170, render: (v) => <Text code>{v}</Text> },
     { title: "关键词", dataIndex: "keyword", width: 140 },
@@ -236,10 +330,16 @@ export default function KeywordCrawlerPage() {
                 ? capabilities.supported_platform_labels.join(" / ")
                 : "未开放"}
             </Descriptions.Item>
-            <Descriptions.Item label="月度调用量">
+            <Descriptions.Item label="本地调用量">
               {capabilities.monthly_query_count} / {capabilities.monthly_hard_limit_queries}
             </Descriptions.Item>
-            <Descriptions.Item label="本地估算费用">
+            <Descriptions.Item label="OneAPI 成功请求">
+              {capabilities.usage?.platform_queries ?? "未返回"}
+            </Descriptions.Item>
+            <Descriptions.Item label="OneAPI 用量费用">
+              {formatCurrency(capabilities.usage?.estimated_cost, capabilities.usage?.currency)}
+            </Descriptions.Item>
+            <Descriptions.Item label="本地预算占用">
               ¥{capabilities.monthly_estimated_cost_cny.toFixed(2)} / ¥{capabilities.monthly_hard_limit_cost_cny.toFixed(2)}
             </Descriptions.Item>
             <Descriptions.Item label="缓存 TTL">{capabilities.cache_ttl_minutes} 分钟</Descriptions.Item>
@@ -318,7 +418,7 @@ export default function KeywordCrawlerPage() {
         </Space>
       </Card>
 
-      {selectedBatch && <BatchDetail batch={selectedBatch} />}
+      {selectedBatch && <BatchDetail batch={selectedBatch} onResolveMedia={handleOpenCandidateMedia} mediaSubmitting={mediaSubmitting} />}
 
       <Card title={`历史批次（${batches.length}）`}>
         <Table
@@ -370,11 +470,69 @@ export default function KeywordCrawlerPage() {
           </Space>
         )}
       </Modal>
+
+      <Modal
+        title="确认单条媒体解析与转写"
+        open={mediaPreviewOpen}
+        onCancel={() => setMediaPreviewOpen(false)}
+        onOk={handleCreateCandidateTranscription}
+        okText="确认并创建转写"
+        cancelText="取消"
+        confirmLoading={mediaSubmitting}
+        okButtonProps={{
+          disabled: !mediaPreview?.resolvable || !mediaRightsConfirmed,
+        }}
+      >
+        {mediaCandidate && mediaPreview && (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Alert
+              type={mediaPreview.resolvable ? "info" : "warning"}
+              showIcon
+              message={mediaCandidate.title}
+              description={
+                mediaPreview.block_reason
+                  || `来源：${mediaPreview.source === "direct_url" ? "已有授权直链" : mediaPreview.provider}；预计费用 ${formatCurrency(mediaPreview.estimated_cost_cny)}；本地共享预算 ${formatCurrency(mediaPreview.monthly_budget_used_cny)} / ${formatCurrency(mediaPreview.monthly_budget_limit_cny)}`
+              }
+            />
+            {mediaPreview.existing_task_id && (
+              <Button
+                type="link"
+                onClick={() => navigate(`/transcription?task=${encodeURIComponent(mediaPreview.existing_task_id || "")}`)}
+              >
+                查看已有转写任务
+              </Button>
+            )}
+            <Input
+              value={rightsHolder}
+              onChange={(event) => setRightsHolder(event.target.value)}
+              addonBefore="权利主体"
+              placeholder="填写授权主体或公司名称"
+            />
+            <Checkbox
+              checked={mediaRightsConfirmed}
+              onChange={(event) => setMediaRightsConfirmed(event.target.checked)}
+            >
+              我确认拥有该视频用于本次私有转写和文案分析的处理权
+            </Checkbox>
+            <Text type="secondary">
+              供应商返回的临时媒体地址只会在后端读取并立即用于转写，不会展示、保存或批量下载。
+            </Text>
+          </Space>
+        )}
+      </Modal>
     </Space>
   );
 }
 
-function BatchDetail({ batch }: { batch: CrawlerBatchResponse }) {
+function BatchDetail({
+  batch,
+  onResolveMedia,
+  mediaSubmitting,
+}: {
+  batch: CrawlerBatchResponse;
+  onResolveMedia: (candidate: CrawlerCandidateResult) => void;
+  mediaSubmitting: boolean;
+}) {
   const [rankingMode, setRankingMode] = useState<RankingMode>("provider");
 
   return (
@@ -398,13 +556,31 @@ function BatchDetail({ batch }: { batch: CrawlerBatchResponse }) {
         />
       </Space>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {batch.platform_runs.map((run) => <PlatformRunDetail key={run.run_id} run={run} rankingMode={rankingMode} />)}
+        {batch.platform_runs.map((run) => (
+          <PlatformRunDetail
+            key={run.run_id}
+            run={run}
+            rankingMode={rankingMode}
+            onResolveMedia={onResolveMedia}
+            mediaSubmitting={mediaSubmitting}
+          />
+        ))}
       </Space>
     </Card>
   );
 }
 
-function PlatformRunDetail({ run, rankingMode }: { run: CrawlerPlatformRun; rankingMode: RankingMode }) {
+function PlatformRunDetail({
+  run,
+  rankingMode,
+  onResolveMedia,
+  mediaSubmitting,
+}: {
+  run: CrawlerPlatformRun;
+  rankingMode: RankingMode;
+  onResolveMedia: (candidate: CrawlerCandidateResult) => void;
+  mediaSubmitting: boolean;
+}) {
   const candidates = [...run.candidates].sort((a, b) => {
     if (rankingMode === "system") {
       return (a.system_rank ?? 999) - (b.system_rank ?? 999);
@@ -421,50 +597,100 @@ function PlatformRunDetail({ run, rankingMode }: { run: CrawlerPlatformRun; rank
         <Descriptions.Item label="返回">{run.returned_count}/{run.requested_count}</Descriptions.Item>
         <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
         <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
-        <Descriptions.Item label="计费单元">{run.billable_units ?? 0}</Descriptions.Item>
+        <Descriptions.Item label="估算费用">{formatCurrency(run.billable_units)}</Descriptions.Item>
       </Descriptions>
       {run.error && <Alert style={{ marginTop: 12 }} type="error" showIcon message={run.error} />}
       {run.candidates.length === 0 ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无候选结果" />
+        <Alert
+          style={{ marginTop: 16 }}
+          type="warning"
+          showIcon
+          message="供应商本次未返回可用候选"
+          description={
+            run.error
+              || "本次已产生平台 API 调用，但供应商响应中没有可入库的作品列表；这通常不是前端展示问题。建议换小流量关键词或稍后强制刷新验证。"
+          }
+        />
       ) : (
         <List
           style={{ marginTop: 12 }}
           dataSource={candidates}
-          renderItem={(item) => <CandidateListItem item={item} />}
+          renderItem={(item) => (
+            <CandidateListItem
+              item={item}
+              onResolveMedia={onResolveMedia}
+              mediaSubmitting={mediaSubmitting}
+            />
+          )}
         />
       )}
     </Card>
   );
 }
 
-function CandidateListItem({ item }: { item: CrawlerCandidateResult }) {
+function CandidateListItem({
+  item,
+  onResolveMedia,
+  mediaSubmitting,
+}: {
+  item: CrawlerCandidateResult;
+  onResolveMedia: (candidate: CrawlerCandidateResult) => void;
+  mediaSubmitting: boolean;
+}) {
   const componentEntries = Object.entries(item.component_scores || {});
+  const metrics = metricEntries(item);
+  const shouldShowConfidence = item.confidence !== null && item.confidence !== undefined && item.confidence >= 0.6;
+  const directVideoUrl = isDirectVideoUrl(item.source_url);
+  const transcriptionUrl = directVideoUrl
+    ? `/transcription?candidate=${encodeURIComponent(item.video_id)}&url=${encodeURIComponent(item.source_url || "")}`
+    : `/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`;
 
   return (
     <List.Item
       actions={[
-        item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无链接</Text>,
-        <a href={`/transcription?candidate=${encodeURIComponent(item.video_id)}`}>去转写</a>,
+        item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
+        <Button
+          type="link"
+          size="small"
+          loading={mediaSubmitting}
+          onClick={() => onResolveMedia(item)}
+        >
+          {item.media_transcription_task_id
+            ? "查看转写"
+            : directVideoUrl
+              ? "确认直链转写"
+              : "补媒体并转写"}
+        </Button>,
+        !directVideoUrl && (
+          <Tooltip title="也可以手动填写已授权 MP4/MOV 直链或上传视频文件。">
+            <a href={transcriptionUrl}>手动补直链/上传</a>
+          </Tooltip>
+        ),
       ]}
     >
       <List.Item.Meta
         avatar={item.provider_hot_rank ? <Tag color="purple">热度 #{item.provider_hot_rank}</Tag> : undefined}
         title={
-          <Space wrap>
-            <Text strong>{item.title}</Text>
-            {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
-            {item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
+            <Space wrap>
+              <Text strong>{item.title}</Text>
+              {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
+              {item.media_resolution_status && <Tag>{statusLabel(item.media_resolution_status)}</Tag>}
+              {item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
             {item.anomaly_status && item.anomaly_status !== "normal" && <Tag color="warning">异常：{item.anomaly_status}</Tag>}
           </Space>
         }
         description={
           <Space direction="vertical" size={2}>
             <Text type="secondary">
-              作者：{item.author_name}；趋势分：{formatScore(item.trend_score)}；置信度：{item.confidence ?? "暂无"}；样本池：{item.pool_size ?? "暂无"}；增长：{item.like_growth_per_hour ?? "首次观测"}
+              作者：{item.author_name}；趋势分：{formatScore(item.trend_score)}
+              {shouldShowConfidence ? `；置信度：${item.confidence}` : ""}
+              ；样本池：{item.pool_size ?? "暂无"}；增长：{item.like_growth_per_hour ?? "首次观测"}
             </Text>
-            <Text type="secondary">
-              播放：{formatNumber(item.plays)}；点赞：{formatNumber(item.likes)}；评论：{formatNumber(item.comments)}；分享：{formatNumber(item.shares)}；收藏：{formatNumber(item.favorites)}
-            </Text>
+            {metrics.length > 0 && (
+              <Text type="secondary">
+                {metrics.map(([label, value]) => `${label}：${formatNumber(value)}`).join("；")}
+              </Text>
+            )}
             {componentEntries.length > 0 && (
               <Space wrap size={[4, 4]}>
                 {componentEntries.map(([name, value]) => (

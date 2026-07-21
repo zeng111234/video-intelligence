@@ -18,6 +18,7 @@ from src.models import (
     ProviderCapability,
     ProviderErrorKind,
     ProviderMode,
+    ProviderMediaResult,
     ProviderSearchError,
     ProviderSearchItem,
     ProviderSearchPage,
@@ -47,6 +48,11 @@ class OneApiLicensedSearchProvider:
     base_url = "https://api.getoneapi.com"
     endpoint_prices_cny = {
         Platform.DOUYIN: 0.03,
+        Platform.XIAOHONGSHU: 0.12,
+        Platform.WECHAT_CHANNELS: 0.15,
+    }
+    media_endpoint_prices_cny = {
+        Platform.DOUYIN: 0.08,
         Platform.XIAOHONGSHU: 0.12,
         Platform.WECHAT_CHANNELS: 0.15,
     }
@@ -213,6 +219,46 @@ class OneApiLicensedSearchProvider:
             currency="CNY",
         )
 
+    def media_resolution_price(self, platform: Platform) -> float | None:
+        return self.media_endpoint_prices_cny.get(platform)
+
+    def resolve_media_url(
+        self,
+        platform: Platform,
+        platform_item_id: str,
+        idempotency_key: str,
+    ) -> ProviderMediaResult:
+        self._validate_media_resolution(platform, platform_item_id)
+        observed_at = self._clock()
+        endpoint, payload = self._media_request(platform, platform_item_id)
+        body = self._request(endpoint, payload, timeout_unknown=True)
+        data = body.get("data")
+        media_url = self._extract_media_url(data)
+        if media_url is None:
+            raise LicensedProviderError(
+                "供应商详情接口未返回可用于转写的视频文件直链。",
+                kind=ProviderErrorKind.VALIDATION,
+                code="media_url_missing",
+            )
+        try:
+            parsed_url = HttpUrl(media_url)
+        except ValueError as exc:
+            raise LicensedProviderError(
+                "供应商返回的视频文件直链格式无效。",
+                kind=ProviderErrorKind.VALIDATION,
+                code="media_url_invalid",
+            ) from exc
+        return ProviderMediaResult(
+            platform=platform,
+            provider=self.provider_name,
+            platform_item_id=platform_item_id,
+            media_url=parsed_url,
+            observed_at=observed_at,
+            request_id=self._request_id(body, idempotency_key),
+            api_call_count=1,
+            billable_units=self.media_endpoint_prices_cny[platform],
+        )
+
     def account_balance_cny(self) -> float | None:
         if not self._api_key:
             raise LicensedProviderError(
@@ -247,6 +293,33 @@ class OneApiLicensedSearchProvider:
             raise LicensedProviderError(
                 "每个平台每次只能获取 1 到 10 条。",
                 kind=ProviderErrorKind.VALIDATION,
+            )
+
+    def _validate_media_resolution(
+        self, platform: Platform, platform_item_id: str
+    ) -> None:
+        capability = self.capabilities()
+        if not capability.enabled:
+            raise LicensedProviderError(
+                "尚未配置 OneAPI API Key，未发起真实请求。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                code="api_key_missing",
+            )
+        if platform not in self.media_endpoint_prices_cny:
+            raise LicensedProviderError(
+                "OneAPI 媒体解析暂只支持抖音、小红书和微信视频号。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        if not platform_item_id.strip():
+            raise LicensedProviderError(
+                "作品 ID 为空，不能补媒体直链。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        if platform_item_id.startswith("proxy-"):
+            raise LicensedProviderError(
+                "该候选只有本地代理 ID，供应商无法按真实作品 ID 补媒体直链。",
+                kind=ProviderErrorKind.VALIDATION,
+                code="proxy_id_not_resolvable",
             )
 
     @staticmethod
@@ -293,6 +366,26 @@ class OneApiLicensedSearchProvider:
             "raw": False,
         }
 
+    @staticmethod
+    def _media_request(
+        platform: Platform,
+        platform_item_id: str,
+    ) -> tuple[str, dict[str, Any]]:
+        if platform == Platform.DOUYIN:
+            return "/api/douyin-app/fetch_video_high_quality_play_url", {
+                "aweme_id": platform_item_id,
+                "share_text": "",
+            }
+        if platform == Platform.XIAOHONGSHU:
+            return "/api/xiaohongshu-v2/fetch_video_note_detail", {
+                "note_id": platform_item_id,
+                "share_text": "",
+            }
+        return "/api/wechat-channels-v2/fetch_video_detail", {
+            "object_id": platform_item_id,
+            "raw": False,
+        }
+
     def _request(
         self,
         endpoint: str,
@@ -307,7 +400,7 @@ class OneApiLicensedSearchProvider:
             "User-Agent": "video-intelligence-oneapi/1.0",
         }
         url = f"{self._base_url}{endpoint}"
-        
+
         log_http_request_response(
             url=url,
             method="POST",
@@ -315,7 +408,7 @@ class OneApiLicensedSearchProvider:
             request_body=payload,
             additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
         )
-        
+
         status: int = 0
         body: Mapping[str, Any] = {}
         try:
@@ -325,7 +418,7 @@ class OneApiLicensedSearchProvider:
                 headers,
                 self._timeout_seconds,
             )
-            
+
             # 记录响应详情
             log_http_request_response(
                 url=url,
@@ -336,7 +429,7 @@ class OneApiLicensedSearchProvider:
                 response_body=body,
                 additional_info={"endpoint": endpoint},
             )
-            
+
         except HTTPError as exc:
             # 记录HTTP错误详情
             error_context = create_error_context(
@@ -346,10 +439,13 @@ class OneApiLicensedSearchProvider:
                 request_headers=headers,
                 request_body=payload,
                 response_status=exc.code,
-                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+                additional_info={
+                    "endpoint": endpoint,
+                    "timeout_unknown": timeout_unknown,
+                },
             )
             error_context.log_error()
-            
+
             self._raise_http_error(exc.code)
         except (socket.timeout, TimeoutError) as exc:
             # 记录超时错误
@@ -359,10 +455,13 @@ class OneApiLicensedSearchProvider:
                 request_method="POST",
                 request_headers=headers,
                 request_body=payload,
-                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+                additional_info={
+                    "endpoint": endpoint,
+                    "timeout_unknown": timeout_unknown,
+                },
             )
             error_context.log_error()
-            
+
             kind = (
                 ProviderErrorKind.OUTCOME_UNKNOWN
                 if timeout_unknown
@@ -387,10 +486,13 @@ class OneApiLicensedSearchProvider:
                 request_method="POST",
                 request_headers=headers,
                 request_body=payload,
-                additional_info={"endpoint": endpoint, "timeout_unknown": timeout_unknown},
+                additional_info={
+                    "endpoint": endpoint,
+                    "timeout_unknown": timeout_unknown,
+                },
             )
             error_context.log_error()
-            
+
             if isinstance(exc.reason, (socket.timeout, TimeoutError)):
                 kind = (
                     ProviderErrorKind.OUTCOME_UNKNOWN
@@ -425,7 +527,7 @@ class OneApiLicensedSearchProvider:
                 additional_info={"endpoint": endpoint},
             )
             error_context.log_error()
-            
+
             raise LicensedProviderError(
                 "无法连接 OneAPI，最多只会自动重试一次。",
                 kind=ProviderErrorKind.CONNECTION,
@@ -446,7 +548,7 @@ class OneApiLicensedSearchProvider:
                 additional_info={"endpoint": endpoint},
             )
             error_context.log_error()
-            
+
             self._raise_http_error(status)
         code = str(body.get("code", "")).strip()
         if code != "200":
@@ -462,7 +564,7 @@ class OneApiLicensedSearchProvider:
                 additional_info={"endpoint": endpoint, "business_code": code},
             )
             error_context.log_error()
-            
+
             self._raise_business_error(code, body, endpoint)
         return body
 
@@ -514,7 +616,7 @@ class OneApiLicensedSearchProvider:
                 response_body=None,
                 headers=None,
             )
-            
+
             # 创建错误上下文
             error_context = create_error_context(
                 error=Exception("HTTP 404 错误"),
@@ -524,10 +626,10 @@ class OneApiLicensedSearchProvider:
                     "service": "oneapi",
                 },
             )
-            
+
             # 记录错误
             error_context.log_error()
-            
+
             # 404 是服务层错误（端点不存在或已变更），不是参数校验错误
             # 根据分析结果决定是否可重试
             raise LicensedProviderError(
@@ -545,10 +647,10 @@ class OneApiLicensedSearchProvider:
                     "service": "oneapi",
                 },
             )
-            
+
             # 记录错误
             error_context.log_error()
-            
+
             raise LicensedProviderError(
                 "OneAPI 服务暂时不可用，系统最多自动重试一次。",
                 kind=ProviderErrorKind.SERVICE,
@@ -564,10 +666,10 @@ class OneApiLicensedSearchProvider:
                     "service": "oneapi",
                 },
             )
-            
+
             # 记录错误
             error_context.log_error()
-            
+
             kind = ProviderErrorKind.VALIDATION
             message = "OneAPI 拒绝了本次请求，请检查查询参数。"
         raise LicensedProviderError(message, kind=kind, code=str(status))
@@ -914,6 +1016,74 @@ class OneApiLicensedSearchProvider:
             return id_hits, title_hits, len(items)
 
         return max(candidates, key=score)
+
+    @classmethod
+    def _extract_media_url(cls, value: Any) -> str | None:
+        media_keys = {
+            "play_url",
+            "playUrl",
+            "video_url",
+            "videoUrl",
+            "download_url",
+            "downloadUrl",
+            "media_url",
+            "mediaUrl",
+            "master_url",
+            "masterUrl",
+            "backup_url",
+            "backupUrl",
+            "src",
+        }
+        candidates: list[str] = []
+
+        def visit(current: Any, depth: int, key_hint: str = "") -> None:
+            if depth > 8:
+                return
+            if isinstance(current, str):
+                text = current.strip()
+                if text.startswith(("https://", "http://")) and (
+                    key_hint in media_keys or cls._looks_like_media_url(text)
+                ):
+                    candidates.append(text)
+                return
+            if isinstance(current, Mapping):
+                for key, nested in current.items():
+                    visit(nested, depth + 1, str(key))
+                return
+            if isinstance(current, list):
+                for nested in current:
+                    visit(nested, depth + 1, key_hint)
+
+        visit(value, 0)
+        for candidate in candidates:
+            if candidate.startswith("https://"):
+                return candidate
+        return candidates[0] if candidates else None
+
+    @staticmethod
+    def _looks_like_media_url(url: str) -> bool:
+        text = url.casefold()
+        if text.endswith((".mp4", ".mov")) or ".mp4?" in text or ".mov?" in text:
+            return True
+        media_markers = (
+            "video",
+            "play",
+            "byte",
+            "ixigua",
+            "douyinvod",
+            "xhscdn",
+            "sns-video",
+            "qpic.cn",
+        )
+        page_markers = (
+            "douyin.com/video/",
+            "xiaohongshu.com/explore/",
+            "weixin.qq.com/sph/",
+            "channels.weixin.qq.com/",
+        )
+        return any(marker in text for marker in media_markers) and not any(
+            marker in text for marker in page_markers
+        )
 
     @classmethod
     def _extract_usage_records(cls, value: Any) -> list[Mapping[str, Any]]:
