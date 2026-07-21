@@ -59,7 +59,7 @@ class FakeAvatarProvider:
         return AvatarCapability(
             provider_name="fake-avatar",
             display_name="测试数字人",
-            mode=ProviderMode.SANDBOX,
+            mode=ProviderMode.PRODUCTION,
             enabled=True,
             permission_status="authorized",
             max_script_chars=240,

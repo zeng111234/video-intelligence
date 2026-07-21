@@ -1,111 +1,123 @@
-"""数字人生成 API 测试"""
+"""数字人生成 API 测试。"""
 
-import pytest
 from fastapi.testclient import TestClient
 
 from project.backend.app.main import app
 
 
-@pytest.fixture
-def client():
-    return TestClient(app)
+def test_capabilities_are_explicit():
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/avatar/capabilities")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["provider_name"] == "sandbox_avatar"
+    assert data["mode"] == "sandbox"
+    assert data["enabled"] is True
+    assert data["missing_configuration"] == []
 
 
-class TestAvatarAPI:
-    """数字人 API 测试"""
+def test_assets_only_return_authorized_public_assets():
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/avatar/assets")
 
-    def test_generate_avatar_video(self, client):
-        """测试生成数字人视频"""
-        resp = client.post("/api/v1/avatar/generate", json={
-            "avatar_type": "image",
-            "audio_type": "tts",
-            "tts_text": "大家好，欢迎观看今天的视频",
-            "tts_voice": "sweet_female",
-            "speech_rate": 1.0,
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "task_id" in data
-        assert data["status"] == "running"
-        assert data["avatar_type"] == "image"
-        assert data["audio_type"] == "tts"
+    assert resp.status_code == 200
+    data = resp.json()
+    assert {item["kind"] for item in data} == {"avatar", "voice"}
+    assert all(item["authorized"] for item in data)
 
-    def test_generate_without_tts_text(self, client):
-        """测试 TTS 模式没有文案"""
-        resp = client.post("/api/v1/avatar/generate", json={
-            "avatar_type": "image",
-            "audio_type": "tts",
-            "tts_text": "",
-        })
-        assert resp.status_code == 400
 
-    def test_get_task_status(self, client):
-        """测试获取任务状态"""
-        # 先创建任务
-        create_resp = client.post("/api/v1/avatar/generate", json={
-            "avatar_type": "image",
-            "audio_type": "tts",
-            "tts_text": "测试文案",
-        })
-        task_id = create_resp.json()["task_id"]
+def test_create_and_get_job():
+    with TestClient(app) as client:
+        assets = client.get("/api/v1/avatar/assets").json()
+        avatar = next(item for item in assets if item["kind"] == "avatar")
+        voice = next(item for item in assets if item["kind"] == "voice")
 
-        # 获取任务状态
-        resp = client.get(f"/api/v1/avatar/tasks/{task_id}")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["task_id"] == task_id
-
-    def test_get_task_not_found(self, client):
-        """测试获取不存在的任务"""
-        resp = client.get("/api/v1/avatar/tasks/nonexistent")
-        assert resp.status_code == 404
-
-    def test_list_tasks(self, client):
-        """测试获取任务列表"""
-        resp = client.get("/api/v1/avatar/tasks")
-        assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
-
-    def test_list_voices(self, client):
-        """测试获取音色列表"""
-        resp = client.get("/api/v1/avatar/voices")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
-        # 验证音色结构
-        voice = data[0]
-        assert "id" in voice
-        assert "name" in voice
-        assert "gender" in voice
-
-    def test_upload_avatar_image(self, client):
-        """测试上传形象图片"""
-        # 创建模拟图片文件
-        import io
-        from PIL import Image
-
-        img = Image.new("RGB", (100, 100), color="red")
-        img_bytes = io.BytesIO()
-        img.save(img_bytes, format="JPEG")
-        img_bytes.seek(0)
-
-        resp = client.post(
-            "/api/v1/avatar/upload-avatar",
-            files={"file": ("test.jpg", img_bytes, "image/jpeg")},
+        create_resp = client.post(
+            "/api/v1/avatar/jobs",
+            json={
+                "script_text": "大家好，欢迎观看今天的视频。",
+                "avatar_id": avatar["asset_id"],
+                "voice_id": voice["asset_id"],
+                "target_seconds": 45,
+                "speech_rate": 1.0,
+                "aspect_ratio": "9:16",
+                "resolution": "1080x1920",
+                "publish_mode": "manual",
+                "target_platforms": ["douyin"],
+                "idempotency_key": "test-avatar-job-0001",
+            },
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "file_id" in data
-        assert data["status"] == "uploaded"
+        assert create_resp.status_code == 200
+        created = create_resp.json()
+        assert created["status"] == "running"
+        assert created["is_mock"] is True
+        assert created["result_url"] is None
 
-    def test_upload_avatar_invalid_type(self, client):
-        """测试上传无效类型文件"""
-        import io
+        get_resp = client.get(f"/api/v1/avatar/jobs/{created['task_id']}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["task_id"] == created["task_id"]
 
-        fake_file = io.BytesIO(b"fake content")
+
+def test_jobs_list_uses_real_history_not_hardcoded_samples():
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/avatar/jobs")
+
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+def test_missing_job_is_404():
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/avatar/jobs/nonexistent")
+
+    assert resp.status_code == 404
+
+
+def test_media_is_not_available_for_sandbox_job():
+    with TestClient(app) as client:
+        assets = client.get("/api/v1/avatar/assets").json()
+        avatar = next(item for item in assets if item["kind"] == "avatar")
+        voice = next(item for item in assets if item["kind"] == "voice")
+        created = client.post(
+            "/api/v1/avatar/jobs",
+            json={
+                "script_text": "这是一条演示任务。",
+                "avatar_id": avatar["asset_id"],
+                "voice_id": voice["asset_id"],
+                "idempotency_key": "test-avatar-job-media",
+            },
+        ).json()
+
+        resp = client.get(f"/api/v1/avatar/jobs/{created['task_id']}/media")
+
+    assert resp.status_code == 400
+
+
+def test_legacy_generate_accepts_old_tts_fields():
+    with TestClient(app) as client:
         resp = client.post(
-            "/api/v1/avatar/upload-avatar",
-            files={"file": ("test.txt", fake_file, "text/plain")},
+            "/api/v1/avatar/generate",
+            json={
+                "avatar_type": "image",
+                "audio_type": "tts",
+                "tts_text": "旧页面提交的文案。",
+                "tts_voice": "sandbox-voice-cn-female-01",
+                "speech_rate": 1.0,
+            },
         )
-        assert resp.status_code == 400
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["task_id"].startswith("avatar-")
+    assert data["status"] == "running"
+    assert data["video_url"] is None
+
+
+def test_config_reports_upload_disabled():
+    with TestClient(app) as client:
+        resp = client.get("/api/v1/avatar/config")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["supports_upload"] is False

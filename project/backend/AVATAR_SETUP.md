@@ -1,193 +1,84 @@
-# 数字人视频生成配置指南
+# 数字人生成环境变量配置
 
-## 当前状态
+客户版数字人页面只读取后端能力接口。真实供应商、资产 ID、音色 ID、结果目录和发布账号都通过 `.env` 配置，不需要改代码。
 
-系统当前运行在 **演示模式**，返回模拟任务和进度。
+## 配置文件位置
 
-## 启用真实数字人生成
+后端启动时会自动读取：
 
-### 方案一：Duix-Avatar（推荐）
+1. 仓库根目录 `.env`
+2. `project/backend/.env`
 
-开源 AI 数字人工具包，支持离线视频生成和数字人克隆。
+系统环境变量优先级最高，其次是根目录 `.env`，再其次是 `project/backend/.env`。
 
-**GitHub**: https://github.com/duixcom/Duix-Avatar (14k stars)
+建议直接复制根目录 `.env.example` 为 `.env`，然后只填写你要启用的供应商。
 
-#### 特点
-- 完全开源，可离线运行
-- 支持数字人克隆
-- 支持视频生成
-- 活跃的社区维护
+## 本地演示模式
 
-#### 安装步骤
+不产生费用，不生成真实成片，只验证页面、任务和轮询闭环。
 
-```bash
-# 克隆仓库
-git clone https://github.com/duixcom/Duix-Avatar.git
-cd Duix-Avatar
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 下载模型
-python download_models.py
+```env
+AVATAR_PROVIDER_MODE=sandbox
+AVATAR_RESULT_DIRECTORY=data/avatar_results
 ```
 
-#### 集成方式
+## 百度曦灵真实生成
 
-1. 启动 Duix-Avatar 服务
-2. 在 `.env` 中配置：
+启用真实生成前，需要在百度曦灵开放平台取得应用凭证、可用人像 ID 和音色 ID。
+
+```env
+AVATAR_PROVIDER_MODE=baidu_xiling
+AVATAR_RESULT_DIRECTORY=data/avatar_results
+
+BAIDU_XILING_APP_ID=
+BAIDU_XILING_APP_KEY=
+BAIDU_XILING_FIGURE_ID=
+BAIDU_XILING_VOICE_ID=
+BAIDU_XILING_BASE_URL=https://open.xiling.baidu.com
+BAIDU_XILING_FIGURE_NAME=百度曦灵公共数字人
+BAIDU_XILING_VOICE_NAME=百度曦灵公共音色
+BAIDU_XILING_CALLBACK_URL=
+BAIDU_XILING_TRANSPARENT=false
+BAIDU_XILING_TIMEOUT_SECONDS=20
+BAIDU_XILING_MAX_SCRIPT_CHARS=20000
+BAIDU_XILING_ESTIMATED_45S_COST_CNY=2.25
 ```
+
+## 内部数字人服务
+
+仅当你要接公司自有数字人服务时使用。
+
+```env
+AVATAR_PROVIDER_MODE=internal
 AVATAR_SERVICE_ENABLED=true
-AVATAR_SERVICE_BASE_URL=http://localhost:8080
+AVATAR_SERVICE_BASE_URL=
+AVATAR_SERVICE_TOKEN=
+AVATAR_SERVICE_TIMEOUT_SECONDS=20
+AVATAR_RESULT_TIMEOUT_SECONDS=120
 ```
 
-3. 修改 `project/backend/app/api/v1/avatar.py`，调用真实服务
+## 发布平台账号
 
-### 方案二：Linly-Talker
+未取得官方权限前保持为空。系统会走人工发布包或演示状态，不应伪造真实作品链接。
 
-中文数字人对话系统，集成 SadTalker。
-
-**GitHub**: https://github.com/Kedreamix/Linly-Talker (3.4k stars)
-
-#### 特点
-- 中文优化
-- 集成 SadTalker 唇形同步
-- 支持多种 TTS 引擎
-- 支持实时对话
-
-#### 安装步骤
-
-```bash
-# 克隆仓库
-git clone https://github.com/Kedreamix/Linly-Talker.git
-cd Linly-Talker
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 下载模型
-python download_models.py
+```env
+PUBLISH_DOUYIN_ACCESS_TOKEN=
+PUBLISH_DOUYIN_OPEN_ID=
+PUBLISH_KUAISHOU_ACCESS_TOKEN=
+PUBLISH_KUAISHOU_OPEN_ID=
+PUBLISH_WECHAT_CHANNELS_ACCESS_TOKEN=
+PUBLISH_WECHAT_CHANNELS_OPEN_ID=
+PUBLISH_XIAOHONGSHU_ACCESS_TOKEN=
+PUBLISH_XIAOHONGSHU_OPEN_ID=
 ```
 
-### 方案三：SadTalker
+## 当前 API
 
-专注于唇形同步的说话头像生成。
+- `GET /api/v1/avatar/capabilities`
+- `GET /api/v1/avatar/assets`
+- `POST /api/v1/avatar/jobs`
+- `GET /api/v1/avatar/jobs`
+- `GET /api/v1/avatar/jobs/{task_id}`
+- `GET /api/v1/avatar/jobs/{task_id}/media`
 
-**GitHub**: https://github.com/OpenTalker/SadTalker
-
-#### 特点
-- 单张照片 + 音频 → 视频
-- 唇形同步效果好
-- 轻量级
-
-#### 安装步骤
-
-```bash
-# 克隆仓库
-git clone https://github.com/OpenTalker/SadTalker.git
-cd SadTalker
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 下载模型
-bash scripts/download_models.sh
-```
-
-## API 接口
-
-当前已实现的 API 接口：
-
-### 生成视频
-```
-POST /api/v1/avatar/generate
-Content-Type: application/json
-
-{
-  "avatar_type": "image",
-  "audio_type": "tts",
-  "tts_text": "大家好，欢迎观看今天的视频",
-  "tts_voice": "sweet_female",
-  "speech_rate": 1.0
-}
-```
-
-### 上传形象
-```
-POST /api/v1/avatar/upload-avatar
-Content-Type: multipart/form-data
-
-file: <image-file>
-```
-
-### 上传音频
-```
-POST /api/v1/avatar/upload-audio
-Content-Type: multipart/form-data
-
-file: <audio-file>
-```
-
-### 查询任务状态
-```
-GET /api/v1/avatar/tasks/{task_id}
-```
-
-### 获取音色列表
-```
-GET /api/v1/avatar/voices
-```
-
-## TTS 集成
-
-### 方案一：Edge TTS（推荐）
-
-免费、高质量的 TTS 服务。
-
-```bash
-pip install edge-tts
-```
-
-使用示例：
-```python
-import edge_tts
-import asyncio
-
-async def generate_speech(text, voice="zh-CN-XiaoxiaoNeural", output="output.mp3"):
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(output)
-
-asyncio.run(generate_speech("大家好，欢迎观看今天的视频"))
-```
-
-### 方案二：阿里云 TTS
-
-需要阿里云账号和 API Key。
-
-### 方案三：本地 TTS
-
-使用 Coqui TTS 或其他本地 TTS 引擎。
-
-```bash
-pip install TTS
-```
-
-## 故障排除
-
-### Q1: GPU 内存不足
-
-- 使用 CPU 模式：设置 `device=cpu`
-- 使用较小的模型
-- 减少批处理大小
-
-### Q2: 生成速度慢
-
-- 使用 GPU 加速
-- 使用较小的模型
-- 降低输出分辨率
-
-### Q3: 唇形不同步
-
-- 确保音频清晰
-- 使用 SadTalker 的最新版本
-- 调整唇形同步参数
+旧兼容入口 `POST /api/v1/avatar/generate` 仍保留，但新页面不再使用上传形象、上传音频和假下载逻辑。

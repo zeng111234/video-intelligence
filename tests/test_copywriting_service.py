@@ -28,6 +28,9 @@ class _FailingEngine:
     def rewrite(self, source_text: str, **kwargs) -> list[str]:
         raise RuntimeError("引擎模拟故障")
 
+    def generate(self, **kwargs) -> list[str]:
+        raise RuntimeError("引擎模拟故障")
+
 
 class _SlowEngine:
     """模拟引擎返回空结果的场景。"""
@@ -42,6 +45,9 @@ class _SlowEngine:
         }
 
     def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        return []
+
+    def generate(self, **kwargs) -> list[str]:
         return []
 
 
@@ -78,12 +84,13 @@ class TestCopywritingServiceEdgeCases:
         assert "引擎模拟故障" in task.error_message
 
     def test_rewrite_engine_empty_result(self):
-        """引擎返回空列表时，result_text 应为 None。"""
+        """引擎返回空列表时，应产生失败任务。"""
         svc = CopywritingService(self.repo, _SlowEngine())
         task = svc.rewrite(source_text="空结果测试")
-        assert task.status == TaskStatus.SUCCEEDED
+        assert task.status == TaskStatus.FAILED
         assert task.result_text is None
         assert task.result_variants == []
+        assert "未返回有效内容" in task.error_message
 
     def test_rewrite_with_source_ids(self):
         """source_task_id 和 source_revision_id 应正确存储。"""
@@ -99,15 +106,44 @@ class TestCopywritingServiceEdgeCases:
         """完整参数传递应正确反映在任务中。"""
         task = self.svc.rewrite(
             source_text="完整参数测试文案内容",
+            platform="xiaohongshu",
+            target_audience="企业主",
             style_prompt="口播风格",
             target_length=500,
             tone="casual",
             variant_count=2,
         )
+        assert task.platform.value == "xiaohongshu"
+        assert task.target_audience == "企业主"
         assert task.style_prompt == "口播风格"
         assert task.target_length == 500
         assert task.tone == "casual"
         assert len(task.result_variants) == 2
+
+    def test_generate_success(self):
+        task = self.svc.generate(
+            content_brief="介绍 AI 短视频获客工具",
+            platform="wechat_channels",
+            target_audience="市场负责人",
+            selling_points="降低内容制作成本",
+            call_to_action="私信领取方案",
+            variant_count=2,
+        )
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.creation_mode == "generate"
+        assert task.platform.value == "wechat_channels"
+        assert task.target_audience == "市场负责人"
+        assert task.selling_points == "降低内容制作成本"
+        assert task.call_to_action == "私信领取方案"
+        assert len(task.result_variants) == 2
+
+    def test_generate_empty_brief_raises(self):
+        with pytest.raises(ValueError, match="内容概要不能为空"):
+            self.svc.generate(content_brief=" ")
+
+    def test_unsupported_platform_raises(self):
+        with pytest.raises(ValueError, match="只支持"):
+            self.svc.rewrite(source_text="平台测试", platform="kuaishou")
 
     def test_rewrite_on_progress_called(self):
         """on_progress 回调应被调用（至少 RUNNING 和 SUCCEEDED 各一次）。"""

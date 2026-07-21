@@ -12,7 +12,6 @@ import {
   SearchOutlined,
   ThunderboltOutlined,
   VideoCameraOutlined,
-  AudioOutlined,
   RocketOutlined,
   SettingOutlined,
 } from "@ant-design/icons";

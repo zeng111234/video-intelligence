@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from src.contracts import CopywritingEngine, TaskRepository
@@ -30,7 +30,7 @@ class CopywritingService:
         self.repository = repository
         self.engine = engine
 
-    def capabilities(self) -> dict[str, str | bool | int]:
+    def capabilities(self) -> dict[str, Any]:
         return self.engine.capabilities()
 
     def rewrite(
@@ -103,6 +103,17 @@ class CopywritingService:
                     "token_usage": self._last_usage(),
                     "result_text": results[0] if results else None,
                     "result_variants": results,
+                }
+            )
+            self._save(task, on_progress)
+            return task
+        except Exception as exc:
+            task = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "stage": "改写失败",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": str(exc),
                 }
             )
             self._save(task, on_progress)
@@ -189,17 +200,6 @@ class CopywritingService:
                 update={
                     "status": TaskStatus.FAILED,
                     "stage": "生成失败",
-                    "updated_at": datetime.now().astimezone(),
-                    "error_message": str(exc),
-                }
-            )
-            self._save(task, on_progress)
-            return task
-        except Exception as exc:
-            task = task.model_copy(
-                update={
-                    "status": TaskStatus.FAILED,
-                    "stage": "改写失败",
                     "updated_at": datetime.now().astimezone(),
                     "error_message": str(exc),
                 }

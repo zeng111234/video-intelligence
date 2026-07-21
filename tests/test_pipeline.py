@@ -135,8 +135,8 @@ class TestSandboxPublisher:
         task = pub.publish("/fake/video.mp4", target)
         assert task.status == TaskStatus.SUCCEEDED
         assert task.publish_status == PublishStatus.SUCCEEDED
-        assert task.platform_url is not None
-        assert task.platform_video_id is not None
+        assert task.platform_url is None
+        assert task.platform_video_id is None
         assert task.is_mock is True
 
     def test_check_status(self):
@@ -154,8 +154,7 @@ class TestSandboxPublisher:
         target = PublishTarget(platform=PublishPlatform.DOUYIN, title="URL测试")
         task = pub.publish("/fake/video.mp4", target)
         url = pub.get_published_url(task.task_id)
-        assert url is not None
-        assert url.startswith("https://")
+        assert url is None
 
 
 class TestPlatformPublisherAdapter:

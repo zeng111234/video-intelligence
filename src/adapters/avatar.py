@@ -426,7 +426,7 @@ class BaiduXilingAvatarProvider:
             permission_status="authorized" if not missing else "configuration_missing",
             max_script_chars=_int_env("BAIDU_XILING_MAX_SCRIPT_CHARS", 20000),
             supported_aspect_ratios=["9:16"],
-            estimated_cost_cny=float(os.getenv("BAIDU_XILING_ESTIMATED_45S_COST_CNY", "2.25")),
+            estimated_cost_cny=_float_env("BAIDU_XILING_ESTIMATED_45S_COST_CNY", 2.25),
             estimated_seconds=45,
             missing_configuration=missing,
         )
@@ -587,7 +587,7 @@ class BaiduXilingAvatarProvider:
 
 
 def build_avatar_provider():
-    mode = os.getenv("AVATAR_PROVIDER_MODE", os.getenv("AVATAR_MODE", "sandbox")).lower()
+    mode = os.getenv("AVATAR_PROVIDER_MODE", "sandbox").lower()
     if mode in {"baidu", "baidu_xiling", "xiling"}:
         return BaiduXilingAvatarProvider.from_env()
     if mode in {"internal", "cloud"}:

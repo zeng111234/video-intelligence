@@ -1,587 +1,447 @@
 /**
- * 数字人视频生成页面
- * 支持形象录制/上传、音频录制/上传、TTS、视频生成
+ * 数字人口播生成页面。
+ * 首版只开放公共形象 + 文本驱动，所有任务状态均来自 FastAPI。
  */
-import { useState, useRef, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Typography,
-  Card,
+  Alert,
   Button,
-  Space,
-  Row,
+  Card,
   Col,
-  Tabs,
-  Upload,
+  Empty,
   Input,
+  InputNumber,
+  List,
+  Progress,
+  Row,
   Select,
   Slider,
-  Progress,
+  Space,
   Tag,
-  Empty,
+  Typography,
 } from "antd";
-import { useToast } from "../components/Toast";
 import {
-  VideoCameraOutlined,
-  AudioOutlined,
-  UploadOutlined,
-  PlayCircleOutlined,
-  StopOutlined,
-  SoundOutlined,
-  UserOutlined,
-  RocketOutlined,
-  DownloadOutlined,
-  ReloadOutlined,
   CheckCircleOutlined,
-  ClockCircleOutlined,
+  CloudSyncOutlined,
+  DownloadOutlined,
+  ExclamationCircleOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
+  RocketOutlined,
+  UserOutlined,
 } from "@ant-design/icons";
+import {
+  createAvatarJob,
+  downloadAvatarJobMedia,
+  getAvatarCapabilities,
+  getAvatarJob,
+  listAvatarAssets,
+  listAvatarJobs,
+} from "../api/client";
+import type { AvatarAsset, AvatarCapability, AvatarJob } from "../api/types";
+import { useToast } from "../components/Toast";
 
-const { Title, Text } = Typography;
-const { Option } = Select;
+const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
-/** TTS 音色选项 */
-const TTS_VOICES = [
-  { label: "甜美女声", value: "sweet_female" },
-  { label: "磁性男声", value: "magnetic_male" },
-  { label: "活力青年", value: "youth" },
-  { label: "专业播音", value: "broadcast" },
-  { label: "亲切客服", value: "customer_service" },
+const TARGET_PLATFORMS = [
+  { label: "抖音", value: "douyin" },
+  { label: "快手", value: "kuaishou" },
+  { label: "视频号", value: "wechat_channels" },
+  { label: "小红书", value: "xiaohongshu" },
 ];
 
-/** 模拟生成历史 */
-const GENERATION_HISTORY = [
-  {
-    id: "avatar-001",
-    name: "产品介绍视频",
-    status: "succeeded",
-    duration: "0:45",
-    createdAt: "2026-07-20 14:30",
-  },
-  {
-    id: "avatar-002",
-    name: "二手车测评口播",
-    status: "succeeded",
-    duration: "1:20",
-    createdAt: "2026-07-20 10:15",
-  },
-  {
-    id: "avatar-003",
-    name: "新车对比讲解",
-    status: "running",
-    duration: "-",
-    createdAt: "2026-07-20 16:00",
-  },
-];
+const TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "outcome_unknown",
+]);
+
+function buildIdempotencyKey() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `avatar-${crypto.randomUUID()}`;
+  }
+  return `avatar-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function statusColor(status: string) {
+  if (status === "succeeded") return "success";
+  if (["failed", "cancelled", "outcome_unknown"].includes(status)) return "error";
+  if (status === "running") return "processing";
+  return "default";
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    queued: "排队中",
+    submitted: "已提交",
+    running: "生成中",
+    succeeded: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    outcome_unknown: "待核对",
+  };
+  return labels[status] || status;
+}
 
 export default function AvatarPage() {
   const toast = useToast();
-  // 形象相关
-  const [avatarImage, setAvatarImage] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const [capability, setCapability] = useState<AvatarCapability | null>(null);
+  const [assets, setAssets] = useState<AvatarAsset[]>([]);
+  const [jobs, setJobs] = useState<AvatarJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
-  // 音频相关
-  const [audioMode, setAudioMode] = useState<"record" | "upload" | "tts">("tts");
-  const [ttsText, setTtsText] = useState("");
-  const [ttsVoice, setTtsVoice] = useState("sweet_female");
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
-
-  // 生成相关
-  const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
+  const [scriptText, setScriptText] = useState("");
+  const [avatarId, setAvatarId] = useState<string>();
+  const [voiceId, setVoiceId] = useState<string>();
+  const [targetSeconds, setTargetSeconds] = useState(45);
   const [speechRate, setSpeechRate] = useState(1);
+  const [targetPlatforms, setTargetPlatforms] = useState<string[]>(["douyin"]);
 
-  /** 下载视频 */
-  const handleDownloadVideo = useCallback(() => {
-    if (!generatedVideo) {
-      toast.warning("没有可下载的视频");
+  const avatars = useMemo(
+    () => assets.filter((item) => item.kind === "avatar"),
+    [assets],
+  );
+  const voices = useMemo(
+    () => assets.filter((item) => item.kind === "voice"),
+    [assets],
+  );
+  const activeJob = useMemo(
+    () => jobs.find((item) => item.task_id === activeJobId) || jobs[0] || null,
+    [activeJobId, jobs],
+  );
+
+  const estimatedCost = useMemo(() => {
+    if (!capability?.estimated_cost_cny || !capability.estimated_seconds) return null;
+    return (
+      capability.estimated_cost_cny *
+      (targetSeconds / capability.estimated_seconds)
+    );
+  }, [capability, targetSeconds]);
+
+  const refresh = useCallback(async () => {
+    const [nextCapability, nextAssets, nextJobs] = await Promise.all([
+      getAvatarCapabilities(),
+      listAvatarAssets(),
+      listAvatarJobs(),
+    ]);
+    setCapability(nextCapability);
+    setAssets(nextAssets);
+    setJobs(nextJobs);
+    setAvatarId((current) => current || nextAssets.find((item) => item.kind === "avatar")?.asset_id);
+    setVoiceId((current) => current || nextAssets.find((item) => item.kind === "voice")?.asset_id);
+    setActiveJobId((current) => current || nextJobs[0]?.task_id || null);
+  }, []);
+
+  useEffect(() => {
+    refresh()
+      .catch((error) => toast.error(error.message || "读取数字人服务失败"))
+      .finally(() => setLoading(false));
+  }, [refresh, toast]);
+
+  useEffect(() => {
+    if (!activeJob || TERMINAL_STATUSES.has(activeJob.status)) return;
+    const timer = window.setTimeout(async () => {
+      try {
+        const latest = await getAvatarJob(activeJob.task_id);
+        setJobs((items) =>
+          items.map((item) => (item.task_id === latest.task_id ? latest : item)),
+        );
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "刷新任务状态失败");
+      }
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [activeJob, toast]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!capability?.enabled) {
+      toast.warning("数字人服务尚未可用，请先配置供应商。");
       return;
     }
-    // 模拟下载
-    const a = document.createElement("a");
-    a.href = generatedVideo;
-    a.download = `数字人视频_${new Date().toISOString().slice(0, 10)}.mp4`;
-    a.click();
-    toast.success("视频下载已开始");
-  }, [generatedVideo, toast]);
+    if (!avatarId || !voiceId) {
+      toast.warning("缺少可用公共形象或音色。");
+      return;
+    }
+    if (!scriptText.trim()) {
+      toast.warning("请输入口播文案。");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const job = await createAvatarJob({
+        script_text: scriptText.trim(),
+        avatar_id: avatarId,
+        voice_id: voiceId,
+        target_seconds: targetSeconds,
+        speech_rate: speechRate,
+        aspect_ratio: "9:16",
+        resolution: "1080x1920",
+        publish_mode: "manual",
+        target_platforms: targetPlatforms,
+        idempotency_key: buildIdempotencyKey(),
+      });
+      setJobs((items) => [job, ...items.filter((item) => item.task_id !== job.task_id)]);
+      setActiveJobId(job.task_id);
+      toast.success(job.is_mock ? "演示任务已创建" : "数字人任务已提交");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "提交数字人任务失败");
+    } finally {
+      setSubmitting(false);
+    }
+  }, [
+    avatarId,
+    capability,
+    scriptText,
+    speechRate,
+    targetPlatforms,
+    targetSeconds,
+    toast,
+    voiceId,
+  ]);
 
-  /** 下载历史视频 */
-  const handleDownloadHistory = useCallback((item: any) => {
-    toast.success(`正在下载: ${item.name}`);
+  const handleDownload = useCallback(async (job: AvatarJob) => {
+    try {
+      const blob = await downloadAvatarJobMedia(job.task_id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `avatar_${job.task_id}.mp4`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "下载失败");
+    }
   }, [toast]);
 
-  /** 开始录制形象 */
-  const startVideoRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 720, height: 1280, facingMode: "user" },
-        audio: false,
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setIsRecording(true);
-      toast.info("开始录制形象，点击停止结束");
-    } catch (err) {
-      toast.error("无法访问摄像头，请检查权限");
-    }
-  }, []);
-
-  /** 停止录制形象 */
-  const stopVideoRecording = useCallback(() => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-    }
-    setIsRecording(false);
-    setAvatarImage("/avatar-placeholder.png"); // 模拟截图
-    toast.success("形象录制完成");
-  }, []);
-
-  /** 开始录制音频 */
-  const startAudioRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
-      setIsRecordingAudio(true);
-      toast.info("开始录制音频，点击停止结束");
-    } catch (err) {
-      toast.error("无法访问麦克风，请检查权限");
-    }
-  }, []);
-
-  /** 停止录制音频 */
-  const stopAudioRecording = useCallback(() => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
-    }
-    setIsRecordingAudio(false);
-    toast.success("音频录制完成");
-  }, []);
-
-  /** 开始生成视频 */
-  const handleGenerate = useCallback(() => {
-    if (!avatarImage && !audioFile && !ttsText) {
-      toast.warning("请先录制/上传形象和音频");
-      return;
-    }
-    setGenerating(true);
-    setProgress(0);
-
-    // 模拟生成过程
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setGenerating(false);
-          setGeneratedVideo("/generated-video.mp4");
-          toast.success("数字人视频生成完成！");
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 500);
-  }, [avatarImage, audioFile, ttsText]);
+  const serviceUnavailable = Boolean(capability && !capability.enabled);
 
   return (
     <div>
-      {/* 页面头部 */}
       <div style={{ marginBottom: 24 }}>
         <Title level={4} style={{ margin: 0 }}>
-          <UserOutlined /> 数字人视频生成
+          <UserOutlined /> 数字人口播生成
         </Title>
-        <Text type="secondary">录制形象 + 音频/TTS → 生成数字人口播视频</Text>
+        <Text type="secondary">
+          公共数字人 + 文本驱动 + 真实任务状态；成片后再生成四平台发布包。
+        </Text>
       </div>
 
+      {capability && (
+        <Alert
+          style={{ marginBottom: 16 }}
+          type={serviceUnavailable ? "warning" : capability.mode === "sandbox" ? "info" : "success"}
+          showIcon
+          message={
+            serviceUnavailable
+              ? "数字人供应商未配置，暂不能提交真实任务"
+              : capability.mode === "sandbox"
+                ? "当前为演示模式：可验证任务闭环，但不会生成真实成片"
+                : `${capability.display_name} 已可用`
+          }
+          description={
+            serviceUnavailable && capability.missing_configuration.length
+              ? `缺少配置：${capability.missing_configuration.join("、")}`
+              : "首版只开放公共形象和文本转口播。摄像头录制、照片上传、录音上传会在供应商能力接通后再开放。"
+          }
+        />
+      )}
+
       <Row gutter={[24, 24]}>
-        {/* 左侧：输入区 */}
         <Col xs={24} lg={12}>
-          {/* 形象录制 */}
-          <Card
-            title={<Space><VideoCameraOutlined /> 数字人形象</Space>}
-            style={{ marginBottom: 24 }}
-          >
-            <Tabs
-              defaultActiveKey="record"
-              items={[
-                {
-                  key: "record",
-                  label: "摄像头录制",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <div
-                        style={{
-                          background: "#000",
-                          borderRadius: 8,
-                          overflow: "hidden",
-                          aspectRatio: "9/16",
-                          maxHeight: 300,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {isRecording ? (
-                          <video
-                            ref={videoRef}
-                            autoPlay
-                            muted
-                            playsInline
-                            style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                          />
-                        ) : avatarImage ? (
-                          <div style={{ color: "#10b981", textAlign: "center" }}>
-                            <CheckCircleOutlined style={{ fontSize: 48 }} />
-                            <br />
-                            <Text style={{ color: "#fff" }}>形象已录制</Text>
-                          </div>
-                        ) : (
-                          <div style={{ color: "#666", textAlign: "center" }}>
-                            <UserOutlined style={{ fontSize: 48 }} />
-                            <br />
-                            <Text style={{ color: "#999" }}>点击下方按钮开始录制</Text>
-                          </div>
-                        )}
-                      </div>
-                      <Button
-                        type={isRecording ? "default" : "primary"}
-                        danger={isRecording}
-                        icon={isRecording ? <StopOutlined /> : <VideoCameraOutlined />}
-                        block
-                        size="large"
-                        onClick={isRecording ? stopVideoRecording : startVideoRecording}
-                      >
-                        {isRecording ? "停止录制" : "开始录制形象"}
-                      </Button>
-                      <Text type="secondary" style={{ fontSize: 12 }}>
-                        建议：正对摄像头，光线充足，面部清晰，录制 5-10 秒
-                      </Text>
-                    </Space>
-                  ),
-                },
-                {
-                  key: "upload",
-                  label: "上传照片",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Upload.Dragger
-                        accept="image/*"
-                        showUploadList={false}
-                        beforeUpload={(file) => {
-                          const reader = new FileReader();
-                          reader.onload = (e) => {
-                            setAvatarImage(e.target?.result as string);
-                            toast.success("形象照片已上传");
-                          };
-                          reader.readAsDataURL(file);
-                          return false;
-                        }}
-                        style={{ padding: "30px 0" }}
-                      >
-                        {avatarImage ? (
-                          <img
-                            src={avatarImage}
-                            alt="avatar"
-                            style={{ maxHeight: 200, borderRadius: 8 }}
-                          />
-                        ) : (
-                          <>
-                            <p style={{ marginBottom: 8 }}>
-                              <UploadOutlined style={{ fontSize: 32, color: "#6366f1" }} />
-                            </p>
-                            <p>点击或拖拽照片到此区域</p>
-                            <p style={{ color: "#94a3b8", fontSize: 12 }}>
-                              支持 JPG、PNG 格式，建议正面免冠照
-                            </p>
-                          </>
-                        )}
-                      </Upload.Dragger>
-                    </Space>
-                  ),
-                },
-              ]}
-            />
-          </Card>
+          <Card title={<Space><RocketOutlined /> 生成配置</Space>} loading={loading}>
+            <Space direction="vertical" size={16} style={{ width: "100%" }}>
+              <div>
+                <Text strong>口播文案</Text>
+                <TextArea
+                  rows={6}
+                  value={scriptText}
+                  onChange={(event) => setScriptText(event.target.value)}
+                  maxLength={capability?.max_script_chars || 240}
+                  showCount
+                  placeholder="输入数字人要说的内容，建议 15–60 秒内说完。"
+                  style={{ marginTop: 8 }}
+                />
+              </div>
 
-          {/* 音频输入 */}
-          <Card title={<Space><AudioOutlined /> 音频内容</Space>}>
-            <Tabs
-              activeKey={audioMode}
-              onChange={(key) => setAudioMode(key as any)}
-              items={[
-                {
-                  key: "tts",
-                  label: "文字转语音",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <div>
-                        <Text strong style={{ display: "block", marginBottom: 8 }}>
-                          输入文案
-                        </Text>
-                        <TextArea
-                          placeholder="输入数字人要说的内容..."
-                          rows={4}
-                          value={ttsText}
-                          onChange={(e) => setTtsText(e.target.value)}
-                          showCount
-                          maxLength={500}
-                        />
-                      </div>
-                      <div>
-                        <Text strong style={{ display: "block", marginBottom: 8 }}>
-                          选择音色
-                        </Text>
-                        <Select
-                          value={ttsVoice}
-                          onChange={setTtsVoice}
-                          style={{ width: "100%" }}
-                        >
-                          {TTS_VOICES.map((v) => (
-                            <Option key={v.value} value={v.value}>
-                              {v.label}
-                            </Option>
-                          ))}
-                        </Select>
-                      </div>
-                      <div>
-                        <Text strong style={{ display: "block", marginBottom: 8 }}>
-                          语速: {speechRate}x
-                        </Text>
-                        <Slider value={speechRate} onChange={setSpeechRate} min={0.5} max={2} step={0.1} />
-                      </div>
-                    </Space>
-                  ),
-                },
-                {
-                  key: "record",
-                  label: "录制音频",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <div
-                        style={{
-                          background: "#f8fafc",
-                          borderRadius: 8,
-                          padding: 40,
-                          textAlign: "center",
-                        }}
-                      >
-                        <SoundOutlined
-                          style={{
-                            fontSize: 48,
-                            color: isRecordingAudio ? "#ef4444" : "#6366f1",
-                          }}
-                        />
-                        <br />
-                        <Text type="secondary">
-                          {isRecordingAudio ? "正在录制..." : "点击下方按钮开始录制"}
-                        </Text>
-                      </div>
-                      <Button
-                        type={isRecordingAudio ? "default" : "primary"}
-                        danger={isRecordingAudio}
-                        icon={isRecordingAudio ? <StopOutlined /> : <AudioOutlined />}
-                        block
-                        size="large"
-                        onClick={isRecordingAudio ? stopAudioRecording : startAudioRecording}
-                      >
-                        {isRecordingAudio ? "停止录制" : "开始录制音频"}
-                      </Button>
-                    </Space>
-                  ),
-                },
-                {
-                  key: "upload",
-                  label: "上传音频",
-                  children: (
-                    <Upload.Dragger
-                      accept="audio/*"
-                      showUploadList={false}
-                      beforeUpload={(file) => {
-                        setAudioFile(file);
-                        toast.success(`音频 "${file.name}" 已添加`);
-                        return false;
-                      }}
-                      style={{ padding: "30px 0" }}
-                    >
-                      <p style={{ marginBottom: 8 }}>
-                        <UploadOutlined style={{ fontSize: 32, color: "#6366f1" }} />
-                      </p>
-                      <p>点击或拖拽音频文件到此区域</p>
-                      <p style={{ color: "#94a3b8", fontSize: 12 }}>
-                        支持 MP3、WAV、M4A 格式
-                      </p>
-                    </Upload.Dragger>
-                  ),
-                },
-              ]}
-            />
-          </Card>
-        </Col>
-
-        {/* 右侧：预览和生成 */}
-        <Col xs={24} lg={12}>
-          {/* 生成控制 */}
-          <Card
-            title={<Space><RocketOutlined /> 视频生成</Space>}
-            style={{ marginBottom: 24 }}
-          >
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              {/* 状态展示 */}
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Card size="small" style={{ textAlign: "center" }}>
-                    <UserOutlined style={{ fontSize: 24, color: avatarImage ? "#10b981" : "#94a3b8" }} />
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      形象 {avatarImage ? "✓" : "未设置"}
-                    </Text>
-                  </Card>
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Text strong>公共形象</Text>
+                  <Select
+                    value={avatarId}
+                    onChange={setAvatarId}
+                    options={avatars.map((item) => ({ label: item.name, value: item.asset_id }))}
+                    placeholder="无可用形象"
+                    style={{ width: "100%", marginTop: 8 }}
+                  />
                 </Col>
-                <Col span={8}>
-                  <Card size="small" style={{ textAlign: "center" }}>
-                    <SoundOutlined
-                      style={{
-                        fontSize: 24,
-                        color: audioFile || ttsText ? "#10b981" : "#94a3b8",
-                      }}
-                    />
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      音频 {audioFile || ttsText ? "✓" : "未设置"}
-                    </Text>
-                  </Card>
-                </Col>
-                <Col span={8}>
-                  <Card size="small" style={{ textAlign: "center" }}>
-                    <VideoCameraOutlined
-                      style={{
-                        fontSize: 24,
-                        color: generatedVideo ? "#10b981" : "#94a3b8",
-                      }}
-                    />
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      视频 {generatedVideo ? "✓" : "待生成"}
-                    </Text>
-                  </Card>
+                <Col span={12}>
+                  <Text strong>音色</Text>
+                  <Select
+                    value={voiceId}
+                    onChange={setVoiceId}
+                    options={voices.map((item) => ({ label: item.name, value: item.asset_id }))}
+                    placeholder="无可用音色"
+                    style={{ width: "100%", marginTop: 8 }}
+                  />
                 </Col>
               </Row>
 
-              {/* 生成进度 */}
-              {generating && (
-                <div>
-                  <Text strong style={{ marginBottom: 8, display: "block" }}>
-                    生成进度
-                  </Text>
-                  <Progress
-                    percent={progress}
-                    status="active"
-                    strokeColor={{ from: "#6366f1", to: "#10b981" }}
+              <Row gutter={12}>
+                <Col span={12}>
+                  <Text strong>目标时长</Text>
+                  <InputNumber
+                    min={15}
+                    max={60}
+                    value={targetSeconds}
+                    onChange={(value) => setTargetSeconds(Number(value || 45))}
+                    addonAfter="秒"
+                    style={{ width: "100%", marginTop: 8 }}
                   />
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {progress < 30
-                      ? "正在分析形象..."
-                      : progress < 60
-                        ? "正在合成音频..."
-                        : progress < 90
-                          ? "正在生成视频..."
-                          : "即将完成..."}
-                  </Text>
-                </div>
-              )}
+                </Col>
+                <Col span={12}>
+                  <Text strong>输出规格</Text>
+                  <Input value="1080x1920 · 9:16" disabled style={{ marginTop: 8 }} />
+                </Col>
+              </Row>
 
-              {/* 生成按钮 */}
+              <div>
+                <Text strong>语速：{speechRate.toFixed(1)}x</Text>
+                <Slider
+                  value={speechRate}
+                  onChange={setSpeechRate}
+                  min={0.8}
+                  max={1.2}
+                  step={0.1}
+                />
+              </div>
+
+              <div>
+                <Text strong>目标平台</Text>
+                <Select
+                  mode="multiple"
+                  value={targetPlatforms}
+                  onChange={setTargetPlatforms}
+                  options={TARGET_PLATFORMS}
+                  style={{ width: "100%", marginTop: 8 }}
+                />
+              </div>
+
+              <Card size="small" style={{ background: "#f8fafc" }}>
+                <Space direction="vertical" size={4}>
+                  <Text>供应商：{capability?.display_name || "读取中"}</Text>
+                  <Text>
+                    预计费用：
+                    {estimatedCost === null ? "待供应商返回" : `¥${estimatedCost.toFixed(2)}`}
+                  </Text>
+                  <Text type="secondary">自动发布默认关闭，成片后先生成发布包和人工检查清单。</Text>
+                </Space>
+              </Card>
+
               <Button
                 type="primary"
                 icon={<RocketOutlined />}
                 size="large"
                 block
-                loading={generating}
-                onClick={handleGenerate}
-                disabled={!avatarImage || (!audioFile && !ttsText)}
+                loading={submitting}
+                disabled={serviceUnavailable || !avatarId || !voiceId}
+                onClick={handleSubmit}
               >
-                {generating ? "生成中..." : "开始生成数字人视频"}
+                提交数字人口播任务
               </Button>
             </Space>
           </Card>
+        </Col>
 
-          {/* 预览区 */}
-          <Card title={<Space><PlayCircleOutlined /> 视频预览</Space>}>
-            {generatedVideo ? (
-              <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                <div
-                  style={{
-                    background: "#000",
-                    borderRadius: 8,
-                    overflow: "hidden",
-                    aspectRatio: "9/16",
-                    maxHeight: 400,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <div style={{ color: "#10b981", textAlign: "center" }}>
-                    <CheckCircleOutlined style={{ fontSize: 64 }} />
-                    <br />
-                    <Text style={{ color: "#fff", fontSize: 16 }}>视频生成完成</Text>
-                  </div>
-                </div>
-                <Space>
-                  <Button type="primary" icon={<DownloadOutlined />} onClick={handleDownloadVideo}>
-                    下载视频
-                  </Button>
-                  <Button icon={<ReloadOutlined />} onClick={() => setGeneratedVideo(null)}>
-                    重新生成
-                  </Button>
+        <Col xs={24} lg={12}>
+          <Card
+            title={<Space><PlayCircleOutlined /> 当前任务</Space>}
+            extra={<Button size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
+            style={{ marginBottom: 24 }}
+          >
+            {activeJob ? (
+              <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                <Space wrap>
+                  <Tag color={statusColor(activeJob.status)}>
+                    {statusLabel(activeJob.status)}
+                  </Tag>
+                  {activeJob.is_mock && <Tag color="blue">演示</Tag>}
+                  <Text type="secondary">{activeJob.provider_name}</Text>
                 </Space>
+                <Progress
+                  percent={activeJob.progress}
+                  status={activeJob.status === "failed" ? "exception" : "active"}
+                />
+                <Paragraph style={{ marginBottom: 0 }}>{activeJob.stage}</Paragraph>
+                {activeJob.error_message && (
+                  <Alert
+                    type="error"
+                    showIcon
+                    icon={<ExclamationCircleOutlined />}
+                    message={activeJob.error_message}
+                  />
+                )}
+                {activeJob.result_url ? (
+                  <Button
+                    type="primary"
+                    icon={<DownloadOutlined />}
+                    onClick={() => handleDownload(activeJob)}
+                  >
+                    下载真实成片
+                  </Button>
+                ) : activeJob.status === "succeeded" ? (
+                  <Alert type="warning" showIcon message="任务已成功，但媒体尚未转存或不可下载。" />
+                ) : (
+                  <Alert
+                    type="info"
+                    showIcon
+                    icon={<CloudSyncOutlined />}
+                    message="等待供应商完成后，这里会出现真实成片下载。"
+                  />
+                )}
               </Space>
             ) : (
-              <Empty description="生成视频后在此预览" />
+              <Empty description="暂无真实任务" />
             )}
           </Card>
 
-          {/* 生成历史 */}
-          <Card
-            title={<Space><ClockCircleOutlined /> 生成历史</Space>}
-            style={{ marginTop: 24 }}
-          >
-            {GENERATION_HISTORY.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "12px 0",
-                  borderBottom: "1px solid #f0f0f0",
-                }}
-              >
-                <div>
-                  <Text strong>{item.name}</Text>
-                  <br />
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {item.createdAt} · 时长 {item.duration}
-                  </Text>
-                </div>
-                <Space>
-                  <Tag color={item.status === "succeeded" ? "success" : "processing"}>
-                    {item.status === "succeeded" ? "已完成" : "生成中"}
-                  </Tag>
-                  {item.status === "succeeded" && (
-                    <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleDownloadHistory(item)}>
-                      下载
-                    </Button>
-                  )}
-                </Space>
-              </div>
-            ))}
+          <Card title="真实任务历史">
+            {jobs.length ? (
+              <List
+                dataSource={jobs}
+                renderItem={(item) => (
+                  <List.Item
+                    actions={[
+                      <Button key="view" type="link" onClick={() => setActiveJobId(item.task_id)}>
+                        查看
+                      </Button>,
+                      item.result_url ? (
+                        <Button key="download" type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(item)}>
+                          下载
+                        </Button>
+                      ) : null,
+                    ].filter(Boolean)}
+                  >
+                    <List.Item.Meta
+                      avatar={<CheckCircleOutlined style={{ color: item.status === "succeeded" ? "#10b981" : "#64748b" }} />}
+                      title={
+                        <Space>
+                          <Text strong>{item.title}</Text>
+                          <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
+                          {item.is_mock && <Tag>演示</Tag>}
+                        </Space>
+                      }
+                      description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
+                    />
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="提交任务后会显示真实历史记录" />
+            )}
           </Card>
         </Col>
       </Row>

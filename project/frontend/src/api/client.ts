@@ -5,6 +5,10 @@
 import type {
   AdminStatusResponse,
   AnalyticsResponse,
+  AvatarAsset,
+  AvatarCapability,
+  AvatarJob,
+  AvatarJobCreateRequest,
   CandidateListResponse,
   CopywritingCapabilitiesResponse,
   CopywritingGenerateRequest,
@@ -58,7 +62,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       503: "服务暂时不可用",
     };
     throw new Error(
-      body.detail || statusMessages[resp.status] || `请求失败: ${resp.status}`,
+      body.detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
     );
   }
   return resp.json();
@@ -287,10 +291,44 @@ export function listPublishPlatforms(): Promise<PublishPlatformsResponse> {
   return request("/publish/platforms");
 }
 
+/* ---- 数字人生成 ---- */
+
+export function getAvatarCapabilities(): Promise<AvatarCapability> {
+  return request("/avatar/capabilities");
+}
+
+export function listAvatarAssets(): Promise<AvatarAsset[]> {
+  return request("/avatar/assets");
+}
+
+export function createAvatarJob(params: AvatarJobCreateRequest): Promise<AvatarJob> {
+  return request("/avatar/jobs", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listAvatarJobs(): Promise<AvatarJob[]> {
+  return request("/avatar/jobs");
+}
+
+export function getAvatarJob(taskId: string): Promise<AvatarJob> {
+  return request(`/avatar/jobs/${taskId}`);
+}
+
+export async function downloadAvatarJobMedia(taskId: string): Promise<Blob> {
+  const resp = await fetch(`${BASE}/avatar/jobs/${taskId}/media`);
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "下载数字人成片失败");
+  }
+  return resp.blob();
+}
+
 /* ---- 通知/消息 ---- */
 
 export function getNotifications(): Promise<any[]> {
-  return request("/notifications").catch(() => {
+  return request<any[]>("/notifications").catch(() => {
     // 后端暂未实现，返回 mock 数据
     return [
       { id: "1", title: "批量生产任务完成", description: "您提交的批量生产任务已完成", time: "5 分钟前", read: false, type: "task" },
@@ -301,7 +339,7 @@ export function getNotifications(): Promise<any[]> {
 }
 
 export function getMessages(): Promise<any[]> {
-  return request("/messages").catch(() => {
+  return request<any[]>("/messages").catch(() => {
     // 后端暂未实现，返回 mock 数据
     return [
       { id: "1", sender: "系统助手", avatar: "🤖", content: "您的批量生产任务已排队", time: "10 分钟前", read: false },

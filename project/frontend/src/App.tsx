@@ -95,20 +95,3 @@ export default function App() {
     </ToastProvider>
   );
 }
-
-/**
- * 即将上线占位组件
- */
-function ComingSoonPlaceholder({ title }: { title: string }) {
-  return (
-    <div style={{ textAlign: "center", padding: "80px 24px" }}>
-      <div style={{ fontSize: 64, marginBottom: 24 }}>🚧</div>
-      <h2 style={{ fontSize: 24, fontWeight: 600, marginBottom: 8, color: "var(--text-primary)" }}>
-        {title}
-      </h2>
-      <p style={{ color: "var(--text-secondary)", fontSize: 14 }}>
-        功能开发中，敬请期待
-      </p>
-    </div>
-  );
-}

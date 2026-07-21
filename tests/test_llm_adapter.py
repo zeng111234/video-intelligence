@@ -13,6 +13,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from src.adapters.llm import (
+    DisabledCopywritingEngine,
     LLMAdapterError,
     OpenAICompatibleCopywritingEngine,
     SandboxCopywritingEngine,
@@ -127,26 +128,30 @@ class TestOpenAICompatibleCopywritingEngine:
 
     def test_rewrite_without_api_key_raises(self):
         engine = OpenAICompatibleCopywritingEngine(api_key="")
-        with pytest.raises(LLMAdapterError, match="未配置 OPENAI_API_KEY"):
+        with pytest.raises(LLMAdapterError, match="未配置 COPYWRITING_API_KEY"):
             engine.rewrite("测试文案")
 
     def test_from_env_defaults(self):
         """from_env 应使用环境变量。"""
         with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("COPYWRITING_API_KEY", None)
+            os.environ.pop("COPYWRITING_BASE_URL", None)
+            os.environ.pop("COPYWRITING_MODEL", None)
             os.environ.pop("OPENAI_API_KEY", None)
             os.environ.pop("OPENAI_BASE_URL", None)
             os.environ.pop("COPYWRITING_LLM_MODEL", None)
             engine = OpenAICompatibleCopywritingEngine.from_env()
             assert engine.api_key == ""
-            assert engine.model == "gpt-4o-mini"
+            assert engine.base_url == "https://api.deepseek.com"
+            assert engine.model == "deepseek-v4-flash"
 
     def test_from_env_with_vars(self):
         with patch.dict(
             os.environ,
             {
-                "OPENAI_API_KEY": "sk-env-test",
-                "OPENAI_BASE_URL": "https://env.api.com/v1",
-                "COPYWRITING_LLM_MODEL": "gpt-4-turbo",
+                "COPYWRITING_API_KEY": "sk-env-test",
+                "COPYWRITING_BASE_URL": "https://env.api.com/v1",
+                "COPYWRITING_MODEL": "gpt-4-turbo",
             },
         ):
             engine = OpenAICompatibleCopywritingEngine.from_env()
@@ -160,6 +165,7 @@ class TestOpenAICompatibleCopywritingEngine:
         assert "短视频口播文案" in prompt
         assert "professional" in prompt
         assert "300" in prompt
+        assert "严格 JSON" in prompt
 
     def test_build_system_prompt_with_style(self):
         engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
@@ -181,6 +187,37 @@ class TestOpenAICompatibleCopywritingEngine:
         engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
         result = engine._chat_completion("系统提示", "用户提示")
         assert result == "改写后的文案内容"
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert sent["response_format"] == {"type": "json_object"}
+
+    @patch("src.adapters.llm.urlopen")
+    def test_deepseek_payload_disables_thinking(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [{"message": {"content": '{"variants":["结果"]}'}}],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        engine = OpenAICompatibleCopywritingEngine(
+            api_key="sk-test",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-flash",
+        )
+        results = engine.rewrite("原始文案", variant_count=3)
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert sent["model"] == "deepseek-v4-flash"
+        assert sent["thinking"] == {"type": "disabled"}
+        assert results == ["结果"]
+        assert engine.last_usage["total_tokens"] == 15
 
     @patch("src.adapters.llm.urlopen")
     def test_chat_completion_http_error(self, mock_urlopen):
@@ -260,3 +297,17 @@ class TestOpenAICompatibleCopywritingEngine:
         engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
         with pytest.raises(LLMAdapterError, match="未返回有效内容"):
             engine.rewrite("原始文案", variant_count=1)
+
+
+class TestDisabledCopywritingEngine:
+    def test_disabled_capabilities_do_not_enable_generation(self):
+        engine = DisabledCopywritingEngine(model="deepseek-v4-flash")
+        cap = engine.capabilities()
+        assert cap["enabled"] is False
+        assert cap["mode"] == "disabled"
+        assert cap["missing_configuration"] == ["COPYWRITING_API_KEY"]
+
+    def test_disabled_generate_raises_readable_error(self):
+        engine = DisabledCopywritingEngine()
+        with pytest.raises(LLMAdapterError, match="COPYWRITING_API_KEY"):
+            engine.generate(content_brief="测试")

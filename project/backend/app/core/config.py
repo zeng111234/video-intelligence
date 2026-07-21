@@ -10,7 +10,46 @@ from pathlib import Path
 # config.py 在 project/backend/app/core/ 下，需要 5 层 parent 才能到仓库根
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 DATABASE_PATH = PROJECT_ROOT / "data" / "video_intelligence.db"
+ENV_PATH = PROJECT_ROOT / ".env"
+BACKEND_ENV_PATH = PROJECT_ROOT / "project" / "backend" / ".env"
 STREAMLIT_SECRETS_PATH = PROJECT_ROOT / ".streamlit" / "secrets.toml"
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    """解析本机 .env 文件，不支持 shell 展开，也不打印密钥。"""
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return values
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not key or not key.replace("_", "").isalnum() or key[0].isdigit():
+            continue
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def _load_env_files() -> None:
+    """加载 Git 忽略的 .env 文件。
+
+    优先级：系统环境变量 > 根目录 .env > project/backend/.env > legacy streamlit secrets。
+    """
+    for path in (ENV_PATH, BACKEND_ENV_PATH):
+        for key, value in _parse_env_file(path).items():
+            os.environ.setdefault(key, value)
+
+
+_load_env_files()
 
 
 # ---------------------------------------------------------------------------

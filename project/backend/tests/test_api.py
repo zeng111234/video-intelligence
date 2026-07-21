@@ -16,13 +16,31 @@ if _project_root not in sys.path:
 
 from project.backend.app.main import app  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
-from project.backend.app.core.config import CrawlerProviderMode  # noqa: E402
+from project.backend.app.core.config import (  # noqa: E402
+    CopywritingProviderMode,
+    CrawlerProviderMode,
+)
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
+from project.backend.app.core import config as backend_config  # noqa: E402
 
 
 @pytest.fixture()
 def client():
     return TestClient(app)
+
+
+@pytest.fixture()
+def copywriting_sandbox(monkeypatch: pytest.MonkeyPatch):
+    backend_deps.get_copywriting_engine.cache_clear()
+    backend_deps.get_copywriting_service.cache_clear()
+    monkeypatch.setattr(
+        backend_deps,
+        "COPYWRITING_MODE",
+        CopywritingProviderMode.SANDBOX,
+    )
+    yield
+    backend_deps.get_copywriting_engine.cache_clear()
+    backend_deps.get_copywriting_service.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -428,6 +446,8 @@ class TestOpenAPI:
         assert "/api/v1/pipelines" in schema["paths"]
         assert "/api/v1/tasks" in schema["paths"]
         assert "/api/v1/admin/status" in schema["paths"]
+        assert "/api/v1/copywriting/capabilities" in schema["paths"]
+        assert "/api/v1/copywriting/generate" in schema["paths"]
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +505,40 @@ class TestGetTaskById:
 
 
 class TestCopywriting:
+    pytestmark = pytest.mark.usefixtures("copywriting_sandbox")
+
+    def test_capabilities(self, client: TestClient):
+        resp = client.get("/api/v1/copywriting/capabilities")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is True
+        assert data["mode"] == "sandbox"
+        assert data["supported_platforms"] == [
+            "douyin",
+            "xiaohongshu",
+            "wechat_channels",
+        ]
+
+    def test_generate_basic(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/copywriting/generate",
+            json={
+                "content_brief": "介绍 AI 短视频获客系统",
+                "platform": "douyin",
+                "target_audience": "企业主",
+                "selling_points": "降低内容制作成本",
+                "call_to_action": "私信领取方案",
+                "target_length": 100,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "succeeded"
+        assert data["provider_name"] == "sandbox_copywriting"
+        assert data["model_name"] == "sandbox-template"
+        assert data["is_mock"] is True
+        assert len(data["result_variants"]) == 1
+
     def test_rewrite_basic(self, client: TestClient):
         """基本文案改写。"""
         resp = client.post(
@@ -500,6 +554,8 @@ class TestCopywriting:
         assert data["status"] == "succeeded"
         assert data["result_text"] is not None
         assert len(data["result_text"]) > 0
+        assert data["provider_name"] == "sandbox_copywriting"
+        assert data["is_mock"] is True
 
     def test_rewrite_with_variants(self, client: TestClient):
         """请求多个变体。"""
@@ -524,12 +580,45 @@ class TestCopywriting:
 
     def test_rewrite_capabilities(self, client: TestClient):
         """获取文案改写引擎能力。"""
-        # copywriting 端点当前没有 /capabilities，但改写结果应包含 task_id
-        resp = client.post(
-            "/api/v1/copywriting/rewrite",
-            json={"source_text": "能力检查。"},
-        )
+        resp = client.get("/api/v1/copywriting/capabilities")
         assert resp.status_code == 200
+
+
+class TestCopywritingProductionConfig:
+    def test_missing_key_disables_capabilities(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        client: TestClient,
+    ):
+        backend_deps.get_copywriting_engine.cache_clear()
+        backend_deps.get_copywriting_service.cache_clear()
+        monkeypatch.setattr(
+            backend_deps,
+            "COPYWRITING_MODE",
+            CopywritingProviderMode.PRODUCTION,
+        )
+        monkeypatch.setattr(backend_deps, "COPYWRITING_API_KEY", "")
+        monkeypatch.setattr(backend_deps, "COPYWRITING_MODEL", "deepseek-v4-flash")
+
+        resp = client.get("/api/v1/copywriting/capabilities")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["enabled"] is False
+        assert data["mode"] == "disabled"
+        assert "COPYWRITING_API_KEY" in data["missing_configuration"]
+
+        create_resp = client.post(
+            "/api/v1/copywriting/generate",
+            json={"content_brief": "未配置 Key 测试"},
+        )
+        assert create_resp.status_code == 200
+        task = create_resp.json()
+        assert task["status"] == "failed"
+        assert "COPYWRITING_API_KEY" in task["error_message"]
+        assert task["is_mock"] is False
+
+        backend_deps.get_copywriting_engine.cache_clear()
+        backend_deps.get_copywriting_service.cache_clear()
 
 
 # ---------------------------------------------------------------------------
@@ -665,3 +754,47 @@ class TestAdminStatusEnhanced:
         assert data["python_version"] is not None
         assert "platform_info" in data
         assert data["platform_info"] is not None
+
+
+class TestEnvConfig:
+    def test_env_file_loading_respects_process_env(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        local_env = tmp_path / ".env"
+        local_env.write_text(
+            "COPYWRITING_MODEL=from-local\nQUOTED_VALUE='abc def'\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setattr(backend_config, "ENV_PATH", local_env)
+        monkeypatch.delenv("COPYWRITING_MODEL", raising=False)
+        monkeypatch.delenv("QUOTED_VALUE", raising=False)
+
+        backend_config._load_env_files()
+
+        assert backend_config._env("COPYWRITING_MODEL") == "from-local"
+        assert backend_config._env("QUOTED_VALUE") == "abc def"
+
+        monkeypatch.setenv("COPYWRITING_MODEL", "from-process")
+        backend_config._load_env_files()
+        assert backend_config._env("COPYWRITING_MODEL") == "from-process"
+
+    def test_backend_env_file_is_loaded_as_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        root_env = tmp_path / ".env"
+        backend_env = tmp_path / "backend.env"
+        root_env.write_text("", encoding="utf-8")
+        backend_env.write_text("AVATAR_PROVIDER_MODE=baidu_xiling\n", encoding="utf-8")
+
+        monkeypatch.setattr(backend_config, "ENV_PATH", root_env)
+        monkeypatch.setattr(backend_config, "BACKEND_ENV_PATH", backend_env)
+        monkeypatch.delenv("AVATAR_PROVIDER_MODE", raising=False)
+
+        backend_config._load_env_files()
+
+        assert backend_config._env("AVATAR_PROVIDER_MODE") == "baidu_xiling"

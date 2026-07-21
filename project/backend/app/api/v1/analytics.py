@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+
+# 匹配末尾的 6 位 hex 颜色后缀（如 "露营b2bcd0" → "露营"）
+_HEX_SUFFIX_RE = re.compile(r"[0-9a-fA-F]{6}$")
 
 from project.backend.app.core.deps import get_repository
 
@@ -39,6 +43,17 @@ class AnalyticsResponse(BaseModel):
     trends: list[AnalyticsTrendItem] = Field(default_factory=list)
     competitors: list[AnalyticsCompetitorItem] = Field(default_factory=list)
     contentDistribution: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def _normalize_category(category: str) -> str:
+    """去除分类末尾的 6 位 hex 颜色后缀，避免同一关键词被拆成多个碎片。"""
+    if not category:
+        return category
+    # 如果去掉 hex 后缀后仍以 "关键词/" 开头，则认为是脏数据后缀
+    stripped = _HEX_SUFFIX_RE.sub("", category)
+    if stripped.startswith("关键词/") and len(stripped) > len("关键词/"):
+        return stripped
+    return category
 
 
 def _cutoff(time_range: str) -> datetime:
@@ -146,9 +161,8 @@ def get_analytics_summary(
 
     category_counts: dict[str, int] = {}
     for item in candidates:
-        category_counts[item.category or "未分类"] = (
-            category_counts.get(item.category or "未分类", 0) + 1
-        )
+        label = _normalize_category(item.category or "未分类")
+        category_counts[label] = category_counts.get(label, 0) + 1
     content_distribution = [
         {
             "label": label,

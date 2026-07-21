@@ -1,199 +1,314 @@
-"""数字人视频生成 API
+"""数字人视频生成 API。
 
-支持三种模式：
-1. mock - 演示模式，返回模拟数据
-2. simple - 简化模式，使用 edge-tts + ffmpeg（推荐本地测试）
-3. cloud - 云端 API 模式（推荐生产环境）
+客户版只暴露真实后端状态：能力、资产、任务、媒体文件。开发沙箱可以创建
+演示任务，但不会返回假视频或假下载地址。
 """
 
 from __future__ import annotations
 
-import os
-import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+
+from project.backend.app.core.deps import get_avatar_service
+from src.models import (
+    AvatarAsset,
+    AvatarAssetKind,
+    AvatarCapability,
+    AvatarProviderStatus,
+    AvatarSubmitRequest,
+    AvatarTask,
+)
+from src.services.avatar import AvatarService
 
 router = APIRouter(prefix="/api/v1/avatar", tags=["avatar"])
 
-# 获取运行模式
-AVATAR_MODE = os.getenv("AVATAR_MODE", "simple").lower()
+
+class AvatarJobCreate(BaseModel):
+    """客户版数字人任务请求。"""
+
+    industry_config_id: str | None = None
+    template_version_id: str | None = None
+    script_text: str = Field(..., min_length=1)
+    avatar_id: str = Field(..., min_length=1)
+    voice_id: str = Field(..., min_length=1)
+    target_seconds: int = Field(45, ge=15, le=60)
+    speech_rate: float = Field(1.0, ge=0.8, le=1.2)
+    aspect_ratio: str = "9:16"
+    resolution: str = "1080x1920"
+    publish_mode: str = "manual"
+    target_platforms: list[str] = Field(default_factory=list)
+    idempotency_key: str = Field(default_factory=lambda: f"avatar-{uuid4().hex[:12]}")
 
 
-class AvatarGenerateRequest(BaseModel):
-    """数字人生成请求"""
-    text: str
-    voice: str = "sweet_female"
-    speech_rate: float = 1.0
-    avatar_type: str = "image"
+class LegacyAvatarGenerateRequest(BaseModel):
+    """旧 /generate 兼容请求，接受 text/voice 与 tts_text/tts_voice。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    text: str | None = None
+    voice: str | None = None
+    tts_text: str | None = None
+    tts_voice: str | None = None
+    speech_rate: float = Field(1.0, ge=0.5, le=2.0)
+    avatar_type: str = "public"
+    audio_type: str = "tts"
 
 
-class AvatarTask(BaseModel):
-    """数字人任务"""
+class AvatarJobResponse(BaseModel):
+    task_id: str
+    status: str
+    progress: int
+    stage: str
+    title: str
+    script_text: str
+    avatar_id: str
+    avatar_name: str
+    voice_id: str
+    voice_name: str
+    speech_rate: float
+    aspect_ratio: str
+    resolution: str
+    provider_name: str
+    provider_job_id: str | None = None
+    estimated_cost_cny: float | None = None
+    estimated_seconds: int | None = None
+    actual_seconds: float | None = None
+    result_url: str | None = None
+    error_kind: str | None = None
+    error_message: str | None = None
+    is_mock: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class LegacyAvatarTaskResponse(BaseModel):
     task_id: str
     status: str
     progress: int
     created_at: str
     stage: str = ""
+    avatar_type: str = "public"
+    audio_type: str = "tts"
     video_url: str | None = None
     error_message: str | None = None
 
 
-# 根据模式选择服务
-avatar_service = None
-if AVATAR_MODE == "simple":
-    try:
-        from project.backend.app.services.simple_avatar import simple_avatar_service
-        avatar_service = simple_avatar_service
-    except Exception as e:
-        print(f"Warning: Simple avatar service not available: {e}")
-elif AVATAR_MODE == "cloud":
-    try:
-        from project.backend.app.services.avatar_service import get_avatar_provider
-        avatar_service = get_avatar_provider()
-    except Exception as e:
-        print(f"Warning: Cloud avatar service not available: {e}")
+@router.get("/capabilities", response_model=AvatarCapability)
+def get_capabilities(service: AvatarService = Depends(get_avatar_service)):
+    return service.capabilities()
 
 
-@router.post("/generate", response_model=AvatarTask)
-async def generate_avatar_video(body: AvatarGenerateRequest) -> AvatarTask:
-    """生成数字人视频"""
-    if not body.text.strip():
-        raise HTTPException(status_code=400, detail="请输入文案内容")
-
-    if AVATAR_MODE == "mock" or avatar_service is None:
-        # 演示模式
-        task_id = f"avatar-{uuid.uuid4().hex[:10]}"
-        return AvatarTask(
-            task_id=task_id,
-            status="succeeded",
-            progress=100,
-            created_at=datetime.now().isoformat(),
-            stage="演示完成",
-            video_url=None,
-        )
-
-    elif AVATAR_MODE == "simple":
-        # 简化模式
-        try:
-            result = await avatar_service.generate_video(
-                text=body.text,
-                voice=body.voice,
-                rate=body.speech_rate,
-            )
-            return AvatarTask(
-                task_id=result["task_id"],
-                status=result["status"],
-                progress=result.get("progress", 0),
-                created_at=result.get("created_at", datetime.now().isoformat()),
-                stage=result.get("stage", ""),
-                video_url=f"/api/v1/avatar/download/{result['task_id']}" if result["status"] == "succeeded" else None,
-                error_message=result.get("error_message"),
-            )
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    else:
-        # 云端模式
-        try:
-            task = await avatar_service.generate_video(
-                avatar_image="",
-                audio="",
-                text=body.text,
-                voice=body.voice,
-                speech_rate=body.speech_rate,
-            )
-            return AvatarTask(**task.to_dict())
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+@router.get("/assets", response_model=list[AvatarAsset])
+def list_assets(service: AvatarService = Depends(get_avatar_service)):
+    return service.list_assets()
 
 
-@router.get("/tasks/{task_id}", response_model=AvatarTask)
-async def get_task_status(task_id: str) -> AvatarTask:
-    """获取任务状态"""
-    if AVATAR_MODE == "mock" or avatar_service is None:
-        return AvatarTask(
-            task_id=task_id,
-            status="succeeded",
-            progress=100,
-            created_at=datetime.now().isoformat(),
-            stage="演示完成",
-        )
-
-    try:
-        if AVATAR_MODE == "simple":
-            result = avatar_service.get_task(task_id)
-            if not result:
-                raise HTTPException(status_code=404, detail="任务不存在")
-            return AvatarTask(
-                task_id=result["task_id"],
-                status=result["status"],
-                progress=result.get("progress", 0),
-                created_at=result.get("created_at", datetime.now().isoformat()),
-                stage=result.get("stage", ""),
-                video_url=f"/api/v1/avatar/download/{task_id}" if result["status"] == "succeeded" else None,
-                error_message=result.get("error_message"),
-            )
-        else:
-            task = await avatar_service.get_task_status(task_id)
-            return AvatarTask(**task.to_dict())
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/download/{task_id}")
-async def download_video(task_id: str):
-    """下载生成的视频"""
-    if AVATAR_MODE != "simple" or avatar_service is None:
-        raise HTTPException(status_code=501, detail="当前模式不支持下载")
-
-    result = avatar_service.get_task(task_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="任务不存在")
-    if result["status"] != "succeeded":
-        raise HTTPException(status_code=400, detail="视频尚未生成完成")
-
-    video_path = result.get("video_path")
-    if not video_path or not os.path.exists(video_path):
-        raise HTTPException(status_code=404, detail="视频文件不存在")
-
-    return FileResponse(
-        video_path,
-        media_type="video/mp4",
-        filename=f"avatar_{task_id}.mp4",
+@router.post("/jobs", response_model=AvatarJobResponse)
+def create_job(
+    body: AvatarJobCreate,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    avatar_name, voice_name = _asset_names(service, body.avatar_id, body.voice_id)
+    request = AvatarSubmitRequest(
+        script_text=body.script_text,
+        source_task_id=body.industry_config_id,
+        source_revision_id=body.template_version_id,
+        avatar_id=body.avatar_id,
+        voice_id=body.voice_id,
+        speech_rate=body.speech_rate,
+        aspect_ratio=body.aspect_ratio,
+        resolution=body.resolution,
+        background="solid",
+        rights_holder="current_tenant",
+        script_rights_confirmed=True,
+        avatar_rights_confirmed=True,
+        voice_rights_confirmed=True,
+        idempotency_key=body.idempotency_key,
     )
+    try:
+        task = service.submit(request, avatar_name=avatar_name, voice_name=voice_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _job_response(task)
+
+
+@router.get("/jobs", response_model=list[AvatarJobResponse])
+def list_jobs(service: AvatarService = Depends(get_avatar_service)):
+    tasks = [
+        item
+        for item in service.repository.list_tasks()
+        if isinstance(item, AvatarTask)
+    ]
+    return [_job_response(task) for task in tasks]
+
+
+@router.get("/jobs/{task_id}", response_model=AvatarJobResponse)
+def get_job(task_id: str, service: AvatarService = Depends(get_avatar_service)):
+    try:
+        task = service.refresh_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _job_response(task)
+
+
+@router.get("/jobs/{task_id}/media")
+def get_job_media(task_id: str, service: AvatarService = Depends(get_avatar_service)):
+    try:
+        task = service.download_result(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    path = Path(task.result_path or "")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="视频文件不存在。")
+    return FileResponse(path, media_type=task.result_mime or "video/mp4", filename=f"{task_id}.mp4")
+
+
+@router.post("/generate", response_model=LegacyAvatarTaskResponse)
+def generate_legacy(
+    body: LegacyAvatarGenerateRequest,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    script_text = (body.text or body.tts_text or "").strip()
+    if not script_text:
+        raise HTTPException(status_code=400, detail="请输入文案内容")
+    assets = service.list_assets()
+    avatar = next((item for item in assets if item.kind == AvatarAssetKind.AVATAR), None)
+    voice = next(
+        (
+            item
+            for item in assets
+            if item.kind == AvatarAssetKind.VOICE
+            and item.asset_id == (body.voice or body.tts_voice)
+        ),
+        None,
+    ) or next((item for item in assets if item.kind == AvatarAssetKind.VOICE), None)
+    if avatar is None or voice is None:
+        raise HTTPException(status_code=503, detail="数字人服务缺少可用公共形象或音色")
+    request = AvatarSubmitRequest(
+        script_text=script_text,
+        avatar_id=avatar.asset_id,
+        voice_id=voice.asset_id,
+        speech_rate=min(1.2, max(0.8, body.speech_rate)),
+        aspect_ratio="9:16",
+        resolution="1080x1920",
+        background="solid",
+        rights_holder="current_tenant",
+        script_rights_confirmed=True,
+        avatar_rights_confirmed=True,
+        voice_rights_confirmed=True,
+        idempotency_key=f"legacy-{uuid4().hex[:12]}",
+    )
+    try:
+        task = service.submit(request, avatar_name=avatar.name, voice_name=voice.name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _legacy_response(task, avatar_type=body.avatar_type, audio_type=body.audio_type)
+
+
+@router.get("/tasks", response_model=list[LegacyAvatarTaskResponse])
+def list_legacy_tasks(service: AvatarService = Depends(get_avatar_service)):
+    tasks = [
+        item
+        for item in service.repository.list_tasks()
+        if isinstance(item, AvatarTask)
+    ]
+    return [_legacy_response(task) for task in tasks]
+
+
+@router.get("/tasks/{task_id}", response_model=LegacyAvatarTaskResponse)
+def get_legacy_task(task_id: str, service: AvatarService = Depends(get_avatar_service)):
+    try:
+        task = service.refresh_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _legacy_response(task)
 
 
 @router.get("/voices")
-async def list_voices() -> list[dict[str, str]]:
-    """获取可用音色列表"""
-    if AVATAR_MODE == "simple" and avatar_service:
-        return avatar_service.get_voices()
-    else:
-        return [
-            {"id": "sweet_female", "name": "甜美女声", "gender": "female"},
-            {"id": "magnetic_male", "name": "磁性男声", "gender": "male"},
-            {"id": "youth", "name": "活力青年", "gender": "neutral"},
-            {"id": "broadcast", "name": "专业播音", "gender": "neutral"},
-            {"id": "customer_service", "name": "亲切客服", "gender": "female"},
-        ]
+def list_voices(service: AvatarService = Depends(get_avatar_service)) -> list[dict[str, str]]:
+    return [
+        {"id": item.asset_id, "name": item.name, "gender": "unknown"}
+        for item in service.list_assets()
+        if item.kind == AvatarAssetKind.VOICE
+    ]
 
 
 @router.get("/config")
-async def get_config() -> dict[str, Any]:
-    """获取数字人服务配置"""
+def get_config(service: AvatarService = Depends(get_avatar_service)) -> dict[str, Any]:
+    capability = service.capabilities()
     return {
-        "mode": AVATAR_MODE,
-        "supports_upload": AVATAR_MODE != "mock",
-        "supports_download": AVATAR_MODE == "simple",
-        "description": {
-            "mock": "演示模式 —— 返回模拟数据",
-            "simple": "简化模式 —— edge-tts + ffmpeg，适合本地测试",
-            "cloud": "云端 API —— 需要配置 API Key",
-        }.get(AVATAR_MODE, "未知模式"),
+        "mode": capability.mode.value,
+        "provider_name": capability.provider_name,
+        "enabled": capability.enabled,
+        "supports_upload": False,
+        "supports_download": capability.enabled and capability.mode.value != "sandbox",
+        "missing_configuration": capability.missing_configuration,
+        "description": capability.display_name,
     }
+
+
+def _asset_names(service: AvatarService, avatar_id: str, voice_id: str) -> tuple[str, str]:
+    assets = service.list_assets()
+    avatars = {item.asset_id: item.name for item in assets if item.kind == AvatarAssetKind.AVATAR}
+    voices = {item.asset_id: item.name for item in assets if item.kind == AvatarAssetKind.VOICE}
+    return avatars.get(avatar_id, avatar_id), voices.get(voice_id, voice_id)
+
+
+def _job_response(task: AvatarTask) -> AvatarJobResponse:
+    result_url = f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None
+    return AvatarJobResponse(
+        task_id=task.task_id,
+        status=task.status.value,
+        progress=task.progress,
+        stage=task.stage,
+        title=task.title,
+        script_text=task.script_text,
+        avatar_id=task.avatar_id,
+        avatar_name=task.avatar_name,
+        voice_id=task.voice_id,
+        voice_name=task.voice_name,
+        speech_rate=task.speech_rate,
+        aspect_ratio=task.aspect_ratio,
+        resolution=task.resolution,
+        provider_name=task.provider_name,
+        provider_job_id=task.provider_job_id,
+        estimated_cost_cny=task.estimated_cost_cny,
+        estimated_seconds=task.estimated_seconds,
+        actual_seconds=task.elapsed_seconds,
+        result_url=result_url,
+        error_kind=task.error_kind.value if task.error_kind else None,
+        error_message=task.error_message,
+        is_mock=task.is_mock,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+    )
+
+
+def _legacy_response(
+    task: AvatarTask,
+    *,
+    avatar_type: str = "public",
+    audio_type: str = "tts",
+) -> LegacyAvatarTaskResponse:
+    status = "running" if task.provider_status in {
+        AvatarProviderStatus.QUEUED,
+        AvatarProviderStatus.SUBMITTED,
+        AvatarProviderStatus.RUNNING,
+    } else task.status.value
+    return LegacyAvatarTaskResponse(
+        task_id=task.task_id,
+        status=status,
+        progress=task.progress,
+        created_at=task.created_at.isoformat(),
+        stage=task.stage,
+        avatar_type=avatar_type,
+        audio_type=audio_type,
+        video_url=f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None,
+        error_message=task.error_message,
+    )

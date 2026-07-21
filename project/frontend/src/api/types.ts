@@ -271,7 +271,72 @@ export interface PublishResponse {
 }
 
 export interface PublishPlatformsResponse {
-  platforms: string[];
+  platforms: Array<{ platform: string; enabled: boolean; display_name: string }>;
+}
+
+/* ---- 数字人生成 ---- */
+
+export interface AvatarCapability {
+  provider_name: string;
+  display_name: string;
+  mode: "sandbox" | "production";
+  enabled: boolean;
+  permission_status: string;
+  max_script_chars: number;
+  supported_aspect_ratios: string[];
+  estimated_cost_cny: number | null;
+  estimated_seconds: number | null;
+  missing_configuration: string[];
+}
+
+export interface AvatarAsset {
+  asset_id: string;
+  kind: "avatar" | "voice";
+  name: string;
+  preview_url: string | null;
+  authorized: boolean;
+}
+
+export interface AvatarJob {
+  task_id: string;
+  status: string;
+  progress: number;
+  stage: string;
+  title: string;
+  script_text: string;
+  avatar_id: string;
+  avatar_name: string;
+  voice_id: string;
+  voice_name: string;
+  speech_rate: number;
+  aspect_ratio: string;
+  resolution: string;
+  provider_name: string;
+  provider_job_id: string | null;
+  estimated_cost_cny: number | null;
+  estimated_seconds: number | null;
+  actual_seconds: number | null;
+  result_url: string | null;
+  error_kind: string | null;
+  error_message: string | null;
+  is_mock: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvatarJobCreateRequest {
+  industry_config_id?: string | null;
+  template_version_id?: string | null;
+  script_text: string;
+  avatar_id: string;
+  voice_id: string;
+  target_seconds: number;
+  speech_rate: number;
+  aspect_ratio: string;
+  resolution: string;
+  publish_mode: "manual" | "auto";
+  target_platforms: string[];
+  idempotency_key: string;
 }
 
 /* ---- 深度分析 ---- */

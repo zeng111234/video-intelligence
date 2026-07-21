@@ -23,7 +23,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { useTheme } from "../contexts/ThemeContext";
-import { getNotifications, getMessages, getUserProfile } from "../api/client";
+import { getNotifications, getMessages } from "../api/client";
 
 const { Text } = Typography;
 

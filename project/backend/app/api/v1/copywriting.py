@@ -38,9 +38,9 @@ class CopywritingResponse(BaseModel):
     provider_name: str
     model_name: str
     is_mock: bool
-    token_usage: dict[str, int] = {}
+    token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
-    result_variants: list[str] = []
+    result_variants: list[str] = Field(default_factory=list)
     error_message: str | None = None
 
 
