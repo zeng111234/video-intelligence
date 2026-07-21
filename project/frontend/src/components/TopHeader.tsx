@@ -2,7 +2,7 @@
  * 顶部栏组件
  * 页面标题 + 主题切换 + 通知 + 消息 + 用户头像
  */
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Badge, Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
 import {
@@ -159,6 +159,25 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   /** 通知状态 */
   const [notifications, setNotifications] = useState<NotificationItem[]>(MOCK_NOTIFICATIONS);
   const [messages, setMessages] = useState<MessageItem[]>(MOCK_MESSAGES);
+
+  /** 加载通知和消息 */
+  useEffect(() => {
+    getNotifications()
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setNotifications(data);
+        }
+      })
+      .catch(() => {});
+
+    getMessages()
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setMessages(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   /** 未读计数 */
   const unreadNotifCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
