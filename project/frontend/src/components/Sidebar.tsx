@@ -62,19 +62,19 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: [
           { key: "/dashboard", label: "数据仪表盘", icon: <DashboardOutlined /> },
           { key: "/candidates", label: "候选检索", icon: <SearchOutlined /> },
-          { key: "/pipeline", label: "批量生产", icon: <ThunderboltOutlined /> },
+          { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
           { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
-          { key: "/tasks", label: "任务中心", icon: <UnorderedListOutlined /> },
+          { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
+          { key: "/pipeline", label: "批量生产", icon: <ThunderboltOutlined /> },
+          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
+          { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
         ],
       },
       {
-        title: "高级功能",
+        title: "数据分析",
         items: [
-          { key: "/analytics", label: "深度分析", icon: <LineChartOutlined />, isPro: true },
-          { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined />, isPro: true },
-          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
-          { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
-          { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
+          { key: "/analytics", label: "深度分析", icon: <LineChartOutlined /> },
+          { key: "/tasks", label: "任务中心", icon: <UnorderedListOutlined /> },
         ],
       },
       {
