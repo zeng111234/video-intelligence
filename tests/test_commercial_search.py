@@ -123,6 +123,44 @@ def _service(repository, provider, now: datetime) -> CommercialSearchService:
     )
 
 
+def _douyin_only_service(
+    repository,
+    provider,
+    now: datetime,
+) -> CommercialSearchService:
+    source = SourceService(repository, HeatService())
+    return CommercialSearchService(
+        repository,
+        source,
+        KeywordTrendService(repository),
+        provider,
+        active_platforms=(Platform.DOUYIN,),
+        clock=lambda: now,
+    )
+
+
+def test_douyin_only_service_never_calls_other_platforms() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.endpoint_prices_cny = {
+        Platform.DOUYIN: 0.03,
+        Platform.XIAOHONGSHU: 0.12,
+        Platform.WECHAT_CHANNELS: 0.15,
+    }
+    service = _douyin_only_service(repository, provider, now)
+
+    preview = service.preview(keyword="二手车")
+    batch = service.execute(keyword="二手车")
+    runs = repository.list_platform_search_runs(batch.batch_id)
+
+    assert [item.platform for item in preview] == [Platform.DOUYIN]
+    assert preview[0].estimated_cost_cny == 0.03
+    assert batch.platforms == [Platform.DOUYIN]
+    assert [run.platform for run in runs] == [Platform.DOUYIN]
+    assert provider.search_calls == [Platform.DOUYIN]
+
+
 def test_sandbox_executes_three_platforms_without_external_calls() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])

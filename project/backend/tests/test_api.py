@@ -20,8 +20,20 @@ from project.backend.app.core.config import (  # noqa: E402
     CopywritingProviderMode,
     CrawlerProviderMode,
 )
+from src.adapters.licensed import SandboxLicensedSearchProvider  # noqa: E402
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from project.backend.app.core import config as backend_config  # noqa: E402
+from src.models import (  # noqa: E402
+    PipelineRun,
+    PipelineRunStatus,
+    PipelineStage,
+    PipelineStepResult,
+    Platform,
+    TaskStatus,
+)
+from src.repositories import MockRepository  # noqa: E402
+from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
+from src.services.commercial_search import CommercialSearchService  # noqa: E402
 
 
 @pytest.fixture()
@@ -262,6 +274,47 @@ class TestPipelines:
         )
         assert resp.status_code == 200
 
+    def test_create_pipeline_from_candidate(self, client: TestClient):
+        class FakePipelineService:
+            def execute_candidate_script_pipeline(self, **kwargs):
+                assert kwargs["idempotency_key"] == "idem-pipeline-api"
+                return PipelineRun(
+                    run_id="pipeline-api-1",
+                    keyword="候选标题",
+                    status=PipelineRunStatus.PAUSED,
+                    current_stage=PipelineStage.HUMAN_REVIEW,
+                    stages=[
+                        PipelineStepResult(
+                            stage=PipelineStage.TRANSCRIPTION,
+                            status=TaskStatus.SUCCEEDED,
+                            task_id="transcript-api-1",
+                            outputs={"task_id": "transcript-api-1"},
+                        )
+                    ],
+                    copywriting_task_id="copy-api-1",
+                )
+
+        app.dependency_overrides[backend_deps.get_pipeline_service] = (
+            lambda: FakePipelineService()
+        )
+        try:
+            resp = client.post(
+                "/api/v1/pipelines/from-candidate",
+                headers={"Idempotency-Key": "idem-pipeline-api"},
+                json={
+                    "candidate_id": "candidate-1",
+                    "rights_confirmed": True,
+                    "rights_holder": "测试公司",
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "paused"
+        assert data["current_stage"] == "human_review"
+        assert data["stages"][0]["outputs"]["task_id"] == "transcript-api-1"
+
     def test_create_pipeline_empty_keyword(self, client: TestClient):
         resp = client.post("/api/v1/pipelines", json={"keyword": ""})
         assert resp.status_code == 422  # min_length=1
@@ -322,6 +375,37 @@ class TestTasks:
 
 
 class TestCrawlerBatches:
+    @pytest.fixture(autouse=True)
+    def crawler_sandbox(self):
+        """集成测试禁止读取本机 Production Key 并产生付费请求。"""
+
+        repository = MockRepository(candidates=[], tasks=[])
+        provider = SandboxLicensedSearchProvider()
+        service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            provider,
+            active_platforms=(Platform.DOUYIN,),
+        )
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        app.dependency_overrides[backend_deps.get_licensed_search_provider] = (
+            lambda: provider
+        )
+        app.dependency_overrides[backend_deps.get_commercial_search_service] = (
+            lambda: service
+        )
+        yield
+        app.dependency_overrides.pop(backend_deps.get_repository, None)
+        app.dependency_overrides.pop(
+            backend_deps.get_licensed_search_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_commercial_search_service,
+            None,
+        )
+
     def test_capabilities(self, client: TestClient):
         resp = client.get("/api/v1/crawler/capabilities")
         assert resp.status_code == 200
@@ -329,8 +413,10 @@ class TestCrawlerBatches:
         assert data["mode"] in {"sandbox", "production"}
         assert "monthly_query_count" in data
         assert "supported_platforms" in data
+        assert data["active_platforms"] == ["douyin"]
+        assert data["paused_platforms"] == ["xiaohongshu", "wechat_channels"]
 
-    def test_preview_three_platforms(self, client: TestClient):
+    def test_preview_only_douyin(self, client: TestClient):
         resp = client.post(
             "/api/v1/crawler/preview",
             json={
@@ -342,7 +428,7 @@ class TestCrawlerBatches:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["platforms"]) == 3
+        assert [item["platform"] for item in data["platforms"]] == ["douyin"]
         assert data["ranking_mode"] == "keyword_hot"
         assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
@@ -362,7 +448,7 @@ class TestCrawlerBatches:
         assert create_resp.status_code == 200
         created = create_resp.json()
         assert created["status"] in {"succeeded", "partial", "failed"}
-        assert len(created["platform_runs"]) == 3
+        assert [run["platform"] for run in created["platform_runs"]] == ["douyin"]
 
         batch_id = created["batch_id"]
         detail_resp = client.get(f"/api/v1/crawler/batches/{batch_id}")
@@ -425,6 +511,25 @@ class TestCrawlerBatches:
         assert capability.mode.value == "production"
         assert capability.enabled is True
         assert capability.credential_alias == "ONEAPI_API_KEY"
+
+        backend_deps.get_licensed_search_provider.cache_clear()
+
+    def test_fastapi_production_mode_uses_oneapi_when_key_exists(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        backend_deps.get_licensed_search_provider.cache_clear()
+        monkeypatch.setattr(
+            backend_deps,
+            "CRAWLER_PROVIDER_MODE",
+            CrawlerProviderMode.PRODUCTION,
+        )
+        monkeypatch.setattr(backend_deps, "ONEAPI_API_KEY", "configured-for-test")
+
+        provider = backend_deps.get_licensed_search_provider()
+
+        assert isinstance(provider, OneApiLicensedSearchProvider)
+        assert provider.capabilities().enabled is True
 
         backend_deps.get_licensed_search_provider.cache_clear()
 

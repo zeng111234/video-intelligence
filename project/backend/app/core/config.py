@@ -135,6 +135,28 @@ CRAWLER_PROVIDER_NAME: str = _secret(
 ONEAPI_API_KEY: str = _secret("ONEAPI_API_KEY")
 
 
+def _crawler_active_platforms() -> tuple[str, ...]:
+    """返回本阶段允许自动调用的平台。
+
+    供应商可以同时支持多平台，但自动化流程可以只开放其中一部分，
+    避免未验收平台产生付费请求。
+    """
+
+    supported = {"douyin", "xiaohongshu", "wechat_channels"}
+    configured = _secret("CRAWLER_ACTIVE_PLATFORMS", "douyin")
+    values = tuple(
+        dict.fromkeys(
+            item.strip().casefold()
+            for item in configured.split(",")
+            if item.strip().casefold() in supported
+        )
+    )
+    return values or ("douyin",)
+
+
+CRAWLER_ACTIVE_PLATFORMS: tuple[str, ...] = _crawler_active_platforms()
+
+
 # ---------------------------------------------------------------------------
 # AI 文案大模型配置
 # ---------------------------------------------------------------------------

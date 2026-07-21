@@ -1,11 +1,11 @@
 /**
  * 侧边栏组件
- * 还原原型的导航结构、分组、PRO 标识、升级卡片
+ * 还原原型的导航结构和分组
  * 支持折叠/展开、深色模式、响应式
  */
-import { useState, useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useMemo, type ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Badge, Modal, Button } from "antd";
+import { Badge } from "antd";
 import {
   DashboardOutlined,
   SearchOutlined,
@@ -21,6 +21,7 @@ import {
   MenuUnfoldOutlined,
   BugOutlined,
   VideoCameraOutlined,
+  AppstoreOutlined,
 } from "@ant-design/icons";
 
 /** 导航项类型 */
@@ -28,7 +29,6 @@ interface NavItem {
   key: string;
   label: string;
   icon: ReactNode;
-  isPro?: boolean;
   badge?: number;
 }
 
@@ -52,7 +52,6 @@ interface SidebarProps {
 export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
 
   /** 导航分组配置 */
   const navGroups: NavGroup[] = useMemo(
@@ -61,11 +60,12 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         title: "核心功能",
         items: [
           { key: "/dashboard", label: "数据仪表盘", icon: <DashboardOutlined /> },
+          { key: "/studio", label: "内容工作台", icon: <AppstoreOutlined /> },
           { key: "/candidates", label: "候选检索", icon: <SearchOutlined /> },
           { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
           { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
           { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
-          { key: "/pipeline", label: "批量生产", icon: <ThunderboltOutlined /> },
+          { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
           { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
         ],
@@ -88,7 +88,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
     []
   );
 
-  /** 导航点击处理 - Pro 会员直接进入 */
+  /** 导航点击处理 */
   const handleNavClick = useCallback(
     (key: string) => {
       navigate(key);
@@ -145,7 +145,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
                   {!collapsed && (
                     <>
                       <span className="vi-nav-item-text">{item.label}</span>
-                      {item.isPro && <span className="vi-pro-badge">PRO</span>}
                       {item.badge && (
                         <Badge
                           count={item.badge}
@@ -161,164 +160,8 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           ))}
         </nav>
 
-        {/* 底部升级卡片 */}
-        {!collapsed && (
-          <div className="vi-sidebar-footer">
-            <div
-              className="vi-upgrade-card"
-              onClick={() => setUpgradeModalOpen(true)}
-            >
-              <div className="vi-upgrade-title">升级到 Pro 版本</div>
-              <div className="vi-upgrade-desc">
-                解锁全部高级功能，提升10倍效率
-              </div>
-              <button className="vi-upgrade-btn">立即升级</button>
-            </div>
-          </div>
-        )}
-
-        {/* 折叠态升级图标 */}
-        {collapsed && (
-          <div className="vi-sidebar-footer-collapsed">
-            <div
-              className="vi-upgrade-icon"
-              onClick={() => setUpgradeModalOpen(true)}
-              title="升级到 Pro"
-            >
-              🚀
-            </div>
-          </div>
-        )}
+        <div className={collapsed ? "vi-sidebar-footer-collapsed" : "vi-sidebar-footer"} />
       </aside>
-
-      {/* 升级弹窗 */}
-      <Modal
-        title="升级到 Pro 版本"
-        open={upgradeModalOpen}
-        onCancel={() => setUpgradeModalOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setUpgradeModalOpen(false)}>
-            稍后再说
-          </Button>,
-          <Button
-            key="upgrade"
-            type="primary"
-            style={{
-              background:
-                "linear-gradient(135deg, var(--primary-500), var(--primary-700))",
-              border: "none",
-            }}
-          >
-            立即升级 Pro
-          </Button>,
-        ]}
-        width={560}
-        centered
-      >
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🚀</div>
-          <h3
-            style={{
-              fontSize: 20,
-              fontWeight: 600,
-              marginBottom: 8,
-              color: "var(--gray-800)",
-            }}
-          >
-            解锁全部高级功能
-          </h3>
-          <p style={{ color: "var(--gray-500)", fontSize: 14 }}>
-            Pro版本提供更强大的AI能力和无限制的使用额度
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr",
-            gap: 16,
-            marginBottom: 24,
-          }}
-        >
-          {/* Free 版本 */}
-          <div
-            style={{
-              padding: 16,
-              background: "var(--gray-50)",
-              borderRadius: 12,
-            }}
-          >
-            <h4
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                marginBottom: 12,
-                color: "var(--gray-700)",
-              }}
-            >
-              Free 版本
-            </h4>
-            <ul style={{ listStyle: "none", fontSize: 13, color: "var(--gray-600)", padding: 0 }}>
-              <li style={{ marginBottom: 8 }}>✓ 每日100次搜索</li>
-              <li style={{ marginBottom: 8 }}>✓ 基础文案生成</li>
-              <li style={{ marginBottom: 8 }}>✓ 单平台发布</li>
-              <li style={{ marginBottom: 8 }}>✓ 基础数据统计</li>
-              <li style={{ color: "var(--gray-400)" }}>✗ AI智能优化</li>
-              <li style={{ color: "var(--gray-400)" }}>✗ 批量处理</li>
-            </ul>
-          </div>
-
-          {/* Pro 版本 */}
-          <div
-            style={{
-              padding: 16,
-              background: "linear-gradient(135deg, var(--primary-50), var(--primary-100))",
-              borderRadius: 12,
-              border: "2px solid var(--primary-200)",
-            }}
-          >
-            <h4
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                marginBottom: 12,
-                color: "var(--primary-700)",
-              }}
-            >
-              Pro 版本
-            </h4>
-            <ul style={{ listStyle: "none", fontSize: 13, color: "var(--gray-700)", padding: 0 }}>
-              <li style={{ marginBottom: 8 }}>✓ 无限次搜索</li>
-              <li style={{ marginBottom: 8 }}>✓ AI智能文案优化</li>
-              <li style={{ marginBottom: 8 }}>✓ 多平台批量发布</li>
-              <li style={{ marginBottom: 8 }}>✓ 深度数据分析</li>
-              <li style={{ marginBottom: 8, fontWeight: 600, color: "var(--primary-700)" }}>
-                ✓ AI智能优化
-              </li>
-              <li style={{ fontWeight: 600, color: "var(--primary-700)" }}>
-                ✓ 批量处理
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        {/* 价格区域 */}
-        <div
-          style={{
-            textAlign: "center",
-            padding: 16,
-            background: "linear-gradient(135deg, var(--primary-500), var(--primary-700))",
-            borderRadius: 12,
-            color: "white",
-          }}
-        >
-          <div style={{ fontSize: 14, marginBottom: 4 }}>限时优惠</div>
-          <div style={{ fontSize: 32, fontWeight: 700, marginBottom: 4 }}>
-            ¥99<span style={{ fontSize: 16, fontWeight: 400 }}>/月</span>
-          </div>
-          <div style={{ fontSize: 12, opacity: 0.8 }}>原价 ¥199/月，立省50%</div>
-        </div>
-      </Modal>
 
       {/* 侧边栏样式 */}
       <style>{`
@@ -473,16 +316,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           flex: 1;
           overflow: hidden;
           text-overflow: ellipsis;
-        }
-
-        .vi-pro-badge {
-          background: #fbbf24;
-          color: #92400e;
-          padding: 2px 6px;
-          border-radius: 4px;
-          font-size: 10px;
-          font-weight: 700;
-          flex-shrink: 0;
         }
 
         .vi-sidebar-footer {

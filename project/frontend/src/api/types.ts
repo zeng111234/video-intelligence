@@ -33,6 +33,10 @@ export interface TranscriptionResponse {
   progress: number;
   stage: string;
   media_name: string;
+  model_name: string | null;
+  duration_seconds: number | null;
+  approved_revision_id: string | null;
+  low_confidence_count: number;
   segments: TranscriptSegment[];
   error_message: string | null;
   created_at: string | null;
@@ -42,8 +46,9 @@ export interface TranscriptionResponse {
 export interface PipelineStage {
   stage: string;
   status: string;
-  task_id: string;
+  task_id: string | null;
   error_message: string | null;
+  outputs?: Record<string, string>;
 }
 
 export interface PipelineResponse {
@@ -55,6 +60,19 @@ export interface PipelineResponse {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface PipelineFromCandidateRequest {
+  candidate_id: string;
+  rights_confirmed: boolean;
+  rights_holder: string;
+  model_name?: string;
+  hotwords?: string;
+  target_length?: number;
+  tone?: string;
+  target_audience?: string;
+  style_prompt?: string;
+  variant_count?: number;
 }
 
 export interface TaskItem {
@@ -94,6 +112,10 @@ export interface CrawlerCapabilitiesResponse {
   enabled: boolean;
   supported_platforms: string[];
   supported_platform_labels: string[];
+  active_platforms: string[];
+  active_platform_labels: string[];
+  paused_platforms: string[];
+  paused_platform_labels: string[];
   missing_configuration: string[];
   permission_status: string;
   monthly_query_count: number;
@@ -104,6 +126,23 @@ export interface CrawlerCapabilitiesResponse {
   cache_ttl_minutes: number;
   supports_usage: boolean;
   usage: CrawlerProviderUsage | null;
+}
+
+export interface VoiceoverDraftResponse {
+  copywriting_task_id: string;
+  source_task_id: string;
+  source_revision_id: string;
+  status: string;
+  provider_name: string;
+  model_name: string;
+  is_mock: boolean;
+  target_seconds: number;
+  target_characters: number;
+  source_characters: number;
+  result_text: string | null;
+  result_variants: string[];
+  token_usage: Record<string, number>;
+  error_message: string | null;
 }
 
 export interface CrawlerProviderUsage {
@@ -354,6 +393,8 @@ export interface AvatarJob {
 export interface AvatarJobCreateRequest {
   industry_config_id?: string | null;
   template_version_id?: string | null;
+  source_task_id?: string | null;
+  source_revision_id?: string | null;
   script_text: string;
   avatar_id: string;
   voice_id: string;

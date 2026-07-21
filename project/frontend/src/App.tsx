@@ -25,6 +25,7 @@ import PublishPage from "./pages/PublishPage";
 import AvatarPage from "./pages/AvatarPage";
 import HelpPage from "./pages/HelpPage";
 import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
+import StudioPage from "./pages/StudioPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
@@ -39,8 +40,8 @@ function AppInner() {
   const { searchOpen, setSearchOpen, helpOpen, setHelpOpen } = useGlobalShortcuts();
 
   return (
-    <>
-      <BrowserRouter>
+    <BrowserRouter>
+      <>
         <ErrorBoundary>
           <Routes>
             {/* DashboardLayout 包裹所有需要侧边栏的页面 */}
@@ -50,6 +51,7 @@ function AppInner() {
 
               {/* 核心功能页面 - 保留现有页面 */}
               <Route path="/dashboard" element={<DashboardPage />} />
+              <Route path="/studio" element={<StudioPage />} />
               <Route path="/candidates" element={<CandidatesPage />} />
               <Route path="/pipeline" element={<PipelinePage />} />
               <Route path="/transcription" element={<TranscriptionPage />} />
@@ -75,12 +77,12 @@ function AppInner() {
             </Route>
           </Routes>
         </ErrorBoundary>
-      </BrowserRouter>
 
-      {/* Phase 4 全局组件 */}
-      <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <ShortcutHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
-    </>
+        {/* Phase 4 全局组件 */}
+        <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+        <ShortcutHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+      </>
+    </BrowserRouter>
   );
 }
 

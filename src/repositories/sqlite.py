@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -30,16 +31,33 @@ from src.models import (
 
 
 class SQLiteRepository:
-    """SQLite-backed repository with idempotent candidates and append-only snapshots."""
+    """SQLite-backed repository with idempotent candidates and append-only snapshots.
+
+    Thread-safe: each thread gets its own sqlite3.Connection to the same
+    database file, avoiding ``sqlite3.InterfaceError: bad parameter or
+    other API misuse`` when FastAPI serves concurrent requests.
+    """
 
     def __init__(self, database_path: str | Path) -> None:
-        path = Path(database_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(path, check_same_thread=False)
-        self.connection.row_factory = sqlite3.Row
+        self._db_path = str(Path(database_path).resolve())
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._local = threading.local()
+        # Run bootstrap schema on the initial (main) thread connection.
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA journal_mode = WAL")
         self._bootstrap_schema()
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Return a per-thread connection, creating one lazily if needed."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            self._local.conn = conn
+        return conn
 
     def _bootstrap_schema(self) -> None:
         """智能启动：如果数据库已由迁移框架管理则跳过内联迁移。"""
@@ -1144,7 +1162,7 @@ class SQLiteRepository:
         media_rows = self.connection.execute(
             """
             SELECT payload_json FROM media_resolution_attempts
-            WHERE created_at >= ? AND status IN ('succeeded', 'outcome_unknown')
+            WHERE created_at >= ? AND api_call_count > 0
             """,
             (since.isoformat(),),
         ).fetchall()

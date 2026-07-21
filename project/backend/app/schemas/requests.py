@@ -17,7 +17,7 @@ class TranscriptionCreateRequest(BaseModel):
     media_type: str = Field("video/mp4", description="媒体类型")
     rights_confirmed: bool = Field(False, description="是否确认权利")
     rights_holder: str = Field("", description="权利主体")
-    model_name: str = Field("base", description="识别模型")
+    model_name: str = Field("large-v3-turbo", description="识别模型")
     hotwords: str | None = Field(None, description="热词")
 
 

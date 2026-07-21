@@ -17,11 +17,15 @@ from src.models import (
     PipelineRunStatus,
     PipelineStage,
     PipelineStepResult,
+    Platform,
     PublishPlatform,
     PublishTarget,
     TaskStatus,
+    TranscriptionTask,
     VideoEditConfig,
 )
+from src.services.media_resolution import MediaResolutionError
+from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES, TranscriptionError
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +40,16 @@ class PipelineService:
         copywriting_service,
         video_editing_service,
         publish_service,
+        media_resolution_service=None,
+        transcription_service=None,
     ) -> None:
         self.repository = repository
         self.commercial_search_service = commercial_search_service
         self.copywriting_service = copywriting_service
         self.video_editing_service = video_editing_service
         self.publish_service = publish_service
+        self.media_resolution_service = media_resolution_service
+        self.transcription_service = transcription_service
 
     # -- 流水线生命周期 --
 
@@ -158,6 +166,200 @@ class PipelineService:
 
     def list_runs(self, limit: int = 20) -> list[PipelineRun]:
         return self.repository.list_pipeline_runs(limit)
+
+    def execute_candidate_script_pipeline(
+        self,
+        *,
+        candidate_id: str,
+        rights_confirmed: bool,
+        rights_holder: str,
+        idempotency_key: str,
+        model_name: str = "large-v3-turbo",
+        hotwords: str | None = None,
+        target_length: int = 300,
+        tone: str = "casual",
+        target_audience: str = "",
+        style_prompt: str = "",
+        variant_count: int = 2,
+    ) -> PipelineRun:
+        """从单条候选执行：补媒体 -> 转写 -> 文案改写 -> 等待人工审核。
+
+        该流程不自动进入数字人、剪辑或发布。真实转写和改写结果必须由用户
+        校对/确认后，才能作为下游生产输入。
+        """
+
+        if self.media_resolution_service is None or self.transcription_service is None:
+            raise RuntimeError("流水线未配置媒体解析或转写服务。")
+        if not rights_confirmed:
+            raise RuntimeError("必须确认拥有媒体处理权。")
+
+        getter = getattr(self.repository, "get_candidate", None)
+        if getter is None:
+            raise RuntimeError("当前仓库不支持按候选创建生产流水线。")
+        candidate = getter(candidate_id)
+        if candidate is None:
+            raise ValueError("候选不存在。")
+        if candidate.platform != Platform.DOUYIN:
+            raise RuntimeError(
+                "当前自动化试运行仅支持抖音候选；"
+                "小红书和视频号暂停媒体解析与转写，未发起付费请求。"
+            )
+
+        run = self.create_run(
+            keyword=candidate.title[:200],
+            config={
+                "source": "crawler_candidate",
+                "candidate_id": candidate.video_id,
+                "platform": candidate.platform.value,
+                "platform_item_id": candidate.platform_item_id or "",
+                "rights_holder": rights_holder.strip(),
+                "flow": "media_to_asr_to_copy_review",
+            },
+        )
+        run = run.model_copy(
+            update={
+                "status": PipelineRunStatus.RUNNING,
+                "candidate_video_id": candidate.video_id,
+                "updated_at": datetime.now().astimezone(),
+            }
+        )
+        self.repository.save_pipeline_run(run)
+
+        try:
+            run = self.update_stage(
+                run,
+                PipelineStage.MEDIA_RESOLUTION,
+                TaskStatus.RUNNING,
+                outputs={"candidate_id": candidate.video_id},
+            )
+            resolved = self.media_resolution_service.resolve_video(
+                candidate,
+                idempotency_key=idempotency_key,
+            )
+            run = self.update_stage(
+                run,
+                PipelineStage.MEDIA_RESOLUTION,
+                TaskStatus.SUCCEEDED,
+                task_id=resolved.attempt.resolution_id,
+                outputs={
+                    "resolution_id": resolved.attempt.resolution_id,
+                    "provider": resolved.attempt.provider,
+                    "billable_units": str(resolved.attempt.billable_units or 0.0),
+                    "source": "provider_or_direct_url",
+                },
+            )
+        except MediaResolutionError as exc:
+            run = self.update_stage(
+                run,
+                PipelineStage.MEDIA_RESOLUTION,
+                TaskStatus.FAILED,
+                error_message=exc.user_message,
+            )
+            return self.complete_run(run, success=False, error_message=exc.user_message)
+
+        try:
+            run = self.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.RUNNING,
+                task_id=resolved.attempt.resolution_id,
+            )
+            transcription = self.transcription_service.create_task(
+                media_name=resolved.video.name,
+                media_type=resolved.video.media_type,
+                media_bytes=resolved.video.content,
+                rights_confirmed=rights_confirmed,
+                rights_holder=rights_holder,
+                candidate_id=candidate.video_id,
+                model_name=model_name,
+                hotwords=hotwords or None,
+                max_media_bytes=MAX_PROVIDER_MEDIA_BYTES,
+            )
+            self.media_resolution_service.attach_task(resolved.attempt, transcription)
+            run = self.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.SUCCEEDED,
+                task_id=transcription.task_id,
+                outputs={
+                    "task_id": transcription.task_id,
+                    "duration_seconds": str(transcription.duration_seconds or ""),
+                    "segment_count": str(len(transcription.segments or [])),
+                    "review_state": "unapproved_asr",
+                },
+            )
+        except TranscriptionError as exc:
+            run = self.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.FAILED,
+                error_message=exc.user_message,
+            )
+            return self.complete_run(run, success=False, error_message=exc.user_message)
+
+        source_text = self._transcription_text(transcription)
+        try:
+            run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
+            rewrite_goal = (
+                "基于真实 ASR 转写提炼爆款视频口播结构并改写。"
+                "保留可确认事实和表达逻辑，删除口头禅、重复句和噪声；"
+                "不得补写未在转写中出现的事实、数据、案例或效果承诺。"
+                "输出可人工审核的口播文案，不要 Markdown。"
+            )
+            copy_task = self.copywriting_service.rewrite(
+                source_text=source_text,
+                platform=candidate.platform.value,
+                target_audience=target_audience,
+                style_prompt=style_prompt or "短视频口播，清晰直接，保留原视频爆款表达结构",
+                target_length=target_length,
+                tone=tone,
+                rewrite_goal=rewrite_goal,
+                variant_count=variant_count,
+                source_task_id=transcription.task_id,
+            )
+            if copy_task.status == TaskStatus.FAILED:
+                raise RuntimeError(copy_task.error_message or "文案改写失败。")
+            run = self.update_stage(
+                run,
+                PipelineStage.COPYWRITING,
+                TaskStatus.SUCCEEDED,
+                task_id=copy_task.task_id,
+                outputs={
+                    "task_id": copy_task.task_id,
+                    "source_task_id": transcription.task_id,
+                    "variant_count": str(len(copy_task.result_variants)),
+                    "review_state": "awaiting_human_approval",
+                },
+            )
+            run = self.update_stage(
+                run,
+                PipelineStage.HUMAN_REVIEW,
+                TaskStatus.RUNNING,
+                task_id=copy_task.task_id,
+                outputs={
+                    "copywriting_task_id": copy_task.task_id,
+                    "instruction": "人工审核后再进入数字人、剪辑或发布。",
+                },
+            )
+            paused = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "copywriting_task_id": copy_task.task_id,
+                    "current_stage": PipelineStage.HUMAN_REVIEW,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_pipeline_run(paused)
+            return paused
+        except Exception as exc:
+            error_msg = str(exc)
+            run = self.update_stage(
+                run,
+                PipelineStage.COPYWRITING,
+                TaskStatus.FAILED,
+                error_message=error_msg,
+            )
+            return self.complete_run(run, success=False, error_message=error_msg)
 
     # -- 端到端执行 --
 
@@ -286,9 +488,8 @@ class PipelineService:
                 run, PipelineStage.VIDEO_EDITING, TaskStatus.RUNNING
             )
 
-            # 使用文案作为字幕文本进行剪辑
-            # 在沙箱模式下，SandboxVideoEditor 会生成占位文件
-            source_video = self._resolve_source_video(keyword)
+            # 使用文案作为字幕文本进行剪辑；必须由上游提供授权源视频。
+            source_video = self._resolve_source_video(run.config)
 
             edit_task = self.video_editing_service.edit_video(
                 source_video_path=source_video,
@@ -392,21 +593,31 @@ class PipelineService:
     # -- 辅助方法 --
 
     @staticmethod
-    def _resolve_source_video(keyword: str) -> str:
-        """获取源视频路径。
+    def _resolve_source_video(config: dict[str, Any]) -> str:
+        """获取已授权源视频路径。
 
-        在沙箱模式下生成一个临时占位文件用于演示，
-        实际生产环境中应从候选素材中选取或由数字人生成。
+        流水线不能生成占位视频来制造“已生产”结果。调用方必须传入
+        source_video_path，通常来自用户上传、数字人生成结果或人工确认的成片。
         """
 
-        data_dir = Path("data/video_edits")
-        data_dir.mkdir(parents=True, exist_ok=True)
+        source_video_path = str(config.get("source_video_path") or "").strip()
+        if not source_video_path:
+            raise RuntimeError(
+                "没有已授权源视频，不能进入视频剪辑和发布；请先上传视频、完成数字人生成，或在流水线配置中提供 source_video_path。"
+            )
 
-        placeholder = data_dir / "sandbox_source.mp4"
-        if not placeholder.exists():
-            # 创建最小占位 MP4 文件（仅用于沙箱演示，不实际播放）
-            placeholder.write_bytes(b"\x00" * 128)
-        return str(placeholder)
+        source_path = Path(source_video_path)
+        if not source_path.is_file():
+            raise RuntimeError(f"源视频不存在或不可读取: {source_video_path}")
+        return str(source_path)
+
+    @staticmethod
+    def _transcription_text(task: TranscriptionTask) -> str:
+        lines = [" ".join(segment.text.split()).strip() for segment in task.segments]
+        text = "\n".join(line for line in lines if line)
+        if not text.strip():
+            raise RuntimeError("转写结果为空，不能生成文案。")
+        return text
 
     @staticmethod
     def build_publish_targets(

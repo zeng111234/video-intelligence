@@ -233,7 +233,10 @@ class OneApiLicensedSearchProvider:
         endpoint, payload = self._media_request(platform, platform_item_id)
         body = self._request(endpoint, payload, timeout_unknown=True)
         data = body.get("data")
-        media_url = self._extract_media_url(data)
+        media_url = self._extract_media_url(
+            data,
+            prefer_low_quality=platform == Platform.DOUYIN,
+        )
         if media_url is None:
             raise LicensedProviderError(
                 "供应商详情接口未返回可用于转写的视频文件直链。",
@@ -257,6 +260,11 @@ class OneApiLicensedSearchProvider:
             request_id=self._request_id(body, idempotency_key),
             api_call_count=1,
             billable_units=self.media_endpoint_prices_cny[platform],
+            warnings=(
+                ["douyin_detail_low_bitrate_media"]
+                if platform == Platform.DOUYIN
+                else []
+            ),
         )
 
     def account_balance_cny(self) -> float | None:
@@ -372,7 +380,7 @@ class OneApiLicensedSearchProvider:
         platform_item_id: str,
     ) -> tuple[str, dict[str, Any]]:
         if platform == Platform.DOUYIN:
-            return "/api/douyin-app/fetch_video_high_quality_play_url", {
+            return "/api/douyin-app/fetch_video_detail", {
                 "aweme_id": platform_item_id,
                 "share_text": "",
             }
@@ -1018,12 +1026,25 @@ class OneApiLicensedSearchProvider:
         return max(candidates, key=score)
 
     @classmethod
-    def _extract_media_url(cls, value: Any) -> str | None:
+    def _extract_media_url(
+        cls,
+        value: Any,
+        *,
+        prefer_low_quality: bool = False,
+    ) -> str | None:
         media_keys = {
             "play_url",
             "playUrl",
+            "play_addr",
+            "playAddr",
+            "url_list",
+            "urlList",
             "video_url",
             "videoUrl",
+            "audio_url",
+            "audioUrl",
+            "audio_addr",
+            "audioAddr",
             "download_url",
             "downloadUrl",
             "media_url",
@@ -1034,31 +1055,75 @@ class OneApiLicensedSearchProvider:
             "backupUrl",
             "src",
         }
-        candidates: list[str] = []
+        candidates: list[tuple[int, float, int, str]] = []
 
-        def visit(current: Any, depth: int, key_hint: str = "") -> None:
+        def visit(
+            current: Any,
+            depth: int,
+            key_path: tuple[str, ...] = (),
+            quality_hint: float | None = None,
+        ) -> None:
             if depth > 8:
                 return
             if isinstance(current, str):
                 text = current.strip()
+                key_hint = key_path[-1] if key_path else ""
                 if text.startswith(("https://", "http://")) and (
                     key_hint in media_keys or cls._looks_like_media_url(text)
                 ):
-                    candidates.append(text)
+                    path_text = ".".join(key_path).casefold()
+                    if any(
+                        marker in text.casefold()
+                        for marker in (
+                            "douyin.com/video/",
+                            "xiaohongshu.com/explore/",
+                            "weixin.qq.com/sph/",
+                            "channels.weixin.qq.com/",
+                        )
+                    ):
+                        return
+                    media_priority = 0
+                    if "music" in path_text:
+                        media_priority = 3
+                    elif "audio" in path_text:
+                        # 详情响应里的音频字段可能是背景音乐，而不是作品口播。
+                        # 第一版自动化闭环只选最低码率视频，再由 FFmpeg
+                        # 提取其实际音轨。
+                        media_priority = 2
+                    elif not prefer_low_quality:
+                        media_priority = 0
+                    quality = quality_hint if quality_hint is not None else float("inf")
+                    https_priority = 0 if text.startswith("https://") else 1
+                    candidates.append((media_priority, quality, https_priority, text))
                 return
             if isinstance(current, Mapping):
+                next_quality = quality_hint
+                for key in (
+                    "bit_rate",
+                    "bitRate",
+                    "bitrate",
+                    "data_size",
+                    "dataSize",
+                    "file_size",
+                    "fileSize",
+                    "size",
+                ):
+                    numeric = cls._to_float(current.get(key))
+                    if numeric is not None:
+                        next_quality = numeric
+                        break
                 for key, nested in current.items():
-                    visit(nested, depth + 1, str(key))
+                    visit(nested, depth + 1, (*key_path, str(key)), next_quality)
                 return
             if isinstance(current, list):
                 for nested in current:
-                    visit(nested, depth + 1, key_hint)
+                    visit(nested, depth + 1, key_path, quality_hint)
 
         visit(value, 0)
-        for candidate in candidates:
-            if candidate.startswith("https://"):
-                return candidate
-        return candidates[0] if candidates else None
+        if not candidates:
+            return None
+        candidates.sort()
+        return candidates[0][3]
 
     @staticmethod
     def _looks_like_media_url(url: str) -> bool:

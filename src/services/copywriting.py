@@ -42,6 +42,7 @@ class CopywritingService:
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
+        rewrite_goal: str = "",
         variant_count: int = 1,
         source_task_id: str | None = None,
         source_revision_id: str | None = None,
@@ -74,6 +75,7 @@ class CopywritingService:
             style_prompt=style_prompt,
             target_length=target_length,
             tone=tone,
+            rewrite_goal=rewrite_goal,
             provider_name=str(cap.get("provider_name", "unknown")),
             model_name=str(cap.get("model", "")),
             source_task_id=source_task_id,
@@ -90,6 +92,7 @@ class CopywritingService:
                 style_prompt=style_prompt,
                 target_length=target_length,
                 tone=tone,
+                rewrite_goal=rewrite_goal,
                 variant_count=variant_count,
             )
             if not results:
@@ -253,7 +256,9 @@ class CopywritingService:
         try:
             platform_enum = Platform(platform)
         except ValueError as exc:
-            raise ValueError("文案平台只支持 douyin、xiaohongshu、wechat_channels。") from exc
+            raise ValueError(
+                "文案平台只支持 douyin、xiaohongshu、wechat_channels。"
+            ) from exc
         if platform_enum not in SUPPORTED_COPYWRITING_PLATFORMS:
             raise ValueError("文案平台只支持 douyin、xiaohongshu、wechat_channels。")
         return platform_enum

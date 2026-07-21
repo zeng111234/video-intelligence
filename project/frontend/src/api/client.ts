@@ -20,11 +20,13 @@ import type {
   CrawlerCapabilitiesResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
+  PipelineFromCandidateRequest,
   PipelineResponse,
   PublishPlatformsResponse,
   PublishResponse,
   TaskListResponse,
   TranscriptionResponse,
+  VoiceoverDraftResponse,
 } from "./types";
 
 const BASE = "/api/v1";
@@ -102,12 +104,16 @@ export function createTranscription(
 export function createTranscriptionByUrl(
   url: string,
   rightsConfirmed = true,
+  modelName = "large-v3-turbo",
+  rightsHolder = "本人/公司已授权",
 ): Promise<TranscriptionResponse> {
   return request("/transcriptions/url", {
     method: "POST",
     body: JSON.stringify({
       url,
       rights_confirmed: rightsConfirmed,
+      rights_holder: rightsHolder,
+      model_name: modelName,
     }),
   });
 }
@@ -156,10 +162,16 @@ export async function exportTranscription(
 }
 
 /** 上传文件并转写 */
-export async function uploadAndTranscribe(file: File): Promise<TranscriptionResponse> {
+export async function uploadAndTranscribe(
+  file: File,
+  modelName = "large-v3-turbo",
+  rightsHolder = "本人/公司已授权",
+): Promise<TranscriptionResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", rightsHolder);
+  formData.append("model_name", modelName);
 
   const resp = await fetch(`${BASE}/transcriptions/upload`, {
     method: "POST",
@@ -185,8 +197,54 @@ export function createPipeline(
   });
 }
 
+export function createPipelineFromCandidate(
+  params: PipelineFromCandidateRequest & { idempotencyKey: string },
+): Promise<PipelineResponse> {
+  return request("/pipelines/from-candidate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": params.idempotencyKey,
+    },
+    body: JSON.stringify({
+      candidate_id: params.candidate_id,
+      rights_confirmed: params.rights_confirmed,
+      rights_holder: params.rights_holder,
+      model_name: params.model_name || "large-v3-turbo",
+      hotwords: params.hotwords || "",
+      target_length: params.target_length ?? 300,
+      tone: params.tone || "casual",
+      target_audience: params.target_audience || "",
+      style_prompt: params.style_prompt || "",
+      variant_count: params.variant_count ?? 2,
+    }),
+  });
+}
+
 export function getPipeline(runId: string): Promise<PipelineResponse> {
   return request(`/pipelines/${runId}`);
+}
+
+export function createVoiceoverDraft(params: {
+  taskId: string;
+  targetSeconds: number;
+  speechRate?: number;
+  platform?: string;
+  targetAudience?: string;
+  tone?: string;
+  variantCount?: number;
+}): Promise<VoiceoverDraftResponse> {
+  return request(`/transcriptions/${params.taskId}/voiceover-drafts`, {
+    method: "POST",
+    body: JSON.stringify({
+      target_seconds: params.targetSeconds,
+      speech_rate: params.speechRate ?? 1,
+      platform: params.platform ?? "douyin",
+      target_audience: params.targetAudience ?? "",
+      tone: params.tone ?? "casual",
+      variant_count: params.variantCount ?? 2,
+    }),
+  });
 }
 
 export function listPipelines(): Promise<PipelineResponse[]> {
@@ -203,6 +261,25 @@ export function listTasks(): Promise<TaskListResponse> {
 
 export function getAdminStatus(): Promise<AdminStatusResponse> {
   return request("/admin/status");
+}
+
+/* ---- Dashboard 统计 ---- */
+
+export interface DashboardStatsResponse {
+  totalVideos: number;
+  todayProduced: number;
+  totalCandidates: number;
+  todayCandidates: number;
+  activeTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  totalTasks: number;
+  successRate: number;
+  pipelineCount: number;
+}
+
+export function getDashboardStats(): Promise<DashboardStatsResponse> {
+  return request("/dashboard/stats");
 }
 
 /* ---- 关键词爬虫 ---- */
@@ -260,7 +337,7 @@ export function createCrawlerCandidateTranscription(params: {
     body: JSON.stringify({
       rights_confirmed: params.rightsConfirmed,
       rights_holder: params.rightsHolder,
-      model_name: params.modelName || "base",
+      model_name: params.modelName || "large-v3-turbo",
       hotwords: params.hotwords || "",
     }),
   });
@@ -358,37 +435,15 @@ export async function downloadAvatarJobMedia(taskId: string): Promise<Blob> {
 /* ---- 通知/消息 ---- */
 
 export function getNotifications(): Promise<any[]> {
-  return request<any[]>("/notifications").catch(() => {
-    // 后端暂未实现，返回 mock 数据
-    return [
-      { id: "1", title: "批量生产任务完成", description: "您提交的批量生产任务已完成", time: "5 分钟前", read: false, type: "task" },
-      { id: "2", title: "系统更新通知", description: "系统将于今晚进行维护升级", time: "1 小时前", read: false, type: "system" },
-      { id: "3", title: "Pro 会员即将到期", description: "您的 Pro 会员将于下月到期", time: "2 小时前", read: true, type: "pro" },
-    ];
-  });
+  return request<any[]>("/notifications");
 }
 
 export function getMessages(): Promise<any[]> {
-  return request<any[]>("/messages").catch(() => {
-    // 后端暂未实现，返回 mock 数据
-    return [
-      { id: "1", sender: "系统助手", avatar: "🤖", content: "您的批量生产任务已排队", time: "10 分钟前", read: false },
-      { id: "2", sender: "运营小助手", avatar: "💡", content: "新功能上线！AI 文案生成支持自定义风格模板", time: "2 小时前", read: false },
-    ];
-  });
+  return request<any[]>("/messages");
 }
 
 export function getUserProfile(): Promise<any> {
-  return request("/user/profile").catch(() => {
-    // 后端暂未实现，返回 mock 数据
-    return {
-      username: "Admin",
-      email: "admin@videoinsight.com",
-      phone: "138****8888",
-      role: "Pro 会员",
-      twoFactorEnabled: true,
-    };
-  });
+  return request("/user/profile");
 }
 
 /* ---- 深度分析 ---- */

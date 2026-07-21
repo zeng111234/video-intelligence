@@ -34,6 +34,8 @@ class AvatarJobCreate(BaseModel):
 
     industry_config_id: str | None = None
     template_version_id: str | None = None
+    source_task_id: str | None = None
+    source_revision_id: str | None = None
     script_text: str = Field(..., min_length=1)
     avatar_id: str = Field(..., min_length=1)
     voice_id: str = Field(..., min_length=1)
@@ -117,8 +119,8 @@ def create_job(
     avatar_name, voice_name = _asset_names(service, body.avatar_id, body.voice_id)
     request = AvatarSubmitRequest(
         script_text=body.script_text,
-        source_task_id=body.industry_config_id,
-        source_revision_id=body.template_version_id,
+        source_task_id=body.source_task_id or body.industry_config_id,
+        source_revision_id=body.source_revision_id or body.template_version_id,
         avatar_id=body.avatar_id,
         voice_id=body.voice_id,
         speech_rate=body.speech_rate,
@@ -141,9 +143,7 @@ def create_job(
 @router.get("/jobs", response_model=list[AvatarJobResponse])
 def list_jobs(service: AvatarService = Depends(get_avatar_service)):
     tasks = [
-        item
-        for item in service.repository.list_tasks()
-        if isinstance(item, AvatarTask)
+        item for item in service.repository.list_tasks() if isinstance(item, AvatarTask)
     ]
     return [_job_response(task) for task in tasks]
 
@@ -166,7 +166,9 @@ def get_job_media(task_id: str, service: AvatarService = Depends(get_avatar_serv
     path = Path(task.result_path or "")
     if not path.exists():
         raise HTTPException(status_code=404, detail="视频文件不存在。")
-    return FileResponse(path, media_type=task.result_mime or "video/mp4", filename=f"{task_id}.mp4")
+    return FileResponse(
+        path, media_type=task.result_mime or "video/mp4", filename=f"{task_id}.mp4"
+    )
 
 
 @router.post("/generate", response_model=LegacyAvatarTaskResponse)
@@ -178,7 +180,9 @@ def generate_legacy(
     if not script_text:
         raise HTTPException(status_code=400, detail="请输入文案内容")
     assets = service.list_assets()
-    avatar = next((item for item in assets if item.kind == AvatarAssetKind.AVATAR), None)
+    avatar = next(
+        (item for item in assets if item.kind == AvatarAssetKind.AVATAR), None
+    )
     voice = next(
         (
             item
@@ -208,15 +212,15 @@ def generate_legacy(
         task = service.submit(request, avatar_name=avatar.name, voice_name=voice.name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return _legacy_response(task, avatar_type=body.avatar_type, audio_type=body.audio_type)
+    return _legacy_response(
+        task, avatar_type=body.avatar_type, audio_type=body.audio_type
+    )
 
 
 @router.get("/tasks", response_model=list[LegacyAvatarTaskResponse])
 def list_legacy_tasks(service: AvatarService = Depends(get_avatar_service)):
     tasks = [
-        item
-        for item in service.repository.list_tasks()
-        if isinstance(item, AvatarTask)
+        item for item in service.repository.list_tasks() if isinstance(item, AvatarTask)
     ]
     return [_legacy_response(task) for task in tasks]
 
@@ -231,7 +235,9 @@ def get_legacy_task(task_id: str, service: AvatarService = Depends(get_avatar_se
 
 
 @router.get("/voices")
-def list_voices(service: AvatarService = Depends(get_avatar_service)) -> list[dict[str, str]]:
+def list_voices(
+    service: AvatarService = Depends(get_avatar_service),
+) -> list[dict[str, str]]:
     return [
         {"id": item.asset_id, "name": item.name, "gender": "unknown"}
         for item in service.list_assets()
@@ -253,15 +259,27 @@ def get_config(service: AvatarService = Depends(get_avatar_service)) -> dict[str
     }
 
 
-def _asset_names(service: AvatarService, avatar_id: str, voice_id: str) -> tuple[str, str]:
+def _asset_names(
+    service: AvatarService, avatar_id: str, voice_id: str
+) -> tuple[str, str]:
     assets = service.list_assets()
-    avatars = {item.asset_id: item.name for item in assets if item.kind == AvatarAssetKind.AVATAR}
-    voices = {item.asset_id: item.name for item in assets if item.kind == AvatarAssetKind.VOICE}
+    avatars = {
+        item.asset_id: item.name
+        for item in assets
+        if item.kind == AvatarAssetKind.AVATAR
+    }
+    voices = {
+        item.asset_id: item.name
+        for item in assets
+        if item.kind == AvatarAssetKind.VOICE
+    }
     return avatars.get(avatar_id, avatar_id), voices.get(voice_id, voice_id)
 
 
 def _job_response(task: AvatarTask) -> AvatarJobResponse:
-    result_url = f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None
+    result_url = (
+        f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None
+    )
     return AvatarJobResponse(
         task_id=task.task_id,
         status=task.status.value,
@@ -296,11 +314,16 @@ def _legacy_response(
     avatar_type: str = "public",
     audio_type: str = "tts",
 ) -> LegacyAvatarTaskResponse:
-    status = "running" if task.provider_status in {
-        AvatarProviderStatus.QUEUED,
-        AvatarProviderStatus.SUBMITTED,
-        AvatarProviderStatus.RUNNING,
-    } else task.status.value
+    status = (
+        "running"
+        if task.provider_status
+        in {
+            AvatarProviderStatus.QUEUED,
+            AvatarProviderStatus.SUBMITTED,
+            AvatarProviderStatus.RUNNING,
+        }
+        else task.status.value
+    )
     return LegacyAvatarTaskResponse(
         task_id=task.task_id,
         status=status,
@@ -309,6 +332,8 @@ def _legacy_response(
         stage=task.stage,
         avatar_type=avatar_type,
         audio_type=audio_type,
-        video_url=f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None,
+        video_url=f"/api/v1/avatar/jobs/{task.task_id}/media"
+        if task.result_path
+        else None,
         error_message=task.error_message,
     )

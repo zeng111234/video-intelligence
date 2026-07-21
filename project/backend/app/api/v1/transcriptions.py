@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_transcription_service
+from project.backend.app.core.deps import (
+    get_copywriting_service,
+    get_transcription_service,
+)
 from project.backend.app.core.config import ASRMode, ASR_MODE
 from project.backend.app.schemas.requests import (
     TranscriptionCreateRequest,
@@ -22,11 +25,47 @@ router = APIRouter(prefix="/api/v1/transcriptions", tags=["transcriptions"])
 
 class TranscriptionUrlRequest(BaseModel):
     """链接转写请求"""
+
     url: str
     rights_confirmed: bool = True
+    rights_holder: str = "API用户"
+    model_name: str = "large-v3-turbo"
 
 
-def _to_response(task) -> TranscriptionResponse:
+class VoiceoverDraftRequest(BaseModel):
+    """从已批准转写生成短数字人口播稿。"""
+
+    target_seconds: int = 45
+    speech_rate: float = 1.0
+    platform: str = "douyin"
+    target_audience: str = ""
+    tone: str = "casual"
+    variant_count: int = 2
+
+
+class VoiceoverDraftResponse(BaseModel):
+    copywriting_task_id: str
+    source_task_id: str
+    source_revision_id: str
+    status: str
+    provider_name: str
+    model_name: str
+    is_mock: bool
+    target_seconds: int
+    target_characters: int
+    source_characters: int
+    result_text: str | None = None
+    result_variants: list[str] = Field(default_factory=list)
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    error_message: str | None = None
+
+
+def _to_response(task, service=None) -> TranscriptionResponse:
+    source_segments = task.segments or []
+    if service is not None and not task.is_mock:
+        revisions = service.repository.list_transcript_revisions(task.task_id)
+        if revisions:
+            source_segments = revisions[-1].corrected_segments
     segments = [
         {
             "start": s.start,
@@ -34,8 +73,9 @@ def _to_response(task) -> TranscriptionResponse:
             "text": s.text,
             "confidence": s.confidence,
             "needs_review": s.needs_review,
+            "reviewed": s.reviewed,
         }
-        for s in (task.segments or [])
+        for s in source_segments
     ]
     return TranscriptionResponse(
         task_id=task.task_id,
@@ -44,6 +84,14 @@ def _to_response(task) -> TranscriptionResponse:
         progress=task.progress,
         stage=task.stage,
         media_name=task.media_name,
+        model_name=task.model_name,
+        duration_seconds=task.duration_seconds,
+        approved_revision_id=task.approved_revision_id,
+        low_confidence_count=sum(
+            1
+            for segment in source_segments
+            if segment.needs_review and not segment.reviewed
+        ),
         segments=segments,
         error_message=task.error_message,
         created_at=task.created_at,
@@ -65,7 +113,7 @@ def create_transcription(
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _to_response(task)
+    return _to_response(task, service)
 
 
 @router.post("/upload", response_model=TranscriptionResponse)
@@ -73,7 +121,7 @@ async def upload_and_transcribe(
     file: UploadFile = File(..., description="视频文件（MP4 / MOV）"),
     rights_confirmed: bool = Form(True, description="是否确认拥有媒体处理权"),
     rights_holder: str = Form("", description="权利主体"),
-    model_name: str = Form("base", description="识别模型名称"),
+    model_name: str = Form("large-v3-turbo", description="识别模型名称"),
     hotwords: str = Form("", description="专有词提示"),
     service=Depends(get_transcription_service),
 ) -> TranscriptionResponse:
@@ -108,7 +156,7 @@ async def upload_and_transcribe(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return _to_response(task)
+    return _to_response(task, service)
 
 
 @router.post("/url", response_model=TranscriptionResponse)
@@ -136,12 +184,12 @@ async def create_transcription_by_url(
             media_type=video.media_type,
             media_bytes=video.content,
             rights_confirmed=body.rights_confirmed,
-            rights_holder="API用户",
-            model_name="base",
+            rights_holder=body.rights_holder.strip() or "API用户",
+            model_name=body.model_name,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _to_response(task)
+    return _to_response(task, service)
 
 
 @router.get("/config", response_model=dict[str, Any])
@@ -170,7 +218,7 @@ def list_transcriptions(
         for task in service.repository.list_tasks()
         if getattr(task, "kind", None) == TaskKind.TRANSCRIPTION
     ][:safe_limit]
-    return [_to_response(task) for task in tasks]
+    return [_to_response(task, service) for task in tasks]
 
 
 @router.get("/{task_id}", response_model=TranscriptionResponse)
@@ -182,7 +230,7 @@ def get_transcription(
     task = service.repository.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="转写任务不存在。")
-    return _to_response(task)
+    return _to_response(task, service)
 
 
 @router.post("/{task_id}/revisions", response_model=dict[str, Any])
@@ -215,6 +263,92 @@ def save_transcription_revision(
     return revision.model_dump(mode="json")
 
 
+@router.post(
+    "/{task_id}/voiceover-drafts",
+    response_model=VoiceoverDraftResponse,
+)
+def create_voiceover_draft(
+    task_id: str,
+    body: VoiceoverDraftRequest,
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+):
+    """使用已确认成稿生成 15–60 秒的去重口播稿，不修改原始转写。"""
+    if not 15 <= body.target_seconds <= 60:
+        raise HTTPException(status_code=400, detail="目标时长必须在 15–60 秒之间。")
+    if not 0.8 <= body.speech_rate <= 1.2:
+        raise HTTPException(status_code=400, detail="语速必须在 0.8–1.2 倍之间。")
+    if not 1 <= body.variant_count <= 3:
+        raise HTTPException(status_code=400, detail="口播稿变体数量必须在 1–3 个之间。")
+
+    revision = transcription_service.get_approved_revision(task_id)
+    if revision is None:
+        raise HTTPException(
+            status_code=400,
+            detail="请先完成低置信片段复核并确认成稿，再生成数字人口播稿。",
+        )
+    capability = copywriting_service.capabilities()
+    if not capability.get("enabled", False):
+        raise HTTPException(
+            status_code=503,
+            detail="真实 LLM 文案服务未配置，暂不能生成口播稿。",
+        )
+
+    source_text = _deduplicate_adjacent_segments(revision.corrected_segments)
+    target_characters = max(
+        50,
+        min(800, round(body.target_seconds * 4 * body.speech_rate)),
+    )
+    rewrite_goal = (
+        f"生成约 {body.target_seconds} 秒、约 {target_characters} 字的数字人口播稿。"
+        "删除口头禅、寒暄、重复句和与主旨无关的绕话；合并重复观点。"
+        "保留原文中可确认的核心观点、数字、专有名词和必要限定条件；"
+        "不得把低置信或不确定内容补写成事实，不得虚构案例、效果或承诺。"
+        "输出自然连续的纯口播正文，不要标题、分镜说明、括号注释或 Markdown。"
+    )
+    task = copywriting_service.rewrite(
+        source_text=source_text,
+        platform=body.platform,
+        target_audience=body.target_audience,
+        style_prompt="清晰、自然、适合数字人口播",
+        target_length=target_characters,
+        tone=body.tone,
+        rewrite_goal=rewrite_goal,
+        variant_count=body.variant_count,
+        source_task_id=task_id,
+        source_revision_id=revision.revision_id,
+    )
+    return VoiceoverDraftResponse(
+        copywriting_task_id=task.task_id,
+        source_task_id=task_id,
+        source_revision_id=revision.revision_id,
+        status=task.status.value,
+        provider_name=task.provider_name,
+        model_name=task.model_name,
+        is_mock=task.is_mock,
+        target_seconds=body.target_seconds,
+        target_characters=target_characters,
+        source_characters=len(source_text),
+        result_text=task.result_text,
+        result_variants=task.result_variants,
+        token_usage=task.token_usage,
+        error_message=task.error_message,
+    )
+
+
+def _deduplicate_adjacent_segments(segments: list[TranscriptSegment]) -> str:
+    """只移除相邻完全重复片段；语义去重交给 LLM，原修订保持不变。"""
+    lines: list[str] = []
+    previous = ""
+    for segment in segments:
+        text = " ".join(segment.text.split()).strip()
+        if not text or text == previous:
+            continue
+        lines.append(text)
+        previous = text
+    return "\n".join(lines)
+
+
 @router.get("/{task_id}/export")
 def export_transcription(
     task_id: str,
@@ -232,7 +366,9 @@ def export_transcription(
     else:
         revision = service.get_approved_revision(task_id)
         if revision is None:
-            raise HTTPException(status_code=400, detail="真实转写需确认成稿后才能导出。")
+            raise HTTPException(
+                status_code=400, detail="真实转写需确认成稿后才能导出。"
+            )
         segments = revision.corrected_segments
     exporter = {
         "txt": service.export_txt,

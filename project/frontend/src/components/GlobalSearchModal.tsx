@@ -5,6 +5,7 @@
  */
 import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { SearchOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 import { getModKey } from "../hooks/useKeyboardShortcuts";
 
 interface SearchItem {
@@ -16,8 +17,9 @@ interface SearchItem {
 
 const ALL_ITEMS: SearchItem[] = [
   { key: "dashboard", label: "数据仪表盘", path: "/dashboard", group: "核心功能" },
+  { key: "studio", label: "内容工作台", path: "/studio", group: "核心功能" },
   { key: "candidates", label: "候选检索", path: "/candidates", group: "核心功能" },
-  { key: "pipeline", label: "批量生产", path: "/pipeline", group: "核心功能" },
+  { key: "pipeline", label: "生产批次", path: "/pipeline", group: "核心功能" },
   { key: "transcription", label: "语音转写", path: "/transcription", group: "核心功能" },
   { key: "tasks", label: "任务中心", path: "/tasks", group: "核心功能" },
   { key: "analytics", label: "深度分析", path: "/analytics", group: "高级功能" },
@@ -34,6 +36,7 @@ interface Props {
 }
 
 export default function GlobalSearchModal({ open, onClose }: Props) {
+  const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -66,13 +69,13 @@ export default function GlobalSearchModal({ open, onClose }: Props) {
         e.preventDefault();
         setSelectedIndex((prev) => Math.max(prev - 1, 0));
       } else if (e.key === "Enter" && results[selectedIndex]) {
-        window.location.href = results[selectedIndex].path;
+        navigate(results[selectedIndex].path);
         onClose();
       } else if (e.key === "Escape") {
         onClose();
       }
     },
-    [results, selectedIndex, onClose]
+    [navigate, results, selectedIndex, onClose]
   );
 
   if (!open) return null;
@@ -119,7 +122,7 @@ export default function GlobalSearchModal({ open, onClose }: Props) {
                     key={item.key}
                     className={`gs-item${idx === selectedIndex ? " active" : ""}`}
                     onClick={() => {
-                      window.location.href = item.path;
+                      navigate(item.path);
                       onClose();
                     }}
                     onMouseEnter={() => setSelectedIndex(idx)}

@@ -21,6 +21,7 @@ from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import PlatformRunStatus, SearchBatch
 from src.adapters.licensed import LicensedProviderError
 from src.services.media_resolution import MediaResolutionError
+from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
 from src.services.commercial_search import (
     CACHE_TTL_MINUTES,
     MONTHLY_HARD_LIMIT_COST_CNY,
@@ -42,7 +43,7 @@ PLATFORM_LABELS: dict[str, str] = {
 class CrawlerSearchRequest(BaseModel):
     keyword: str = Field(..., min_length=2, max_length=50, description="搜索关键词")
     published_window_days: int = Field(7, description="1=近24小时，7=近7天")
-    count_per_platform: int = Field(10, ge=1, le=10, description="每平台返回数量")
+    count_per_platform: int = Field(10, ge=1, le=10, description="当前启用平台返回数量")
     force_refresh: bool = Field(False, description="是否绕过缓存强制刷新")
 
 
@@ -82,6 +83,10 @@ class CrawlerCapabilitiesResponse(BaseModel):
     enabled: bool
     supported_platforms: list[str]
     supported_platform_labels: list[str]
+    active_platforms: list[str]
+    active_platform_labels: list[str]
+    paused_platforms: list[str]
+    paused_platform_labels: list[str]
     missing_configuration: list[str]
     permission_status: str
     monthly_query_count: int
@@ -145,7 +150,7 @@ class CrawlerCandidateMediaPreviewResponse(BaseModel):
 class CrawlerCandidateTranscriptionRequest(BaseModel):
     rights_confirmed: bool = Field(False, description="确认拥有媒体处理权")
     rights_holder: str = Field(..., min_length=1, max_length=80)
-    model_name: str = Field("base", description="转写模型")
+    model_name: str = Field("large-v3-turbo", description="转写模型")
     hotwords: str = Field("", max_length=500)
 
 
@@ -199,6 +204,12 @@ def _platform_label(value: str) -> str:
 
 def _capability_payload(service, provider) -> CrawlerCapabilitiesResponse:
     capability = provider.capabilities()
+    active_platforms = list(service.active_platforms)
+    paused_platforms = [
+        item
+        for item in capability.supported_platforms
+        if item not in active_platforms
+    ]
     try:
         usage = provider.usage()
     except LicensedProviderError:
@@ -212,6 +223,10 @@ def _capability_payload(service, provider) -> CrawlerCapabilitiesResponse:
         supported_platform_labels=[
             _platform_label(item.value) for item in capability.supported_platforms
         ],
+        active_platforms=[item.value for item in active_platforms],
+        active_platform_labels=[_platform_label(item.value) for item in active_platforms],
+        paused_platforms=[item.value for item in paused_platforms],
+        paused_platform_labels=[_platform_label(item.value) for item in paused_platforms],
         missing_configuration=capability.missing_configuration,
         permission_status=capability.permission_status,
         monthly_query_count=service.monthly_query_count(),
@@ -240,7 +255,7 @@ def preview_crawler_batch(
     service=Depends(get_commercial_search_service),
     provider=Depends(get_licensed_search_provider),
 ):
-    """提交前预览三平台执行计划，包含缓存命中、预计调用和阻断原因。"""
+    """提交前预览当前启用平台的执行计划。"""
     try:
         previews = service.preview(
             keyword=body.keyword,
@@ -293,7 +308,7 @@ def create_crawler_batch(
     service=Depends(get_commercial_search_service),
     repo=Depends(get_repository),
 ):
-    """执行三平台关键词榜单批次，并持久化到 SQLite。"""
+    """执行当前启用平台的关键词榜单批次并持久化。"""
     try:
         batch = service.execute(
             keyword=body.keyword,
@@ -415,6 +430,7 @@ def transcribe_candidate_media(
             candidate_id=candidate.video_id,
             model_name=body.model_name,
             hotwords=body.hotwords or None,
+            max_media_bytes=MAX_PROVIDER_MEDIA_BYTES,
         )
         media_service.attach_task(resolved.attempt, task)
     except MediaResolutionError as exc:
@@ -434,6 +450,7 @@ def _transcription_to_response(task) -> TranscriptionResponse:
             "text": s.text,
             "confidence": s.confidence,
             "needs_review": s.needs_review,
+            "reviewed": s.reviewed,
         }
         for s in (task.segments or [])
     ]
@@ -444,6 +461,14 @@ def _transcription_to_response(task) -> TranscriptionResponse:
         progress=task.progress,
         stage=task.stage,
         media_name=task.media_name,
+        model_name=task.model_name,
+        duration_seconds=task.duration_seconds,
+        approved_revision_id=task.approved_revision_id,
+        low_confidence_count=sum(
+            1
+            for segment in (task.segments or [])
+            if segment.needs_review and not segment.reviewed
+        ),
         segments=segments,
         error_message=task.error_message,
         created_at=task.created_at,

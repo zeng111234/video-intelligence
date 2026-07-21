@@ -121,7 +121,14 @@ async def validation_exception_handler(request, exc):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
-    """兜底异常处理，防止 500 泄露堆栈。"""
+    """兜底异常处理，防止 500 泄露堆栈，但记录完整错误日志。"""
+    logger.error(
+        "Unhandled exception on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc,
+        exc_info=True,
+    )
     return JSONResponse(
         status_code=500,
         content={

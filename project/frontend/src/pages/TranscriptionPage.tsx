@@ -6,6 +6,7 @@ import {
   Checkbox,
   Empty,
   Input,
+  InputNumber,
   Progress,
   Select,
   Space,
@@ -18,6 +19,7 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   DownloadOutlined,
+  CopyOutlined,
   FileTextOutlined,
   LinkOutlined,
   ReloadOutlined,
@@ -26,15 +28,20 @@ import {
 } from "@ant-design/icons";
 import {
   createTranscriptionByUrl,
+  createVoiceoverDraft,
   exportTranscription,
   getTranscription,
   listTranscriptions,
   saveTranscriptionRevision,
   uploadAndTranscribe,
 } from "../api/client";
-import type { TranscriptSegment, TranscriptionResponse } from "../api/types";
+import type {
+  TranscriptSegment,
+  TranscriptionResponse,
+  VoiceoverDraftResponse,
+} from "../api/types";
 import { useToast } from "../components/Toast";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -69,6 +76,7 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export default function TranscriptionPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [tasks, setTasks] = useState<TranscriptionResponse[]>([]);
   const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
@@ -80,6 +88,12 @@ export default function TranscriptionPage() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [asrModel, setAsrModel] = useState("large-v3-turbo");
+  const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
+  const [targetSeconds, setTargetSeconds] = useState(45);
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [voiceoverDraft, setVoiceoverDraft] = useState<VoiceoverDraftResponse | null>(null);
+  const [activeDraft, setActiveDraft] = useState(0);
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
@@ -133,6 +147,7 @@ export default function TranscriptionPage() {
   const selectTask = (task: TranscriptionResponse) => {
     setSelected(task);
     setSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
+    setVoiceoverDraft(null);
   };
 
   const handleUrlTranscribe = async () => {
@@ -143,7 +158,7 @@ export default function TranscriptionPage() {
     }
     setSubmitting(true);
     try {
-      const created = await createTranscriptionByUrl(url, true);
+      const created = await createTranscriptionByUrl(url, true, asrModel, rightsHolder);
       toast.success("转写任务已创建");
       setVideoUrl("");
       setSelected(created);
@@ -159,7 +174,7 @@ export default function TranscriptionPage() {
   const handleFileUpload = async (file: File) => {
     setSubmitting(true);
     try {
-      const created = await uploadAndTranscribe(file);
+      const created = await uploadAndTranscribe(file, asrModel, rightsHolder);
       toast.success("文件已上传并创建转写任务");
       setSelected(created);
       setSegments(created.segments);
@@ -210,6 +225,50 @@ export default function TranscriptionPage() {
     } catch (err) {
       toast.error((err as Error).message);
     }
+  };
+
+  const handleCreateVoiceoverDraft = async () => {
+    if (!selected) return;
+    if (!selected.approved_revision_id) {
+      toast.warning("请先复核低置信片段并确认成稿");
+      return;
+    }
+    setDraftLoading(true);
+    try {
+      const draft = await createVoiceoverDraft({
+        taskId: selected.task_id,
+        targetSeconds,
+        variantCount: 2,
+      });
+      setVoiceoverDraft(draft);
+      setActiveDraft(0);
+      if (draft.status !== "succeeded") {
+        toast.error(draft.error_message || "口播稿生成失败");
+        return;
+      }
+      toast.success("已生成去重压缩口播稿，原始转写未改动");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  const draftVariants = voiceoverDraft?.result_variants.length
+    ? voiceoverDraft.result_variants
+    : voiceoverDraft?.result_text
+      ? [voiceoverDraft.result_text]
+      : [];
+  const activeDraftText = draftVariants[activeDraft] || "";
+
+  const handleUseForAvatar = () => {
+    if (!voiceoverDraft || !activeDraftText) return;
+    const params = new URLSearchParams({
+      script: activeDraftText,
+      sourceTask: voiceoverDraft.copywriting_task_id,
+      sourceRevision: voiceoverDraft.source_revision_id,
+    });
+    navigate(`/avatar?${params.toString()}`);
   };
 
   const columns: ColumnsType<TranscriptionResponse> = [
@@ -312,6 +371,30 @@ export default function TranscriptionPage() {
       )}
 
       <Card title="创建转写任务">
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="默认使用准确率优先模型"
+          description="large-v3-turbo 比快速预览更慢、更占内存，但更适合正式文案。专有词应在校对环节逐条确认，不建议向整段音频强行注入热词。"
+        />
+        <Space wrap style={{ marginBottom: 16 }}>
+          <Select
+            value={asrModel}
+            onChange={setAsrModel}
+            style={{ width: 230 }}
+            options={[
+              { value: "large-v3-turbo", label: "准确率优先 · large-v3-turbo" },
+              { value: "base", label: "快速预览 · base" },
+            ]}
+          />
+          <Input
+            value={rightsHolder}
+            onChange={(event) => setRightsHolder(event.target.value)}
+            addonBefore="权利主体"
+            style={{ width: 300 }}
+          />
+        </Space>
         <Tabs
           items={[
             {
@@ -377,6 +460,14 @@ export default function TranscriptionPage() {
             <Space wrap>
               <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
               <Text strong>{selected.media_name}</Text>
+              <Tag color={selected.model_name === "large-v3-turbo" ? "green" : "orange"}>
+                {selected.model_name === "large-v3-turbo" ? "准确率优先" : "快速预览"}
+              </Tag>
+              {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
+              {selected.low_confidence_count > 0 && (
+                <Tag color="warning">待复核 {selected.low_confidence_count} 段</Tag>
+              )}
+              {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
               <Text type="secondary">{selected.stage}</Text>
             </Space>
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
@@ -405,6 +496,91 @@ export default function TranscriptionPage() {
           </Space>
         ) : (
           <Empty description="选择一个转写任务查看和校对" />
+        )}
+      </Card>
+
+      <Card title="压缩为数字人口播稿">
+        {selected ? (
+          <Space direction="vertical" style={{ width: "100%" }} size={16}>
+            <Alert
+              type={selected.approved_revision_id ? "info" : "warning"}
+              showIcon
+              message={
+                selected.approved_revision_id
+                  ? "LLM 将基于已确认成稿去重、压缩，不会覆盖原始转写"
+                  : "先完成校对并确认成稿"
+              }
+              description="模型会删除口头禅、重复句和绕话，保留已确认的核心观点、数字与专有名词；生成后仍需人工检查，再交给数字人。"
+            />
+            <Space wrap>
+              <Text>目标时长</Text>
+              <InputNumber
+                min={15}
+                max={60}
+                value={targetSeconds}
+                onChange={(value) => setTargetSeconds(Number(value || 45))}
+                addonAfter="秒"
+              />
+              <Button
+                type="primary"
+                loading={draftLoading}
+                disabled={!selected.approved_revision_id}
+                onClick={handleCreateVoiceoverDraft}
+              >
+                生成去重压缩稿
+              </Button>
+            </Space>
+            {draftVariants.length > 0 && (
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Space wrap>
+                  {draftVariants.map((_, index) => (
+                    <Button
+                      key={index}
+                      size="small"
+                      type={activeDraft === index ? "primary" : "default"}
+                      onClick={() => setActiveDraft(index)}
+                    >
+                      版本 {index + 1}
+                    </Button>
+                  ))}
+                  <Tag>{activeDraftText.length} 字</Tag>
+                  <Tag>目标约 {voiceoverDraft?.target_characters} 字</Tag>
+                  <Tag>{voiceoverDraft?.model_name}</Tag>
+                  {voiceoverDraft?.is_mock && <Tag color="warning">Sandbox 演示文案</Tag>}
+                </Space>
+                <TextArea
+                  value={activeDraftText}
+                  autoSize={{ minRows: 6 }}
+                  onChange={(event) => {
+                    const next = [...draftVariants];
+                    next[activeDraft] = event.target.value;
+                    setVoiceoverDraft((current) => current ? {
+                      ...current,
+                      result_text: activeDraft === 0 ? event.target.value : current.result_text,
+                      result_variants: next,
+                    } : current);
+                  }}
+                />
+                <Space>
+                  <Button
+                    icon={<CopyOutlined />}
+                    onClick={() => navigator.clipboard.writeText(activeDraftText).then(() => toast.success("已复制"))}
+                  >
+                    复制口播稿
+                  </Button>
+                  <Button
+                    type="primary"
+                    disabled={voiceoverDraft?.is_mock}
+                    onClick={handleUseForAvatar}
+                  >
+                    人工确认后带到数字人
+                  </Button>
+                </Space>
+              </Space>
+            )}
+          </Space>
+        ) : (
+          <Empty description="选择一个转写任务后生成口播稿" />
         )}
       </Card>
 

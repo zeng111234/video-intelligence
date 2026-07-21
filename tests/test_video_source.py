@@ -109,7 +109,7 @@ def test_final_redirect_target_is_validated_before_reading() -> None:
 
 
 def test_direct_video_size_and_content_type_are_limited() -> None:
-    with pytest.raises(VideoSourceError, match="超过 50MB"):
+    with pytest.raises(VideoSourceError, match="超过 5 bytes"):
         fetch_authorized_video(
             "https://cdn.example.com/video.mp4",
             resolver=public_resolver,
@@ -127,6 +127,25 @@ def test_direct_video_size_and_content_type_are_limited() -> None:
             open_url=lambda *args, **kwargs: FakeResponse(
                 b"<html>share page</html>",
                 content_type="text/html",
+            ),
+        )
+
+
+def test_direct_video_download_has_total_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = iter([0.0, 0.0, 61.0])
+    monkeypatch.setattr(
+        "src.services.video_source.monotonic",
+        lambda: next(ticks),
+    )
+
+    with pytest.raises(VideoSourceError, match="下载超过 60 秒"):
+        fetch_authorized_video(
+            "https://cdn.example.com/video.mp4",
+            resolver=public_resolver,
+            open_url=lambda *args, **kwargs: FakeResponse(
+                b"\x00\x00\x00\x18ftypisom-authorized-video",
             ),
         )
 

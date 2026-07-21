@@ -27,7 +27,7 @@ import {
 } from "@ant-design/icons";
 import {
   createCrawlerBatch,
-  createCrawlerCandidateTranscription,
+  createPipelineFromCandidate,
   getCrawlerBatch,
   getCrawlerCapabilities,
   listCrawlerBatches,
@@ -44,7 +44,7 @@ import type {
   CrawlerSearchRequest,
 } from "../api/types";
 import { useToast } from "../components/Toast";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -152,7 +152,7 @@ export default function KeywordCrawlerPage() {
       ? "请先填写关键词；此按钮会先预览调用计划，弹窗确认后才执行爬取。"
         : !canPreview
           ? "关键词需为 2–50 个字符。"
-          : "填写完成：下一步会预览缓存、额度和三平台阻断原因。";
+          : "填写完成：下一步会预览抖音缓存、额度和费用。";
   const isSandboxMode = capabilities?.mode === "sandbox";
   const crawlerDescription = capabilities
     ? isSandboxMode
@@ -161,7 +161,7 @@ export default function KeywordCrawlerPage() {
     : "通过 FastAPI 调用 CommercialSearchService，结果持久化到 SQLite。";
   const formFlowDescription = isSandboxMode
     ? "为了避免误触发平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。Sandbox 模式会写入演示数据，但不代表真实平台生产数据。"
-    : "为了避免误触发真实平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。当前 Production 模式会调用供应商接口，请先用每平台 1 条做小流量验收。";
+    : "为了避免误触发真实平台调用或重复计费，本页会先预览再执行。当前自动化试运行只调用抖音，小红书和视频号不会产生请求或费用。";
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -212,7 +212,7 @@ export default function KeywordCrawlerPage() {
       setSelectedBatch(batch);
       setPreviewOpen(false);
       setKeyword("");
-      toast.success("三平台关键词批次已写入 SQLite");
+      toast.success("抖音关键词批次已写入 SQLite");
       await refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -248,21 +248,30 @@ export default function KeywordCrawlerPage() {
     }
     setMediaSubmitting(true);
     try {
-      const task = await createCrawlerCandidateTranscription({
-        candidateId: mediaCandidate.video_id,
-        rightsHolder,
-        rightsConfirmed: mediaRightsConfirmed,
+      const run = await createPipelineFromCandidate({
+        candidate_id: mediaCandidate.video_id,
+        rights_holder: rightsHolder,
+        rights_confirmed: mediaRightsConfirmed,
         idempotencyKey: [
-          "media",
+          "pipeline",
           mediaCandidate.video_id,
           Date.now(),
           Math.random().toString(16).slice(2),
         ].join("-"),
+        target_length: 300,
+        tone: "casual",
+        variant_count: 2,
       });
-      toast.success("转写任务已创建");
+      if (run.status === "paused") {
+        toast.success("已提取转写并生成待审核文案");
+      } else if (run.status === "failed") {
+        toast.warning(run.error_message || "流水线未完成，请查看生产批次详情");
+      } else {
+        toast.success("生产流水线已创建");
+      }
       setMediaPreviewOpen(false);
       await refresh();
-      navigate(`/transcription?task=${encodeURIComponent(task.task_id)}`);
+      navigate(`/pipeline?run=${encodeURIComponent(run.run_id)}`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -312,7 +321,7 @@ export default function KeywordCrawlerPage() {
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <div>
-        <Title level={4} style={{ margin: 0 }}>三平台关键词爆款榜</Title>
+        <Title level={4} style={{ margin: 0 }}>抖音关键词爆款榜</Title>
         <Text type="secondary">{crawlerDescription}</Text>
       </div>
 
@@ -329,6 +338,12 @@ export default function KeywordCrawlerPage() {
               {capabilities.supported_platform_labels.length
                 ? capabilities.supported_platform_labels.join(" / ")
                 : "未开放"}
+            </Descriptions.Item>
+            <Descriptions.Item label="当前自动化">
+              {capabilities.active_platform_labels.join(" / ") || "未启用"}
+            </Descriptions.Item>
+            <Descriptions.Item label="本阶段暂停">
+              {capabilities.paused_platform_labels.join(" / ") || "无"}
             </Descriptions.Item>
             <Descriptions.Item label="本地调用量">
               {capabilities.monthly_query_count} / {capabilities.monthly_hard_limit_queries}
@@ -352,6 +367,15 @@ export default function KeywordCrawlerPage() {
               showIcon
               message="供应商未配置完整"
               description={capabilities.missing_configuration.join("；")}
+            />
+          )}
+          {capabilities.paused_platforms.length > 0 && (
+            <Alert
+              style={{ marginTop: 12 }}
+              type="info"
+              showIcon
+              message="先跑通抖音单平台闭环"
+              description={`${capabilities.paused_platform_labels.join("、")} 本阶段不爬取，不产生供应商调用和费用；历史批次仍可查看。`}
             />
           )}
         </Card>
@@ -395,7 +419,7 @@ export default function KeywordCrawlerPage() {
             />
           </div>
           <div>
-            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>每平台条数</Text>
+            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>抖音返回条数</Text>
             <InputNumber
               min={1}
               max={10}
@@ -431,7 +455,7 @@ export default function KeywordCrawlerPage() {
       </Card>
 
       <Modal
-        title="确认三平台搜索计划"
+        title="确认抖音搜索计划"
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         onOk={handleExecute}
@@ -476,7 +500,7 @@ export default function KeywordCrawlerPage() {
         open={mediaPreviewOpen}
         onCancel={() => setMediaPreviewOpen(false)}
         onOk={handleCreateCandidateTranscription}
-        okText="确认并创建转写"
+        okText="确认并提取文案"
         cancelText="取消"
         confirmLoading={mediaSubmitting}
         okButtonProps={{
@@ -517,6 +541,12 @@ export default function KeywordCrawlerPage() {
             <Text type="secondary">
               供应商返回的临时媒体地址只会在后端读取并立即用于转写，不会展示、保存或批量下载。
             </Text>
+            <Alert
+              type="info"
+              showIcon
+              message="转写使用准确率优先模型 large-v3-turbo"
+              description="比快速预览更慢，但更适合后续校对、压缩口播稿和数字人生成。"
+            />
           </Space>
         )}
       </Modal>
@@ -644,28 +674,40 @@ function CandidateListItem({
   const transcriptionUrl = directVideoUrl
     ? `/transcription?candidate=${encodeURIComponent(item.video_id)}&url=${encodeURIComponent(item.source_url || "")}`
     : `/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`;
+  const studioUrl = `/studio?candidate_id=${encodeURIComponent(item.video_id)}`;
+  const automationPaused = item.platform !== "douyin" && !item.media_transcription_task_id;
 
   return (
     <List.Item
       actions={[
         item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
-        <Button
-          type="link"
-          size="small"
-          loading={mediaSubmitting}
-          onClick={() => onResolveMedia(item)}
+        <Tooltip
+          title={automationPaused ? "本阶段只跑通抖音自动化，不会对该平台发起付费媒体解析。" : undefined}
         >
-          {item.media_transcription_task_id
-            ? "查看转写"
-            : directVideoUrl
-              ? "确认直链转写"
-              : "补媒体并转写"}
-        </Button>,
+          <span>
+            <Button
+              type="link"
+              size="small"
+              loading={mediaSubmitting}
+              disabled={automationPaused}
+              onClick={() => onResolveMedia(item)}
+            >
+              {item.media_transcription_task_id
+                ? "查看转写"
+                : automationPaused
+                  ? "本阶段暂停"
+                  : directVideoUrl
+                    ? "直链提取文案"
+                    : "提取文案流水线"}
+            </Button>
+          </span>
+        </Tooltip>,
         !directVideoUrl && (
           <Tooltip title="也可以手动填写已授权 MP4/MOV 直链或上传视频文件。">
-            <a href={transcriptionUrl}>手动补直链/上传</a>
+            <Link to={transcriptionUrl}>手动补直链/上传</Link>
           </Tooltip>
         ),
+        <Link to={studioUrl}>进入工作台</Link>,
       ]}
     >
       <List.Item.Meta

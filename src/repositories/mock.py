@@ -282,9 +282,7 @@ class MockRepository:
         media_cost = sum(
             attempt.billable_units or attempt.estimated_cost_cny or 0.0
             for attempt in self._media_resolution_attempts.values()
-            if attempt.created_at >= since
-            and attempt.status
-            in {MediaResolutionStatus.SUCCEEDED, MediaResolutionStatus.OUTCOME_UNKNOWN}
+            if attempt.created_at >= since and attempt.api_call_count > 0
         )
         return search_cost + media_cost
 

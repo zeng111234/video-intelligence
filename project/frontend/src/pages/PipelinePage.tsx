@@ -1,8 +1,9 @@
 /**
- * 批量生产流水线页面
- * 串联整个内容生产工作流：候选检索 → 语音转写 → AI文案 → 数字人 → 发布
+ * 生产批次页面
+ * 串联内容生产记录：候选检索 → 语音转写 → AI文案 → 数字人 → 发布
+ * 所有数据来自后端 API，无硬编码测试数据
  */
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import {
   Typography,
   Card,
@@ -39,8 +40,11 @@ import {
   EditOutlined,
   SendOutlined,
   SettingOutlined,
+  WarningOutlined,
 } from "@ant-design/icons";
-import { createPipeline } from "../api/client";
+import { createPipeline, listPipelines, listTasks } from "../api/client";
+import type { PipelineResponse, TaskItem } from "../api/types";
+import { Link, useSearchParams } from "react-router-dom";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -99,99 +103,91 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
   running: <PlayCircleOutlined />,
   failed: <CloseCircleOutlined />,
   pending: <ClockCircleOutlined />,
+  paused: <ClockCircleOutlined />,
 };
 
-/** 模拟流水线历史数据 */
-const PIPELINE_HISTORY = [
-  {
-    id: "PL-20260721-001",
-    name: "二手车测评批量生产",
-    keyword: "二手车测评",
-    status: "succeeded",
-    videos: 24,
-    progress: 100,
-    startTime: "2026-07-21 10:30:00",
-    duration: "45分35秒",
-    stages: [
-      { name: "关键词爬取", status: "succeeded", duration: "5分20秒", count: 50 },
-      { name: "文案提取", status: "succeeded", duration: "12分15秒", count: 50 },
-      { name: "AI文案改写", status: "succeeded", duration: "8分10秒", count: 24 },
-      { name: "数字人生成", status: "succeeded", duration: "15分50秒", count: 24 },
-      { name: "多平台发布", status: "succeeded", duration: "4分0秒", count: 24 },
-    ],
-  },
-  {
-    id: "PL-20260721-002",
-    name: "新车对比系列",
-    keyword: "新车对比",
-    status: "running",
-    videos: 12,
-    progress: 60,
-    startTime: "2026-07-21 14:15:00",
-    duration: "进行中",
-    stages: [
-      { name: "关键词爬取", status: "succeeded", duration: "4分45秒", count: 30 },
-      { name: "文案提取", status: "succeeded", duration: "9分50秒", count: 30 },
-      { name: "AI文案改写", status: "running", duration: "进行中", count: 12 },
-      { name: "数字人生成", status: "pending", duration: "-", count: 0 },
-      { name: "多平台发布", status: "pending", duration: "-", count: 0 },
-    ],
-  },
-  {
-    id: "PL-20260720-003",
-    name: "汽车保养技巧",
-    keyword: "汽车保养",
-    status: "succeeded",
-    videos: 16,
-    progress: 100,
-    startTime: "2026-07-20 16:45:00",
-    duration: "38分20秒",
-    stages: [
-      { name: "关键词爬取", status: "succeeded", duration: "4分30秒", count: 40 },
-      { name: "文案提取", status: "succeeded", duration: "10分40秒", count: 40 },
-      { name: "AI文案改写", status: "succeeded", duration: "7分50秒", count: 16 },
-      { name: "数字人生成", status: "succeeded", duration: "12分20秒", count: 16 },
-      { name: "多平台发布", status: "succeeded", duration: "3分0秒", count: 16 },
-    ],
-  },
-  {
-    id: "PL-20260720-004",
-    name: "新能源汽车",
-    keyword: "新能源",
-    status: "failed",
-    videos: 0,
-    progress: 20,
-    startTime: "2026-07-20 09:20:00",
-    duration: "失败",
-    stages: [
-      { name: "关键词爬取", status: "succeeded", duration: "3分50秒", count: 25 },
-      { name: "文案提取", status: "failed", duration: "错误", count: 0 },
-      { name: "AI文案改写", status: "pending", duration: "-", count: 0 },
-      { name: "数字人生成", status: "pending", duration: "-", count: 0 },
-      { name: "多平台发布", status: "pending", duration: "-", count: 0 },
-    ],
-  },
-];
-
-/** 模拟统计数据 */
-const STATS = {
-  totalPipelines: 156,
-  successRate: 94.2,
-  totalVideos: 3847,
-  avgDuration: "38分30秒",
+const STAGE_LABEL: Record<string, string> = {
+  keyword_search: "关键词爬取",
+  media_resolution: "补媒体",
+  transcription: "语音转写",
+  copywriting: "文案改写",
+  human_review: "人工审核",
+  avatar_generation: "数字人",
+  video_editing: "视频剪辑",
+  publishing: "发布",
 };
+
+function statusText(status: string) {
+  const labels: Record<string, string> = {
+    succeeded: "已完成",
+    running: "运行中",
+    failed: "失败",
+    pending: "等待中",
+    paused: "待审核",
+  };
+  return labels[status] || status;
+}
 
 export default function PipelinePage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
   const [keyword, setKeyword] = useState("");
   const [keywords, setKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedPipeline, setSelectedPipeline] = useState<any>(null);
+  const [selectedPipeline, setSelectedPipeline] = useState<PipelineResponse | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [videoCount, setVideoCount] = useState<string>("10");
   const [videoStyle, setVideoStyle] = useState<string>("engaging");
   const [refreshing, setRefreshing] = useState(false);
-  const [pipelineHistory, setPipelineHistory] = useState(PIPELINE_HISTORY);
+  const [pipelineHistory, setPipelineHistory] = useState<PipelineResponse[]>([]);
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+
+  /** 统计数据 - 从真实数据计算 */
+  const stats = useMemo(() => {
+    const totalPipelines = pipelineHistory.length;
+    const succeededCount = pipelineHistory.filter((p) => p.status === "succeeded").length;
+    const successRate = totalPipelines > 0 ? Math.round((succeededCount / totalPipelines) * 1000) / 10 : 0;
+    return {
+      totalPipelines,
+      successRate,
+      totalVideos: tasks.filter((t) => t.status === "succeeded").length,
+      avgDuration: "-",
+    };
+  }, [pipelineHistory, tasks]);
+
+  /** 加载流水线和任务数据 */
+  const loadData = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const [pipelineData, taskData] = await Promise.allSettled([
+        listPipelines(),
+        listTasks(),
+      ]);
+      if (pipelineData.status === "fulfilled") {
+        setPipelineHistory(pipelineData.value || []);
+      }
+      if (taskData.status === "fulfilled") {
+        setTasks(taskData.value?.items || []);
+      }
+    } catch {
+      // 独立处理错误
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const runId = searchParams.get("run");
+    if (!runId || pipelineHistory.length === 0) return;
+    const found = pipelineHistory.find((item) => item.run_id === runId);
+    if (found) {
+      setSelectedPipeline(found);
+    }
+  }, [pipelineHistory, searchParams]);
 
   /** 流水线阶段开关 */
   const [enabledStages, setEnabledStages] = useState<Record<string, boolean>>({
@@ -209,12 +205,9 @@ export default function PipelinePage() {
 
   /** 刷新任务列表 */
   const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    setTimeout(() => {
-      setRefreshing(false);
-      toast.success("任务列表已刷新");
-    }, 1000);
-  }, [toast]);
+    loadData();
+    toast.success("任务列表已刷新");
+  }, [loadData, toast]);
 
   /** 添加关键词 */
   const handleAddKeyword = () => {
@@ -257,24 +250,8 @@ export default function PipelinePage() {
       const results = await Promise.all(
         keywords.map((kw) => createPipeline(kw, { count: videoCount, style: videoStyle, stages: activeStages }))
       );
-      toast.success(`已创建 ${keywords.length} 个批量生产任务`);
-      const newTasks = results.map((r, i) => ({
-        id: r.run_id || `PL-${Date.now()}-${i}`,
-        name: `${keywords[i]}批量生产`,
-        keyword: keywords[i],
-        status: r.status || "running",
-        videos: 0,
-        progress: 0,
-        startTime: new Date().toLocaleString("zh-CN"),
-        duration: "进行中",
-        stages: PIPELINE_STAGES.filter((s) => activeStages.includes(s.key)).map((s) => ({
-          name: s.label,
-          status: "pending",
-          duration: "-",
-          count: 0,
-        })),
-      }));
-      setPipelineHistory((prev) => [...newTasks, ...prev]);
+      toast.success(`已创建 ${keywords.length} 个生产批次`);
+      setPipelineHistory((prev) => [...results, ...prev]);
       setKeywords([]);
     } catch (err) {
       toast.error((err as Error).message || "创建失败");
@@ -289,18 +266,20 @@ export default function PipelinePage() {
     return pipelineHistory.filter((p) => p.status === filterStatus);
   }, [filterStatus, pipelineHistory]);
 
+  /** 计算流水线进度 */
+  const getPipelineProgress = useCallback((pipeline: PipelineResponse) => {
+    if (!pipeline.stages || pipeline.stages.length === 0) return 0;
+    const succeeded = pipeline.stages.filter((s) => s.status === "succeeded").length;
+    return Math.round((succeeded / pipeline.stages.length) * 100);
+  }, []);
+
   /** 表格列定义 */
   const columns = [
     {
       title: "任务ID",
-      dataIndex: "id",
+      dataIndex: "run_id",
       width: 160,
       render: (id: string) => <Text code>{id}</Text>,
-    },
-    {
-      title: "任务名称",
-      dataIndex: "name",
-      render: (name: string) => <Text strong>{name}</Text>,
     },
     {
       title: "关键词",
@@ -313,44 +292,40 @@ export default function PipelinePage() {
       width: 100,
       render: (status: string) => (
         <Tag icon={STATUS_ICON[status]} color={STATUS_COLOR[status]}>
-          {status === "succeeded" ? "已完成" : status === "running" ? "运行中" : status === "failed" ? "失败" : "等待中"}
+          {statusText(status)}
         </Tag>
       ),
     },
     {
-      title: "产出视频",
-      dataIndex: "videos",
-      width: 100,
-      render: (videos: number) => (
-        <Statistic value={videos} valueStyle={{ fontSize: 14 }} prefix={<VideoCameraOutlined />} />
-      ),
+      title: "当前阶段",
+      dataIndex: "current_stage",
+      width: 120,
+      render: (stage: string | null) => stage ? STAGE_LABEL[stage] || stage : "-",
     },
     {
       title: "进度",
-      dataIndex: "progress",
       width: 150,
-      render: (progress: number, record: any) => (
-        <Progress
-          percent={progress}
-          size="small"
-          status={record.status === "failed" ? "exception" : record.status === "succeeded" ? "success" : "active"}
-        />
-      ),
+      render: (_: unknown, record: PipelineResponse) => {
+        const progress = getPipelineProgress(record);
+        return (
+          <Progress
+            percent={progress}
+            size="small"
+            status={record.status === "failed" ? "exception" : record.status === "succeeded" ? "success" : "active"}
+          />
+        );
+      },
     },
     {
-      title: "耗时",
-      dataIndex: "duration",
-      width: 100,
-    },
-    {
-      title: "开始时间",
-      dataIndex: "startTime",
-      width: 160,
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 180,
+      render: (v: string | null) => v ? new Date(v).toLocaleString("zh-CN") : "-",
     },
     {
       title: "操作",
       width: 80,
-      render: (_: any, record: any) => (
+      render: (_: unknown, record: PipelineResponse) => (
         <Button type="link" size="small" onClick={() => setSelectedPipeline(record)}>
           详情
         </Button>
@@ -363,9 +338,9 @@ export default function PipelinePage() {
       {/* 页面头部 */}
       <div style={{ marginBottom: 24 }}>
         <Title level={4} style={{ margin: 0 }}>
-          <ThunderboltOutlined /> 批量生产流水线
+          <ThunderboltOutlined /> 生产批次
         </Title>
-        <Text type="secondary">一键串联整个内容生产工作流，批量生成短视频</Text>
+        <Text type="secondary">创建和查看生产批次记录；创建记录不代表已经开始生成视频。</Text>
       </div>
 
       {/* 统计卡片 */}
@@ -374,7 +349,7 @@ export default function PipelinePage() {
           <Card hoverable>
             <Statistic
               title="总任务数"
-              value={STATS.totalPipelines}
+              value={stats.totalPipelines}
               prefix={<ThunderboltOutlined style={{ color: "#6366f1" }} />}
               valueStyle={{ color: "#6366f1" }}
             />
@@ -384,7 +359,7 @@ export default function PipelinePage() {
           <Card hoverable>
             <Statistic
               title="成功率"
-              value={STATS.successRate}
+              value={stats.successRate}
               suffix="%"
               prefix={<CheckCircleOutlined style={{ color: "#10b981" }} />}
               valueStyle={{ color: "#10b981" }}
@@ -394,8 +369,8 @@ export default function PipelinePage() {
         <Col xs={12} sm={6}>
           <Card hoverable>
             <Statistic
-              title="产出视频"
-              value={STATS.totalVideos}
+              title="已完成任务"
+              value={stats.totalVideos}
               prefix={<VideoCameraOutlined style={{ color: "#f59e0b" }} />}
               valueStyle={{ color: "#f59e0b" }}
             />
@@ -405,7 +380,7 @@ export default function PipelinePage() {
           <Card hoverable>
             <Statistic
               title="平均耗时"
-              value={STATS.avgDuration}
+              value={stats.avgDuration}
               prefix={<ClockCircleOutlined style={{ color: "#8b5cf6" }} />}
               valueStyle={{ color: "#8b5cf6" }}
             />
@@ -416,7 +391,7 @@ export default function PipelinePage() {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         {/* 创建任务 */}
         <Col xs={24} lg={10}>
-          <Card title={<Space><PlusOutlined /> 创建批量生产任务</Space>}>
+          <Card title={<Space><PlusOutlined /> 创建生产批次</Space>}>
             <Space direction="vertical" style={{ width: "100%" }} size={16}>
               {/* 关键词输入 */}
               <div>
@@ -529,7 +504,7 @@ export default function PipelinePage() {
                 onClick={handleCreate}
                 disabled={keywords.length === 0}
               >
-                开始批量生产
+                创建生产批次
               </Button>
             </Space>
           </Card>
@@ -550,60 +525,89 @@ export default function PipelinePage() {
                 {/* 基本信息 */}
                 <Row gutter={16}>
                   <Col span={8}>
-                    <Statistic title="任务ID" value={selectedPipeline.id} valueStyle={{ fontSize: 14 }} />
+                    <Statistic title="任务ID" value={selectedPipeline.run_id} valueStyle={{ fontSize: 14 }} />
                   </Col>
                   <Col span={8}>
                     <Statistic title="关键词" value={selectedPipeline.keyword} valueStyle={{ fontSize: 14 }} />
                   </Col>
                   <Col span={8}>
-                    <Statistic title="产出视频" value={selectedPipeline.videos} valueStyle={{ fontSize: 14 }} />
+                    <Statistic title="当前阶段" value={selectedPipeline.current_stage || "-"} valueStyle={{ fontSize: 14 }} />
                   </Col>
                 </Row>
 
                 {/* 流水线步骤 */}
-                <div>
-                  <Text strong style={{ marginBottom: 12, display: "block" }}>生产流程</Text>
-                  <Steps
-                    size="small"
-                    current={selectedPipeline.stages.findIndex((s: any) => s.status === "running")}
-                    items={selectedPipeline.stages.map((stage: any) => ({
-                      title: stage.name,
-                      description: `${stage.duration} · ${stage.count}条`,
-                      status:
-                        stage.status === "succeeded"
-                          ? "finish"
-                          : stage.status === "running"
-                            ? "process"
-                            : stage.status === "failed"
-                              ? "error"
-                              : "wait",
-                    }))}
-                  />
-                </div>
+                {selectedPipeline.stages && selectedPipeline.stages.length > 0 && (
+                  <div>
+                    <Text strong style={{ marginBottom: 12, display: "block" }}>生产流程</Text>
+                    <Steps
+                      size="small"
+                      current={selectedPipeline.stages.findIndex((s) => s.status === "running")}
+                      items={selectedPipeline.stages.map((stage) => ({
+                        title: STAGE_LABEL[stage.stage] || stage.stage,
+                        description: stage.task_id || stage.error_message || "-",
+                        status:
+                          stage.status === "succeeded"
+                            ? "finish"
+                            : stage.status === "running"
+                              ? "process"
+                              : stage.status === "failed"
+                                ? "error"
+                                : "wait",
+                      }))}
+                    />
+                  </div>
+                )}
 
                 {/* 时间线 */}
-                <div>
-                  <Text strong style={{ marginBottom: 12, display: "block" }}>执行日志</Text>
-                  <Timeline
-                    items={selectedPipeline.stages.map((stage: any) => ({
-                      color:
-                        stage.status === "succeeded"
-                          ? "green"
-                          : stage.status === "running"
-                            ? "blue"
-                            : stage.status === "failed"
-                              ? "red"
-                              : "gray",
-                      children: (
-                        <div>
-                          <Text strong>{stage.name}</Text>
-                          <br />
-                          <Text type="secondary">{stage.duration} · 产出 {stage.count} 条</Text>
-                        </div>
-                      ),
-                    }))}
-                  />
-                </div>
+                {selectedPipeline.stages && selectedPipeline.stages.length > 0 && (
+                  <div>
+                    <Text strong style={{ marginBottom: 12, display: "block" }}>执行日志</Text>
+                    <Timeline
+                      items={selectedPipeline.stages.map((stage) => ({
+                        color:
+                          stage.status === "succeeded"
+                            ? "green"
+                            : stage.status === "running"
+                              ? "blue"
+                              : stage.status === "failed"
+                                ? "red"
+                                : "gray",
+                        children: (
+                          <div>
+                            <Text strong>{stage.stage}</Text>
+                            <br />
+                            <Text type="secondary">
+                              {stage.task_id ? `任务ID: ${stage.task_id}` : ""}
+                              {stage.error_message ? ` 错误: ${stage.error_message}` : ""}
+                            </Text>
+                            {stage.outputs && Object.keys(stage.outputs).length > 0 && (
+                              <div style={{ marginTop: 4 }}>
+                                <Space wrap size={[4, 4]}>
+                                  {Object.entries(stage.outputs).map(([key, value]) => (
+                                    <Tag key={key}>{key}: {value}</Tag>
+                                  ))}
+                                  {stage.outputs.task_id && stage.stage === "transcription" && (
+                                    <Link to={`/transcription?task=${encodeURIComponent(stage.outputs.task_id)}`}>查看转写</Link>
+                                  )}
+                                  {stage.outputs.copywriting_task_id && (
+                                    <Link to="/ai-copy">查看文案页</Link>
+                                  )}
+                                </Space>
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      }))}
+                    />
+                  </div>
+                )}
+
+                {/* 错误信息 */}
+                {selectedPipeline.error_message && (
+                  <div>
+                    <Text type="danger"><WarningOutlined /> {selectedPipeline.error_message}</Text>
+                  </div>
+                )}
               </Space>
             ) : (
               <Empty description="点击任务列表中的「详情」查看流水线执行情况" />
@@ -634,7 +638,7 @@ export default function PipelinePage() {
         <Table
           columns={columns}
           dataSource={filteredPipelines}
-          rowKey="id"
+          rowKey="run_id"
           pagination={{ pageSize: 10 }}
           size="middle"
         />

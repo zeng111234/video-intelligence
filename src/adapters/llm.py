@@ -46,10 +46,14 @@ class DisabledCopywritingEngine:
         }
 
     def generate(self, **kwargs) -> list[str]:
-        raise LLMAdapterError("AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。")
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。"
+        )
 
     def rewrite(self, source_text: str, **kwargs) -> list[str]:
-        raise LLMAdapterError("AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。")
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。"
+        )
 
 
 class SandboxCopywritingEngine:
@@ -102,6 +106,7 @@ class SandboxCopywritingEngine:
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
+        rewrite_goal: str = "",
         variant_count: int = 1,
     ) -> list[str]:
         snippet = source_text[:80].replace("\n", " ")
@@ -203,6 +208,7 @@ class OpenAICompatibleCopywritingEngine:
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
+        rewrite_goal: str = "",
         variant_count: int = 1,
     ) -> list[str]:
         if not self.api_key:
@@ -220,6 +226,7 @@ class OpenAICompatibleCopywritingEngine:
             f"目标平台：{platform}\n"
             f"目标受众：{target_audience or '未指定'}\n"
             "要求：保持原文事实和核心信息不变，重组表达，增强开场吸引力、主体清晰度和 CTA。\n"
+            f"本次改写目标：{rewrite_goal or '常规短视频口播改写'}\n"
             f"原文：\n{source_text}"
         )
         return self._generate_variants(system_prompt, user_prompt, variant_count)

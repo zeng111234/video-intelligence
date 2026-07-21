@@ -24,6 +24,7 @@ from src.resources import load_asr_model
 from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 
 MAX_MEDIA_BYTES = 50 * 1024 * 1024
+MAX_PROVIDER_MEDIA_BYTES = 300 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov"}
 ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo"}
@@ -84,8 +85,9 @@ class TranscriptionService:
         rights_confirmed: bool,
         rights_holder: str,
         candidate_id: str | None = None,
-        model_name: str = "base",
+        model_name: str = "large-v3-turbo",
         hotwords: str | None = None,
+        max_media_bytes: int = MAX_MEDIA_BYTES,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
     ) -> TranscriptionTask:
         if not rights_confirmed:
@@ -108,7 +110,11 @@ class TranscriptionService:
                 "专有词提示不能超过 500 个字符。",
                 code="asr_hotwords_too_long",
             )
-        self._validate_upload(media_name, media_bytes)
+        self._validate_upload(
+            media_name,
+            media_bytes,
+            max_media_bytes=max_media_bytes,
+        )
         now = datetime.now().astimezone()
         task = TranscriptionTask(
             task_id=f"transcript-{uuid4().hex[:10]}",
@@ -203,7 +209,12 @@ class TranscriptionService:
             raise safe_error from exc
 
     @staticmethod
-    def _validate_upload(media_name: str, content: bytes) -> None:
+    def _validate_upload(
+        media_name: str,
+        content: bytes,
+        *,
+        max_media_bytes: int = MAX_MEDIA_BYTES,
+    ) -> None:
         extension = Path(media_name).suffix.casefold()
         if extension not in ALLOWED_EXTENSIONS:
             raise MediaValidationError(
@@ -211,8 +222,9 @@ class TranscriptionService:
             )
         if not content:
             raise MediaValidationError("上传文件为空。")
-        if len(content) > MAX_MEDIA_BYTES:
-            raise MediaValidationError("单个媒体文件不能超过50MB。")
+        if len(content) > max_media_bytes:
+            limit_mb = max_media_bytes // (1024 * 1024)
+            raise MediaValidationError(f"单个媒体文件不能超过{limit_mb}MB。")
         if not _has_valid_signature(extension, content):
             raise MediaValidationError("文件内容与扩展名不匹配，已拒绝处理。")
 

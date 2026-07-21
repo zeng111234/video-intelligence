@@ -102,6 +102,13 @@ class TestCopywritingServiceEdgeCases:
         assert task.source_task_id == "transcript-abc"
         assert task.source_revision_id == "revision-xyz"
 
+    def test_rewrite_persists_voiceover_goal(self):
+        task = self.svc.rewrite(
+            source_text="需要压缩的长文案",
+            rewrite_goal="压缩为 45 秒并删除重复观点",
+        )
+        assert task.rewrite_goal == "压缩为 45 秒并删除重复观点"
+
     def test_rewrite_with_all_params(self):
         """完整参数传递应正确反映在任务中。"""
         task = self.svc.rewrite(

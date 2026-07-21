@@ -114,11 +114,11 @@ export default function CandidatesPage() {
         ),
     },
     {
-      title: "转写",
-      width: 90,
+      title: "工作台",
+      width: 110,
       render: (_, record) => (
-        <Link to={`/transcription?candidate=${encodeURIComponent(record.video_id)}`}>
-          去确认
+        <Link to={`/studio?candidate_id=${encodeURIComponent(record.video_id)}`}>
+          进入工作台
         </Link>
       ),
     },

@@ -1,6 +1,7 @@
 /**
  * 顶部栏组件
  * 页面标题 + 主题切换 + 通知 + 消息 + 用户头像
+ * 所有数据来自后端 API，无硬编码测试数据
  */
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -23,7 +24,7 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { useTheme } from "../contexts/ThemeContext";
-import { getNotifications, getMessages } from "../api/client";
+import { getNotifications, getMessages, getUserProfile } from "../api/client";
 
 const { Text } = Typography;
 
@@ -71,77 +72,14 @@ interface MessageItem {
   read: boolean;
 }
 
-/** Mock 通知数据 */
-const MOCK_NOTIFICATIONS: NotificationItem[] = [
-  {
-    id: "1",
-    title: "批量生产任务完成",
-    description: "您提交的「二手车短视频」批量生产任务已完成，共生成 24 条视频。",
-    time: "5 分钟前",
-    read: false,
-    type: "task",
-  },
-  {
-    id: "2",
-    title: "系统更新通知",
-    description: "系统将于今晚 22:00 进行维护升级，预计耗时 30 分钟。",
-    time: "1 小时前",
-    read: false,
-    type: "system",
-  },
-  {
-    id: "3",
-    title: "Pro 会员即将到期",
-    description: "您的 Pro 会员将于 2026-08-01 到期，续费享 8 折优惠。",
-    time: "2 小时前",
-    read: true,
-    type: "pro",
-  },
-  {
-    id: "4",
-    title: "账号安全提醒",
-    description: "检测到新设备登录，如非本人操作请及时修改密码。",
-    time: "昨天",
-    read: true,
-    type: "security",
-  },
-  {
-    id: "5",
-    title: "语音转写完成",
-    description: "「竞品分析录音」转写已完成，共识别 3,200 字。",
-    time: "昨天",
-    read: true,
-    type: "task",
-  },
-];
-
-/** Mock 消息数据 */
-const MOCK_MESSAGES: MessageItem[] = [
-  {
-    id: "1",
-    sender: "系统助手",
-    avatar: "🤖",
-    content: "您的批量生产任务已排队，预计 10 分钟后开始执行。",
-    time: "10 分钟前",
-    read: false,
-  },
-  {
-    id: "2",
-    sender: "运营小助手",
-    avatar: "💡",
-    content: "新功能上线！AI 文案生成支持自定义风格模板，快来试试吧。",
-    time: "2 小时前",
-    read: false,
-  },
-  {
-    id: "3",
-    sender: "技术支持",
-    avatar: "🔧",
-    content: "您反馈的视频导出问题已修复，请重新尝试导出操作。",
-    time: "昨天",
-    read: true,
-  },
-];
+/** 用户信息类型 */
+interface UserProfile {
+  username: string;
+  email: string;
+  phone: string;
+  role: string;
+  two_factor_enabled: boolean;
+}
 
 /**
  * 顶部栏组件
@@ -157,14 +95,15 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const [profileOpen, setProfileOpen] = useState(false);
 
   /** 通知状态 */
-  const [notifications, setNotifications] = useState<NotificationItem[]>(MOCK_NOTIFICATIONS);
-  const [messages, setMessages] = useState<MessageItem[]>(MOCK_MESSAGES);
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [messages, setMessages] = useState<MessageItem[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  /** 加载通知和消息 */
+  /** 加载通知、消息和用户信息 */
   useEffect(() => {
     getNotifications()
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setNotifications(data);
         }
       })
@@ -172,8 +111,16 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
     getMessages()
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setMessages(data);
+        }
+      })
+      .catch(() => {});
+
+    getUserProfile()
+      .then((data) => {
+        if (data) {
+          setUserProfile(data);
         }
       })
       .catch(() => {});
@@ -721,8 +668,8 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           <div className="profile-avatar">
             <UserOutlined />
           </div>
-          <div className="profile-name">Admin 用户</div>
-          <div className="profile-email">admin@videoinsight.com</div>
+          <div className="profile-name">{userProfile?.username || "未登录"}</div>
+          <div className="profile-email">{userProfile?.email || ""}</div>
         </div>
 
         {/* 基本信息 */}
@@ -734,25 +681,25 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             <span className="profile-info-label">
               <UserOutlined /> 用户名
             </span>
-            <span className="profile-info-value">Admin</span>
+            <span className="profile-info-value">{userProfile?.username || "-"}</span>
           </div>
           <div className="profile-info-item">
             <span className="profile-info-label">
               <MailOutlined /> 邮箱
             </span>
-            <span className="profile-info-value">admin@videoinsight.com</span>
+            <span className="profile-info-value">{userProfile?.email || "-"}</span>
           </div>
           <div className="profile-info-item">
             <span className="profile-info-label">
               <MobileOutlined /> 手机
             </span>
-            <span className="profile-info-value">138****8888</span>
+            <span className="profile-info-value">{userProfile?.phone || "-"}</span>
           </div>
           <div className="profile-info-item" style={{ borderBottom: "none" }}>
             <span className="profile-info-label">
               <TeamOutlined /> 角色
             </span>
-            <Tag color="purple">Pro 会员</Tag>
+            <Tag color="purple">{userProfile?.role || "普通用户"}</Tag>
           </div>
         </div>
 
@@ -773,7 +720,9 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             <span className="profile-info-label">
               <MobileOutlined /> 两步验证
             </span>
-            <Tag color="green">已开启</Tag>
+            <Tag color={userProfile?.two_factor_enabled ? "green" : "default"}>
+              {userProfile?.two_factor_enabled ? "已开启" : "未开启"}
+            </Tag>
           </div>
         </div>
       </Drawer>

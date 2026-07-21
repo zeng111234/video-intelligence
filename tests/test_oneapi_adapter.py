@@ -156,14 +156,37 @@ def test_search_maps_three_platforms_without_pagination(
     assert page.items[0].platform == platform
 
 
-def test_resolve_douyin_media_uses_high_quality_endpoint() -> None:
+def test_resolve_douyin_media_uses_detail_low_bitrate_endpoint() -> None:
     transport = FixedTransport(
         [
             {
                 "code": 200,
                 "message": "success",
                 "data": {
-                    "play_url": "https://v3-dy.example.com/media/video.mp4",
+                    "audio_url": "https://audio.example.com/background.m4a",
+                    "video": {
+                        "bit_rate": [
+                            {
+                                "bit_rate": 1200000,
+                                "play_addr": {
+                                    "url_list": [
+                                        "https://v3-dy.example.com/media/high.mp4"
+                                    ]
+                                },
+                            },
+                            {
+                                "bit_rate": 260000,
+                                "play_addr": {
+                                    "url_list": [
+                                        "https://v3-dy.example.com/media/low.mp4"
+                                    ]
+                                },
+                            },
+                        ],
+                        "play_addr": {
+                            "url_list": ["https://v3-dy.example.com/media/main.mp4"]
+                        },
+                    },
                 },
             }
         ]
@@ -176,12 +199,11 @@ def test_resolve_douyin_media_uses_high_quality_endpoint() -> None:
         "idem-media-douyin",
     )
 
-    assert transport.calls[0][0].endswith(
-        "/api/douyin-app/fetch_video_high_quality_play_url"
-    )
+    assert transport.calls[0][0].endswith("/api/douyin-app/fetch_video_detail")
     assert transport.calls[0][1]["aweme_id"] == "7584380037021830400"
     assert result.billable_units == pytest.approx(0.08)
-    assert str(result.media_url).startswith("https://v3-dy.example.com/media/video.mp4")
+    assert str(result.media_url).startswith("https://v3-dy.example.com/media/low.mp4")
+    assert "douyin_detail_low_bitrate_media" in result.warnings
 
 
 def test_resolve_xhs_media_uses_video_note_detail_endpoint() -> None:

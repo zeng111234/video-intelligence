@@ -271,6 +271,7 @@ class CopywritingEngine(Protocol):
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
+        rewrite_goal: str = "",
         variant_count: int = 1,
     ) -> list[str]: ...
 

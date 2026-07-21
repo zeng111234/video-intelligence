@@ -56,12 +56,23 @@ class CommercialSearchService:
         trend_service: KeywordTrendService,
         provider: LicensedSearchProvider,
         *,
+        active_platforms: tuple[Platform, ...] | None = None,
         clock=None,
     ) -> None:
         self.repository = repository
         self.source_service = source_service
         self.trend_service = trend_service
         self.provider = provider
+        selected_platforms = (
+            SUPPORTED_PLATFORMS if active_platforms is None else active_platforms
+        )
+        self.active_platforms = tuple(dict.fromkeys(selected_platforms))
+        if not self.active_platforms:
+            raise ValueError("至少需要启用一个关键词搜索平台。")
+        unsupported = set(self.active_platforms) - set(SUPPORTED_PLATFORMS)
+        if unsupported:
+            names = "、".join(sorted(item.value for item in unsupported))
+            raise ValueError(f"不支持的关键词搜索平台：{names}。")
         self.clock = clock or (lambda: datetime.now().astimezone())
 
     def preview(
@@ -81,7 +92,7 @@ class CommercialSearchService:
         previews: list[PlatformSearchPreview] = []
         pending_calls = 0
         pending_cost = 0.0
-        for platform in SUPPORTED_PLATFORMS:
+        for platform in self.active_platforms:
             cached = (
                 None
                 if force_refresh
@@ -152,6 +163,7 @@ class CommercialSearchService:
             requested_count_per_platform=count,
             provider=capability.provider_name,
             mode=capability.mode,
+            platforms=list(self.active_platforms),
             force_refresh=force_refresh,
         )
         self.repository.save_search_batch(batch)
@@ -159,7 +171,7 @@ class CommercialSearchService:
         self.repository.save_search_batch(batch)
 
         runs: list[PlatformSearchRun] = []
-        for platform in SUPPORTED_PLATFORMS:
+        for platform in self.active_platforms:
             runs.append(
                 self._execute_platform(
                     batch=batch,

@@ -36,6 +36,10 @@ class TranscriptionResponse(BaseModel):
     progress: int
     stage: str = ""
     media_name: str = ""
+    model_name: str | None = None
+    duration_seconds: float | None = None
+    approved_revision_id: str | None = None
+    low_confidence_count: int = 0
     segments: list[dict[str, Any]] = Field(default_factory=list)
     error_message: str | None = None
     created_at: datetime | None = None

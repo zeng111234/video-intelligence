@@ -174,6 +174,22 @@ class TestOpenAICompatibleCopywritingEngine:
         assert "casual" in prompt
 
     @patch("src.adapters.llm.urlopen")
+    def test_rewrite_includes_voiceover_goal(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": '{"variants":["结果"]}'}}]}
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        engine.rewrite("原始文案", rewrite_goal="压缩为 45 秒并删除重复句")
+
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert "压缩为 45 秒并删除重复句" in sent["messages"][1]["content"]
+
+    @patch("src.adapters.llm.urlopen")
     def test_chat_completion_success(self, mock_urlopen):
         """模拟成功 API 调用。"""
         mock_response = MagicMock()

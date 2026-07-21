@@ -5,6 +5,7 @@ import socket
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+from time import monotonic
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import unquote, urlparse
@@ -111,6 +112,7 @@ def fetch_authorized_video(
     open_url: OpenUrl | None = None,
     timeout_seconds: float = 15,
     max_bytes: int = MAX_MEDIA_BYTES,
+    max_elapsed_seconds: float = 60,
     require_extension: bool = True,
     fallback_name: str = "provider-video.mp4",
 ) -> DirectVideo:
@@ -121,6 +123,12 @@ def fetch_authorized_video(
         resolver,
         require_extension=require_extension,
     )
+    max_size_label = (
+        f"{max_bytes // (1024 * 1024)}MB"
+        if max_bytes >= 1024 * 1024
+        else f"{max_bytes} bytes"
+    )
+    max_elapsed_label = int(max_elapsed_seconds)
     opener = open_url or _default_open_url(
         resolver,
         require_extension=require_extension,
@@ -154,18 +162,33 @@ def fetch_authorized_video(
                 except ValueError:
                     content_length = 0
                 if content_length > max_bytes:
-                    raise VideoSourceError("视频文件超过 50MB，请压缩后再试。")
+                    raise VideoSourceError(
+                        f"视频文件超过 {max_size_label}，请压缩后再试。"
+                    )
 
             chunks: list[bytes] = []
             total = 0
+            started = monotonic()
             while True:
+                if monotonic() - started > max_elapsed_seconds:
+                    raise VideoSourceError(
+                        f"视频文件下载超过 {max_elapsed_label} 秒，"
+                        "请换短视频或手动上传 MP4/MOV。"
+                    )
                 chunk = response.read(min(1024 * 1024, max_bytes + 1 - total))
                 if not chunk:
                     break
                 chunks.append(chunk)
                 total += len(chunk)
                 if total > max_bytes:
-                    raise VideoSourceError("视频文件超过 50MB，请压缩后再试。")
+                    raise VideoSourceError(
+                        f"视频文件超过 {max_size_label}，请压缩后再试。"
+                    )
+                if monotonic() - started > max_elapsed_seconds:
+                    raise VideoSourceError(
+                        f"视频文件下载超过 {max_elapsed_label} 秒，"
+                        "请换短视频或手动上传 MP4/MOV。"
+                    )
 
             content = b"".join(chunks)
             if not content:

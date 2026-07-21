@@ -22,7 +22,8 @@ from src.models import (
 )
 from src.repositories import MockRepository
 from src.services.media_resolution import MediaResolutionError, MediaResolutionService
-from src.services.video_source import DirectVideo
+from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
+from src.services.video_source import DirectVideo, VideoSourceError
 
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -33,6 +34,7 @@ class FixtureMediaProvider:
     def __init__(self) -> None:
         self.calls: list[tuple[Platform, str, str]] = []
         self.error: LicensedProviderError | None = None
+        self.warnings: list[str] = []
 
     def capabilities(self) -> ProviderCapability:
         return ProviderCapability(
@@ -73,6 +75,7 @@ class FixtureMediaProvider:
             request_id="provider-media-1",
             api_call_count=1,
             billable_units=self.media_resolution_price(platform) or 0.0,
+            warnings=self.warnings,
         )
 
 
@@ -152,6 +155,36 @@ def test_media_resolution_cost_counts_against_shared_monthly_budget(
     )
 
 
+def test_provider_media_fetch_uses_larger_provider_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureMediaProvider()
+    candidate = _candidate(platform=Platform.DOUYIN, platform_item_id="douyin-1")
+    repository.save_candidate(candidate)
+    seen: dict[str, int] = {}
+
+    def fake_fetch_authorized_video(*args, **kwargs):
+        seen["max_bytes"] = kwargs["max_bytes"]
+        return DirectVideo(
+            name="video.mp4",
+            media_type="video/mp4",
+            content=b"0000ftypmp42",
+        )
+
+    monkeypatch.setattr(
+        "src.services.media_resolution.fetch_authorized_video",
+        fake_fetch_authorized_video,
+    )
+
+    _service(repository, provider).resolve_video(
+        candidate,
+        idempotency_key="idem-provider-limit",
+    )
+
+    assert seen["max_bytes"] == MAX_PROVIDER_MEDIA_BYTES
+
+
 def test_unknown_media_resolution_blocks_later_attempt() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureMediaProvider()
@@ -172,4 +205,91 @@ def test_unknown_media_resolution_blocks_later_attempt() -> None:
         service.resolve_video(candidate, idempotency_key="idem-media-later")
 
     assert "结果未知" in caught.value.user_message
+    assert len(provider.calls) == 1
+
+    preview = service.preview(candidate)
+    assert preview.resolvable is False
+    assert "结果未知" in (preview.block_reason or "")
+
+
+def test_non_transcribable_provider_media_is_recorded_and_blocks_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureMediaProvider()
+    candidate = _candidate(platform=Platform.XIAOHONGSHU, platform_item_id="xhs-2")
+    repository.save_candidate(candidate)
+    monkeypatch.setattr(
+        "src.services.media_resolution.fetch_authorized_video",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            VideoSourceError("该地址返回的不是可识别的视频文件，请改为上传 MP4/MOV。")
+        ),
+    )
+    service = _service(repository, provider)
+
+    with pytest.raises(MediaResolutionError):
+        service.resolve_video(candidate, idempotency_key="idem-media-not-video")
+
+    latest = repository.find_latest_media_resolution_for_candidate(candidate.video_id)
+    assert latest is not None
+    assert latest.api_call_count == 1
+    assert latest.billable_units == pytest.approx(0.12)
+    assert latest.provider_request_id == "provider-media-1"
+    assert repository.monthly_platform_query_cost(NOW.replace(day=1)) == pytest.approx(
+        0.12
+    )
+
+    preview = service.preview(candidate)
+    assert preview.resolvable is False
+    assert "手动补直链或上传" in (preview.block_reason or "")
+    assert len(provider.calls) == 1
+
+
+def test_oversized_provider_media_blocks_repeat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureMediaProvider()
+    provider.warnings = ["douyin_detail_low_bitrate_media"]
+    candidate = _candidate(platform=Platform.DOUYIN, platform_item_id="douyin-big")
+    repository.save_candidate(candidate)
+    monkeypatch.setattr(
+        "src.services.media_resolution.fetch_authorized_video",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            VideoSourceError("视频文件超过 300MB，请压缩后再试。")
+        ),
+    )
+    service = _service(repository, provider)
+
+    with pytest.raises(MediaResolutionError):
+        service.resolve_video(candidate, idempotency_key="idem-media-too-large")
+
+    preview = service.preview(candidate)
+
+    assert preview.resolvable is False
+    assert "手动补直链或上传" in (preview.block_reason or "")
+    assert len(provider.calls) == 1
+
+
+def test_legacy_high_quality_oversized_failure_can_retry_with_new_douyin_strategy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureMediaProvider()
+    candidate = _candidate(platform=Platform.DOUYIN, platform_item_id="douyin-old-big")
+    repository.save_candidate(candidate)
+    monkeypatch.setattr(
+        "src.services.media_resolution.fetch_authorized_video",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            VideoSourceError("视频文件超过 300MB，请压缩后再试。")
+        ),
+    )
+    service = _service(repository, provider)
+
+    with pytest.raises(MediaResolutionError):
+        service.resolve_video(candidate, idempotency_key="idem-old-high-quality")
+
+    preview = service.preview(candidate)
+
+    assert preview.resolvable is True
     assert len(provider.calls) == 1

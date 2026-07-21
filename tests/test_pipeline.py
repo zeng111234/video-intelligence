@@ -15,18 +15,29 @@ from src.adapters.publishers.sandbox import SandboxPublisher, PlatformPublisherA
 from src.adapters.video_editor import FFmpegVideoEditor, VideoEditorError
 from src.models import (
     CopywritingTask,
+    DataSource,
+    EligibilityStatus,
+    HeatLevel,
+    HeatResult,
+    MediaResolutionAttempt,
+    MediaResolutionStatus,
     PipelineRun,
     PipelineRunStatus,
     PipelineStage,
+    Platform,
     PublishPlatform,
     PublishStatus,
     PublishTask,
     PublishTarget,
     TaskKind,
     TaskStatus,
+    TranscriptSegment,
+    TranscriptionTask,
+    VideoCandidate,
     VideoEditConfig,
     VideoEditStep,
     VideoEditStepKind,
+    VideoMetricSnapshot,
 )
 from src.adapters.licensed import SandboxLicensedSearchProvider
 from src.adapters.video_editor import SandboxVideoEditor
@@ -38,6 +49,8 @@ from src.services.pipeline import PipelineService
 from src.services.publisher import PublishService
 from src.services.source import SourceService
 from src.services.heat import HeatService
+from src.services.media_resolution import MediaResolutionError, ResolvedMedia
+from src.services.video_source import DirectVideo
 from src.services.video_editor import VideoEditingService
 
 
@@ -314,6 +327,101 @@ class TestVideoEditingService:
 # ---------------------------------------------------------------------------
 
 
+def _pipeline_candidate() -> VideoCandidate:
+    now = datetime.now().astimezone()
+    return VideoCandidate(
+        video_id="candidate-pipeline-1",
+        platform_item_id="aweme-real-1",
+        title="测试爆款视频",
+        author_id="author-1",
+        author_name="测试作者",
+        platform=Platform.DOUYIN,
+        category="关键词/测试",
+        published_at=now,
+        source_type=DataSource.LICENSED_PROVIDER,
+        eligibility_status=EligibilityStatus.AUTO_MATCHED,
+        metrics=VideoMetricSnapshot(
+            item_id="candidate-pipeline-1",
+            sampled_at=now,
+            likes=1000,
+            confidence=0.8,
+        ),
+        heat=HeatResult(
+            score=60,
+            level=HeatLevel.INSUFFICIENT,
+            confidence=0.5,
+        ),
+    )
+
+
+class FakeMediaResolutionService:
+    def __init__(self, error: MediaResolutionError | None = None) -> None:
+        self.error = error
+        self.attached_task_id: str | None = None
+
+    def resolve_video(self, candidate: VideoCandidate, *, idempotency_key: str):
+        if self.error:
+            raise self.error
+        attempt = MediaResolutionAttempt(
+            idempotency_key=idempotency_key,
+            candidate_id=candidate.video_id,
+            platform=candidate.platform,
+            platform_item_id=candidate.platform_item_id or "",
+            provider="fixture_oneapi",
+            status=MediaResolutionStatus.SUCCEEDED,
+            estimated_cost_cny=0.08,
+            billable_units=0.08,
+            api_call_count=1,
+        )
+        return ResolvedMedia(
+            attempt=attempt,
+            video=DirectVideo(
+                name="candidate.mp4",
+                media_type="video/mp4",
+                content=b"0000ftypmp42",
+            ),
+        )
+
+    def attach_task(self, attempt: MediaResolutionAttempt, task: TranscriptionTask):
+        self.attached_task_id = task.task_id
+        return attempt.model_copy(update={"task_id": task.task_id})
+
+
+class FakeTranscriptionService:
+    def __init__(self, repository: MockRepository) -> None:
+        self.repository = repository
+
+    def create_task(self, **kwargs) -> TranscriptionTask:
+        now = datetime.now().astimezone()
+        task = TranscriptionTask(
+            task_id="transcript-pipeline-1",
+            title=kwargs["media_name"],
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            media_name=kwargs["media_name"],
+            media_type=kwargs["media_type"],
+            rights_confirmed=True,
+            rights_holder=kwargs["rights_holder"],
+            candidate_id=kwargs["candidate_id"],
+            segments=[
+                TranscriptSegment(
+                    start=0,
+                    end=3,
+                    text="这个视频讲的是低成本获客的三个关键动作。",
+                    confidence=0.9,
+                )
+            ],
+            stage="待校对",
+            model_name=kwargs["model_name"],
+            duration_seconds=4.0,
+            is_mock=False,
+        )
+        self.repository.save_task(task)
+        return task
+
+
 class TestPipelineService:
     def setup_method(self):
         self.repo = MockRepository()
@@ -331,6 +439,73 @@ class TestPipelineService:
         }
         pub_svc = PublishService(self.repo, pub_publishers)
         self.svc = PipelineService(self.repo, search_svc, copy_svc, edit_svc, pub_svc)
+
+    def test_candidate_script_pipeline_pauses_after_copywriting_review(self):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        media_svc = FakeMediaResolutionService()
+        transcription_svc = FakeTranscriptionService(self.repo)
+        self.svc.media_resolution_service = media_svc
+        self.svc.transcription_service = transcription_svc
+
+        run = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key="pipeline-candidate-1",
+        )
+
+        assert run.status == PipelineRunStatus.PAUSED
+        assert run.current_stage == PipelineStage.HUMAN_REVIEW
+        assert run.copywriting_task_id
+        assert media_svc.attached_task_id == run.stages[1].task_id
+        stage_status = {stage.stage: stage.status for stage in run.stages}
+        assert stage_status[PipelineStage.MEDIA_RESOLUTION] == TaskStatus.SUCCEEDED
+        assert stage_status[PipelineStage.TRANSCRIPTION] == TaskStatus.SUCCEEDED
+        assert stage_status[PipelineStage.COPYWRITING] == TaskStatus.SUCCEEDED
+        assert stage_status[PipelineStage.HUMAN_REVIEW] == TaskStatus.RUNNING
+        stored = self.repo.get_pipeline_run(run.run_id)
+        assert stored is not None
+        assert stored.status == PipelineRunStatus.PAUSED
+
+    def test_candidate_script_pipeline_records_media_resolution_failure(self):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        media_svc = FakeMediaResolutionService(
+            error=MediaResolutionError("供应商未返回可用于转写的视频。")
+        )
+        self.svc.media_resolution_service = media_svc
+        self.svc.transcription_service = FakeTranscriptionService(self.repo)
+
+        run = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key="pipeline-candidate-failed",
+        )
+
+        assert run.status == PipelineRunStatus.FAILED
+        assert run.current_stage == PipelineStage.MEDIA_RESOLUTION
+        assert "供应商未返回" in (run.error_message or "")
+
+    def test_candidate_script_pipeline_blocks_non_douyin_before_paid_resolution(self):
+        candidate = _pipeline_candidate().model_copy(
+            update={"platform": Platform.XIAOHONGSHU}
+        )
+        self.repo.save_candidate(candidate)
+        media_svc = FakeMediaResolutionService()
+        self.svc.media_resolution_service = media_svc
+        self.svc.transcription_service = FakeTranscriptionService(self.repo)
+
+        with pytest.raises(RuntimeError, match="仅支持抖音"):
+            self.svc.execute_candidate_script_pipeline(
+                candidate_id=candidate.video_id,
+                rights_confirmed=True,
+                rights_holder="测试公司",
+                idempotency_key="pipeline-xhs-blocked",
+            )
+
+        assert self.repo.list_pipeline_runs() == []
 
     def test_create_run(self):
         run = self.svc.create_run(keyword="二手车")
@@ -367,6 +542,20 @@ class TestPipelineService:
         )
         assert updated.status == PipelineRunStatus.FAILED
         assert updated.error_message == "生成失败"
+
+    def test_resolve_source_video_requires_authorized_file(self, tmp_path: Path):
+        with pytest.raises(RuntimeError, match="没有已授权源视频"):
+            PipelineService._resolve_source_video({})
+
+        missing = tmp_path / "missing.mp4"
+        with pytest.raises(RuntimeError, match="源视频不存在或不可读取"):
+            PipelineService._resolve_source_video({"source_video_path": str(missing)})
+
+        source = tmp_path / "source.mp4"
+        source.write_bytes(b"fake-video")
+        assert PipelineService._resolve_source_video(
+            {"source_video_path": str(source)}
+        ) == str(source)
 
     def test_complete_run_success(self):
         run = self.svc.create_run(keyword="完成测试")

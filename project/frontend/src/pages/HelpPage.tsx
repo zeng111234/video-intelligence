@@ -4,19 +4,17 @@
  */
 import { useState } from "react";
 import { Typography, Card, Collapse, Space, Tag, Input, Row, Col, Button } from "antd";
+import { useNavigate } from "react-router-dom";
 import {
   QuestionCircleOutlined,
   BookOutlined,
-  MessageOutlined,
-  MailOutlined,
   SearchOutlined,
-  ThunderboltOutlined,
   VideoCameraOutlined,
   RocketOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
 
-const { Title, Text, Paragraph, Link } = Typography;
+const { Title, Text, Paragraph } = Typography;
 const { Panel } = Collapse;
 
 /** 常见问题数据 */
@@ -27,11 +25,11 @@ const FAQ_DATA = [
     items: [
       {
         q: "如何开始使用系统？",
-        a: "首先在「候选检索」页面搜索感兴趣的视频，然后可以使用「批量生产」功能生成类似内容，或使用「语音转写」功能提取视频文案。",
+        a: "优先进入「内容工作台」。从候选或关键词榜单带入素材后，重新确认权利，再上传文件或填写授权 MP4/MOV 直链进行转写。",
       },
       {
-        q: "如何批量生产短视频？",
-        a: "进入「批量生产」页面，输入关键词（如：二手车、美食），设置生产数量和风格，点击「开始批量生产」即可。",
+        q: "生产批次和真正生成视频是什么关系？",
+        a: "「生产批次」只创建和记录生产流程，不宣称已经生成视频。只有授权媒体、确认成稿、数字人或剪辑任务真实完成后，才会出现可用产物。",
       },
       {
         q: "如何使用语音转写功能？",
@@ -58,16 +56,16 @@ const FAQ_DATA = [
     ],
   },
   {
-    category: "Pro 功能",
-    icon: <ThunderboltOutlined />,
+    category: "能力状态",
+    icon: <SettingOutlined />,
     items: [
       {
-        q: "Pro 版本有哪些额外功能？",
-        a: "Pro 版本包含：深度分析（趋势分析、竞品分析）、AI文案生成（智能改写、多风格）、以及更高的使用额度。",
+        q: "为什么有些按钮不可用？",
+        a: "不可用通常是因为供应商凭证、授权确认、可识别媒体、成稿审批或额度条件不满足。系统会显示阻断原因，不伪造生产成功。",
       },
       {
-        q: "如何升级到 Pro？",
-        a: "点击侧边栏底部的「升级到 Pro」卡片，或联系客服获取优惠价格。",
+        q: "Sandbox 和 Production 有什么区别？",
+        a: "Sandbox 只用于演示流程，不代表真实平台生产数据。Production 会调用已配置供应商接口，并受本地预算、缓存和幂等保护限制。",
       },
     ],
   },
@@ -95,9 +93,9 @@ const FAQ_DATA = [
 const QUICK_START = [
   {
     step: 1,
-    title: "搜索候选视频",
-    desc: "在「候选检索」页面输入关键词，找到热门视频素材",
-    path: "/candidates",
+    title: "进入工作台",
+    desc: "从工作台查看素材、转写和生产批次",
+    path: "/studio",
   },
   {
     step: 2,
@@ -107,8 +105,8 @@ const QUICK_START = [
   },
   {
     step: 3,
-    title: "批量生产内容",
-    desc: "在「批量生产」页面，一键生成多条短视频",
+    title: "创建生产批次",
+    desc: "只创建批次记录，不宣称已生成视频",
     path: "/pipeline",
   },
   {
@@ -120,6 +118,7 @@ const QUICK_START = [
 ];
 
 export default function HelpPage() {
+  const navigate = useNavigate();
   const [searchText, setSearchText] = useState("");
 
   /** 过滤 FAQ */
@@ -163,7 +162,7 @@ export default function HelpPage() {
               <Card
                 size="small"
                 hoverable
-                onClick={() => (window.location.href = item.path)}
+                onClick={() => navigate(item.path)}
                 style={{ height: "100%" }}
               >
                 <div style={{ textAlign: "center" }}>
@@ -229,38 +228,36 @@ export default function HelpPage() {
         )}
       </Card>
 
-      {/* 联系支持 */}
-      <Card title={<Space><MessageOutlined /> 联系支持</Space>}>
+      {/* 本地资料 */}
+      <Card title={<Space><BookOutlined /> 本地资料</Space>}>
         <Row gutter={[24, 24]}>
           <Col xs={24} sm={8}>
             <div style={{ textAlign: "center" }}>
-              <MailOutlined style={{ fontSize: 32, color: "#6366f1", marginBottom: 12 }} />
-              <Title level={5}>邮件支持</Title>
-              <Text type="secondary">发送问题到我们的邮箱</Text>
+              <SettingOutlined style={{ fontSize: 32, color: "#6366f1", marginBottom: 12 }} />
+              <Title level={5}>系统状态</Title>
+              <Text type="secondary">查看后端、数据库和供应商配置</Text>
               <br />
-              <Link href="mailto:support@videoinsight.com">support@videoinsight.com</Link>
+              <Button size="small" style={{ marginTop: 8 }} onClick={() => navigate("/admin")}>
+                打开系统设置
+              </Button>
             </div>
           </Col>
           <Col xs={24} sm={8}>
             <div style={{ textAlign: "center" }}>
-              <MessageOutlined style={{ fontSize: 32, color: "#10b981", marginBottom: 12 }} />
-              <Title level={5}>在线客服</Title>
-              <Text type="secondary">工作日 9:00-18:00</Text>
+              <RocketOutlined style={{ fontSize: 32, color: "#10b981", marginBottom: 12 }} />
+              <Title level={5}>启动说明</Title>
+              <Text type="secondary">1001 React 和 2001 FastAPI 是正式入口</Text>
               <br />
-              <Button type="primary" size="small" style={{ marginTop: 8 }}>
-                开始对话
-              </Button>
+              <Text code>README.md</Text>
             </div>
           </Col>
           <Col xs={24} sm={8}>
             <div style={{ textAlign: "center" }}>
               <BookOutlined style={{ fontSize: 32, color: "#f59e0b", marginBottom: 12 }} />
-              <Title level={5}>文档中心</Title>
-              <Text type="secondary">查看详细使用文档</Text>
+              <Title level={5}>交付文档</Title>
+              <Text type="secondary">交接和交付文件保留在本地仓库</Text>
               <br />
-              <Button size="small" style={{ marginTop: 8 }}>
-                查看文档
-              </Button>
+              <Text code>交接文档.md</Text>
             </div>
           </Col>
         </Row>

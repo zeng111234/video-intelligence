@@ -172,7 +172,10 @@ class PublishStatus(StrEnum):
 
 class PipelineStage(StrEnum):
     KEYWORD_SEARCH = "keyword_search"
+    MEDIA_RESOLUTION = "media_resolution"
+    TRANSCRIPTION = "transcription"
     COPYWRITING = "copywriting"
+    HUMAN_REVIEW = "human_review"
     AVATAR_GENERATION = "avatar_generation"
     VIDEO_EDITING = "video_editing"
     PUBLISHING = "publishing"
@@ -776,6 +779,7 @@ class CopywritingTask(TaskRecord):
     style_prompt: str = ""
     target_length: int = Field(default=300, ge=50, le=2000)
     tone: str = "professional"
+    rewrite_goal: str = ""
     provider_name: str = "local_llm"
     model_name: str = ""
     token_usage: dict[str, int] = Field(default_factory=dict)

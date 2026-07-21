@@ -107,34 +107,8 @@ export default function PublishPage() {
 
   /* ---- 初始化 ---- */
   useEffect(() => {
-    // 模拟加载
-    const timer = setTimeout(() => {
-      setRecords([
-        {
-          id: "pub-20260720-001",
-          platform: "douyin",
-          title: "二手车避坑指南｜5万预算怎么选",
-          status: "succeeded",
-          createdAt: "2026-07-20 14:30:00",
-        },
-        {
-          id: "pub-20260720-002",
-          platform: "xiaohongshu",
-          title: "新能源车续航实测｜谁是真王者",
-          status: "running",
-          createdAt: "2026-07-20 15:10:00",
-        },
-        {
-          id: "pub-20260719-003",
-          platform: "wechat_channels",
-          title: "汽车保养小知识｜机油怎么选",
-          status: "succeeded",
-          createdAt: "2026-07-19 10:20:00",
-        },
-      ]);
-      setLoading(false);
-    }, 600);
-    return () => clearTimeout(timer);
+    // 发布记录列表 API 暂未实现，初始化为空列表
+    setLoading(false);
   }, []);
 
   /* ---- 添加标签 ---- */
@@ -159,18 +133,12 @@ export default function PublishPage() {
   }, [toast]);
 
   /* ---- 重试发布 ---- */
-  const handleRetry = useCallback((record: any) => {
+  const handleRetry = useCallback((record: PublishRecord) => {
     setRecords((prev) =>
       prev.map((r) => (r.id === record.id ? { ...r, status: "pending" } : r))
     );
-    toast.success(`正在重试: ${record.title}`);
-    // 模拟重试成功
-    setTimeout(() => {
-      setRecords((prev) =>
-        prev.map((r) => (r.id === record.id ? { ...r, status: "succeeded" } : r))
-      );
-      toast.success(`重试成功: ${record.title}`);
-    }, 2000);
+    toast.info(`正在重试: ${record.title}`);
+    // TODO: 接入真实的重试 API
   }, [toast]);
 
   /* ---- 发布 ---- */

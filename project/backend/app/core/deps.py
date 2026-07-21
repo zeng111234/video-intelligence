@@ -37,7 +37,7 @@ from src.adapters.llm import (  # noqa: E402
 from src.adapters.video_editor import SandboxVideoEditor  # noqa: E402
 from src.adapters.avatar import build_avatar_provider  # noqa: E402
 from src.adapters.publishers.sandbox import build_publisher  # noqa: E402
-from src.models import PublishPlatform  # noqa: E402
+from src.models import Platform, PublishPlatform  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
     DATABASE_PATH,
     PROJECT_ROOT,
@@ -49,6 +49,7 @@ from project.backend.app.core.config import (  # noqa: E402
     ALIYUN_ASR_APP_KEY,
     CRAWLER_PROVIDER_MODE,
     CRAWLER_PROVIDER_NAME,
+    CRAWLER_ACTIVE_PLATFORMS,
     CrawlerProviderMode,
     ONEAPI_API_KEY,
     COPYWRITING_API_KEY,
@@ -88,7 +89,9 @@ def get_keyword_trend_service() -> KeywordTrendService:
 def get_licensed_search_provider():
     if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.SANDBOX:
         return SandboxLicensedSearchProvider()
-    if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.ONEAPI:
+    if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.ONEAPI or (
+        CRAWLER_PROVIDER_MODE == CrawlerProviderMode.PRODUCTION and ONEAPI_API_KEY
+    ):
         return OneApiLicensedSearchProvider(ONEAPI_API_KEY)
     return DisabledLicensedSearchProvider(CRAWLER_PROVIDER_NAME)
 
@@ -100,6 +103,9 @@ def get_commercial_search_service() -> CommercialSearchService:
         source_service=get_source_service(),
         trend_service=get_keyword_trend_service(),
         provider=get_licensed_search_provider(),
+        active_platforms=tuple(
+            Platform(platform) for platform in CRAWLER_ACTIVE_PLATFORMS
+        ),
     )
 
 
@@ -270,4 +276,6 @@ def get_pipeline_service() -> PipelineService:
         copywriting_service=get_copywriting_service(),
         video_editing_service=get_video_editing_service(),
         publish_service=get_publish_service(),
+        media_resolution_service=get_media_resolution_service(),
+        transcription_service=get_transcription_service(),
     )

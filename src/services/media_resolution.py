@@ -19,6 +19,7 @@ from src.services.commercial_search import (
     DUPLICATE_GUARD_SECONDS,
     MONTHLY_HARD_LIMIT_COST_CNY,
 )
+from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
 from src.services.video_source import (
     DirectVideo,
     VideoSourceError,
@@ -95,6 +96,7 @@ class MediaResolutionService:
             estimated_cost=estimated_cost,
             monthly_cost=monthly_cost,
             source=source,
+            latest=latest,
         )
         return CandidateMediaPreview(
             candidate_id=candidate.video_id,
@@ -149,6 +151,7 @@ class MediaResolutionService:
             created_at=now,
             updated_at=now,
         )
+        current_attempt = attempt
         if not self.repository.claim_media_resolution_request(
             idempotency_key,
             attempt.resolution_id,
@@ -188,9 +191,11 @@ class MediaResolutionService:
                     }
                 )
                 self.repository.save_media_resolution_attempt(updated)
+                current_attempt = updated
                 video = fetch_authorized_video(
                     str(result.media_url),
                     require_extension=False,
+                    max_bytes=MAX_PROVIDER_MEDIA_BYTES,
                     fallback_name=(
                         f"{candidate.platform.value}-{candidate.platform_item_id}.mp4"
                     ),
@@ -209,7 +214,7 @@ class MediaResolutionService:
             )
             return ResolvedMedia(attempt=finished, video=video)
         except LicensedProviderError as exc:
-            failed = self._failed_attempt_from_provider_error(attempt, exc)
+            failed = self._failed_attempt_from_provider_error(current_attempt, exc)
             self.repository.save_media_resolution_attempt(failed)
             self.repository.mark_media_resolution_request(
                 idempotency_key,
@@ -226,7 +231,7 @@ class MediaResolutionService:
                 attempt=failed,
             ) from exc
         except VideoSourceError as exc:
-            failed = attempt.model_copy(
+            failed = current_attempt.model_copy(
                 update={
                     "status": MediaResolutionStatus.FAILED,
                     "error_kind": ProviderErrorKind.VALIDATION,
@@ -289,10 +294,25 @@ class MediaResolutionService:
         estimated_cost: float | None,
         monthly_cost: float,
         source: str,
+        latest: MediaResolutionAttempt | None,
     ) -> str | None:
         capability = self.provider.capabilities()
         if source == "direct_url":
             return None
+        if latest and latest.status == MediaResolutionStatus.OUTCOME_UNKNOWN:
+            return "该候选存在结果未知的媒体解析请求，请先核对 OneAPI 使用记录再重试。"
+        if (
+            latest
+            and latest.status == MediaResolutionStatus.FAILED
+            and latest.api_call_count > 0
+            and self._is_non_transcribable_media_error(latest.error_message)
+            and self._same_media_strategy(latest)
+        ):
+            return (
+                "供应商详情接口返回的媒体当前不能直接进入转写链路"
+                "（格式、体积或可读性未通过校验），"
+                "为避免重复计费，请手动补直链或上传视频。"
+            )
         if capability.mode != ProviderMode.PRODUCTION or not capability.enabled:
             return "当前供应商不是可用 Production 模式，不能付费补媒体直链。"
         if candidate.platform_item_id is None or not candidate.platform_item_id.strip():
@@ -306,6 +326,26 @@ class MediaResolutionService:
         if monthly_cost + estimated_cost > MONTHLY_HARD_LIMIT_COST_CNY:
             return "已达到本地本月 ¥10 共享预算上限，未发起付费解析。"
         return None
+
+    @staticmethod
+    def _is_non_transcribable_media_error(message: str | None) -> bool:
+        if not message:
+            return False
+        return any(
+            marker in message
+            for marker in (
+                "不是可识别的视频文件",
+                "未返回可用于转写的视频文件直链",
+                "视频文件直链格式无效",
+                "视频文件超过",
+            )
+        )
+
+    @staticmethod
+    def _same_media_strategy(attempt: MediaResolutionAttempt) -> bool:
+        if attempt.platform != Platform.DOUYIN:
+            return True
+        return "douyin_detail_low_bitrate_media" in attempt.warnings
 
     def _price(self, platform: Platform) -> float | None:
         if hasattr(self.provider, "media_resolution_price"):
