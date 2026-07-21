@@ -88,7 +88,7 @@ export default function PublishPage() {
   const toast = useToast();
 
   /* ---- 状态 ---- */
-  const [platform, setPlatform] = useState("douyin");
+  const [platforms, setPlatforms] = useState<string[]>(["douyin"]);
   const [videoPath, setVideoPath] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -97,6 +97,13 @@ export default function PublishPage() {
   const [publishing, setPublishing] = useState(false);
   const [records, setRecords] = useState<PublishRecord[]>([]);
   const [loading, setLoading] = useState(true);
+
+  /* ---- 切换平台选择 ---- */
+  const togglePlatform = useCallback((key: string) => {
+    setPlatforms((prev) =>
+      prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]
+    );
+  }, []);
 
   /* ---- 初始化 ---- */
   useEffect(() => {
@@ -112,7 +119,7 @@ export default function PublishPage() {
         },
         {
           id: "pub-20260720-002",
-          platform: "kuaishou",
+          platform: "xiaohongshu",
           title: "新能源车续航实测｜谁是真王者",
           status: "running",
           createdAt: "2026-07-20 15:10:00",
@@ -176,27 +183,34 @@ export default function PublishPage() {
       toast.warning("请输入视频标题");
       return;
     }
+    if (platforms.length === 0) {
+      toast.warning("请至少选择一个发布平台");
+      return;
+    }
     setPublishing(true);
     try {
-      const resp = await publishVideo({
-        video_path: videoPath,
-        platform,
-        title,
-        description,
-        tags,
-      });
-      toast.success(`发布任务已创建：${resp.task_id}`);
+      // 为每个选中的平台创建发布任务
+      const results = await Promise.all(
+        platforms.map((p) =>
+          publishVideo({
+            video_path: videoPath,
+            platform: p,
+            title,
+            description,
+            tags,
+          })
+        )
+      );
+      toast.success(`已创建 ${platforms.length} 个发布任务`);
       // 添加到记录
-      setRecords((prev) => [
-        {
-          id: resp.task_id,
-          platform,
-          title,
-          status: resp.status || "pending",
-          createdAt: new Date().toLocaleString("zh-CN"),
-        },
-        ...prev,
-      ]);
+      const newRecords = results.map((resp, i) => ({
+        id: resp.task_id,
+        platform: platforms[i],
+        title,
+        status: resp.status || "pending",
+        createdAt: new Date().toLocaleString("zh-CN"),
+      }));
+      setRecords((prev) => [...newRecords, ...prev]);
       // 清空表单
       setVideoPath("");
       setTitle("");
@@ -207,7 +221,7 @@ export default function PublishPage() {
     } finally {
       setPublishing(false);
     }
-  }, [videoPath, platform, title, description, tags, toast]);
+  }, [videoPath, platforms, title, description, tags, toast]);
 
   /* ---- 表格列 ---- */
   const columns: ColumnsType<PublishRecord> = [
@@ -280,7 +294,7 @@ export default function PublishPage() {
           <RocketOutlined /> 多平台发布
         </Title>
         <Text type="secondary">
-          一键将短视频发布到抖音、快手、视频号等多个平台
+          一键将短视频发布到抖音、小红书、视频号等多个平台
         </Text>
       </div>
 
@@ -308,37 +322,62 @@ export default function PublishPage() {
           >
             <Spin spinning={loading}>
               <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                {/* 平台选择 */}
+                {/* 平台选择（多选） */}
                 <div>
                   <Text strong style={{ display: "block", marginBottom: 8 }}>
-                    选择平台
+                    选择平台（可多选）
                   </Text>
                   <div style={{ display: "flex", gap: 12 }}>
-                    {PLATFORMS.map((p) => (
-                      <div
-                        key={p.key}
-                        onClick={() => setPlatform(p.key)}
-                        style={{
-                          flex: 1,
-                          padding: "16px 12px",
-                          borderRadius: "var(--radius-md)",
-                          border: `2px solid ${platform === p.key ? p.color : "var(--border-default)"}`,
-                          background: platform === p.key ? p.bgColor : "var(--bg-card)",
-                          cursor: "pointer",
-                          textAlign: "center",
-                          transition: "all 0.2s",
-                        }}
-                      >
-                        <div style={{ fontSize: 28, marginBottom: 4 }}>{p.icon}</div>
-                        <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
-                        <div>
-                          <Text type="secondary" style={{ fontSize: 11 }}>
-                            {p.desc}
-                          </Text>
+                    {PLATFORMS.map((p) => {
+                      const selected = platforms.includes(p.key);
+                      return (
+                        <div
+                          key={p.key}
+                          onClick={() => togglePlatform(p.key)}
+                          style={{
+                            flex: 1,
+                            padding: "16px 12px",
+                            borderRadius: "var(--radius-md)",
+                            border: `2px solid ${selected ? p.color : "var(--border-default)"}`,
+                            background: selected ? p.bgColor : "var(--bg-card)",
+                            cursor: "pointer",
+                            textAlign: "center",
+                            transition: "all 0.2s",
+                            position: "relative",
+                          }}
+                        >
+                          {selected && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: 8,
+                                right: 8,
+                                width: 20,
+                                height: 20,
+                                borderRadius: "50%",
+                                background: p.color,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                              }}
+                            >
+                              <CheckCircleOutlined style={{ color: "white", fontSize: 12 }} />
+                            </div>
+                          )}
+                          <div style={{ fontSize: 28, marginBottom: 4 }}>{p.icon}</div>
+                          <Text strong style={{ fontSize: 13 }}>{p.name}</Text>
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 11 }}>
+                              {p.desc}
+                            </Text>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: "block" }}>
+                    已选择 {platforms.length} 个平台
+                  </Text>
                 </div>
 
                 {/* 视频路径 */}
