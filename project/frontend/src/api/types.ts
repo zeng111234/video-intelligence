@@ -97,8 +97,10 @@ export interface CrawlerCapabilitiesResponse {
   missing_configuration: string[];
   permission_status: string;
   monthly_query_count: number;
+  monthly_estimated_cost_cny: number;
   monthly_warning_queries: number;
   monthly_hard_limit_queries: number;
+  monthly_hard_limit_cost_cny: number;
   cache_ttl_minutes: number;
   supports_usage: boolean;
   usage: Record<string, unknown> | null;
@@ -116,17 +118,23 @@ export interface CrawlerPlatformPreview {
   platform_label: string;
   cache_hit: boolean;
   estimated_api_calls: number;
+  platform_unit_price_cny: number | null;
+  estimated_cost_cny: number | null;
   blocked_reason: string | null;
 }
 
 export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
   provider_mode: string;
   provider_name: string;
+  ranking_mode: string;
   monthly_query_count: number;
+  monthly_estimated_cost_cny: number;
   monthly_warning_queries: number;
   monthly_hard_limit_queries: number;
+  monthly_hard_limit_cost_cny: number;
   cache_ttl_minutes: number;
   platforms: CrawlerPlatformPreview[];
+  estimated_total_cost_cny: number;
   blocked: boolean;
 }
 
@@ -145,6 +153,16 @@ export interface CrawlerCandidateResult {
   like_growth_per_hour: number | null;
   anomaly_status: string | null;
   platform_rank: number | null;
+  provider_hot_rank: number | null;
+  system_rank: number | null;
+  plays: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  favorites: number | null;
+  component_scores: Record<string, number | null>;
+  data_quality_warnings: string[];
+  model_version: string | null;
   evidence: string | null;
   reasons: string[];
 }
@@ -185,6 +203,7 @@ export interface CrawlerBatchResponse {
   platform_runs: CrawlerPlatformRun[];
   total_api_calls: number;
   total_candidates: number;
+  total_estimated_cost_cny: number;
 }
 
 export interface CrawlerBatchListResponse {
@@ -197,9 +216,49 @@ export interface CrawlerBatchListResponse {
 export interface CopywritingResponse {
   task_id: string;
   status: string;
+  provider_name: string;
+  model_name: string;
+  is_mock: boolean;
+  token_usage: Record<string, number>;
   result_text: string | null;
   result_variants: string[];
   error_message: string | null;
+}
+
+export interface CopywritingCapabilitiesResponse {
+  provider_name: string;
+  display_name: string;
+  mode: string;
+  enabled: boolean;
+  model_name: string;
+  max_input_chars: number;
+  max_output_chars: number;
+  supports_variants: boolean;
+  max_variants: number;
+  supported_platforms: string[];
+  missing_configuration: string[];
+}
+
+export interface CopywritingGenerateRequest {
+  content_brief: string;
+  platform?: string;
+  target_audience?: string;
+  selling_points?: string;
+  call_to_action?: string;
+  style_prompt?: string;
+  target_length?: number;
+  tone?: string;
+  variant_count?: number;
+}
+
+export interface CopywritingRewriteRequest {
+  source_text: string;
+  platform?: string;
+  target_audience?: string;
+  style_prompt?: string;
+  target_length?: number;
+  tone?: string;
+  variant_count?: number;
 }
 
 /* ---- 多平台发布 ---- */

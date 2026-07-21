@@ -10,6 +10,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Segmented,
   Select,
   Space,
   Table,
@@ -20,7 +21,6 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   CheckCircleOutlined,
-  CloseCircleOutlined,
   EyeOutlined,
   ReloadOutlined,
   SearchOutlined,
@@ -56,6 +56,8 @@ const STATUS_COLOR: Record<string, string> = {
   outcome_unknown: "error",
 };
 
+type RankingMode = "provider" | "system";
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     pending: "等待中",
@@ -68,6 +70,14 @@ function statusLabel(status: string) {
     outcome_unknown: "结果未知",
   };
   return labels[status] || status;
+}
+
+function formatNumber(value: number | null | undefined) {
+  return value === null || value === undefined ? "未返回" : value.toLocaleString("zh-CN");
+}
+
+function formatScore(value: number | null | undefined) {
+  return value === null || value === undefined ? "暂无" : value.toFixed(1);
 }
 
 export default function KeywordCrawlerPage() {
@@ -95,9 +105,18 @@ export default function KeywordCrawlerPage() {
   const keywordHelp =
     keywordLength === 0
       ? "请先填写关键词；此按钮会先预览调用计划，弹窗确认后才执行爬取。"
-      : !canPreview
-        ? "关键词需为 2–50 个字符。"
-        : "填写完成：下一步会预览缓存、额度和三平台阻断原因。";
+        : !canPreview
+          ? "关键词需为 2–50 个字符。"
+          : "填写完成：下一步会预览缓存、额度和三平台阻断原因。";
+  const isSandboxMode = capabilities?.mode === "sandbox";
+  const crawlerDescription = capabilities
+    ? isSandboxMode
+      ? "通过 FastAPI 调用 CommercialSearchService，当前为 Sandbox 演示模式，不代表真实平台生产数据。"
+      : `通过 FastAPI 调用 ${capabilities.display_name}，当前为 Production 模式；请使用小流量关键词验证真实响应字段与授权边界。`
+    : "通过 FastAPI 调用 CommercialSearchService，结果持久化到 SQLite。";
+  const formFlowDescription = isSandboxMode
+    ? "为了避免误触发平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。Sandbox 模式会写入演示数据，但不代表真实平台生产数据。"
+    : "为了避免误触发真实平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。当前 Production 模式会调用供应商接口，请先用每平台 1 条做小流量验收。";
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -200,9 +219,7 @@ export default function KeywordCrawlerPage() {
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <div>
         <Title level={4} style={{ margin: 0 }}>三平台关键词爆款榜</Title>
-        <Text type="secondary">
-          通过 FastAPI 调用 CommercialSearchService，结果持久化到 SQLite；Sandbox 不代表真实平台生产数据。
-        </Text>
+        <Text type="secondary">{crawlerDescription}</Text>
       </div>
 
       {capabilities && (
@@ -221,6 +238,9 @@ export default function KeywordCrawlerPage() {
             </Descriptions.Item>
             <Descriptions.Item label="月度调用量">
               {capabilities.monthly_query_count} / {capabilities.monthly_hard_limit_queries}
+            </Descriptions.Item>
+            <Descriptions.Item label="本地估算费用">
+              ¥{capabilities.monthly_estimated_cost_cny.toFixed(2)} / ¥{capabilities.monthly_hard_limit_cost_cny.toFixed(2)}
             </Descriptions.Item>
             <Descriptions.Item label="缓存 TTL">{capabilities.cache_ttl_minutes} 分钟</Descriptions.Item>
             <Descriptions.Item label="权限状态">{capabilities.permission_status}</Descriptions.Item>
@@ -243,7 +263,7 @@ export default function KeywordCrawlerPage() {
           type="info"
           showIcon
           message="执行流程：填写关键词 → 预览调用计划 → 在弹窗中确认并执行爬取"
-          description="为了避免误触发平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。Sandbox 模式会写入演示数据，但不代表真实平台生产数据。"
+          description={formFlowDescription}
         />
         <Space wrap align="end">
           <div>
@@ -289,7 +309,7 @@ export default function KeywordCrawlerPage() {
           </Checkbox>
           <Tooltip title={!canPreview ? keywordHelp : "先检查缓存命中、预计新增调用和阻断原因"}>
             <Button type="primary" loading={submitting} disabled={!canPreview} onClick={handlePreview}>
-              预览调用计划
+              预览并确认
             </Button>
           </Tooltip>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>
@@ -326,7 +346,7 @@ export default function KeywordCrawlerPage() {
               type={preview.provider_mode === "sandbox" ? "warning" : "info"}
               showIcon
               message={`当前模式：${preview.provider_mode === "sandbox" ? "Sandbox 演示" : preview.provider_mode}`}
-              description={`预计新增调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；本月已用 ${preview.monthly_query_count}/${preview.monthly_hard_limit_queries}`}
+              description={`排行模式：${preview.ranking_mode}；预计新增调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；预计费用 ¥${preview.estimated_total_cost_cny.toFixed(2)}；本月已用 ${preview.monthly_query_count}/${preview.monthly_hard_limit_queries}，本地费用 ¥${preview.monthly_estimated_cost_cny.toFixed(2)}/¥${preview.monthly_hard_limit_cost_cny.toFixed(2)}`}
             />
             <List
               dataSource={preview.platforms}
@@ -337,6 +357,8 @@ export default function KeywordCrawlerPage() {
                       <Tag color="blue">{item.platform_label}</Tag>
                       {item.cache_hit ? <Tag color="cyan">缓存命中</Tag> : <Tag>需查询</Tag>}
                       <Tag>预计调用 {item.estimated_api_calls}</Tag>
+                      <Tag>单价 {item.platform_unit_price_cny === null ? "未知" : `¥${item.platform_unit_price_cny.toFixed(2)}`}</Tag>
+                      <Tag>预计费用 {item.estimated_cost_cny === null ? "未知" : `¥${item.estimated_cost_cny.toFixed(2)}`}</Tag>
                     </Space>
                     {item.blocked_reason && (
                       <Text type="danger"><WarningOutlined /> {item.blocked_reason}</Text>
@@ -353,6 +375,8 @@ export default function KeywordCrawlerPage() {
 }
 
 function BatchDetail({ batch }: { batch: CrawlerBatchResponse }) {
+  const [rankingMode, setRankingMode] = useState<RankingMode>("provider");
+
   return (
     <Card title={`批次详情：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
       <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
@@ -360,15 +384,34 @@ function BatchDetail({ batch }: { batch: CrawlerBatchResponse }) {
         <Descriptions.Item label="范围">{batch.published_window_days === 1 ? "近 24 小时" : "近 7 天"}</Descriptions.Item>
         <Descriptions.Item label="每平台">{batch.count_per_platform} 条</Descriptions.Item>
         <Descriptions.Item label="强制刷新">{batch.force_refresh ? "是" : "否"}</Descriptions.Item>
+        <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>
       </Descriptions>
+      <Space style={{ marginBottom: 12 }}>
+        <Text type="secondary">展示顺序</Text>
+        <Segmented
+          value={rankingMode}
+          onChange={(value) => setRankingMode(value as RankingMode)}
+          options={[
+            { label: "平台热度名次", value: "provider" },
+            { label: "系统评估排行", value: "system" },
+          ]}
+        />
+      </Space>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {batch.platform_runs.map((run) => <PlatformRunDetail key={run.run_id} run={run} />)}
+        {batch.platform_runs.map((run) => <PlatformRunDetail key={run.run_id} run={run} rankingMode={rankingMode} />)}
       </Space>
     </Card>
   );
 }
 
-function PlatformRunDetail({ run }: { run: CrawlerPlatformRun }) {
+function PlatformRunDetail({ run, rankingMode }: { run: CrawlerPlatformRun; rankingMode: RankingMode }) {
+  const candidates = [...run.candidates].sort((a, b) => {
+    if (rankingMode === "system") {
+      return (a.system_rank ?? 999) - (b.system_rank ?? 999);
+    }
+    return (a.provider_hot_rank ?? a.platform_rank ?? 999) - (b.provider_hot_rank ?? b.platform_rank ?? 999);
+  });
+
   return (
     <Card
       size="small"
@@ -386,7 +429,7 @@ function PlatformRunDetail({ run }: { run: CrawlerPlatformRun }) {
       ) : (
         <List
           style={{ marginTop: 12 }}
-          dataSource={run.candidates}
+          dataSource={candidates}
           renderItem={(item) => <CandidateListItem item={item} />}
         />
       )}
@@ -395,6 +438,8 @@ function PlatformRunDetail({ run }: { run: CrawlerPlatformRun }) {
 }
 
 function CandidateListItem({ item }: { item: CrawlerCandidateResult }) {
+  const componentEntries = Object.entries(item.component_scores || {});
+
   return (
     <List.Item
       actions={[
@@ -403,10 +448,11 @@ function CandidateListItem({ item }: { item: CrawlerCandidateResult }) {
       ]}
     >
       <List.Item.Meta
-        avatar={item.platform_rank ? <Tag color="purple">#{item.platform_rank}</Tag> : undefined}
+        avatar={item.provider_hot_rank ? <Tag color="purple">热度 #{item.provider_hot_rank}</Tag> : undefined}
         title={
           <Space wrap>
             <Text strong>{item.title}</Text>
+            {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
             {item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
             {item.anomaly_status && item.anomaly_status !== "normal" && <Tag color="warning">异常：{item.anomaly_status}</Tag>}
           </Space>
@@ -414,8 +460,26 @@ function CandidateListItem({ item }: { item: CrawlerCandidateResult }) {
         description={
           <Space direction="vertical" size={2}>
             <Text type="secondary">
-              作者：{item.author_name}；趋势分：{item.trend_score ?? "暂无"}；置信度：{item.confidence ?? "暂无"}；样本池：{item.pool_size ?? "暂无"}；增长：{item.like_growth_per_hour ?? "待复采"}
+              作者：{item.author_name}；趋势分：{formatScore(item.trend_score)}；置信度：{item.confidence ?? "暂无"}；样本池：{item.pool_size ?? "暂无"}；增长：{item.like_growth_per_hour ?? "首次观测"}
             </Text>
+            <Text type="secondary">
+              播放：{formatNumber(item.plays)}；点赞：{formatNumber(item.likes)}；评论：{formatNumber(item.comments)}；分享：{formatNumber(item.shares)}；收藏：{formatNumber(item.favorites)}
+            </Text>
+            {componentEntries.length > 0 && (
+              <Space wrap size={[4, 4]}>
+                {componentEntries.map(([name, value]) => (
+                  <Tag key={name}>{name}: {value === null ? "暂无" : value.toFixed(1)}</Tag>
+                ))}
+              </Space>
+            )}
+            {item.data_quality_warnings.length > 0 && (
+              <Space wrap size={[4, 4]}>
+                {item.data_quality_warnings.map((warning) => (
+                  <Tag key={warning} color="warning">{warning}</Tag>
+                ))}
+              </Space>
+            )}
+            {item.model_version && <Text type="secondary">模型：{item.model_version}</Text>}
             {item.evidence && <Text type="secondary">依据：{item.evidence}</Text>}
             {item.reasons.length > 0 && (
               <Paragraph style={{ margin: 0 }}>

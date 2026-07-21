@@ -1,15 +1,10 @@
-"""LLM 文案改写适配器。
-
-支持多种后端：
-- 本地/自托管 LLM（如 Ollama、vLLM）
-- OpenAI 兼容 API
-- 离线沙箱（演示模式）
-"""
+"""LLM 文案生成适配器。"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -23,31 +18,92 @@ class LLMAdapterError(RuntimeError):
         self.retryable = retryable
 
 
-class SandboxCopywritingEngine:
-    """离线沙箱文案改写引擎——不发起真实 LLM 调用。"""
+class DisabledCopywritingEngine:
+    """未配置真实模型 Key 时的禁用引擎。"""
 
-    def capabilities(self) -> dict[str, str | bool | int]:
+    def __init__(
+        self,
+        *,
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-v4-flash",
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.last_usage: dict[str, int] = {}
+
+    def capabilities(self) -> dict[str, Any]:
+        return {
+            "provider_name": "deepseek",
+            "display_name": f"AI 文案生成 ({self.model})",
+            "mode": "disabled",
+            "enabled": False,
+            "max_input_chars": 12000,
+            "max_output_chars": 4000,
+            "supports_variants": True,
+            "max_variants": 5,
+            "model": self.model,
+            "missing_configuration": ["COPYWRITING_API_KEY"],
+        }
+
+    def generate(self, **kwargs) -> list[str]:
+        raise LLMAdapterError("AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。")
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        raise LLMAdapterError("AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。")
+
+
+class SandboxCopywritingEngine:
+    """离线沙箱文案引擎，不发起真实 LLM 调用。"""
+
+    last_usage: dict[str, int] = {}
+
+    def capabilities(self) -> dict[str, Any]:
         return {
             "provider_name": "sandbox_copywriting",
-            "display_name": "文案改写（演示）",
+            "display_name": "文案生成（演示）",
             "mode": "sandbox",
             "enabled": True,
             "max_input_chars": 5000,
             "max_output_chars": 2000,
             "supports_variants": True,
             "max_variants": 3,
+            "model": "sandbox-template",
+            "missing_configuration": [],
         }
 
-    def rewrite(
+    def generate(
         self,
-        source_text: str,
         *,
+        content_brief: str,
+        platform: str = "douyin",
+        target_audience: str = "",
+        selling_points: str = "",
+        call_to_action: str = "",
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
         variant_count: int = 1,
     ) -> list[str]:
-        """返回演示文案，不调用真实 LLM。"""
+        snippet = content_brief[:80].replace("\n", " ")
+        templates = [
+            f"【演示】开场钩子：如果你正在关注「{snippet}」，这条内容值得看完。\n主体：围绕核心卖点，用更清晰的结构讲明价值。\nCTA：{call_to_action or '欢迎私信了解更多。'}",
+            f"【演示】开场钩子：同样是做{platform}内容，差距往往在表达顺序。\n主体：「{snippet}」可以先讲痛点，再给方案。\nCTA：{call_to_action or '觉得有用可以收藏。'}",
+            f"【演示】开场钩子：别急着堆信息，先让目标用户听懂重点。\n主体：面向{target_audience or '目标客户'}，突出{selling_points or '核心价值'}。\nCTA：{call_to_action or '想要方案可以联系我们。'}",
+        ]
+        count = max(1, min(variant_count, len(templates)))
+        return templates[:count]
+
+    def rewrite(
+        self,
+        source_text: str,
+        *,
+        platform: str = "douyin",
+        target_audience: str = "",
+        style_prompt: str = "",
+        target_length: int = 300,
+        tone: str = "professional",
+        variant_count: int = 1,
+    ) -> list[str]:
         snippet = source_text[:80].replace("\n", " ")
         templates = [
             f"【演示】专业口播文案：围绕「{snippet}」展开，以数据驱动的视角为您解读行业趋势。了解更多请联系我们。",
@@ -59,10 +115,7 @@ class SandboxCopywritingEngine:
 
 
 class OpenAICompatibleCopywritingEngine:
-    """通过 OpenAI 兼容 API 调用 LLM 进行文案改写。
-
-    兼容 OpenAI、Ollama /v1、vLLM 等后端。
-    """
+    """通过 OpenAI 兼容 API 调用 LLM 进行文案生成。"""
 
     def __init__(
         self,
@@ -76,20 +129,29 @@ class OpenAICompatibleCopywritingEngine:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = max(5.0, timeout_seconds)
+        self.last_usage: dict[str, int] = {}
 
     @classmethod
     def from_env(cls) -> OpenAICompatibleCopywritingEngine:
         return cls(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            model=os.getenv("COPYWRITING_LLM_MODEL", "gpt-4o-mini"),
+            api_key=os.getenv("COPYWRITING_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
+            base_url=(
+                os.getenv("COPYWRITING_BASE_URL")
+                or os.getenv("OPENAI_BASE_URL")
+                or "https://api.deepseek.com"
+            ),
+            model=(
+                os.getenv("COPYWRITING_MODEL")
+                or os.getenv("COPYWRITING_LLM_MODEL")
+                or "deepseek-v4-flash"
+            ),
         )
 
-    def capabilities(self) -> dict[str, str | bool | int]:
+    def capabilities(self) -> dict[str, Any]:
         configured = bool(self.api_key)
         return {
-            "provider_name": "openai_compatible",
-            "display_name": f"LLM 文案改写 ({self.model})",
+            "provider_name": self._provider_name(),
+            "display_name": f"AI 文案生成 ({self.model})",
             "mode": "production" if configured else "disabled",
             "enabled": configured,
             "max_input_chars": 12000,
@@ -97,54 +159,152 @@ class OpenAICompatibleCopywritingEngine:
             "supports_variants": True,
             "max_variants": 5,
             "model": self.model,
+            "missing_configuration": [] if configured else ["COPYWRITING_API_KEY"],
         }
 
-    def rewrite(
+    def generate(
         self,
-        source_text: str,
         *,
+        content_brief: str,
+        platform: str = "douyin",
+        target_audience: str = "",
+        selling_points: str = "",
+        call_to_action: str = "",
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
         variant_count: int = 1,
     ) -> list[str]:
         if not self.api_key:
-            raise LLMAdapterError("未配置 OPENAI_API_KEY，无法调用 LLM。")
-        system_prompt = self._build_system_prompt(style_prompt, target_length, tone)
-        user_prompt = f"请基于以下原文进行改写：\n\n{source_text}"
-        results: list[str] = []
-        for _ in range(max(1, variant_count)):
-            text = self._chat_completion(system_prompt, user_prompt)
-            if text:
-                results.append(text)
-        if not results:
-            raise LLMAdapterError("LLM 未返回有效内容。")
-        return results
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        system_prompt = self._build_system_prompt(
+            style_prompt,
+            target_length,
+            tone,
+            platform,
+            target_audience,
+            variant_count,
+        )
+        user_prompt = self._build_generate_prompt(
+            content_brief=content_brief,
+            platform=platform,
+            target_audience=target_audience,
+            selling_points=selling_points,
+            call_to_action=call_to_action,
+        )
+        return self._generate_variants(system_prompt, user_prompt, variant_count)
+
+    def rewrite(
+        self,
+        source_text: str,
+        *,
+        platform: str = "douyin",
+        target_audience: str = "",
+        style_prompt: str = "",
+        target_length: int = 300,
+        tone: str = "professional",
+        variant_count: int = 1,
+    ) -> list[str]:
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        system_prompt = self._build_system_prompt(
+            style_prompt,
+            target_length,
+            tone,
+            platform,
+            target_audience,
+            variant_count,
+        )
+        user_prompt = (
+            "任务：改写已有短视频文案。\n"
+            f"目标平台：{platform}\n"
+            f"目标受众：{target_audience or '未指定'}\n"
+            "要求：保持原文事实和核心信息不变，重组表达，增强开场吸引力、主体清晰度和 CTA。\n"
+            f"原文：\n{source_text}"
+        )
+        return self._generate_variants(system_prompt, user_prompt, variant_count)
+
+    def _provider_name(self) -> str:
+        if "deepseek.com" in self.base_url.lower():
+            return "deepseek"
+        return "openai_compatible"
 
     def _build_system_prompt(
-        self, style_prompt: str, target_length: int, tone: str
+        self,
+        style_prompt: str,
+        target_length: int,
+        tone: str,
+        platform: str = "douyin",
+        target_audience: str = "",
+        variant_count: int = 1,
     ) -> str:
         parts = [
             "你是一位专业的短视频口播文案撰写专家。",
-            "请根据用户提供的原文进行改写，保持核心信息不变，但用更吸引人的方式表达。",
+            "只能使用用户提供的事实，不得虚构价格、资质、客户案例、数据、效果承诺或平台背书。",
+            "输出必须围绕短视频结构：开场钩子、主体、行动号召。",
+            "每个变体都要有实质差异，不能只是替换同义词。",
+            "返回严格 JSON，不要 Markdown，不要解释。",
+            'JSON 格式：{"variants":["文案1","文案2"],"notes":[]}',
         ]
         if style_prompt:
             parts.append(f"风格要求：{style_prompt}")
+        parts.append(f"目标平台：{platform}")
+        if target_audience:
+            parts.append(f"目标受众：{target_audience}")
         parts.append(f"语气：{tone}")
-        parts.append(f"目标字数：约{target_length}字")
-        parts.append("只输出改写后的文案，不要解释。")
+        parts.append(f"目标字数：每个变体约{target_length}字")
+        parts.append(f"变体数量：{max(1, min(variant_count, 5))}")
         return "\n".join(parts)
 
+    def _build_generate_prompt(
+        self,
+        *,
+        content_brief: str,
+        platform: str,
+        target_audience: str,
+        selling_points: str,
+        call_to_action: str,
+    ) -> str:
+        return "\n".join(
+            [
+                "任务：从需求生成短视频文案。",
+                f"目标平台：{platform}",
+                f"内容概要：{content_brief}",
+                f"目标受众：{target_audience or '未指定'}",
+                f"核心卖点：{selling_points or '未指定'}",
+                f"行动号召：{call_to_action or '未指定'}",
+                "要求：信息不足时保持克制，用可验证表述，不编造缺失事实。",
+            ]
+        )
+
+    def _generate_variants(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        variant_count: int,
+    ) -> list[str]:
+        content = self._chat_completion(system_prompt, user_prompt)
+        variants = self._parse_variants(content)
+        count = max(1, min(variant_count, 5))
+        variants = [item.strip() for item in variants if item.strip()]
+        if not variants:
+            raise LLMAdapterError("LLM 未返回有效内容。")
+        return variants[:count]
+
     def _chat_completion(self, system_prompt: str, user_prompt: str) -> str:
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.8,
-            "max_tokens": 2000,
+            "max_tokens": 2400,
+            "response_format": {"type": "json_object"},
         }
+        if self._provider_name() == "deepseek":
+            payload["thinking"] = {"type": "disabled"}
+
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers = {
             "Content-Type": "application/json; charset=utf-8",
@@ -156,41 +316,107 @@ class OpenAICompatibleCopywritingEngine:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
                 raw = response.read()
         except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:300]
             raise LLMAdapterError(
-                f"LLM API 返回 HTTP {exc.code}：{detail}",
-                retryable=exc.code in {429, 500, 502, 503},
+                self._http_error_message(exc),
+                retryable=exc.code in {408, 409, 425, 429, 500, 502, 503, 504},
             ) from exc
         except (TimeoutError, URLError) as exc:
             raise LLMAdapterError(
-                "无法连接 LLM 服务，请检查网络和配置。", retryable=True
+                "无法连接 LLM 服务，请检查网络、Base URL 和供应商状态。",
+                retryable=True,
             ) from exc
+
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise LLMAdapterError("LLM 返回了无效 JSON。") from exc
+
+        self.last_usage = self._extract_usage(envelope.get("usage", {}))
         choices = envelope.get("choices", [])
         if not choices:
             return ""
         return str(choices[0].get("message", {}).get("content", "")).strip()
 
+    @staticmethod
+    def _http_error_message(exc: HTTPError) -> str:
+        raw = exc.read().decode("utf-8", errors="replace")[:300]
+        try:
+            payload = json.loads(raw)
+            detail = payload.get("error", {}).get("message") or payload.get("message")
+        except json.JSONDecodeError:
+            detail = ""
+        suffix = f"：{detail}" if detail else ""
+        return f"LLM API 返回 HTTP {exc.code}{suffix}"
+
+    @staticmethod
+    def _extract_usage(usage: Any) -> dict[str, int]:
+        if not isinstance(usage, dict):
+            return {}
+        result: dict[str, int] = {}
+        for source_key, target_key in [
+            ("prompt_tokens", "prompt_tokens"),
+            ("completion_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ]:
+            value = usage.get(source_key)
+            if isinstance(value, int):
+                result[target_key] = value
+        return result
+
+    @staticmethod
+    def _parse_variants(content: str) -> list[str]:
+        if not content.strip():
+            return []
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return [cleaned]
+        if isinstance(payload, dict):
+            variants = payload.get("variants")
+            if isinstance(variants, list):
+                return [str(item) for item in variants]
+            text = payload.get("text") or payload.get("result")
+            if text:
+                return [str(text)]
+        if isinstance(payload, list):
+            return [str(item) for item in payload]
+        return []
+
 
 def build_copywriting_engine(secrets: dict[str, Any] | None = None):
-    """工厂：根据配置返回合适的文案改写引擎。"""
-    import streamlit as st
+    """工厂：根据配置返回文案引擎。
 
-    mode = os.getenv("COPYWRITING_MODE", "").strip().lower()
-    if secrets:
-        mode = str(st.secrets.get("COPYWRITING_MODE", mode)).strip().lower()
-
+    兼容旧 Streamlit 调用；正式 FastAPI 依赖注入在 project/backend/app/core/deps.py。
+    """
+    mode = _setting("COPYWRITING_MODE", secrets, "production").strip().lower()
     if mode == "sandbox":
         return SandboxCopywritingEngine()
 
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if secrets:
-        api_key = str(st.secrets.get("OPENAI_API_KEY", api_key)).strip()
+    api_key = _setting("COPYWRITING_API_KEY", secrets) or _setting(
+        "OPENAI_API_KEY", secrets
+    )
+    base_url = (
+        _setting("COPYWRITING_BASE_URL", secrets)
+        or _setting("OPENAI_BASE_URL", secrets)
+        or "https://api.deepseek.com"
+    )
+    model = (
+        _setting("COPYWRITING_MODEL", secrets)
+        or _setting("COPYWRITING_LLM_MODEL", secrets)
+        or "deepseek-v4-flash"
+    )
     if api_key:
-        return OpenAICompatibleCopywritingEngine.from_env()
+        return OpenAICompatibleCopywritingEngine(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )
+    return DisabledCopywritingEngine(base_url=base_url, model=model)
 
-    # 默认沙箱
-    return SandboxCopywritingEngine()
+
+def _setting(key: str, secrets: dict[str, Any] | None = None, default: str = "") -> str:
+    value = os.getenv(key, "")
+    if not value and secrets:
+        value = str(secrets.get(key, ""))
+    return (value or default).strip()

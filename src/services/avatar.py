@@ -104,7 +104,7 @@ class AvatarService:
             stage="正在提交",
             estimated_cost_cny=capability.estimated_cost_cny,
             estimated_seconds=capability.estimated_seconds,
-            is_mock=False,
+            is_mock=capability.mode.value == "sandbox",
         )
         self.repository.save_task(task)
         try:
@@ -224,16 +224,23 @@ class AvatarService:
     def _apply_snapshot(task: AvatarTask, snapshot: AvatarJobSnapshot) -> AvatarTask:
         status_map = {
             AvatarProviderStatus.QUEUED: TaskStatus.QUEUED,
+            AvatarProviderStatus.SUBMITTED: TaskStatus.SUBMITTED,
             AvatarProviderStatus.RUNNING: TaskStatus.RUNNING,
             AvatarProviderStatus.SUCCEEDED: TaskStatus.SUCCEEDED,
             AvatarProviderStatus.FAILED: TaskStatus.FAILED,
-            AvatarProviderStatus.OUTCOME_UNKNOWN: TaskStatus.FAILED,
+            AvatarProviderStatus.CANCELLED: TaskStatus.CANCELLED,
+            AvatarProviderStatus.OUTCOME_UNKNOWN: TaskStatus.OUTCOME_UNKNOWN,
         }
         now = datetime.now().astimezone()
         elapsed = (
             (now - task.created_at).total_seconds()
             if snapshot.status
-            in {AvatarProviderStatus.SUCCEEDED, AvatarProviderStatus.FAILED}
+            in {
+                AvatarProviderStatus.SUCCEEDED,
+                AvatarProviderStatus.FAILED,
+                AvatarProviderStatus.CANCELLED,
+                AvatarProviderStatus.OUTCOME_UNKNOWN,
+            }
             else task.elapsed_seconds
         )
         return task.model_copy(

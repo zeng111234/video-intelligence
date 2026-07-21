@@ -179,7 +179,7 @@ def test_ten_minute_cache_creates_zero_new_calls_and_no_new_matches() -> None:
 
     first_runs = repository.list_platform_search_runs(first.batch_id)
     second_runs = repository.list_platform_search_runs(second.batch_id)
-    assert all(run.status == PlatformRunStatus.SUCCEEDED for run in first_runs)
+    assert all(run.status == PlatformRunStatus.PARTIAL for run in first_runs)
     assert all(run.status == PlatformRunStatus.CACHED for run in second_runs)
     assert sum(run.api_call_count for run in second_runs) == 0
     assert len(provider.search_calls) == 3
@@ -200,7 +200,7 @@ def test_force_refresh_within_sixty_seconds_is_blocked_across_batches() -> None:
     assert len(provider.search_calls) == 3
 
 
-def test_connection_failure_retries_once_but_rate_limit_does_not() -> None:
+def test_connection_failure_is_not_retried_for_paid_post() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     retry_repository = MockRepository(candidates=[], tasks=[])
     retry_provider = FixtureProvider(now)
@@ -208,10 +208,10 @@ def test_connection_failure_retries_once_but_rate_limit_does_not() -> None:
     retried = _service(retry_repository, retry_provider, now).execute(keyword="二手车")
 
     assert all(
-        run.status == PlatformRunStatus.SUCCEEDED
+        run.status == PlatformRunStatus.FAILED
         for run in retry_repository.list_platform_search_runs(retried.batch_id)
     )
-    assert len(retry_provider.search_calls) == 6
+    assert len(retry_provider.search_calls) == 3
 
     limited_repository = MockRepository(candidates=[], tasks=[])
     limited_provider = FixtureProvider(now)
@@ -335,7 +335,7 @@ def test_monthly_hard_limit_blocks_network_calls() -> None:
 
     class QuotaRepository(MockRepository):
         def monthly_platform_query_count(self, since: datetime) -> int:
-            return 450
+            return 100
 
     repository = QuotaRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -344,6 +344,55 @@ def test_monthly_hard_limit_blocks_network_calls() -> None:
     runs = repository.list_platform_search_runs(batch.batch_id)
     assert all(run.status == PlatformRunStatus.BLOCKED for run in runs)
     assert provider.search_calls == []
+
+
+def test_monthly_cost_limit_blocks_network_calls() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+
+    class CostRepository(MockRepository):
+        def monthly_platform_query_cost(self, since: datetime) -> float:
+            return 10.0
+
+    repository = CostRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.endpoint_prices_cny = {
+        Platform.DOUYIN: 0.03,
+        Platform.XIAOHONGSHU: 0.12,
+        Platform.WECHAT_CHANNELS: 0.15,
+    }
+    batch = _service(repository, provider, now).execute(keyword="二手车")
+
+    runs = repository.list_platform_search_runs(batch.batch_id)
+    assert all(run.status == PlatformRunStatus.BLOCKED for run in runs)
+    assert provider.search_calls == []
+
+
+def test_preview_reports_price_and_uses_six_hour_cache() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.endpoint_prices_cny = {
+        Platform.DOUYIN: 0.03,
+        Platform.XIAOHONGSHU: 0.12,
+        Platform.WECHAT_CHANNELS: 0.15,
+    }
+    service = _service(repository, provider, now)
+    service.execute(keyword="二手车")
+
+    cached_preview = service.preview(keyword="二手车")
+
+    assert all(item.cache_hit for item in cached_preview)
+    assert all(item.estimated_api_calls == 0 for item in cached_preview)
+    assert all(item.estimated_cost_cny == 0 for item in cached_preview)
+
+    later_preview = _service(
+        repository,
+        provider,
+        now + timedelta(hours=6, minutes=1),
+    ).preview(keyword="二手车")
+
+    assert all(not item.cache_hit for item in later_preview)
+    assert sum(item.estimated_cost_cny or 0 for item in later_preview) == 0.3
 
 
 def test_search_batch_model_rejects_unsupported_window() -> None:

@@ -16,6 +16,7 @@ from src.adapters.licensed import (  # noqa: E402
     DisabledLicensedSearchProvider,
     SandboxLicensedSearchProvider,
 )
+from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from src.services.candidate import CandidateService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
@@ -23,12 +24,18 @@ from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
+from src.services.avatar import AvatarService  # noqa: E402
 from src.services.heat import HeatService  # noqa: E402
 from src.services.keyword_trend import KeywordTrendService  # noqa: E402
 from src.services.source import SourceService  # noqa: E402
-from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
+from src.adapters.llm import (  # noqa: E402
+    DisabledCopywritingEngine,
+    OpenAICompatibleCopywritingEngine,
+    SandboxCopywritingEngine,
+)
 from src.adapters.video_editor import SandboxVideoEditor  # noqa: E402
-from src.adapters.publishers.sandbox import SandboxPublisher  # noqa: E402
+from src.adapters.avatar import build_avatar_provider  # noqa: E402
+from src.adapters.publishers.sandbox import build_publisher  # noqa: E402
 from src.models import PublishPlatform  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
     DATABASE_PATH,
@@ -42,6 +49,12 @@ from project.backend.app.core.config import (  # noqa: E402
     CRAWLER_PROVIDER_MODE,
     CRAWLER_PROVIDER_NAME,
     CrawlerProviderMode,
+    ONEAPI_API_KEY,
+    COPYWRITING_API_KEY,
+    COPYWRITING_BASE_URL,
+    COPYWRITING_MODE,
+    COPYWRITING_MODEL,
+    CopywritingProviderMode,
 )
 
 
@@ -74,6 +87,8 @@ def get_keyword_trend_service() -> KeywordTrendService:
 def get_licensed_search_provider():
     if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.SANDBOX:
         return SandboxLicensedSearchProvider()
+    if CRAWLER_PROVIDER_MODE == CrawlerProviderMode.ONEAPI:
+        return OneApiLicensedSearchProvider(ONEAPI_API_KEY)
     return DisabledLicensedSearchProvider(CRAWLER_PROVIDER_NAME)
 
 
@@ -147,8 +162,22 @@ def get_transcription_service() -> TranscriptionService:
 
 @lru_cache
 def get_copywriting_engine():
-    """获取文案改写引擎实例（当前默认沙箱模式）。"""
-    return SandboxCopywritingEngine()
+    """获取 AI 文案引擎。
+
+    FastAPI 正式页面不自动回退到沙箱：未配置 Key 时返回 disabled 引擎。
+    """
+    if COPYWRITING_MODE == CopywritingProviderMode.SANDBOX:
+        return SandboxCopywritingEngine()
+    if COPYWRITING_API_KEY:
+        return OpenAICompatibleCopywritingEngine(
+            api_key=COPYWRITING_API_KEY,
+            base_url=COPYWRITING_BASE_URL,
+            model=COPYWRITING_MODEL,
+        )
+    return DisabledCopywritingEngine(
+        base_url=COPYWRITING_BASE_URL,
+        model=COPYWRITING_MODEL,
+    )
 
 
 @lru_cache
@@ -188,18 +217,31 @@ def get_video_editing_service() -> VideoEditingService:
 
 
 @lru_cache
-def get_publishers() -> dict[str, SandboxPublisher]:
+def get_publishers():
     """构建已注册的发布平台适配器映射。"""
     return {
-        PublishPlatform.DOUYIN: SandboxPublisher(PublishPlatform.DOUYIN),
-        PublishPlatform.KUAISHOU: SandboxPublisher(PublishPlatform.KUAISHOU),
-        PublishPlatform.WECHAT_CHANNELS: SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),
+        platform.value: build_publisher(platform)
+        for platform in (
+            PublishPlatform.DOUYIN,
+            PublishPlatform.KUAISHOU,
+            PublishPlatform.WECHAT_CHANNELS,
+            PublishPlatform.XIAOHONGSHU,
+        )
     }
 
 
 @lru_cache
 def get_publish_service() -> PublishService:
     return PublishService(get_repository(), get_publishers())
+
+
+@lru_cache
+def get_avatar_service() -> AvatarService:
+    return AvatarService(
+        get_repository(),
+        build_avatar_provider(),
+        result_directory=PROJECT_ROOT / "data" / "avatar_results",
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from project.backend.app.main import app  # noqa: E402
+from project.backend.app.core import deps as backend_deps  # noqa: E402
+from project.backend.app.core.config import CrawlerProviderMode  # noqa: E402
+from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 
 
 @pytest.fixture()
@@ -322,7 +325,10 @@ class TestCrawlerBatches:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["platforms"]) == 3
+        assert data["ranking_mode"] == "keyword_hot"
+        assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
+        assert all("estimated_cost_cny" in item for item in data["platforms"])
 
     def test_create_and_read_persistent_batch(self, client: TestClient):
         keyword = f"露营{uuid4().hex[:6]}"
@@ -346,6 +352,15 @@ class TestCrawlerBatches:
         detail = detail_resp.json()
         assert detail["batch_id"] == batch_id
         assert sum(len(run["candidates"]) for run in detail["platform_runs"]) >= 1
+        first_candidate = next(
+            candidate
+            for run in detail["platform_runs"]
+            for candidate in run["candidates"]
+        )
+        assert "provider_hot_rank" in first_candidate
+        assert "system_rank" in first_candidate
+        assert "component_scores" in first_candidate
+        assert "data_quality_warnings" in first_candidate
 
         list_resp = client.get("/api/v1/crawler/batches")
         assert list_resp.status_code == 200
@@ -354,6 +369,46 @@ class TestCrawlerBatches:
     def test_old_crawler_tasks_contract_removed(self, client: TestClient):
         resp = client.get("/api/v1/crawler/tasks")
         assert resp.status_code == 404
+
+    def test_fastapi_oneapi_provider_requires_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        backend_deps.get_licensed_search_provider.cache_clear()
+        monkeypatch.setattr(
+            backend_deps,
+            "CRAWLER_PROVIDER_MODE",
+            CrawlerProviderMode.ONEAPI,
+        )
+        monkeypatch.setattr(backend_deps, "ONEAPI_API_KEY", "")
+
+        provider = backend_deps.get_licensed_search_provider()
+        assert isinstance(provider, OneApiLicensedSearchProvider)
+        capability = provider.capabilities()
+        assert capability.mode.value == "production"
+        assert capability.enabled is False
+        assert "OneAPI API Key" in capability.missing_configuration
+
+    def test_fastapi_oneapi_provider_enables_with_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        backend_deps.get_licensed_search_provider.cache_clear()
+        monkeypatch.setattr(
+            backend_deps,
+            "CRAWLER_PROVIDER_MODE",
+            CrawlerProviderMode.ONEAPI,
+        )
+        monkeypatch.setattr(backend_deps, "ONEAPI_API_KEY", "configured-for-test")
+
+        provider = backend_deps.get_licensed_search_provider()
+        assert isinstance(provider, OneApiLicensedSearchProvider)
+        capability = provider.capabilities()
+        assert capability.mode.value == "production"
+        assert capability.enabled is True
+        assert capability.credential_alias == "ONEAPI_API_KEY"
+
+        backend_deps.get_licensed_search_provider.cache_clear()
 
 
 # ---------------------------------------------------------------------------

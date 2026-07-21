@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from enum import StrEnum
 from pathlib import Path
 
 # config.py 在 project/backend/app/core/ 下，需要 5 层 parent 才能到仓库根
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 DATABASE_PATH = PROJECT_ROOT / "data" / "video_intelligence.db"
+STREAMLIT_SECRETS_PATH = PROJECT_ROOT / ".streamlit" / "secrets.toml"
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +34,28 @@ def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
 
+def _legacy_streamlit_secret(key: str) -> str:
+    """读取旧 8501 Streamlit secrets，供 1001/2001 迁移期复用凭证。
+
+    环境变量仍然优先；这里仅作为兼容来源，避免把旧系统里已配置的
+    OneAPI Key 丢失。调用方不得打印密钥值。
+    """
+    if not STREAMLIT_SECRETS_PATH.exists():
+        return ""
+    try:
+        value = tomllib.loads(STREAMLIT_SECRETS_PATH.read_text(encoding="utf-8")).get(
+            key,
+            "",
+        )
+    except (OSError, tomllib.TOMLDecodeError):
+        return ""
+    return str(value).strip() if value is not None else ""
+
+
+def _secret(key: str, default: str = "") -> str:
+    return _env(key) or _legacy_streamlit_secret(key) or default
+
+
 # ASR 模式：sandbox / local / cloud（默认 sandbox）
 ASR_MODE: ASRMode = ASRMode(_env("ASR_MODE", "sandbox") or "sandbox")
 
@@ -53,10 +77,51 @@ ALIYUN_ASR_APP_KEY: str = _env("ALIYUN_ASR_APP_KEY")
 class CrawlerProviderMode(StrEnum):
     """关键词商业搜索供应商模式。"""
     SANDBOX = "sandbox"
+    ONEAPI = "oneapi"
     PRODUCTION = "production"
 
 
-CRAWLER_PROVIDER_MODE: CrawlerProviderMode = CrawlerProviderMode(
-    _env("CRAWLER_PROVIDER_MODE", "sandbox") or "sandbox"
+_crawler_mode_value = (
+    _secret("CRAWLER_PROVIDER_MODE")
+    or _secret("VIDEO_LICENSED_PROVIDER_MODE")
+    or "sandbox"
 )
-CRAWLER_PROVIDER_NAME: str = _env("CRAWLER_PROVIDER_NAME", "commercial_provider_pending")
+CRAWLER_PROVIDER_MODE: CrawlerProviderMode = CrawlerProviderMode(
+    _crawler_mode_value
+)
+CRAWLER_PROVIDER_NAME: str = _secret(
+    "CRAWLER_PROVIDER_NAME",
+    "commercial_provider_pending",
+)
+ONEAPI_API_KEY: str = _secret("ONEAPI_API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# AI 文案大模型配置
+# ---------------------------------------------------------------------------
+
+
+class CopywritingProviderMode(StrEnum):
+    """AI 文案供应商模式。"""
+
+    SANDBOX = "sandbox"
+    PRODUCTION = "production"
+
+
+_copywriting_mode_value = _secret("COPYWRITING_MODE", "production") or "production"
+COPYWRITING_MODE: CopywritingProviderMode = CopywritingProviderMode(
+    _copywriting_mode_value
+)
+COPYWRITING_API_KEY: str = (
+    _secret("COPYWRITING_API_KEY") or _secret("OPENAI_API_KEY")
+)
+COPYWRITING_BASE_URL: str = (
+    _secret("COPYWRITING_BASE_URL")
+    or _secret("OPENAI_BASE_URL")
+    or "https://api.deepseek.com"
+)
+COPYWRITING_MODEL: str = (
+    _secret("COPYWRITING_MODEL")
+    or _secret("COPYWRITING_LLM_MODEL")
+    or "deepseek-v4-flash"
+)

@@ -262,7 +262,9 @@ class KeywordTrendService:
                 )
             reasons.append(f"近 7 天有效入榜 {appearance_count} 次")
             if growth is None:
-                reasons.append("这是首次观测；至少 2 小时后再次查询才能判断增长")
+                reasons.append(
+                    "首次观测：暂无真实增长证据；增长组件使用入榜持续性替代分"
+                )
             else:
                 reasons.append(
                     f"{growth_hours:.1f} 小时点赞增长 {growth:.1f}/小时，分位 P{growth_percentile:.0f}"

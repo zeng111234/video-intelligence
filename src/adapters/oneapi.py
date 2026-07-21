@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import socket
 
-from pydantic import HttpUrl
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from pydantic import ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from src.adapters.licensed import LicensedProviderError
 from src.models import (
@@ -185,17 +183,23 @@ class OneApiLicensedSearchProvider:
             },
             timeout_unknown=False,
         )
-        records = self._extract_candidate_list(usage_body.get("data"))
-        estimated_cost = sum(
-            value
-            for item in records
-            if (value := self._to_float(self._first(item, "cost", "amount", "fee")))
-            is not None
-        )
+        records = self._extract_usage_records(usage_body.get("data"))
+        estimated_cost = sum(self._record_cost(item) for item in records)
         platform_queries = sum(
             max(
                 0,
-                self._to_int(self._first(item, "count", "request_count", "times")) or 1,
+                self._to_int(
+                    self._first(
+                        item,
+                        "successCount",
+                        "success_count",
+                        "success",
+                        "count",
+                        "request_count",
+                        "times",
+                    )
+                )
+                or 0,
             )
             for item in records
         )
@@ -265,14 +269,14 @@ class OneApiLicensedSearchProvider:
                 "offset": "0",
                 "publish_time": str(1 if window_days == 1 else 7),
                 "filter_duration": "",
-                "sort_type": "0",
+                "sort_type": "1",
                 "search_id": "",
             }
         if platform == Platform.XIAOHONGSHU:
             return "/api/xiaohongshu-v2/search_notes", {
                 "keyword": keyword,
                 "page": 1,
-                "sort_type": "general",
+                "sort_type": "popularity_descending",
                 "note_type": "不限",
                 "time_filter": "一天内" if window_days == 1 else "一周内",
                 "search_id": "",
@@ -283,11 +287,8 @@ class OneApiLicensedSearchProvider:
         return "/api/wechat-search/fetch_search_video", {
             "keyword": keyword,
             "duration": 0,
-            "sort": 0,
-            # This legacy endpoint uses its own enum rather than day counts.
-            # ``0`` means no upstream time filter; the adapter enforces the
-            # requested seven-day window locally after normalization.
-            "publish_time": 1 if window_days == 1 else 0,
+            "sort": 2,
+            "publish_time": 1 if window_days == 1 else 2,
             "offset": 0,
             "raw": False,
         }
@@ -307,8 +308,6 @@ class OneApiLicensedSearchProvider:
         }
         url = f"{self._base_url}{endpoint}"
         
-        # 记录请求详情
-        logger = logging.getLogger(__name__)
         log_http_request_response(
             url=url,
             method="POST",
@@ -511,14 +510,14 @@ class OneApiLicensedSearchProvider:
         elif status == 404:
             # 分析 404 错误原因（端点变更、资源不存在等）
             error_analysis = analyze_404_error(
-                url=f"OneAPI HTTP 404 错误",
+                url="OneAPI HTTP 404 错误",
                 response_body=None,
                 headers=None,
             )
             
             # 创建错误上下文
             error_context = create_error_context(
-                error=Exception(f"HTTP 404 错误"),
+                error=Exception("HTTP 404 错误"),
                 additional_info={
                     "status_code": status,
                     "error_analysis": error_analysis,
@@ -609,7 +608,8 @@ class OneApiLicensedSearchProvider:
         request_id: str,
     ) -> ProviderSearchItem:
         item = self._unwrap_item(raw_item)
-        item_id = self._required_text(
+        warnings: list[str] = []
+        item_id = self._optional_text(
             self._first(
                 item,
                 "aweme_id",
@@ -628,7 +628,6 @@ class OneApiLicensedSearchProvider:
                 "itemId",
                 "id",
             ),
-            "作品ID",
         )
         title = self._required_text(
             self._first(
@@ -642,6 +641,15 @@ class OneApiLicensedSearchProvider:
             ),
             "标题",
         )
+        if item_id is None:
+            item_id = self._proxy_id(
+                platform,
+                "missing-item-id",
+                raw_item,
+                title,
+                str(rank),
+            )
+            warnings.append("供应商未返回作品ID，已使用本地稳定代理ID。")
         author = self._first_mapping(
             item,
             "author",
@@ -652,7 +660,7 @@ class OneApiLicensedSearchProvider:
             "finder_info",
             "finderInfo",
         )
-        author_id = self._required_text(
+        author_id = self._optional_text(
             self._first(
                 author,
                 "sec_uid",
@@ -675,9 +683,8 @@ class OneApiLicensedSearchProvider:
                 "finder_username",
                 "finderUsername",
             ),
-            "作者ID",
         )
-        author_name = self._required_text(
+        author_name = self._optional_text(
             self._first(
                 author,
                 "nickname",
@@ -687,8 +694,19 @@ class OneApiLicensedSearchProvider:
                 "username",
             )
             or self._first(item, "author_name", "authorName", "nickname"),
-            "作者名称",
         )
+        if author_id is None:
+            author_id = self._proxy_id(
+                platform,
+                "missing-author-id",
+                raw_item,
+                title,
+                item_id,
+            )
+            warnings.append("供应商未返回作者ID，已使用本地稳定代理ID。")
+        if author_name is None:
+            author_name = "未知作者"
+            warnings.append("供应商未返回作者名称。")
         published_at = self._to_datetime(
             self._first(
                 item,
@@ -703,7 +721,8 @@ class OneApiLicensedSearchProvider:
             )
         )
         if published_at is None:
-            raise ValueError("缺少有效发布时间")
+            published_at = observed_at
+            warnings.append("供应商未返回有效发布时间，使用采样时间；时间窗无法核验。")
 
         statistics = self._first_mapping(
             item,
@@ -725,7 +744,15 @@ class OneApiLicensedSearchProvider:
             "web_url",
             "webUrl",
             "url",
-        ) or self._source_url(platform, item_id)
+        )
+        parsed_source_url = None
+        if source_url:
+            try:
+                parsed_source_url = HttpUrl(str(source_url))
+            except ValueError:
+                warnings.append("供应商返回的原视频链接无效，已置为空。")
+        else:
+            warnings.append("供应商未返回原视频链接，未生成替代链接。")
         return ProviderSearchItem(
             platform=platform,
             platform_item_id=item_id,
@@ -733,7 +760,7 @@ class OneApiLicensedSearchProvider:
             author_id=author_id,
             author_name=author_name,
             published_at=published_at,
-            source_url=HttpUrl(str(source_url)),
+            source_url=parsed_source_url,
             provider_rank=rank,
             metrics=VideoMetricSnapshot(
                 item_id=item_id,
@@ -792,6 +819,7 @@ class OneApiLicensedSearchProvider:
                 confidence=0.7,
             ),
             evidence=f"oneapi:{request_id}",
+            data_quality_warnings=warnings,
         )
 
     @classmethod
@@ -887,6 +915,53 @@ class OneApiLicensedSearchProvider:
 
         return max(candidates, key=score)
 
+    @classmethod
+    def _extract_usage_records(cls, value: Any) -> list[Mapping[str, Any]]:
+        if isinstance(value, Mapping):
+            records = cls._first(value, "records", "items", "list", "data")
+            if isinstance(records, list):
+                return [item for item in records if isinstance(item, Mapping)]
+            return [value]
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, Mapping)]
+        return []
+
+    def _record_cost(self, item: Mapping[str, Any]) -> float:
+        direct = self._to_float(self._first(item, "cost", "amount", "fee"))
+        if direct is not None:
+            return direct
+        return self._estimate_record_cost(item)
+
+    def _estimate_record_cost(self, item: Mapping[str, Any]) -> float:
+        count = self._to_int(
+            self._first(
+                item,
+                "successCount",
+                "success_count",
+                "success",
+                "count",
+                "request_count",
+                "times",
+            )
+        )
+        if not count:
+            return 0.0
+        record_text = json.dumps(item, ensure_ascii=False).casefold()
+        platform = self._platform_from_record_text(record_text)
+        if platform is None:
+            return 0.0
+        return round(count * self.endpoint_prices_cny[platform], 4)
+
+    @staticmethod
+    def _platform_from_record_text(text: str) -> Platform | None:
+        if "douyin" in text or "抖音" in text:
+            return Platform.DOUYIN
+        if "xiaohongshu" in text or "xhs" in text or "小红书" in text:
+            return Platform.XIAOHONGSHU
+        if "wechat" in text or "weixin" in text or "视频号" in text:
+            return Platform.WECHAT_CHANNELS
+        return None
+
     @staticmethod
     def _first(value: Any, *keys: str) -> Any:
         if not isinstance(value, Mapping):
@@ -907,6 +982,24 @@ class OneApiLicensedSearchProvider:
         if not text:
             raise ValueError(f"缺少{label}")
         return text
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text or None
+
+    @staticmethod
+    def _proxy_id(
+        platform: Platform,
+        reason: str,
+        raw_item: Mapping[str, Any],
+        *stable_parts: str,
+    ) -> str:
+        payload = json.dumps(raw_item, ensure_ascii=False, sort_keys=True, default=str)
+        digest = hashlib.sha256(
+            "|".join((platform.value, reason, payload, *stable_parts)).encode("utf-8")
+        ).hexdigest()[:20]
+        return f"proxy-{reason}-{digest}"
 
     @staticmethod
     def _to_datetime(value: Any) -> datetime | None:

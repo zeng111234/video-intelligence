@@ -156,7 +156,7 @@ def test_search_maps_three_platforms_without_pagination(
     assert page.items[0].platform == platform
 
 
-def test_search_request_defaults_to_general_sort_and_seven_day_window() -> None:
+def test_search_request_uses_keyword_hot_sort_and_seven_day_window() -> None:
     responses = [{"code": 200, "data": []} for _ in range(3)]
     transport = FixedTransport(responses)
     provider = build_provider(transport)
@@ -183,15 +183,15 @@ def test_search_request_defaults_to_general_sort_and_seven_day_window() -> None:
         "offset": "0",
         "publish_time": "7",
         "filter_duration": "",
-        "sort_type": "0",
+        "sort_type": "1",
         "search_id": "",
     }
     assert xhs["page"] == 1
-    assert xhs["sort_type"] == "general"
+    assert xhs["sort_type"] == "popularity_descending"
     assert xhs["time_filter"] == "一周内"
     assert wechat["offset"] == 0
-    assert wechat["sort"] == 0
-    assert wechat["publish_time"] == 0
+    assert wechat["sort"] == 2
+    assert wechat["publish_time"] == 2
 
 
 def test_xhs_camel_case_nested_card_is_selected_over_filter_lists() -> None:
@@ -270,7 +270,7 @@ def test_missing_metrics_remain_none_and_bad_items_are_reported() -> None:
                                 "publish_time": int(NOW.timestamp()),
                             }
                         },
-                        {"note_card": {"display_title": "缺少ID"}},
+                        {"note_card": {"note_id": "bad-no-title"}},
                     ]
                 },
             }
@@ -291,6 +291,79 @@ def test_missing_metrics_remain_none_and_bad_items_are_reported() -> None:
     assert page.items[0].metrics.favorites is None
     assert len(page.errors) == 1
     assert page.errors[0].item_index == 1
+
+
+def test_missing_non_core_ids_use_marked_proxy_ids_without_fake_urls() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "data": {
+                    "items": [
+                        {
+                            "note_card": {
+                                "display_title": "露营装备清单",
+                                "user": {"nickname": "小红书作者"},
+                                "publish_time": int(NOW.timestamp()),
+                                "interact_info": {"liked_count": "8800"},
+                            }
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+
+    page = build_provider(transport).search(
+        Platform.XIAOHONGSHU,
+        "露营",
+        NOW - timedelta(days=7),
+        10,
+        "idem-proxy-fields",
+    )
+
+    assert len(page.items) == 1
+    item = page.items[0]
+    assert item.platform_item_id.startswith("proxy-missing-item-id-")
+    assert item.author_id.startswith("proxy-missing-author-id-")
+    assert item.source_url is None
+    assert any("代理ID" in warning for warning in item.data_quality_warnings)
+    assert any("未生成替代链接" in warning for warning in item.data_quality_warnings)
+
+
+def test_missing_publish_time_uses_observed_time_with_warning() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "data": {
+                    "object_list": [
+                        {
+                            "object_id": "wx-no-time",
+                            "description": "露营视频号内容",
+                            "finder_info": {
+                                "finder_username": "finder-user",
+                                "nickname": "视频号作者",
+                            },
+                            "like_count": 1200,
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+
+    page = build_provider(transport).search(
+        Platform.WECHAT_CHANNELS,
+        "露营",
+        NOW - timedelta(days=7),
+        10,
+        "idem-no-publish-time",
+    )
+
+    assert len(page.items) == 1
+    assert page.items[0].published_at == NOW
+    assert any("时间窗无法核验" in warning for warning in page.items[0].data_quality_warnings)
 
 
 def test_business_authorization_error_is_not_retryable_or_secret_bearing() -> None:
@@ -367,6 +440,35 @@ def test_usage_and_balance_are_read_only_account_calls() -> None:
     assert balance == pytest.approx(12.34)
     assert transport.calls[0][0].endswith("/back/user/usage_record")
     assert transport.calls[1][0].endswith("/back/user/balance")
+
+
+def test_usage_parses_date_records_success_count_and_estimates_cost() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "data": {
+                    "records": [
+                        {
+                            "date": "2026-07-18",
+                            "apiName": "douyin search_video",
+                            "successCount": 2,
+                        },
+                        {
+                            "date": "2026-07-18",
+                            "apiName": "wechat fetch_search_video",
+                            "successCount": 1,
+                        },
+                    ]
+                },
+            }
+        ]
+    )
+
+    usage = build_provider(transport).usage()
+
+    assert usage.platform_queries == 3
+    assert usage.estimated_cost == pytest.approx(0.21)
 
 
 def test_capability_and_config_keep_network_disabled_until_key_exists(

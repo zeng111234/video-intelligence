@@ -14,10 +14,13 @@ from project.backend.app.core.deps import (
     get_repository,
 )
 from src.models import PlatformRunStatus, SearchBatch
+from src.adapters.licensed import LicensedProviderError
 from src.services.commercial_search import (
     CACHE_TTL_MINUTES,
+    MONTHLY_HARD_LIMIT_COST_CNY,
     MONTHLY_HARD_LIMIT_QUERIES,
     MONTHLY_WARNING_QUERIES,
+    RANKING_MODE,
 )
 
 router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
@@ -41,6 +44,8 @@ class CrawlerPlatformPreview(BaseModel):
     platform_label: str
     cache_hit: bool
     estimated_api_calls: int
+    platform_unit_price_cny: float | None = None
+    estimated_cost_cny: float | None = None
     blocked_reason: str | None = None
 
 
@@ -51,11 +56,15 @@ class CrawlerPreviewResponse(BaseModel):
     force_refresh: bool
     provider_mode: str
     provider_name: str
+    ranking_mode: str
     monthly_query_count: int
+    monthly_estimated_cost_cny: float
     monthly_warning_queries: int
     monthly_hard_limit_queries: int
+    monthly_hard_limit_cost_cny: float
     cache_ttl_minutes: int
     platforms: list[CrawlerPlatformPreview]
+    estimated_total_cost_cny: float
     blocked: bool
 
 
@@ -69,8 +78,10 @@ class CrawlerCapabilitiesResponse(BaseModel):
     missing_configuration: list[str]
     permission_status: str
     monthly_query_count: int
+    monthly_estimated_cost_cny: float
     monthly_warning_queries: int
     monthly_hard_limit_queries: int
+    monthly_hard_limit_cost_cny: float
     cache_ttl_minutes: int
     supports_usage: bool
     usage: dict[str, Any] | None = None
@@ -91,6 +102,16 @@ class CrawlerCandidateResult(BaseModel):
     like_growth_per_hour: float | None = None
     anomaly_status: str | None = None
     platform_rank: int | None = None
+    provider_hot_rank: int | None = None
+    system_rank: int | None = None
+    plays: int | None = None
+    likes: int | None = None
+    comments: int | None = None
+    shares: int | None = None
+    favorites: int | None = None
+    component_scores: dict[str, float | None] = Field(default_factory=dict)
+    data_quality_warnings: list[str] = Field(default_factory=list)
+    model_version: str | None = None
     evidence: str | None = None
     reasons: list[str] = Field(default_factory=list)
 
@@ -131,6 +152,7 @@ class CrawlerBatchResponse(BaseModel):
     platform_runs: list[CrawlerPlatformRunResponse] = Field(default_factory=list)
     total_api_calls: int = 0
     total_candidates: int = 0
+    total_estimated_cost_cny: float = 0.0
 
 
 class CrawlerBatchListResponse(BaseModel):
@@ -144,7 +166,10 @@ def _platform_label(value: str) -> str:
 
 def _capability_payload(service, provider) -> CrawlerCapabilitiesResponse:
     capability = provider.capabilities()
-    usage = provider.usage()
+    try:
+        usage = provider.usage()
+    except LicensedProviderError:
+        usage = None
     return CrawlerCapabilitiesResponse(
         provider_name=capability.provider_name,
         display_name=capability.display_name,
@@ -157,8 +182,10 @@ def _capability_payload(service, provider) -> CrawlerCapabilitiesResponse:
         missing_configuration=capability.missing_configuration,
         permission_status=capability.permission_status,
         monthly_query_count=service.monthly_query_count(),
+        monthly_estimated_cost_cny=service.monthly_query_cost(),
         monthly_warning_queries=MONTHLY_WARNING_QUERIES,
         monthly_hard_limit_queries=MONTHLY_HARD_LIMIT_QUERIES,
+        monthly_hard_limit_cost_cny=MONTHLY_HARD_LIMIT_COST_CNY,
         cache_ttl_minutes=CACHE_TTL_MINUTES,
         supports_usage=capability.supports_usage,
         usage=usage.model_dump(mode="json") if usage else None,
@@ -197,10 +224,16 @@ def preview_crawler_batch(
             platform_label=_platform_label(item.platform.value),
             cache_hit=item.cache_hit,
             estimated_api_calls=item.estimated_api_calls,
+            platform_unit_price_cny=item.platform_unit_price_cny,
+            estimated_cost_cny=item.estimated_cost_cny,
             blocked_reason=item.blocked_reason,
         )
         for item in previews
     ]
+    estimated_total_cost = round(
+        sum(item.estimated_cost_cny or 0.0 for item in platform_items),
+        4,
+    )
     return CrawlerPreviewResponse(
         keyword=body.keyword.strip(),
         published_window_days=body.published_window_days,
@@ -208,11 +241,15 @@ def preview_crawler_batch(
         force_refresh=body.force_refresh,
         provider_mode=capability.mode.value,
         provider_name=capability.provider_name,
+        ranking_mode=RANKING_MODE,
         monthly_query_count=service.monthly_query_count(),
+        monthly_estimated_cost_cny=service.monthly_query_cost(),
         monthly_warning_queries=MONTHLY_WARNING_QUERIES,
         monthly_hard_limit_queries=MONTHLY_HARD_LIMIT_QUERIES,
+        monthly_hard_limit_cost_cny=MONTHLY_HARD_LIMIT_COST_CNY,
         cache_ttl_minutes=CACHE_TTL_MINUTES,
         platforms=platform_items,
+        estimated_total_cost_cny=estimated_total_cost,
         blocked=all(item.blocked_reason for item in platform_items),
     )
 
@@ -288,6 +325,10 @@ def _batch_to_response(
         platform_runs=run_items,
         total_api_calls=sum(item.api_call_count for item in run_items),
         total_candidates=sum(item.returned_count for item in run_items),
+        total_estimated_cost_cny=round(
+            sum(item.billable_units or 0.0 for item in run_items),
+            4,
+        ),
     )
 
 
@@ -301,17 +342,19 @@ def _run_to_response(
     candidates: list[CrawlerCandidateResult] = []
     if include_candidates and run.status in {
         PlatformRunStatus.SUCCEEDED,
+        PlatformRunStatus.PARTIAL,
         PlatformRunStatus.CACHED,
     }:
         match_run_id = run.cached_from_run_id if run.cached_from_run_id else run.run_id
         matches = repo.list_candidate_matches(match_run_id)
-        trend_by_candidate = {
-            item.candidate_id: item
-            for item in repo.list_keyword_trend_results(
-                batch.keyword,
-                limit=batch.requested_count_per_platform,
-                platform=run.platform,
-            )
+        trends = repo.list_keyword_trend_results(
+            batch.keyword,
+            limit=batch.requested_count_per_platform,
+            platform=run.platform,
+        )
+        trend_by_candidate = {item.candidate_id: item for item in trends}
+        system_rank_by_candidate = {
+            item.candidate_id: index for index, item in enumerate(trends, start=1)
         }
         for match in sorted(matches, key=lambda item: item.platform_rank):
             candidate = repo.get_candidate(match.video_id)
@@ -334,6 +377,16 @@ def _run_to_response(
                     like_growth_per_hour=trend.like_growth_per_hour if trend else None,
                     anomaly_status=trend.anomaly_status.value if trend else None,
                     platform_rank=match.platform_rank,
+                    provider_hot_rank=match.platform_rank,
+                    system_rank=system_rank_by_candidate.get(candidate.video_id),
+                    plays=candidate.metrics.plays,
+                    likes=candidate.metrics.likes,
+                    comments=candidate.metrics.comments,
+                    shares=candidate.metrics.shares,
+                    favorites=candidate.metrics.favorites,
+                    component_scores=trend.component_scores if trend else {},
+                    data_quality_warnings=candidate.data_quality_warnings,
+                    model_version=trend.model_version if trend else None,
                     evidence=match.evidence or candidate.evidence,
                     reasons=trend.reasons if trend else [],
                 )

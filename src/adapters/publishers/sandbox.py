@@ -40,7 +40,7 @@ class SandboxPublisher:
         video_path: str,
         target: PublishTarget,
     ) -> PublishTask:
-        """模拟发布——直接返回成功状态。"""
+        """模拟发布——只记录演示完成，不伪造平台作品。"""
         now = datetime.now().astimezone()
         task_id = f"publish-{uuid4().hex[:10]}"
         task = PublishTask(
@@ -53,10 +53,10 @@ class SandboxPublisher:
             video_path=video_path,
             target=target,
             publish_status=PublishStatus.SUCCEEDED,
-            platform_video_id=f"sandbox-{uuid4().hex[:8]}",
-            platform_url=f"https://sandbox.example.com/video/{task_id}",
+            platform_video_id=None,
+            platform_url=None,
             provider_name=f"sandbox_{self._platform.value}",
-            stage="演示发布成功",
+            stage="演示完成，未发布到真实平台",
             is_mock=True,
         )
         self._tasks[task_id] = task

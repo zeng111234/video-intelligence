@@ -48,6 +48,7 @@ class SQLiteRepository:
         if current_version > 0:
             # 已由迁移框架管理，只确保基础表存在（幂等 CREATE IF NOT EXISTS）
             self._create_schema_tables_only()
+            self._ensure_runtime_columns()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
@@ -75,6 +76,7 @@ class SQLiteRepository:
                 official_hot INTEGER NOT NULL DEFAULT 0,
                 official_rank INTEGER,
                 official_hot_value REAL,
+                data_quality_warnings_json TEXT NOT NULL DEFAULT '[]',
                 UNIQUE(platform, platform_item_id)
             );
 
@@ -229,6 +231,16 @@ class SQLiteRepository:
         )
         self.connection.commit()
 
+    def _ensure_runtime_columns(self) -> None:
+        self._ensure_column("candidates", "feed_id", "TEXT")
+        self._ensure_column("candidates", "finder_user_name", "TEXT")
+        self._ensure_column(
+            "candidates",
+            "data_quality_warnings_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
+        self.connection.commit()
+
     def _create_schema(self) -> None:
         self.connection.executescript(
             """
@@ -251,6 +263,7 @@ class SQLiteRepository:
                 official_hot INTEGER NOT NULL DEFAULT 0,
                 official_rank INTEGER,
                 official_hot_value REAL,
+                data_quality_warnings_json TEXT NOT NULL DEFAULT '[]',
                 UNIQUE(platform, platform_item_id)
             );
 
@@ -421,6 +434,11 @@ class SQLiteRepository:
         )
         self._ensure_column("candidates", "feed_id", "TEXT")
         self._ensure_column("candidates", "finder_user_name", "TEXT")
+        self._ensure_column(
+            "candidates",
+            "data_quality_warnings_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )
         self.connection.execute(
             "DROP INDEX IF EXISTS idx_candidate_matches_keyword_observed"
         )
@@ -535,8 +553,8 @@ class SQLiteRepository:
                     category, published_at, source_url, source_type, rights_status,
                     matched_by_json, cohort_key, eligibility_status, evidence,
                     feed_id, finder_user_name, official_hot, official_rank,
-                    official_hot_value
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    official_hot_value, data_quality_warnings_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(platform, platform_item_id) DO UPDATE SET
                     title = excluded.title,
                     author_id = excluded.author_id,
@@ -554,7 +572,8 @@ class SQLiteRepository:
                     finder_user_name = excluded.finder_user_name,
                     official_hot = excluded.official_hot,
                     official_rank = excluded.official_rank,
-                    official_hot_value = excluded.official_hot_value
+                    official_hot_value = excluded.official_hot_value,
+                    data_quality_warnings_json = excluded.data_quality_warnings_json
                 """,
                 (
                     video_id,
@@ -577,6 +596,7 @@ class SQLiteRepository:
                     int(candidate.official_hot),
                     candidate.official_rank,
                     candidate.official_hot_value,
+                    json.dumps(candidate.data_quality_warnings, ensure_ascii=False),
                 ),
             )
             snapshot = candidate.metrics.model_copy(update={"item_id": video_id})
@@ -692,6 +712,7 @@ class SQLiteRepository:
             official_hot=bool(row["official_hot"]),
             official_rank=row["official_rank"],
             official_hot_value=row["official_hot_value"],
+            data_quality_warnings=json.loads(row["data_quality_warnings_json"] or "[]"),
             metrics=snapshots[-1],
             heat=heat,
         )
@@ -1041,7 +1062,7 @@ class SQLiteRepository:
             FROM platform_search_runs AS run
             JOIN search_batches AS batch ON batch.batch_id = run.batch_id
             WHERE run.provider = ? AND run.platform = ?
-              AND run.status = 'succeeded'
+              AND run.status IN ('succeeded', 'partial')
               AND run.finished_at >= ?
               AND batch.keyword = ?
               AND batch.published_window_days = ?
@@ -1070,6 +1091,19 @@ class SQLiteRepository:
             (since.isoformat(),),
         ).fetchone()
         return int(row["query_count"] if row else 0)
+
+    def monthly_platform_query_cost(self, since: datetime) -> float:
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM platform_search_runs WHERE started_at >= ?
+            """,
+            (since.isoformat(),),
+        ).fetchall()
+        total = 0.0
+        for row in rows:
+            payload = json.loads(row["payload_json"])
+            total += float(payload.get("billable_units") or 0.0)
+        return round(total, 4)
 
     def claim_platform_search_request(
         self,

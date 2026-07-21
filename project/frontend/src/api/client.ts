@@ -6,7 +6,10 @@ import type {
   AdminStatusResponse,
   AnalyticsResponse,
   CandidateListResponse,
+  CopywritingCapabilitiesResponse,
+  CopywritingGenerateRequest,
   CopywritingResponse,
+  CopywritingRewriteRequest,
   CrawlerBatchListResponse,
   CrawlerBatchResponse,
   CrawlerCapabilitiesResponse,
@@ -233,6 +236,8 @@ export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> 
 
 export function rewriteCopywriting(params: {
   source_text: string;
+  platform?: string;
+  target_audience?: string;
   style_prompt?: string;
   target_length?: number;
   tone?: string;
@@ -242,6 +247,25 @@ export function rewriteCopywriting(params: {
     method: "POST",
     body: JSON.stringify(params),
   });
+}
+
+export function getCopywritingCapabilities(): Promise<CopywritingCapabilitiesResponse> {
+  return request("/copywriting/capabilities");
+}
+
+export function generateCopywriting(
+  params: CopywritingGenerateRequest,
+): Promise<CopywritingResponse> {
+  return request("/copywriting/generate", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function rewriteCopywritingV2(
+  params: CopywritingRewriteRequest,
+): Promise<CopywritingResponse> {
+  return rewriteCopywriting(params);
 }
 
 /* ---- 多平台发布 ---- */

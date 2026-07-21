@@ -123,6 +123,7 @@ class SourceService:
             official_hot=item.official_hot,
             official_rank=item.official_rank,
             official_hot_value=item.official_hot_value,
+            data_quality_warnings=item.data_quality_warnings,
             metrics=metrics,
             heat=HeatResult(
                 score=0,

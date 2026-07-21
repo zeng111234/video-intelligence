@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from src.models import (
     AvatarAsset,
@@ -164,6 +164,8 @@ class CandidateRepository(Protocol):
 
     def monthly_platform_query_count(self, since: datetime) -> int: ...
 
+    def monthly_platform_query_cost(self, since: datetime) -> float: ...
+
     def claim_platform_search_request(
         self,
         fingerprint: str,
@@ -213,12 +215,28 @@ class TaskRepository(Protocol):
 class CopywritingEngine(Protocol):
     """基于 LLM 的文案改写 / 复刻接口。"""
 
-    def capabilities(self) -> dict[str, str | bool | int]: ...
+    def capabilities(self) -> dict[str, Any]: ...
+
+    def generate(
+        self,
+        *,
+        content_brief: str,
+        platform: str = "douyin",
+        target_audience: str = "",
+        selling_points: str = "",
+        call_to_action: str = "",
+        style_prompt: str = "",
+        target_length: int = 300,
+        tone: str = "professional",
+        variant_count: int = 1,
+    ) -> list[str]: ...
 
     def rewrite(
         self,
         source_text: str,
         *,
+        platform: str = "douyin",
+        target_audience: str = "",
         style_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",

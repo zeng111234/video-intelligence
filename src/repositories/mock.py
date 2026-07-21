@@ -252,7 +252,7 @@ class MockRepository:
                 batch
                 and run.provider == provider
                 and run.platform == platform
-                and run.status.value == "succeeded"
+                and run.status.value in {"succeeded", "partial"}
                 and run.finished_at is not None
                 and run.finished_at >= since
                 and batch.keyword.casefold() == keyword.casefold()
@@ -265,6 +265,13 @@ class MockRepository:
     def monthly_platform_query_count(self, since: datetime) -> int:
         return sum(
             run.api_call_count
+            for run in self._platform_search_runs.values()
+            if run.started_at >= since
+        )
+
+    def monthly_platform_query_cost(self, since: datetime) -> float:
+        return sum(
+            run.billable_units or 0.0
             for run in self._platform_search_runs.values()
             if run.started_at >= since
         )

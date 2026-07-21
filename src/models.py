@@ -82,9 +82,12 @@ class TaskKind(StrEnum):
 
 class TaskStatus(StrEnum):
     QUEUED = "queued"
+    SUBMITTED = "submitted"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    OUTCOME_UNKNOWN = "outcome_unknown"
 
 
 class TranscriptStatus(StrEnum):
@@ -115,6 +118,7 @@ class PlatformRunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
     CACHED = "cached"
     FAILED = "failed"
     BLOCKED = "blocked"
@@ -146,6 +150,7 @@ class PublishPlatform(StrEnum):
     DOUYIN = "douyin"
     KUAISHOU = "kuaishou"
     WECHAT_CHANNELS = "wechat_channels"
+    XIAOHONGSHU = "xiaohongshu"
 
 
 class PublishStatus(StrEnum):
@@ -180,9 +185,11 @@ class AvatarAssetKind(StrEnum):
 
 class AvatarProviderStatus(StrEnum):
     QUEUED = "queued"
+    SUBMITTED = "submitted"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     OUTCOME_UNKNOWN = "outcome_unknown"
 
 
@@ -250,6 +257,7 @@ class VideoCandidate(BaseModel):
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
+    data_quality_warnings: list[str] = Field(default_factory=list)
     metrics: VideoMetricSnapshot
     heat: HeatResult
 
@@ -310,10 +318,11 @@ class ProviderSearchItem(BaseModel):
     author_id: str = Field(min_length=1)
     author_name: str = Field(min_length=1)
     published_at: datetime
-    source_url: HttpUrl
+    source_url: HttpUrl | None = None
     provider_rank: int = Field(ge=1, le=10)
     metrics: VideoMetricSnapshot
     evidence: str | None = None
+    data_quality_warnings: list[str] = Field(default_factory=list)
 
 
 class ProviderSearchPage(BaseModel):
@@ -437,6 +446,7 @@ class NormalizedCandidate(BaseModel):
     official_hot: bool = False
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
+    data_quality_warnings: list[str] = Field(default_factory=list)
 
 
 class ImportErrorDetail(BaseModel):
@@ -715,12 +725,19 @@ class CopywritingTask(TaskRecord):
     """基于 LLM 的文案改写 / 复刻任务。"""
 
     kind: TaskKind = TaskKind.COPYWRITING
-    source_text: str
+    creation_mode: str = "rewrite"
+    source_text: str = ""
+    content_brief: str = ""
+    platform: Platform = Platform.DOUYIN
+    target_audience: str = ""
+    selling_points: str = ""
+    call_to_action: str = ""
     style_prompt: str = ""
     target_length: int = Field(default=300, ge=50, le=2000)
     tone: str = "professional"
     provider_name: str = "local_llm"
     model_name: str = ""
+    token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
     source_task_id: str | None = None

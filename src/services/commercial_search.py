@@ -26,14 +26,16 @@ from src.models import (
     SourcePage,
 )
 from src.platforms import SUPPORTED_PLATFORMS
-from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 from src.services.keyword_trend import KeywordTrendService
 from src.services.source import SourceService
 
-CACHE_TTL_MINUTES = 10
+CACHE_TTL_MINUTES = 360
 DUPLICATE_GUARD_SECONDS = 60
-MONTHLY_WARNING_QUERIES = 360
-MONTHLY_HARD_LIMIT_QUERIES = 450
+MONTHLY_WARNING_QUERIES = 80
+MONTHLY_HARD_LIMIT_QUERIES = 100
+MONTHLY_HARD_LIMIT_COST_CNY = 10.0
+RANKING_MODE = "keyword_hot"
+KEYWORD_HOT_SORT_TYPE = 1
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,8 @@ class PlatformSearchPreview:
     platform: Platform
     cache_hit: bool
     estimated_api_calls: int
+    estimated_cost_cny: float | None = None
+    platform_unit_price_cny: float | None = None
     blocked_reason: str | None = None
 
 
@@ -72,8 +76,11 @@ class CommercialSearchService:
         capability = self.provider.capabilities()
         now = self.clock()
         monthly_queries = self.monthly_query_count(now)
+        monthly_cost = self.monthly_query_cost(now)
+        prices = self._endpoint_prices()
         previews: list[PlatformSearchPreview] = []
         pending_calls = 0
+        pending_cost = 0.0
         for platform in SUPPORTED_PLATFORMS:
             cached = (
                 None
@@ -90,6 +97,12 @@ class CommercialSearchService:
             estimated_calls = (
                 0 if cached or capability.mode == ProviderMode.SANDBOX else 1
             )
+            unit_price = prices.get(platform)
+            estimated_cost = (
+                round(estimated_calls * unit_price, 4)
+                if unit_price is not None
+                else None
+            )
             blocked_reason = None
             if not capability.enabled:
                 blocked_reason = "商业接口尚未完成签约与生产验收"
@@ -99,14 +112,23 @@ class CommercialSearchService:
                 monthly_queries + pending_calls + estimated_calls
                 > MONTHLY_HARD_LIMIT_QUERIES
             ):
-                blocked_reason = "已达到本月 450 次平台查询上限"
+                blocked_reason = "已达到本月 100 次平台查询上限"
+            elif (
+                estimated_cost is not None
+                and monthly_cost + pending_cost + estimated_cost
+                > MONTHLY_HARD_LIMIT_COST_CNY
+            ):
+                blocked_reason = "已达到本地本月 ¥10 爬虫预算上限"
             if not blocked_reason:
                 pending_calls += estimated_calls
+                pending_cost += estimated_cost or 0.0
             previews.append(
                 PlatformSearchPreview(
                     platform=platform,
                     cache_hit=cached is not None,
                     estimated_api_calls=estimated_calls,
+                    estimated_cost_cny=estimated_cost,
+                    platform_unit_price_cny=unit_price,
                     blocked_reason=blocked_reason,
                 )
             )
@@ -150,10 +172,18 @@ class CommercialSearchService:
             )
 
         successful = sum(
-            run.status in {PlatformRunStatus.SUCCEEDED, PlatformRunStatus.CACHED}
+            run.status
+            in {
+                PlatformRunStatus.SUCCEEDED,
+                PlatformRunStatus.PARTIAL,
+                PlatformRunStatus.CACHED,
+            }
             for run in runs
         )
-        if successful == len(runs):
+        if all(
+            run.status in {PlatformRunStatus.SUCCEEDED, PlatformRunStatus.CACHED}
+            for run in runs
+        ):
             status = SearchBatchStatus.SUCCEEDED
         elif successful:
             status = SearchBatchStatus.PARTIAL
@@ -175,6 +205,11 @@ class CommercialSearchService:
         current = now or self.clock()
         month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         return self.repository.monthly_platform_query_count(month_start)
+
+    def monthly_query_cost(self, now: datetime | None = None) -> float:
+        current = now or self.clock()
+        month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return self.repository.monthly_platform_query_cost(month_start)
 
     def _execute_platform(
         self,
@@ -245,7 +280,19 @@ class CommercialSearchService:
             return self._finish_run(
                 run,
                 status=PlatformRunStatus.BLOCKED,
-                error="已达到本月 450 次平台查询上限，未发起请求。",
+                error="已达到本月 100 次平台查询上限，未发起请求。",
+            )
+        unit_price = self._endpoint_prices().get(platform)
+        if (
+            capability.mode == ProviderMode.PRODUCTION
+            and unit_price is not None
+            and self.monthly_query_cost(started_at) + unit_price
+            > MONTHLY_HARD_LIMIT_COST_CNY
+        ):
+            return self._finish_run(
+                run,
+                status=PlatformRunStatus.BLOCKED,
+                error="已达到本地本月 ¥10 爬虫预算上限，未发起请求。",
             )
         if self.repository.has_unresolved_platform_search_request(fingerprint):
             return self._finish_run(
@@ -311,7 +358,7 @@ class CommercialSearchService:
                 partial=bool(provider_errors) or len(normalized) < count,
                 permission_status=capability.permission_status,
                 publish_time=published_window_days,
-                sort_type=0,
+                sort_type=KEYWORD_HOT_SORT_TYPE,
                 api_call_count=page.api_call_count,
                 started_at=started_at,
                 finished_at=self.clock(),
@@ -340,9 +387,14 @@ class CommercialSearchService:
                 platform=platform,
                 provider_name=capability.provider_name,
             )
+            run_status = (
+                PlatformRunStatus.PARTIAL
+                if provider_errors or len(normalized) < count
+                else PlatformRunStatus.SUCCEEDED
+            )
             finished = self._finish_run(
                 run,
-                status=PlatformRunStatus.SUCCEEDED,
+                status=run_status,
                 returned_count=len(normalized),
                 api_call_count=page.api_call_count,
                 billable_units=page.billable_units,
@@ -404,38 +456,23 @@ class CommercialSearchService:
             return finished
 
     def _search_with_retry(self, **kwargs) -> ProviderSearchPage:
-        def _is_retryable(exc: BaseException) -> bool:
-            if isinstance(exc, LicensedProviderError):
-                return (
-                    exc.retryable
-                    and not exc.outcome_unknown
-                    and exc.kind
-                    in {ProviderErrorKind.CONNECTION, ProviderErrorKind.SERVICE}
-                )
-            return isinstance(exc, (ConnectionError, TimeoutError))
-
         try:
-            return retry_with_policy(
-                lambda: self.provider.search(**kwargs),
-                policy=RetryPolicy(max_attempts=2, base_delay=0),
-                retry_for=(LicensedProviderError, ConnectionError, TimeoutError),
-                retryable=_is_retryable,
-                error_message="商业数据接口调用失败。",
-            )
-        except ExternalServiceError as exc:
-            cause = exc.__cause__
-            if isinstance(cause, LicensedProviderError):
-                raise cause
-            if isinstance(cause, (ConnectionError, TimeoutError)):
-                raise LicensedProviderError(
-                    f"连接商业数据接口失败：{cause}",
-                    kind=ProviderErrorKind.CONNECTION,
-                    retryable=False,
-                    outcome_unknown=True,
-                ) from cause
+            return self.provider.search(**kwargs)
+        except LicensedProviderError:
+            raise
+        except (ConnectionError, TimeoutError) as exc:
             raise LicensedProviderError(
-                "商业数据接口调用失败。",
-                kind=ProviderErrorKind.SERVICE,
+                f"连接商业数据接口失败：{exc}",
+                kind=ProviderErrorKind.CONNECTION,
+                retryable=False,
+                outcome_unknown=True,
+            ) from exc
+        except OSError as exc:
+            raise LicensedProviderError(
+                f"商业数据接口连接异常：{exc}",
+                kind=ProviderErrorKind.CONNECTION,
+                retryable=False,
+                outcome_unknown=True,
             ) from exc
 
     @staticmethod
@@ -464,8 +501,9 @@ class CommercialSearchService:
                 reason = "供应商返回了重复作品ID。"
             elif item.published_at < published_after:
                 reason = "作品发布时间超出本次查询范围。"
-            elif not CommercialSearchService._url_matches_platform(
-                str(item.source_url), platform
+            elif item.source_url is not None and not CommercialSearchService._url_matches_platform(
+                str(item.source_url),
+                platform,
             ):
                 reason = "作品链接与平台不匹配。"
             if reason:
@@ -494,6 +532,7 @@ class CommercialSearchService:
                     cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
                     eligibility_status=EligibilityStatus.AUTO_MATCHED,
                     evidence=item.evidence,
+                    data_quality_warnings=item.data_quality_warnings,
                 )
             )
         return normalized, errors
@@ -532,7 +571,7 @@ class CommercialSearchService:
                     ),
                     observed_at=item.metrics.sampled_at,
                     publish_time=published_window_days,
-                    sort_type=0,
+                    sort_type=KEYWORD_HOT_SORT_TYPE,
                     evidence=item.evidence,
                 )
             )
@@ -570,7 +609,14 @@ class CommercialSearchService:
         count: int,
         now: datetime,
     ) -> PlatformSearchRun | None:
-        return self.repository.find_cached_platform_search_run(
+        fingerprint = self._fingerprint(
+            provider,
+            platform,
+            keyword,
+            published_window_days,
+            count,
+        )
+        cached = self.repository.find_cached_platform_search_run(
             provider=provider,
             platform=platform,
             keyword=keyword,
@@ -578,6 +624,9 @@ class CommercialSearchService:
             requested_count=count,
             since=now - timedelta(minutes=CACHE_TTL_MINUTES),
         )
+        if cached and cached.request_fingerprint == fingerprint:
+            return cached
+        return None
 
     def _finish_run(self, run: PlatformSearchRun, **updates) -> PlatformSearchRun:
         finished = run.model_copy(update={"finished_at": self.clock(), **updates})
@@ -604,10 +653,18 @@ class CommercialSearchService:
         count: int,
     ) -> str:
         payload = (
-            f"{provider}|{platform.value}|{keyword.casefold()}|"
+            f"{provider}|{platform.value}|{RANKING_MODE}|{keyword.casefold()}|"
             f"{published_window_days}|{count}"
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _endpoint_prices(self) -> dict[Platform, float]:
+        raw_prices = getattr(self.provider, "endpoint_prices_cny", {})
+        return {
+            platform: float(price)
+            for platform, price in raw_prices.items()
+            if isinstance(platform, Platform) and price is not None
+        }
 
     @staticmethod
     def _url_matches_platform(url: str, platform: Platform) -> bool:
