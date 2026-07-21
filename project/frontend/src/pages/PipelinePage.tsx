@@ -44,41 +44,41 @@ import { createPipeline } from "../api/client";
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-/** 流水线阶段定义 */
+/** 流水线阶段定义 - 按内容生产流程排序 */
 const PIPELINE_STAGES = [
   {
-    key: "candidate",
-    label: "候选检索",
+    key: "crawler",
+    label: "关键词爬取",
     icon: <SearchOutlined />,
-    description: "从抖音/小红书/视频号搜索热门素材",
+    description: "爬取热门关键词和趋势视频",
     color: "#6366f1",
   },
   {
     key: "transcription",
-    label: "语音转写",
+    label: "文案提取",
     icon: <AudioOutlined />,
-    description: "提取视频中的语音内容",
+    description: "从视频中提取语音转为文案",
     color: "#10b981",
   },
   {
     key: "copywriting",
-    label: "AI文案生成",
+    label: "AI文案改写",
     icon: <EditOutlined />,
-    description: "基于转写内容生成新文案",
+    description: "AI 智能改写文案，生成多版本",
     color: "#f59e0b",
   },
   {
     key: "avatar",
     label: "数字人生成",
     icon: <VideoCameraOutlined />,
-    description: "生成数字人口播视频",
+    description: "用改写后的文案生成口播视频",
     color: "#8b5cf6",
   },
   {
     key: "publish",
     label: "多平台发布",
     icon: <SendOutlined />,
-    description: "一键发布到多个平台",
+    description: "一键发布到抖音/小红书/视频号",
     color: "#ef4444",
   },
 ];
@@ -112,9 +112,9 @@ const PIPELINE_HISTORY = [
     startTime: "2026-07-21 10:30:00",
     duration: "45分35秒",
     stages: [
-      { name: "候选检索", status: "succeeded", duration: "5分20秒", count: 50 },
-      { name: "语音转写", status: "succeeded", duration: "12分15秒", count: 50 },
-      { name: "AI文案生成", status: "succeeded", duration: "8分10秒", count: 24 },
+      { name: "关键词爬取", status: "succeeded", duration: "5分20秒", count: 50 },
+      { name: "文案提取", status: "succeeded", duration: "12分15秒", count: 50 },
+      { name: "AI文案改写", status: "succeeded", duration: "8分10秒", count: 24 },
       { name: "数字人生成", status: "succeeded", duration: "15分50秒", count: 24 },
       { name: "多平台发布", status: "succeeded", duration: "4分0秒", count: 24 },
     ],
@@ -129,9 +129,9 @@ const PIPELINE_HISTORY = [
     startTime: "2026-07-21 14:15:00",
     duration: "进行中",
     stages: [
-      { name: "候选检索", status: "succeeded", duration: "4分45秒", count: 30 },
-      { name: "语音转写", status: "succeeded", duration: "9分50秒", count: 30 },
-      { name: "AI文案生成", status: "running", duration: "进行中", count: 12 },
+      { name: "关键词爬取", status: "succeeded", duration: "4分45秒", count: 30 },
+      { name: "文案提取", status: "succeeded", duration: "9分50秒", count: 30 },
+      { name: "AI文案改写", status: "running", duration: "进行中", count: 12 },
       { name: "数字人生成", status: "pending", duration: "-", count: 0 },
       { name: "多平台发布", status: "pending", duration: "-", count: 0 },
     ],
@@ -146,9 +146,9 @@ const PIPELINE_HISTORY = [
     startTime: "2026-07-20 16:45:00",
     duration: "38分20秒",
     stages: [
-      { name: "候选检索", status: "succeeded", duration: "4分30秒", count: 40 },
-      { name: "语音转写", status: "succeeded", duration: "10分40秒", count: 40 },
-      { name: "AI文案生成", status: "succeeded", duration: "7分50秒", count: 16 },
+      { name: "关键词爬取", status: "succeeded", duration: "4分30秒", count: 40 },
+      { name: "文案提取", status: "succeeded", duration: "10分40秒", count: 40 },
+      { name: "AI文案改写", status: "succeeded", duration: "7分50秒", count: 16 },
       { name: "数字人生成", status: "succeeded", duration: "12分20秒", count: 16 },
       { name: "多平台发布", status: "succeeded", duration: "3分0秒", count: 16 },
     ],
@@ -163,9 +163,9 @@ const PIPELINE_HISTORY = [
     startTime: "2026-07-20 09:20:00",
     duration: "失败",
     stages: [
-      { name: "候选检索", status: "succeeded", duration: "3分50秒", count: 25 },
-      { name: "语音转写", status: "failed", duration: "错误", count: 0 },
-      { name: "AI文案生成", status: "pending", duration: "-", count: 0 },
+      { name: "关键词爬取", status: "succeeded", duration: "3分50秒", count: 25 },
+      { name: "文案提取", status: "failed", duration: "错误", count: 0 },
+      { name: "AI文案改写", status: "pending", duration: "-", count: 0 },
       { name: "数字人生成", status: "pending", duration: "-", count: 0 },
       { name: "多平台发布", status: "pending", duration: "-", count: 0 },
     ],
@@ -194,7 +194,7 @@ export default function PipelinePage() {
 
   /** 流水线阶段开关 */
   const [enabledStages, setEnabledStages] = useState<Record<string, boolean>>({
-    candidate: true,
+    crawler: true,
     transcription: true,
     copywriting: true,
     avatar: true,
