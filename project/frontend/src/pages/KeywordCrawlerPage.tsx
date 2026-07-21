@@ -14,6 +14,7 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
@@ -89,6 +90,14 @@ export default function KeywordCrawlerPage() {
     count_per_platform: countPerPlatform,
     force_refresh: forceRefresh,
   }), [keyword, publishedWindowDays, countPerPlatform, forceRefresh]);
+  const keywordLength = requestPayload.keyword.length;
+  const canPreview = keywordLength >= 2 && keywordLength <= 50;
+  const keywordHelp =
+    keywordLength === 0
+      ? "请先填写关键词；此按钮会先预览调用计划，弹窗确认后才执行爬取。"
+      : !canPreview
+        ? "关键词需为 2–50 个字符。"
+        : "填写完成：下一步会预览缓存、额度和三平台阻断原因。";
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -229,6 +238,13 @@ export default function KeywordCrawlerPage() {
       )}
 
       <Card title="创建搜索批次">
+        <Alert
+          style={{ marginBottom: 16 }}
+          type="info"
+          showIcon
+          message="执行流程：填写关键词 → 预览调用计划 → 在弹窗中确认并执行爬取"
+          description="为了避免误触发平台调用或重复计费，本页不会在第一次点击按钮时直接爬取。Sandbox 模式会写入演示数据，但不代表真实平台生产数据。"
+        />
         <Space wrap align="end">
           <div>
             <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>关键词</Text>
@@ -240,7 +256,11 @@ export default function KeywordCrawlerPage() {
               placeholder="例如：二手车"
               allowClear
               style={{ width: 260 }}
+              status={keywordLength > 0 && !canPreview ? "error" : undefined}
             />
+            <Text type={canPreview ? "secondary" : "warning"} style={{ display: "block", marginTop: 4 }}>
+              {keywordHelp}
+            </Text>
           </div>
           <div>
             <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>时间范围</Text>
@@ -267,9 +287,11 @@ export default function KeywordCrawlerPage() {
           <Checkbox checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)}>
             强制刷新
           </Checkbox>
-          <Button type="primary" loading={submitting} onClick={handlePreview}>
-            预览并确认
-          </Button>
+          <Tooltip title={!canPreview ? keywordHelp : "先检查缓存命中、预计新增调用和阻断原因"}>
+            <Button type="primary" loading={submitting} disabled={!canPreview} onClick={handlePreview}>
+              预览调用计划
+            </Button>
+          </Tooltip>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>
             刷新
           </Button>
@@ -293,7 +315,7 @@ export default function KeywordCrawlerPage() {
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         onOk={handleExecute}
-        okText="确认执行"
+        okText="确认并执行爬取"
         cancelText="取消"
         confirmLoading={submitting}
         okButtonProps={{ disabled: !preview || preview.blocked }}

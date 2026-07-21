@@ -23,6 +23,7 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import AiCopyPage from "./pages/AiCopyPage";
 import PublishPage from "./pages/PublishPage";
 import AvatarPage from "./pages/AvatarPage";
+import HelpPage from "./pages/HelpPage";
 import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -66,8 +67,8 @@ function AppInner() {
               {/* 关键词爬虫 */}
               <Route path="/crawler" element={<KeywordCrawlerPage />} />
 
-              {/* 待实现功能占位 */}
-              <Route path="/help" element={<ComingSoonPlaceholder title="帮助中心" />} />
+              {/* 帮助中心 */}
+              <Route path="/help" element={<HelpPage />} />
 
               {/* 404 */}
               <Route path="*" element={<NotFoundPage />} />
