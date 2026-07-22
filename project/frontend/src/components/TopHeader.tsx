@@ -215,24 +215,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             </button>
           </Tooltip>
 
-          {/* 通知 */}
-          <Tooltip title="通知">
-            <button className="vi-header-action" onClick={() => setNotifOpen(true)}>
-              <Badge count={unreadNotifCount} size="small" offset={[-4, 4]}>
-                <BellOutlined />
-              </Badge>
-            </button>
-          </Tooltip>
-
-          {/* 消息 */}
-          <Tooltip title="消息">
-            <button className="vi-header-action" onClick={() => setMsgOpen(true)}>
-              <Badge count={unreadMsgCount} size="small" offset={[-4, 4]}>
-                <MessageOutlined />
-              </Badge>
-            </button>
-          </Tooltip>
-
           {/* 用户头像 */}
           <Dropdown
             menu={{ items: userMenuItems }}
