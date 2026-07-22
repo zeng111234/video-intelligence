@@ -20,12 +20,24 @@ import type {
   CrawlerBatchResponse,
   CrawlerCandidateMediaPreviewResponse,
   CrawlerCapabilitiesResponse,
+  CrawlerDoubaoJobListResponse,
+  CrawlerDoubaoMobileCapabilitiesResponse,
+  CrawlerDoubaoWorkerStartResponse,
+  CrawlerDueRecrawlResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
   EditTemplate,
   PipelineFromCandidateRequest,
   PipelineResponse,
+  PublishAsset,
+  PublishAssetListResponse,
+  PublishBatchListResponse,
+  PublishBatchResponse,
+  PublishConfigResponse,
+  PublishPlatformConfig,
+  PublishPlatformConfigUpdate,
   PublishPlatformsResponse,
+  PublishPreflightResponse,
   PublishResponse,
   StepKindsResponse,
   SubtitleStatusResponse,
@@ -136,13 +148,33 @@ export function listTranscriptions(): Promise<TranscriptionResponse[]> {
   return request("/transcriptions");
 }
 
+export function importManualTranscript(params: {
+  text: string;
+  rightsHolder: string;
+  mediaName: string;
+  candidateId?: string;
+  sourceUrl?: string;
+}): Promise<TranscriptionResponse> {
+  return request("/transcriptions/manual-text", {
+    method: "POST",
+    body: JSON.stringify({
+      text: params.text,
+      rights_confirmed: true,
+      rights_holder: params.rightsHolder,
+      media_name: params.mediaName,
+      candidate_id: params.candidateId || null,
+      source_url: params.sourceUrl || null,
+    }),
+  });
+}
+
 export function saveTranscriptionRevision(params: {
   taskId: string;
   segments: Array<{
-    start: number;
-    end: number;
+    start: number | null;
+    end: number | null;
     text: string;
-    confidence: number;
+    confidence: number | null;
     needs_review: boolean;
     reviewed: boolean;
   }>;
@@ -348,6 +380,12 @@ export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> 
   return request(`/crawler/batches/${batchId}`);
 }
 
+export function executeDueCrawlerRecrawls(limit = 5): Promise<CrawlerDueRecrawlResponse> {
+  return request(`/crawler/recrawls/due?limit=${limit}`, {
+    method: "POST",
+  });
+}
+
 export function previewCrawlerCandidateMedia(
   candidateId: string,
 ): Promise<CrawlerCandidateMediaPreviewResponse> {
@@ -374,6 +412,58 @@ export function createCrawlerCandidateTranscription(params: {
       model_name: params.modelName || "large-v3-turbo",
       hotwords: params.hotwords || "",
     }),
+  });
+}
+
+export function createCrawlerDoubaoJobs(candidateIds: string[]): Promise<CrawlerDoubaoJobListResponse> {
+  return request("/crawler/doubao-browser/jobs", {
+    method: "POST",
+    body: JSON.stringify({ candidate_ids: candidateIds }),
+  });
+}
+
+export function listCrawlerDoubaoJobs(candidateId?: string): Promise<CrawlerDoubaoJobListResponse> {
+  const query = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : "";
+  return request(`/crawler/doubao-browser/jobs${query}`);
+}
+
+export function retryCrawlerDoubaoJob(taskId: string): Promise<TranscriptionResponse> {
+  return request(`/crawler/doubao-browser/jobs/${taskId}/retry`, {
+    method: "POST",
+  });
+}
+
+export function startCrawlerDoubaoWorker(): Promise<CrawlerDoubaoWorkerStartResponse> {
+  return request("/crawler/doubao-browser/worker/start", {
+    method: "POST",
+  });
+}
+
+export function getCrawlerDoubaoMobileCapabilities(): Promise<CrawlerDoubaoMobileCapabilitiesResponse> {
+  return request("/crawler/doubao-mobile/capabilities");
+}
+
+export function createCrawlerDoubaoMobileJobs(candidateIds: string[]): Promise<CrawlerDoubaoJobListResponse> {
+  return request("/crawler/doubao-mobile/jobs", {
+    method: "POST",
+    body: JSON.stringify({ candidate_ids: candidateIds }),
+  });
+}
+
+export function listCrawlerDoubaoMobileJobs(candidateId?: string): Promise<CrawlerDoubaoJobListResponse> {
+  const query = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : "";
+  return request(`/crawler/doubao-mobile/jobs${query}`);
+}
+
+export function retryCrawlerDoubaoMobileJob(taskId: string): Promise<TranscriptionResponse> {
+  return request(`/crawler/doubao-mobile/jobs/${taskId}/retry`, {
+    method: "POST",
+  });
+}
+
+export function startCrawlerDoubaoMobileWorker(): Promise<CrawlerDoubaoWorkerStartResponse> {
+  return request("/crawler/doubao-mobile/worker/start", {
+    method: "POST",
   });
 }
 
@@ -440,6 +530,92 @@ export function listPublishPlatforms(): Promise<PublishPlatformsResponse> {
   return request("/publish/platforms");
 }
 
+export function getPublishConfig(): Promise<PublishConfigResponse> {
+  return request("/publish/config");
+}
+
+export function updatePublishConfig(
+  platform: string,
+  params: PublishPlatformConfigUpdate,
+): Promise<PublishPlatformConfig> {
+  return request(`/publish/config/${platform}`, {
+    method: "PUT",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listPublishAssets(): Promise<PublishAssetListResponse> {
+  return request("/publish/assets");
+}
+
+export async function uploadPublishAsset(file: File): Promise<PublishAsset> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("rights_confirmed", "true");
+
+  const resp = await fetch(`${BASE}/publish/assets/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "上传发布成片失败");
+  }
+  return resp.json();
+}
+
+export function preflightPublish(params: {
+  video_path: string;
+  platforms: string[];
+  title: string;
+  description?: string;
+  tags?: string[];
+}): Promise<PublishPreflightResponse> {
+  return request("/publish/preflight", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function createPublishBatch(params: {
+  video_path: string;
+  platforms: string[];
+  title: string;
+  description?: string;
+  tags?: string[];
+  confirmation_accepted: boolean;
+}): Promise<PublishBatchResponse> {
+  return request("/publish/batches", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listPublishBatches(): Promise<PublishBatchListResponse> {
+  return request("/publish/batches");
+}
+
+export function recordManualPublishResult(
+  taskId: string,
+  params: {
+    succeeded: boolean | null;
+    platform_url?: string;
+    platform_video_id?: string;
+    note?: string;
+  },
+): Promise<PublishResponse> {
+  return request(`/publish/tasks/${taskId}/manual-result`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function retryPublishTask(taskId: string): Promise<PublishResponse> {
+  return request(`/publish/tasks/${taskId}/retry`, {
+    method: "POST",
+  });
+}
+
 /* ---- 数字人生成 ---- */
 
 export function getAvatarCapabilities(): Promise<AvatarCapability> {
@@ -448,6 +624,29 @@ export function getAvatarCapabilities(): Promise<AvatarCapability> {
 
 export function listAvatarAssets(): Promise<AvatarAsset[]> {
   return request("/avatar/assets");
+}
+
+export async function uploadAvatarAsset(params: {
+  kind: "avatar" | "voice";
+  file: File;
+  name?: string;
+}): Promise<AvatarAsset> {
+  const formData = new FormData();
+  formData.append("kind", params.kind);
+  formData.append("file", params.file);
+  formData.append("name", params.name || params.file.name.replace(/\.[^.]+$/, ""));
+  formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", "本人/公司已授权");
+
+  const resp = await fetch(`${BASE}/avatar/assets/upload`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "上传数字人素材失败");
+  }
+  return resp.json();
 }
 
 export function createAvatarJob(params: AvatarJobCreateRequest): Promise<AvatarJob> {

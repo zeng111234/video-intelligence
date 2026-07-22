@@ -67,6 +67,16 @@ class AvatarService:
             )
         if request.aspect_ratio not in capability.supported_aspect_ratios:
             raise ValueError("当前供应商不支持所选画幅。")
+        if capability.profiles:
+            profiles = {profile.profile_id: profile for profile in capability.profiles}
+            profile = profiles.get(request.profile_id)
+            if profile is None:
+                raise ValueError("所选数字人生成方案不存在。")
+            if not profile.enabled:
+                detail = "、".join(profile.missing_configuration)
+                raise ValueError(f"所选数字人生成方案尚未就绪：{detail}")
+        elif request.profile_id != "default":
+            raise ValueError("当前供应商不支持所选数字人生成方案。")
 
         assets = self.list_assets()
         avatar_ids = {
@@ -93,6 +103,7 @@ class AvatarService:
             avatar_name=avatar_name,
             voice_id=request.voice_id,
             voice_name=voice_name,
+            profile_id=request.profile_id,
             speech_rate=request.speech_rate,
             aspect_ratio=request.aspect_ratio,
             resolution=request.resolution,

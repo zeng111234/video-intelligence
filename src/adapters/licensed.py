@@ -196,6 +196,8 @@ class SandboxLicensedSearchProvider:
             api_call_count=0,
             billable_units=0,
             has_more=False,
+            raw_item_count=len(items),
+            parsed_item_count=len(items),
         )
 
     def refresh_metrics(

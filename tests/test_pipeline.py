@@ -64,7 +64,7 @@ class TestSandboxCopywritingEngine:
         engine = SandboxCopywritingEngine()
         cap = engine.capabilities()
         assert cap["enabled"] is True
-        assert cap["mode"] == "sandbox"
+        assert cap["mode"] == "manual"
 
     def test_rewrite_single(self):
         engine = SandboxCopywritingEngine()
@@ -136,7 +136,7 @@ class TestSandboxPublisher:
         pub = SandboxPublisher(PublishPlatform.DOUYIN)
         cap = pub.capabilities()
         assert cap["enabled"] is True
-        assert cap["mode"] == "sandbox"
+        assert cap["mode"] == "manual"
 
     def test_publish_returns_success(self):
         pub = SandboxPublisher(PublishPlatform.KUAISHOU)
@@ -146,8 +146,8 @@ class TestSandboxPublisher:
             description="测试描述",
         )
         task = pub.publish("/fake/video.mp4", target)
-        assert task.status == TaskStatus.SUCCEEDED
-        assert task.publish_status == PublishStatus.SUCCEEDED
+        assert task.status == TaskStatus.SUBMITTED
+        assert task.publish_status == PublishStatus.MANUAL_READY
         assert task.platform_url is None
         assert task.platform_video_id is None
         assert task.is_mock is True
@@ -160,7 +160,7 @@ class TestSandboxPublisher:
         )
         task = pub.publish("/fake/video.mp4", target)
         status = pub.check_status(task.task_id)
-        assert status == PublishStatus.SUCCEEDED
+        assert status == PublishStatus.MANUAL_READY
 
     def test_get_published_url(self):
         pub = SandboxPublisher()
@@ -224,7 +224,7 @@ class TestPublishService:
         )
         task = self.svc.publish(video_path=self._temp_video, target=target)
         assert isinstance(task, PublishTask)
-        assert task.status == TaskStatus.SUCCEEDED
+        assert task.status == TaskStatus.SUBMITTED
 
     def test_multi_platform_publish(self):
         targets = [
@@ -236,15 +236,13 @@ class TestPublishService:
             targets=targets,
         )
         assert len(tasks) == 2
-        assert all(t.status == TaskStatus.SUCCEEDED for t in tasks)
+        assert all(t.status == TaskStatus.SUBMITTED for t in tasks)
 
     def test_publish_nonexistent_video_real_mode(self):
-        """非沙箱模式下不存在的文件应该失败。"""
-        # 沙箱模式下应该成功（跳过文件检查）
+        """人工发布包模式下可先记录不存在的本机路径。"""
         target = PublishTarget(platform=PublishPlatform.DOUYIN, title="测试")
         task = self.svc.publish(video_path="/nonexistent/video.mp4", target=target)
-        # 沙箱模式下应该成功（跳过文件检查）
-        assert task.status == TaskStatus.SUCCEEDED
+        assert task.status == TaskStatus.SUBMITTED
 
     def test_list_tasks(self):
         # 完全隔离的测试
@@ -369,8 +367,8 @@ class FakeMediaResolutionService:
             platform_item_id=candidate.platform_item_id or "",
             provider="fixture_oneapi",
             status=MediaResolutionStatus.SUCCEEDED,
-            estimated_cost_cny=0.08,
-            billable_units=0.08,
+            estimated_cost_cny=0.04,
+            billable_units=0.04,
             api_call_count=1,
         )
         return ResolvedMedia(

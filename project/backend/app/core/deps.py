@@ -20,6 +20,10 @@ from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from src.services.candidate import CandidateService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
+from src.services.doubao_browser import (  # noqa: E402
+    DoubaoBrowserAutomationService,
+    DoubaoMobileAutomationService,
+)
 from src.services.media_resolution import MediaResolutionService  # noqa: E402
 from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
@@ -164,6 +168,16 @@ def _sandbox_model_loader(*args, **kwargs):
 def get_transcription_service() -> TranscriptionService:
     model_loader = _build_asr_model_loader()
     return TranscriptionService(get_repository(), model_loader=model_loader)
+
+
+@lru_cache
+def get_doubao_browser_service() -> DoubaoBrowserAutomationService:
+    return DoubaoBrowserAutomationService(get_repository())
+
+
+@lru_cache
+def get_doubao_mobile_service() -> DoubaoMobileAutomationService:
+    return DoubaoMobileAutomationService(get_repository())
 
 
 @lru_cache

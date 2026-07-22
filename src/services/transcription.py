@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 import subprocess
@@ -397,8 +398,17 @@ class TranscriptionService:
     def _validate_segments(segments: list[TranscriptSegment]) -> None:
         if not segments:
             raise TranscriptionError("转写结果不能为空。", code="empty_transcript")
+        has_timing = [segment.start is not None and segment.end is not None for segment in segments]
+        if any(has_timing) and not all(has_timing):
+            raise TranscriptionError(
+                "同一份文案不能混用有时间轴和无时间轴片段。",
+                code="mixed_segment_timing",
+            )
+        if not any(has_timing):
+            return
         previous_end = 0.0
         for segment in segments:
+            assert segment.start is not None and segment.end is not None
             if not math.isfinite(segment.start) or not math.isfinite(segment.end):
                 raise TranscriptionError(
                     "片段时间无效，请刷新后重新校对。",
@@ -431,7 +441,11 @@ class TranscriptionService:
                 "请填写校对人后再保存。", code="reviewer_required", task_id=task_id
             )
         if approve and any(
-            (segment.confidence < 0.75 or segment.needs_review) and not segment.reviewed
+            (
+                (segment.confidence is not None and segment.confidence < 0.75)
+                or segment.needs_review
+            )
+            and not segment.reviewed
             for segment in segments
         ):
             raise TranscriptionError(
@@ -478,6 +492,73 @@ class TranscriptionService:
                 )
             )
         return revision
+
+    def import_manual_text(
+        self,
+        *,
+        text: str,
+        rights_confirmed: bool,
+        rights_holder: str,
+        media_name: str = "豆包人工转写",
+        candidate_id: str | None = None,
+        source_url: str | None = None,
+    ) -> TranscriptionTask:
+        """Create a reviewable, zero-cost transcript from user-pasted text.
+
+        This intentionally records no artificial timestamps and never automates a
+        third-party consumer product. The user remains responsible for the source
+        and confirms the right to process it.
+        """
+        if not rights_confirmed:
+            raise TranscriptionError("请先确认拥有媒体处理权。", code="rights_required")
+        owner = rights_holder.strip()
+        if not owner:
+            raise TranscriptionError("请填写权利确认人。", code="rights_holder_required")
+        paragraphs = [
+            item.strip()
+            for item in re.split(r"\n\s*\n", text.strip())
+            if item.strip()
+        ]
+        if not paragraphs:
+            raise TranscriptionError("请粘贴需要回填的文案。", code="empty_transcript")
+        now = datetime.now().astimezone()
+        segments = [
+            TranscriptSegment(
+                start=None,
+                end=None,
+                text=paragraph,
+                confidence=None,
+                needs_review=True,
+                reviewed=False,
+            )
+            for paragraph in paragraphs
+        ]
+        task = TranscriptionTask(
+            task_id=f"transcript-{uuid4().hex[:10]}",
+            title=f"人工导入：{media_name.strip() or '外部文案'}",
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            media_name=media_name.strip() or "外部文案",
+            media_type="text/plain",
+            rights_confirmed=True,
+            rights_holder=owner,
+            rights_confirmed_at=now,
+            candidate_id=candidate_id,
+            segments=segments,
+            stage="待人工复核",
+            is_mock=False,
+            model_name="manual_text",
+            language="zh",
+            source_kind="manual_text",
+            source_url=source_url.strip() if source_url else None,
+            timing_available=False,
+            outputs={"transcript.txt": "draft", "transcript.json": "draft"},
+        )
+        self.repository.save_task(task)
+        self.save_revision(task.task_id, segments, reviewer=owner)
+        return task
 
     def create_mock_task(
         self,

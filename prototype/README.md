@@ -23,6 +23,12 @@
   - 特性：交互优化、视觉迭代
   - 更新日期：2026-07-19
 
+- **strategy-framework-visualization.html** - 策略框架可视化原型
+  - 功能：展示短视频智能生产系统的差异化定位与策略建议框架
+  - 特性：响应式设计、交互动效、数据可视化、策略框架展示
+  - 配套文档：`doc/strategic-positioning-proposal.md`（完整版）、`doc/strategy-executive-summary.md`（执行摘要）
+  - 更新日期：2026-07-22
+
 ### 规划原型
 
 - 首页总览原型

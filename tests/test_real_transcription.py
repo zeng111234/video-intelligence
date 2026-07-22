@@ -388,6 +388,46 @@ def test_low_confidence_segments_require_explicit_review_before_new_approval() -
     assert approved.corrected_segments[0].reviewed is True
 
 
+def test_manual_text_import_creates_untimed_reviewable_task() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    service = TranscriptionService(repository)
+
+    task = service.import_manual_text(
+        text="第一段文案。\n\n第二段文案。",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        media_name="豆包回填",
+        candidate_id="douyin-1",
+        source_url="https://v.douyin.com/example/",
+    )
+
+    assert task.source_kind == "manual_text"
+    assert task.timing_available is False
+    assert [segment.start for segment in task.segments] == [None, None]
+    assert [segment.end for segment in task.segments] == [None, None]
+    assert all(segment.needs_review for segment in task.segments)
+    assert service.export_txt(task.segments) == "第一段文案。\n第二段文案。".encode(
+        "utf-8"
+    )
+
+    with pytest.raises(TranscriptionError) as caught:
+        service.save_revision(
+            task.task_id,
+            task.segments,
+            reviewer="校对员",
+            approve=True,
+        )
+    assert caught.value.code == "review_required"
+
+    approved = service.save_revision(
+        task.task_id,
+        [segment.model_copy(update={"reviewed": True}) for segment in task.segments],
+        reviewer="校对员",
+        approve=True,
+    )
+    assert approved.status == TranscriptStatus.APPROVED
+
+
 def test_export_revision_lookup_strictly_follows_task_pointer() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     service = TranscriptionService(

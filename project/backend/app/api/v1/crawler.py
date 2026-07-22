@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import os
+import shutil
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
     get_commercial_search_service,
+    get_doubao_browser_service,
+    get_doubao_mobile_service,
     get_licensed_search_provider,
     get_media_resolution_service,
     get_repository,
@@ -20,6 +28,7 @@ from project.backend.app.core.config import ASRMode
 from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import PlatformRunStatus, SearchBatch
 from src.adapters.licensed import LicensedProviderError
+from src.services.doubao_browser import DoubaoBrowserAutomationError
 from src.services.media_resolution import MediaResolutionError
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
 from src.services.commercial_search import (
@@ -109,9 +118,18 @@ class CrawlerCandidateResult(BaseModel):
     published_at: datetime | None = None
     trend_score: float | None = None
     trend_level: str | None = None
+    display_tier: str = "ordinary"
+    effective_interactions: float | None = None
     confidence: float | None = None
     pool_size: int | None = None
     like_growth_per_hour: float | None = None
+    engagement_growth_per_hour: float | None = None
+    acceleration_ratio: float | None = None
+    valid_snapshot_count: int | None = None
+    recrawl_count: int | None = None
+    recall_count: int | None = None
+    missed_checkpoint_count: int | None = None
+    sampling_span_hours: float | None = None
     anomaly_status: str | None = None
     platform_rank: int | None = None
     provider_hot_rank: int | None = None
@@ -154,6 +172,66 @@ class CrawlerCandidateTranscriptionRequest(BaseModel):
     hotwords: str = Field("", max_length=500)
 
 
+class CrawlerDoubaoJobCreateRequest(BaseModel):
+    candidate_ids: list[str] = Field(..., min_length=1, max_length=10)
+
+
+class CrawlerDoubaoJobStageRequest(BaseModel):
+    stage: str = Field(..., min_length=1, max_length=120)
+    progress: int | None = Field(default=None, ge=0, le=99)
+    outputs: dict[str, str] = Field(default_factory=dict)
+
+
+class CrawlerDoubaoJobCompleteRequest(BaseModel):
+    transcript_text: str = Field(..., min_length=1, max_length=80_000)
+    short_url: str = Field(..., min_length=1, max_length=500)
+    doubao_conversation_url: str | None = Field(default=None, max_length=1000)
+    doubao_message_id: str | None = Field(default=None, max_length=200)
+
+
+class CrawlerDoubaoJobFailRequest(BaseModel):
+    error_message: str = Field(..., min_length=1, max_length=500)
+    stage: str = Field("浏览器自动化失败", min_length=1, max_length=120)
+    retryable: bool = True
+
+
+class CrawlerDoubaoJobResponse(TranscriptionResponse):
+    candidate_id: str | None = None
+    source_url: str | None = None
+    douyin_short_url: str | None = None
+    doubao_conversation_url: str | None = None
+    fee_cny: float = 0.0
+    review_required: bool = True
+    prompt_version: str | None = None
+    worker_id: str | None = None
+
+
+class CrawlerDoubaoJobListResponse(BaseModel):
+    items: list[CrawlerDoubaoJobResponse]
+    total: int
+
+
+class CrawlerDoubaoJobClaimResponse(BaseModel):
+    job: CrawlerDoubaoJobResponse | None = None
+
+
+class CrawlerDoubaoWorkerStartResponse(BaseModel):
+    started: bool
+    command: list[str]
+    log_path: str
+    message: str
+
+
+class CrawlerDoubaoMobileCapabilitiesResponse(BaseModel):
+    enabled: bool
+    worker_mode: str
+    appium_server_url: str
+    android_package: str | None = None
+    missing_configuration: list[str]
+    requirements: list[str]
+    message: str
+
+
 class CrawlerPlatformRunResponse(BaseModel):
     run_id: str
     platform: str
@@ -163,6 +241,13 @@ class CrawlerPlatformRunResponse(BaseModel):
     status: str
     requested_count: int
     returned_count: int
+    raw_item_count: int = 0
+    parsed_item_count: int = 0
+    out_of_window_count: int = 0
+    invalid_count: int = 0
+    duplicate_count: int = 0
+    result_state: str = "historical_unknown"
+    payload_diagnostic: str | None = None
     cache_hit: bool
     cached_from_run_id: str | None = None
     api_call_count: int
@@ -195,6 +280,11 @@ class CrawlerBatchResponse(BaseModel):
 
 class CrawlerBatchListResponse(BaseModel):
     items: list[CrawlerBatchResponse]
+    total: int
+
+
+class CrawlerDueRecrawlResponse(BaseModel):
+    executed_batches: list[CrawlerBatchResponse]
     total: int
 
 
@@ -338,6 +428,23 @@ def list_crawler_batches(
     )
 
 
+@router.post("/recrawls/due", response_model=CrawlerDueRecrawlResponse)
+def execute_due_recrawls(
+    limit: int = 5,
+    service=Depends(get_commercial_search_service),
+    repo=Depends(get_repository),
+):
+    """执行已到期的关键词复爬计划，仍走预算、缓存和重复请求保护。"""
+    try:
+        batches = service.execute_due_recrawls(max_groups=max(1, min(limit, 10)))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CrawlerDueRecrawlResponse(
+        executed_batches=[_batch_to_response(batch, repo) for batch in batches],
+        total=len(batches),
+    )
+
+
 @router.get("/batches/{batch_id}", response_model=CrawlerBatchResponse)
 def get_crawler_batch(
     batch_id: str,
@@ -442,6 +549,414 @@ def transcribe_candidate_media(
     return _transcription_to_response(task)
 
 
+@router.post(
+    "/doubao-browser/jobs",
+    response_model=CrawlerDoubaoJobListResponse,
+)
+def create_doubao_browser_jobs(
+    body: CrawlerDoubaoJobCreateRequest,
+    repo=Depends(get_repository),
+    service=Depends(get_doubao_browser_service),
+):
+    """为候选创建零成本豆包浏览器文案提取任务，不调用付费媒体解析。"""
+    jobs = []
+    seen: set[str] = set()
+    for candidate_id in body.candidate_ids:
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        candidate = repo.get_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"候选不存在：{candidate_id}")
+        try:
+            jobs.append(service.create_job(candidate))
+        except DoubaoBrowserAutomationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return CrawlerDoubaoJobListResponse(
+        items=[_doubao_job_to_response(job) for job in jobs],
+        total=len(jobs),
+    )
+
+
+@router.get(
+    "/doubao-browser/jobs",
+    response_model=CrawlerDoubaoJobListResponse,
+)
+def list_doubao_browser_jobs(
+    candidate_id: str | None = None,
+    limit: int = 50,
+    service=Depends(get_doubao_browser_service),
+):
+    jobs = service.list_jobs(candidate_id=candidate_id, limit=limit)
+    return CrawlerDoubaoJobListResponse(
+        items=[_doubao_job_to_response(job) for job in jobs],
+        total=len(jobs),
+    )
+
+
+@router.post(
+    "/doubao-browser/jobs/claim",
+    response_model=CrawlerDoubaoJobClaimResponse,
+)
+def claim_doubao_browser_job(
+    worker_id: str = "local-browser-worker",
+    service=Depends(get_doubao_browser_service),
+):
+    job = service.claim_next_job(worker_id)
+    return CrawlerDoubaoJobClaimResponse(
+        job=_doubao_job_to_response(job) if job else None
+    )
+
+
+@router.post(
+    "/doubao-browser/jobs/{task_id}/stage",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def update_doubao_browser_job_stage(
+    task_id: str,
+    body: CrawlerDoubaoJobStageRequest,
+    service=Depends(get_doubao_browser_service),
+):
+    try:
+        job = service.mark_stage(
+            task_id,
+            stage=body.stage,
+            progress=body.progress,
+            outputs=body.outputs,
+        )
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-browser/jobs/{task_id}/complete",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def complete_doubao_browser_job(
+    task_id: str,
+    body: CrawlerDoubaoJobCompleteRequest,
+    service=Depends(get_doubao_browser_service),
+):
+    try:
+        job = service.complete_job(
+            task_id,
+            transcript_text=body.transcript_text,
+            short_url=body.short_url,
+            doubao_conversation_url=body.doubao_conversation_url,
+            doubao_message_id=body.doubao_message_id,
+        )
+    except (DoubaoBrowserAutomationError, TranscriptionError) as exc:
+        status_code = getattr(exc, "status_code", 400)
+        detail = getattr(exc, "user_message", str(exc))
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-browser/jobs/{task_id}/fail",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def fail_doubao_browser_job(
+    task_id: str,
+    body: CrawlerDoubaoJobFailRequest,
+    service=Depends(get_doubao_browser_service),
+):
+    try:
+        job = service.fail_job(
+            task_id,
+            error_message=body.error_message,
+            stage=body.stage,
+            retryable=body.retryable,
+        )
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-browser/jobs/{task_id}/retry",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def retry_doubao_browser_job(
+    task_id: str,
+    service=Depends(get_doubao_browser_service),
+):
+    try:
+        job = service.requeue_job(task_id)
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-browser/worker/start",
+    response_model=CrawlerDoubaoWorkerStartResponse,
+)
+def start_doubao_browser_worker():
+    """启动本机专用 Chrome profile 执行器。用户点击该接口即授权打开浏览器。"""
+    project_root = Path(__file__).resolve().parents[5]
+    script = project_root / "scripts" / "doubao_browser_worker.mjs"
+    if not script.exists():
+        raise HTTPException(status_code=500, detail="本地豆包执行器脚本不存在。")
+    log_dir = project_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "doubao-browser-worker.log"
+    command = [
+        "node",
+        str(script),
+        "--api",
+        "http://127.0.0.1:2001/api/v1/crawler",
+    ]
+    try:
+        with log_path.open("ab") as log_file:
+            subprocess.Popen(
+                command,
+                cwd=str(project_root),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    if sys.platform.startswith("win")
+                    else 0
+                ),
+            )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="未找到 Node.js，无法启动本地执行器。") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"执行器启动失败：{exc}") from exc
+    return CrawlerDoubaoWorkerStartResponse(
+        started=True,
+        command=command,
+        log_path=str(log_path),
+        message="已启动专用浏览器执行器；如遇登录、验证码或豆包限制，任务会停在失败状态并显示原因。",
+    )
+
+
+@router.get(
+    "/doubao-mobile/capabilities",
+    response_model=CrawlerDoubaoMobileCapabilitiesResponse,
+)
+def get_doubao_mobile_capabilities():
+    """返回安卓手机豆包执行器的本机依赖状态。"""
+    appium_server_url = os.getenv("DOUBAO_MOBILE_APPIUM_URL", "http://127.0.0.1:4723")
+    android_package = os.getenv("DOUBAO_ANDROID_PACKAGE", "").strip() or None
+    adb_path = os.getenv("ADB_PATH", "").strip() or shutil.which("adb")
+    missing = []
+    if not adb_path:
+        missing.append("ADB_PATH 或 PATH 中的 adb")
+    if not android_package:
+        missing.append("DOUBAO_ANDROID_PACKAGE")
+    try:
+        httpx.get(f"{appium_server_url.rstrip('/')}/status", timeout=1.0)
+    except httpx.HTTPError:
+        missing.append("Appium Server")
+    return CrawlerDoubaoMobileCapabilitiesResponse(
+        enabled=not missing,
+        worker_mode="android_appium_uiautomator2",
+        appium_server_url=appium_server_url,
+        android_package=android_package,
+        missing_configuration=missing,
+        requirements=[
+            "一台已登录抖音和豆包的安卓测试机",
+            "Android USB 调试已开启，adb devices 可看到设备",
+            "Appium Server 已启动，并安装 UiAutomator2 driver",
+            "DOUBAO_ANDROID_PACKAGE 指向豆包 App 包名",
+        ],
+        message=(
+            "手机执行器可启动；实际成功率取决于当前 App UI、登录状态和授权弹窗。"
+            if not missing
+            else "手机执行器未配置完整；可创建任务，但启动后会失败并写明缺失项。"
+        ),
+    )
+
+
+@router.post(
+    "/doubao-mobile/jobs",
+    response_model=CrawlerDoubaoJobListResponse,
+)
+def create_doubao_mobile_jobs(
+    body: CrawlerDoubaoJobCreateRequest,
+    repo=Depends(get_repository),
+    service=Depends(get_doubao_mobile_service),
+):
+    """为候选创建安卓手机豆包文案提取任务，不调用付费媒体解析。"""
+    jobs = []
+    seen: set[str] = set()
+    for candidate_id in body.candidate_ids:
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        candidate = repo.get_candidate(candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"候选不存在：{candidate_id}")
+        try:
+            jobs.append(service.create_job(candidate))
+        except DoubaoBrowserAutomationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return CrawlerDoubaoJobListResponse(
+        items=[_doubao_job_to_response(job) for job in jobs],
+        total=len(jobs),
+    )
+
+
+@router.get(
+    "/doubao-mobile/jobs",
+    response_model=CrawlerDoubaoJobListResponse,
+)
+def list_doubao_mobile_jobs(
+    candidate_id: str | None = None,
+    limit: int = 50,
+    service=Depends(get_doubao_mobile_service),
+):
+    jobs = service.list_jobs(candidate_id=candidate_id, limit=limit)
+    return CrawlerDoubaoJobListResponse(
+        items=[_doubao_job_to_response(job) for job in jobs],
+        total=len(jobs),
+    )
+
+
+@router.post(
+    "/doubao-mobile/jobs/claim",
+    response_model=CrawlerDoubaoJobClaimResponse,
+)
+def claim_doubao_mobile_job(
+    worker_id: str = "local-android-doubao-worker",
+    service=Depends(get_doubao_mobile_service),
+):
+    job = service.claim_next_job(worker_id)
+    return CrawlerDoubaoJobClaimResponse(
+        job=_doubao_job_to_response(job) if job else None
+    )
+
+
+@router.post(
+    "/doubao-mobile/jobs/{task_id}/stage",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def update_doubao_mobile_job_stage(
+    task_id: str,
+    body: CrawlerDoubaoJobStageRequest,
+    service=Depends(get_doubao_mobile_service),
+):
+    try:
+        job = service.mark_stage(
+            task_id,
+            stage=body.stage,
+            progress=body.progress,
+            outputs=body.outputs,
+        )
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-mobile/jobs/{task_id}/complete",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def complete_doubao_mobile_job(
+    task_id: str,
+    body: CrawlerDoubaoJobCompleteRequest,
+    service=Depends(get_doubao_mobile_service),
+):
+    try:
+        job = service.complete_job(
+            task_id,
+            transcript_text=body.transcript_text,
+            short_url=body.short_url,
+            doubao_conversation_url=body.doubao_conversation_url,
+            doubao_message_id=body.doubao_message_id,
+        )
+    except (DoubaoBrowserAutomationError, TranscriptionError) as exc:
+        status_code = getattr(exc, "status_code", 400)
+        detail = getattr(exc, "user_message", str(exc))
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-mobile/jobs/{task_id}/fail",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def fail_doubao_mobile_job(
+    task_id: str,
+    body: CrawlerDoubaoJobFailRequest,
+    service=Depends(get_doubao_mobile_service),
+):
+    try:
+        job = service.fail_job(
+            task_id,
+            error_message=body.error_message,
+            stage=body.stage,
+            retryable=body.retryable,
+        )
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-mobile/jobs/{task_id}/retry",
+    response_model=CrawlerDoubaoJobResponse,
+)
+def retry_doubao_mobile_job(
+    task_id: str,
+    service=Depends(get_doubao_mobile_service),
+):
+    try:
+        job = service.requeue_job(task_id)
+    except DoubaoBrowserAutomationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+    return _doubao_job_to_response(job)
+
+
+@router.post(
+    "/doubao-mobile/worker/start",
+    response_model=CrawlerDoubaoWorkerStartResponse,
+)
+def start_doubao_mobile_worker():
+    """启动本机安卓手机 Appium 执行器。"""
+    project_root = Path(__file__).resolve().parents[5]
+    script = project_root / "scripts" / "doubao_mobile_worker.mjs"
+    if not script.exists():
+        raise HTTPException(status_code=500, detail="本地安卓豆包执行器脚本不存在。")
+    log_dir = project_root / "data" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "doubao-mobile-worker.log"
+    command = [
+        "node",
+        str(script),
+        "--api",
+        "http://127.0.0.1:2001/api/v1/crawler",
+    ]
+    try:
+        with log_path.open("ab") as log_file:
+            subprocess.Popen(
+                command,
+                cwd=str(project_root),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    if sys.platform.startswith("win")
+                    else 0
+                ),
+            )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="未找到 Node.js，无法启动安卓执行器。") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"安卓执行器启动失败：{exc}") from exc
+    return CrawlerDoubaoWorkerStartResponse(
+        started=True,
+        command=command,
+        log_path=str(log_path),
+        message="已启动安卓手机执行器；如缺少 ADB、Appium、豆包包名或需要登录，任务会失败并显示原因。",
+    )
+
+
 def _transcription_to_response(task) -> TranscriptionResponse:
     segments = [
         {
@@ -462,6 +977,8 @@ def _transcription_to_response(task) -> TranscriptionResponse:
         stage=task.stage,
         media_name=task.media_name,
         model_name=task.model_name,
+        source_kind=task.source_kind,
+        timing_available=task.timing_available,
         duration_seconds=task.duration_seconds,
         approved_revision_id=task.approved_revision_id,
         low_confidence_count=sum(
@@ -473,6 +990,22 @@ def _transcription_to_response(task) -> TranscriptionResponse:
         error_message=task.error_message,
         created_at=task.created_at,
         updated_at=task.updated_at,
+    )
+
+
+def _doubao_job_to_response(task) -> CrawlerDoubaoJobResponse:
+    outputs = task.outputs or {}
+    base = _transcription_to_response(task).model_dump()
+    return CrawlerDoubaoJobResponse(
+        **base,
+        candidate_id=task.candidate_id,
+        source_url=task.source_url,
+        douyin_short_url=outputs.get("douyin_short_url"),
+        doubao_conversation_url=outputs.get("doubao_conversation_url"),
+        fee_cny=0.0,
+        review_required=outputs.get("review_required") == "true",
+        prompt_version=outputs.get("prompt_version"),
+        worker_id=outputs.get("worker_id"),
     )
 
 
@@ -554,9 +1087,26 @@ def _run_to_response(
                     published_at=candidate.published_at,
                     trend_score=trend.score if trend else None,
                     trend_level=trend.level.value if trend else None,
+                    display_tier=trend.display_tier if trend else "ordinary",
+                    effective_interactions=(
+                        trend.effective_interactions if trend else None
+                    ),
                     confidence=trend.confidence if trend else None,
                     pool_size=trend.pool_size if trend else None,
                     like_growth_per_hour=trend.like_growth_per_hour if trend else None,
+                    engagement_growth_per_hour=(
+                        trend.engagement_growth_per_hour if trend else None
+                    ),
+                    acceleration_ratio=trend.acceleration_ratio if trend else None,
+                    valid_snapshot_count=(
+                        trend.valid_snapshot_count if trend else None
+                    ),
+                    recrawl_count=trend.recrawl_count if trend else None,
+                    recall_count=trend.recall_count if trend else None,
+                    missed_checkpoint_count=(
+                        trend.missed_checkpoint_count if trend else None
+                    ),
+                    sampling_span_hours=trend.sampling_span_hours if trend else None,
                     anomaly_status=trend.anomaly_status.value if trend else None,
                     platform_rank=match.platform_rank,
                     provider_hot_rank=match.platform_rank,
@@ -588,6 +1138,13 @@ def _run_to_response(
         status=run.status.value,
         requested_count=run.requested_count,
         returned_count=run.returned_count,
+        raw_item_count=run.raw_item_count,
+        parsed_item_count=run.parsed_item_count,
+        out_of_window_count=run.out_of_window_count,
+        invalid_count=run.invalid_count,
+        duplicate_count=run.duplicate_count,
+        result_state=run.result_state,
+        payload_diagnostic=run.payload_diagnostic,
         cache_hit=run.cache_hit,
         cached_from_run_id=run.cached_from_run_id,
         api_call_count=run.api_call_count,

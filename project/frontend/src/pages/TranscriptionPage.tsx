@@ -40,6 +40,7 @@ import {
   createVoiceoverDraft,
   exportTranscription,
   getTranscription,
+  importManualTranscript,
   listTranscriptions,
   listVoiceoverDrafts,
   saveTranscriptionRevision,
@@ -110,6 +111,7 @@ export default function TranscriptionPage() {
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
   const [segmentDrafts, setSegmentDrafts] = usePersistentState<Record<string, SegmentDraft>>("transcription_segment_drafts", {}, undefined, 1000);
   const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
+  const [manualText, setManualText] = usePersistentState("transcription_manual_text", "");
   const [reviewer, setReviewer] = usePersistentState("transcription_reviewer", "校对员");
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
@@ -131,6 +133,8 @@ export default function TranscriptionPage() {
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
+  const sourceUrlFromQuery = searchParams.get("source_url")?.trim() || "";
+  const manualFromQuery = searchParams.get("manual") === "1";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
 
   const filteredTasks = useMemo(() => {
@@ -212,8 +216,8 @@ export default function TranscriptionPage() {
 
   useEffect(() => {
     if (urlFromQuery) setVideoUrl(urlFromQuery);
-    if (candidateFromQuery || urlFromQuery) setCreateOpen(true);
-  }, [candidateFromQuery, setVideoUrl, urlFromQuery]);
+    if (candidateFromQuery || urlFromQuery || manualFromQuery) setCreateOpen(true);
+  }, [candidateFromQuery, manualFromQuery, setVideoUrl, urlFromQuery]);
 
   const handleNewTask = () => {
     setSelected(null);
@@ -250,6 +254,32 @@ export default function TranscriptionPage() {
     try {
       const created = await uploadAndTranscribe(file, asrModel, rightsHolder);
       toast.success("文件已上传并创建转写任务");
+      setCreateOpen(false);
+      applyTask(created, false);
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleManualImport = async () => {
+    if (!manualText.trim()) {
+      toast.warning("请粘贴豆包或其他工具产出的文案");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const created = await importManualTranscript({
+        text: manualText,
+        rightsHolder,
+        mediaName: candidateTitleFromQuery || "豆包人工转写",
+        candidateId: candidateFromQuery || undefined,
+        sourceUrl: sourceUrlFromQuery || undefined,
+      });
+      toast.success("已导入，待人工复核后可确认成稿");
+      setManualText("");
       setCreateOpen(false);
       applyTask(created, false);
       await refresh();
@@ -405,7 +435,9 @@ export default function TranscriptionPage() {
     {
       title: "时间",
       width: 150,
-      render: (_, record) => <Text code>{record.start.toFixed(1)}s - {record.end.toFixed(1)}s</Text>,
+      render: (_, record) => record.start === null || record.end === null
+        ? <Text type="secondary">无时间轴</Text>
+        : <Text code>{record.start.toFixed(1)}s - {record.end.toFixed(1)}s</Text>,
     },
     {
       title: "文本",
@@ -418,7 +450,7 @@ export default function TranscriptionPage() {
       title: "置信度",
       dataIndex: "confidence",
       width: 110,
-      render: (value: number) => `${Math.round(value * 100)}%`,
+      render: (value: number | null) => value === null ? "人工导入" : `${Math.round(value * 100)}%`,
     },
     {
       title: "复核",
@@ -458,7 +490,9 @@ export default function TranscriptionPage() {
           message="已带入候选视频"
           description={urlFromQuery
             ? "已预填授权直链，请确认权利主体后创建转写。"
-            : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
+            : manualFromQuery
+              ? `请打开抖音分享链接后在豆包等工具中转写，把文案粘贴回来即可；不会自动登录或调用第三方消费服务。`
+              : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
         />
       )}
 
@@ -489,6 +523,7 @@ export default function TranscriptionPage() {
               <Text strong>{selected.media_name}</Text>
               <Text code>{selected.task_id}</Text>
               <Tag>{selected.model_name || "未知模型"}</Tag>
+              {selected.source_kind === "manual_text" && <Tag color="blue">人工回填 · 无时间轴</Tag>}
               {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
               {selected.low_confidence_count > 0 && <Tag color="warning">待复核 {selected.low_confidence_count} 段</Tag>}
               <Text type="secondary">{selected.stage}</Text>
@@ -508,6 +543,7 @@ export default function TranscriptionPage() {
                         <Button icon={<SaveOutlined />} loading={saving} onClick={() => saveRevision(false)}>保存校对版本</Button>
                         <Button type="primary" loading={saving} onClick={() => saveRevision(true)}>确认成稿</Button>
                       </Space>
+                      {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
                       <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
                       <Collapse
                         size="small"
@@ -600,7 +636,7 @@ export default function TranscriptionPage() {
             type="warning"
             showIcon
             message="权利确认边界"
-            description="不会自动下载平台分享页。请上传你有权处理的文件，或填写已授权的 MP4/MOV 直链。"
+            description="不会自动下载平台分享页或自动操作豆包。可上传有权处理的文件、填写授权直链，或把你在豆包等工具中得到的文案人工回填。"
           />
           <Space wrap>
             <Select
@@ -643,6 +679,27 @@ export default function TranscriptionPage() {
                     <p><UploadOutlined style={{ fontSize: 28 }} /></p>
                     <p>点击或拖拽 MP4/MOV 文件上传</p>
                   </Upload.Dragger>
+                ),
+              },
+              {
+                key: "manual",
+                label: "豆包人工回填（免费）",
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <Alert
+                      type="info"
+                      showIcon
+                      message="把分享链接自行发送到豆包等工具，复制转写结果后粘贴到这里。"
+                      description="本系统不登录、不自动化操作第三方消费服务；人工回填只生成无时间轴文案，仍须完成复核。"
+                    />
+                    <TextArea
+                      value={manualText}
+                      onChange={(event) => setManualText(event.target.value)}
+                      placeholder="粘贴转写文案；空行会分成多个校对片段"
+                      rows={10}
+                    />
+                    <Button type="primary" loading={submitting} onClick={handleManualImport}>确认权利并导入文案</Button>
+                  </Space>
                 ),
               },
             ]}

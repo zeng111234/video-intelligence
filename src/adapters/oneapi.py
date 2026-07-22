@@ -52,7 +52,8 @@ class OneApiLicensedSearchProvider:
         Platform.WECHAT_CHANNELS: 0.15,
     }
     media_endpoint_prices_cny = {
-        Platform.DOUYIN: 0.08,
+        # OneAPI's current public list prices this exact detail endpoint at ¥0.04.
+        Platform.DOUYIN: 0.04,
         Platform.XIAOHONGSHU: 0.12,
         Platform.WECHAT_CHANNELS: 0.15,
     }
@@ -96,11 +97,7 @@ class OneApiLicensedSearchProvider:
                 "trial_unverified_commercial_rights" if enabled else "api_key_missing"
             ),
             credential_alias="ONEAPI_API_KEY" if enabled else None,
-            missing_configuration=(
-                ["OneAPI API Key"]
-                if not enabled
-                else ["真实响应字段小流量验收", "B端展示与派生分析授权确认"]
-            ),
+            missing_configuration=(["OneAPI API Key"] if not enabled else []),
         )
 
     def search(
@@ -135,8 +132,11 @@ class OneApiLicensedSearchProvider:
                     observed_at=observed_at,
                     request_id=request_id,
                 )
-                if normalized.published_at >= published_after:
-                    items.append(normalized)
+                # Keep all successfully parsed items. The commercial-search
+                # service applies the requested window once and records why an
+                # item was filtered, instead of turning a non-empty provider
+                # response into an unexplained zero-result batch here.
+                items.append(normalized)
             except (KeyError, TypeError, ValueError, ValidationError) as exc:
                 errors.append(
                     ProviderSearchError(
@@ -155,6 +155,13 @@ class OneApiLicensedSearchProvider:
             api_call_count=1,
             billable_units=self.endpoint_prices_cny[platform],
             has_more=self._as_bool(self._first(data, "has_more", "hasMore", "more")),
+            raw_item_count=len(raw_items),
+            parsed_item_count=len(items),
+            payload_diagnostic=(
+                "供应商成功响应但未发现可识别的视频列表。"
+                if not raw_items and isinstance(data, Mapping) and data
+                else None
+            ),
             errors=errors,
         )
 
@@ -843,6 +850,13 @@ class OneApiLicensedSearchProvider:
             "interaction",
         )
         metrics_source = {**item, **statistics}
+        share_info = self._first_mapping(
+            item,
+            "share_info",
+            "shareInfo",
+            "share",
+            "shareInfoV2",
+        )
         source_url = self._first(
             item,
             "share_url",
@@ -854,6 +868,12 @@ class OneApiLicensedSearchProvider:
             "web_url",
             "webUrl",
             "url",
+        ) or self._first(
+            share_info,
+            "share_url",
+            "shareUrl",
+            "url",
+            "link",
         )
         parsed_source_url = None
         if source_url:

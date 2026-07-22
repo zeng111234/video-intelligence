@@ -24,6 +24,7 @@ from src.models import (
     SearchBatch,
     SearchBatchStatus,
     SourcePage,
+    SamplingStatus,
 )
 from src.platforms import SUPPORTED_PLATFORMS
 from src.services.keyword_trend import KeywordTrendService
@@ -36,6 +37,11 @@ MONTHLY_HARD_LIMIT_QUERIES = 100
 MONTHLY_HARD_LIMIT_COST_CNY = 10.0
 RANKING_MODE = "keyword_hot"
 KEYWORD_HOT_SORT_TYPE = 1
+RECRAWL_OFFSETS_BY_WINDOW = {
+    1: (2, 6, 12),
+    7: (6, 24, 48),
+}
+RECRAWL_MISS_GRACE_MINUTES = 30
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,45 @@ class CommercialSearchService:
         self.repository.save_search_batch(batch)
         return batch
 
+    def execute_due_recrawls(self, *, max_groups: int = 5) -> list[SearchBatch]:
+        capability = self.provider.capabilities()
+        now = self.clock()
+        grouped: dict[tuple[str, Platform, str, int], list[SamplingCheckpoint]] = {}
+        for checkpoint in self.repository.list_sampling_checkpoints():
+            if checkpoint.status != SamplingStatus.PENDING:
+                continue
+            if checkpoint.due_at > now:
+                continue
+            if checkpoint.platform not in self.active_platforms:
+                continue
+            if checkpoint.provider_name != capability.provider_name:
+                continue
+            key = (
+                checkpoint.keyword.casefold(),
+                checkpoint.platform,
+                checkpoint.provider_name,
+                checkpoint.published_window_days,
+            )
+            grouped.setdefault(key, []).append(checkpoint)
+
+        batches: list[SearchBatch] = []
+        ordered_groups = sorted(
+            grouped.items(),
+            key=lambda item: min(checkpoint.due_at for checkpoint in item[1]),
+        )
+        for (keyword, _platform, _provider_name, window_days), _checkpoints in ordered_groups[
+            : max(1, max_groups)
+        ]:
+            batches.append(
+                self.execute(
+                    keyword=keyword,
+                    published_window_days=window_days,
+                    count=10,
+                    force_refresh=True,
+                )
+            )
+        return batches
+
     def monthly_query_count(self, now: datetime | None = None) -> int:
         current = now or self.clock()
         month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -281,6 +326,13 @@ class CommercialSearchService:
                 run,
                 status=PlatformRunStatus.CACHED,
                 returned_count=cached.returned_count,
+                raw_item_count=cached.raw_item_count,
+                parsed_item_count=cached.parsed_item_count,
+                out_of_window_count=cached.out_of_window_count,
+                invalid_count=cached.invalid_count,
+                duplicate_count=cached.duplicate_count,
+                result_state=cached.result_state,
+                payload_diagnostic=cached.payload_diagnostic,
                 cached_from_run_id=cached.run_id,
                 cache_hit=True,
             )
@@ -335,7 +387,7 @@ class CommercialSearchService:
                 limit=count,
                 idempotency_key=idempotency_key,
             )
-            normalized, validation_errors = self._normalize_page(
+            normalized, validation_errors, validation_counts = self._normalize_page(
                 page,
                 platform=platform,
                 keyword=keyword,
@@ -344,6 +396,12 @@ class CommercialSearchService:
                 limit=count,
             )
             provider_errors = [*page.errors, *validation_errors]
+            effective_raw_item_count = (
+                page.raw_item_count if page.raw_item_count else len(page.items)
+            )
+            effective_parsed_item_count = (
+                page.parsed_item_count if page.parsed_item_count else len(page.items)
+            )
             import_errors = [
                 ImportErrorDetail(
                     row=(error.item_index or 0) + 1,
@@ -365,7 +423,11 @@ class CommercialSearchService:
                 requested_count=count,
                 fetched_count=len(page.items),
                 unique_count=len(normalized),
-                duplicate_count=max(0, len(page.items[:count]) - len(normalized)),
+                duplicate_count=validation_counts["duplicate_count"],
+                raw_item_count=effective_raw_item_count,
+                parsed_item_count=effective_parsed_item_count,
+                out_of_window_count=validation_counts["out_of_window_count"],
+                invalid_count=validation_counts["invalid_count"],
                 exhausted=not page.has_more,
                 partial=bool(provider_errors) or len(normalized) < count,
                 permission_status=capability.permission_status,
@@ -379,6 +441,7 @@ class CommercialSearchService:
                 request_fingerprint=fingerprint,
                 provider_request_id=page.request_id,
                 billable_units=page.billable_units,
+                payload_diagnostic=page.payload_diagnostic,
             )
             self.repository.save_discovery_result(discovery)
             self._save_matches_and_checkpoints(
@@ -394,7 +457,7 @@ class CommercialSearchService:
                     if item.platform == platform
                 },
             )
-            self.trend_service.recompute(
+            trends = self.trend_service.recompute(
                 keyword,
                 platform=platform,
                 provider_name=capability.provider_name,
@@ -403,6 +466,13 @@ class CommercialSearchService:
                 PlatformRunStatus.PARTIAL
                 if provider_errors or len(normalized) < count
                 else PlatformRunStatus.SUCCEEDED
+            )
+            result_state = self._result_state(
+                raw_item_count=effective_raw_item_count,
+                payload_diagnostic=page.payload_diagnostic,
+                normalized=normalized,
+                validation_counts=validation_counts,
+                trends=trends,
             )
             finished = self._finish_run(
                 run,
@@ -413,6 +483,13 @@ class CommercialSearchService:
                 quota_remaining=page.quota_remaining,
                 provider_request_id=page.request_id,
                 errors=provider_errors,
+                raw_item_count=effective_raw_item_count,
+                parsed_item_count=effective_parsed_item_count,
+                out_of_window_count=validation_counts["out_of_window_count"],
+                invalid_count=validation_counts["invalid_count"],
+                duplicate_count=validation_counts["duplicate_count"],
+                result_state=result_state,
+                payload_diagnostic=page.payload_diagnostic,
             )
             self.repository.mark_platform_search_request(
                 fingerprint, "succeeded", finished.finished_at or self.clock()
@@ -496,8 +573,13 @@ class CommercialSearchService:
         provider: str,
         published_after: datetime,
         limit: int,
-    ) -> tuple[list[NormalizedCandidate], list[ProviderSearchError]]:
+    ) -> tuple[list[NormalizedCandidate], list[ProviderSearchError], dict[str, int]]:
         errors: list[ProviderSearchError] = []
+        counts = {
+            "out_of_window_count": 0,
+            "invalid_count": 0,
+            "duplicate_count": 0,
+        }
         if page.platform != platform or page.provider != provider:
             raise LicensedProviderError(
                 "供应商响应的平台或供应商标识与请求不一致。",
@@ -509,15 +591,19 @@ class CommercialSearchService:
             reason = None
             if item.platform != platform:
                 reason = "作品平台与当前子任务不一致。"
+                counts["invalid_count"] += 1
             elif item.platform_item_id in seen:
                 reason = "供应商返回了重复作品ID。"
+                counts["duplicate_count"] += 1
             elif item.published_at < published_after:
                 reason = "作品发布时间超出本次查询范围。"
+                counts["out_of_window_count"] += 1
             elif item.source_url is not None and not CommercialSearchService._url_matches_platform(
                 str(item.source_url),
                 platform,
             ):
                 reason = "作品链接与平台不匹配。"
+                counts["invalid_count"] += 1
             if reason:
                 errors.append(
                     ProviderSearchError(
@@ -547,7 +633,33 @@ class CommercialSearchService:
                     data_quality_warnings=item.data_quality_warnings,
                 )
             )
-        return normalized, errors
+        return normalized, errors, counts
+
+    @staticmethod
+    def _result_state(
+        *,
+        raw_item_count: int,
+        payload_diagnostic: str | None,
+        normalized: list[NormalizedCandidate],
+        validation_counts: dict[str, int],
+        trends,
+    ) -> str:
+        """Describe why a run is empty without spending on another page."""
+        if raw_item_count == 0:
+            return (
+                "provider_payload_invalid"
+                if payload_diagnostic
+                else "provider_empty"
+            )
+        if not normalized:
+            if validation_counts["out_of_window_count"]:
+                return "all_out_of_window"
+            return "all_invalid"
+        if trends and all(
+            item.display_tier in {"ordinary", "observing"} for item in trends
+        ):
+            return "no_hot"
+        return "has_results"
 
     def _save_matches_and_checkpoints(
         self,
@@ -565,11 +677,13 @@ class CommercialSearchService:
             for item in self.repository.list_candidates()
         }
         keyword_key = keyword.casefold()
-        existing_checkpoints = self.repository.list_sampling_checkpoints(keyword_key)
+        all_checkpoints = self.repository.list_sampling_checkpoints(keyword_key)
+        observed_ids: set[str] = set()
         for fallback_rank, item in enumerate(normalized, start=1):
             video_id = candidate_ids.get((platform, item.platform_item_id))
             if not video_id:
                 continue
+            observed_ids.add(video_id)
             self.repository.save_candidate_match(
                 CandidateMatch(
                     request_id=discovery.request_id,
@@ -587,15 +701,36 @@ class CommercialSearchService:
                     evidence=item.evidence,
                 )
             )
+            existing_checkpoints = [
+                checkpoint
+                for checkpoint in all_checkpoints
+                if checkpoint.candidate_id == video_id
+                and checkpoint.platform == platform
+                and checkpoint.provider_name == provider
+                and checkpoint.published_window_days == published_window_days
+            ]
+            for checkpoint in existing_checkpoints:
+                if (
+                    checkpoint.status == SamplingStatus.PENDING
+                    and item.metrics.sampled_at >= checkpoint.due_at
+                ):
+                    updated = checkpoint.model_copy(
+                        update={
+                            "status": SamplingStatus.OBSERVED,
+                            "observed_at": item.metrics.sampled_at,
+                        }
+                    )
+                    self.repository.save_sampling_checkpoint(updated)
             has_plan = any(
                 checkpoint.candidate_id == video_id
                 and checkpoint.platform == platform
                 and checkpoint.provider_name == provider
-                for checkpoint in existing_checkpoints
+                and checkpoint.published_window_days == published_window_days
+                for checkpoint in all_checkpoints
             )
             if has_plan:
                 continue
-            for offset in (2, 6, 24):
+            for offset in RECRAWL_OFFSETS_BY_WINDOW[published_window_days]:
                 checkpoint = SamplingCheckpoint(
                     checkpoint_id=(
                         f"sample-{hashlib.sha256(f'{discovery.request_id}|{video_id}|{offset}'.encode()).hexdigest()[:12]}"
@@ -610,6 +745,22 @@ class CommercialSearchService:
                     due_at=item.metrics.sampled_at + timedelta(hours=offset),
                 )
                 self.repository.save_sampling_checkpoint(checkpoint)
+
+        miss_cutoff = discovery.finished_at - timedelta(
+            minutes=RECRAWL_MISS_GRACE_MINUTES
+        )
+        for checkpoint in all_checkpoints:
+            if (
+                checkpoint.status == SamplingStatus.PENDING
+                and checkpoint.platform == platform
+                and checkpoint.provider_name == provider
+                and checkpoint.published_window_days == published_window_days
+                and checkpoint.due_at < miss_cutoff
+                and checkpoint.candidate_id not in observed_ids
+            ):
+                self.repository.save_sampling_checkpoint(
+                    checkpoint.model_copy(update={"status": SamplingStatus.MISSED})
+                )
 
     def _cached_run(
         self,

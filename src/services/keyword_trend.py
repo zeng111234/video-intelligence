@@ -15,13 +15,15 @@ from src.models import (
     VideoMetricSnapshot,
 )
 
-MODEL_VERSION = "keyword-trend-v1"
+MODEL_VERSION = "keyword-trend-v2"
 WINDOW_DAYS = 7
+REQUIRED_RECRAWLS = 3
+MIN_CONFIDENT_POOL_SIZE = 30
 COMPONENT_WEIGHTS = {
-    "age_adjusted_engagement": 0.35,
-    "platform_rank": 0.25,
-    "freshness": 0.20,
-    "growth_or_persistence": 0.20,
+    "weighted_growth_velocity": 0.60,
+    "acceleration": 0.20,
+    "recall_persistence": 0.10,
+    "freshness": 0.10,
 }
 
 
@@ -49,6 +51,23 @@ def _visible_likes(
     )
 
 
+def _visible_metric_snapshots(
+    snapshots: list[VideoMetricSnapshot], since: datetime, now: datetime
+) -> list[VideoMetricSnapshot]:
+    return sorted(
+        (
+            item
+            for item in snapshots
+            if since <= item.sampled_at <= now
+            and any(
+                value is not None
+                for value in (item.likes, item.comments, item.shares, item.favorites)
+            )
+        ),
+        key=lambda item: item.sampled_at,
+    )
+
+
 def _growth(
     snapshots: list[VideoMetricSnapshot], since: datetime, now: datetime
 ) -> tuple[float | None, float | None]:
@@ -68,6 +87,64 @@ def _growth(
         return None, None
     hours = (latest.sampled_at - previous.sampled_at).total_seconds() / 3600
     return ((latest.likes or 0) - (previous.likes or 0)) / hours, hours
+
+
+def _weighted_delta(
+    previous: VideoMetricSnapshot, current: VideoMetricSnapshot
+) -> float | None:
+    previous_values = [
+        previous.likes,
+        previous.comments,
+        previous.shares,
+        previous.favorites,
+    ]
+    current_values = [
+        current.likes,
+        current.comments,
+        current.shares,
+        current.favorites,
+    ]
+    if all(value is None for value in previous_values) or all(
+        value is None for value in current_values
+    ):
+        return None
+    weights = (1, 3, 4, 4)
+    return float(
+        sum(
+            weight * ((current_value or 0) - (previous_value or 0))
+            for weight, previous_value, current_value in zip(
+                weights, previous_values, current_values, strict=True
+            )
+        )
+    )
+
+
+def _weighted_growth(
+    snapshots: list[VideoMetricSnapshot], since: datetime, now: datetime
+) -> tuple[float | None, float | None, int, float | None, bool]:
+    visible = _visible_metric_snapshots(snapshots, since, now)
+    rates: list[float] = []
+    has_negative = False
+    for previous, current in zip(visible, visible[1:], strict=False):
+        hours = (current.sampled_at - previous.sampled_at).total_seconds() / 3600
+        delta = _weighted_delta(previous, current)
+        if hours <= 0 or delta is None:
+            continue
+        rate = delta / hours
+        if rate < 0:
+            has_negative = True
+            continue
+        rates.append(rate)
+    if not rates:
+        return None, None, 0, None, has_negative
+    previous_median = statistics.median(rates[:-1]) if len(rates) >= 2 else None
+    acceleration = (
+        round(rates[-1] / previous_median, 4)
+        if previous_median is not None and previous_median > 0
+        else None
+    )
+    span_hours = (visible[-1].sampled_at - visible[0].sampled_at).total_seconds() / 3600
+    return round(statistics.median(rates), 4), round(span_hours, 2), len(rates), acceleration, has_negative
 
 
 def _interval_rates(snapshots: list[VideoMetricSnapshot]) -> list[float]:
@@ -91,6 +168,65 @@ def _rank_score(matches: list[CandidateMatch]) -> float:
         for match, weight in zip(ordered, weights, strict=False)
     )
     return round(weighted / sum(weights), 2)
+
+
+def _effective_interactions(snapshot: VideoMetricSnapshot | None) -> float:
+    if snapshot is None:
+        return 0.0
+    return float(
+        (snapshot.likes or 0)
+        + 3 * (snapshot.comments or 0)
+        + 4 * (snapshot.shares or 0)
+        + 4 * (snapshot.favorites or 0)
+    )
+
+
+def _display_tier(
+    *,
+    candidate: VideoCandidate,
+    history: list[VideoMetricSnapshot],
+    score: float,
+    confidence: float,
+    engagement_growth_per_hour: float | None,
+    growth_percentile: float | None,
+    acceleration_percentile: float | None,
+    anomaly_suspected: bool,
+    recrawl_count: int,
+    recall_count: int,
+) -> tuple[str, float, list[str]]:
+    """Classify display eligibility using confirmed recrawl growth evidence."""
+    latest = max(history, key=lambda item: item.sampled_at) if history else None
+    interactions = _effective_interactions(latest)
+    if anomaly_suspected:
+        return "ordinary", interactions, ["增长轨迹存在异常，暂不入选"]
+    if recrawl_count < REQUIRED_RECRAWLS:
+        return (
+            "observing",
+            interactions,
+            [f"仅完成 {recrawl_count} 次复爬，需至少 {REQUIRED_RECRAWLS} 次"],
+        )
+    if recall_count < REQUIRED_RECRAWLS:
+        return (
+            "observing",
+            interactions,
+            [f"复爬再次召回 {recall_count} 次，稳定性不足"],
+        )
+    if engagement_growth_per_hour is None or engagement_growth_per_hour <= 0:
+        return "ordinary", interactions, ["复爬后未形成正向互动增长"]
+    if (
+        score >= 85
+        and confidence >= 0.80
+        and (growth_percentile or 0) >= 95
+        and (acceleration_percentile or 0) >= 80
+    ):
+        return "exploding", interactions, ["增长速度位于前 5%，且最近一段仍在加速"]
+    if score >= 75 and confidence >= 0.70 and (growth_percentile or 0) >= 90:
+        return "hot", interactions, ["复爬确认增长速度位于候选前 10%"]
+    if score >= 65 and confidence >= 0.60 and (growth_percentile or 0) >= 80:
+        return "potential", interactions, ["复爬确认增长速度位于候选前 20%"]
+    if candidate.official_hot:
+        return "potential", interactions, ["官方热榜交叉命中，但增长证据未达热门线"]
+    return "ordinary", interactions, ["未达到热门或潜力观察门槛"]
 
 
 class KeywordTrendService:
@@ -141,14 +277,19 @@ class KeywordTrendService:
             candidate_id: self.repository.list_snapshots(candidate_id)
             for candidate_id in candidates
         }
-        growth_data = {
+        like_growth_data = {
             candidate_id: _growth(history, since, computed_at)
             for candidate_id, history in histories.items()
         }
+        weighted_growth_data = {
+            candidate_id: _weighted_growth(history, since, computed_at)
+            for candidate_id, history in histories.items()
+        }
         growth_eligible_size = sum(
-            value[0] is not None for value in growth_data.values()
+            value[0] is not None for value in weighted_growth_data.values()
         )
-        growth_values = [value[0] for value in growth_data.values()]
+        growth_values = [value[0] for value in weighted_growth_data.values()]
+        acceleration_values = [value[3] for value in weighted_growth_data.values()]
         positive_growth_median = statistics.median(
             [value for value in growth_values if value is not None and value > 0]
             or [0.0]
@@ -174,23 +315,38 @@ class KeywordTrendService:
         for candidate_id, candidate in candidates.items():
             candidate_matches = grouped[candidate_id]
             history = histories[candidate_id]
-            growth, growth_hours = growth_data[candidate_id]
+            like_growth, _like_growth_hours = like_growth_data[candidate_id]
+            (
+                engagement_growth,
+                sampling_span_hours,
+                positive_interval_count,
+                acceleration_ratio,
+                has_negative_weighted_growth,
+            ) = weighted_growth_data[candidate_id]
             age_likes = age_like_values[candidate_id]
             age_engagement = age_engagement_values[candidate_id]
-            rank_score = _rank_score(candidate_matches)
-            appearance_count = len(
-                {
-                    int(item.observed_at.timestamp() // (2 * 3600))
-                    for item in candidate_matches
-                }
+            recall_count = len({item.request_id for item in candidate_matches})
+            appearance_count = recall_count
+            visible_metric_snapshots = _visible_metric_snapshots(
+                history, since, computed_at
             )
+            valid_snapshot_count = len(visible_metric_snapshots)
+            recrawl_count = max(0, valid_snapshot_count - 1)
             age_hours = max(
                 0.0,
                 (computed_at - candidate.published_at).total_seconds() / 3600,
             )
-            freshness = round(max(0.0, 100 * (1 - age_hours / 168)), 2)
-            persistence = round(min(100.0, appearance_count / 3 * 100), 2)
-            growth_percentile = _percentile(growth, growth_values)
+            latest_scope = max(candidate_matches, key=lambda item: item.observed_at)
+            window_hours = max(24, latest_scope.publish_time * 24)
+            freshness = round(max(0.0, 100 * (1 - age_hours / window_hours)), 2)
+            persistence = round(
+                min(100.0, recall_count / (REQUIRED_RECRAWLS + 1) * 100),
+                2,
+            )
+            growth_percentile = _percentile(engagement_growth, growth_values)
+            acceleration_percentile = _percentile(
+                acceleration_ratio, acceleration_values
+            )
             age_like_percentile = _percentile(age_likes, list(age_like_values.values()))
             age_engagement_percentile = _percentile(
                 age_engagement, list(age_engagement_values.values())
@@ -199,12 +355,10 @@ class KeywordTrendService:
                 latest_likes[candidate_id], list(latest_likes.values())
             )
             components = {
-                "age_adjusted_engagement": age_engagement_percentile,
-                "platform_rank": rank_score,
+                "weighted_growth_velocity": growth_percentile,
+                "acceleration": acceleration_percentile,
+                "recall_persistence": persistence,
                 "freshness": freshness,
-                "growth_or_persistence": (
-                    growth_percentile if growth_percentile is not None else persistence
-                ),
             }
             available_weight = sum(
                 COMPONENT_WEIGHTS[name]
@@ -229,6 +383,7 @@ class KeywordTrendService:
                 positive_growth_median=positive_growth_median,
                 since=since,
                 now=computed_at,
+                has_negative_weighted_growth=has_negative_weighted_growth,
             )
             anomaly_penalty = 0.75 if anomaly_reasons else 1.0
             score = round(raw_score * anomaly_penalty, 1)
@@ -236,8 +391,9 @@ class KeywordTrendService:
                 history=history,
                 since=since,
                 now=computed_at,
-                growth_available=growth is not None,
-                appearance_count=appearance_count,
+                growth_available=engagement_growth is not None,
+                recrawl_count=recrawl_count,
+                recall_count=recall_count,
                 pool_size=pool_size,
                 source_confidence=self._source_confidence(history),
                 growth_eligible_size=growth_eligible_size,
@@ -247,9 +403,23 @@ class KeywordTrendService:
                 confidence=confidence,
                 pool_size=pool_size,
                 growth_percentile=growth_percentile,
-                appearance_count=appearance_count,
+                acceleration_percentile=acceleration_percentile,
+                recrawl_count=recrawl_count,
+                recall_count=recall_count,
                 age_hours=age_hours,
                 anomaly_suspected=bool(anomaly_reasons),
+            )
+            display_tier, effective_interactions, tier_reasons = _display_tier(
+                candidate=candidate,
+                history=history,
+                score=score,
+                confidence=confidence,
+                engagement_growth_per_hour=engagement_growth,
+                growth_percentile=growth_percentile,
+                acceleration_percentile=acceleration_percentile,
+                anomaly_suspected=bool(anomaly_reasons),
+                recrawl_count=recrawl_count,
+                recall_count=recall_count,
             )
             latest_match = max(candidate_matches, key=lambda item: item.observed_at)
             reasons = [
@@ -260,18 +430,26 @@ class KeywordTrendService:
                 reasons.append(
                     f"按发布时间折算的互动速度位于本平台候选前 {leading_percent}%"
                 )
-            reasons.append(f"近 7 天有效入榜 {appearance_count} 次")
-            if growth is None:
+            reasons.append(
+                f"有效快照 {valid_snapshot_count} 次，复爬 {recrawl_count} 次，再次召回 {recall_count} 次"
+            )
+            if engagement_growth is None:
                 reasons.append(
-                    "首次观测：暂无真实增长证据；增长组件使用入榜持续性替代分"
+                    "暂无可用增长速度：需等待后续复爬快照"
                 )
             else:
                 reasons.append(
-                    f"{growth_hours:.1f} 小时点赞增长 {growth:.1f}/小时，分位 P{growth_percentile:.0f}"
+                    f"{sampling_span_hours:.1f} 小时加权互动增长 {engagement_growth:.1f}/小时，分位 P{growth_percentile:.0f}"
                 )
-            if pool_size < 30:
+            if acceleration_ratio is not None:
                 reasons.append(
-                    f"当前仅有 {pool_size} 条同平台样本，暂不输出正式爆火等级"
+                    f"最近增长加速度 {acceleration_ratio:.2f}x，分位 P{acceleration_percentile:.0f}"
+                )
+            if recrawl_count < REQUIRED_RECRAWLS:
+                reasons.append(f"未满 {REQUIRED_RECRAWLS} 次复爬，不进入热门榜")
+            if pool_size < MIN_CONFIDENT_POOL_SIZE:
+                reasons.append(
+                    f"当前仅有 {pool_size} 条同平台样本，正式等级会偏保守"
                 )
             checkpoints = [
                 checkpoint
@@ -300,15 +478,24 @@ class KeywordTrendService:
                     platform_rank=latest_match.platform_rank,
                     likes_per_hour=age_likes,
                     engagement_per_hour=age_engagement,
-                    like_growth_per_hour=growth,
+                    like_growth_per_hour=like_growth,
+                    engagement_growth_per_hour=engagement_growth,
+                    acceleration_ratio=acceleration_ratio,
+                    valid_snapshot_count=valid_snapshot_count,
+                    recrawl_count=recrawl_count,
+                    recall_count=recall_count,
+                    missed_checkpoint_count=missed_count,
+                    sampling_span_hours=sampling_span_hours,
                     appearance_count=appearance_count,
                     pool_size=pool_size,
                     component_scores={
                         **components,
                         "age_adjusted_likes": age_like_percentile,
+                        "age_adjusted_engagement": age_engagement_percentile,
                     },
                     percentiles={
                         "growth": growth_percentile,
+                        "acceleration": acceleration_percentile,
                         "age_adjusted_likes": age_like_percentile,
                         "age_adjusted_engagement": age_engagement_percentile,
                         "likes": likes_percentile,
@@ -319,6 +506,9 @@ class KeywordTrendService:
                         else AnomalyStatus.NORMAL
                     ),
                     anomaly_penalty=anomaly_penalty,
+                    display_tier=display_tier,
+                    effective_interactions=effective_interactions,
+                    tier_reasons=tier_reasons,
                     reasons=reasons,
                     model_version=MODEL_VERSION,
                 )
@@ -385,22 +575,22 @@ class KeywordTrendService:
         since: datetime,
         now: datetime,
         growth_available: bool,
-        appearance_count: int,
+        recrawl_count: int,
+        recall_count: int,
         pool_size: int,
         source_confidence: float,
         growth_eligible_size: int,
     ) -> float:
-        visible = _visible_likes(history, since, now)
+        visible = _visible_metric_snapshots(history, since, now)
         confidence = 0.20 + 0.25 * source_confidence
         if growth_available:
-            confidence += 0.15
-        if len(visible) >= 2 and visible[-1].sampled_at - visible[
-            0
-        ].sampled_at >= timedelta(hours=6):
             confidence += 0.10
-        if appearance_count >= 2:
-            confidence += 0.10
-        if pool_size >= 30:
+        confidence += 0.20 * min(1.0, len(visible) / (REQUIRED_RECRAWLS + 1))
+        confidence += 0.15 * min(1.0, recrawl_count / REQUIRED_RECRAWLS)
+        confidence += 0.10 * min(1.0, recall_count / (REQUIRED_RECRAWLS + 1))
+        if len(visible) >= 2 and visible[-1].sampled_at - visible[0].sampled_at >= timedelta(hours=6):
+            confidence += 0.05
+        if pool_size >= MIN_CONFIDENT_POOL_SIZE:
             confidence += 0.10
         if pool_size >= 100:
             confidence += 0.05
@@ -419,30 +609,33 @@ class KeywordTrendService:
         confidence: float,
         pool_size: int,
         growth_percentile: float | None,
-        appearance_count: int,
+        acceleration_percentile: float | None,
+        recrawl_count: int,
+        recall_count: int,
         age_hours: float,
         anomaly_suspected: bool = False,
     ) -> KeywordTrendLevel:
         if (
             anomaly_suspected
-            or pool_size < 30
+            or pool_size < MIN_CONFIDENT_POOL_SIZE
             or confidence < 0.60
             or growth_percentile is None
+            or recrawl_count < REQUIRED_RECRAWLS
+            or recall_count < REQUIRED_RECRAWLS
         ):
             return KeywordTrendLevel.OBSERVING
         if (
             pool_size >= 100
             and score >= 85
             and growth_percentile >= 95
-            and appearance_count >= 3
+            and (acceleration_percentile or 0) >= 80
             and confidence >= 0.80
         ):
             return KeywordTrendLevel.S
         if (
-            pool_size >= 100
+            pool_size >= MIN_CONFIDENT_POOL_SIZE
             and score >= 75
             and growth_percentile >= 90
-            and appearance_count >= 2
             and confidence >= 0.70
         ):
             return KeywordTrendLevel.A
@@ -464,6 +657,7 @@ class KeywordTrendService:
         positive_growth_median: float,
         since: datetime,
         now: datetime,
+        has_negative_weighted_growth: bool = False,
     ) -> list[str]:
         reasons: list[str] = []
         if (
@@ -475,6 +669,8 @@ class KeywordTrendService:
         rates = _interval_rates(_visible_likes(history, since, now))
         if any(rate < 0 for rate in rates):
             reasons.append("点赞计数出现倒退，标记增长轨迹异常")
+        if has_negative_weighted_growth:
+            reasons.append("加权互动计数出现倒退，标记增长轨迹异常")
         if (
             len(rates) >= 2
             and positive_growth_median > 0

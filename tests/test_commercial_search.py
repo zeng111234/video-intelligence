@@ -12,6 +12,7 @@ from src.models import (
     ProviderSearchItem,
     ProviderSearchPage,
     ProviderUsage,
+    SamplingStatus,
     SearchBatch,
 )
 from src.repositories import MockRepository, SQLiteRepository
@@ -25,6 +26,7 @@ class FixtureProvider:
         self.search_calls: list[Platform] = []
         self.error: LicensedProviderError | None = None
         self.fail_first_connection = False
+        self.page_override: ProviderSearchPage | None = None
         self._attempts: dict[Platform, int] = {}
 
     def capabilities(self) -> ProviderCapability:
@@ -60,6 +62,8 @@ class FixtureProvider:
                 kind=ProviderErrorKind.CONNECTION,
                 retryable=True,
             )
+        if self.page_override is not None:
+            return self.page_override
         item_id = "same-id"
         return ProviderSearchPage(
             platform=platform,
@@ -366,6 +370,178 @@ def test_sqlite_migrates_legacy_trend_table_to_platform_primary_key(tmp_path) ->
     ]
     assert primary_key == ["keyword", "platform", "video_id", "computed_at"]
     assert migrated.list_keyword_trend_results("二手车", platform=Platform.XIAOHONGSHU)
+
+
+def test_empty_provider_response_is_recorded_as_provider_empty() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[],
+        observed_at=now,
+        request_id="provider-empty",
+        api_call_count=1,
+        billable_units=0.03,
+        has_more=True,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="冷门词")
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.status == PlatformRunStatus.PARTIAL
+    assert run.result_state == "provider_empty"
+    assert run.raw_item_count == 0
+    assert run.parsed_item_count == 0
+    assert run.returned_count == 0
+    assert run.api_call_count == 1
+    assert provider.search_calls == [Platform.DOUYIN]
+
+
+def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="old-video",
+                title="冷门词旧视频",
+                author_id="author-old",
+                author_name="旧作者",
+                published_at=now - timedelta(days=8),
+                source_url="https://www.douyin.com/video/old-video",
+                provider_rank=1,
+                metrics={
+                    "item_id": "old-video",
+                    "sampled_at": now,
+                    "likes": 1200,
+                    "comments": 100,
+                    "shares": 50,
+                    "favorites": 80,
+                    "confidence": 0.9,
+                },
+            )
+        ],
+        observed_at=now,
+        request_id="provider-old",
+        api_call_count=1,
+        billable_units=0.03,
+        raw_item_count=1,
+        parsed_item_count=1,
+        has_more=True,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(
+        keyword="冷门词",
+        published_window_days=7,
+    )
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.result_state == "all_out_of_window"
+    assert run.raw_item_count == 1
+    assert run.parsed_item_count == 1
+    assert run.out_of_window_count == 1
+    assert run.returned_count == 0
+    assert len(repository.list_candidates()) == 0
+    assert provider.search_calls == [Platform.DOUYIN]
+
+
+def test_low_engagement_search_result_is_not_labeled_hot() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="ordinary-video",
+                title="二手车低互动视频",
+                author_id="ordinary-author",
+                author_name="普通作者",
+                published_at=now - timedelta(hours=2),
+                source_url="https://www.douyin.com/video/ordinary-video",
+                provider_rank=1,
+                metrics={
+                    "item_id": "ordinary-video",
+                    "sampled_at": now,
+                    "likes": 43,
+                    "comments": 23,
+                    "shares": 0,
+                    "favorites": 0,
+                    "confidence": 0.9,
+                },
+            )
+        ],
+        observed_at=now,
+        request_id="provider-ordinary",
+        api_call_count=1,
+        billable_units=0.03,
+        raw_item_count=1,
+        parsed_item_count=1,
+        has_more=True,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="二手车")
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+    trends = repository.list_keyword_trend_results("二手车", platform=Platform.DOUYIN)
+
+    assert run.result_state == "no_hot"
+    assert trends[0].display_tier == "observing"
+    assert trends[0].recrawl_count == 0
+    assert trends[0].effective_interactions == 112
+
+
+def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses() -> None:
+    first_seen = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(first_seen)
+    service = _douyin_only_service(repository, provider, first_seen)
+
+    service.execute(keyword="二手车", published_window_days=1)
+    checkpoints = repository.list_sampling_checkpoints("二手车")
+
+    assert [item.offset_hours for item in checkpoints] == [2, 6, 12]
+    assert all(item.status == SamplingStatus.PENDING for item in checkpoints)
+
+    six_hours_later = first_seen + timedelta(hours=6)
+    provider.now = six_hours_later
+    later_service = _douyin_only_service(repository, provider, six_hours_later)
+    later_service.execute(keyword="二手车", published_window_days=1, force_refresh=True)
+
+    checkpoints = repository.list_sampling_checkpoints("二手车")
+    assert [
+        item.status for item in checkpoints if item.offset_hours in {2, 6}
+    ] == [SamplingStatus.OBSERVED, SamplingStatus.OBSERVED]
+    assert [
+        item.status for item in checkpoints if item.offset_hours == 12
+    ] == [SamplingStatus.PENDING]
+
+    thirteen_hours_later = first_seen + timedelta(hours=13)
+    provider.now = thirteen_hours_later
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[],
+        observed_at=thirteen_hours_later,
+        request_id="provider-empty-after-recrawl",
+        api_call_count=1,
+        billable_units=0.03,
+        has_more=True,
+    )
+    missed_service = _douyin_only_service(repository, provider, thirteen_hours_later)
+    missed_service.execute(keyword="二手车", published_window_days=1, force_refresh=True)
+
+    checkpoints = repository.list_sampling_checkpoints("二手车")
+    assert [
+        item.status for item in checkpoints if item.offset_hours == 12
+    ] == [SamplingStatus.MISSED]
 
 
 def test_monthly_hard_limit_blocks_network_calls() -> None:

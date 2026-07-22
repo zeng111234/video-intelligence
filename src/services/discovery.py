@@ -19,6 +19,11 @@ from src.models import (
 )
 from src.services.source import SourceService
 
+RECRAWL_OFFSETS_BY_WINDOW = {
+    1: (2, 6, 12),
+    7: (6, 24, 48),
+}
+
 
 class KeywordDiscoveryService:
     def __init__(
@@ -195,7 +200,7 @@ class KeywordDiscoveryService:
                         if checkpoint.candidate_id == video_id
                     ]
                     if not checkpoints:
-                        for offset in (2, 6, 24):
+                        for offset in RECRAWL_OFFSETS_BY_WINDOW[publish_time]:
                             self.repository.save_sampling_checkpoint(
                                 SamplingCheckpoint(
                                     checkpoint_id=f"sample-{uuid4().hex[:12]}",

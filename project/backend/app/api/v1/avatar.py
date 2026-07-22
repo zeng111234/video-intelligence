@@ -7,15 +7,20 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+import mimetypes
+import os
 from pathlib import Path
+import shutil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from project.backend.app.core.deps import get_avatar_service
+from src.adapters.avatar import PROJECT_ROOT
 from src.models import (
     AvatarAsset,
     AvatarAssetKind,
@@ -28,6 +33,11 @@ from src.services.avatar import AvatarService
 
 router = APIRouter(prefix="/api/v1/avatar", tags=["avatar"])
 
+AVATAR_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a"}
+MAX_AVATAR_UPLOAD_BYTES = 10 * 1024 * 1024
+MAX_VOICE_UPLOAD_BYTES = 50 * 1024 * 1024
+
 
 class AvatarJobCreate(BaseModel):
     """客户版数字人任务请求。"""
@@ -39,6 +49,7 @@ class AvatarJobCreate(BaseModel):
     script_text: str = Field(..., min_length=1)
     avatar_id: str = Field(..., min_length=1)
     voice_id: str = Field(..., min_length=1)
+    profile_id: str = "default"
     target_seconds: int = Field(45, ge=15, le=60)
     speech_rate: float = Field(1.0, ge=0.8, le=1.2)
     aspect_ratio: str = "9:16"
@@ -73,6 +84,7 @@ class AvatarJobResponse(BaseModel):
     avatar_name: str
     voice_id: str
     voice_name: str
+    profile_id: str = "default"
     speech_rate: float
     aspect_ratio: str
     resolution: str
@@ -111,6 +123,86 @@ def list_assets(service: AvatarService = Depends(get_avatar_service)):
     return service.list_assets()
 
 
+@router.post("/assets/upload", response_model=AvatarAsset)
+def upload_asset(
+    kind: AvatarAssetKind = Form(...),
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    service: AvatarService = Depends(get_avatar_service),
+):
+    capability = service.capabilities()
+    if capability.provider_name != "local_avatar":
+        raise HTTPException(status_code=400, detail="只有本地数字人模式支持上传素材。")
+    if not rights_confirmed:
+        raise HTTPException(status_code=400, detail="必须确认拥有形象或声音授权。")
+
+    suffix = Path(file.filename or "").suffix.lower()
+    allowed = AVATAR_UPLOAD_EXTENSIONS if kind == AvatarAssetKind.AVATAR else VOICE_UPLOAD_EXTENSIONS
+    max_bytes = MAX_AVATAR_UPLOAD_BYTES if kind == AvatarAssetKind.AVATAR else MAX_VOICE_UPLOAD_BYTES
+    if suffix not in allowed:
+        allowed_text = "、".join(sorted(allowed))
+        raise HTTPException(status_code=400, detail=f"素材格式不支持，请上传 {allowed_text}。")
+
+    payload = file.file.read(max_bytes + 1)
+    if not payload:
+        raise HTTPException(status_code=400, detail="上传文件为空。")
+    if len(payload) > max_bytes:
+        raise HTTPException(status_code=400, detail="上传文件超过大小限制。")
+
+    manifest_path = _local_assets_manifest_path()
+    uploads_directory = manifest_path.parent / "uploads"
+    uploads_directory.mkdir(parents=True, exist_ok=True)
+    asset_id = f"local-{kind.value}-{uuid4().hex[:12]}"
+    stored_name = f"{asset_id}{suffix}"
+    stored_path = (uploads_directory / stored_name).resolve()
+    expected_root = uploads_directory.resolve()
+    if expected_root not in stored_path.parents:
+        raise HTTPException(status_code=400, detail="上传路径越界。")
+    stored_path.write_bytes(payload)
+
+    manifest = _read_assets_manifest(manifest_path)
+    relative_path = stored_path.relative_to(manifest_path.parent).as_posix()
+    display_name = name.strip() or Path(file.filename or asset_id).stem or asset_id
+    record: dict[str, Any] = {
+        "asset_id": asset_id,
+        "kind": kind.value,
+        "name": display_name,
+        "path": relative_path,
+        "authorized": True,
+        "rights_holder": rights_holder.strip() or "本人/公司已授权",
+        "uploaded_at": datetime.now().astimezone().isoformat(),
+    }
+    if kind == AvatarAssetKind.AVATAR:
+        record["preview_url"] = f"/api/v1/avatar/assets/{asset_id}/media"
+    manifest["assets"] = [
+        item for item in manifest["assets"] if item.get("asset_id") != asset_id
+    ] + [record]
+    _write_assets_manifest(manifest_path, manifest)
+
+    return AvatarAsset(
+        asset_id=asset_id,
+        kind=kind,
+        name=display_name,
+        preview_url=record.get("preview_url"),
+        authorized=True,
+    )
+
+
+@router.get("/assets/{asset_id}/media")
+def get_asset_media(asset_id: str):
+    manifest_path = _local_assets_manifest_path()
+    record = _find_asset_record(manifest_path, asset_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="素材不存在。")
+    path = _asset_record_path(manifest_path, record)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="素材文件不存在。")
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    return FileResponse(path, media_type=media_type, filename=path.name)
+
+
 @router.post("/jobs", response_model=AvatarJobResponse)
 def create_job(
     body: AvatarJobCreate,
@@ -123,6 +215,7 @@ def create_job(
         source_revision_id=body.source_revision_id or body.template_version_id,
         avatar_id=body.avatar_id,
         voice_id=body.voice_id,
+        profile_id=body.profile_id,
         speech_rate=body.speech_rate,
         aspect_ratio=body.aspect_ratio,
         resolution=body.resolution,
@@ -198,6 +291,7 @@ def generate_legacy(
         script_text=script_text,
         avatar_id=avatar.asset_id,
         voice_id=voice.asset_id,
+        profile_id="default",
         speech_rate=min(1.2, max(0.8, body.speech_rate)),
         aspect_ratio="9:16",
         resolution="1080x1920",
@@ -252,7 +346,7 @@ def get_config(service: AvatarService = Depends(get_avatar_service)) -> dict[str
         "mode": capability.mode.value,
         "provider_name": capability.provider_name,
         "enabled": capability.enabled,
-        "supports_upload": False,
+        "supports_upload": capability.provider_name == "local_avatar",
         "supports_download": capability.enabled and capability.mode.value != "sandbox",
         "missing_configuration": capability.missing_configuration,
         "description": capability.display_name,
@@ -276,9 +370,60 @@ def _asset_names(
     return avatars.get(avatar_id, avatar_id), voices.get(voice_id, voice_id)
 
 
+def _local_assets_manifest_path() -> Path:
+    raw_path = os.getenv("LOCAL_AVATAR_ASSETS_MANIFEST", "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=503, detail="本地素材清单未配置。")
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+def _read_assets_manifest(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"assets": []}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="本地素材清单无法读取。") from exc
+    items = payload.get("assets", payload) if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        raise HTTPException(status_code=500, detail="本地素材清单格式无效。")
+    return {"assets": [item for item in items if isinstance(item, dict)]}
+
+
+def _write_assets_manifest(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_suffix(f"{path.suffix}.tmp")
+    temporary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    shutil.move(str(temporary_path), str(path))
+
+
+def _find_asset_record(path: Path, asset_id: str) -> dict[str, Any] | None:
+    manifest = _read_assets_manifest(path)
+    for item in manifest["assets"]:
+        if item.get("asset_id") == asset_id and item.get("authorized"):
+            return item
+    return None
+
+
+def _asset_record_path(manifest_path: Path, record: dict[str, Any]) -> Path:
+    raw_path = str(record.get("path", ""))
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = manifest_path.parent / path
+    return path.resolve()
+
+
 def _job_response(task: AvatarTask) -> AvatarJobResponse:
     result_url = (
-        f"/api/v1/avatar/jobs/{task.task_id}/media" if task.result_path else None
+        f"/api/v1/avatar/jobs/{task.task_id}/media"
+        if task.result_path or (task.status.value == "succeeded" and not task.is_mock)
+        else None
     )
     return AvatarJobResponse(
         task_id=task.task_id,
@@ -291,6 +436,7 @@ def _job_response(task: AvatarTask) -> AvatarJobResponse:
         avatar_name=task.avatar_name,
         voice_id=task.voice_id,
         voice_name=task.voice_name,
+        profile_id=task.profile_id,
         speech_rate=task.speech_rate,
         aspect_ratio=task.aspect_ratio,
         resolution=task.resolution,

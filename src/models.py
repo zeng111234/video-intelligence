@@ -169,10 +169,12 @@ class PublishPlatform(StrEnum):
 
 class PublishStatus(StrEnum):
     PENDING = "pending"
+    MANUAL_READY = "manual_ready"
     UPLOADING = "uploading"
     PROCESSING = "processing"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    OUTCOME_UNKNOWN = "outcome_unknown"
 
 
 class PipelineStage(StrEnum):
@@ -352,6 +354,9 @@ class ProviderSearchPage(BaseModel):
     quota_remaining: int | None = Field(default=None, ge=0)
     billable_units: float | None = Field(default=None, ge=0)
     has_more: bool = False
+    raw_item_count: int = Field(default=0, ge=0)
+    parsed_item_count: int = Field(default=0, ge=0)
+    payload_diagnostic: str | None = None
     errors: list[ProviderSearchError] = Field(default_factory=list)
 
 
@@ -409,6 +414,20 @@ class AvatarCapability(BaseModel):
     estimated_cost_cny: float | None = Field(default=None, ge=0)
     estimated_seconds: int | None = Field(default=None, ge=0)
     missing_configuration: list[str] = Field(default_factory=list)
+    profiles: list["AvatarProfile"] = Field(default_factory=list)
+
+
+class AvatarProfile(BaseModel):
+    """面向客户展示的数字人生成档位，而非底层模型名称。"""
+
+    profile_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    description: str = ""
+    enabled: bool = False
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    estimated_seconds: int | None = Field(default=None, ge=0)
+    required_vram_gb: int | None = Field(default=None, ge=0)
+    missing_configuration: list[str] = Field(default_factory=list)
 
 
 class AvatarAsset(BaseModel):
@@ -425,6 +444,7 @@ class AvatarSubmitRequest(BaseModel):
     source_revision_id: str | None = None
     avatar_id: str = Field(min_length=1)
     voice_id: str = Field(min_length=1)
+    profile_id: str = "default"
     speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     aspect_ratio: str = "9:16"
     resolution: str = "1080x1920"
@@ -551,6 +571,12 @@ class DiscoveryResult(BaseModel):
     fetched_count: int = Field(default=0, ge=0)
     unique_count: int = Field(default=0, ge=0)
     duplicate_count: int = Field(default=0, ge=0)
+    raw_item_count: int = Field(default=0, ge=0)
+    parsed_item_count: int = Field(default=0, ge=0)
+    out_of_window_count: int = Field(default=0, ge=0)
+    invalid_count: int = Field(default=0, ge=0)
+    result_state: str = "historical_unknown"
+    payload_diagnostic: str | None = None
     exhausted: bool = False
     partial: bool = False
     permission_status: str
@@ -604,6 +630,13 @@ class PlatformSearchRun(BaseModel):
     status: PlatformRunStatus = PlatformRunStatus.QUEUED
     requested_count: int = Field(default=10, ge=1, le=10)
     returned_count: int = Field(default=0, ge=0, le=10)
+    raw_item_count: int = Field(default=0, ge=0)
+    parsed_item_count: int = Field(default=0, ge=0)
+    out_of_window_count: int = Field(default=0, ge=0)
+    invalid_count: int = Field(default=0, ge=0)
+    duplicate_count: int = Field(default=0, ge=0)
+    result_state: str = "historical_unknown"
+    payload_diagnostic: str | None = None
     api_call_count: int = Field(default=0, ge=0, le=1)
     billable_units: float | None = Field(default=None, ge=0)
     quota_remaining: int | None = Field(default=None, ge=0)
@@ -634,12 +667,22 @@ class KeywordTrendResult(BaseModel):
     likes_per_hour: float | None = None
     engagement_per_hour: float | None = None
     like_growth_per_hour: float | None = None
+    engagement_growth_per_hour: float | None = None
+    acceleration_ratio: float | None = None
+    valid_snapshot_count: int = Field(default=1, ge=0)
+    recrawl_count: int = Field(default=0, ge=0)
+    recall_count: int = Field(default=1, ge=0)
+    missed_checkpoint_count: int = Field(default=0, ge=0)
+    sampling_span_hours: float | None = None
     appearance_count: int = Field(ge=1)
     pool_size: int = Field(ge=1)
     component_scores: dict[str, float | None] = Field(default_factory=dict)
     percentiles: dict[str, float | None] = Field(default_factory=dict)
     anomaly_status: AnomalyStatus = AnomalyStatus.NOT_EVALUATED
     anomaly_penalty: float = Field(default=1.0, gt=0, le=1)
+    display_tier: str = "ordinary"
+    effective_interactions: float = Field(default=0, ge=0)
+    tier_reasons: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     model_version: str = "keyword-trend-v1"
 
@@ -658,15 +701,19 @@ class RelevanceReview(BaseModel):
 
 
 class TranscriptSegment(BaseModel):
-    start: float = Field(ge=0)
-    end: float = Field(gt=0)
+    start: float | None = Field(default=None, ge=0)
+    end: float | None = Field(default=None, gt=0)
     text: str = Field(min_length=1)
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(default=None, ge=0, le=1)
     needs_review: bool = False
     reviewed: bool = False
 
     @model_validator(mode="after")
     def validate_time_range(self):
+        if self.start is None and self.end is None:
+            return self
+        if self.start is None or self.end is None:
+            raise ValueError("片段时间必须同时提供开始和结束时间。")
         if self.end <= self.start:
             raise ValueError("片段结束时间必须晚于开始时间。")
         return self
@@ -733,6 +780,9 @@ class TranscriptionTask(TaskRecord):
     asr_hotwords: str | None = None
     language: str | None = None
     duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
+    source_kind: str = "asr"
+    source_url: str | None = None
+    timing_available: bool = True
     approved_revision_id: str | None = None
 
 
@@ -745,6 +795,7 @@ class AvatarTask(TaskRecord):
     avatar_name: str
     voice_id: str
     voice_name: str
+    profile_id: str = "default"
     speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     aspect_ratio: str = "9:16"
     resolution: str = "1080x1920"
@@ -860,6 +911,7 @@ class PublishTask(TaskRecord):
     """发布任务。"""
 
     kind: TaskKind = TaskKind.PUBLISHING
+    batch_id: str | None = None
     video_path: str
     target: PublishTarget
     publish_status: PublishStatus = PublishStatus.PENDING

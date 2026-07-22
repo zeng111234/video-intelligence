@@ -201,7 +201,7 @@ def test_resolve_douyin_media_uses_detail_low_bitrate_endpoint() -> None:
 
     assert transport.calls[0][0].endswith("/api/douyin-app/fetch_video_detail")
     assert transport.calls[0][1]["aweme_id"] == "7584380037021830400"
-    assert result.billable_units == pytest.approx(0.08)
+    assert result.billable_units == pytest.approx(0.04)
     assert str(result.media_url).startswith("https://v3-dy.example.com/media/low.mp4")
     assert "douyin_detail_low_bitrate_media" in result.warnings
 
@@ -432,6 +432,43 @@ def test_missing_non_core_ids_use_marked_proxy_ids_without_fake_urls() -> None:
     assert item.source_url is None
     assert any("代理ID" in warning for warning in item.data_quality_warnings)
     assert any("未生成替代链接" in warning for warning in item.data_quality_warnings)
+
+
+def test_douyin_search_prefers_nested_share_url_for_doubao_prompt() -> None:
+    transport = FixedTransport(
+        [
+            {
+                "code": 200,
+                "data": {
+                    "aweme_list": [
+                        {
+                            "aweme_id": "7663098861069536550",
+                            "desc": "7 月开始风向彻底变了",
+                            "author": {
+                                "sec_uid": "dy-author",
+                                "nickname": "抖音作者",
+                            },
+                            "create_time": int(NOW.timestamp()),
+                            "share_info": {
+                                "share_url": "https://v.douyin.com/5PkWSQr4BCY/"
+                            },
+                            "statistics": {"digg_count": 2895},
+                        }
+                    ]
+                },
+            }
+        ]
+    )
+
+    page = build_provider(transport).search(
+        Platform.DOUYIN,
+        "商业",
+        NOW - timedelta(days=7),
+        10,
+        "idem-nested-share-url",
+    )
+
+    assert str(page.items[0].source_url) == "https://v.douyin.com/5PkWSQr4BCY/"
 
 
 def test_missing_publish_time_uses_observed_time_with_warning() -> None:

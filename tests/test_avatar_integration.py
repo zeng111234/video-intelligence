@@ -178,6 +178,18 @@ def test_avatar_service_persists_real_task_and_refreshes_status() -> None:
     assert refreshed.provider_status == AvatarProviderStatus.SUCCEEDED
 
 
+def test_avatar_service_rejects_profile_when_provider_has_no_profiles() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FakeAvatarProvider()
+    service = AvatarService(repository, provider)
+    request = _request("avatar-profile-mismatch").model_copy(
+        update={"profile_id": "local_fast"}
+    )
+
+    with pytest.raises(ValueError, match="不支持所选数字人生成方案"):
+        service.submit(request, avatar_name="授权形象", voice_name="授权音色")
+
+
 def test_unknown_submit_is_saved_and_reconciled_by_idempotency_key() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FakeAvatarProvider(outcome_unknown=True)

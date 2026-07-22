@@ -37,6 +37,8 @@ class TranscriptionResponse(BaseModel):
     stage: str = ""
     media_name: str = ""
     model_name: str | None = None
+    source_kind: str = "asr"
+    timing_available: bool = True
     duration_seconds: float | None = None
     approved_revision_id: str | None = None
     low_confidence_count: int = 0

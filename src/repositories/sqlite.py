@@ -26,6 +26,8 @@ from src.models import (
     TaskRecord,
     TranscriptRevision,
     TranscriptionTask,
+    PublishTask,
+    VideoEditTask,
     VideoCandidate,
     VideoMetricSnapshot,
 )
@@ -1414,6 +1416,10 @@ class SQLiteRepository:
             return AvatarTask
         if payload["kind"] == TaskKind.COPYWRITING:
             return CopywritingTask
+        if payload["kind"] == TaskKind.VIDEO_EDITING:
+            return VideoEditTask
+        if payload["kind"] == TaskKind.PUBLISHING:
+            return PublishTask
         return TaskRecord
 
     def save_task(self, task: TaskRecord) -> None:

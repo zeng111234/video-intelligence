@@ -18,10 +18,10 @@ export interface CandidateListResponse {
 }
 
 export interface TranscriptSegment {
-  start: number;
-  end: number;
+  start: number | null;
+  end: number | null;
   text: string;
-  confidence: number;
+  confidence: number | null;
   needs_review: boolean;
   reviewed?: boolean;
 }
@@ -34,6 +34,8 @@ export interface TranscriptionResponse {
   stage: string;
   media_name: string;
   model_name: string | null;
+  source_kind: string;
+  timing_available: boolean;
   duration_seconds: number | null;
   approved_revision_id: string | null;
   low_confidence_count: number;
@@ -197,9 +199,18 @@ export interface CrawlerCandidateResult {
   published_at: string | null;
   trend_score: number | null;
   trend_level: string | null;
+  display_tier: "exploding" | "hot" | "potential" | "observing" | "ordinary";
+  effective_interactions: number | null;
   confidence: number | null;
   pool_size: number | null;
   like_growth_per_hour: number | null;
+  engagement_growth_per_hour: number | null;
+  acceleration_ratio: number | null;
+  valid_snapshot_count: number | null;
+  recrawl_count: number | null;
+  recall_count: number | null;
+  missed_checkpoint_count: number | null;
+  sampling_span_hours: number | null;
   anomaly_status: string | null;
   platform_rank: number | null;
   provider_hot_rank: number | null;
@@ -235,6 +246,39 @@ export interface CrawlerCandidateMediaPreviewResponse {
   source: string;
 }
 
+export interface CrawlerDoubaoJobResponse extends TranscriptionResponse {
+  candidate_id: string | null;
+  source_url: string | null;
+  douyin_short_url: string | null;
+  doubao_conversation_url: string | null;
+  fee_cny: number;
+  review_required: boolean;
+  prompt_version: string | null;
+  worker_id: string | null;
+}
+
+export interface CrawlerDoubaoJobListResponse {
+  items: CrawlerDoubaoJobResponse[];
+  total: number;
+}
+
+export interface CrawlerDoubaoWorkerStartResponse {
+  started: boolean;
+  command: string[];
+  log_path: string;
+  message: string;
+}
+
+export interface CrawlerDoubaoMobileCapabilitiesResponse {
+  enabled: boolean;
+  worker_mode: string;
+  appium_server_url: string;
+  android_package: string | null;
+  missing_configuration: string[];
+  requirements: string[];
+  message: string;
+}
+
 export interface CrawlerPlatformRun {
   run_id: string;
   platform: string;
@@ -244,6 +288,13 @@ export interface CrawlerPlatformRun {
   status: string;
   requested_count: number;
   returned_count: number;
+  raw_item_count: number;
+  parsed_item_count: number;
+  out_of_window_count: number;
+  invalid_count: number;
+  duplicate_count: number;
+  result_state: string;
+  payload_diagnostic: string | null;
   cache_hit: boolean;
   cached_from_run_id: string | null;
   api_call_count: number;
@@ -276,6 +327,11 @@ export interface CrawlerBatchResponse {
 
 export interface CrawlerBatchListResponse {
   items: CrawlerBatchResponse[];
+  total: number;
+}
+
+export interface CrawlerDueRecrawlResponse {
+  executed_batches: CrawlerBatchResponse[];
   total: number;
 }
 
@@ -352,13 +408,117 @@ export interface CopywritingRewriteRequest {
 
 export interface PublishResponse {
   task_id: string;
+  batch_id: string | null;
   status: string;
+  publish_status: string;
   platform: string;
+  title: string;
+  stage: string;
+  provider_name: string;
+  platform_video_id: string | null;
+  platform_url: string | null;
+  is_mock: boolean;
   error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface PublishPlatformsResponse {
-  platforms: Array<{ platform: string; enabled: boolean; display_name: string }>;
+  platforms: PublishPlatformCapability[];
+}
+
+export interface PublishPlatformCapability {
+  platform: string;
+  enabled: boolean;
+  display_name: string;
+  mode: string;
+  provider_name: string;
+  manual_only: boolean;
+  manual_fallback: boolean;
+  supports_scheduled: boolean;
+  supports_tags: boolean;
+  supports_cover: boolean;
+  missing_configuration: string[];
+}
+
+export interface PublishPreflightPlatform {
+  platform: string;
+  display_name: string;
+  provider_name: string;
+  mode: string;
+  enabled: boolean;
+  manual_required: boolean;
+  manual_only: boolean;
+  can_create_task: boolean;
+  issue: string | null;
+  missing_configuration: string[];
+  manual_steps: string[];
+}
+
+export interface PublishPreflightResponse {
+  blocked: boolean;
+  video_path: string;
+  issues: string[];
+  platforms: PublishPreflightPlatform[];
+}
+
+export interface PublishBatchResponse {
+  batch_id: string;
+  status: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  outcome_unknown: number;
+  pending: number;
+  created_at: string;
+  updated_at: string;
+  tasks: PublishResponse[];
+}
+
+export interface PublishBatchListResponse {
+  items: PublishBatchResponse[];
+  total: number;
+}
+
+export interface PublishAsset {
+  name: string;
+  path: string;
+  size_bytes: number;
+  updated_at?: number;
+}
+
+export interface PublishAssetListResponse {
+  items: PublishAsset[];
+  total: number;
+}
+
+export interface PublishVariableStatus {
+  field: "mode" | "access_token" | "open_id" | "client_key" | "client_secret" | string;
+  key: string;
+  configured: boolean;
+  masked_value: string;
+  secret: boolean;
+}
+
+export interface PublishPlatformConfig {
+  platform: string;
+  display_name: string;
+  mode: "manual" | "official" | string;
+  env_path: string;
+  variables: PublishVariableStatus[];
+}
+
+export interface PublishConfigResponse {
+  env_path: string;
+  platforms: PublishPlatformConfig[];
+}
+
+export interface PublishPlatformConfigUpdate {
+  mode: "manual" | "official";
+  access_token?: string;
+  open_id?: string;
+  client_key?: string;
+  client_secret?: string;
 }
 
 /* ---- 数字人生成 ---- */
@@ -373,6 +533,18 @@ export interface AvatarCapability {
   supported_aspect_ratios: string[];
   estimated_cost_cny: number | null;
   estimated_seconds: number | null;
+  missing_configuration: string[];
+  profiles: AvatarProfile[];
+}
+
+export interface AvatarProfile {
+  profile_id: string;
+  display_name: string;
+  description: string;
+  enabled: boolean;
+  estimated_cost_cny: number | null;
+  estimated_seconds: number | null;
+  required_vram_gb: number | null;
   missing_configuration: string[];
 }
 
@@ -395,6 +567,7 @@ export interface AvatarJob {
   avatar_name: string;
   voice_id: string;
   voice_name: string;
+  profile_id: string;
   speech_rate: number;
   aspect_ratio: string;
   resolution: string;
@@ -419,6 +592,7 @@ export interface AvatarJobCreateRequest {
   script_text: string;
   avatar_id: string;
   voice_id: string;
+  profile_id?: string;
   target_seconds: number;
   speech_rate: number;
   aspect_ratio: string;

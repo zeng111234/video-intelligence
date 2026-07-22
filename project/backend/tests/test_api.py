@@ -30,11 +30,14 @@ from src.models import (  # noqa: E402
     PipelineStage,
     PipelineStepResult,
     Platform,
+    PublishPlatform,
     TaskStatus,
 )
 from src.repositories import MockRepository  # noqa: E402
+from src.adapters.publishers.sandbox import SandboxPublisher  # noqa: E402
 from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
+from src.services.publisher import PublishService  # noqa: E402
 from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 
@@ -237,6 +240,51 @@ class TestTranscriptions:
         export_resp = client.get(f"/api/v1/transcriptions/{task_id}/export?format=srt")
         assert export_resp.status_code == 200
         assert b"00:00:00,000 -->" in export_resp.content
+
+    def test_manual_text_import_is_free_untimed_and_blocks_subtitle_export(
+        self, client: TestClient
+    ):
+        create_resp = client.post(
+            "/api/v1/transcriptions/manual-text",
+            json={
+                "text": "第一段文案。\n\n第二段文案。",
+                "rights_confirmed": True,
+                "rights_holder": "测试公司",
+                "media_name": "豆包回填",
+                "source_url": "https://v.douyin.com/example/",
+            },
+        )
+        assert create_resp.status_code == 200
+        data = create_resp.json()
+        task_id = data["task_id"]
+        assert data["source_kind"] == "manual_text"
+        assert data["timing_available"] is False
+        assert data["segments"][0]["start"] is None
+        assert data["segments"][0]["end"] is None
+
+        approve_resp = client.post(
+            f"/api/v1/transcriptions/{task_id}/revisions",
+            json={
+                "segments": [
+                    {
+                        **segment,
+                        "reviewed": True,
+                    }
+                    for segment in data["segments"]
+                ],
+                "reviewer": "校对员",
+                "approve": True,
+            },
+        )
+        assert approve_resp.status_code == 200
+
+        txt_resp = client.get(f"/api/v1/transcriptions/{task_id}/export?format=txt")
+        assert txt_resp.status_code == 200
+        assert "第一段文案。".encode("utf-8") in txt_resp.content
+
+        srt_resp = client.get(f"/api/v1/transcriptions/{task_id}/export?format=srt")
+        assert srt_resp.status_code == 400
+        assert "没有时间轴" in srt_resp.json()["message"]
 
 
 # ---------------------------------------------------------------------------
@@ -514,6 +562,8 @@ class TestCrawlerBatches:
         assert capability.mode.value == "production"
         assert capability.enabled is True
         assert capability.credential_alias == "ONEAPI_API_KEY"
+        assert capability.missing_configuration == []
+        assert capability.permission_status == "trial_unverified_commercial_rights"
 
         backend_deps.get_licensed_search_provider.cache_clear()
 
@@ -819,14 +869,32 @@ class TestEditingTemplatesAndSubtitles:
 
 
 class TestPublish:
+    def install_publish_service_override(self):
+        service = PublishService(
+            MockRepository(),
+            {
+                "douyin": SandboxPublisher(PublishPlatform.DOUYIN),
+                "kuaishou": SandboxPublisher(PublishPlatform.KUAISHOU),
+                "wechat_channels": SandboxPublisher(PublishPlatform.WECHAT_CHANNELS),
+                "xiaohongshu": SandboxPublisher(PublishPlatform.XIAOHONGSHU),
+            },
+        )
+        app.dependency_overrides[backend_deps.get_publish_service] = lambda: service
+        return service
+
     def test_list_platforms(self, client: TestClient):
         """列出可用发布平台。"""
-        resp = client.get("/api/v1/publish/platforms")
+        self.install_publish_service_override()
+        try:
+            resp = client.get("/api/v1/publish/platforms")
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
         assert resp.status_code == 200
         data = resp.json()
         assert "platforms" in data
         platforms = data["platforms"]
         assert len(platforms) >= 3  # douyin, kuaishou, wechat_channels
+        assert {"platform", "mode", "enabled"} <= set(platforms[0])
 
     def test_publish_invalid_platform(self, client: TestClient):
         """无效平台应返回 400。"""
@@ -839,6 +907,113 @@ class TestPublish:
             },
         )
         assert resp.status_code == 400
+
+    def test_preflight_batch_and_manual_result(self, client: TestClient):
+        """发布批次可预检、创建并人工回填结果。"""
+        self.install_publish_service_override()
+        payload = {
+            "video_path": "/some/video.mp4",
+            "platforms": ["douyin", "kuaishou"],
+            "title": "测试发布任务",
+            "description": "测试描述",
+            "tags": ["AI"],
+        }
+        try:
+            preflight_resp = client.post("/api/v1/publish/preflight", json=payload)
+            assert preflight_resp.status_code == 200
+            preflight = preflight_resp.json()
+            assert preflight["blocked"] is False
+            assert len(preflight["platforms"]) == 2
+
+            batch_resp = client.post(
+                "/api/v1/publish/batches",
+                json={**payload, "confirmation_accepted": True},
+            )
+            assert batch_resp.status_code == 200
+            batch = batch_resp.json()
+            assert batch["status"] == "manual_ready"
+            assert batch["total"] == 2
+            task_id = batch["tasks"][0]["task_id"]
+            assert batch["tasks"][0]["publish_status"] == "manual_ready"
+
+            manual_resp = client.post(
+                f"/api/v1/publish/tasks/{task_id}/manual-result",
+                json={
+                    "succeeded": True,
+                    "platform_url": "https://example.com/published/1",
+                    "note": "已在平台后台确认",
+                },
+            )
+            assert manual_resp.status_code == 200
+            manual = manual_resp.json()
+            assert manual["status"] == "succeeded"
+            assert manual["publish_status"] == "succeeded"
+            assert manual["platform_url"] == "https://example.com/published/1"
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+
+    def test_create_batch_requires_confirmation(self, client: TestClient):
+        self.install_publish_service_override()
+        try:
+            resp = client.post(
+                "/api/v1/publish/batches",
+                json={
+                    "video_path": "/some/video.mp4",
+                    "platforms": ["douyin"],
+                    "title": "未确认",
+                    "confirmation_accepted": False,
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+        assert resp.status_code == 400
+
+    def test_publish_config_can_be_saved_to_root_env(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        env_path = tmp_path / ".env"
+        env_path.write_text("COPYWRITING_MODEL=keep-me\n", encoding="utf-8")
+        monkeypatch.setattr(backend_config, "ENV_PATH", env_path)
+        for key in (
+            "PUBLISH_DOUYIN_MODE",
+            "PUBLISH_DOUYIN_ACCESS_TOKEN",
+            "PUBLISH_DOUYIN_OPEN_ID",
+            "PUBLISH_DOUYIN_CLIENT_KEY",
+            "PUBLISH_DOUYIN_CLIENT_SECRET",
+        ):
+            monkeypatch.delenv(key, raising=False)
+
+        resp = client.put(
+            "/api/v1/publish/config/douyin",
+            json={
+                "mode": "official",
+                "access_token": "token-secret-value",
+                "open_id": "open-id-1234",
+                "client_key": "client-key-5678",
+                "client_secret": "client-secret-value",
+            },
+        )
+        assert resp.status_code == 200
+        assert "token-secret-value" not in resp.text
+        data = resp.json()
+        assert data["mode"] == "official"
+        token_status = next(
+            item for item in data["variables"] if item["field"] == "access_token"
+        )
+        assert token_status["configured"] is True
+        assert token_status["secret"] is True
+
+        saved = env_path.read_text(encoding="utf-8")
+        assert "COPYWRITING_MODEL=keep-me" in saved
+        assert "PUBLISH_DOUYIN_MODE=official" in saved
+        assert "PUBLISH_DOUYIN_ACCESS_TOKEN=token-secret-value" in saved
+
+        get_resp = client.get("/api/v1/publish/config")
+        assert get_resp.status_code == 200
+        assert "token-secret-value" not in get_resp.text
 
 
 # ---------------------------------------------------------------------------

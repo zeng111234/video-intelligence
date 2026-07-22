@@ -22,10 +22,10 @@ class TranscriptionCreateRequest(BaseModel):
 
 
 class TranscriptSegmentRequest(BaseModel):
-    start: float = Field(ge=0)
-    end: float = Field(ge=0)
+    start: float | None = Field(None, ge=0)
+    end: float | None = Field(None, ge=0)
     text: str = Field(..., min_length=1)
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(None, ge=0, le=1)
     needs_review: bool = False
     reviewed: bool = False
 

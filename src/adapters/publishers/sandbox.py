@@ -15,7 +15,7 @@ from src.models import (
 
 
 class SandboxPublisher:
-    """离线沙箱发布器，用于演示和测试。"""
+    """离线人工发布包生成器，不发起真实平台请求。"""
 
     def __init__(self, platform: PublishPlatform = PublishPlatform.DOUYIN) -> None:
         self._platform = platform
@@ -25,11 +25,16 @@ class SandboxPublisher:
         return self._platform.value
 
     def capabilities(self) -> dict[str, str | bool]:
+        manual_only = self._platform in {
+            PublishPlatform.WECHAT_CHANNELS,
+            PublishPlatform.XIAOHONGSHU,
+        }
         return {
             "provider_name": f"sandbox_{self._platform.value}",
-            "display_name": f"{self._platform.value} 发布（演示）",
-            "mode": "sandbox",
+            "display_name": f"{self._platform.value} 人工发布",
+            "mode": "manual",
             "enabled": True,
+            "manual_only": manual_only,
             "supports_scheduled": False,
             "supports_tags": True,
             "supports_cover": False,
@@ -40,23 +45,23 @@ class SandboxPublisher:
         video_path: str,
         target: PublishTarget,
     ) -> PublishTask:
-        """模拟发布——只记录演示完成，不伪造平台作品。"""
+        """生成发布包——等待人工去平台完成发布并回填结果。"""
         now = datetime.now().astimezone()
         task_id = f"publish-{uuid4().hex[:10]}"
         task = PublishTask(
             task_id=task_id,
             title=f"发布 · {target.title[:20]}",
-            status=TaskStatus.SUCCEEDED,
-            progress=100,
+            status=TaskStatus.SUBMITTED,
+            progress=60,
             created_at=now,
             updated_at=now,
             video_path=video_path,
             target=target,
-            publish_status=PublishStatus.SUCCEEDED,
+            publish_status=PublishStatus.MANUAL_READY,
             platform_video_id=None,
             platform_url=None,
             provider_name=f"sandbox_{self._platform.value}",
-            stage="演示完成，未发布到真实平台",
+            stage="已生成发布包，等待人工发布确认",
             is_mock=True,
         )
         self._tasks[task_id] = task
@@ -88,10 +93,12 @@ class PlatformPublisherAdapter:
         return self._platform.value
 
     def capabilities(self) -> dict[str, str | bool | list[str]]:
+        token_key = f"PUBLISH_{self._platform.value.upper()}_ACCESS_TOKEN"
+        open_id_key = f"PUBLISH_{self._platform.value.upper()}_OPEN_ID"
         return {
             "provider_name": self._platform.value,
-            "display_name": f"{self._platform.value} 发布",
-            "mode": "production" if self._enabled else "disabled",
+            "display_name": f"{self._platform.value} 官方发布（未实测）",
+            "mode": "official_unimplemented",
             "enabled": self._enabled,
             "supports_scheduled": False,
             "supports_tags": True,
@@ -99,11 +106,9 @@ class PlatformPublisherAdapter:
             "missing_configuration": (
                 []
                 if self._enabled
-                else [
-                    f"PUBLISH_{self._platform.value.upper()}_ACCESS_TOKEN",
-                    f"PUBLISH_{self._platform.value.upper()}_OPEN_ID",
-                ]
+                else [token_key, open_id_key]
             ),
+            "manual_fallback": True,
         }
 
     def publish(
@@ -128,12 +133,13 @@ class PlatformPublisherAdapter:
 
 
 def build_publisher(platform: PublishPlatform):
-    """工厂：根据配置返回合适的发布器。"""
+    """工厂：默认返回人工发布包生成器。
+
+    官方 API 适配器尚未完成真实联调，即使本地存在 token 也不直接启用真实发布。
+    """
     import os
 
-    token_key = f"PUBLISH_{platform.value.upper()}_ACCESS_TOKEN"
-    if os.getenv(token_key, "").strip():
-        adapter = PlatformPublisherAdapter(platform)
-        adapter._enabled = True
-        return adapter
+    mode_key = f"PUBLISH_{platform.value.upper()}_MODE"
+    if os.getenv(mode_key, "").strip().lower() == "official":
+        return PlatformPublisherAdapter(platform)
     return SandboxPublisher(platform)

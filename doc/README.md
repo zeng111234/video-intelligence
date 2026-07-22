@@ -16,6 +16,8 @@
 - `final-checklist.md` - 最终检查清单（2026-07-19 快照）
 - `final-delivery-verification.md` - 最终交付验证（2026-07-19 快照）
 - `project-status-final.md` - 项目最终状态（2026-07-19 快照）
+- `strategic-positioning-proposal.md` - 差异化定位与策略建议书（完整版）
+- `strategy-executive-summary.md` - 策略建议执行摘要
 
 > 标注"快照"的文档记录 2026-07-19 的项目状态，当前状态请参考项目根目录的 `README.md` 和 `PROJECT_HANDOFF.md`。
 

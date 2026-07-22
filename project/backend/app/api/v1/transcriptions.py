@@ -39,6 +39,17 @@ class TranscriptionUrlRequest(BaseModel):
     model_name: str = "large-v3-turbo"
 
 
+class ManualTextImportRequest(BaseModel):
+    """用户将外部工具转写结果粘贴回来，不调用该工具的自动化接口。"""
+
+    text: str = Field(..., min_length=1, max_length=50_000)
+    rights_confirmed: bool = False
+    rights_holder: str = Field(..., min_length=1, max_length=80)
+    media_name: str = Field("豆包人工转写", min_length=1, max_length=200)
+    candidate_id: str | None = None
+    source_url: str | None = None
+
+
 class VoiceoverDraftRequest(BaseModel):
     """从已批准转写生成短数字人口播稿。"""
 
@@ -99,6 +110,8 @@ def _to_response(task, service=None) -> TranscriptionResponse:
         stage=task.stage,
         media_name=task.media_name,
         model_name=task.model_name,
+        source_kind=task.source_kind,
+        timing_available=task.timing_available,
         duration_seconds=task.duration_seconds,
         approved_revision_id=task.approved_revision_id,
         low_confidence_count=sum(
@@ -235,6 +248,26 @@ def list_transcriptions(
         if getattr(task, "kind", None) == TaskKind.TRANSCRIPTION
     ][:safe_limit]
     return [_to_response(task, service) for task in tasks]
+
+
+@router.post("/manual-text", response_model=TranscriptionResponse)
+def import_manual_text(
+    body: ManualTextImportRequest,
+    service=Depends(get_transcription_service),
+):
+    """创建零成本人工回填任务，后续仍需人工复核后才可导出。"""
+    try:
+        task = service.import_manual_text(
+            text=body.text,
+            rights_confirmed=body.rights_confirmed,
+            rights_holder=body.rights_holder,
+            media_name=body.media_name,
+            candidate_id=body.candidate_id,
+            source_url=body.source_url,
+        )
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_response(task, service)
 
 
 @router.get("/{task_id}", response_model=TranscriptionResponse)
@@ -481,6 +514,13 @@ def export_transcription(
                 status_code=400, detail="真实转写需确认成稿后才能导出。"
             )
         segments = revision.corrected_segments
+    if format in {"srt", "ass"} and any(
+        segment.start is None or segment.end is None for segment in segments
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="人工导入文案没有时间轴，只支持 TXT/JSON 导出。",
+        )
     exporter = {
         "txt": service.export_txt,
         "json": service.export_json,

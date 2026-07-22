@@ -398,7 +398,9 @@ def test_first_keyword_snapshot_only_observes_and_ranks_top_ten() -> None:
 
     assert len(results) == 10
     assert all(result.level == KeywordTrendLevel.OBSERVING for result in results)
-    assert all(result.confidence == 0.45 for result in results)
+    assert all(result.confidence == 0.53 for result in results)
+    assert all(result.display_tier == "observing" for result in results)
+    assert all(result.recrawl_count == 0 for result in results)
     assert all(result.pool_size == 12 for result in results)
 
 
@@ -502,7 +504,7 @@ def test_keyword_trend_isolates_same_keyword_by_platform(tmp_path) -> None:
     )
 
 
-def test_keyword_growth_can_emit_provisional_b_after_thirty_samples() -> None:
+def test_keyword_growth_waits_for_three_recrawls_before_formal_level() -> None:
     now = datetime(2026, 7, 17, 12, tzinfo=timezone.utc)
     candidates = [
         _trend_candidate(str(index), now=now, likes=100 + index) for index in range(30)
@@ -530,8 +532,66 @@ def test_keyword_growth_can_emit_provisional_b_after_thirty_samples() -> None:
 
     assert target.percentiles["growth"] >= 80
     assert target.confidence >= 0.60
-    assert target.level == KeywordTrendLevel.B
+    assert target.level == KeywordTrendLevel.OBSERVING
+    assert target.display_tier == "observing"
+    assert target.recrawl_count == 1
     assert target.provisional is True
+
+
+def test_keyword_growth_can_promote_after_three_recrawls() -> None:
+    first_seen_at = datetime(2026, 7, 17, 0, tzinfo=timezone.utc)
+    computed_at = datetime(2026, 7, 17, 12, tzinfo=timezone.utc)
+    candidates = [
+        _trend_candidate(
+            str(index),
+            now=first_seen_at + timedelta(hours=2),
+            likes=100 + index,
+            age_hours=3,
+        )
+        for index in range(30)
+    ]
+    repository = MockRepository(candidates=candidates, tasks=[])
+    for index, candidate in enumerate(candidates):
+        values = (
+            [100 + index, 102 + index, 106 + index, 112 + index]
+            if index != 29
+            else [100, 300, 1100, 4300]
+        )
+        for request_index, (sampled_at, likes) in enumerate(
+            zip(
+                [
+                    first_seen_at,
+                    first_seen_at + timedelta(hours=2),
+                    first_seen_at + timedelta(hours=6),
+                    first_seen_at + timedelta(hours=12),
+                ],
+                values,
+                strict=True,
+            )
+        ):
+            if request_index > 0:
+                repository.append_snapshot(
+                    candidate.metrics.model_copy(
+                        update={"sampled_at": sampled_at, "likes": likes}
+                    )
+                )
+            _save_match(
+                repository,
+                candidate_id=candidate.video_id,
+                request_id=f"run-{request_index}",
+                observed_at=sampled_at,
+                rank=1 if index == 29 else min(10, index % 10 + 1),
+            )
+
+    results = KeywordTrendService(repository).recompute("二手车", now=computed_at)
+    target = next(item for item in results if item.candidate_id == "29")
+
+    assert target.recrawl_count == 3
+    assert target.recall_count == 4
+    assert target.engagement_growth_per_hour is not None
+    assert target.percentiles["growth"] >= 90
+    assert target.level in {KeywordTrendLevel.A, KeywordTrendLevel.B}
+    assert target.display_tier in {"exploding", "hot", "potential"}
 
 
 def test_suspicious_like_structure_is_penalized_not_removed() -> None:
@@ -608,7 +668,9 @@ def test_keyword_level_thresholds_are_gated() -> None:
             confidence=0.85,
             pool_size=100,
             growth_percentile=96,
-            appearance_count=3,
+            acceleration_percentile=90,
+            recrawl_count=3,
+            recall_count=4,
             age_hours=10,
         )
         == KeywordTrendLevel.S
@@ -619,7 +681,9 @@ def test_keyword_level_thresholds_are_gated() -> None:
             confidence=0.75,
             pool_size=100,
             growth_percentile=92,
-            appearance_count=2,
+            acceleration_percentile=50,
+            recrawl_count=3,
+            recall_count=4,
             age_hours=10,
         )
         == KeywordTrendLevel.A
@@ -630,7 +694,9 @@ def test_keyword_level_thresholds_are_gated() -> None:
             confidence=0.65,
             pool_size=30,
             growth_percentile=85,
-            appearance_count=1,
+            acceleration_percentile=None,
+            recrawl_count=3,
+            recall_count=3,
             age_hours=10,
         )
         == KeywordTrendLevel.B
@@ -641,7 +707,9 @@ def test_keyword_level_thresholds_are_gated() -> None:
             confidence=0.90,
             pool_size=29,
             growth_percentile=99,
-            appearance_count=3,
+            acceleration_percentile=90,
+            recrawl_count=3,
+            recall_count=4,
             age_hours=1,
         )
         == KeywordTrendLevel.OBSERVING

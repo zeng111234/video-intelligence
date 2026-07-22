@@ -32,7 +32,6 @@ import {
   RocketOutlined,
   UploadOutlined,
   UserOutlined,
-  VideoCameraOutlined,
 } from "@ant-design/icons";
 import {
   createAvatarJob,
@@ -41,8 +40,9 @@ import {
   getAvatarJob,
   listAvatarAssets,
   listAvatarJobs,
+  uploadAvatarAsset,
 } from "../api/client";
-import type { AvatarAsset, AvatarCapability, AvatarJob } from "../api/types";
+import type { AvatarAsset, AvatarCapability, AvatarJob, AvatarProfile } from "../api/types";
 import { useToast } from "../components/Toast";
 import { useSearchParams } from "react-router-dom";
 
@@ -101,11 +101,14 @@ export default function AvatarPage() {
   const [jobs, setJobs] = useState<AvatarJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   const [scriptText, setScriptText] = useState("");
   const [avatarId, setAvatarId] = useState<string>();
   const [voiceId, setVoiceId] = useState<string>();
+  const [profileId, setProfileId] = useState("default");
   const [targetSeconds, setTargetSeconds] = useState(45);
   const [speechRate, setSpeechRate] = useState(1);
   const [targetPlatforms, setTargetPlatforms] = useState<string[]>(["douyin"]);
@@ -122,14 +125,84 @@ export default function AvatarPage() {
     () => jobs.find((item) => item.task_id === activeJobId) || jobs[0] || null,
     [activeJobId, jobs],
   );
+  const selectedAvatar = useMemo(
+    () => avatars.find((item) => item.asset_id === avatarId) || null,
+    [avatarId, avatars],
+  );
+  const selectedVoice = useMemo(
+    () => voices.find((item) => item.asset_id === voiceId) || null,
+    [voiceId, voices],
+  );
+
+  const profiles = useMemo<AvatarProfile[]>(
+    () => capability?.profiles?.length
+      ? capability.profiles
+      : [{
+          profile_id: "default",
+          display_name: capability?.display_name || "默认方案",
+          description: "由当前数字人供应商生成",
+          enabled: Boolean(capability?.enabled),
+          estimated_cost_cny: capability?.estimated_cost_cny ?? null,
+          estimated_seconds: capability?.estimated_seconds ?? null,
+          required_vram_gb: null,
+          missing_configuration: [],
+        }],
+    [capability],
+  );
+
+  const selectedProfile = useMemo(
+    () => profiles.find((item) => item.profile_id === profileId) || profiles[0],
+    [profileId, profiles],
+  );
 
   const estimatedCost = useMemo(() => {
-    if (!capability?.estimated_cost_cny || !capability.estimated_seconds) return null;
+    if (selectedProfile?.estimated_cost_cny === null || !selectedProfile?.estimated_seconds) return null;
     return (
-      capability.estimated_cost_cny *
-      (targetSeconds / capability.estimated_seconds)
+      selectedProfile.estimated_cost_cny *
+      (targetSeconds / selectedProfile.estimated_seconds)
     );
-  }, [capability, targetSeconds]);
+  }, [selectedProfile, targetSeconds]);
+
+  const serviceUnavailable = Boolean(capability && !capability.enabled);
+  const selectedProfileUnavailable = Boolean(selectedProfile && !selectedProfile.enabled);
+  const supportsLocalUpload = capability?.provider_name === "local_avatar";
+  const selectedRecordedProfile = selectedProfile?.profile_id === "local_recorded_natural";
+
+  const estimatedCostText = useMemo(() => {
+    if (!capability) return "读取中";
+    if (capability.mode === "sandbox") return "演示任务，不计费";
+    if (estimatedCost === null) return "待方案就绪后返回";
+    if (estimatedCost === 0) return "本地算力（不含硬件摊销）";
+    return `¥${estimatedCost.toFixed(2)}`;
+  }, [capability, estimatedCost]);
+
+  const capabilityDescription = useMemo(() => {
+    if (!capability) return "";
+    if (serviceUnavailable) {
+      return capability.missing_configuration.length
+        ? "缺少供应商配置，请管理员在服务端完成配置后再开放真实生成。"
+        : "服务端当前未开放数字人生成能力。";
+    }
+    if (capability.mode === "sandbox") {
+      return "演示模式只用于验证任务提交、状态轮询和页面流程，不会产生真实成片或真实费用。";
+    }
+    if (capability.provider_name === "local_avatar") {
+      return "当前支持上传本人照片和完整口播录音。录音驱动不是声音克隆：最终口播以录音内容为准。";
+    }
+    return "当前支持从已授权的公共形象和公共音色库中选择。自定义克隆入口将在后端能力接通后开放。";
+  }, [capability, serviceUnavailable]);
+
+  const profileStatusText = selectedProfileUnavailable
+    ? "该方案尚未部署完成：请管理员先完成本地语音、视频模型与授权素材配置。"
+    : "";
+
+  const submitButtonText = serviceUnavailable
+    ? "数字人服务尚未配置"
+    : selectedProfileUnavailable
+      ? "所选方案尚未就绪"
+      : capability?.mode === "sandbox"
+        ? "创建演示任务（不生成真实成片）"
+        : "提交数字人口播任务";
 
   const refresh = useCallback(async () => {
     const [nextCapability, nextAssets, nextJobs] = await Promise.all([
@@ -142,6 +215,10 @@ export default function AvatarPage() {
     setJobs(nextJobs);
     setAvatarId((current) => current || nextAssets.find((item) => item.kind === "avatar")?.asset_id);
     setVoiceId((current) => current || nextAssets.find((item) => item.kind === "voice")?.asset_id);
+    setProfileId((current) => {
+      const enabled = nextCapability.profiles?.find((item) => item.enabled)?.profile_id;
+      return nextCapability.profiles?.some((item) => item.profile_id === current) ? current : enabled || "default";
+    });
     setActiveJobId((current) => current || nextJobs[0]?.task_id || null);
   }, []);
 
@@ -181,6 +258,14 @@ export default function AvatarPage() {
       toast.warning("缺少可用公共形象或音色。");
       return;
     }
+    if (!selectedAvatar?.authorized || !selectedVoice?.authorized) {
+      toast.warning("所选公共形象或音色尚未授权。");
+      return;
+    }
+    if (selectedProfile && !selectedProfile.enabled) {
+      toast.warning("所选生成方案尚未部署完成。");
+      return;
+    }
     if (!scriptText.trim()) {
       toast.warning("请输入口播文案。");
       return;
@@ -193,6 +278,7 @@ export default function AvatarPage() {
         script_text: scriptText.trim(),
         avatar_id: avatarId,
         voice_id: voiceId,
+        profile_id: selectedProfile?.profile_id,
         target_seconds: targetSeconds,
         speech_rate: speechRate,
         aspect_ratio: "9:16",
@@ -220,6 +306,9 @@ export default function AvatarPage() {
     targetSeconds,
     toast,
     voiceId,
+    selectedProfile,
+    selectedAvatar,
+    selectedVoice,
   ]);
 
   const handleDownload = useCallback(async (job: AvatarJob) => {
@@ -236,7 +325,30 @@ export default function AvatarPage() {
     }
   }, [toast]);
 
-  const serviceUnavailable = Boolean(capability && !capability.enabled);
+  const handleAssetUpload = useCallback(async (kind: "avatar" | "voice", file: File) => {
+    if (!supportsLocalUpload) {
+      toast.warning("当前供应商不支持在页面上传本地素材。");
+      return false;
+    }
+    const setUploading = kind === "avatar" ? setUploadingAvatar : setUploadingVoice;
+    setUploading(true);
+    try {
+      const asset = await uploadAvatarAsset({ kind, file });
+      await refresh();
+      if (kind === "avatar") {
+        setAvatarId(asset.asset_id);
+      } else {
+        setVoiceId(asset.asset_id);
+        setProfileId("local_recorded_natural");
+      }
+      toast.success(kind === "avatar" ? "本人形象已录入" : "本人完整口播录音已录入");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "上传素材失败");
+    } finally {
+      setUploading(false);
+    }
+    return false;
+  }, [refresh, supportsLocalUpload, toast]);
 
   return (
     <div>
@@ -261,69 +373,134 @@ export default function AvatarPage() {
                 ? "当前为演示模式：可验证任务闭环，但不会生成真实成片"
                 : `${capability.display_name} 已可用`
           }
-          description={
-            serviceUnavailable && capability.missing_configuration.length
-              ? `缺少配置：${capability.missing_configuration.join("、")}`
-              : "支持公共形象快速生成，也可上传自己的形象和声音进行克隆。"
-          }
+          description={capabilityDescription}
         />
       )}
 
-      {/* 形象与声音录入 */}
+      {/* 公共素材选择 */}
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={6}>
-          <Card title={<Space><UserOutlined /> 我的形象</Space>}>
-            <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Card title={<Space><UserOutlined /> 形象素材</Space>} loading={loading}>
+            <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
                 style={{
                   width: "100%",
                   aspectRatio: "3/4",
                   borderRadius: 12,
-                  background: "linear-gradient(135deg, #f5f3ff, #ede9fe)",
+                  background: "#f8fafc",
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
-                  cursor: "pointer",
+                  overflow: "hidden",
                 }}
               >
-                <UserOutlined style={{ fontSize: 48, color: "#6366f1", marginBottom: 12 }} />
-                <Text strong>上传形象照片</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>支持 JPG/PNG，正面免冠照</Text>
+                {selectedAvatar?.preview_url ? (
+                  <img
+                    src={selectedAvatar.preview_url}
+                    alt={selectedAvatar.name}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  />
+                ) : (
+                  <>
+                    <UserOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
+                    <Text strong>{selectedAvatar?.name || "请选择公共形象"}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>已授权素材库</Text>
+                  </>
+                )}
               </div>
-              <Upload accept="image/*" showUploadList={false}>
-                <Button block icon={<UploadOutlined />}>选择照片</Button>
+              <Select
+                value={avatarId}
+                onChange={setAvatarId}
+                options={avatars.map((item) => ({
+                  label: item.authorized ? item.name : `${item.name}（未授权）`,
+                  value: item.asset_id,
+                  disabled: !item.authorized,
+                }))}
+                placeholder="选择公共形象"
+                style={{ width: "100%" }}
+              />
+              <Upload
+                accept="image/png,image/jpeg,image/webp"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void handleAssetUpload("avatar", file);
+                  return false;
+                }}
+              >
+                <Button
+                  block
+                  icon={<UploadOutlined />}
+                  loading={uploadingAvatar}
+                  disabled={!supportsLocalUpload}
+                >
+                  上传本人照片
+                </Button>
               </Upload>
-              <Button block icon={<VideoCameraOutlined />}>摄像头录制</Button>
+              <Alert
+                type="info"
+                showIcon
+                message="本人形象可直接使用"
+                description="建议上传正脸清晰照片，需确认拥有肖像授权。"
+              />
             </Space>
           </Card>
         </Col>
         <Col xs={24} lg={6}>
-          <Card title={<Space><AudioOutlined /> 我的声音</Space>}>
-            <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Card title={<Space><AudioOutlined /> 声音素材</Space>} loading={loading}>
+            <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
                 style={{
                   width: "100%",
                   height: 160,
                   borderRadius: 12,
-                  background: "linear-gradient(135deg, #f0fdf4, #dcfce7)",
+                  background: "#f8fafc",
                   display: "flex",
                   flexDirection: "column",
                   alignItems: "center",
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
-                  cursor: "pointer",
                 }}
               >
-                <AudioOutlined style={{ fontSize: 48, color: "#10b981", marginBottom: 12 }} />
-                <Text strong>上传录音文件</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>支持 MP3/WAV，3-10秒清晰语音</Text>
+                <AudioOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
+                <Text strong>{selectedVoice?.name || "请选择公共音色"}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>已授权音色库</Text>
               </div>
-              <Upload accept="audio/*" showUploadList={false}>
-                <Button block icon={<UploadOutlined />}>选择音频</Button>
+              <Select
+                value={voiceId}
+                onChange={setVoiceId}
+                options={voices.map((item) => ({
+                  label: item.authorized ? item.name : `${item.name}（未授权）`,
+                  value: item.asset_id,
+                  disabled: !item.authorized,
+                }))}
+                placeholder="选择公共音色"
+                style={{ width: "100%" }}
+              />
+              <Upload
+                accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void handleAssetUpload("voice", file);
+                  return false;
+                }}
+              >
+                <Button
+                  block
+                  icon={<UploadOutlined />}
+                  loading={uploadingVoice}
+                  disabled={!supportsLocalUpload}
+                >
+                  上传完整口播录音
+                </Button>
               </Upload>
-              <Button block icon={<AudioOutlined />}>开始录音</Button>
+              <Alert
+                type="info"
+                showIcon
+                message="当前是录音驱动，不是声音克隆"
+                description="请上传已经念完整段文案的音频；选择本人录音驱动版后，视频会按这段录音生成。"
+              />
             </Space>
           </Card>
         </Col>
@@ -356,28 +533,34 @@ export default function AvatarPage() {
                 )}
               </div>
 
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Text strong>公共形象</Text>
-                  <Select
-                    value={avatarId}
-                    onChange={setAvatarId}
-                    options={avatars.map((item) => ({ label: item.name, value: item.asset_id }))}
-                    placeholder="无可用形象"
-                    style={{ width: "100%", marginTop: 8 }}
+              <div>
+                <Text strong>生成方案</Text>
+                <Select
+                  value={selectedProfile?.profile_id}
+                  onChange={setProfileId}
+                  style={{ width: "100%", marginTop: 8 }}
+                  options={profiles.map((item) => ({
+                    value: item.profile_id,
+                    disabled: !item.enabled,
+                    label: `${item.display_name}${item.required_vram_gb ? ` · ${item.required_vram_gb}GB 显存` : ""}`,
+                  }))}
+                />
+                {selectedProfile && (
+                  <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
+                    {selectedProfile.description}
+                    {profileStatusText ? ` ${profileStatusText}` : ""}
+                  </Text>
+                )}
+                {selectedRecordedProfile && (
+                  <Alert
+                    style={{ marginTop: 8 }}
+                    type="info"
+                    showIcon
+                    message="录音驱动模式"
+                    description="文案只用于任务记录和后续发布包，最终口播内容以你上传的完整录音为准。"
                   />
-                </Col>
-                <Col span={12}>
-                  <Text strong>音色</Text>
-                  <Select
-                    value={voiceId}
-                    onChange={setVoiceId}
-                    options={voices.map((item) => ({ label: item.name, value: item.asset_id }))}
-                    placeholder="无可用音色"
-                    style={{ width: "100%", marginTop: 8 }}
-                  />
-                </Col>
-              </Row>
+                )}
+              </div>
 
               <Row gutter={12}>
                 <Col span={12}>
@@ -424,7 +607,7 @@ export default function AvatarPage() {
                   <Text>供应商：{capability?.display_name || "读取中"}</Text>
                   <Text>
                     预计费用：
-                    {estimatedCost === null ? "待供应商返回" : `¥${estimatedCost.toFixed(2)}`}
+                    {estimatedCostText}
                   </Text>
                   <Text type="secondary">自动发布默认关闭，成片后先生成发布包和人工检查清单。</Text>
                 </Space>
@@ -436,10 +619,15 @@ export default function AvatarPage() {
                 size="large"
                 block
                 loading={submitting}
-                disabled={serviceUnavailable || !avatarId || !voiceId}
+                disabled={
+                  serviceUnavailable ||
+                  selectedProfileUnavailable ||
+                  !selectedAvatar?.authorized ||
+                  !selectedVoice?.authorized
+                }
                 onClick={handleSubmit}
               >
-                提交数字人口播任务
+                {submitButtonText}
               </Button>
             </Space>
           </Card>

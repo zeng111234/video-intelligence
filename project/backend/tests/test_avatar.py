@@ -2,14 +2,17 @@
 
 from fastapi.testclient import TestClient
 
+from project.backend.app.core.deps import get_avatar_service, get_repository
 from project.backend.app.main import app
+from src.adapters.avatar import LocalCommandAvatarProvider
+from src.services.avatar import AvatarService
 
 
 def test_capabilities_are_explicit():
     with TestClient(app) as client:
         resp = client.get("/api/v1/avatar/capabilities")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["provider_name"] == "sandbox_avatar"
     assert data["mode"] == "sandbox"
@@ -21,7 +24,7 @@ def test_assets_only_return_authorized_public_assets():
     with TestClient(app) as client:
         resp = client.get("/api/v1/avatar/assets")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert {item["kind"] for item in data} == {"avatar", "voice"}
     assert all(item["authorized"] for item in data)
@@ -63,7 +66,7 @@ def test_jobs_list_uses_real_history_not_hardcoded_samples():
     with TestClient(app) as client:
         resp = client.get("/api/v1/avatar/jobs")
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     assert isinstance(resp.json(), list)
 
 
@@ -107,7 +110,7 @@ def test_legacy_generate_accepts_old_tts_fields():
             },
         )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["task_id"].startswith("avatar-")
     assert data["status"] == "running"
@@ -121,3 +124,38 @@ def test_config_reports_upload_disabled():
     assert resp.status_code == 200
     data = resp.json()
     assert data["supports_upload"] is False
+
+
+def test_local_asset_upload_updates_manifest(monkeypatch, tmp_path):
+    manifest = tmp_path / "assets.json"
+    monkeypatch.setenv("LOCAL_AVATAR_ASSETS_MANIFEST", str(manifest))
+    provider = LocalCommandAvatarProvider(
+        assets_manifest=str(manifest),
+        natural_command="python sadtalker.py",
+    )
+    app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
+        get_repository(), provider
+    )
+
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/avatar/assets/upload",
+                data={
+                    "kind": "avatar",
+                    "name": "本人形象",
+                    "rights_confirmed": "true",
+                    "rights_holder": "测试公司",
+                },
+                files={"file": ("me.png", b"image-bytes", "image/png")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["kind"] == "avatar"
+    assert data["name"] == "本人形象"
+    assert data["authorized"] is True
+    assert data["preview_url"].startswith("/api/v1/avatar/assets/")
+    assert manifest.exists()

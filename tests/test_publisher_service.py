@@ -20,6 +20,7 @@ from src.models import (
     TaskStatus,
 )
 from src.repositories.mock import MockRepository
+from src.repositories.sqlite import SQLiteRepository
 from src.services.publisher import PublishService
 
 
@@ -113,7 +114,7 @@ class TestPublishServiceEdgeCases:
             target=target,
             on_progress=bad_callback,
         )
-        assert task.status == TaskStatus.SUCCEEDED
+        assert task.status == TaskStatus.SUBMITTED
 
     def test_get_task_returns_publish_task(self):
         target = PublishTarget(platform=PublishPlatform.DOUYIN, title="检索测试")
@@ -141,6 +142,7 @@ class TestPublishServiceEdgeCases:
         platforms = self.svc.available_platforms()
         assert len(platforms) == 3
         assert all(p["enabled"] for p in platforms)
+        assert all("mode" in p for p in platforms)
 
     def test_available_platforms_empty(self):
         svc = PublishService(self.repo, {})
@@ -163,11 +165,66 @@ class TestPublishServiceEdgeCases:
             targets=targets,
         )
         assert len(tasks) == 2
-        assert tasks[0].status == TaskStatus.SUCCEEDED
+        assert tasks[0].status == TaskStatus.SUBMITTED
         assert tasks[1].status == TaskStatus.FAILED
 
     def test_publish_sandbox_skips_file_check(self):
-        """沙箱模式下不存在的文件应成功（跳过文件检查）。"""
+        """人工发布包模式下不存在的文件路径也能先记录。"""
         target = PublishTarget(platform=PublishPlatform.DOUYIN, title="沙箱跳过检查")
         task = self.svc.publish(video_path="/nonexistent/video.mp4", target=target)
-        assert task.status == TaskStatus.SUCCEEDED
+        assert task.status == TaskStatus.SUBMITTED
+
+    def test_preflight_manual_platforms(self):
+        targets = [
+            PublishTarget(platform=PublishPlatform.DOUYIN, title="预检测试"),
+            PublishTarget(platform=PublishPlatform.KUAISHOU, title="预检测试"),
+        ]
+        result = self.svc.preflight(video_path=str(self._temp_video), targets=targets)
+        assert result["blocked"] is False
+        assert len(result["platforms"]) == 2
+        assert all(item["manual_required"] for item in result["platforms"])
+
+    def test_create_batch_groups_tasks(self):
+        targets = [
+            PublishTarget(platform=PublishPlatform.DOUYIN, title="批次测试"),
+            PublishTarget(platform=PublishPlatform.KUAISHOU, title="批次测试"),
+        ]
+        batch = self.svc.create_batch(video_path=str(self._temp_video), targets=targets)
+        assert batch["status"] == "manual_ready"
+        assert batch["total"] == 2
+        assert all(task.batch_id == batch["batch_id"] for task in batch["tasks"])
+
+    def test_record_manual_result_success(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="人工确认")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        updated = self.svc.record_manual_result(
+            task_id=task.task_id,
+            succeeded=True,
+            platform_url="https://example.com/video/1",
+            note="平台后台已确认",
+        )
+        assert updated.status == TaskStatus.SUCCEEDED
+        assert updated.publish_status == PublishStatus.SUCCEEDED
+        assert updated.platform_url == "https://example.com/video/1"
+        assert updated.is_mock is False
+
+    def test_retry_failed_task_once(self):
+        svc = PublishService(self.repo, {"douyin": _FailingPublisher()})
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="失败后重试")
+        task = svc.publish(video_path=str(self._temp_video), target=target)
+        retried = svc.retry_task(task.task_id)
+        assert retried.retry_count == 1
+        with pytest.raises(ValueError, match="已重试过一次"):
+            svc.retry_task(retried.task_id)
+
+
+def test_sqlite_repository_reads_publish_task(tmp_path):
+    repo = SQLiteRepository(tmp_path / "publish.db")
+    svc = PublishService(repo, {"douyin": SandboxPublisher(PublishPlatform.DOUYIN)})
+    target = PublishTarget(platform=PublishPlatform.DOUYIN, title="SQLite发布")
+    created = svc.publish(video_path="/tmp/video.mp4", target=target)
+
+    fresh_repo = SQLiteRepository(tmp_path / "publish.db")
+    fetched = fresh_repo.get_task(created.task_id)
+    assert isinstance(fetched, PublishTask)
+    assert fetched.publish_status == PublishStatus.MANUAL_READY

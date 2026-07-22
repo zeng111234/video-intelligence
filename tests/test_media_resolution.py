@@ -52,7 +52,7 @@ class FixtureMediaProvider:
 
     def media_resolution_price(self, platform: Platform) -> float | None:
         return {
-            Platform.DOUYIN: 0.08,
+            Platform.DOUYIN: 0.04,
             Platform.XIAOHONGSHU: 0.12,
             Platform.WECHAT_CHANNELS: 0.15,
         }.get(platform)

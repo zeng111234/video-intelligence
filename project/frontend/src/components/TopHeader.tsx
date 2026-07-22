@@ -5,12 +5,11 @@
  */
 import { useMemo, useState, useCallback, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Badge, Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
+import { Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
 import {
   SunOutlined,
   MoonOutlined,
   BellOutlined,
-  MessageOutlined,
   UserOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -128,7 +127,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
   /** 未读计数 */
   const unreadNotifCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
-  const unreadMsgCount = useMemo(() => messages.filter((m) => !m.read).length, [messages]);
 
   /** 根据路由自动计算页面标题 */
   const pageTitle = useMemo(() => {
