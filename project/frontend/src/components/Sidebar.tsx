@@ -60,19 +60,39 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
   const navGroups: NavGroup[] = useMemo(
     () => [
       {
-        title: "核心功能",
+        title: "概览",
         items: [
           { key: "/dashboard", label: "数据仪表盘", icon: <DashboardOutlined /> },
-          { key: "/studio", label: "内容工作台", icon: <AppstoreOutlined /> },
-          { key: "/candidates", label: "候选检索", icon: <SearchOutlined /> },
+        ],
+      },
+      {
+        title: "内容发现",
+        items: [
           { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
+          { key: "/candidates", label: "候选检索", icon: <SearchOutlined /> },
+        ],
+      },
+      {
+        title: "内容生产",
+        items: [
           { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
           { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
           { key: "/video-editor", label: "AI智能剪辑", icon: <RobotOutlined /> },
           { key: "/subtitle", label: "字幕生成", icon: <SubnodeOutlined /> },
-          { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
           { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
+        ],
+      },
+      {
+        title: "批量管理",
+        items: [
+          { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
+        ],
+      },
+      {
+        title: "工作台",
+        items: [
+          { key: "/studio", label: "内容工作台", icon: <AppstoreOutlined /> },
         ],
       },
       {
