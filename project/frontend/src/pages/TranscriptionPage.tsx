@@ -4,10 +4,16 @@ import {
   Button,
   Card,
   Checkbox,
+  Col,
+  Collapse,
+  Drawer,
   Empty,
   Input,
   InputNumber,
+  List,
+  Modal,
   Progress,
+  Row,
   Select,
   Space,
   Table,
@@ -18,21 +24,26 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import {
-  DownloadOutlined,
+  AudioOutlined,
   CopyOutlined,
-  FileTextOutlined,
+  DownloadOutlined,
+  FileAddOutlined,
+  HistoryOutlined,
   LinkOutlined,
   ReloadOutlined,
   SaveOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createTranscriptionByUrl,
   createVoiceoverDraft,
   exportTranscription,
   getTranscription,
   listTranscriptions,
+  listVoiceoverDrafts,
   saveTranscriptionRevision,
+  updateVoiceoverDraft,
   uploadAndTranscribe,
 } from "../api/client";
 import type {
@@ -41,7 +52,7 @@ import type {
   VoiceoverDraftResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { usePersistentState } from "../hooks/usePersistentState";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -54,6 +65,12 @@ const STATUS_COLOR: Record<string, string> = {
   failed: "error",
 };
 
+interface SegmentDraft {
+  taskId: string;
+  serverUpdatedAt: string | null;
+  segments: TranscriptSegment[];
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     queued: "排队中",
@@ -63,6 +80,14 @@ function statusLabel(status: string) {
     failed: "失败",
   };
   return labels[status] || status;
+}
+
+function formatTime(value: string | null) {
+  return value ? new Date(value).toLocaleString("zh-CN") : "-";
+}
+
+function normalizeSegments(segments: TranscriptSegment[]) {
+  return segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false }));
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -78,59 +103,35 @@ export default function TranscriptionPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+
   const [tasks, setTasks] = useState<TranscriptionResponse[]>([]);
   const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
-  const [videoUrl, setVideoUrl] = useState("");
-  const [reviewer, setReviewer] = useState("校对员");
-  const [filterStatus, setFilterStatus] = useState("all");
-  const [searchText, setSearchText] = useState("");
+  const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
+  const [segmentDrafts, setSegmentDrafts] = usePersistentState<Record<string, SegmentDraft>>("transcription_segment_drafts", {}, undefined, 1000);
+  const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
+  const [reviewer, setReviewer] = usePersistentState("transcription_reviewer", "校对员");
+  const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
+  const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
+  const [asrModel, setAsrModel] = usePersistentState("transcription_asr_model", "large-v3-turbo");
+  const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
+  const [targetSeconds, setTargetSeconds] = usePersistentState("transcription_target_seconds", 45);
+  const [activeDraftIndex, setActiveDraftIndex] = usePersistentState("transcription_active_draft_index", 0);
+  const [activePanel, setActivePanel] = usePersistentState<"review" | "voiceover">("transcription_active_panel", "review");
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [asrModel, setAsrModel] = useState("large-v3-turbo");
-  const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
-  const [targetSeconds, setTargetSeconds] = useState(45);
   const [draftLoading, setDraftLoading] = useState(false);
-  const [voiceoverDraft, setVoiceoverDraft] = useState<VoiceoverDraftResponse | null>(null);
-  const [activeDraft, setActiveDraft] = useState(0);
+  const [voiceoverDrafts, setVoiceoverDrafts] = useState<VoiceoverDraftResponse[]>([]);
+  const [activeVoiceover, setActiveVoiceover] = useState<VoiceoverDraftResponse | null>(null);
+
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const items = await listTranscriptions();
-      setTasks(items);
-      if (taskFromQuery) {
-        const task =
-          items.find((item) => item.task_id === taskFromQuery)
-          || await getTranscription(taskFromQuery);
-        setSelected(task);
-        setSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
-      } else if (selected) {
-        const next = items.find((item) => item.task_id === selected.task_id) || null;
-        setSelected(next);
-        setSegments(next?.segments || []);
-      }
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [selected?.task_id, taskFromQuery, toast]);
-
-  useEffect(() => {
-    refresh();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (urlFromQuery) {
-      setVideoUrl(urlFromQuery);
-    }
-  }, [urlFromQuery]);
 
   const filteredTasks = useMemo(() => {
     const normalized = searchText.trim().toLowerCase();
@@ -139,15 +140,88 @@ export default function TranscriptionPage() {
       const searchOk =
         !normalized ||
         task.media_name.toLowerCase().includes(normalized) ||
-        task.title.toLowerCase().includes(normalized);
+        task.title.toLowerCase().includes(normalized) ||
+        task.task_id.toLowerCase().includes(normalized);
       return statusOk && searchOk;
     });
-  }, [tasks, filterStatus, searchText]);
+  }, [filterStatus, searchText, tasks]);
 
-  const selectTask = (task: TranscriptionResponse) => {
+  const loadVoiceoverDrafts = useCallback(async (taskId: string) => {
+    try {
+      const drafts = await listVoiceoverDrafts(taskId);
+      setVoiceoverDrafts(drafts);
+      setActiveVoiceover(drafts[0] || null);
+      setActiveDraftIndex(0);
+    } catch (err) {
+      setVoiceoverDrafts([]);
+      setActiveVoiceover(null);
+      toast.error((err as Error).message || "读取口播稿历史失败");
+    }
+  }, [setActiveDraftIndex, toast]);
+
+  const applyTask = useCallback((task: TranscriptionResponse, closeHistory = true) => {
+    const serverSegments = normalizeSegments(task.segments);
+    const localDraft = segmentDrafts[task.task_id];
     setSelected(task);
-    setSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
-    setVoiceoverDraft(null);
+    setSelectedTaskId(task.task_id);
+    if (localDraft && localDraft.serverUpdatedAt === task.updated_at) {
+      setSegments(localDraft.segments);
+    } else if (localDraft) {
+      Modal.confirm({
+        title: "发现本机校对草稿",
+        content: "服务端任务已更新，本机草稿可能基于旧版本。请选择恢复草稿或丢弃草稿。",
+        okText: "恢复草稿",
+        cancelText: "丢弃草稿",
+        onOk: () => setSegments(localDraft.segments),
+        onCancel: () => {
+          setSegmentDrafts((prev) => {
+            const next = { ...prev };
+            delete next[task.task_id];
+            return next;
+          });
+          setSegments(serverSegments);
+        },
+      });
+    } else {
+      setSegments(serverSegments);
+    }
+    loadVoiceoverDrafts(task.task_id);
+    if (closeHistory) setHistoryOpen(false);
+  }, [loadVoiceoverDrafts, segmentDrafts, setSegmentDrafts, setSelectedTaskId]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const items = await listTranscriptions();
+      setTasks(items);
+      const targetId = taskFromQuery || selectedTaskId;
+      if (targetId) {
+        const task = items.find((item) => item.task_id === targetId) || await getTranscription(targetId);
+        applyTask(task, false);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [applyTask, selectedTaskId, taskFromQuery, toast]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (urlFromQuery) setVideoUrl(urlFromQuery);
+    if (candidateFromQuery || urlFromQuery) setCreateOpen(true);
+  }, [candidateFromQuery, setVideoUrl, urlFromQuery]);
+
+  const handleNewTask = () => {
+    setSelected(null);
+    setSelectedTaskId(null);
+    setSegments([]);
+    setVoiceoverDrafts([]);
+    setActiveVoiceover(null);
+    setCreateOpen(true);
   };
 
   const handleUrlTranscribe = async () => {
@@ -161,8 +235,8 @@ export default function TranscriptionPage() {
       const created = await createTranscriptionByUrl(url, true, asrModel, rightsHolder);
       toast.success("转写任务已创建");
       setVideoUrl("");
-      setSelected(created);
-      setSegments(created.segments);
+      setCreateOpen(false);
+      applyTask(created, false);
       await refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -176,8 +250,8 @@ export default function TranscriptionPage() {
     try {
       const created = await uploadAndTranscribe(file, asrModel, rightsHolder);
       toast.success("文件已上传并创建转写任务");
-      setSelected(created);
-      setSegments(created.segments);
+      setCreateOpen(false);
+      applyTask(created, false);
       await refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -187,7 +261,20 @@ export default function TranscriptionPage() {
   };
 
   const updateSegment = (index: number, patch: Partial<TranscriptSegment>) => {
-    setSegments((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+    setSegments((prev) => {
+      const nextSegments = prev.map((item, i) => (i === index ? { ...item, ...patch } : item));
+      if (selected) {
+        setSegmentDrafts((current) => ({
+          ...current,
+          [selected.task_id]: {
+            taskId: selected.task_id,
+            serverUpdatedAt: selected.updated_at,
+            segments: nextSegments,
+          },
+        }));
+      }
+      return nextSegments;
+    });
   };
 
   const saveRevision = async (approve: boolean) => {
@@ -207,6 +294,11 @@ export default function TranscriptionPage() {
         reviewer,
         approve,
       });
+      setSegmentDrafts((prev) => {
+        const next = { ...prev };
+        delete next[selected.task_id];
+        return next;
+      });
       toast.success(approve ? "已确认成稿" : "校对版本已保存");
       await refresh();
     } catch (err) {
@@ -216,7 +308,7 @@ export default function TranscriptionPage() {
     }
   };
 
-  const handleExport = async (format: "txt" | "json" | "srt") => {
+  const handleExport = async (format: "txt" | "json" | "srt" | "ass") => {
     if (!selected) return;
     try {
       const blob = await exportTranscription(selected.task_id, format);
@@ -240,12 +332,13 @@ export default function TranscriptionPage() {
         targetSeconds,
         variantCount: 2,
       });
-      setVoiceoverDraft(draft);
-      setActiveDraft(0);
       if (draft.status !== "succeeded") {
         toast.error(draft.error_message || "口播稿生成失败");
         return;
       }
+      setActiveVoiceover(draft);
+      setVoiceoverDrafts((prev) => [draft, ...prev.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id)]);
+      setActiveDraftIndex(0);
       toast.success("已生成去重压缩口播稿，原始转写未改动");
     } catch (err) {
       toast.error((err as Error).message);
@@ -254,60 +347,59 @@ export default function TranscriptionPage() {
     }
   };
 
-  const draftVariants = voiceoverDraft?.result_variants.length
-    ? voiceoverDraft.result_variants
-    : voiceoverDraft?.result_text
-      ? [voiceoverDraft.result_text]
+  const activeDraftVariants = activeVoiceover?.result_variants.length
+    ? activeVoiceover.result_variants
+    : activeVoiceover?.result_text
+      ? [activeVoiceover.result_text]
       : [];
-  const activeDraftText = draftVariants[activeDraft] || "";
+  const activeDraftText = activeDraftVariants[activeDraftIndex] || "";
 
-  const handleUseForAvatar = () => {
-    if (!voiceoverDraft || !activeDraftText) return;
+  const updateActiveVoiceoverText = (text: string) => {
+    if (!activeVoiceover) return;
+    const nextVariants = [...activeDraftVariants];
+    nextVariants[activeDraftIndex] = text;
+    const updated = {
+      ...activeVoiceover,
+      result_text: activeDraftIndex === 0 ? text : activeVoiceover.result_text,
+      result_variants: nextVariants,
+    };
+    setActiveVoiceover(updated);
+    setVoiceoverDrafts((prev) => prev.map((item) => item.copywriting_task_id === updated.copywriting_task_id ? updated : item));
+  };
+
+  const saveVoiceoverDraft = async () => {
+    if (!selected || !activeVoiceover || !activeDraftText.trim()) return false;
+    setSaving(true);
+    try {
+      const saved = await updateVoiceoverDraft({
+        taskId: selected.task_id,
+        draftId: activeVoiceover.copywriting_task_id,
+        resultText: activeDraftText,
+        resultVariants: activeDraftVariants,
+      });
+      setActiveVoiceover(saved);
+      setVoiceoverDrafts((prev) => prev.map((item) => item.copywriting_task_id === saved.copywriting_task_id ? saved : item));
+      toast.success("口播稿编辑已保存");
+      return true;
+    } catch (err) {
+      toast.error((err as Error).message || "保存口播稿失败");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUseForAvatar = async () => {
+    if (!activeVoiceover || !activeDraftText || activeVoiceover.is_mock) return;
+    const saved = await saveVoiceoverDraft();
+    if (!saved) return;
     const params = new URLSearchParams({
       script: activeDraftText,
-      sourceTask: voiceoverDraft.copywriting_task_id,
-      sourceRevision: voiceoverDraft.source_revision_id,
+      sourceTask: activeVoiceover.copywriting_task_id,
+      sourceRevision: activeVoiceover.source_revision_id,
     });
     navigate(`/avatar?${params.toString()}`);
   };
-
-  const columns: ColumnsType<TranscriptionResponse> = [
-    { title: "任务ID", dataIndex: "task_id", width: 170, render: (value) => <Text code>{value}</Text> },
-    { title: "媒体", dataIndex: "media_name", ellipsis: true },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 110,
-      render: (value: string) => <Tag color={STATUS_COLOR[value]}>{statusLabel(value)}</Tag>,
-    },
-    {
-      title: "进度",
-      dataIndex: "progress",
-      width: 130,
-      render: (value: number, record) => (
-        <Progress
-          percent={value}
-          size="small"
-          status={record.status === "failed" ? "exception" : record.status === "succeeded" ? "success" : "active"}
-        />
-      ),
-    },
-    {
-      title: "创建时间",
-      dataIndex: "created_at",
-      width: 180,
-      render: (value: string | null) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
-    },
-    {
-      title: "操作",
-      width: 90,
-      render: (_, record) => (
-        <Button type="link" onClick={() => selectTask(record)}>
-          查看
-        </Button>
-      ),
-    },
-  ];
 
   const segmentColumns: ColumnsType<TranscriptSegment> = [
     {
@@ -319,11 +411,7 @@ export default function TranscriptionPage() {
       title: "文本",
       dataIndex: "text",
       render: (value: string, _record, index) => (
-        <TextArea
-          value={value}
-          autoSize
-          onChange={(event) => updateSegment(index, { text: event.target.value })}
-        />
+        <TextArea value={value} autoSize onChange={(event) => updateSegment(index, { text: event.target.value })} />
       ),
     },
     {
@@ -349,98 +437,37 @@ export default function TranscriptionPage() {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <div>
-        <Title level={4} style={{ margin: 0 }}>语音转写</Title>
-        <Text type="secondary">转写历史从后端 SQLite 加载；真实转写必须确认成稿后才能导出。</Text>
-      </div>
+      <Row justify="space-between" align="middle" gutter={[16, 12]}>
+        <Col>
+          <Title level={4} style={{ margin: 0 }}>语音转写</Title>
+          <Text type="secondary">SQLite 保存转写历史；浏览器只保留当前选择和未提交校对草稿。</Text>
+        </Col>
+        <Col>
+          <Space wrap>
+            <Button icon={<FileAddOutlined />} onClick={handleNewTask}>新建转写</Button>
+            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>转写历史</Button>
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>
+          </Space>
+        </Col>
+      </Row>
 
-      <Alert
-        type="warning"
-        showIcon
-        message="权利确认边界"
-        description="候选或爬虫结果跳转到此页后，不会自动下载平台分享页。请上传你有权处理的文件，或填写已授权的 MP4/MOV 直链。"
-      />
-
-      {candidateFromQuery && !urlFromQuery && (
+      {candidateFromQuery && (
         <Alert
           type="info"
           showIcon
-          message="需要补充可转写媒体"
-          description={`已从候选 ${candidateTitleFromQuery || candidateFromQuery} 跳转；当前供应商没有返回原视频直链。请粘贴已授权 MP4/MOV 直链，或切换到“上传文件”上传你有权处理的视频。`}
+          message="已带入候选视频"
+          description={urlFromQuery
+            ? "已预填授权直链，请确认权利主体后创建转写。"
+            : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
         />
       )}
 
-      <Card title="创建转写任务">
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="默认使用准确率优先模型"
-          description="large-v3-turbo 比快速预览更慢、更占内存，但更适合正式文案。专有词应在校对环节逐条确认，不建议向整段音频强行注入热词。"
-        />
-        <Space wrap style={{ marginBottom: 16 }}>
-          <Select
-            value={asrModel}
-            onChange={setAsrModel}
-            style={{ width: 230 }}
-            options={[
-              { value: "large-v3-turbo", label: "准确率优先 · large-v3-turbo" },
-              { value: "base", label: "快速预览 · base" },
-            ]}
-          />
-          <Input
-            value={rightsHolder}
-            onChange={(event) => setRightsHolder(event.target.value)}
-            addonBefore="权利主体"
-            style={{ width: 300 }}
-          />
-        </Space>
-        <Tabs
-          items={[
-            {
-              key: "url",
-              label: <span><LinkOutlined /> 授权直链</span>,
-              children: (
-                <Space direction="vertical" style={{ width: "100%" }}>
-                  <TextArea
-                    value={videoUrl}
-                    onChange={(event) => setVideoUrl(event.target.value)}
-                    placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载"
-                    rows={3}
-                  />
-                  <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>
-                    确认权利并创建转写
-                  </Button>
-                </Space>
-              ),
-            },
-            {
-              key: "file",
-              label: <span><UploadOutlined /> 上传文件</span>,
-              children: (
-                <Upload.Dragger
-                  accept=".mp4,.mov"
-                  beforeUpload={(file) => {
-                    handleFileUpload(file);
-                    return false;
-                  }}
-                  multiple={false}
-                  showUploadList={false}
-                  disabled={submitting}
-                >
-                  <p><UploadOutlined style={{ fontSize: 28 }} /></p>
-                  <p>点击或拖拽 MP4/MOV 文件上传</p>
-                </Upload.Dragger>
-              ),
-            },
-          ]}
-        />
-      </Card>
-
       <Card
-        title={<Space><FileTextOutlined /> 校对与导出</Space>}
+        title={<Space><AudioOutlined /> 当前任务工作区</Space>}
         extra={selected && (
-          <Space>
+          <Space wrap>
+            <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
+            {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
             <Select
               value="txt"
               style={{ width: 90 }}
@@ -448,183 +475,222 @@ export default function TranscriptionPage() {
                 { value: "txt", label: "TXT" },
                 { value: "json", label: "JSON" },
                 { value: "srt", label: "SRT" },
+                { value: "ass", label: "ASS" },
               ]}
-              onSelect={(value) => handleExport(value as "txt" | "json" | "srt")}
+              onSelect={(value) => handleExport(value as "txt" | "json" | "srt" | "ass")}
             />
             <Button icon={<DownloadOutlined />} onClick={() => handleExport("txt")}>导出</Button>
           </Space>
         )}
       >
         {selected ? (
-          <Space direction="vertical" style={{ width: "100%" }}>
+          <Space direction="vertical" style={{ width: "100%" }} size={16}>
             <Space wrap>
-              <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
               <Text strong>{selected.media_name}</Text>
-              <Tag color={selected.model_name === "large-v3-turbo" ? "green" : "orange"}>
-                {selected.model_name === "large-v3-turbo" ? "准确率优先" : "快速预览"}
-              </Tag>
+              <Text code>{selected.task_id}</Text>
+              <Tag>{selected.model_name || "未知模型"}</Tag>
               {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
-              {selected.low_confidence_count > 0 && (
-                <Tag color="warning">待复核 {selected.low_confidence_count} 段</Tag>
-              )}
-              {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
+              {selected.low_confidence_count > 0 && <Tag color="warning">待复核 {selected.low_confidence_count} 段</Tag>}
               <Text type="secondary">{selected.stage}</Text>
             </Space>
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
-            {segments.length > 0 ? (
-              <>
-                <Space>
-                  <Input value={reviewer} onChange={(event) => setReviewer(event.target.value)} addonBefore="校对人" />
-                  <Button icon={<SaveOutlined />} loading={saving} onClick={() => saveRevision(false)}>
-                    保存校对版本
-                  </Button>
-                  <Button type="primary" loading={saving} onClick={() => saveRevision(true)}>
-                    确认成稿
-                  </Button>
-                </Space>
-                <Table
-                  rowKey={(_, index) => String(index)}
-                  columns={segmentColumns}
-                  dataSource={segments}
-                  pagination={false}
-                  size="small"
-                />
-              </>
-            ) : (
-              <Empty description="该任务暂无可校对片段" />
-            )}
-          </Space>
-        ) : (
-          <Empty description="选择一个转写任务查看和校对" />
-        )}
-      </Card>
-
-      <Card title="压缩为数字人口播稿">
-        {selected ? (
-          <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Alert
-              type={selected.approved_revision_id ? "info" : "warning"}
-              showIcon
-              message={
-                selected.approved_revision_id
-                  ? "LLM 将基于已确认成稿去重、压缩，不会覆盖原始转写"
-                  : "先完成校对并确认成稿"
-              }
-              description="模型会删除口头禅、重复句和绕话，保留已确认的核心观点、数字与专有名词；生成后仍需人工检查，再交给数字人。"
-            />
-            <Space wrap>
-              <Text>目标时长</Text>
-              <InputNumber
-                min={15}
-                max={60}
-                value={targetSeconds}
-                onChange={(value) => setTargetSeconds(Number(value || 45))}
-                addonAfter="秒"
-              />
-              <Button
-                type="primary"
-                loading={draftLoading}
-                disabled={!selected.approved_revision_id}
-                onClick={handleCreateVoiceoverDraft}
-              >
-                生成去重压缩稿
-              </Button>
-            </Space>
-            {draftVariants.length > 0 && (
-              <Space direction="vertical" style={{ width: "100%" }}>
-                <Space wrap>
-                  {draftVariants.map((_, index) => (
-                    <Button
-                      key={index}
-                      size="small"
-                      type={activeDraft === index ? "primary" : "default"}
-                      onClick={() => setActiveDraft(index)}
-                    >
-                      版本 {index + 1}
-                    </Button>
-                  ))}
-                  <Tag>{activeDraftText.length} 字</Tag>
-                  <Tag>目标约 {voiceoverDraft?.target_characters} 字</Tag>
-                  <Tag>{voiceoverDraft?.model_name}</Tag>
-                  {voiceoverDraft?.is_mock && <Tag color="warning">Sandbox 演示文案</Tag>}
-                </Space>
-                <TextArea
-                  value={activeDraftText}
-                  autoSize={{ minRows: 6 }}
-                  onChange={(event) => {
-                    const next = [...draftVariants];
-                    next[activeDraft] = event.target.value;
-                    setVoiceoverDraft((current) => current ? {
-                      ...current,
-                      result_text: activeDraft === 0 ? event.target.value : current.result_text,
-                      result_variants: next,
-                    } : current);
-                  }}
-                />
-                <Space>
-                  <Button
-                    icon={<CopyOutlined />}
-                    onClick={() => navigator.clipboard.writeText(activeDraftText).then(() => toast.success("已复制"))}
-                  >
-                    复制口播稿
-                  </Button>
-                  <Button
-                    type="primary"
-                    disabled={voiceoverDraft?.is_mock}
-                    onClick={handleUseForAvatar}
-                  >
-                    人工确认后带到数字人
-                  </Button>
-                </Space>
-              </Space>
-            )}
-          </Space>
-        ) : (
-          <Empty description="选择一个转写任务后生成口播稿" />
-        )}
-      </Card>
-
-      <Card
-        title="转写历史"
-        extra={
-          <Space>
-            <Input
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="搜索媒体"
-              style={{ width: 200 }}
-            />
-            <Select
-              value={filterStatus}
-              onChange={setFilterStatus}
-              style={{ width: 130 }}
-              options={[
-                { value: "all", label: "全部" },
-                { value: "running", label: "转写中" },
-                { value: "succeeded", label: "已完成" },
-                { value: "failed", label: "失败" },
+            <Tabs
+              activeKey={activePanel}
+              onChange={(key) => setActivePanel(key as "review" | "voiceover")}
+              items={[
+                {
+                  key: "review",
+                  label: "校对成稿",
+                  children: segments.length > 0 ? (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <Space wrap>
+                        <Input value={reviewer} onChange={(event) => setReviewer(event.target.value)} addonBefore="校对人" style={{ width: 240 }} />
+                        <Button icon={<SaveOutlined />} loading={saving} onClick={() => saveRevision(false)}>保存校对版本</Button>
+                        <Button type="primary" loading={saving} onClick={() => saveRevision(true)}>确认成稿</Button>
+                      </Space>
+                      <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
+                      <Collapse
+                        size="small"
+                        items={[{
+                          key: "plain",
+                          label: "纯文本预览",
+                          children: <Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => segment.text).join("\n")}</Paragraph>,
+                        }]}
+                      />
+                    </Space>
+                  ) : <Empty description="该任务暂无可校对片段" />,
+                },
+                {
+                  key: "voiceover",
+                  label: "数字人口播稿",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <Alert
+                        type={selected.approved_revision_id ? "info" : "warning"}
+                        showIcon
+                        message={selected.approved_revision_id ? "基于已确认成稿生成，不覆盖原始转写" : "先完成校对并确认成稿"}
+                      />
+                      <Space wrap>
+                        <Text>目标时长</Text>
+                        <InputNumber min={15} max={60} value={targetSeconds} onChange={(value) => setTargetSeconds(Number(value || 45))} addonAfter="秒" />
+                        <Button type="primary" loading={draftLoading} disabled={!selected.approved_revision_id} onClick={handleCreateVoiceoverDraft}>
+                          生成去重压缩稿
+                        </Button>
+                      </Space>
+                      {voiceoverDrafts.length > 0 && (
+                        <Space wrap>
+                          {voiceoverDrafts.map((draft, index) => (
+                            <Button
+                              key={draft.copywriting_task_id}
+                              size="small"
+                              type={activeVoiceover?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"}
+                              onClick={() => {
+                                setActiveVoiceover(draft);
+                                setActiveDraftIndex(0);
+                              }}
+                            >
+                              历史 {index + 1}
+                            </Button>
+                          ))}
+                        </Space>
+                      )}
+                      {activeDraftVariants.length > 0 ? (
+                        <Space direction="vertical" style={{ width: "100%" }}>
+                          <Space wrap>
+                            {activeDraftVariants.map((_, index) => (
+                              <Button key={index} size="small" type={activeDraftIndex === index ? "primary" : "default"} onClick={() => setActiveDraftIndex(index)}>
+                                版本 {index + 1}
+                              </Button>
+                            ))}
+                            <Tag>{activeDraftText.length} 字</Tag>
+                            <Tag>目标 {activeVoiceover?.target_seconds ? `${activeVoiceover.target_seconds} 秒` : "未知"}</Tag>
+                            <Tag>{activeVoiceover?.model_name || "未知模型"}</Tag>
+                            {activeVoiceover?.is_mock && <Tag color="warning">Sandbox 演示文案</Tag>}
+                          </Space>
+                          <TextArea value={activeDraftText} autoSize={{ minRows: 6 }} onChange={(event) => updateActiveVoiceoverText(event.target.value)} />
+                          <Space wrap>
+                            <Button icon={<SaveOutlined />} loading={saving} onClick={saveVoiceoverDraft}>保存编辑</Button>
+                            <Button icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(activeDraftText).then(() => toast.success("已复制"))}>复制口播稿</Button>
+                            <Button type="primary" loading={saving} disabled={activeVoiceover?.is_mock} onClick={handleUseForAvatar}>保存并带到数字人</Button>
+                          </Space>
+                        </Space>
+                      ) : (
+                        <Empty description="当前任务暂无口播稿历史" />
+                      )}
+                    </Space>
+                  ),
+                },
               ]}
             />
-            <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>
           </Space>
-        }
-      >
-        <Table
-          rowKey="task_id"
-          columns={columns}
-          dataSource={filteredTasks}
-          loading={loading}
-          pagination={{ pageSize: 10, showSizeChanger: false }}
-        />
+        ) : (
+          <Empty description="新建或从历史选择一个转写任务" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: "40px 0" }} />
+        )}
       </Card>
 
-      {selected?.segments?.length ? (
-        <Card title="纯文本预览">
-          <Paragraph style={{ whiteSpace: "pre-wrap" }}>
-            {segments.map((segment) => segment.text).join("\n")}
-          </Paragraph>
-        </Card>
-      ) : null}
+      <Modal
+        title="新建转写"
+        open={createOpen}
+        onCancel={() => setCreateOpen(false)}
+        footer={null}
+        width={720}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={16}>
+          <Alert
+            type="warning"
+            showIcon
+            message="权利确认边界"
+            description="不会自动下载平台分享页。请上传你有权处理的文件，或填写已授权的 MP4/MOV 直链。"
+          />
+          <Space wrap>
+            <Select
+              value={asrModel}
+              onChange={setAsrModel}
+              style={{ width: 230 }}
+              options={[
+                { value: "large-v3-turbo", label: "准确率优先 · large-v3-turbo" },
+                { value: "base", label: "快速预览 · base" },
+              ]}
+            />
+            <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" style={{ width: 300 }} />
+          </Space>
+          <Tabs
+            items={[
+              {
+                key: "url",
+                label: <span><LinkOutlined /> 授权直链</span>,
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <TextArea value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载" rows={3} />
+                    <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>确认权利并创建转写</Button>
+                  </Space>
+                ),
+              },
+              {
+                key: "file",
+                label: <span><UploadOutlined /> 上传文件</span>,
+                children: (
+                  <Upload.Dragger
+                    accept=".mp4,.mov"
+                    beforeUpload={(file) => {
+                      handleFileUpload(file);
+                      return false;
+                    }}
+                    multiple={false}
+                    showUploadList={false}
+                    disabled={submitting}
+                  >
+                    <p><UploadOutlined style={{ fontSize: 28 }} /></p>
+                    <p>点击或拖拽 MP4/MOV 文件上传</p>
+                  </Upload.Dragger>
+                ),
+              },
+            ]}
+          />
+        </Space>
+      </Modal>
+
+      <Drawer
+        title="转写历史"
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        width={420}
+        extra={<Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>}
+      >
+        <Space direction="vertical" style={{ width: "100%" }} size={16}>
+          <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="搜索媒体或任务 ID" />
+          <Select
+            value={filterStatus}
+            onChange={setFilterStatus}
+            style={{ width: "100%" }}
+            options={[
+              { value: "all", label: "全部" },
+              { value: "running", label: "转写中" },
+              { value: "succeeded", label: "已完成" },
+              { value: "failed", label: "失败" },
+            ]}
+          />
+          <List
+            loading={loading}
+            dataSource={filteredTasks}
+            locale={{ emptyText: "暂无转写历史" }}
+            renderItem={(item) => (
+              <List.Item actions={[<Button type="link" onClick={() => applyTask(item)}>载入</Button>]}>
+                <List.Item.Meta
+                  title={<Space wrap><Text strong>{item.media_name}</Text><Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag></Space>}
+                  description={
+                    <Space direction="vertical" size={4}>
+                      <Text code>{item.task_id}</Text>
+                      <Text type="secondary">{formatTime(item.created_at)} · {item.progress}%</Text>
+                      <Progress percent={item.progress} size="small" status={item.status === "failed" ? "exception" : item.status === "succeeded" ? "success" : "active"} />
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        </Space>
+      </Drawer>
     </Space>
   );
 }

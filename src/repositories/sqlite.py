@@ -9,6 +9,7 @@ from pathlib import Path
 from src.models import (
     AvatarTask,
     CandidateMatch,
+    CopywritingTask,
     DiscoveryResult,
     HeatLevel,
     HeatResult,
@@ -1411,6 +1412,8 @@ class SQLiteRepository:
             return TranscriptionTask
         if payload["kind"] == TaskKind.AVATAR:
             return AvatarTask
+        if payload["kind"] == TaskKind.COPYWRITING:
+            return CopywritingTask
         return TaskRecord
 
     def save_task(self, task: TaskRecord) -> None:

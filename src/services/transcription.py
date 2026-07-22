@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from time import monotonic
-from typing import Callable
+from typing import Any, Callable
 from uuid import uuid4
 
 from src.contracts import TaskRepository
@@ -28,6 +28,7 @@ MAX_PROVIDER_MEDIA_BYTES = 300 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov"}
 ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo"}
+ALLOWED_ASR_LANGUAGES = {"auto", "zh", "en", "ja", "ko"}
 MAX_HOTWORDS_LENGTH = 500
 
 
@@ -86,6 +87,7 @@ class TranscriptionService:
         rights_holder: str,
         candidate_id: str | None = None,
         model_name: str = "large-v3-turbo",
+        language: str = "zh",
         hotwords: str | None = None,
         max_media_bytes: int = MAX_MEDIA_BYTES,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
@@ -103,6 +105,11 @@ class TranscriptionService:
             raise TranscriptionError(
                 "不支持所选识别模型，请刷新页面后重试。",
                 code="asr_model_invalid",
+            )
+        if language not in ALLOWED_ASR_LANGUAGES:
+            raise TranscriptionError(
+                "不支持所选语言，请刷新页面后重试。",
+                code="asr_language_invalid",
             )
         normalized_hotwords = " ".join((hotwords or "").split())
         if len(normalized_hotwords) > MAX_HOTWORDS_LENGTH:
@@ -169,6 +176,7 @@ class TranscriptionService:
                     wav_path,
                     model_name,
                     normalized_hotwords,
+                    language=language,
                 )
                 self._validate_segments(segments)
             task = task.model_copy(
@@ -296,6 +304,8 @@ class TranscriptionService:
         wav_path: Path,
         model_name: str,
         hotwords: str = "",
+        *,
+        language: str = "zh",
     ) -> tuple[list[TranscriptSegment], str]:
         try:
             model = retry_with_policy(
@@ -310,11 +320,9 @@ class TranscriptionService:
                 code="model_unavailable",
             ) from exc.__cause__
         try:
-            options = {
-                "language": "zh",
-                "vad_filter": True,
-                "beam_size": 5,
-            }
+            options: dict[str, Any] = {"vad_filter": True, "beam_size": 5}
+            if language != "auto":
+                options["language"] = language
             if hotwords:
                 options["hotwords"] = hotwords
             raw_segments, info = model.transcribe(str(wav_path), **options)
@@ -566,3 +574,37 @@ class TranscriptionService:
             for index, segment in enumerate(segments, start=1)
         ]
         return ("\n\n".join(blocks) + "\n").encode("utf-8")
+
+    @staticmethod
+    def export_ass(segments: list[TranscriptSegment]) -> bytes:
+        """导出 ASS 字幕，保持原始文本，仅做格式所需转义。"""
+
+        def timestamp(seconds: float) -> str:
+            centiseconds = round(seconds * 100)
+            hours, remainder = divmod(centiseconds, 360_000)
+            minutes, remainder = divmod(remainder, 6_000)
+            secs, cents = divmod(remainder, 100)
+            return f"{hours}:{minutes:02d}:{secs:02d}.{cents:02d}"
+
+        header = """[Script Info]
+Title: VideoInsight Subtitle
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Default,Microsoft YaHei,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+"""
+        lines = []
+        for segment in segments:
+            text = segment.text.replace("\r", "").replace("\n", r"\N")
+            lines.append(
+                "Dialogue: 0,"
+                f"{timestamp(segment.start)},{timestamp(segment.end)},"
+                f"Default,,0,0,0,,{text}"
+            )
+        return (header + "\n".join(lines) + "\n").encode("utf-8-sig")

@@ -279,3 +279,29 @@ def get_pipeline_service() -> PipelineService:
         media_resolution_service=get_media_resolution_service(),
         transcription_service=get_transcription_service(),
     )
+
+
+# ---------------------------------------------------------------------------
+# 模板管理服务
+# ---------------------------------------------------------------------------
+
+
+@lru_cache
+def get_template_service():
+    """获取模板管理服务实例。"""
+    from src.services.template_service import TemplateService
+
+    return TemplateService(templates_dir=str(PROJECT_ROOT / "data" / "templates"))
+
+
+# ---------------------------------------------------------------------------
+# 字幕生成器
+# ---------------------------------------------------------------------------
+
+
+@lru_cache
+def get_subtitle_generator():
+    """获取字幕生成器实例。"""
+    from src.adapters.subtitle_generator import SubtitleGenerator
+
+    return SubtitleGenerator()

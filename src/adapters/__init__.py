@@ -26,6 +26,8 @@ _EXPORT_MODULES = {
     "SandboxCopywritingEngine": "src.adapters.llm",
     "SandboxLicensedSearchProvider": "src.adapters.licensed",
     "SandboxVideoEditor": "src.adapters.video_editor",
+    "SubtitleGenerator": "src.adapters.subtitle_generator",
+    "SubtitleGeneratorError": "src.adapters.subtitle_generator",
     "VideoEditorError": "src.adapters.video_editor",
 }
 
@@ -69,6 +71,7 @@ if TYPE_CHECKING:
         OfficialApiError,
     )
     from src.adapters.public_metadata import PublicMetadataResearchAdapter
+    from src.adapters.subtitle_generator import SubtitleGenerator, SubtitleGeneratorError
     from src.adapters.video_editor import (
         FFmpegVideoEditor,
         SandboxVideoEditor,

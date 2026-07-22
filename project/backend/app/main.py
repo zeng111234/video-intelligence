@@ -31,6 +31,8 @@ from project.backend.app.api.v1.crawler import router as crawler_router  # noqa:
 from project.backend.app.api.v1.analytics import router as analytics_router  # noqa: E402
 from project.backend.app.api.v1.notifications import router as notifications_router  # noqa: E402
 from project.backend.app.api.v1.avatar import router as avatar_router  # noqa: E402
+from project.backend.app.api.v1.templates import router as templates_router  # noqa: E402
+from project.backend.app.api.v1.subtitles import router as subtitles_router  # noqa: E402
 
 # Swagger UI 静态资源（使用 unpkg CDN 替代 jsdelivr，国内可达性更好）
 _SWAGGER_CSS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
@@ -249,3 +251,5 @@ app.include_router(crawler_router)
 app.include_router(analytics_router)
 app.include_router(notifications_router)
 app.include_router(avatar_router)
+app.include_router(templates_router, prefix="/api/v1")
+app.include_router(subtitles_router, prefix="/api/v1")

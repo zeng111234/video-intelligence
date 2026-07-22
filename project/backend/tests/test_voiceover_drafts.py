@@ -139,3 +139,52 @@ def test_voiceover_draft_uses_approved_revision_and_preserves_source() -> None:
         ).corrected_segments
         == original_segments
     )
+
+
+def test_voiceover_draft_list_and_update_are_scoped_to_transcription() -> None:
+    repository, transcription_service, copywriting_service = _services(approved=True)
+    app.dependency_overrides[transcription_api.get_transcription_service] = lambda: (
+        transcription_service
+    )
+    app.dependency_overrides[transcription_api.get_copywriting_service] = lambda: (
+        copywriting_service
+    )
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/v1/transcriptions/transcript-voiceover-test/voiceover-drafts",
+            json={"target_seconds": 45, "speech_rate": 1, "variant_count": 2},
+        )
+        assert created.status_code == 200
+        draft_id = created.json()["copywriting_task_id"]
+
+        listed = client.get(
+            "/api/v1/transcriptions/transcript-voiceover-test/voiceover-drafts"
+        )
+        assert listed.status_code == 200
+        assert [item["copywriting_task_id"] for item in listed.json()] == [draft_id]
+
+        updated = client.patch(
+            f"/api/v1/transcriptions/transcript-voiceover-test/voiceover-drafts/{draft_id}",
+            json={
+                "result_text": "人工编辑后的第一版",
+                "result_variants": ["旧第一版", "第二版"],
+            },
+        )
+        assert updated.status_code == 200
+        payload = updated.json()
+        assert payload["result_text"] == "人工编辑后的第一版"
+        assert payload["result_variants"][0] == "人工编辑后的第一版"
+
+        saved = repository.get_task(draft_id)
+        assert isinstance(saved, CopywritingTask)
+        assert saved.result_text == "人工编辑后的第一版"
+        assert saved.result_variants[0] == "人工编辑后的第一版"
+
+        wrong_scope = client.patch(
+            f"/api/v1/transcriptions/other-task/voiceover-drafts/{draft_id}",
+            json={"result_text": "不应保存"},
+        )
+        assert wrong_scope.status_code == 404
+    finally:
+        app.dependency_overrides.clear()

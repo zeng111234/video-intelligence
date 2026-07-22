@@ -44,6 +44,25 @@ class CopywritingResponse(BaseModel):
     error_message: str | None = None
 
 
+class CopywritingSummaryResponse(CopywritingResponse):
+    title: str
+    creation_mode: str
+    platform: str
+    target_audience: str
+    target_length: int
+    tone: str
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class CopywritingDetailResponse(CopywritingSummaryResponse):
+    source_text: str = ""
+    content_brief: str = ""
+    selling_points: str = ""
+    call_to_action: str = ""
+    style_prompt: str = ""
+
+
 class CopywritingCapabilitiesResponse(BaseModel):
     provider_name: str
     display_name: str
@@ -77,6 +96,33 @@ def capabilities(service=Depends(get_copywriting_service)):
             str(item) for item in cap.get("missing_configuration", [])  # type: ignore[arg-type]
         ],
     )
+
+
+@router.get("", response_model=list[CopywritingSummaryResponse])
+def list_copywriting(
+    limit: int = 50,
+    service=Depends(get_copywriting_service),
+):
+    """返回独立 AI 文案任务历史，排除转写生成的口播稿。"""
+    safe_limit = max(1, min(limit, 100))
+    tasks = [
+        task
+        for task in service.list_tasks()
+        if getattr(task, "source_task_id", None) is None
+    ][:safe_limit]
+    return [_to_summary(task) for task in tasks]
+
+
+@router.get("/{task_id}", response_model=CopywritingDetailResponse)
+def get_copywriting(
+    task_id: str,
+    service=Depends(get_copywriting_service),
+):
+    """返回可恢复输入和结果的文案任务详情。"""
+    task = service.get_task(task_id)
+    if task is None or task.source_task_id is not None:
+        raise HTTPException(status_code=404, detail="文案任务不存在。")
+    return _to_detail(task)
 
 
 @router.post("/generate", response_model=CopywritingResponse)
@@ -134,4 +180,29 @@ def _to_response(task) -> CopywritingResponse:
         result_text=task.result_text,
         result_variants=task.result_variants,
         error_message=task.error_message,
+    )
+
+
+def _to_summary(task) -> CopywritingSummaryResponse:
+    return CopywritingSummaryResponse(
+        **_to_response(task).model_dump(),
+        title=task.title,
+        creation_mode=task.creation_mode,
+        platform=task.platform.value,
+        target_audience=task.target_audience,
+        target_length=task.target_length,
+        tone=task.tone,
+        created_at=task.created_at.isoformat() if task.created_at else None,
+        updated_at=task.updated_at.isoformat() if task.updated_at else None,
+    )
+
+
+def _to_detail(task) -> CopywritingDetailResponse:
+    return CopywritingDetailResponse(
+        **_to_summary(task).model_dump(),
+        source_text=task.source_text,
+        content_brief=task.content_brief,
+        selling_points=task.selling_points,
+        call_to_action=task.call_to_action,
+        style_prompt=task.style_prompt,
     )

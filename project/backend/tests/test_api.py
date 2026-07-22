@@ -24,6 +24,7 @@ from src.adapters.licensed import SandboxLicensedSearchProvider  # noqa: E402
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from project.backend.app.core import config as backend_config  # noqa: E402
 from src.models import (  # noqa: E402
+    CopywritingTask,
     PipelineRun,
     PipelineRunStatus,
     PipelineStage,
@@ -32,6 +33,8 @@ from src.models import (  # noqa: E402
     TaskStatus,
 )
 from src.repositories import MockRepository  # noqa: E402
+from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
+from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 
@@ -294,8 +297,8 @@ class TestPipelines:
                     copywriting_task_id="copy-api-1",
                 )
 
-        app.dependency_overrides[backend_deps.get_pipeline_service] = (
-            lambda: FakePipelineService()
+        app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+            FakePipelineService()
         )
         try:
             resp = client.post(
@@ -389,11 +392,11 @@ class TestCrawlerBatches:
             active_platforms=(Platform.DOUYIN,),
         )
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
-        app.dependency_overrides[backend_deps.get_licensed_search_provider] = (
-            lambda: provider
+        app.dependency_overrides[backend_deps.get_licensed_search_provider] = lambda: (
+            provider
         )
-        app.dependency_overrides[backend_deps.get_commercial_search_service] = (
-            lambda: service
+        app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
+            service
         )
         yield
         app.dependency_overrides.pop(backend_deps.get_repository, None)
@@ -688,6 +691,43 @@ class TestCopywriting:
         resp = client.get("/api/v1/copywriting/capabilities")
         assert resp.status_code == 200
 
+    def test_history_lists_independent_copywriting_and_detail(self, client: TestClient):
+        repository = MockRepository(candidates=[], tasks=[])
+        service = CopywritingService(repository, SandboxCopywritingEngine())
+        independent = service.generate(
+            content_brief="介绍 AI 短视频获客系统",
+            platform="douyin",
+            target_audience="企业主",
+            selling_points="降低内容制作成本",
+            call_to_action="私信领取方案",
+            target_length=100,
+        )
+        voiceover = service.rewrite(
+            source_text="已确认的转写成稿",
+            source_task_id="transcription-history-test",
+            source_revision_id="revision-1",
+            target_length=100,
+        )
+        assert isinstance(repository.get_task(voiceover.task_id), CopywritingTask)
+
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: service
+        try:
+            list_resp = client.get("/api/v1/copywriting")
+            assert list_resp.status_code == 200
+            items = list_resp.json()
+            assert [item["task_id"] for item in items] == [independent.task_id]
+
+            detail_resp = client.get(f"/api/v1/copywriting/{independent.task_id}")
+            assert detail_resp.status_code == 200
+            detail = detail_resp.json()
+            assert detail["content_brief"] == "介绍 AI 短视频获客系统"
+            assert detail["result_text"]
+
+            hidden_resp = client.get(f"/api/v1/copywriting/{voiceover.task_id}")
+            assert hidden_resp.status_code == 404
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
+
 
 class TestCopywritingProductionConfig:
     def test_missing_key_disables_capabilities(
@@ -747,6 +787,30 @@ class TestVideoEditor:
         data = resp.json()
         assert "provider_name" in data
         assert "enabled" in data
+
+
+# ---------------------------------------------------------------------------
+# /api/v1/templates 与 /api/v1/subtitles
+# ---------------------------------------------------------------------------
+
+
+class TestEditingTemplatesAndSubtitles:
+    def test_template_list_serializes_step_definitions(self, client: TestClient):
+        resp = client.get("/api/v1/templates")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] >= 5
+        assert isinstance(data["items"][0]["steps"][0], dict)
+        assert "kind" in data["items"][0]["steps"][0]
+
+    def test_subtitle_status_reports_local_engine_contract(self, client: TestClient):
+        resp = client.get("/api/v1/subtitles/status")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["provider_name"] == "faster-whisper"
+        assert data["default_model"] == "large-v3-turbo"
+        assert data["supported_formats"] == ["srt", "ass"]
+        assert "ffmpeg_available" in data
 
 
 # ---------------------------------------------------------------------------

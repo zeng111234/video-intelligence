@@ -185,7 +185,7 @@ export default function KeywordCrawlerPage() {
 
   useEffect(() => {
     refresh();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [refresh]);
 
   const handlePreview = async () => {
     if (requestPayload.keyword.length < 2) {

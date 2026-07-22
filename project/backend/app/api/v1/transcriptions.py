@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -17,7 +18,13 @@ from project.backend.app.schemas.requests import (
     TranscriptionRevisionRequest,
 )
 from project.backend.app.schemas.responses import TranscriptionResponse
-from src.models import TaskKind, TranscriptSegment, TranscriptionTask
+from src.models import (
+    CopywritingTask,
+    TaskKind,
+    TaskStatus,
+    TranscriptSegment,
+    TranscriptionTask,
+)
 from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/transcriptions", tags=["transcriptions"])
@@ -51,13 +58,20 @@ class VoiceoverDraftResponse(BaseModel):
     provider_name: str
     model_name: str
     is_mock: bool
-    target_seconds: int
+    target_seconds: int | None = None
     target_characters: int
     source_characters: int
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
     token_usage: dict[str, int] = Field(default_factory=dict)
     error_message: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class VoiceoverDraftUpdateRequest(BaseModel):
+    result_text: str = Field(..., min_length=1)
+    result_variants: list[str] = Field(default_factory=list)
 
 
 def _to_response(task, service=None) -> TranscriptionResponse:
@@ -122,6 +136,7 @@ async def upload_and_transcribe(
     rights_confirmed: bool = Form(True, description="是否确认拥有媒体处理权"),
     rights_holder: str = Form("", description="权利主体"),
     model_name: str = Form("large-v3-turbo", description="识别模型名称"),
+    language: str = Form("zh", description="识别语言：auto/zh/en/ja/ko"),
     hotwords: str = Form("", description="专有词提示"),
     service=Depends(get_transcription_service),
 ) -> TranscriptionResponse:
@@ -151,6 +166,7 @@ async def upload_and_transcribe(
             rights_confirmed=rights_confirmed,
             rights_holder=rights_holder,
             model_name=model_name,
+            language=language,
             hotwords=hotwords or None,
         )
     except Exception as exc:
@@ -318,22 +334,117 @@ def create_voiceover_draft(
         source_task_id=task_id,
         source_revision_id=revision.revision_id,
     )
+    task = task.model_copy(
+        update={
+            "outputs": {
+                **task.outputs,
+                "voiceover_target_seconds": str(body.target_seconds),
+                "voiceover_speech_rate": str(body.speech_rate),
+            },
+            "updated_at": datetime.now().astimezone(),
+        }
+    )
+    copywriting_service.repository.save_task(task)
+    return _voiceover_to_response(task, source_characters=len(source_text))
+
+
+@router.get(
+    "/{task_id}/voiceover-drafts",
+    response_model=list[VoiceoverDraftResponse],
+)
+def list_voiceover_drafts(
+    task_id: str,
+    limit: int = 50,
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+):
+    """列出当前转写任务下的口播稿版本。"""
+    transcription_task = transcription_service.repository.get_task(task_id)
+    if not isinstance(transcription_task, TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+    safe_limit = max(1, min(limit, 100))
+    drafts = [
+        task
+        for task in copywriting_service.list_tasks()
+        if task.source_task_id == task_id
+    ][:safe_limit]
+    return [_voiceover_to_response(task) for task in drafts]
+
+
+@router.patch(
+    "/{task_id}/voiceover-drafts/{draft_id}",
+    response_model=VoiceoverDraftResponse,
+)
+def update_voiceover_draft(
+    task_id: str,
+    draft_id: str,
+    body: VoiceoverDraftUpdateRequest,
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+):
+    """保存人工编辑后的口播稿，且只允许修改当前转写任务所属草稿。"""
+    transcription_task = transcription_service.repository.get_task(task_id)
+    if not isinstance(transcription_task, TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+
+    task = copywriting_service.get_task(draft_id)
+    if task is None or task.source_task_id != task_id:
+        raise HTTPException(
+            status_code=404, detail="口播稿不存在或不属于当前转写任务。"
+        )
+
+    variants = [item for item in body.result_variants if item.strip()]
+    if not variants:
+        variants = [body.result_text]
+    variants[0] = body.result_text
+    updated = task.model_copy(
+        update={
+            "status": TaskStatus.SUCCEEDED,
+            "progress": 100,
+            "stage": "人工编辑已保存",
+            "result_text": variants[0],
+            "result_variants": variants,
+            "updated_at": datetime.now().astimezone(),
+        }
+    )
+    copywriting_service.repository.save_task(updated)
+    return _voiceover_to_response(updated)
+
+
+def _voiceover_to_response(
+    task: CopywritingTask,
+    *,
+    source_characters: int | None = None,
+) -> VoiceoverDraftResponse:
+    target_seconds = _int_output(task, "voiceover_target_seconds")
     return VoiceoverDraftResponse(
         copywriting_task_id=task.task_id,
-        source_task_id=task_id,
-        source_revision_id=revision.revision_id,
+        source_task_id=task.source_task_id or "",
+        source_revision_id=task.source_revision_id or "",
         status=task.status.value,
         provider_name=task.provider_name,
         model_name=task.model_name,
         is_mock=task.is_mock,
-        target_seconds=body.target_seconds,
-        target_characters=target_characters,
-        source_characters=len(source_text),
+        target_seconds=target_seconds,
+        target_characters=task.target_length,
+        source_characters=source_characters
+        if source_characters is not None
+        else len(task.source_text),
         result_text=task.result_text,
         result_variants=task.result_variants,
         token_usage=task.token_usage,
         error_message=task.error_message,
+        created_at=task.created_at.isoformat() if task.created_at else None,
+        updated_at=task.updated_at.isoformat() if task.updated_at else None,
     )
+
+
+def _int_output(task: CopywritingTask, key: str) -> int | None:
+    try:
+        raw = task.outputs.get(key)
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _deduplicate_adjacent_segments(segments: list[TranscriptSegment]) -> str:
@@ -355,9 +466,9 @@ def export_transcription(
     format: str = "txt",
     service=Depends(get_transcription_service),
 ):
-    """导出 TXT/JSON/SRT。真实转写必须先确认成稿，演示任务可直接导出。"""
-    if format not in {"txt", "json", "srt"}:
-        raise HTTPException(status_code=400, detail="导出格式只支持 txt/json/srt。")
+    """导出 TXT/JSON/SRT/ASS。真实转写必须先确认成稿，演示任务可直接导出。"""
+    if format not in {"txt", "json", "srt", "ass"}:
+        raise HTTPException(status_code=400, detail="导出格式只支持 txt/json/srt/ass。")
     task = service.repository.get_task(task_id)
     if not isinstance(task, TranscriptionTask):
         raise HTTPException(status_code=404, detail="转写任务不存在。")
@@ -374,6 +485,7 @@ def export_transcription(
         "txt": service.export_txt,
         "json": service.export_json,
         "srt": service.export_srt,
+        "ass": service.export_ass,
     }[format]
     content = exporter(segments)
     media_type = "application/json" if format == "json" else "text/plain"

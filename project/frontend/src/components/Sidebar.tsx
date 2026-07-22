@@ -22,6 +22,8 @@ import {
   BugOutlined,
   VideoCameraOutlined,
   AppstoreOutlined,
+  RobotOutlined,
+  SubnodeOutlined,
 } from "@ant-design/icons";
 
 /** 导航项类型 */
@@ -66,6 +68,8 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
           { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
           { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
+          { key: "/video-editor", label: "AI智能剪辑", icon: <RobotOutlined /> },
+          { key: "/subtitle", label: "字幕生成", icon: <SubnodeOutlined /> },
           { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
           { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },

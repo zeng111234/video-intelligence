@@ -65,7 +65,7 @@ export default function CandidatesPage() {
 
   useEffect(() => {
     doSearch();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [doSearch]);
 
   const columns: ColumnsType<CandidateItem> = [
     {

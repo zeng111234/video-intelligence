@@ -23,6 +23,8 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import AiCopyPage from "./pages/AiCopyPage";
 import PublishPage from "./pages/PublishPage";
 import AvatarPage from "./pages/AvatarPage";
+import VideoEditorPage from "./pages/VideoEditorPage";
+import SubtitlePage from "./pages/SubtitlePage";
 import HelpPage from "./pages/HelpPage";
 import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
 import StudioPage from "./pages/StudioPage";
@@ -65,6 +67,8 @@ function AppInner() {
               <Route path="/ai-copy" element={<AiCopyPage />} />
               <Route path="/publish" element={<PublishPage />} />
               <Route path="/avatar" element={<AvatarPage />} />
+              <Route path="/video-editor" element={<VideoEditorPage />} />
+              <Route path="/subtitle" element={<SubtitlePage />} />
 
               {/* 关键词爬虫 */}
               <Route path="/crawler" element={<KeywordCrawlerPage />} />

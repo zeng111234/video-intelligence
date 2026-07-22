@@ -153,6 +153,11 @@ class VideoEditStepKind(StrEnum):
     RESIZE = "resize"
     FILTER = "filter"
     CONCAT = "concat"
+    # AI 智能剪辑步骤
+    AI_SUBTITLE = "ai_subtitle"        # 基于 Whisper 的自动字幕生成
+    AI_VOLUME_NORM = "ai_volume_norm"  # 音量标准化（EBU R128）
+    AI_ENHANCE = "ai_enhance"          # 画面增强（亮度/对比度/锐化/降噪）
+    AI_SILENCE_TRIM = "ai_silence_trim"  # 智能静音裁剪
 
 
 class PublishPlatform(StrEnum):
@@ -882,6 +887,58 @@ class PipelineStepResult(BaseModel):
     finished_at: datetime | None = None
     error_message: str | None = None
     outputs: dict[str, str] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# 转写支持格式
+# ---------------------------------------------------------------------------
+
+# 转写服务允许的媒体格式（视频 + 音频）
+ALLOWED_TRANSCRIPTION_EXTENSIONS: set[str] = {
+    ".mp4", ".mov",           # 视频
+    ".wav", ".mp3", ".aac",   # 音频
+    ".flac", ".ogg", ".m4a",  # 音频
+}
+
+
+# ---------------------------------------------------------------------------
+# 编辑模板
+# ---------------------------------------------------------------------------
+
+
+class TemplateStepDef(BaseModel):
+    """模板步骤定义"""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str  # VideoEditStepKind 的值
+    params: dict[str, Any] = Field(default_factory=dict)
+    label: str = ""
+
+
+class EditTemplate(BaseModel):
+    """编辑模板"""
+
+    model_config = ConfigDict(frozen=True)
+
+    template_id: str
+    name: str
+    description: str = ""
+    category: str = "custom"  # optimization | subtitle | social_media | podcast | custom
+    icon: str = "RocketOutlined"
+    steps: list[TemplateStepDef] = Field(default_factory=list)
+    output_format: str = "mp4"
+    output_resolution: str = "1080x1920"
+    output_fps: int = 30
+    output_bitrate: str = "4M"
+    is_builtin: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# 端到端流水线
+# ---------------------------------------------------------------------------
 
 
 class PipelineRun(BaseModel):

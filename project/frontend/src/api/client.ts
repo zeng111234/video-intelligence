@@ -11,21 +11,31 @@ import type {
   AvatarJobCreateRequest,
   CandidateListResponse,
   CopywritingCapabilitiesResponse,
+  CopywritingDetailResponse,
   CopywritingGenerateRequest,
   CopywritingResponse,
   CopywritingRewriteRequest,
+  CopywritingSummaryResponse,
   CrawlerBatchListResponse,
   CrawlerBatchResponse,
   CrawlerCandidateMediaPreviewResponse,
   CrawlerCapabilitiesResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
+  EditTemplate,
   PipelineFromCandidateRequest,
   PipelineResponse,
   PublishPlatformsResponse,
   PublishResponse,
+  StepKindsResponse,
+  SubtitleStatusResponse,
   TaskListResponse,
+  TemplateCreateRequest,
+  TemplateListResponse,
   TranscriptionResponse,
+  VideoCapabilitiesResponse,
+  VideoEditRequest,
+  VideoEditResponse,
   VoiceoverDraftResponse,
 } from "./types";
 
@@ -151,12 +161,12 @@ export function saveTranscriptionRevision(params: {
 
 export async function exportTranscription(
   taskId: string,
-  format: "txt" | "json" | "srt",
+  format: "txt" | "json" | "srt" | "ass",
 ): Promise<Blob> {
   const resp = await fetch(`${BASE}/transcriptions/${taskId}/export?format=${format}`);
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new Error(body.detail || "导出失败");
+    throw new Error(body.detail || body.message || "导出失败");
   }
   return resp.blob();
 }
@@ -166,12 +176,14 @@ export async function uploadAndTranscribe(
   file: File,
   modelName = "large-v3-turbo",
   rightsHolder = "本人/公司已授权",
+  language = "zh",
 ): Promise<TranscriptionResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", rightsHolder);
   formData.append("model_name", modelName);
+  formData.append("language", language);
 
   const resp = await fetch(`${BASE}/transcriptions/upload`, {
     method: "POST",
@@ -180,7 +192,7 @@ export async function uploadAndTranscribe(
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
-    throw new Error(body.detail || "文件上传失败");
+    throw new Error(body.detail || body.message || "文件上传失败");
   }
   return resp.json();
 }
@@ -243,6 +255,28 @@ export function createVoiceoverDraft(params: {
       target_audience: params.targetAudience ?? "",
       tone: params.tone ?? "casual",
       variant_count: params.variantCount ?? 2,
+    }),
+  });
+}
+
+export function listVoiceoverDrafts(
+  taskId: string,
+  limit = 50,
+): Promise<VoiceoverDraftResponse[]> {
+  return request(`/transcriptions/${taskId}/voiceover-drafts?limit=${limit}`);
+}
+
+export function updateVoiceoverDraft(params: {
+  taskId: string;
+  draftId: string;
+  resultText: string;
+  resultVariants: string[];
+}): Promise<VoiceoverDraftResponse> {
+  return request(`/transcriptions/${params.taskId}/voiceover-drafts/${params.draftId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      result_text: params.resultText,
+      result_variants: params.resultVariants,
     }),
   });
 }
@@ -364,6 +398,14 @@ export function getCopywritingCapabilities(): Promise<CopywritingCapabilitiesRes
   return request("/copywriting/capabilities");
 }
 
+export function listCopywritingTasks(limit = 50): Promise<CopywritingSummaryResponse[]> {
+  return request(`/copywriting?limit=${limit}`);
+}
+
+export function getCopywritingTask(taskId: string): Promise<CopywritingDetailResponse> {
+  return request(`/copywriting/${taskId}`);
+}
+
 export function generateCopywriting(
   params: CopywritingGenerateRequest,
 ): Promise<CopywritingResponse> {
@@ -457,4 +499,63 @@ export function getAnalyticsData(
     params.set("keyword", keyword.trim());
   }
   return request(`/analytics/summary?${params.toString()}`);
+}
+
+/* ---- 视频剪辑 ---- */
+
+export function getVideoCapabilities(): Promise<VideoCapabilitiesResponse> {
+  return request("/video-editor/capabilities");
+}
+
+export function getVideoStepKinds(): Promise<StepKindsResponse> {
+  return request("/video-editor/step-kinds");
+}
+
+export function editVideo(params: VideoEditRequest): Promise<VideoEditResponse> {
+  return request("/video-editor/edit", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+// ====== 模板 API ======
+
+export async function listTemplates(category?: string): Promise<TemplateListResponse> {
+  const params = category ? `?category=${encodeURIComponent(category)}` : "";
+  return request<TemplateListResponse>(`/templates${params}`);
+}
+
+export async function getTemplate(templateId: string): Promise<EditTemplate> {
+  return request<EditTemplate>(`/templates/${encodeURIComponent(templateId)}`);
+}
+
+export async function createTemplate(data: TemplateCreateRequest): Promise<EditTemplate> {
+  return request<EditTemplate>("/templates", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteTemplate(templateId: string): Promise<void> {
+  return request(`/templates/${encodeURIComponent(templateId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function applyTemplate(
+  templateId: string,
+  sourceVideoPath: string,
+): Promise<{ task_id: string; status: string }> {
+  return request(`/templates/${encodeURIComponent(templateId)}/apply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_video_path: sourceVideoPath }),
+  });
+}
+
+// ====== 字幕 API ======
+
+export async function getSubtitleStatus(): Promise<SubtitleStatusResponse> {
+  return request<SubtitleStatusResponse>("/subtitles/status");
 }

@@ -66,6 +66,7 @@ def test_transcription_requires_rights_and_exports_valid_formats() -> None:
     )
     assert task.status == TaskStatus.SUCCEEDED
     assert b"00:00:00,000 -->" in service.export_srt(task.segments)
+    assert b"[Script Info]" in service.export_ass(task.segments)
     exported = service.export_json(task.segments)
     assert b'"segments"' in exported
     assert b'"mock"' not in exported

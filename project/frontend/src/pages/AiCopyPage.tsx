@@ -4,9 +4,12 @@ import {
   Button,
   Card,
   Col,
-  Divider,
+  Collapse,
+  Drawer,
   Empty,
   Input,
+  List,
+  Popconfirm,
   Row,
   Segmented,
   Select,
@@ -20,8 +23,10 @@ import {
   BankOutlined,
   CopyOutlined,
   EditOutlined,
+  FileAddOutlined,
   FileTextOutlined,
   HeartOutlined,
+  HistoryOutlined,
   ReloadOutlined,
   SmileOutlined,
   StarOutlined,
@@ -30,13 +35,18 @@ import {
 import {
   generateCopywriting,
   getCopywritingCapabilities,
+  getCopywritingTask,
+  listCopywritingTasks,
   rewriteCopywriting,
 } from "../api/client";
 import type {
   CopywritingCapabilitiesResponse,
+  CopywritingDetailResponse,
   CopywritingResponse,
+  CopywritingSummaryResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
+import { usePersistentState } from "../hooks/usePersistentState";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -73,28 +83,68 @@ const PLATFORM_OPTIONS = [
 
 type CopyMode = "generate" | "rewrite";
 
+function formatTime(value: string | null) {
+  return value ? new Date(value).toLocaleString("zh-CN") : "-";
+}
+
+function stylePresetFromPrompt(prompt: string) {
+  return Object.entries(STYLE_PROMPTS).find(([, value]) => value === prompt)?.[0] || "engaging";
+}
+
 export default function AiCopyPage() {
   const toast = useToast();
-  const [mode, setMode] = useState<CopyMode>("rewrite");
+  const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
+  const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
+  const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
+  const [targetAudience, setTargetAudience, clearTargetAudience] = usePersistentState("ai_copy_target_audience", "");
+  const [sellingPoints, setSellingPoints, clearSellingPoints] = usePersistentState("ai_copy_selling_points", "");
+  const [callToAction, setCallToAction, clearCallToAction] = usePersistentState("ai_copy_call_to_action", "");
+  const [platform, setPlatform] = usePersistentState("ai_copy_platform", "douyin");
+  const [stylePreset, setStylePreset] = usePersistentState("ai_copy_style_preset", "engaging");
+  const [tone, setTone] = usePersistentState("ai_copy_tone", "casual");
+  const [targetLength, setTargetLength] = usePersistentState("ai_copy_target_length", 200);
+  const [variantCount, setVariantCount] = usePersistentState("ai_copy_variant_count", 3);
+  const [activeVariant, setActiveVariant] = usePersistentState("ai_copy_active_variant", 0);
+
   const [capability, setCapability] = useState<CopywritingCapabilitiesResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
-
-  const [contentBrief, setContentBrief] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [targetAudience, setTargetAudience] = useState("");
-  const [sellingPoints, setSellingPoints] = useState("");
-  const [callToAction, setCallToAction] = useState("");
-  const [platform, setPlatform] = useState("douyin");
-  const [stylePreset, setStylePreset] = useState("engaging");
-  const [tone, setTone] = useState("casual");
-  const [targetLength, setTargetLength] = useState(200);
-  const [variantCount, setVariantCount] = useState(3);
-
+  const [history, setHistory] = useState<CopywritingSummaryResponse[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [variants, setVariants] = useState<string[]>([]);
-  const [activeVariant, setActiveVariant] = useState(0);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [lastResponse, setLastResponse] = useState<CopywritingResponse | null>(null);
+  const [variants, setVariants] = useState<string[]>([]);
+
+  const selectedStyle = useMemo(
+    () => STYLE_PRESETS.find((item) => item.key === stylePreset) ?? STYLE_PRESETS[0],
+    [stylePreset],
+  );
+  const inputReady = mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
+  const hasLocalDraft = Boolean(
+    contentBrief.trim() ||
+    sourceText.trim() ||
+    targetAudience.trim() ||
+    sellingPoints.trim() ||
+    callToAction.trim(),
+  );
+  const enabled = capability?.enabled === true;
+  const disabledMessage = capabilityError
+    ? capabilityError
+    : capability && !capability.enabled
+      ? `未配置 ${capability.missing_configuration.join("、") || "模型密钥"}，请在本机私密配置中设置后重启后端。`
+      : "";
+
+  const refreshHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      setHistory(await listCopywritingTasks(50));
+    } catch (err) {
+      toast.error((err as Error).message || "读取文案历史失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,22 +156,25 @@ export default function AiCopyPage() {
         }
       })
       .catch((err) => {
-        if (!cancelled) {
-          setCapabilityError((err as Error).message || "读取模型能力失败");
-        }
+        if (!cancelled) setCapabilityError((err as Error).message || "读取模型能力失败");
       });
+    refreshHistory();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshHistory]);
 
-  const selectedStyle = useMemo(
-    () => STYLE_PRESETS.find((item) => item.key === stylePreset) ?? STYLE_PRESETS[0],
-    [stylePreset],
-  );
-  const inputReady =
-    mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
-  const enabled = capability?.enabled === true;
+  const applyResult = useCallback((resp: CopywritingResponse) => {
+    setTaskId(resp.task_id);
+    setLastResponse(resp);
+    const resultVariants = resp.result_variants.length > 0
+      ? resp.result_variants
+      : resp.result_text
+        ? [resp.result_text]
+        : [];
+    setVariants(resultVariants);
+    setActiveVariant(0);
+  }, [setActiveVariant]);
 
   const handleSubmit = useCallback(async () => {
     if (!inputReady) {
@@ -144,50 +197,39 @@ export default function AiCopyPage() {
         tone,
         variant_count: variantCount,
       };
-      const resp =
-        mode === "generate"
-          ? await generateCopywriting({
-              ...common,
-              content_brief: contentBrief,
-              selling_points: sellingPoints,
-              call_to_action: callToAction,
-            })
-          : await rewriteCopywriting({
-              ...common,
-              source_text: sourceText,
-            });
-
-      setTaskId(resp.task_id);
-      setLastResponse(resp);
+      const resp = mode === "generate"
+        ? await generateCopywriting({
+            ...common,
+            content_brief: contentBrief,
+            selling_points: sellingPoints,
+            call_to_action: callToAction,
+          })
+        : await rewriteCopywriting({ ...common, source_text: sourceText });
+      applyResult(resp);
+      await refreshHistory();
       if (resp.status !== "succeeded") {
         toast.error(resp.error_message || "文案生成失败");
         return;
       }
-      const resultVariants =
-        resp.result_variants.length > 0
-          ? resp.result_variants
-          : resp.result_text
-            ? [resp.result_text]
-            : [];
-      if (resultVariants.length === 0) {
+      if (!resp.result_text && resp.result_variants.length === 0) {
         toast.warning("后端未返回有效文案");
         return;
       }
-      setVariants(resultVariants);
-      setActiveVariant(0);
-      toast.success(`已生成 ${resultVariants.length} 个文案变体`);
+      toast.success(`已生成 ${Math.max(resp.result_variants.length, resp.result_text ? 1 : 0)} 个文案变体`);
     } catch (err) {
       toast.error((err as Error).message || "文案生成失败");
     } finally {
       setLoading(false);
     }
   }, [
+    applyResult,
     callToAction,
     contentBrief,
     enabled,
     inputReady,
     mode,
     platform,
+    refreshHistory,
     sellingPoints,
     sourceText,
     stylePreset,
@@ -198,42 +240,90 @@ export default function AiCopyPage() {
     variantCount,
   ]);
 
+  const handleLoadHistory = async (item: CopywritingSummaryResponse) => {
+    setHistoryLoading(true);
+    try {
+      const detail: CopywritingDetailResponse = await getCopywritingTask(item.task_id);
+      const nextMode = detail.creation_mode === "generate" ? "generate" : "rewrite";
+      setMode(nextMode);
+      setContentBrief(detail.content_brief);
+      setSourceText(detail.source_text);
+      setTargetAudience(detail.target_audience);
+      setSellingPoints(detail.selling_points);
+      setCallToAction(detail.call_to_action);
+      setPlatform(detail.platform);
+      setTone(detail.tone);
+      setTargetLength(detail.target_length);
+      setStylePreset(stylePresetFromPrompt(detail.style_prompt));
+      applyResult(detail);
+      setHistoryOpen(false);
+    } catch (err) {
+      toast.error((err as Error).message || "读取文案详情失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleNewCopy = () => {
+    setContentBrief("");
+    setSourceText("");
+    setSellingPoints("");
+    setCallToAction("");
+    setTargetAudience("");
+    setTaskId(null);
+    setLastResponse(null);
+    setVariants([]);
+    setActiveVariant(0);
+  };
+
+  const handleClearDraft = () => {
+    clearMode();
+    clearContentBrief();
+    clearSourceText();
+    clearTargetAudience();
+    clearSellingPoints();
+    clearCallToAction();
+    setTaskId(null);
+    setLastResponse(null);
+    setVariants([]);
+    setActiveVariant(0);
+    toast.success("本机草稿已清空");
+  };
+
   const handleCopy = useCallback((text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      toast.success("已复制到剪贴板");
-    });
+    navigator.clipboard.writeText(text).then(() => toast.success("已复制到剪贴板"));
   }, [toast]);
 
   const tokenUsage = lastResponse?.token_usage ?? {};
-  const disabledMessage = capabilityError
-    ? capabilityError
-    : capability && !capability.enabled
-      ? `未配置 ${capability.missing_configuration.join("、") || "模型密钥"}，请在本机私密配置中设置后重启后端。`
-      : "";
+  const settingsSummary = `${PLATFORM_OPTIONS.find((item) => item.value === platform)?.label || platform} / ${TONE_OPTIONS.find((item) => item.value === tone)?.label || tone} / ${selectedStyle.label} / ${targetLength} 字 / ${variantCount} 版`;
+  const activeText = variants[activeVariant] || "";
 
   return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <EditOutlined /> AI 文案生成
-        </Title>
-        <Text type="secondary">
-          真实大模型生成短视频口播文案，支持需求生成与原文改写
-        </Text>
-      </div>
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Row justify="space-between" align="middle" gutter={[16, 12]}>
+        <Col>
+          <Title level={4} style={{ margin: 0 }}>
+            <EditOutlined /> AI 文案生成
+          </Title>
+          <Text type="secondary">真实大模型生成短视频口播文案，支持需求生成与原文改写</Text>
+        </Col>
+        <Col>
+          <Space wrap>
+            <Tag color={hasLocalDraft ? "green" : "default"}>本机草稿{hasLocalDraft ? "已保存" : "为空"}</Tag>
+            <Button icon={<FileAddOutlined />} onClick={handleNewCopy}>新建文案</Button>
+            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>历史记录</Button>
+            <Popconfirm title="清空本机草稿？" okText="清空" cancelText="取消" onConfirm={handleClearDraft}>
+              <Button danger disabled={!hasLocalDraft && variants.length === 0}>清空草稿</Button>
+            </Popconfirm>
+          </Space>
+        </Col>
+      </Row>
 
-      {disabledMessage && (
-        <Alert
-          type={capabilityError ? "error" : "warning"}
-          message={disabledMessage}
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
-      )}
+      {disabledMessage && <Alert type={capabilityError ? "error" : "warning"} message={disabledMessage} showIcon />}
 
-      <Row gutter={[24, 24]}>
+      <Row gutter={[24, 24]} align="top">
         <Col xs={24} lg={10}>
-          <Card title={<Space><FileTextOutlined /> 文案输入</Space>} style={{ height: "100%" }}>
+          <Card title={<Space><FileTextOutlined /> 文案输入</Space>}>
             <Space direction="vertical" style={{ width: "100%" }} size={16}>
               <Segmented
                 block
@@ -247,136 +337,93 @@ export default function AiCopyPage() {
 
               {mode === "generate" ? (
                 <>
-                  <div>
-                    <Text strong style={{ display: "block", marginBottom: 8 }}>内容概要</Text>
-                    <TextArea
-                      placeholder="例如：面向中小企业老板，介绍 AI 短视频获客系统如何降低内容生产成本..."
-                      rows={5}
-                      value={contentBrief}
-                      onChange={(e) => setContentBrief(e.target.value)}
-                      showCount
-                      maxLength={5000}
-                      style={{ resize: "none" }}
-                    />
-                  </div>
-                  <div>
-                    <Text strong style={{ display: "block", marginBottom: 8 }}>核心卖点</Text>
-                    <TextArea
-                      placeholder="输入产品亮点、服务优势或确定可说的事实"
-                      rows={3}
-                      value={sellingPoints}
-                      onChange={(e) => setSellingPoints(e.target.value)}
-                      maxLength={1200}
-                      style={{ resize: "none" }}
-                    />
-                  </div>
-                  <div>
-                    <Text strong style={{ display: "block", marginBottom: 8 }}>行动号召</Text>
-                    <Input
-                      placeholder="例如：私信领取行业案例清单"
-                      value={callToAction}
-                      onChange={(e) => setCallToAction(e.target.value)}
-                      maxLength={120}
-                    />
-                  </div>
-                </>
-              ) : (
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>原始文案</Text>
                   <TextArea
-                    placeholder="粘贴已有文案、脚本或口播稿..."
-                    rows={8}
-                    value={sourceText}
-                    onChange={(e) => setSourceText(e.target.value)}
+                    placeholder="内容概要，例如：面向中小企业老板，介绍 AI 短视频获客系统如何降低内容生产成本..."
+                    rows={5}
+                    value={contentBrief}
+                    onChange={(e) => setContentBrief(e.target.value)}
                     showCount
                     maxLength={5000}
                     style={{ resize: "none" }}
                   />
-                </div>
+                  <TextArea
+                    placeholder="核心卖点：产品亮点、服务优势或确定可说的事实"
+                    rows={3}
+                    value={sellingPoints}
+                    onChange={(e) => setSellingPoints(e.target.value)}
+                    maxLength={1200}
+                    style={{ resize: "none" }}
+                  />
+                  <Input
+                    placeholder="行动号召，例如：私信领取行业案例清单"
+                    value={callToAction}
+                    onChange={(e) => setCallToAction(e.target.value)}
+                    maxLength={120}
+                  />
+                </>
+              ) : (
+                <TextArea
+                  placeholder="粘贴已有文案、脚本或口播稿..."
+                  rows={8}
+                  value={sourceText}
+                  onChange={(e) => setSourceText(e.target.value)}
+                  showCount
+                  maxLength={5000}
+                  style={{ resize: "none" }}
+                />
               )}
 
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>目标受众</Text>
-                <Input
-                  placeholder="例如：B2B 企业主、品牌市场负责人"
-                  value={targetAudience}
-                  onChange={(e) => setTargetAudience(e.target.value)}
-                  maxLength={120}
-                />
-              </div>
+              <Input
+                placeholder="目标受众，例如：B2B 企业主、品牌市场负责人"
+                value={targetAudience}
+                onChange={(e) => setTargetAudience(e.target.value)}
+                maxLength={120}
+              />
 
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>平台</Text>
-                  <Select
-                    value={platform}
-                    onChange={setPlatform}
-                    options={PLATFORM_OPTIONS}
-                    style={{ width: "100%" }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>语调</Text>
-                  <Select
-                    value={tone}
-                    onChange={setTone}
-                    options={TONE_OPTIONS}
-                    style={{ width: "100%" }}
-                  />
-                </Col>
-              </Row>
-
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>风格预设</Text>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {STYLE_PRESETS.map((preset) => (
-                    <Tag
-                      key={preset.key}
-                      color={stylePreset === preset.key ? preset.color : undefined}
-                      style={{
-                        cursor: "pointer",
-                        padding: "6px 12px",
-                        fontSize: 13,
-                        borderRadius: 6,
-                        border: stylePreset === preset.key ? undefined : "1px solid var(--border-default)",
-                      }}
-                      onClick={() => setStylePreset(preset.key)}
-                    >
-                      {preset.icon} {preset.label}
-                    </Tag>
-                  ))}
-                </div>
-                <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: "block" }}>
-                  {selectedStyle.desc}
-                </Text>
-              </div>
-
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>目标字数：{targetLength} 字</Text>
-                <Slider
-                  min={50}
-                  max={800}
-                  step={50}
-                  value={targetLength}
-                  onChange={setTargetLength}
-                  marks={{ 50: "50", 200: "200", 500: "500", 800: "800" }}
-                />
-              </div>
-
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>生成变体数</Text>
-                <Select
-                  value={variantCount}
-                  onChange={setVariantCount}
-                  style={{ width: "100%" }}
-                  options={[
-                    { value: 1, label: "1 个变体" },
-                    { value: 2, label: "2 个变体" },
-                    { value: 3, label: "3 个变体" },
-                    { value: 5, label: "5 个变体" },
-                  ]}
-                />
-              </div>
+              <Collapse
+                size="small"
+                items={[
+                  {
+                    key: "settings",
+                    label: `生成设置：${settingsSummary}`,
+                    children: (
+                      <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                        <Row gutter={12}>
+                          <Col span={12}>
+                            <Select value={platform} onChange={setPlatform} options={PLATFORM_OPTIONS} style={{ width: "100%" }} />
+                          </Col>
+                          <Col span={12}>
+                            <Select value={tone} onChange={setTone} options={TONE_OPTIONS} style={{ width: "100%" }} />
+                          </Col>
+                        </Row>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {STYLE_PRESETS.map((preset) => (
+                            <Tag
+                              key={preset.key}
+                              color={stylePreset === preset.key ? preset.color : undefined}
+                              style={{ cursor: "pointer", padding: "6px 12px", borderRadius: 6 }}
+                              onClick={() => setStylePreset(preset.key)}
+                            >
+                              {preset.icon} {preset.label}
+                            </Tag>
+                          ))}
+                        </div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>{selectedStyle.desc}</Text>
+                        <div>
+                          <Text strong>目标字数：{targetLength} 字</Text>
+                          <Slider min={50} max={800} step={50} value={targetLength} onChange={setTargetLength} />
+                        </div>
+                        <Select
+                          value={variantCount}
+                          onChange={setVariantCount}
+                          options={[1, 2, 3, 5].map((value) => ({ value, label: `${value} 个变体` }))}
+                          style={{ width: "100%" }}
+                        />
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
 
               <Button
                 type="primary"
@@ -402,85 +449,40 @@ export default function AiCopyPage() {
                 {lastResponse?.model_name && <Tag>{lastResponse.model_name}</Tag>}
               </Space>
             }
-            extra={
-              variants.length > 0 && (
-                <Button icon={<ReloadOutlined />} size="small" onClick={handleSubmit} loading={loading}>
-                  重新生成
-                </Button>
-              )
-            }
-            style={{ height: "100%" }}
+            extra={variants.length > 0 && (
+              <Button icon={<ReloadOutlined />} size="small" onClick={handleSubmit} loading={loading}>
+                重新生成
+              </Button>
+            )}
           >
             <Spin spinning={loading} tip="AI 正在生成文案...">
               {lastResponse?.status === "failed" && (
-                <Alert
-                  type="error"
-                  showIcon
-                  message={lastResponse.error_message || "文案生成失败"}
-                  style={{ marginBottom: 16 }}
-                />
+                <Alert type="error" showIcon message={lastResponse.error_message || "文案生成失败"} style={{ marginBottom: 16 }} />
               )}
-
-              {variants.length > 0 ? (
+              {activeText ? (
                 <Space direction="vertical" style={{ width: "100%" }} size={16}>
                   {variants.length > 1 && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Space wrap>
                       {variants.map((_, idx) => (
-                        <Tag
-                          key={idx}
-                          color={activeVariant === idx ? "purple" : undefined}
-                          style={{
-                            cursor: "pointer",
-                            padding: "6px 16px",
-                            fontSize: 13,
-                            borderRadius: 6,
-                            border: activeVariant === idx ? undefined : "1px solid var(--border-default)",
-                          }}
-                          onClick={() => setActiveVariant(idx)}
-                        >
+                        <Button key={idx} size="small" type={activeVariant === idx ? "primary" : "default"} onClick={() => setActiveVariant(idx)}>
                           变体 {idx + 1}
-                        </Tag>
+                        </Button>
                       ))}
-                    </div>
+                    </Space>
                   )}
-
-                  <div
-                    style={{
-                      background: "var(--gray-50)",
-                      borderRadius: "var(--radius-md)",
-                      padding: 20,
-                      border: "1px solid var(--border-default)",
-                      minHeight: 220,
-                    }}
-                  >
-                    <Paragraph
-                      style={{
-                        fontSize: 15,
-                        lineHeight: 1.8,
-                        color: "var(--text-primary)",
-                        margin: 0,
-                        whiteSpace: "pre-wrap",
-                      }}
-                    >
-                      {variants[activeVariant]}
+                  <div style={{ background: "var(--gray-50)", borderRadius: 8, padding: 20, border: "1px solid var(--border-default)" }}>
+                    <Paragraph style={{ fontSize: 15, lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" }}>
+                      {activeText}
                     </Paragraph>
                   </div>
-
                   <Space wrap>
-                    <Button icon={<CopyOutlined />} onClick={() => handleCopy(variants[activeVariant])}>
-                      复制当前变体
-                    </Button>
-                    <Button onClick={() => handleCopy(variants.join("\n\n---\n\n"))}>
-                      复制全部变体
-                    </Button>
+                    <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制当前变体</Button>
+                    <Button onClick={() => handleCopy(variants.join("\n\n---\n\n"))}>复制全部变体</Button>
                   </Space>
-
-                  <Divider style={{ margin: "8px 0" }} />
                   <Space wrap size={[16, 8]}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>字数：{variants[activeVariant].length}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>字数：{activeText.length}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>变体数：{variants.length}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>供应商：{lastResponse?.provider_name || "-"}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>模型：{lastResponse?.model_name || "-"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>Token：{tokenUsage.total_tokens ?? "-"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>演示：{lastResponse?.is_mock ? "是" : "否"}</Text>
                   </Space>
@@ -489,12 +491,40 @@ export default function AiCopyPage() {
                 <Empty
                   description={enabled ? "填写输入后点击生成" : "模型未配置，暂不能生成真实文案"}
                   image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  style={{ padding: "32px 0" }}
                 />
               )}
             </Spin>
           </Card>
         </Col>
       </Row>
-    </div>
+
+      <Drawer
+        title="AI 文案历史"
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        width={420}
+        extra={<Button icon={<ReloadOutlined />} loading={historyLoading} onClick={refreshHistory}>刷新</Button>}
+      >
+        <List
+          loading={historyLoading}
+          dataSource={history}
+          locale={{ emptyText: "暂无独立文案任务" }}
+          renderItem={(item) => (
+            <List.Item actions={[<Button type="link" onClick={() => handleLoadHistory(item)}>载入</Button>]}>
+              <List.Item.Meta
+                title={<Space wrap><Text strong>{item.title}</Text><Tag>{item.creation_mode === "generate" ? "需求生成" : "改写"}</Tag></Space>}
+                description={
+                  <Space direction="vertical" size={4}>
+                    <Text type="secondary">{formatTime(item.created_at)}</Text>
+                    <Text type="secondary">{item.model_name || "未知模型"} · {item.target_length} 字 · {item.result_variants.length || (item.result_text ? 1 : 0)} 版</Text>
+                  </Space>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Drawer>
+    </Space>
   );
 }

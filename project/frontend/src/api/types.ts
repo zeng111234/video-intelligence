@@ -136,13 +136,15 @@ export interface VoiceoverDraftResponse {
   provider_name: string;
   model_name: string;
   is_mock: boolean;
-  target_seconds: number;
+  target_seconds: number | null;
   target_characters: number;
   source_characters: number;
   result_text: string | null;
   result_variants: string[];
   token_usage: Record<string, number>;
   error_message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export interface CrawlerProviderUsage {
@@ -291,6 +293,25 @@ export interface CopywritingResponse {
   error_message: string | null;
 }
 
+export interface CopywritingSummaryResponse extends CopywritingResponse {
+  title: string;
+  creation_mode: "generate" | "rewrite" | string;
+  platform: string;
+  target_audience: string;
+  target_length: number;
+  tone: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface CopywritingDetailResponse extends CopywritingSummaryResponse {
+  source_text: string;
+  content_brief: string;
+  selling_points: string;
+  call_to_action: string;
+  style_prompt: string;
+}
+
 export interface CopywritingCapabilitiesResponse {
   provider_name: string;
   display_name: string;
@@ -435,4 +456,133 @@ export interface AnalyticsResponse {
   trends: AnalyticsTrendItem[];
   competitors: AnalyticsCompetitorItem[];
   contentDistribution: { label: string; percent: number }[];
+}
+
+/* ---- 视频剪辑 ---- */
+
+export interface VideoEditStep {
+  step_id?: string;
+  kind: string;
+  params: Record<string, unknown>;
+  order: number;
+}
+
+export interface VideoEditConfig {
+  steps: VideoEditStep[];
+  output_format?: string;
+  output_resolution?: string;
+  output_fps?: number;
+  output_bitrate?: string;
+}
+
+export interface VideoEditRequest {
+  source_video_path: string;
+  subtitle_text?: string;
+  subtitle_style?: string;
+  edit_config?: VideoEditConfig;
+}
+
+export interface VideoEditResponse {
+  task_id: string;
+  status: string;
+  result_path: string | null;
+  result_size_bytes: number | null;
+  error_message: string | null;
+}
+
+export interface VideoCapabilitiesResponse {
+  provider_name: string;
+  display_name: string;
+  enabled: boolean;
+  supports_trim: boolean;
+  supports_subtitle: boolean;
+  supports_watermark: boolean;
+  supports_speed: boolean;
+  supports_resize: boolean;
+  supports_filter: boolean;
+  supports_concat: boolean;
+  supports_transition: boolean;
+  supports_background_music: boolean;
+  supports_ai_subtitle: boolean;
+  supports_ai_volume_norm: boolean;
+  supports_ai_enhance: boolean;
+  supports_ai_silence_trim: boolean;
+}
+
+export interface StepKindParam {
+  type: string;
+  label: string;
+  default?: unknown;
+  required?: boolean;
+  options?: string[];
+  min?: number;
+  max?: number;
+}
+
+export interface StepKindInfo {
+  label: string;
+  category: "basic" | "ai";
+  requires?: string;
+  params: Record<string, StepKindParam>;
+}
+
+export type StepKindsResponse = Record<string, StepKindInfo>;
+
+// ====== 模板系统 ======
+
+export interface TemplateStepDef {
+  kind: string;
+  params?: Record<string, unknown>;
+  label?: string;
+}
+
+export interface EditTemplate {
+  template_id: string;
+  name: string;
+  description: string;
+  category: string;
+  icon: string;
+  steps: TemplateStepDef[];
+  output_format: string;
+  output_resolution: string;
+  output_fps: number;
+  output_bitrate: string;
+  is_builtin: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface TemplateListResponse {
+  items: EditTemplate[];
+  total: number;
+}
+
+export interface TemplateCreateRequest {
+  name: string;
+  description?: string;
+  category?: string;
+  steps?: TemplateStepDef[];
+  output_format?: string;
+  output_resolution?: string;
+  output_fps?: number;
+  output_bitrate?: string;
+}
+
+export interface TemplateApplyRequest {
+  source_video_path: string;
+}
+
+// ====== 字幕系统 ======
+
+export interface SubtitleStatusResponse {
+  whisper_available: boolean;
+  version?: string;
+  supported_formats: string[];
+  install_command?: string;
+  provider_name: string;
+  ffmpeg_available: boolean;
+  asr_mode: string;
+  supported_models: string[];
+  default_model: string;
+  reason?: string;
 }

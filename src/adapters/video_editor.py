@@ -1,13 +1,17 @@
 """FFmpeg 视频编辑适配器。
 
 基于 FFmpeg 实现裁剪、字幕、水印、速度调整、拼接等功能。
+支持 AI 智能剪辑步骤：自动字幕、音量标准化、画面增强、静音裁剪。
 不依赖额外 Python 包，仅通过 subprocess 调用 FFmpeg。
 """
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -41,6 +45,17 @@ class FFmpegVideoEditor:
 
     def capabilities(self) -> dict[str, str | bool]:
         ffmpeg_available = shutil.which(self.ffmpeg) is not None
+        subtitle_available = False
+        if ffmpeg_available:
+            try:
+                from src.adapters.subtitle_generator import SubtitleGenerator
+
+                subtitle_available = (
+                    SubtitleGenerator.whisper_available()
+                    or shutil.which("whisper") is not None
+                )
+            except Exception:
+                subtitle_available = False
         return {
             "provider_name": "ffmpeg_local",
             "display_name": "FFmpeg 本地剪辑",
@@ -54,6 +69,11 @@ class FFmpegVideoEditor:
             "supports_concat": True,
             "supports_transition": False,
             "supports_background_music": True,
+            # AI 智能剪辑
+            "supports_ai_subtitle": subtitle_available,
+            "supports_ai_volume_norm": ffmpeg_available,
+            "supports_ai_enhance": ffmpeg_available,
+            "supports_ai_silence_trim": ffmpeg_available,
         }
 
     def apply_edit(
@@ -227,6 +247,15 @@ class FFmpegVideoEditor:
             self._apply_filter(input_path, output_path, params)
         elif kind == VideoEditStepKind.BACKGROUND_MUSIC:
             self._apply_bgm(input_path, output_path, params)
+        # AI 智能剪辑步骤
+        elif kind == VideoEditStepKind.AI_SUBTITLE:
+            self._apply_ai_subtitle(input_path, output_path, params)
+        elif kind == VideoEditStepKind.AI_VOLUME_NORM:
+            self._apply_ai_volume_norm(input_path, output_path, params)
+        elif kind == VideoEditStepKind.AI_ENHANCE:
+            self._apply_ai_enhance(input_path, output_path, params)
+        elif kind == VideoEditStepKind.AI_SILENCE_TRIM:
+            self._apply_ai_silence_trim(input_path, output_path, params, config)
         else:
             # 不支持的步骤类型直接复制
             self._copy_with_reencode(input_path, output_path, config)
@@ -371,6 +400,478 @@ class FFmpegVideoEditor:
         ]
         self._run(cmd, "添加背景音乐失败。")
 
+    # -- AI 智能剪辑方法 --
+
+    def _apply_ai_subtitle(
+        self, input_path: Path, output_path: Path, params: dict[str, Any]
+    ) -> None:
+        """基于 Whisper 的自动字幕生成。
+
+        优先使用 faster-whisper Python API（SubtitleGenerator），
+        如果不可用则回退到 whisper CLI，
+        两者都不可用时抛出明确错误。
+
+        params:
+            model: Whisper 模型名，默认 base
+            language: 语言代码，默认 zh
+            style: 字幕样式，默认 default
+        """
+        model = params.get("model", "base")
+        language = params.get("language", "zh")
+        style = params.get("style", "default")
+
+        srt_content = self._try_generate_subtitle_with_api(
+            input_path, model=model, language=language
+        )
+
+        if srt_content is None:
+            # API 不可用，回退到 CLI
+            srt_content = self._try_generate_subtitle_with_cli(
+                input_path, model=model, language=language
+            )
+
+        if srt_content is None:
+            raise VideoEditorError(
+                "字幕生成失败：faster-whisper 和 whisper CLI 均不可用。"
+                "请运行 pip install faster-whisper 或 pip install openai-whisper。",
+                retryable=False,
+            )
+
+        with tempfile.TemporaryDirectory(prefix="crow5_ai_sub_") as tmp:
+            srt_path = Path(tmp) / "subtitle.srt"
+            srt_path.write_text(srt_content, encoding="utf-8")
+
+            # 烧入字幕
+            subtitle_filter = self._build_subtitle_filter(srt_path, style)
+            cmd = [
+                self.ffmpeg,
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                str(input_path),
+                "-vf",
+                subtitle_filter,
+                "-c:a",
+                "copy",
+                "-y",
+                str(output_path),
+            ]
+            self._run(cmd, "AI 字幕烧入失败。")
+
+    def _try_generate_subtitle_with_api(
+        self,
+        input_path: Path,
+        *,
+        model: str = "base",
+        language: str = "zh",
+    ) -> str | None:
+        """尝试使用 faster-whisper Python API 生成 SRT 内容。
+
+        Returns:
+            SRT 内容字符串，如果 API 不可用则返回 None
+        """
+        try:
+            from src.adapters.subtitle_generator import SubtitleGenerator
+        except ImportError:
+            return None
+
+        if not SubtitleGenerator.whisper_available():
+            return None
+
+        try:
+            generator = SubtitleGenerator(model_name=model)
+            segments = generator.generate_segments(str(input_path), language=language)
+            # 内联生成 SRT 内容
+            lines: list[str] = []
+            for i, seg in enumerate(segments, start=1):
+                start_ts = SubtitleGenerator._format_srt_time(seg.start)
+                end_ts = SubtitleGenerator._format_srt_time(seg.end)
+                lines.append(f"{i}")
+                lines.append(f"{start_ts} --> {end_ts}")
+                lines.append(seg.text)
+                lines.append("")
+            return "\n".join(lines)
+        except Exception:
+            # API 调用失败，返回 None 以便回退到 CLI
+            return None
+
+    def _try_generate_subtitle_with_cli(
+        self,
+        input_path: Path,
+        *,
+        model: str = "base",
+        language: str = "zh",
+    ) -> str | None:
+        """尝试使用 whisper CLI 生成 SRT 内容。
+
+        Returns:
+            SRT 内容字符串，如果 CLI 不可用则返回 None
+        """
+        whisper_bin = shutil.which("whisper")
+        if not whisper_bin:
+            return None
+
+        with tempfile.TemporaryDirectory(prefix="crow5_ai_sub_cli_") as tmp:
+            # 提取音频
+            audio_path = Path(tmp) / "audio.wav"
+            extract_cmd = [
+                self.ffmpeg,
+                "-nostdin",
+                "-v",
+                "error",
+                "-i",
+                str(input_path),
+                "-vn",
+                "-acodec",
+                "pcm_s16le",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-y",
+                str(audio_path),
+            ]
+            result = self.command_runner(
+                extract_cmd, capture_output=True, text=True, timeout=300, check=False
+            )
+            if result.returncode != 0 or not audio_path.exists():
+                return None
+
+            # Whisper 生成 SRT
+            whisper_cmd = [
+                whisper_bin,
+                str(audio_path),
+                "--model",
+                model,
+                "--language",
+                language,
+                "--output_format",
+                "srt",
+                "--output_dir",
+                tmp,
+            ]
+            result = self.command_runner(
+                whisper_cmd,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+            if result.returncode != 0:
+                return None
+
+            srt_path = Path(tmp) / "audio.srt"
+            if not srt_path.exists():
+                alt_srt = Path(tmp) / f"{audio_path.stem}.srt"
+                if alt_srt.exists():
+                    srt_path = alt_srt
+                else:
+                    return None
+
+            return srt_path.read_text(encoding="utf-8")
+
+    def _apply_ai_volume_norm(
+        self, input_path: Path, output_path: Path, params: dict[str, Any]
+    ) -> None:
+        """音量标准化（EBU R128 loudnorm）。
+
+        使用 FFmpeg loudnorm 滤镜实现两遍标准化：
+        第一遍分析响度，第二遍应用校正。
+
+        params:
+            target_i: 目标响度 LUFS，默认 -16（适合短视频）
+            target_lra: 目标响度范围，默认 11
+            target_tp: 目标真峰值 dBTP，默认 -1.5
+        """
+        target_i = float(params.get("target_i", -16))
+        target_lra = float(params.get("target_lra", 11))
+        target_tp = float(params.get("target_tp", -1.5))
+
+        # 第一遍：分析
+        analyze_cmd = [
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-af",
+            (
+                f"loudnorm=I={target_i}:LRA={target_lra}:TP={target_tp}:print_format=json"
+            ),
+            "-f",
+            "null",
+            "-",
+        ]
+        result = self.command_runner(
+            analyze_cmd, capture_output=True, text=True, timeout=600, check=False
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or "")[:200]
+            raise VideoEditorError(f"音量分析失败。 {detail}")
+
+        # 解析 loudnorm JSON 输出
+        stderr = result.stderr or ""
+        measured_i = target_i
+        measured_lra = target_lra
+        measured_tp = target_tp
+        measured_thresh = -24.0
+        offset = 0.0
+
+        try:
+            # loudnorm 输出在 stderr 最后一个 JSON 块
+            json_matches = re.findall(r'\{[^{}]*"input_i"[^{}]*\}', stderr)
+            if json_matches:
+                stats = json.loads(json_matches[-1])
+                measured_i = float(stats.get("input_i", target_i))
+                measured_lra = float(stats.get("input_lra", target_lra))
+                measured_tp = float(stats.get("input_tp", target_tp))
+                measured_thresh = float(stats.get("input_thresh", -24.0))
+                offset = float(stats.get("target_offset", 0.0))
+        except (json.JSONDecodeError, ValueError, KeyError):
+            pass  # 降级使用默认值
+
+        # 第二遍：应用校正
+        norm_filter = (
+            f"loudnorm=I={target_i}:LRA={target_lra}:TP={target_tp}"
+            f":measured_I={measured_i}:measured_LRA={measured_lra}"
+            f":measured_TP={measured_tp}:measured_thresh={measured_thresh}"
+            f":offset={offset}:linear=true:print_format=summary"
+        )
+        normalize_cmd = [
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-af",
+            norm_filter,
+            "-c:v",
+            "copy",
+            "-y",
+            str(output_path),
+        ]
+        self._run(normalize_cmd, "音量标准化失败。")
+
+    def _apply_ai_enhance(
+        self, input_path: Path, output_path: Path, params: dict[str, Any]
+    ) -> None:
+        """画面增强（亮度/对比度/锐化/降噪）。
+
+        使用 FFmpeg 滤镜组合实现自动画质提升：
+        - eq: 亮度 (brightness) + 对比度 (contrast) + 饱和度 (saturation)
+        - unsharp: 锐化
+        - hqdn3d: 时空降噪
+
+        params:
+            brightness: 亮度调整，默认 0.06（范围 -1~1）
+            contrast: 对比度，默认 1.1（范围 0~2）
+            saturation: 饱和度，默认 1.15（范围 0~3）
+            sharpen: 锐化强度，默认 1.5（范围 0~5）
+            denoise: 降噪强度，默认 3（范围 0~10）
+        """
+        brightness = float(params.get("brightness", 0.06))
+        contrast = float(params.get("contrast", 1.1))
+        saturation = float(params.get("saturation", 1.15))
+        sharpen = float(params.get("sharpen", 1.5))
+        denoise = int(params.get("denoise", 3))
+
+        filters: list[str] = []
+
+        # 亮度 / 对比度 / 饱和度
+        filters.append(
+            f"eq=brightness={brightness}:contrast={contrast}:saturation={saturation}"
+        )
+
+        # 锐化 (unsharp)
+        if sharpen > 0:
+            filters.append(f"unsharp=5:5:{sharpen}:5:5:{sharpen * 0.5}")
+
+        # 降噪 (hqdn3d)
+        if denoise > 0:
+            filters.append(f"hqdn3d={denoise}:{denoise}:{denoise}:{denoise}")
+
+        vf = ",".join(filters)
+
+        cmd = [
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-vf",
+            vf,
+            "-c:a",
+            "copy",
+            "-y",
+            str(output_path),
+        ]
+        self._run(cmd, "画面增强失败。")
+
+    def _apply_ai_silence_trim(
+        self,
+        input_path: Path,
+        output_path: Path,
+        params: dict[str, Any],
+        config: VideoEditConfig,
+    ) -> None:
+        """智能静音裁剪。
+
+        流程：
+        1. 用 silencedetect 检测静音段
+        2. 计算非静音段时间范围
+        3. 提取非静音片段并拼接
+
+        params:
+            noise_threshold: 静音阈值 dB，默认 -30
+            min_duration: 最短静音时长秒，默认 0.5
+            keep_padding: 静音段两端保留的秒数，默认 0.1
+        """
+        noise_db = float(params.get("noise_threshold", -30))
+        min_duration = float(params.get("min_duration", 0.5))
+        keep_padding = float(params.get("keep_padding", 0.1))
+
+        # 1. 获取视频时长
+        duration = self._get_video_duration(input_path)
+
+        # 2. 检测静音段
+        detect_cmd = [
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(input_path),
+            "-af",
+            f"silencedetect=noise={noise_db}dB:d={min_duration}",
+            "-f",
+            "null",
+            "-",
+        ]
+        result = self.command_runner(
+            detect_cmd, capture_output=True, text=True, timeout=600, check=False
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or "")[:200]
+            raise VideoEditorError(f"静音检测失败。 {detail}")
+
+        # 3. 解析静音段
+        silence_starts: list[float] = []
+        silence_ends: list[float] = []
+        for match in re.finditer(r"silence_start:\s*([\d.]+)", result.stderr or ""):
+            silence_starts.append(float(match.group(1)))
+        for match in re.finditer(r"silence_end:\s*([\d.]+)", result.stderr or ""):
+            silence_ends.append(float(match.group(1)))
+
+        # 配对 start/end
+        silence_ranges: list[tuple[float, float]] = []
+        for i, start in enumerate(silence_starts):
+            end = silence_ends[i] if i < len(silence_ends) else duration
+            silence_ranges.append(
+                (max(0, start + keep_padding), min(duration, end - keep_padding))
+            )
+
+        # 4. 计算非静音段
+        speech_segments: list[tuple[float, float]] = []
+        cursor = 0.0
+        for s_start, s_end in silence_ranges:
+            if s_start > cursor:
+                speech_segments.append((cursor, s_start))
+            cursor = max(cursor, s_end)
+        if cursor < duration:
+            speech_segments.append((cursor, duration))
+
+        # 过滤太短的片段（<0.3s）
+        speech_segments = [(s, e) for s, e in speech_segments if e - s >= 0.3]
+
+        if not speech_segments:
+            # 全是静音，直接复制
+            self._copy_with_reencode(input_path, output_path, config)
+            return
+
+        if (
+            len(speech_segments) == 1
+            and speech_segments[0][0] <= 0.1
+            and speech_segments[0][1] >= duration - 0.1
+        ):
+            # 无实质静音，直接复制
+            self._copy_with_reencode(input_path, output_path, config)
+            return
+
+        # 5. 提取片段并拼接
+        with tempfile.TemporaryDirectory(prefix="crow5_ai_trim_") as tmp:
+            segment_files: list[Path] = []
+            for idx, (seg_start, seg_end) in enumerate(speech_segments):
+                seg_file = Path(tmp) / f"seg_{idx:04d}.{config.output_format}"
+                seg_cmd = [
+                    self.ffmpeg,
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-ss",
+                    str(seg_start),
+                    "-to",
+                    str(seg_end),
+                    "-i",
+                    str(input_path),
+                    "-c",
+                    "copy",
+                    "-y",
+                    str(seg_file),
+                ]
+                self._run(seg_cmd, f"提取静音裁剪片段 {idx} 失败。")
+                segment_files.append(seg_file)
+
+            # 拼接
+            concat_list = Path(tmp) / "concat.txt"
+            concat_list.write_text(
+                "\n".join(f"file '{f}'" for f in segment_files),
+                encoding="utf-8",
+            )
+            concat_cmd = [
+                self.ffmpeg,
+                "-nostdin",
+                "-v",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+                "-y",
+                str(output_path),
+            ]
+            self._run(concat_cmd, "静音裁剪拼接失败。")
+
+    def _get_video_duration(self, path: Path) -> float:
+        """获取视频时长（秒）。"""
+        cmd = [
+            self.ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(path),
+        ]
+        result = self.command_runner(
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
+        if result.returncode != 0:
+            raise VideoEditorError("无法获取视频时长。")
+        try:
+            info = json.loads(result.stdout)
+            return float(info["format"]["duration"])
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            raise VideoEditorError(f"解析视频时长失败: {exc}") from exc
+
     def _copy_with_reencode(
         self, input_path: Path, output_path: Path, config: VideoEditConfig
     ) -> None:
@@ -467,6 +968,11 @@ class SandboxVideoEditor:
             "supports_speed": True,
             "supports_resize": True,
             "supports_filter": True,
+            # AI 智能剪辑
+            "supports_ai_subtitle": False,
+            "supports_ai_volume_norm": False,
+            "supports_ai_enhance": False,
+            "supports_ai_silence_trim": False,
         }
 
     def apply_edit(
