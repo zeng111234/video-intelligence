@@ -36,6 +36,7 @@ interface NavItem {
 interface NavGroup {
   title: string;
   items: NavItem[];
+  disabled?: boolean;
 }
 
 /** 组件 Props */
@@ -72,6 +73,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
       },
       {
         title: "数据分析",
+        disabled: true,
         items: [
           { key: "/analytics", label: "深度分析", icon: <LineChartOutlined /> },
           { key: "/tasks", label: "任务中心", icon: <UnorderedListOutlined /> },
@@ -79,6 +81,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
       },
       {
         title: "系统",
+        disabled: true,
         items: [
           { key: "/admin", label: "系统设置", icon: <SettingOutlined /> },
           { key: "/help", label: "帮助中心", icon: <QuestionCircleOutlined /> },
@@ -137,9 +140,10 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
               {group.items.map((item) => (
                 <div
                   key={item.key}
-                  className={`vi-nav-item${isActive(item.key) ? " active" : ""}`}
-                  onClick={() => handleNavClick(item.key)}
+                  className={`vi-nav-item${isActive(item.key) ? " active" : ""}${group.disabled ? " disabled" : ""}`}
+                  onClick={() => !group.disabled && handleNavClick(item.key)}
                   title={collapsed ? item.label : undefined}
+                  style={group.disabled ? { opacity: 0.4, cursor: "not-allowed", pointerEvents: "none" } : undefined}
                 >
                   <span className="vi-nav-item-icon">{item.icon}</span>
                   {!collapsed && (
