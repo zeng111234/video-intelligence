@@ -195,7 +195,7 @@ class DuixAvatarProvider(BaseAvatarProvider):
 
             # Step 2: 视频合成
             if audio_path:
-                video_result = await self._synthesize_video(
+                await self._synthesize_video(
                     audio_path,
                     avatar_image if isinstance(avatar_image, str) else "",
                     task_id,

@@ -17,6 +17,10 @@ from src.adapters.licensed import (  # noqa: E402
     SandboxLicensedSearchProvider,
 )
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
+from src.adapters.official import (  # noqa: E402
+    DouyinHotBillboardAdapter,
+    DouyinHotWordsAdapter,
+)
 from src.services.candidate import CandidateService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
@@ -25,13 +29,20 @@ from src.services.doubao_browser import (  # noqa: E402
     DoubaoMobileAutomationService,
 )
 from src.services.media_resolution import MediaResolutionService  # noqa: E402
+from src.services.douyin_link_transcription import DouyinLinkTranscriptionService  # noqa: E402
+from src.adapters.douyin_parser import LocalDouyinBrowserParserClient  # noqa: E402
+from src.adapters.douyin_browser_search import LocalDouyinBrowserSearchProvider  # noqa: E402
 from src.services.pipeline import PipelineService  # noqa: E402
+from src.services.production import ProductionService  # noqa: E402
+from src.services.feedback import FeedbackService  # noqa: E402
+from src.services.pipeline_worker import PipelineWorker  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
 from src.services.avatar import AvatarService  # noqa: E402
 from src.services.heat import HeatService  # noqa: E402
 from src.services.keyword_trend import KeywordTrendService  # noqa: E402
+from src.services.hot_pool import OfficialHotPoolService  # noqa: E402
 from src.services.source import SourceService  # noqa: E402
 from src.adapters.llm import (  # noqa: E402
     DisabledCopywritingEngine,
@@ -61,6 +72,16 @@ from project.backend.app.core.config import (  # noqa: E402
     COPYWRITING_MODE,
     COPYWRITING_MODEL,
     CopywritingProviderMode,
+    DOUYIN_CLIENT_KEY,
+    DOUYIN_CLIENT_SECRET,
+    DOUYIN_OFFICIAL_HOT_ENABLED,
+    DOUYIN_HOT_WORDS_ENABLED,
+    DOUYIN_LOCAL_BROWSER_ENABLED,
+    DOUYIN_BROWSER_CHANNEL,
+    DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    DOUYIN_BROWSER_DISCOVERY_ENABLED,
+    DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+    DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
 )
 
 
@@ -101,15 +122,61 @@ def get_licensed_search_provider():
 
 
 @lru_cache
+def get_discovery_search_provider():
+    """选择候选发现来源；不影响 OneAPI 的受控媒体解析回退。"""
+    if DOUYIN_BROWSER_DISCOVERY_ENABLED:
+        return LocalDouyinBrowserSearchProvider(
+            enabled=True,
+            profile_dir=DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+            browser_channel=DOUYIN_BROWSER_CHANNEL,
+            debug_port=DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
+            timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+        )
+    return get_licensed_search_provider()
+
+
+@lru_cache
 def get_commercial_search_service() -> CommercialSearchService:
     return CommercialSearchService(
         repository=get_repository(),
         source_service=get_source_service(),
         trend_service=get_keyword_trend_service(),
-        provider=get_licensed_search_provider(),
+        provider=get_discovery_search_provider(),
         active_platforms=tuple(
             Platform(platform) for platform in CRAWLER_ACTIVE_PLATFORMS
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 官方热榜池服务（抖音开放平台热门视频榜 + 实时热点词）
+# ---------------------------------------------------------------------------
+
+
+@lru_cache
+def get_official_hot_billboard_adapter() -> DouyinHotBillboardAdapter | None:
+    """官方热榜适配器；DOUYIN_OFFICIAL_HOT_ENABLED=false 时返回 None，不调用官方接口。"""
+    if not DOUYIN_OFFICIAL_HOT_ENABLED:
+        return None
+    return DouyinHotBillboardAdapter(DOUYIN_CLIENT_KEY, DOUYIN_CLIENT_SECRET)
+
+
+@lru_cache
+def get_official_hot_words_adapter() -> DouyinHotWordsAdapter | None:
+    """官方热点词适配器；DOUYIN_HOT_WORDS_ENABLED=false 时返回 None。"""
+    if not DOUYIN_HOT_WORDS_ENABLED:
+        return None
+    return DouyinHotWordsAdapter(DOUYIN_CLIENT_KEY, DOUYIN_CLIENT_SECRET)
+
+
+@lru_cache
+def get_official_hot_pool_service() -> OfficialHotPoolService:
+    return OfficialHotPoolService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        billboard_adapter=get_official_hot_billboard_adapter(),
+        hot_words_adapter=get_official_hot_words_adapter(),
     )
 
 
@@ -185,6 +252,24 @@ def get_media_resolution_service() -> MediaResolutionService:
     return MediaResolutionService(
         get_repository(),
         get_licensed_search_provider(),
+    )
+
+
+@lru_cache
+def get_experimental_douyin_parser() -> LocalDouyinBrowserParserClient:
+    return LocalDouyinBrowserParserClient(
+        enabled=DOUYIN_LOCAL_BROWSER_ENABLED,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_douyin_link_transcription_service() -> DouyinLinkTranscriptionService:
+    return DouyinLinkTranscriptionService(
+        get_experimental_douyin_parser(),
+        get_licensed_search_provider(),
+        get_transcription_service(),
     )
 
 
@@ -292,6 +377,37 @@ def get_pipeline_service() -> PipelineService:
         publish_service=get_publish_service(),
         media_resolution_service=get_media_resolution_service(),
         transcription_service=get_transcription_service(),
+    )
+
+
+@lru_cache
+def get_production_service() -> ProductionService:
+    return ProductionService(
+        get_repository(),
+        storage_directory=PROJECT_ROOT / "data" / "production",
+        media_resolution_service=get_media_resolution_service(),
+        avatar_service=get_avatar_service(),
+        template_service=get_template_service(),
+        publish_service=get_publish_service(),
+    )
+
+
+@lru_cache
+def get_feedback_service() -> FeedbackService:
+    return FeedbackService(get_repository(), PROJECT_ROOT / "data" / "production")
+
+
+@lru_cache
+def get_pipeline_worker() -> PipelineWorker:
+    return PipelineWorker(
+        repository=get_repository(),
+        pipeline_service=get_pipeline_service(),
+        commercial_search_service=get_commercial_search_service(),
+        avatar_service=get_avatar_service(),
+        video_editing_service=get_video_editing_service(),
+        publish_service=get_publish_service(),
+        template_service=get_template_service(),
+        production_service=get_production_service(),
     )
 
 

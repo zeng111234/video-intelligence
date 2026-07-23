@@ -89,6 +89,19 @@ class SandboxCopywritingEngine:
         variant_count: int = 1,
     ) -> list[str]:
         snippet = content_brief[:80].replace("\n", " ")
+        if "适合数字人口播" in style_prompt:
+            title = content_brief.partition("参考视频标题：")[2].split("\n", 1)[0].strip()
+            return [
+                "做数字人口播，最怕什么？\n"
+                "内容讲了很久，用户却划走了。\n"
+                "先别急着换形象。\n"
+                f"先把「{title[:16]}」讲清楚。\n"
+                "开头先说结果。\n"
+                "中间只讲一个关键方法。\n"
+                "每句话都让用户听得懂。\n"
+                "最后再留一个动作。\n"
+                "想看具体做法，评论区告诉我。"
+            ]
         templates = [
             f"【演示】开场钩子：如果你正在关注「{snippet}」，这条内容值得看完。\n主体：围绕核心卖点，用更清晰的结构讲明价值。\nCTA：{call_to_action or '欢迎私信了解更多。'}",
             f"【演示】开场钩子：同样是做{platform}内容，差距往往在表达顺序。\n主体：「{snippet}」可以先讲痛点，再给方案。\nCTA：{call_to_action or '觉得有用可以收藏。'}",

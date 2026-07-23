@@ -32,6 +32,8 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   badge?: number;
+  /** 规划中入口：保留位置提示，但不允许进入尚未开放的页面。 */
+  disabled?: boolean;
 }
 
 /** 导航分组类型 */
@@ -77,9 +79,9 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: [
           { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
           { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
+          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
           { key: "/video-editor", label: "AI智能剪辑", icon: <RobotOutlined /> },
           { key: "/subtitle", label: "字幕生成", icon: <SubnodeOutlined /> },
-          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
         ],
       },
       {
@@ -87,12 +89,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: [
           { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
-        ],
-      },
-      {
-        title: "工作台",
-        items: [
-          { key: "/studio", label: "内容工作台", icon: <AppstoreOutlined /> },
         ],
       },
       {
@@ -109,6 +105,13 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: [
           { key: "/admin", label: "系统设置", icon: <SettingOutlined /> },
           { key: "/help", label: "帮助中心", icon: <QuestionCircleOutlined /> },
+        ],
+      },
+      {
+        title: "规划中",
+        items: [
+          { key: "/production", label: "IP资产与批量", icon: <AppstoreOutlined />, disabled: true },
+          { key: "/feedback", label: "反馈与复盘", icon: <LineChartOutlined />, disabled: true },
         ],
       },
     ],
@@ -164,10 +167,11 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
               {group.items.map((item) => (
                 <div
                   key={item.key}
-                  className={`vi-nav-item${isActive(item.key) ? " active" : ""}${group.disabled ? " disabled" : ""}`}
-                  onClick={() => !group.disabled && handleNavClick(item.key)}
+                  className={`vi-nav-item${isActive(item.key) && !group.disabled && !item.disabled ? " active" : ""}${group.disabled || item.disabled ? " disabled" : ""}`}
+                  onClick={() => !group.disabled && !item.disabled && handleNavClick(item.key)}
                   title={collapsed ? item.label : undefined}
-                  style={group.disabled ? { opacity: 0.4, cursor: "not-allowed", pointerEvents: "none" } : undefined}
+                  aria-disabled={group.disabled || item.disabled || undefined}
+                  style={group.disabled || item.disabled ? { opacity: 0.4, cursor: "not-allowed", pointerEvents: "none" } : undefined}
                 >
                   <span className="vi-nav-item-icon">{item.icon}</span>
                   {!collapsed && (

@@ -156,6 +156,68 @@ def _crawler_active_platforms() -> tuple[str, ...]:
 
 CRAWLER_ACTIVE_PLATFORMS: tuple[str, ...] = _crawler_active_platforms()
 
+# ---------------------------------------------------------------------------
+# 抖音开放平台官方数据（热门视频榜 + 实时热点词）
+# ---------------------------------------------------------------------------
+
+
+def _env_flag(key: str, default: bool) -> bool:
+    raw = _env(key)
+    if not raw:
+        return default
+    return raw.casefold() in {"1", "true", "yes", "on"}
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        return float(_env(key, str(default)) or default)
+    except ValueError:
+        return default
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(_env(key, str(default)) or default)
+    except ValueError:
+        return default
+
+
+# 发现与付费解析分离：默认用专用本机 Chrome 发现公开作品；OneAPI
+# 仍保留给明确确认的媒体解析和关闭浏览器发现后的人工兜底。
+DOUYIN_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
+    "DOUYIN_BROWSER_DISCOVERY_ENABLED", False
+)
+DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
+    _env(
+        "DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR",
+        str(PROJECT_ROOT / "data" / "browser_profiles" / "douyin"),
+    )
+)
+DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
+    "DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT", 19222
+)
+# 不允许后台定时器在未明确打开预算开关时调用付费 OneAPI 搜索。
+CRAWLER_ONEAPI_AUTO_ENABLED: bool = _env_flag(
+    "CRAWLER_ONEAPI_AUTO_ENABLED", False
+)
+
+
+# One authorized public Douyin share link is resolved by a temporary local
+# browser context.  The API never reads browser profiles or session material.
+DOUYIN_LOCAL_BROWSER_ENABLED: bool = _env_flag("DOUYIN_LOCAL_BROWSER_ENABLED", True)
+DOUYIN_BROWSER_CHANNEL: str = _env("DOUYIN_BROWSER_CHANNEL", "chrome").casefold()
+DOUYIN_BROWSER_TIMEOUT_SECONDS: float = _env_float(
+    "DOUYIN_BROWSER_TIMEOUT_SECONDS", 35.0
+)
+
+
+# 抖音开放平台应用凭证（scope: data.external.billboard_hot_video，无需用户授权）
+DOUYIN_CLIENT_KEY: str = _secret("DOUYIN_CLIENT_KEY")
+DOUYIN_CLIENT_SECRET: str = _secret("DOUYIN_CLIENT_SECRET")
+# 官方热榜 / 官方实时热点词开关；false 时 capabilities 报未启用且不调用官方接口
+DOUYIN_OFFICIAL_HOT_ENABLED: bool = _env_flag("DOUYIN_OFFICIAL_HOT_ENABLED", True)
+DOUYIN_HOT_WORDS_ENABLED: bool = _env_flag("DOUYIN_HOT_WORDS_ENABLED", True)
+
 
 # ---------------------------------------------------------------------------
 # AI 文案大模型配置

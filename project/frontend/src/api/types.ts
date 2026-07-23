@@ -53,15 +53,33 @@ export interface PipelineStage {
   outputs?: Record<string, string>;
 }
 
+export interface PipelineEvent {
+  event_id: string;
+  action: string;
+  status: string;
+  stage: string | null;
+  message: string;
+  details: Record<string, string>;
+  created_at: string;
+}
+
 export interface PipelineResponse {
   run_id: string;
   keyword: string;
   status: string;
   current_stage: string | null;
   stages: PipelineStage[];
+  candidate_video_id: string | null;
+  copywriting_task_id: string | null;
+  avatar_task_id: string | null;
+  edit_task_id: string | null;
+  publish_task_ids: string[];
+  config: Record<string, unknown>;
+  events: PipelineEvent[];
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+  finished_at: string | null;
 }
 
 export interface PipelineFromCandidateRequest {
@@ -75,6 +93,96 @@ export interface PipelineFromCandidateRequest {
   target_audience?: string;
   style_prompt?: string;
   variant_count?: number;
+}
+
+export interface ProductionProfile {
+  profile_id: string;
+  name: string;
+  description: string;
+  target_audience: string;
+  platform: string;
+  script_style: string;
+  avatar_id: string | null;
+  voice_id: string | null;
+  edit_template_id: string | null;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductionBatchItem {
+  candidate_id: string;
+  run_id: string;
+  status: string;
+  current_stage: string | null;
+  blocked_reasons: string[];
+  error_message: string | null;
+  video_path: string | null;
+  publish_mode: string | null;
+}
+
+export interface ProductionBatch {
+  batch_id: string;
+  name: string;
+  profile_id: string;
+  profile_name: string;
+  status: string;
+  is_paused: boolean;
+  items: ProductionBatchItem[];
+  progress: Record<string, number>;
+  execution_config: Record<string, unknown>;
+  estimated_cost_cny: number;
+  monthly_budget_used_cny: number;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ProductionBatchPreflightItem {
+  run_id: string;
+  candidate_id: string;
+  ready: boolean;
+  reasons: string[];
+}
+
+export interface ProductionBatchPreflight {
+  batch_id: string;
+  ready_count: number;
+  blocked_count: number;
+  items: ProductionBatchPreflightItem[];
+  estimated_cost_cny: number;
+  monthly_budget_used_cny: number;
+  platforms: Array<{ platform: string; display_name: string; mode: string; enabled: boolean; manual_required: boolean }>;
+  concurrency: number;
+}
+
+export interface KeywordRunPreflight {
+  ready: boolean;
+  missing: string[];
+  candidate_count: number;
+  message: string;
+}
+
+export interface PublishFeedback {
+  feedback_id: string;
+  publish_task_id: string;
+  pipeline_run_id: string | null;
+  platform: string;
+  views: number;
+  likes: number;
+  comments: number;
+  leads: number;
+  recorded_by: string;
+  note: string;
+  recorded_at: string;
+}
+
+export interface FeedbackRecommendations {
+  sample_size: number;
+  message: string;
+  recommendations: string[];
+  platform_engagement_rates?: Record<string, number>;
 }
 
 export interface TaskItem {
@@ -128,6 +236,78 @@ export interface CrawlerCapabilitiesResponse {
   cache_ttl_minutes: number;
   supports_usage: boolean;
   usage: CrawlerProviderUsage | null;
+  /** 官方热榜能力状态（后端未上线时为 undefined/null，前端容错） */
+  official_hot_billboard?: CrawlerOfficialHotCapability | null;
+  /** 官方实时热点词能力状态 */
+  official_hot_words?: CrawlerOfficialHotCapability | null;
+}
+
+export interface CrawlerBrowserDiscoveryCapabilities {
+  enabled: boolean;
+  running: boolean;
+  login_required: boolean;
+  provider_name: string;
+  message: string;
+}
+
+export interface CrawlerBrowserDiscoveryStartResponse extends CrawlerBrowserDiscoveryCapabilities {
+  started: boolean;
+}
+
+/** 官方热榜 / 官方热点词能力状态 */
+export interface CrawlerOfficialHotCapability {
+  enabled: boolean;
+  missing_configuration: string[];
+  provider_name: string;
+}
+
+/** 官方实时热点词 */
+export interface CrawlerHotWordItem {
+  word: string;
+  hot_value: number | null;
+  fetched_at: string;
+}
+
+export interface CrawlerHotWordsResponse {
+  words: CrawlerHotWordItem[];
+  /** 同步失败或适配器未配置时的原因说明（后端可选返回，前端容错） */
+  error?: string | null;
+}
+
+/** 文案来源三档 */
+export type CrawlerCopySource =
+  | "metadata_original"
+  | "doubao_mobile_transcript"
+  | "authorized_asr_transcript";
+
+/** 官方热榜一键监测 */
+export interface CrawlerOfficialHotMonitorRequest {
+  keyword?: string;
+}
+
+export interface CrawlerOfficialHotMonitorResponse {
+  matched_count: number;
+  result_state: string;
+  result_message: string;
+  executed_recrawls: number;
+  next_recrawl_at: string | null;
+  candidates: CrawlerCandidateResult[];
+}
+
+/** 基于平台信息生成的数字人口播文案。 */
+export interface CrawlerOriginalScriptResponse {
+  copy_source: "metadata_original";
+  is_original_transcript: boolean;
+  needs_manual_review: boolean;
+  script: string;
+}
+
+/** 手机豆包链路本机前置条件 */
+export interface CrawlerDoubaoMobilePrerequisites {
+  adb: boolean;
+  appium_url: boolean;
+  package: boolean;
+  device_ready: boolean;
 }
 
 export interface VoiceoverDraftResponse {
@@ -147,6 +327,34 @@ export interface VoiceoverDraftResponse {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+  draft_stage: "deduplicate" | "compliance" | string;
+  parent_task_id: string | null;
+  needs_manual_review: boolean;
+}
+
+export interface CrawlerLinkTranscriptionCapabilities {
+  experimental: boolean;
+  parser_enabled: boolean;
+  parser_message: string | null;
+  oneapi_estimated_cost_cny: number | null;
+}
+
+export interface CrawlerLinkTranscriptionPreview {
+  share_url: string;
+  work_id: string | null;
+  parser_enabled: boolean;
+  parser_message: string | null;
+  oneapi_fallback_available: boolean;
+  oneapi_estimated_cost_cny: number | null;
+  is_experimental: boolean;
+}
+
+export interface CrawlerLinkTranscriptionResult {
+  status: "succeeded" | "fallback_required";
+  message: string;
+  work_id: string | null;
+  oneapi_estimated_cost_cny: number | null;
+  transcription: TranscriptionResponse | null;
 }
 
 export interface CrawlerProviderUsage {
@@ -159,9 +367,13 @@ export interface CrawlerProviderUsage {
 
 export interface CrawlerSearchRequest {
   keyword: string;
-  published_window_days: 1 | 7;
+  published_window_days: 0 | 1 | 7;
   count_per_platform: number;
   force_refresh: boolean;
+  /** smart 先走免费官方池，候选不足才使用一次低价兜底。 */
+  mode?: "official_hot" | "smart";
+  /** 用户明确给出的相关赛道词；不会由系统自动扩词。 */
+  related_terms?: string[];
 }
 
 export interface CrawlerPlatformPreview {
@@ -186,7 +398,14 @@ export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
   cache_ttl_minutes: number;
   platforms: CrawlerPlatformPreview[];
   estimated_total_cost_cny: number;
+  monitoring_policy?: string;
+  sampling_offsets_hours?: number[];
+  max_api_calls_per_platform?: number;
   blocked: boolean;
+  free_candidate_count?: number;
+  paid_fallback_required?: boolean;
+  paid_fallback_cache_ttl_minutes?: number | null;
+  paid_fallback_blocked_reason?: string | null;
 }
 
 export interface CrawlerCandidateResult {
@@ -227,6 +446,33 @@ export interface CrawlerCandidateResult {
   reasons: string[];
   media_resolution_status: string | null;
   media_transcription_task_id: string | null;
+  /** 增长阶段：观察样本 / 增长确认中 / 热门候选 / 爆发候选 */
+  growth_stage?: string;
+  /** 已采集快照数 */
+  snapshot_count?: number;
+  /** 下一次计划复爬时间 */
+  next_recrawl_at?: string | null;
+  /** 文案来源 */
+  copy_source?: CrawlerCopySource | null;
+  /** 是否为原视频原版转写 */
+  is_original_transcript?: boolean;
+  /** 是否需要人工复核 */
+  needs_manual_review?: boolean;
+  /** 分享数（供应商未返回时为 null，前端显示「未返回」） */
+  share_count?: number | null;
+  /** 收藏数（供应商未返回时为 null，前端显示「未返回」） */
+  collect_count?: number | null;
+  /** 严格关键词规则的命中位置 */
+  relevance_basis?: "title_or_hashtag" | string | null;
+  /** 可解释的关键词命中原因 */
+  relevance_reason?: string | null;
+  trend_points?: CrawlerTrendPoint[];
+}
+
+export interface CrawlerTrendPoint {
+  sampled_at: string;
+  effective_interactions: number;
+  growth_per_hour?: number | null;
 }
 
 export interface CrawlerCandidateMediaPreviewResponse {
@@ -277,6 +523,10 @@ export interface CrawlerDoubaoMobileCapabilitiesResponse {
   missing_configuration: string[];
   requirements: string[];
   message: string;
+  /** 本机前置条件逐项状态（后端未上线时为 undefined/null） */
+  prerequisites?: CrawlerDoubaoMobilePrerequisites | null;
+  /** 创建任务费用，手机豆包链路恒为 0 */
+  estimated_cost_cny?: number;
 }
 
 export interface CrawlerPlatformRun {
@@ -293,6 +543,11 @@ export interface CrawlerPlatformRun {
   out_of_window_count: number;
   invalid_count: number;
   duplicate_count: number;
+  /** 严格关键词匹配后可展示的候选数；旧后端缺失时回退 returned_count */
+  relevant_count?: number;
+  /** 已解析但未通过标题/话题严格匹配的候选数 */
+  irrelevant_count?: number;
+  relevance_rule_version?: string | null;
   result_state: string;
   payload_diagnostic: string | null;
   cache_hit: boolean;
@@ -323,6 +578,12 @@ export interface CrawlerBatchResponse {
   total_api_calls: number;
   total_candidates: number;
   total_estimated_cost_cny: number;
+  monitoring_policy?: string;
+  sampling_offsets_hours?: number[];
+  free_candidate_count?: number;
+  paid_fallback_used?: boolean;
+  paid_fallback_blocked_reason?: string | null;
+  related_terms?: string[];
 }
 
 export interface CrawlerBatchListResponse {
@@ -662,6 +923,80 @@ export interface VideoEditResponse {
   result_path: string | null;
   result_size_bytes: number | null;
   error_message: string | null;
+}
+
+export interface VideoEditorSource {
+  source_id: string;
+  source_type: "avatar" | "pipeline";
+  source_task_id: string;
+  title: string;
+  file_name: string;
+  size_bytes: number;
+  created_at: string;
+  media_url: string;
+  media_type: string;
+}
+
+export interface VideoEditorSourceListResponse {
+  items: VideoEditorSource[];
+  total: number;
+}
+
+export interface VideoEditorRecommendationStep {
+  kind: string;
+  params: Record<string, unknown>;
+  enabled: boolean;
+  label: string;
+}
+
+export interface VideoEditorAnalysis {
+  analysis_id: string;
+  status: string;
+  progress: number;
+  stage: string;
+  error_message: string | null;
+  source_id: string;
+  target_platform: string;
+  subtitle_enabled: boolean;
+  subtitle_model: string;
+  media?: {
+    duration_seconds: number;
+    width: number;
+    height: number;
+    fps: number;
+    orientation: "vertical" | "horizontal";
+    has_audio: boolean;
+    size_bytes: number;
+  };
+  audio?: {
+    available: boolean;
+    mean_volume_db?: number | null;
+    silence_seconds?: number;
+    silence_intervals?: { start: number; end: number }[];
+  };
+  findings?: string[];
+  recommended_steps?: VideoEditorRecommendationStep[];
+  subtitle_task_id?: string | null;
+  subtitle_error?: string | null;
+  content_advice?: string | null;
+}
+
+export interface VideoEditorJob {
+  task_id: string;
+  status: string;
+  progress: number;
+  stage: string;
+  error_message: string | null;
+  result_size_bytes: number | null;
+  media_url: string | null;
+  download_url: string | null;
+  source_id: string | null;
+  analysis_id: string | null;
+}
+
+export interface VideoEditorJobListResponse {
+  items: VideoEditorJob[];
+  total: number;
 }
 
 export interface VideoCapabilitiesResponse {

@@ -6,9 +6,19 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_video_editing_service
+from project.backend.app.core.deps import (
+    get_copywriting_service,
+    get_repository,
+    get_transcription_service,
+    get_video_editing_service,
+)
+from src.services.video_editor_workflow import (
+    VideoEditorWorkflowError,
+    VideoEditorWorkflowService,
+)
 
 router = APIRouter(prefix="/api/v1/video-editor", tags=["video-editor"])
 
@@ -70,6 +80,30 @@ class VideoEditResponse(BaseModel):
     error_message: str | None = None
 
 
+class AnalysisCreateRequest(BaseModel):
+    source_id: str = Field(..., min_length=3)
+    target_platform: str = Field("douyin", pattern="^(douyin|kuaishou|wechat_channels|xiaohongshu)$")
+    subtitle_enabled: bool = True
+    subtitle_model: str = Field("large-v3-turbo", pattern="^(large-v3-turbo|base)$")
+    language: str = Field("zh", pattern="^(auto|zh|en|ja|ko)$")
+
+
+class WorkflowStepRequest(BaseModel):
+    kind: str
+    params: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+
+
+class EditJobCreateRequest(BaseModel):
+    analysis_id: str = Field(..., min_length=3)
+    steps: list[WorkflowStepRequest] = Field(default_factory=list)
+    output_format: str = Field("mp4", pattern="^(mp4|webm|avi|mov)$")
+    output_resolution: str = Field("1080x1920", pattern="^\\d{2,5}x\\d{2,5}$")
+    output_fps: int = Field(30, ge=15, le=60)
+    output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
+    subtitle_enabled: bool = True
+
+
 # ---------------------------------------------------------------------------
 # 辅助函数
 # ---------------------------------------------------------------------------
@@ -108,9 +142,141 @@ def _build_edit_config(req_config: VideoEditConfigRequest | None):
     )
 
 
+def get_workflow_service(
+    repository=Depends(get_repository),
+    video_editing_service=Depends(get_video_editing_service),
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+) -> VideoEditorWorkflowService:
+    return VideoEditorWorkflowService(
+        repository,
+        video_editing_service,
+        transcription_service,
+        copywriting_service,
+    )
+
+
+def _workflow_error(exc: VideoEditorWorkflowError) -> HTTPException:
+    message = str(exc)
+    status = 404 if "不存在" in message or "已不存在" in message else 400
+    return HTTPException(status_code=status, detail=message)
+
+
 # ---------------------------------------------------------------------------
 # 路由
 # ---------------------------------------------------------------------------
+
+
+@router.get("/sources")
+def list_sources(workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    """列出可被智能剪辑使用的真实系统成片。"""
+    items = workflow.list_sources()
+    for item in items:
+        item.pop("_path", None)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/sources/{source_id}/media")
+def get_source_media(source_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        source = workflow.resolve_source(source_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    path = source["_path"]
+    return FileResponse(path, media_type=source["media_type"], filename=source["file_name"])
+
+
+@router.post("/analyses")
+def create_analysis(
+    body: AnalysisCreateRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        task = workflow.create_analysis(**body.model_dump())
+        return workflow.get_analysis(task.task_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/analyses/{analysis_id}")
+def get_analysis(analysis_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.get_analysis(analysis_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/analyses/{analysis_id}/content-advice")
+def create_content_advice(analysis_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.generate_content_advice(analysis_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/jobs")
+def create_edit_job(
+    body: EditJobCreateRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        task = workflow.create_edit_job(
+            analysis_id=body.analysis_id,
+            steps=[item.model_dump() for item in body.steps],
+            output_format=body.output_format,
+            output_resolution=body.output_resolution,
+            output_fps=body.output_fps,
+            output_bitrate=body.output_bitrate,
+            subtitle_enabled=body.subtitle_enabled,
+        )
+        return workflow.get_job(task.task_id)
+    except (VideoEditorWorkflowError, ValueError) as exc:
+        raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
+
+
+@router.get("/jobs")
+def list_jobs(limit: int = 20, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    limit = max(1, min(limit, 100))
+    items = workflow.list_jobs(limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/jobs/{task_id}")
+def get_job(task_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.get_job(task_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/jobs/{task_id}/media")
+def get_job_media(task_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        task = workflow.get_edit_task(task_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    if not task.result_path:
+        raise HTTPException(status_code=400, detail="成片尚未生成。")
+    from pathlib import Path
+    path = Path(task.result_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="成片文件不存在。")
+    return FileResponse(path, media_type=task.result_mime or "video/mp4", filename=path.name)
+
+
+@router.get("/jobs/{task_id}/download")
+def download_job_media(task_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        task = workflow.get_edit_task(task_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    if not task.result_path:
+        raise HTTPException(status_code=400, detail="成片尚未生成。")
+    from pathlib import Path
+    path = Path(task.result_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="成片文件不存在。")
+    return FileResponse(path, media_type=task.result_mime or "video/mp4", filename=f"{task_id}{path.suffix}")
 
 
 @router.post("/edit", response_model=VideoEditResponse)

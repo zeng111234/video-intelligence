@@ -259,7 +259,7 @@ def test_wechat_share_url_is_not_treated_as_transcribable_media() -> None:
     assert transport.calls[0][0].endswith("/api/wechat-channels-v2/fetch_video_detail")
 
 
-def test_search_request_uses_keyword_hot_sort_and_seven_day_window() -> None:
+def test_search_request_uses_comprehensive_sort_and_seven_day_window() -> None:
     responses = [{"code": 200, "data": []} for _ in range(3)]
     transport = FixedTransport(responses)
     provider = build_provider(transport)
@@ -286,7 +286,7 @@ def test_search_request_uses_keyword_hot_sort_and_seven_day_window() -> None:
         "offset": "0",
         "publish_time": "7",
         "filter_duration": "",
-        "sort_type": "1",
+        "sort_type": "0",
         "search_id": "",
     }
     assert xhs["page"] == 1
@@ -295,6 +295,16 @@ def test_search_request_uses_keyword_hot_sort_and_seven_day_window() -> None:
     assert wechat["offset"] == 0
     assert wechat["sort"] == 2
     assert wechat["publish_time"] == 2
+
+
+def test_search_request_uses_unlimited_publish_time_when_window_is_none() -> None:
+    transport = FixedTransport([{"code": 200, "data": []}])
+    provider = build_provider(transport)
+
+    provider.search(Platform.DOUYIN, "租房", None, 10, "idem-unlimited")
+
+    assert transport.calls[0][1]["publish_time"] == "0"
+    assert transport.calls[0][1]["sort_type"] == "0"
 
 
 def test_xhs_camel_case_nested_card_is_selected_over_filter_lists() -> None:

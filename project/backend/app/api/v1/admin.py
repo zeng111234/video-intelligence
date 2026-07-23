@@ -5,8 +5,6 @@ from __future__ import annotations
 import platform
 import sqlite3
 import sys
-from datetime import datetime, timezone
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel

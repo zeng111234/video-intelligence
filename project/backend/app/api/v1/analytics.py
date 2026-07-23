@@ -9,10 +9,10 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from project.backend.app.core.deps import get_repository
+
 # 匹配末尾的 6 位 hex 颜色后缀（如 "露营b2bcd0" → "露营"）
 _HEX_SUFFIX_RE = re.compile(r"[0-9a-fA-F]{6}$")
-
-from project.backend.app.core.deps import get_repository
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["analytics"])
 

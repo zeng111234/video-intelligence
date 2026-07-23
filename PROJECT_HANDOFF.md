@@ -113,25 +113,26 @@
 - **热度规则**：关键词趋势榜与通用热度分开；样本或增长快照不足时仅显示观察排名，异常候选不得输出高等级。
 - **UI**：顶部四页导航、原生 Streamlit 组件、Material Symbols 和中性浅色 B 端主题；未使用自定义 CSS 或第三方 UI 组件。
 
-当前 Git 状态（2026-07-20 更新，以 `git status` 实时状态为准）：
+当前系统状态（2026-07-23 更新，以 `git status` 和实际运行结果为准）：
 
 ```text
 branch: main
-当前 worktree: 包含完整的三服务架构（Streamlit + FastAPI + React）
-FastAPI 后端已实现 9 个 API 路由模块（43 个后端测试）
-React 前端已实现 6 个页面组件
-数据库迁移框架已建立（runner.py + 版本化迁移脚本）
+当前 worktree: 存在未提交改动；生产验证以 FastAPI 2001 + React 1001 为主
+Streamlit 8501 已废弃，不再作为受支持的运行入口
+FastAPI 后端当前有 110 个 API/服务测试
+React 前端当前有 15 个业务路由页面
+数据库迁移框架已建立（runner.py + 001 至 004 版本化迁移）
 ASR 桥接层已实现（本地/云端统一接口）
-测试总数约 290 个，全部通过
+当前验证：后端 110 项通过、非 Streamlit 的核心 Python 421 项通过、前端 7 项通过
 ```
 
 ## 4. 当前已实现与未实现状态
 
-### 已实现（2026-07-20 更新）
+### 已实现（2026-07-23 更新）
 
-- **SQLite 版本化迁移工具**：`database/migrations/` 已建立迁移框架（runner.py + 001/002 迁移脚本），`user_version` 追踪机制已实现。
+- **SQLite 版本化迁移工具**：`database/migrations/` 已建立迁移框架（runner.py + 001 至 004 迁移脚本），`user_version` 追踪机制已实现；v004 会隔离缺失候选的历史复采检查点，恢复外键完整性而不丢弃 payload。
 - **FastAPI 后端**：`project/backend/` 已实现完整的 REST API 服务（端口 2001），包含 9 个路由模块、DI 容器、统一错误处理。
-- **React 前端**：`project/frontend/` 已实现完整的前端应用（端口 1001），包含 6 个页面组件、API 客户端、类型定义。
+- **React 前端**：`project/frontend/` 已实现完整的前端应用（端口 1001），包含 15 个业务路由页面、API 客户端、类型定义。
 - **文案改写服务**：`src/services/copywriting.py` 和后端 `/api/v1/copywriting/rewrite` 端点已实现。
 - **视频编辑服务**：`src/services/video_editor.py` 和后端 `/api/v1/video-editor/*` 端点已实现。
 - **多平台发布服务**：`src/services/publisher.py` 和后端 `/api/v1/publish/*` 端点已实现。
@@ -245,7 +246,7 @@ python -m pytest -q
 python -m compileall -q app.py app_pages src scripts tests
 ```
 
-最近一次验证结果（2026-07-20）：Ruff、格式、编译与约 290 个 Python 测试全部通过。三服务架构（Streamlit 8501 + FastAPI 2001 + React 1001）均可正常启动。FastAPI 后端包含 43 个 API 测试用例，React 前端包含 6 个页面组件。数据库迁移框架已建立，ASR 桥接层已实现本地/云端统一接口。PHP 项目的 Compose 配置、9 个新增 PHP 文件的静态结构/尾随空白、必需路由/配置/迁移和旧递归轮询移除检查通过。当前机器没有 PHP CLI，未运行 `php -l` 或 PHP 契约脚本；Docker 已按一次启动尝试后仍不可用，但已按用户决定降级为可选部署。8501 健康端点和 `/avatar_generation` 均返回 HTTP 200。应用内浏览器控制按上限重试一次后仍失败，因此真实点击由 Streamlit AppTest 覆盖，不把浏览器自动化描述为成功。真实供应商文档、密钥和资产值尚未提供，本次没有发生外部生成或费用。
+最近一次验证结果（2026-07-23）：FastAPI `/health`、83 条 OpenAPI 路径和 17 个安全 GET 端点正常；后端 110 项测试通过，非 Streamlit 的核心 Python 421 项测试通过，前端 Vitest 7 项、TypeScript 和生产构建通过。业务目录 Ruff 与编译通过。SQLite 已升级到 v004，`integrity_check=ok`、`foreign_key_check` 无违规；621 条缺失候选的历史检查点已隔离到可恢复表，63 条有效检查点保留。Streamlit 8501 已废弃，未作为当前能力验收；未执行真实供应商生成、付费调用或真实平台发布。
 
 ## 8. 数据、密钥与外部依赖
 

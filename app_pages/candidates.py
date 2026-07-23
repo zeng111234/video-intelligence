@@ -52,6 +52,7 @@ RUN_STATUS_LABELS = {
     PlatformRunStatus.QUEUED: "等待执行",
     PlatformRunStatus.RUNNING: "正在获取",
     PlatformRunStatus.SUCCEEDED: "获取完成",
+    PlatformRunStatus.PARTIAL: "部分完成",
     PlatformRunStatus.CACHED: "使用10分钟缓存",
     PlatformRunStatus.FAILED: "获取失败",
     PlatformRunStatus.BLOCKED: "已阻止调用",

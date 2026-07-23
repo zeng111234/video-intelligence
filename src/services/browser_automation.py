@@ -19,11 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from src.services.platform_config import (
     PlatformConfig,
@@ -313,7 +311,7 @@ class BrowserAutomation:
                     await page.wait_for_selector(selector, timeout=timeout * 1000)
                     logger.info(f"上传完成指示: {selector}")
                     return True
-                except:
+                except Exception:
                     continue
 
             # 如果没有明确的完成指示，等待一段时间
@@ -340,7 +338,7 @@ class BrowserAutomation:
                 await desc_input.click()
                 await desc_input.fill("")
                 await desc_input.type(description, delay=30)
-                logger.info(f"描述已填写")
+                logger.info("描述已填写")
 
             # 添加标签
             if tags:
@@ -377,7 +375,7 @@ class BrowserAutomation:
                     if element:
                         logger.info(f"发布成功指示: {selector}")
                         return True
-                except:
+                except Exception:
                     continue
 
             # 检查是否有错误指示
@@ -388,11 +386,11 @@ class BrowserAutomation:
                         error_text = await element.text_content()
                         logger.error(f"发布错误: {error_text}")
                         return False
-                except:
+                except Exception:
                     continue
 
-            # 没有明确的成功/失败指示，假设成功
-            return True
+            logger.warning("未检测到平台明确的发布成功信号，按未确认处理")
+            return False
 
         except Exception as e:
             logger.error(f"点击发布失败: {e}")
@@ -405,7 +403,7 @@ class BrowserAutomation:
                 element = await page.query_selector(selector)
                 if element:
                     return element
-            except:
+            except Exception:
                 continue
         return None
 

@@ -26,13 +26,11 @@ import {
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  listCrawlerBatches,
   listPipelines,
   listTasks,
   listTranscriptions,
 } from "../api/client";
 import type {
-  CrawlerBatchResponse,
   PipelineResponse,
   TaskItem,
   TranscriptionResponse,
@@ -45,7 +43,6 @@ const STAGES = [
   { key: "material", title: "素材", icon: <FileSearchOutlined /> },
   { key: "transcription", title: "转写", icon: <AudioOutlined /> },
   { key: "copy", title: "文案", icon: <EditOutlined /> },
-  { key: "voice", title: "配音", icon: <AudioOutlined /> },
   { key: "avatar", title: "数字人", icon: <VideoCameraOutlined /> },
   { key: "edit", title: "后期", icon: <UploadOutlined /> },
   { key: "publish", title: "发布", icon: <RocketOutlined /> },
@@ -66,14 +63,30 @@ function statusLabel(status: string | null | undefined) {
   const labels: Record<string, string> = {
     pending: "等待中",
     running: "执行中",
+    paused: "待人工审核",
     succeeded: "成功",
     failed: "失败",
     partial: "部分成功",
     blocked: "已阻断",
     outcome_unknown: "结果待核对",
     queued: "排队中",
+    human_review: "人工审核",
   };
   return labels[status] || status;
+}
+
+function stageLabel(stage: string | null | undefined) {
+  const labels: Record<string, string> = {
+    keyword_search: "关键词检索",
+    media_resolution: "媒体解析",
+    transcription: "转写",
+    copywriting: "文案生成",
+    human_review: "人工审核",
+    avatar_generation: "数字人生成",
+    video_editing: "后期处理",
+    publishing: "发布准备",
+  };
+  return stage ? labels[stage] || stage : "暂无";
 }
 
 function latest<T extends { created_at: string | null }>(items: T[]) {
@@ -89,9 +102,9 @@ export default function StudioPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const candidateId = searchParams.get("candidate_id") || searchParams.get("candidate") || "";
+  const runId = searchParams.get("run") || "";
   const taskId = searchParams.get("task") || "";
   const [loading, setLoading] = useState(false);
-  const [crawlerBatches, setCrawlerBatches] = useState<CrawlerBatchResponse[]>([]);
   const [transcriptions, setTranscriptions] = useState<TranscriptionResponse[]>([]);
   const [pipelines, setPipelines] = useState<PipelineResponse[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -99,13 +112,11 @@ export default function StudioPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [batchResp, transcriptionResp, pipelineResp, taskResp] = await Promise.all([
-        listCrawlerBatches(),
+      const [transcriptionResp, pipelineResp, taskResp] = await Promise.all([
         listTranscriptions(),
-        listPipelines(),
+        listPipelines({ candidateId: candidateId || undefined, limit: 100 }),
         listTasks(),
       ]);
-      setCrawlerBatches(batchResp.items);
       setTranscriptions(transcriptionResp);
       setPipelines(pipelineResp);
       setTasks(taskResp.items);
@@ -120,35 +131,73 @@ export default function StudioPage() {
     refresh();
   }, [refresh]);
 
-  const selectedTranscription = useMemo(() => {
-    if (taskId) {
-      return transcriptions.find((item) => item.task_id === taskId) || null;
-    }
-    return latest(transcriptions) || null;
-  }, [taskId, transcriptions]);
+  const selectedPipeline = useMemo(() => {
+    if (runId) return pipelines.find((item) => item.run_id === runId) || null;
+    if (candidateId) return latest(pipelines) || null;
+    return null;
+  }, [candidateId, pipelines, runId]);
 
-  const selectedPipeline = useMemo(() => latest(pipelines) || null, [pipelines]);
-  const latestBatch = useMemo(() => latest(crawlerBatches) || null, [crawlerBatches]);
-  const copiedTaskCount = tasks.filter((item) => item.kind === "copywriting").length;
-  const avatarTaskCount = tasks.filter((item) => item.kind === "avatar").length;
-  const publishTaskCount = tasks.filter((item) => item.kind === "publish").length;
+  const linkedTaskIds = useMemo(() => {
+    if (!selectedPipeline) return new Set<string>();
+    const ids = selectedPipeline.stages
+      .map((stage) => stage.task_id)
+      .filter((id): id is string => Boolean(id));
+    [
+      selectedPipeline.copywriting_task_id,
+      selectedPipeline.avatar_task_id,
+      selectedPipeline.edit_task_id,
+      ...selectedPipeline.publish_task_ids,
+    ].forEach((id) => {
+      if (id) ids.push(id);
+    });
+    return new Set(ids);
+  }, [selectedPipeline]);
+
+  const selectedTranscription = useMemo(() => {
+    const linkedTranscriptionId = selectedPipeline?.stages.find(
+      (stage) => stage.stage === "transcription",
+    )?.task_id;
+    const targetTaskId = taskId || linkedTranscriptionId;
+    if (!targetTaskId) return null;
+    return transcriptions.find((item) => item.task_id === targetTaskId) || null;
+  }, [selectedPipeline, taskId, transcriptions]);
+
+  const linkedTasks = useMemo(
+    () => tasks.filter((item) => linkedTaskIds.has(item.task_id)),
+    [linkedTaskIds, tasks],
+  );
+  const copiedTaskCount = linkedTasks.filter((item) => item.kind === "copywriting").length;
+  const avatarTaskCount = linkedTasks.filter((item) => item.kind === "avatar").length;
+  const publishTaskCount = linkedTasks.filter((item) => item.kind === "publish").length;
 
   const currentStage = useMemo(() => {
-    if (publishTaskCount > 0) return 6;
-    if (avatarTaskCount > 0) return 4;
+    if (publishTaskCount > 0) return 5;
+    if (selectedPipeline?.edit_task_id) return 4;
+    if (avatarTaskCount > 0) return 3;
     if (copiedTaskCount > 0) return 2;
     if (selectedTranscription?.approved_revision_id) return 2;
     if (selectedTranscription) return 1;
-    if (candidateId || latestBatch) return 0;
+    if (candidateId || selectedPipeline) return 0;
     return 0;
-  }, [avatarTaskCount, candidateId, copiedTaskCount, latestBatch, publishTaskCount, selectedTranscription]);
+  }, [avatarTaskCount, candidateId, copiedTaskCount, publishTaskCount, selectedPipeline, selectedTranscription]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <div>
         <Title level={4} style={{ margin: 0 }}>内容工作台</Title>
-        <Text type="secondary">把素材、转写、成稿、数字人和发布放在同一个上下文里；每一步仍然调用对应真实页面和后端 API。</Text>
+        <Text type="secondary">按同一生产任务展示素材、转写、文案、数字人、后期和发布；不会混入其他候选的最新记录。</Text>
       </div>
+
+      {!selectedPipeline && (
+        <Alert
+          type="info"
+          showIcon
+          message={candidateId ? "该候选尚未创建生产任务" : "请从候选或生产批次进入工作台"}
+          description={candidateId
+            ? "当前不会展示其他候选的转写、文案或数字人记录。完成授权媒体处理并创建生产任务后，所有产物会归入同一任务。"
+            : "通过候选详情传入 candidate_id，或通过生产批次传入 run，即可查看同一条内容的完整记录。"}
+        />
+      )}
 
       <Card>
         <Steps
@@ -173,17 +222,17 @@ export default function StudioPage() {
                 description={<Text code>{candidateId}</Text>}
               />
             )}
-            {latestBatch ? (
+            {selectedPipeline ? (
               <Descriptions size="small" column={1}>
-                <Descriptions.Item label="最新批次">{latestBatch.keyword}</Descriptions.Item>
+                <Descriptions.Item label="生产任务">{selectedPipeline.run_id}</Descriptions.Item>
+                <Descriptions.Item label="关键词">{selectedPipeline.keyword}</Descriptions.Item>
                 <Descriptions.Item label="状态">
-                  <Tag color={STATUS_COLOR[latestBatch.status]}>{statusLabel(latestBatch.status)}</Tag>
+                  <Tag color={STATUS_COLOR[selectedPipeline.status]}>{statusLabel(selectedPipeline.status)}</Tag>
                 </Descriptions.Item>
-                <Descriptions.Item label="候选数">{latestBatch.total_candidates}</Descriptions.Item>
-                <Descriptions.Item label="估算费用">¥{latestBatch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>
+                <Descriptions.Item label="来源">{String(selectedPipeline.config.source || "手工创建")}</Descriptions.Item>
               </Descriptions>
             ) : (
-              <Empty description="暂无关键词批次" />
+              <Empty description="暂无当前候选的生产任务" />
             )}
             <Space wrap style={{ marginTop: 16 }}>
               <Button onClick={() => navigate("/crawler")}>查看关键词爬虫</Button>
@@ -199,7 +248,7 @@ export default function StudioPage() {
               showIcon
               style={{ marginBottom: 12 }}
               message="当前只跑通抖音媒体提取与转写"
-              description="抖音自动化会优先读取最低码率视频，再提取实际音轨转写。小红书和视频号暂停付费解析；历史候选只能手动补已授权 MP4/MOV 直链或上传文件。"
+              description="只显示当前生产任务关联的转写。小红书和视频号需手动补已授权 MP4/MOV 直链或上传文件。"
             />
             {selectedTranscription ? (
               <Descriptions size="small" column={1}>
@@ -259,7 +308,7 @@ export default function StudioPage() {
         </Col>
       </Row>
 
-      <Card title="生产批次历史">
+      <Card title="当前生产任务">
         {selectedPipeline ? (
           <Space direction="vertical" style={{ width: "100%" }}>
             <Descriptions size="small" column={{ xs: 1, md: 4 }}>
@@ -268,7 +317,7 @@ export default function StudioPage() {
               <Descriptions.Item label="状态">
                 <Tag color={STATUS_COLOR[selectedPipeline.status]}>{statusLabel(selectedPipeline.status)}</Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="当前阶段">{selectedPipeline.current_stage || "暂无"}</Descriptions.Item>
+              <Descriptions.Item label="当前阶段">{stageLabel(selectedPipeline.current_stage)}</Descriptions.Item>
             </Descriptions>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
               工作台只编排和展示真实记录。创建生产批次不会宣称已生成视频；需要有授权媒体、确认成稿和可用供应商后，才进入后续生成或发布。

@@ -6,10 +6,12 @@ from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
     CandidateMatch,
     DiscoveryResult,
+    HotWordRecord,
     KeywordTrendResult,
     MediaResolutionAttempt,
     MediaResolutionStatus,
     PipelineRun,
+    ProductionBatch,
     Platform,
     PlatformSearchRun,
     RelevanceReview,
@@ -53,9 +55,51 @@ class MockRepository:
         self._media_resolution_attempts: dict[str, MediaResolutionAttempt] = {}
         self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
+        self._production_batches: dict[str, ProductionBatch] = {}
+        self._hot_words: dict[tuple[str, datetime], HotWordRecord] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
+
+    def list_official_hot_pool(
+        self, platform: Platform = Platform.DOUYIN
+    ) -> list[VideoCandidate]:
+        pool = [
+            candidate
+            for candidate in self._candidates.values()
+            if candidate.platform == platform
+            and (
+                candidate.official_hot
+                or (candidate.evidence or "").startswith("official_billboard:")
+            )
+        ]
+        return sorted(
+            pool,
+            key=lambda item: (
+                item.official_rank is None,
+                item.official_rank or 0,
+            ),
+        )
+
+    def save_hot_words(self, words: list[HotWordRecord]) -> None:
+        for item in words:
+            self._hot_words[(item.word, item.fetched_at)] = item
+
+    def list_hot_words(self, limit: int = 50) -> list[HotWordRecord]:
+        latest: dict[str, HotWordRecord] = {}
+        for item in self._hot_words.values():
+            previous = latest.get(item.word)
+            if previous is None or item.fetched_at > previous.fetched_at:
+                latest[item.word] = item
+        ordered = sorted(
+            latest.values(),
+            key=lambda item: (
+                item.hot_value is None,
+                -(item.hot_value or 0),
+                -item.fetched_at.timestamp(),
+            ),
+        )
+        return ordered[:limit]
 
     def get_candidate(self, video_id: str) -> VideoCandidate | None:
         return self._candidates.get(video_id)
@@ -178,6 +222,16 @@ class MockRepository:
     def save_task(self, task: TaskRecord) -> None:
         self._tasks[task.task_id] = task
 
+    def delete_task(self, task_id: str) -> bool:
+        if self._tasks.pop(task_id, None) is None:
+            return False
+        self._transcript_revisions = {
+            revision_id: revision
+            for revision_id, revision in self._transcript_revisions.items()
+            if revision.task_id != task_id
+        }
+        return True
+
     def save_transcript_revision(self, revision: TranscriptRevision) -> None:
         if revision.revision_id in self._transcript_revisions or any(
             item.task_id == revision.task_id
@@ -225,6 +279,23 @@ class MockRepository:
             key=lambda item: item.created_at,
             reverse=True,
         )[:limit]
+
+    def delete_search_batch(self, batch_id: str) -> bool:
+        if self._search_batches.pop(batch_id, None) is None:
+            return False
+        run_ids = {
+            run_id
+            for run_id, run in self._platform_search_runs.items()
+            if run.batch_id == batch_id
+        }
+        for run_id in run_ids:
+            self._platform_search_runs.pop(run_id, None)
+        for fingerprint, (run_id, _claimed_at, _status) in list(
+            self._provider_request_guards.items()
+        ):
+            if run_id in run_ids:
+                self._provider_request_guards.pop(fingerprint, None)
+        return True
 
     def save_platform_search_run(self, run: PlatformSearchRun) -> None:
         self._platform_search_runs[run.run_id] = run
@@ -398,6 +469,22 @@ class MockRepository:
     def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]:
         return sorted(
             self._pipeline_runs.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
+
+    def delete_pipeline_run(self, run_id: str) -> bool:
+        return self._pipeline_runs.pop(run_id, None) is not None
+
+    def save_production_batch(self, batch: ProductionBatch) -> None:
+        self._production_batches[batch.batch_id] = batch
+
+    def get_production_batch(self, batch_id: str) -> ProductionBatch | None:
+        return self._production_batches.get(batch_id)
+
+    def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]:
+        return sorted(
+            self._production_batches.values(),
             key=lambda item: item.created_at,
             reverse=True,
         )[:limit]

@@ -200,13 +200,15 @@ video/
 │       │   ├── core/         # 核心配置（config.py、deps.py、security.py）
 │       │   └── schemas/      # Pydantic 模式
 │       ├── requirements.txt  # 后端依赖
-│       └── tests/            # 后端测试（43 个用例）
+│       └── tests/            # 后端 API 与服务测试
 ├── database/                 # 数据库脚本
 │   ├── scripts/              # SQL 初始化脚本
 │   └── migrations/           # 数据库迁移框架
 │       ├── runner.py         # MigrationRunner 核心类
 │       ├── 001_initial_schema.py # 初始 Schema（15 张表 + 6 索引）
 │       ├── 002_add_column_migrations.py # 列扩展迁移
+│       ├── 003_add_media_resolution_tables.py # 媒体解析迁移
+│       ├── 004_quarantine_orphan_sampling_checkpoints.py # 历史检查点修复
 │       └── __main__.py       # CLI 入口
 ├── data/                     # 数据文件目录
 │   └── video_intelligence.db # SQLite 数据库
@@ -214,7 +216,7 @@ video/
 │   ├── start_all_services.ps1 # 全服务启动脚本
 │   ├── launch_app.ps1        # 单应用启动脚本
 │   └── benchmark_asr.py      # ASR 基准测试
-├── tests/                    # 测试代码（~290 个用例，19 个测试文件）
+├── tests/                    # 共享领域与历史 Streamlit 测试代码
 ├── doc/                      # 项目文档（详细设计、交付报告等）
 ├── docs/                     # 项目文档（归档、指南等）
 ├── prototype/                # 产品原型

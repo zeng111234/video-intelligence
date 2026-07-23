@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from contextlib import asynccontextmanager  # noqa: E402
+from contextlib import asynccontextmanager, suppress  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
@@ -22,12 +23,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa
 from project.backend.app.api.v1.candidates import router as candidates_router  # noqa: E402
 from project.backend.app.api.v1.transcriptions import router as transcriptions_router  # noqa: E402
 from project.backend.app.api.v1.pipelines import router as pipelines_router  # noqa: E402
+from project.backend.app.api.v1.production import router as production_router  # noqa: E402
+from project.backend.app.api.v1.feedback import router as feedback_router  # noqa: E402
 from project.backend.app.api.v1.tasks import router as tasks_router  # noqa: E402
 from project.backend.app.api.v1.admin import router as admin_router  # noqa: E402
 from project.backend.app.api.v1.copywriting import router as copywriting_router  # noqa: E402
 from project.backend.app.api.v1.video_editor import router as video_editor_router  # noqa: E402
 from project.backend.app.api.v1.publish import router as publish_router  # noqa: E402
 from project.backend.app.api.v1.crawler import router as crawler_router  # noqa: E402
+from project.backend.app.api.v1.link_transcriptions import router as link_transcriptions_router  # noqa: E402
 from project.backend.app.api.v1.analytics import router as analytics_router  # noqa: E402
 from project.backend.app.api.v1.notifications import router as notifications_router  # noqa: E402
 from project.backend.app.api.v1.avatar import router as avatar_router  # noqa: E402
@@ -62,7 +66,49 @@ async def lifespan(application: FastAPI):
             logger.info("数据库已是最新版本 v%03d", status.current_version)
     except Exception as exc:
         logger.warning("数据库迁移检查失败（不影响启动）: %s", exc)
-    yield
+    worker = None
+    crawler_monitor_task = None
+    try:
+        from project.backend.app.core.deps import get_pipeline_worker
+
+        worker = get_pipeline_worker()
+        await worker.start()
+        logger.info("流水线 worker 已启动")
+    except Exception as exc:
+        logger.warning("流水线 worker 启动失败（不影响 API）: %s", exc)
+    async def crawler_monitor_loop() -> None:
+        """仅执行不限发布时间三点监测的到期采样，避免触发历史 1/7 天任务。"""
+        while True:
+            try:
+                from project.backend.app.core.config import CRAWLER_ONEAPI_AUTO_ENABLED
+                from project.backend.app.core.deps import get_commercial_search_service
+
+                service = get_commercial_search_service()
+                if (
+                    service.provider.capabilities().provider_name == "oneapi"
+                    and not CRAWLER_ONEAPI_AUTO_ENABLED
+                ):
+                    logger.debug("已关闭 OneAPI 自动复爬；跳过本轮到期采样。")
+                else:
+                    await asyncio.to_thread(
+                        service.execute_due_recrawls,
+                        max_groups=5,
+                        published_window_days=0,
+                    )
+            except Exception as exc:
+                logger.warning("关键词趋势定时采样失败（将在下轮重试）: %s", exc)
+            await asyncio.sleep(300)
+
+    crawler_monitor_task = asyncio.create_task(crawler_monitor_loop())
+    try:
+        yield
+    finally:
+        if crawler_monitor_task is not None:
+            crawler_monitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await crawler_monitor_task
+        if worker is not None:
+            await worker.stop()
 
 
 app = FastAPI(
@@ -242,12 +288,15 @@ _LANDING_HTML = """<!DOCTYPE html>
 app.include_router(candidates_router)
 app.include_router(transcriptions_router)
 app.include_router(pipelines_router)
+app.include_router(production_router)
+app.include_router(feedback_router)
 app.include_router(tasks_router)
 app.include_router(admin_router)
 app.include_router(copywriting_router)
 app.include_router(video_editor_router)
 app.include_router(publish_router)
 app.include_router(crawler_router)
+app.include_router(link_transcriptions_router)
 app.include_router(analytics_router)
 app.include_router(notifications_router)
 app.include_router(avatar_router)

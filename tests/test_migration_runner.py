@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import importlib
 import sqlite3
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -193,6 +192,58 @@ class TestUpgrade:
             "idx_keyword_trends_latest",
         }
         assert expected_indexes.issubset(indexes)
+
+    def test_upgrade_quarantines_orphan_sampling_checkpoints(self, runner):
+        """The v004 repair must retain payloads without leaving FK violations."""
+        runner.upgrade(target_version=3)
+        conn = sqlite3.connect(str(runner._database_path))
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute(
+            """
+            INSERT INTO candidates(
+                video_id, platform, platform_item_id, title, author_id,
+                author_name, category, published_at, source_url, source_type,
+                rights_status, matched_by_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "candidate-1",
+                "douyin",
+                "item-1",
+                "candidate",
+                "author-1",
+                "author",
+                "test",
+                "2026-01-01T00:00:00+00:00",
+                "https://example.test/video",
+                "manual",
+                "authorized",
+                "[]",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO sampling_checkpoints(
+                checkpoint_id, keyword, candidate_id, due_at, payload_json
+            ) VALUES ('checkpoint-1', 'test', 'candidate-1', '2026-01-02T00:00:00+00:00', '{}')
+            """
+        )
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM candidates WHERE video_id = 'candidate-1'")
+        conn.commit()
+        conn.close()
+
+        assert runner.upgrade() == 4
+
+        conn = sqlite3.connect(str(runner._database_path))
+        quarantined = conn.execute(
+            "SELECT checkpoint_id, candidate_id, reason FROM orphaned_sampling_checkpoints"
+        ).fetchall()
+        assert quarantined == [("checkpoint-1", "candidate-1", "missing_candidate")]
+        assert conn.execute("SELECT count(*) FROM sampling_checkpoints").fetchone()[0] == 0
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +478,6 @@ class TestCLI:
             sys.path.insert(0, project_root)
 
         from database.migrations.runner import (
-            MigrationRunner,
             MigrationStatus,
             _format_status,
         )

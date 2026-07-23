@@ -16,8 +16,10 @@ import {
   Tag,
   List,
   Avatar,
+  Button,
   Select,
   Empty,
+  Popconfirm,
   Spin,
 } from "antd";
 import {
@@ -29,6 +31,7 @@ import {
   VideoCameraOutlined,
   AudioOutlined,
   RocketOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
 import {
   BarChart,
@@ -45,11 +48,13 @@ import {
 } from "recharts";
 import {
   getDashboardStats,
+  deleteTask,
   listTasks,
   searchCandidates,
   type DashboardStatsResponse,
 } from "../api/client";
 import type { TaskItem, CandidateItem } from "../api/types";
+import { useToast } from "../components/Toast";
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -89,12 +94,14 @@ const EMPTY_STATS: DashboardStatsResponse = {
 };
 
 export default function DashboardPage() {
+  const toast = useToast();
   const [timeRange, setTimeRange] = useState("today");
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStatsResponse>(EMPTY_STATS);
   const [recentTasks, setRecentTasks] = useState<TaskItem[]>([]);
   const [topCandidates, setTopCandidates] = useState<CandidateItem[]>([]);
   const [taskTypeData, setTaskTypeData] = useState<Array<{ name: string; value: number }>>([]);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
 
   /** 加载 Dashboard 数据 */
   const loadDashboardData = useCallback(async () => {
@@ -137,6 +144,19 @@ export default function DashboardPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleDeleteRecentTask = async (task: TaskItem) => {
+    setDeletingTaskId(task.task_id);
+    try {
+      await deleteTask(task.task_id);
+      setRecentTasks((items) => items.filter((item) => item.task_id !== task.task_id));
+      toast.success("任务记录已删除");
+    } catch (error) {
+      toast.error((error as Error).message || "删除任务记录失败");
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
 
   useEffect(() => {
     loadDashboardData();
@@ -316,6 +336,22 @@ export default function DashboardPage() {
                           size="small"
                           status={progress === 100 ? "success" : "active"}
                         />
+                      ),
+                    },
+                    {
+                      title: "操作",
+                      width: 72,
+                      render: (_: unknown, record: TaskItem) => (
+                        <Popconfirm
+                          title="删除这条任务记录？"
+                          description="只删除本条任务记录，不会删除候选视频或本地素材。"
+                          okText="删除"
+                          okButtonProps={{ danger: true }}
+                          cancelText="取消"
+                          onConfirm={() => handleDeleteRecentTask(record)}
+                        >
+                          <Button type="link" danger size="small" icon={<DeleteOutlined />} loading={deletingTaskId === record.task_id}>删除</Button>
+                        </Popconfirm>
                       ),
                     },
                   ]}

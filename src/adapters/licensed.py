@@ -62,7 +62,7 @@ class DisabledLicensedSearchProvider:
         self,
         platform: Platform,
         keyword: str,
-        published_after: datetime,
+        published_after: datetime | None,
         limit: int,
         idempotency_key: str,
     ) -> ProviderSearchPage:
@@ -117,7 +117,7 @@ class SandboxLicensedSearchProvider:
         self,
         platform: Platform,
         keyword: str,
-        published_after: datetime,
+        published_after: datetime | None,
         limit: int,
         idempotency_key: str,
     ) -> ProviderSearchPage:
@@ -140,9 +140,10 @@ class SandboxLicensedSearchProvider:
             )
 
         observed_at = self.clock()
-        window_hours = max(
-            1,
-            int((observed_at - published_after).total_seconds() / 3600),
+        window_hours = (
+            max(1, int((observed_at - published_after).total_seconds() / 3600))
+            if published_after is not None
+            else 180 * 24
         )
         platform_labels = {
             Platform.DOUYIN: "抖音",

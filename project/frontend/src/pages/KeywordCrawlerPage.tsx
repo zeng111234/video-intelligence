@@ -6,11 +6,9 @@ import {
   Checkbox,
   Descriptions,
   Input,
-  InputNumber,
   List,
   Modal,
   Segmented,
-  Select,
   Space,
   Table,
   Tag,
@@ -20,39 +18,48 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   CheckCircleOutlined,
+  DeleteOutlined,
   EyeOutlined,
+  FileTextOutlined,
+  FireOutlined,
   ReloadOutlined,
   SearchOutlined,
   WarningOutlined,
 } from "@ant-design/icons";
 import {
   createCrawlerBatch,
-  createCrawlerDoubaoMobileJobs,
+  createCrawlerLinkTranscription,
   createPipelineFromCandidate,
+  deleteCrawlerBatch,
   executeDueCrawlerRecrawls,
+  generateOriginalScript,
   getCrawlerBatch,
   getCrawlerCapabilities,
-  getCrawlerDoubaoMobileCapabilities,
+  getCrawlerHotWords,
+  getCrawlerLinkTranscriptionCapabilities,
   listCrawlerBatches,
-  listCrawlerDoubaoMobileJobs,
+  officialHotMonitor,
   previewCrawlerCandidateMedia,
+  previewCrawlerLinkTranscription,
+  fallbackCrawlerLinkTranscription,
   previewCrawlerBatch,
-  retryCrawlerDoubaoMobileJob,
-  startCrawlerDoubaoMobileWorker,
 } from "../api/client";
 import type {
   CrawlerBatchResponse,
   CrawlerCandidateMediaPreviewResponse,
   CrawlerCandidateResult,
   CrawlerCapabilitiesResponse,
-  CrawlerDoubaoMobileCapabilitiesResponse,
-  CrawlerDoubaoJobResponse,
+  CrawlerHotWordItem,
+  CrawlerLinkTranscriptionCapabilities,
+  CrawlerLinkTranscriptionPreview,
+  CrawlerOfficialHotMonitorResponse,
+  CrawlerOriginalScriptResponse,
   CrawlerPlatformRun,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
 } from "../api/types";
 import { useToast } from "../components/Toast";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 const { Text, Title, Paragraph } = Typography;
 
@@ -69,7 +76,7 @@ const STATUS_COLOR: Record<string, string> = {
   outcome_unknown: "error",
 };
 
-type RankingMode = "provider" | "system";
+type RankingMode = "total" | "trend";
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -93,7 +100,7 @@ function displayTierLabel(tier: string) {
     hot: "热门",
     potential: "潜力",
     observing: "观察中",
-    ordinary: "普通相关",
+    ordinary: "普通",
   };
   return labels[tier] || tier;
 }
@@ -124,34 +131,42 @@ function formatCurrency(value: number | null | undefined, currency = "CNY") {
   return currency === "CNY" ? `¥${value.toFixed(2)}` : `${value.toFixed(2)} ${currency}`;
 }
 
+const OFFICIAL_HOT_NO_MATCH_MESSAGE = "官方热门池中没有匹配，不代表抖音搜索无视频。";
+
+/** 增长阶段徽标：低饱和度配色 */
+const GROWTH_STAGE_COLORS: Record<string, string> = {
+  观察样本: "#8c8c8c",
+  增长确认中: "#7d9dbf",
+  热门候选: "#c0a062",
+  爆发候选: "#b5654d",
+};
+
+function growthStageColor(stage: string) {
+  return GROWTH_STAGE_COLORS[stage] || "#8c8c8c";
+}
+
+function copySourceLabel(source: string | null | undefined) {
+  const labels: Record<string, string> = {
+    metadata_original: "平台信息生成文案",
+    doubao_mobile_transcript: "已导入转写",
+    authorized_asr_transcript: "授权 ASR 转写",
+  };
+  return source ? labels[source] || source : "未生成";
+}
+
 function resultStateMessage(run: CrawlerPlatformRun) {
+  if (run.result_state === "official_hot_no_match" || run.result_state.includes("官方热榜无匹配")) {
+    return OFFICIAL_HOT_NO_MATCH_MESSAGE;
+  }
   const messages: Record<string, string> = {
     provider_empty: "供应商本次返回 0 条原始候选；这不是正常的关键词搜索结果，建议先核对供应商响应与用量。",
     provider_payload_invalid: "供应商有响应但未识别出候选列表；请核对响应结构与供应商接口变更。",
     all_out_of_window: `供应商返回了 ${run.raw_item_count} 条，但全部早于本次时间范围，未额外翻页以避免增加费用。`,
     all_invalid: "供应商返回的候选全部未通过平台、链接或去重校验，请核对供应商字段。",
+    all_irrelevant: `供应商返回了内容，但均未通过标题/话题的严格关键词匹配；已过滤 ${run.irrelevant_count ?? 0} 条。`,
     no_hot: "已得到候选，但没有达到本产品的热门/潜力阈值；它们不会被标为爆款。",
   };
   return messages[run.result_state] || "本次没有可展示候选，请查看诊断和供应商响应。";
-}
-
-function isDirectVideoUrl(url: string | null) {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    return /\.(mp4|mov)(\?|$)/i.test(parsed.pathname + parsed.search);
-  } catch {
-    return false;
-  }
-}
-
-function isDouyinShortShareUrl(url: string | null) {
-  if (!url) return false;
-  try {
-    return new URL(url).hostname === "v.douyin.com";
-  } catch {
-    return false;
-  }
 }
 
 function metricEntries(item: CrawlerCandidateResult) {
@@ -172,13 +187,43 @@ function metricEntries(item: CrawlerCandidateResult) {
   return entries;
 }
 
+function TrendSamplingStatus({ item }: { item: CrawlerCandidateResult }) {
+  const points = [...(item.trend_points || [])]
+    .filter((point) => Number.isFinite(new Date(point.sampled_at).getTime()))
+    .sort((left, right) => new Date(left.sampled_at).getTime() - new Date(right.sampled_at).getTime());
+  if (points.length === 0) {
+    return <Text type="secondary">尚未采集快照</Text>;
+  }
+  if (points.length === 1) {
+    return <Tag color="processing">已采集 1 次，等待下一次采样</Tag>;
+  }
+  const first = points[0];
+  const last = points[points.length - 1];
+  const elapsedHours = (new Date(last.sampled_at).getTime() - new Date(first.sampled_at).getTime()) / 3_600_000;
+  const growth = last.effective_interactions - first.effective_interactions;
+
+  if (!Number.isFinite(elapsedHours) || elapsedHours <= 0) {
+    return <Tag color="processing">已采集 {points.length} 次，等待有效时间间隔</Tag>;
+  }
+
+  const growthPerHour = growth / elapsedHours;
+  const confirmed = points.length >= 3;
+  return (
+    <Tooltip title={`从首次到最新快照：${formatNumber(growth)} 次有效互动变化，历时 ${elapsedHours.toFixed(1)} 小时。`}>
+      <Space size={4}>
+        <Tag color={confirmed ? "success" : "processing"}>{confirmed ? "趋势已确认" : "增长确认中"}</Tag>
+        <Text type="secondary">新增互动 {growth >= 0 ? "+" : ""}{formatNumber(growth)} · {growthPerHour.toFixed(1)}/小时</Text>
+      </Space>
+    </Tooltip>
+  );
+}
+
 export default function KeywordCrawlerPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
-  const [publishedWindowDays, setPublishedWindowDays] = useState<1 | 7>(7);
-  const [countPerPlatform, setCountPerPlatform] = useState(10);
+  const [relatedTermsInput, setRelatedTermsInput] = useState("");
   const [forceRefresh, setForceRefresh] = useState(false);
   const [preview, setPreview] = useState<CrawlerPreviewResponse | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -187,23 +232,39 @@ export default function KeywordCrawlerPage() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [recrawling, setRecrawling] = useState(false);
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
   const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
   const [mediaPreview, setMediaPreview] = useState<CrawlerCandidateMediaPreviewResponse | null>(null);
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(false);
   const [mediaSubmitting, setMediaSubmitting] = useState(false);
-  const [doubaoJobs, setDoubaoJobs] = useState<CrawlerDoubaoJobResponse[]>([]);
-  const [doubaoMobileCapabilities, setDoubaoMobileCapabilities] = useState<CrawlerDoubaoMobileCapabilitiesResponse | null>(null);
-  const [doubaoSubmitting, setDoubaoSubmitting] = useState(false);
-  const [doubaoWorkerStarting, setDoubaoWorkerStarting] = useState(false);
   const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
   const [mediaRightsConfirmed, setMediaRightsConfirmed] = useState(false);
+  const [hotWords, setHotWords] = useState<CrawlerHotWordItem[]>([]);
+  const [monitorLoading, setMonitorLoading] = useState(false);
+  const [monitorResult, setMonitorResult] = useState<CrawlerOfficialHotMonitorResponse | null>(null);
+  const [originalScript, setOriginalScript] = useState<{
+    candidate: CrawlerCandidateResult;
+    data: CrawlerOriginalScriptResponse;
+  } | null>(null);
+  const [originalScriptLoadingId, setOriginalScriptLoadingId] = useState<string | null>(null);
+  const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
+  const [shareText, setShareText] = useState("");
+  const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
+  const [linkRightsConfirmed, setLinkRightsConfirmed] = useState(false);
+  const [linkSubmitting, setLinkSubmitting] = useState(false);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
-    published_window_days: publishedWindowDays,
-    count_per_platform: countPerPlatform,
+    published_window_days: 0,
+    count_per_platform: 10,
     force_refresh: forceRefresh,
-  }), [keyword, publishedWindowDays, countPerPlatform, forceRefresh]);
+    mode: "smart",
+    related_terms: relatedTermsInput
+      .split(/[，,、\n]/)
+      .map((item) => item.trim())
+      .filter((item, index, values) => item.length >= 2 && values.indexOf(item) === index)
+      .slice(0, 5),
+  }), [keyword, forceRefresh, relatedTermsInput]);
   const keywordLength = requestPayload.keyword.length;
   const canPreview = keywordLength >= 2 && keywordLength <= 50;
   const keywordHelp =
@@ -225,16 +286,17 @@ export default function KeywordCrawlerPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [caps, list, jobs] = await Promise.all([
+      const [caps, list, linkCaps] = await Promise.all([
         getCrawlerCapabilities(),
         listCrawlerBatches(),
-        listCrawlerDoubaoMobileJobs(),
+        getCrawlerLinkTranscriptionCapabilities(),
       ]);
-      const mobileCaps = await getCrawlerDoubaoMobileCapabilities();
+      // 官方热点词建议：后端未上线或拉取失败时降级为空，不影响主流程
+      const hotWordsResp = await getCrawlerHotWords().catch(() => ({ words: [] as CrawlerHotWordItem[] }));
       setCapabilities(caps);
-      setDoubaoMobileCapabilities(mobileCaps);
+      setLinkCapabilities(linkCaps);
+      setHotWords(hotWordsResp.words);
       setBatches(list.items);
-      setDoubaoJobs(jobs.items);
       if (selectedBatch) {
         const detail = await getCrawlerBatch(selectedBatch.batch_id);
         setSelectedBatch(detail);
@@ -245,6 +307,47 @@ export default function KeywordCrawlerPage() {
       setLoading(false);
     }
   }, [selectedBatch?.batch_id, toast]);
+
+  const handlePreviewShareLink = async () => {
+    if (!shareText.trim()) {
+      toast.warning("请粘贴抖音分享链接");
+      return;
+    }
+    setLinkSubmitting(true);
+    try {
+      const item = await previewCrawlerLinkTranscription(shareText);
+      setLinkPreview(item);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLinkSubmitting(false);
+    }
+  };
+
+  const handleCreateShareLink = async (fallback = false) => {
+    if (!linkPreview || !linkRightsConfirmed) {
+      toast.warning("请先确认拥有内容处理权");
+      return;
+    }
+    setLinkSubmitting(true);
+    try {
+      const result = fallback
+        ? await fallbackCrawlerLinkTranscription({ shareText, workId: linkPreview.work_id || "", rightsHolder, rightsConfirmed: true, idempotencyKey: `oneapi-link-${Date.now()}-${Math.random().toString(16).slice(2)}` })
+        : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true });
+      if (result.status === "fallback_required") {
+        toast.warning(result.message);
+        return;
+      }
+      if (result.transcription) {
+        toast.success(result.message);
+        navigate(`/transcription?task=${encodeURIComponent(result.transcription.task_id)}`);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setLinkSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -275,7 +378,7 @@ export default function KeywordCrawlerPage() {
       setSelectedBatch(batch);
       setPreviewOpen(false);
       setKeyword("");
-      toast.success("抖音关键词批次已写入 SQLite");
+      toast.success("爆款候选已写入 SQLite");
       await refresh();
     } catch (err) {
       toast.error((err as Error).message);
@@ -299,6 +402,62 @@ export default function KeywordCrawlerPage() {
       toast.error((err as Error).message);
     } finally {
       setRecrawling(false);
+    }
+  };
+
+  const handleDeleteBatch = (batch: CrawlerBatchResponse) => {
+    Modal.confirm({
+      title: "删除这条历史批次？",
+      content: `将删除“${batch.keyword}”的本次搜索记录和关联运行记录；候选视频数据会保留。`,
+      okText: "删除",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        setDeletingBatchId(batch.batch_id);
+        try {
+          await deleteCrawlerBatch(batch.batch_id);
+          if (selectedBatch?.batch_id === batch.batch_id) {
+            setSelectedBatch(null);
+          }
+          toast.success("历史批次已删除");
+          await refresh();
+        } catch (err) {
+          toast.error((err as Error).message);
+        } finally {
+          setDeletingBatchId(null);
+        }
+      },
+    });
+  };
+
+  const handleOfficialHotMonitor = async () => {
+    setMonitorLoading(true);
+    try {
+      const kw = requestPayload.keyword;
+      const resp = await officialHotMonitor(kw.length >= 2 && kw.length <= 50 ? kw : undefined);
+      setMonitorResult(resp);
+      if (resp.matched_count > 0) {
+        toast.success(`官方热榜匹配 ${resp.matched_count} 条候选`);
+      } else {
+        toast.info(resp.result_message || resp.result_state || "官方热榜无匹配");
+      }
+      await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setMonitorLoading(false);
+    }
+  };
+
+  const handleGenerateOriginalScript = async (candidate: CrawlerCandidateResult) => {
+    setOriginalScriptLoadingId(candidate.video_id);
+    try {
+      const data = await generateOriginalScript(candidate.video_id);
+      setOriginalScript({ candidate, data });
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setOriginalScriptLoadingId(null);
     }
   };
 
@@ -360,84 +519,6 @@ export default function KeywordCrawlerPage() {
     }
   };
 
-  const handleCopyDoubaoPrompt = async (candidate: CrawlerCandidateResult) => {
-    if (!candidate.source_url) {
-      toast.warning("当前候选没有可复制的视频链接");
-      return;
-    }
-    const hasShortShareUrl = isDouyinShortShareUrl(candidate.source_url);
-    const prompt = hasShortShareUrl
-      ? [
-          candidate.title,
-          candidate.source_url,
-          "请把这个抖音视频转成原版口播文案，尽量保留原话、口语停顿和段落，不要改写；如果无法读取视频，请说明无法访问链接。",
-        ].join("\n")
-      : [
-          candidate.title,
-          "抖音分享短链：【先打开系统里的“原视频”，点击抖音页面的“分享/复制链接”，把生成的 v.douyin.com 短链替换到这里；不要直接发送系统长链接】",
-          "请把这个抖音视频转成原版口播文案，尽量保留原话、口语停顿和段落，不要改写；如果无法读取视频，请说明无法访问链接。",
-        ].join("\n");
-    try {
-      await navigator.clipboard.writeText(prompt);
-      toast.success(
-        hasShortShareUrl
-          ? "已复制豆包提示词，粘贴到豆包后把结果回填到本系统即可"
-          : "已复制豆包模板；请先从抖音分享按钮复制短链并替换模板中的占位说明"
-      );
-    } catch {
-      toast.error("复制失败，请手动复制原视频链接");
-    }
-  };
-
-  const startDoubaoWorker = async () => {
-    setDoubaoWorkerStarting(true);
-    try {
-      const resp = await startCrawlerDoubaoMobileWorker();
-      toast.success(resp.message);
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setDoubaoWorkerStarting(false);
-    }
-  };
-
-  const handleCreateDoubaoJobs = async (candidates: CrawlerCandidateResult[]) => {
-    const douyinCandidates = candidates.filter((item) => item.platform === "douyin");
-    if (douyinCandidates.length === 0) {
-      toast.warning("当前没有可自动提取的抖音候选");
-      return;
-    }
-    setDoubaoSubmitting(true);
-    try {
-      const resp = await createCrawlerDoubaoMobileJobs(douyinCandidates.map((item) => item.video_id));
-      setDoubaoJobs((current) => {
-        const byTaskId = new Map(current.map((item) => [item.task_id, item]));
-        for (const item of resp.items) byTaskId.set(item.task_id, item);
-        return Array.from(byTaskId.values());
-      });
-      toast.success(`已创建 ${resp.total} 个手机豆包零成本任务`);
-      await startDoubaoWorker();
-      await refresh();
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setDoubaoSubmitting(false);
-    }
-  };
-
-  const handleRetryDoubaoJob = async (taskId: string) => {
-    setDoubaoSubmitting(true);
-    try {
-      await retryCrawlerDoubaoMobileJob(taskId);
-      toast.success("已重新排队，执行器会自动接管");
-      await startDoubaoWorker();
-      await refresh();
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setDoubaoSubmitting(false);
-    }
-  };
 
   const batchColumns: ColumnsType<CrawlerBatchResponse> = [
     { title: "批次ID", dataIndex: "batch_id", width: 170, render: (v) => <Text code>{v}</Text> },
@@ -459,21 +540,32 @@ export default function KeywordCrawlerPage() {
     },
     {
       title: "操作",
-      width: 90,
+      width: 150,
       render: (_, record) => (
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={async () => {
-            try {
-              setSelectedBatch(await getCrawlerBatch(record.batch_id));
-            } catch (err) {
-              toast.error((err as Error).message);
-            }
-          }}
-        >
-          详情
-        </Button>
+        <Space size={0}>
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={async () => {
+              try {
+                setSelectedBatch(await getCrawlerBatch(record.batch_id));
+              } catch (err) {
+                toast.error((err as Error).message);
+              }
+            }}
+          >
+            详情
+          </Button>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            loading={deletingBatchId === record.batch_id}
+            onClick={() => handleDeleteBatch(record)}
+          >
+            删除
+          </Button>
+        </Space>
       ),
     },
   ];
@@ -485,13 +577,38 @@ export default function KeywordCrawlerPage() {
         <Text type="secondary">{crawlerDescription}</Text>
       </div>
 
+      <Card title="抖音链接转文案（本机实验）">
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <Alert
+            type={linkCapabilities?.parser_enabled ? "info" : "warning"}
+            showIcon
+            message={linkCapabilities?.parser_enabled ? "单条分享链接将走本机实验解析，再进入原话转写" : "本机实验解析器未就绪"}
+            description={linkCapabilities?.parser_enabled
+              ? "仅处理单条、已获授权的抖音分享链接；成功后进入 校对 → 去重 → 合规优化 三步工作区。"
+              : `${linkCapabilities?.parser_message || "请先配置本机解析器。"} 解析失败后可在本页明确确认再使用 OneAPI，预计 ¥${(linkCapabilities?.oneapi_estimated_cost_cny || 0).toFixed(2)} / 条。`}
+          />
+          <Input.TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} rows={3} placeholder="粘贴抖音分享文案或 v.douyin.com 分享链接" />
+          <Space wrap>
+            <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" style={{ width: 280 }} />
+            <Checkbox checked={linkRightsConfirmed} onChange={(event) => setLinkRightsConfirmed(event.target.checked)}>我确认有权处理此内容</Checkbox>
+            <Button loading={linkSubmitting} onClick={handlePreviewShareLink}>识别链接</Button>
+          </Space>
+          {linkPreview && <Alert type="info" showIcon message={`已识别作品 ID：${linkPreview.work_id || "未识别"}`} description={
+            <Space wrap>
+              <Button type="primary" loading={linkSubmitting} disabled={!linkPreview.parser_enabled || !linkRightsConfirmed} onClick={() => handleCreateShareLink(false)}>本机解析并转写</Button>
+              {linkPreview.oneapi_fallback_available && <Button danger loading={linkSubmitting} disabled={!linkRightsConfirmed} onClick={() => Modal.confirm({ title: "确认使用 OneAPI 回退", content: `本次预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleCreateShareLink(true) })}>确认后用 OneAPI 回退</Button>}
+            </Space>
+          } />}
+        </Space>
+      </Card>
+
       {capabilities && (
         <Card title="供应商与额度状态">
           <Descriptions size="small" column={{ xs: 1, md: 3 }}>
             <Descriptions.Item label="供应商">{capabilities.display_name}</Descriptions.Item>
             <Descriptions.Item label="模式">
-              <Tag color={capabilities.mode === "sandbox" ? "orange" : capabilities.enabled ? "blue" : "red"}>
-                {capabilities.mode === "sandbox" ? "Sandbox" : capabilities.enabled ? "Production" : "未配置"}
+              <Tag color={capabilities.mode === "sandbox" ? "orange" : capabilities.mode === "local_browser" ? "green" : capabilities.enabled ? "blue" : "red"}>
+                {capabilities.mode === "sandbox" ? "Sandbox" : capabilities.mode === "local_browser" ? "本机浏览器" : capabilities.enabled ? "Production" : "未配置"}
               </Tag>
             </Descriptions.Item>
             <Descriptions.Item label="支持平台">
@@ -519,7 +636,33 @@ export default function KeywordCrawlerPage() {
             </Descriptions.Item>
             <Descriptions.Item label="缓存 TTL">{capabilities.cache_ttl_minutes} 分钟</Descriptions.Item>
             <Descriptions.Item label="权限状态">{capabilities.permission_status}</Descriptions.Item>
+            {capabilities.official_hot_billboard && (
+              <Descriptions.Item label="官方热榜">
+                <Tag color={capabilities.official_hot_billboard.enabled ? "green" : "default"}>
+                  {capabilities.official_hot_billboard.enabled ? "已启用" : "未启用"}
+                </Tag>
+                {capabilities.official_hot_billboard.provider_name}
+              </Descriptions.Item>
+            )}
+            {capabilities.official_hot_words && (
+              <Descriptions.Item label="官方热点词">
+                <Tag color={capabilities.official_hot_words.enabled ? "green" : "default"}>
+                  {capabilities.official_hot_words.enabled ? "已启用" : "未启用"}
+                </Tag>
+                {capabilities.official_hot_words.provider_name}
+              </Descriptions.Item>
+            )}
           </Descriptions>
+          {(capabilities.official_hot_billboard?.missing_configuration?.length ||
+            capabilities.official_hot_words?.missing_configuration?.length) ? (
+            <Alert
+              style={{ marginTop: 12 }}
+              type="warning"
+              showIcon
+              message="官方热榜/热点词未配置完整"
+              description="请在项目根目录的 .env 填写 DOUYIN_CLIENT_KEY 与 DOUYIN_CLIENT_SECRET，然后重启后端服务。凭证在抖音开放平台创建应用后获取；未配置不影响 OneAPI 搜索发现。"
+            />
+          ) : null}
           {capabilities.missing_configuration.length > 0 && (
             <Alert
               style={{ marginTop: 12 }}
@@ -545,19 +688,6 @@ export default function KeywordCrawlerPage() {
               showIcon
               message="先跑通抖音单平台闭环"
               description={`${capabilities.paused_platform_labels.join("、")} 本阶段不爬取，不产生供应商调用和费用；历史批次仍可查看。`}
-            />
-          )}
-          {doubaoMobileCapabilities && (
-            <Alert
-              style={{ marginTop: 12 }}
-              type={doubaoMobileCapabilities.enabled ? "success" : "warning"}
-              showIcon
-              message="手机豆包零成本链路"
-              description={
-                doubaoMobileCapabilities.enabled
-                  ? `已配置安卓执行器：${doubaoMobileCapabilities.worker_mode}；豆包包名 ${doubaoMobileCapabilities.android_package}`
-                  : `未配置完整：${doubaoMobileCapabilities.missing_configuration.join("、")}。任务可排队，但启动后会失败并显示原因。`
-              }
             />
           )}
         </Card>
@@ -587,35 +717,58 @@ export default function KeywordCrawlerPage() {
             <Text type={canPreview ? "secondary" : "warning"} style={{ display: "block", marginTop: 4 }}>
               {keywordHelp}
             </Text>
+            {hotWords.length > 0 && (
+              <div style={{ marginTop: 8, maxWidth: 520 }}>
+                <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>
+                  官方热点词建议（点击填入搜索词；默认从热词里选，减少冷门词搜不到热门视频的误解）
+                </Text>
+                <Space wrap size={[4, 4]}>
+                  {hotWords.slice(0, 12).map((item) => (
+                    <Tag
+                      key={item.word}
+                      style={{ cursor: "pointer" }}
+                      color={keyword.trim() === item.word ? "gold" : undefined}
+                      onClick={() => setKeyword(item.word)}
+                    >
+                      {item.word}
+                      {item.hot_value !== null && item.hot_value !== undefined
+                        ? ` ${formatNumber(item.hot_value)}`
+                        : ""}
+                    </Tag>
+                  ))}
+                </Space>
+              </div>
+            )}
           </div>
           <div>
-            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>时间范围</Text>
-            <Select
-              value={publishedWindowDays}
-              onChange={setPublishedWindowDays}
-              style={{ width: 140 }}
-              options={[
-                { value: 1, label: "近 24 小时" },
-                { value: 7, label: "近 7 天" },
-              ]}
+            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>相关赛道词（可选）</Text>
+            <Input
+              value={relatedTermsInput}
+              onChange={(event) => setRelatedTermsInput(event.target.value)}
+              placeholder="例如：数字人，口播"
+              style={{ width: 210 }}
             />
-          </div>
-          <div>
-            <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>抖音返回条数</Text>
-            <InputNumber
-              min={1}
-              max={10}
-              value={countPerPlatform}
-              onChange={(value) => setCountPerPlatform(value || 10)}
-              style={{ width: 120 }}
-            />
+            <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+              最多 5 个，只扩展官方免费池召回。
+            </Text>
           </div>
           <Checkbox checked={forceRefresh} onChange={(event) => setForceRefresh(event.target.checked)}>
             强制刷新
           </Checkbox>
-          <Tooltip title={!canPreview ? keywordHelp : "先检查缓存命中、预计新增调用和阻断原因"}>
+          <Tooltip title={!canPreview ? keywordHelp : "先查官方免费池；不足时按预览计划调用 OneAPI，并在 6/24 小时后完成本地趋势采样"}>
             <Button type="primary" loading={submitting} disabled={!canPreview} onClick={handlePreview}>
-              预览并确认
+              用 OneAPI 发现爆款
+            </Button>
+          </Tooltip>
+          <Tooltip title="一次点击完成：先执行到期复爬，再同步官方热榜并按关键词匹配，返回匹配数与下一次复爬时间">
+            <Button
+              type="primary"
+              ghost
+              icon={<FireOutlined />}
+              loading={monitorLoading}
+              onClick={handleOfficialHotMonitor}
+            >
+              官方热榜一键监测
             </Button>
           </Tooltip>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>
@@ -626,20 +779,69 @@ export default function KeywordCrawlerPage() {
           </Button>
         </Space>
         <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-          首次搜索只生成候选和复爬计划；近 24 小时按 2/6/12 小时复爬，近 7 天按 6/24/48 小时复爬，满 3 次复爬后才进入热门/潜力判断。
+          默认先匹配官方热榜与本地快照；免费候选不足 3 条时，按确认后的调用计划使用 OneAPI 搜索。OneAPI 后台自动复爬默认关闭，不会自行产生搜索费用。
         </Text>
       </Card>
+
+      {monitorResult && (
+        <Card
+          title="官方热榜一键监测结果"
+          extra={
+            <Button size="small" onClick={() => setMonitorResult(null)}>
+              收起
+            </Button>
+          }
+        >
+          <Alert
+            style={{ marginBottom: 12 }}
+            type={monitorResult.matched_count > 0 ? "success" : "info"}
+            showIcon
+            message={monitorResult.result_state}
+            description={
+              <Space direction="vertical" size={2}>
+                <Text>{monitorResult.result_message}</Text>
+                {monitorResult.matched_count === 0 &&
+                  (monitorResult.result_state.includes("官方热榜无匹配") ||
+                    monitorResult.result_state === "official_hot_no_match") && (
+                    <Text type="warning">{OFFICIAL_HOT_NO_MATCH_MESSAGE}</Text>
+                  )}
+              </Space>
+            }
+          />
+          <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 12 }}>
+            <Descriptions.Item label="匹配候选数">{monitorResult.matched_count}</Descriptions.Item>
+            <Descriptions.Item label="本次执行复爬">{monitorResult.executed_recrawls} 个</Descriptions.Item>
+            <Descriptions.Item label="下一次复爬">
+              {monitorResult.next_recrawl_at
+                ? new Date(monitorResult.next_recrawl_at).toLocaleString("zh-CN")
+                : "暂无计划"}
+            </Descriptions.Item>
+            <Descriptions.Item label="结果状态">{monitorResult.result_state}</Descriptions.Item>
+          </Descriptions>
+          {monitorResult.candidates.length > 0 && (
+            <List
+              dataSource={monitorResult.candidates}
+              renderItem={(item) => (
+                <CandidateListItem
+                  item={item}
+                  onResolveMedia={handleOpenCandidateMedia}
+                  mediaSubmitting={mediaSubmitting}
+                  onGenerateOriginalScript={handleGenerateOriginalScript}
+                  originalScriptLoading={originalScriptLoadingId === item.video_id}
+                />
+              )}
+            />
+          )}
+        </Card>
+      )}
 
       {selectedBatch && (
         <BatchDetail
           batch={selectedBatch}
-          onCopyDoubaoPrompt={handleCopyDoubaoPrompt}
-          onCreateDoubaoJobs={handleCreateDoubaoJobs}
-          onRetryDoubaoJob={handleRetryDoubaoJob}
-          doubaoJobs={doubaoJobs}
-          doubaoSubmitting={doubaoSubmitting || doubaoWorkerStarting}
           onResolveMedia={handleOpenCandidateMedia}
           mediaSubmitting={mediaSubmitting}
+          onGenerateOriginalScript={handleGenerateOriginalScript}
+          originalScriptLoadingId={originalScriptLoadingId}
         />
       )}
 
@@ -654,11 +856,11 @@ export default function KeywordCrawlerPage() {
       </Card>
 
       <Modal
-        title="确认抖音搜索计划"
+        title="确认 OneAPI 发现计划"
         open={previewOpen}
         onCancel={() => setPreviewOpen(false)}
         onOk={handleExecute}
-        okText="确认并执行爬取"
+        okText="确认并发现候选"
         cancelText="取消"
         confirmLoading={submitting}
         okButtonProps={{ disabled: !preview || preview.blocked }}
@@ -668,9 +870,14 @@ export default function KeywordCrawlerPage() {
             <Alert
               type={preview.provider_mode === "sandbox" ? "warning" : "info"}
               showIcon
-              message={`当前模式：${preview.provider_mode === "sandbox" ? "Sandbox 演示" : preview.provider_mode}`}
-              description={`排行模式：${preview.ranking_mode}；预计新增调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；预计费用 ¥${preview.estimated_total_cost_cny.toFixed(2)}；本月已用 ${preview.monthly_query_count}/${preview.monthly_hard_limit_queries}，本地费用 ¥${preview.monthly_estimated_cost_cny.toFixed(2)}/¥${preview.monthly_hard_limit_cost_cny.toFixed(2)}`}
+              message={preview.mode === "smart" ? "智能发现模式：官方免费池优先" : `当前模式：${preview.provider_mode === "sandbox" ? "Sandbox 演示" : preview.provider_mode}`}
+              description={preview.mode === "smart"
+                ? `免费官方池当前匹配 ${preview.free_candidate_count || 0} 条；${preview.paid_fallback_required ? "不足 3 条，将对抖音不限发布时间调用 OneAPI 检索，并在 6 / 24 小时后完成真实采样" : "已满足候选阈值，不会调用 OneAPI"}；完整监测最多调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；预计费用上限 ¥${preview.estimated_total_cost_cny.toFixed(2)}。`
+                : `不限发布时间；真实采样：${(preview.sampling_offsets_hours || [0, 6, 24]).join(" / ")} 小时；预计新增调用：${preview.platforms.reduce((sum, item) => sum + item.estimated_api_calls, 0)}；预计费用 ¥${preview.estimated_total_cost_cny.toFixed(2)}；本月已用 ${preview.monthly_query_count}/${preview.monthly_hard_limit_queries}，本地费用 ¥${preview.monthly_estimated_cost_cny.toFixed(2)}/¥${preview.monthly_hard_limit_cost_cny.toFixed(2)}`}
             />
+            {preview.paid_fallback_blocked_reason && (
+              <Alert type="warning" showIcon message={`低价兜底暂不可用：${preview.paid_fallback_blocked_reason}`} />
+            )}
             <List
               dataSource={preview.platforms}
               renderItem={(item) => (
@@ -690,6 +897,41 @@ export default function KeywordCrawlerPage() {
                 </List.Item>
               )}
             />
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title="生成文案"
+        open={originalScript !== null}
+        onCancel={() => setOriginalScript(null)}
+        footer={
+          <Button type="primary" onClick={() => setOriginalScript(null)}>
+            关闭
+          </Button>
+        }
+      >
+        {originalScript && (
+          <Space direction="vertical" style={{ width: "100%" }}>
+            <Alert
+              type="warning"
+              showIcon
+              message="生成说明"
+              description="文案已按数字人口播的短句节奏生成；请在使用前核对其中的事实、观点与表达。"
+            />
+            <Text strong>{originalScript.candidate.title}</Text>
+            <Paragraph
+              style={{
+                whiteSpace: "pre-wrap",
+                background: "#fafafa",
+                padding: 12,
+                borderRadius: 6,
+                marginBottom: 0,
+              }}
+            >
+              {originalScript.data.script}
+            </Paragraph>
+            {originalScript.data.needs_manual_review && <Tag color="warning">需要人工复核后再使用</Tag>}
           </Space>
         )}
       </Modal>
@@ -755,55 +997,47 @@ export default function KeywordCrawlerPage() {
 
 function BatchDetail({
   batch,
-  onCopyDoubaoPrompt,
-  onCreateDoubaoJobs,
-  onRetryDoubaoJob,
-  doubaoJobs,
-  doubaoSubmitting,
   onResolveMedia,
   mediaSubmitting,
+  onGenerateOriginalScript,
+  originalScriptLoadingId,
 }: {
   batch: CrawlerBatchResponse;
-  onCopyDoubaoPrompt: (candidate: CrawlerCandidateResult) => void;
-  onCreateDoubaoJobs: (candidates: CrawlerCandidateResult[]) => void;
-  onRetryDoubaoJob: (taskId: string) => void;
-  doubaoJobs: CrawlerDoubaoJobResponse[];
-  doubaoSubmitting: boolean;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
+  originalScriptLoadingId: string | null;
 }) {
-  const [rankingMode, setRankingMode] = useState<RankingMode>("provider");
+  const [rankingMode, setRankingMode] = useState<RankingMode>("total");
   const batchCandidates = batch.platform_runs.flatMap((run) => run.candidates);
-  const douyinCandidates = batchCandidates.filter((candidate) => candidate.platform === "douyin");
 
   return (
     <Card title={`批次详情：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
       <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
         <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>
-        <Descriptions.Item label="范围">{batch.published_window_days === 1 ? "近 24 小时" : "近 7 天"}</Descriptions.Item>
+        <Descriptions.Item label="发布时间">{batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : "近 7 天（历史）"}</Descriptions.Item>
         <Descriptions.Item label="每平台">{batch.count_per_platform} 条</Descriptions.Item>
         <Descriptions.Item label="强制刷新">{batch.force_refresh ? "是" : "否"}</Descriptions.Item>
         <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>
+        <Descriptions.Item label="采样节奏">{(batch.sampling_offsets_hours || [0, 6, 24]).join(" / ")} 小时</Descriptions.Item>
+        {batch.mode === "smart" && <Descriptions.Item label="免费池候选">{batch.free_candidate_count || 0} 条</Descriptions.Item>}
+        {batch.mode === "smart" && <Descriptions.Item label="付费兜底">{batch.paid_fallback_used ? "已使用" : batch.paid_fallback_blocked_reason ? "不可用，已保留免费结果" : "未使用"}</Descriptions.Item>}
       </Descriptions>
-      <Space style={{ marginBottom: 12 }}>
-        <Text type="secondary">展示顺序</Text>
+      {batch.mode === "smart" && batch.related_terms && batch.related_terms.length > 0 && (
+        <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+          本次相关赛道词：{batch.related_terms.join("、")}
+        </Text>
+      )}
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Text type="secondary">榜单</Text>
         <Segmented
           value={rankingMode}
           onChange={(value) => setRankingMode(value as RankingMode)}
           options={[
-            { label: "供应商搜索排序", value: "provider" },
-            { label: "系统评估排行", value: "system" },
+            { label: "总榜", value: "total" },
+            { label: "爆发趋势", value: "trend" },
           ]}
         />
-        <Button
-          type="primary"
-          loading={doubaoSubmitting}
-          disabled={douyinCandidates.length === 0}
-          onClick={() => onCreateDoubaoJobs(douyinCandidates)}
-        >
-          本批手机豆包免费提取
-        </Button>
-        <Text type="secondary">¥0；安卓测试机打开抖音复制分享短链，再发送豆包 App</Text>
       </Space>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         {batch.platform_runs.map((run) => (
@@ -811,13 +1045,10 @@ function BatchDetail({
             key={run.run_id}
             run={run}
             rankingMode={rankingMode}
-            onCopyDoubaoPrompt={onCopyDoubaoPrompt}
-            onCreateDoubaoJobs={onCreateDoubaoJobs}
-            onRetryDoubaoJob={onRetryDoubaoJob}
-            doubaoJobs={doubaoJobs}
-            doubaoSubmitting={doubaoSubmitting}
             onResolveMedia={onResolveMedia}
             mediaSubmitting={mediaSubmitting}
+            onGenerateOriginalScript={onGenerateOriginalScript}
+            originalScriptLoadingId={originalScriptLoadingId}
           />
         ))}
       </Space>
@@ -828,30 +1059,25 @@ function BatchDetail({
 function PlatformRunDetail({
   run,
   rankingMode,
-  onCopyDoubaoPrompt,
-  onCreateDoubaoJobs,
-  onRetryDoubaoJob,
-  doubaoJobs,
-  doubaoSubmitting,
   onResolveMedia,
   mediaSubmitting,
+  onGenerateOriginalScript,
+  originalScriptLoadingId,
 }: {
   run: CrawlerPlatformRun;
   rankingMode: RankingMode;
-  onCopyDoubaoPrompt: (candidate: CrawlerCandidateResult) => void;
-  onCreateDoubaoJobs: (candidates: CrawlerCandidateResult[]) => void;
-  onRetryDoubaoJob: (taskId: string) => void;
-  doubaoJobs: CrawlerDoubaoJobResponse[];
-  doubaoSubmitting: boolean;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
+  originalScriptLoadingId: string | null;
 }) {
-  const candidates = [...run.candidates].sort((a, b) => {
-    if (rankingMode === "system") {
-      return (a.system_rank ?? 999) - (b.system_rank ?? 999);
-    }
-    return (a.provider_hot_rank ?? a.platform_rank ?? 999) - (b.provider_hot_rank ?? b.platform_rank ?? 999);
-  });
+  const totalRanked = [...run.candidates]
+    .sort((a, b) => (b.effective_interactions ?? 0) - (a.effective_interactions ?? 0));
+  const candidates = rankingMode === "total"
+    ? totalRanked
+    : totalRanked
+      .filter((item) => (item.valid_snapshot_count ?? 0) >= 3)
+      .sort((a, b) => (b.trend_score ?? -1) - (a.trend_score ?? -1));
 
   return (
     <Card
@@ -859,9 +1085,9 @@ function PlatformRunDetail({
       title={<Space><Tag color="blue">{run.platform_label}</Tag><Tag color={STATUS_COLOR[run.status]}>{statusLabel(run.status)}</Tag>{run.cache_hit && <Tag color="cyan">缓存</Tag>}</Space>}
     >
       <Descriptions size="small" column={{ xs: 1, md: 4 }}>
-        <Descriptions.Item label="返回">{run.returned_count}/{run.requested_count}</Descriptions.Item>
+        <Descriptions.Item label="严格相关">{run.relevant_count ?? run.returned_count}/{run.requested_count}</Descriptions.Item>
         <Descriptions.Item label="原始 / 解析">{run.raw_item_count} / {run.parsed_item_count}</Descriptions.Item>
-        <Descriptions.Item label="过滤">超时窗 {run.out_of_window_count} · 无效 {run.invalid_count} · 重复 {run.duplicate_count}</Descriptions.Item>
+        <Descriptions.Item label="过滤">关键词不相关 {run.irrelevant_count ?? 0} · 超时窗 {run.out_of_window_count} · 无效 {run.invalid_count} · 重复 {run.duplicate_count}</Descriptions.Item>
         <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
         <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
         <Descriptions.Item label="估算费用">{formatCurrency(run.billable_units)}</Descriptions.Item>
@@ -876,6 +1102,16 @@ function PlatformRunDetail({
           message="本次没有可展示候选"
           description={run.error || resultStateMessage(run)}
         />
+      ) : candidates.length === 0 ? (
+        <Alert
+          style={{ marginTop: 16 }}
+          type="info"
+          showIcon
+          message={rankingMode === "total" ? "本次没有可展示候选" : "爆发趋势等待三点真实曲线"}
+          description={rankingMode === "total"
+            ? "严格相关候选会按有效互动量排序展示。"
+            : "当前尚未完成首次、6 小时、24 小时三次采样；系统不会用单点数据模拟趋势。"}
+        />
       ) : (
         <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size="middle">
           {([
@@ -883,7 +1119,7 @@ function PlatformRunDetail({
             ["hot", "热门候选", "red"],
             ["potential", "潜力候选", "gold"],
             ["observing", "观察样本", "blue"],
-            ["ordinary", "普通相关候选", "default"],
+            ["ordinary", "普通候选", "default"],
           ] as const).map(([tier, label, color]) => {
             const tierCandidates = candidates.filter((item) => item.display_tier === tier);
             if (tierCandidates.length === 0) return null;
@@ -894,13 +1130,10 @@ function PlatformRunDetail({
                   renderItem={(item) => (
                     <CandidateListItem
                       item={item}
-                      onCopyDoubaoPrompt={onCopyDoubaoPrompt}
-                      onCreateDoubaoJobs={onCreateDoubaoJobs}
-                      onRetryDoubaoJob={onRetryDoubaoJob}
-                      doubaoJob={doubaoJobs.find((job) => job.candidate_id === item.video_id)}
-                      doubaoSubmitting={doubaoSubmitting}
                       onResolveMedia={onResolveMedia}
                       mediaSubmitting={mediaSubmitting}
+                      onGenerateOriginalScript={onGenerateOriginalScript}
+                      originalScriptLoading={originalScriptLoadingId === item.video_id}
                     />
                   )}
                 />
@@ -915,76 +1148,48 @@ function PlatformRunDetail({
 
 function CandidateListItem({
   item,
-  onCopyDoubaoPrompt,
-  onCreateDoubaoJobs,
-  onRetryDoubaoJob,
-  doubaoJob,
-  doubaoSubmitting,
   onResolveMedia,
   mediaSubmitting,
+  onGenerateOriginalScript,
+  originalScriptLoading,
 }: {
   item: CrawlerCandidateResult;
-  onCopyDoubaoPrompt: (candidate: CrawlerCandidateResult) => void;
-  onCreateDoubaoJobs: (candidates: CrawlerCandidateResult[]) => void;
-  onRetryDoubaoJob: (taskId: string) => void;
-  doubaoJob: CrawlerDoubaoJobResponse | undefined;
-  doubaoSubmitting: boolean;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
+  originalScriptLoading: boolean;
 }) {
   const componentEntries = Object.entries(item.component_scores || {});
   const metrics = metricEntries(item);
   const shouldShowConfidence = item.confidence !== null && item.confidence !== undefined && item.confidence >= 0.6;
-  const directVideoUrl = isDirectVideoUrl(item.source_url);
-  const transcriptionUrl = directVideoUrl
-    ? `/transcription?candidate=${encodeURIComponent(item.video_id)}&url=${encodeURIComponent(item.source_url || "")}`
-    : `/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}&source_url=${encodeURIComponent(item.source_url || "")}&manual=1`;
-  const studioUrl = `/studio?candidate_id=${encodeURIComponent(item.video_id)}`;
   const automationPaused = item.platform !== "douyin" && !item.media_transcription_task_id;
-  const doubaoStatus = doubaoJob?.status;
-  const doubaoTaskUrl = doubaoJob ? `/transcription?task=${encodeURIComponent(doubaoJob.task_id)}` : "";
+  // 已有原版转写（或正在/已有转写任务）的候选不提供元数据文案，避免与原版转写混淆。
+  const hasOriginalTranscript =
+    item.is_original_transcript === true ||
+    item.copy_source === "doubao_mobile_transcript" ||
+    item.copy_source === "authorized_asr_transcript" ||
+    Boolean(item.media_transcription_task_id);
 
   return (
     <List.Item
       actions={[
         item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
-        doubaoJob?.status === "succeeded" ? (
-          <Link to={doubaoTaskUrl}>查看豆包文案</Link>
-        ) : doubaoJob?.status === "failed" ? (
-          <Button
-            type="link"
-            size="small"
-            loading={doubaoSubmitting}
-            onClick={() => onRetryDoubaoJob(doubaoJob.task_id)}
-          >
-            重试手机豆包提取
-          </Button>
-        ) : doubaoJob ? (
-          <Text type="secondary">手机豆包：{statusLabel(doubaoJob.status)}</Text>
-        ) : (
-          <Button
-            type="link"
-            size="small"
-            loading={doubaoSubmitting}
-            disabled={item.platform !== "douyin" || !item.source_url}
-            onClick={() => onCreateDoubaoJobs([item])}
-          >
-            手机豆包免费提取
-          </Button>
-        ),
-        item.source_url ? (
-          <Button type="link" size="small" onClick={() => onCopyDoubaoPrompt(item)}>
-            手动豆包模板
-          </Button>
-        ) : (
-          <Text type="secondary">无豆包链接</Text>
-        ),
+        !hasOriginalTranscript ? (
+          <Tooltip title="基于标题、热点词与互动数据，生成适合数字人口播的短句文案；使用前请人工核对。">
+            <Button
+              type="link"
+              size="small"
+              icon={<FileTextOutlined />}
+              loading={originalScriptLoading}
+              onClick={() => onGenerateOriginalScript(item)}
+            >
+              生成文案
+            </Button>
+          </Tooltip>
+        ) : null,
         item.media_transcription_task_id ? (
           <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看转写</Button>
-        ) : (
-          <Link to={transcriptionUrl}>回填文案</Link>
-        ),
-        <Tooltip
+        ) : <Tooltip
           title={automationPaused ? "本阶段只跑通抖音自动化，不会对该平台发起付费媒体解析。" : undefined}
         >
           <span>
@@ -1003,8 +1208,6 @@ function CandidateListItem({
             </Button>
           </span>
         </Tooltip>,
-        !directVideoUrl && <Tooltip title="也可以手动填写已授权 MP4/MOV 直链或上传视频文件。"><Link to={transcriptionUrl}>补直链/上传</Link></Tooltip>,
-        <Link to={studioUrl}>进入工作台</Link>,
       ]}
     >
       <List.Item.Meta
@@ -1016,8 +1219,13 @@ function CandidateListItem({
               <Tag color={displayTierColor(item.display_tier)}>
                 {displayTierLabel(item.display_tier)}
               </Tag>
+              {item.relevance_basis && (
+                <Tag color="green">{item.relevance_reason || "标题/话题命中"}</Tag>
+              )}
+              {item.growth_stage && (
+                <Tag color={growthStageColor(item.growth_stage)}>{item.growth_stage}</Tag>
+              )}
               {item.media_resolution_status && <Tag>{statusLabel(item.media_resolution_status)}</Tag>}
-              {doubaoStatus && <Tag color={STATUS_COLOR[doubaoStatus]}>豆包 {statusLabel(doubaoStatus)}</Tag>}
               {item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
             {item.anomaly_status && item.anomaly_status !== "normal" && <Tag color="warning">异常：{item.anomaly_status}</Tag>}
           </Space>
@@ -1027,7 +1235,7 @@ function CandidateListItem({
             <Text type="secondary">
               作者：{item.author_name}；趋势分：{formatScore(item.trend_score)}
               {shouldShowConfidence ? `；置信度：${item.confidence}` : ""}
-              ；样本池：{item.pool_size ?? "暂无"}；复爬：{item.recrawl_count ?? 0}/3
+              ；样本池：{item.pool_size ?? "暂无"}；复搜：{item.recrawl_count ?? 0}/2
               ；加权增长：{item.engagement_growth_per_hour ?? "等待复爬"}
               ；有效互动：{formatNumber(item.effective_interactions)}
             </Text>
@@ -1037,9 +1245,25 @@ function CandidateListItem({
               ；跨度：{item.sampling_span_hours === null || item.sampling_span_hours === undefined ? "暂无" : `${item.sampling_span_hours} 小时`}
               ；加速度：{item.acceleration_ratio === null || item.acceleration_ratio === undefined ? "暂无" : `${item.acceleration_ratio}x`}
             </Text>
+            <Space align="center" size="small">
+              <Text type="secondary">增长采样</Text>
+              <TrendSamplingStatus item={item} />
+            </Space>
             {metrics.length > 0 && (
               <Text type="secondary">
                 {metrics.map(([label, value]) => `${label}：${formatNumber(value)}`).join("；")}
+              </Text>
+            )}
+            <Text type="secondary">
+              文案来源：{copySourceLabel(item.copy_source)}
+              ；原版转写：{item.is_original_transcript === undefined ? "未知" : item.is_original_transcript ? "是" : "否"}
+              ；人工复核：{item.needs_manual_review === undefined ? "未知" : item.needs_manual_review ? "需要" : "不需要"}
+              ；下一次复爬：{item.next_recrawl_at ? new Date(item.next_recrawl_at).toLocaleString("zh-CN") : "暂无"}
+              {item.snapshot_count !== undefined && item.snapshot_count !== null ? `；快照数：${item.snapshot_count}` : ""}
+            </Text>
+            {(item.share_count !== undefined || item.collect_count !== undefined) && (
+              <Text type="secondary">
+                分享：{formatNumber(item.share_count)}；收藏：{formatNumber(item.collect_count)}
               </Text>
             )}
             {componentEntries.length > 0 && (
@@ -1057,13 +1281,6 @@ function CandidateListItem({
               </Space>
             )}
             {item.model_version && <Text type="secondary">模型：{item.model_version}</Text>}
-            {doubaoJob && (
-              <Text type={doubaoJob.status === "failed" ? "danger" : "secondary"}>
-                手机豆包免费链路：{doubaoJob.stage}
-                {doubaoJob.douyin_short_url ? `；短链：${doubaoJob.douyin_short_url}` : ""}
-                {doubaoJob.error_message ? `；原因：${doubaoJob.error_message}` : ""}
-              </Text>
-            )}
             {item.evidence && <Text type="secondary">依据：{item.evidence}</Text>}
             {item.reasons.length > 0 && (
               <Paragraph style={{ margin: 0 }}>

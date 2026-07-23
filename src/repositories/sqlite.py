@@ -13,9 +13,11 @@ from src.models import (
     DiscoveryResult,
     HeatLevel,
     HeatResult,
+    HotWordRecord,
     KeywordTrendResult,
     MediaResolutionAttempt,
     PipelineRun,
+    ProductionBatch,
     Platform,
     PlatformSearchRun,
     RelevanceReview,
@@ -70,10 +72,50 @@ class SQLiteRepository:
             self._create_schema_tables_only()
             self._ensure_runtime_columns()
             self._ensure_media_resolution_tables()
+            self._ensure_hot_word_tables()
+            self._ensure_production_batch_tables()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
         self._ensure_media_resolution_tables()
+        self._ensure_hot_word_tables()
+        self._ensure_production_batch_tables()
+
+    def _ensure_hot_word_tables(self) -> None:
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS hot_words (
+                word TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                hot_value INTEGER,
+                source TEXT NOT NULL DEFAULT 'douyin_hot_words',
+                PRIMARY KEY(word, fetched_at)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_hot_words_fetched
+            ON hot_words(fetched_at DESC);
+            """
+        )
+        self.connection.commit()
+
+    def _ensure_production_batch_tables(self) -> None:
+        """批次控制状态独立落库，服务重启后可继续调度。"""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS production_batches (
+                batch_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_production_batches_status
+            ON production_batches(status, created_at DESC);
+            """
+        )
+        self.connection.commit()
 
     def _create_schema_tables_only(self) -> None:
         """仅创建表（不执行列迁移），幂等安全。"""
@@ -772,6 +814,8 @@ class SQLiteRepository:
             official_rank=row["official_rank"],
             official_hot_value=row["official_hot_value"],
             data_quality_warnings=json.loads(row["data_quality_warnings_json"] or "[]"),
+            share_count=snapshots[-1].shares,
+            collect_count=snapshots[-1].favorites,
             metrics=snapshots[-1],
             heat=heat,
         )
@@ -781,6 +825,66 @@ class SQLiteRepository:
             "SELECT * FROM candidates ORDER BY published_at DESC"
         ).fetchall()
         return [item for row in rows if (item := self._candidate_from_row(row))]
+
+    def list_official_hot_pool(
+        self, platform: Platform = Platform.DOUYIN
+    ) -> list[VideoCandidate]:
+        """官方热榜池：官方热榜命中的候选（official_hot 或官方榜单证据）。"""
+        rows = self.connection.execute(
+            """
+            SELECT * FROM candidates
+            WHERE platform = ?
+              AND (official_hot = 1 OR evidence LIKE 'official_billboard:%')
+            ORDER BY official_rank IS NULL, official_rank, published_at DESC
+            """,
+            (platform.value,),
+        ).fetchall()
+        return [item for row in rows if (item := self._candidate_from_row(row))]
+
+    def save_hot_words(self, words: list[HotWordRecord]) -> None:
+        if not words:
+            return
+        with self.connection:
+            self.connection.executemany(
+                """
+                INSERT OR REPLACE INTO hot_words(word, fetched_at, hot_value, source)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item.word,
+                        item.fetched_at.isoformat(),
+                        item.hot_value,
+                        item.source,
+                    )
+                    for item in words
+                ],
+            )
+
+    def list_hot_words(self, limit: int = 50) -> list[HotWordRecord]:
+        rows = self.connection.execute(
+            """
+            SELECT hw.word, hw.hot_value, hw.fetched_at, hw.source
+            FROM hot_words AS hw
+            JOIN (
+                SELECT word, MAX(fetched_at) AS max_at
+                FROM hot_words GROUP BY word
+            ) AS latest
+              ON latest.word = hw.word AND latest.max_at = hw.fetched_at
+            ORDER BY hw.hot_value IS NULL, hw.hot_value DESC, hw.fetched_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            HotWordRecord(
+                word=row["word"],
+                hot_value=row["hot_value"],
+                fetched_at=row["fetched_at"],
+                source=row["source"],
+            )
+            for row in rows
+        ]
 
     def get_candidate(self, video_id: str) -> VideoCandidate | None:
         row = self.connection.execute(
@@ -1058,6 +1162,25 @@ class SQLiteRepository:
             (limit,),
         ).fetchall()
         return [SearchBatch.model_validate_json(row["payload_json"]) for row in rows]
+
+    def delete_search_batch(self, batch_id: str) -> bool:
+        """删除一条历史搜索批次及其平台运行记录，不删除共享候选数据。"""
+        with self.connection:
+            run_rows = self.connection.execute(
+                "SELECT run_id FROM platform_search_runs WHERE batch_id = ?",
+                (batch_id,),
+            ).fetchall()
+            run_ids = [str(row["run_id"]) for row in run_rows]
+            if run_ids:
+                self.connection.executemany(
+                    "DELETE FROM provider_request_guards WHERE run_id = ?",
+                    [(run_id,) for run_id in run_ids],
+                )
+            deleted = self.connection.execute(
+                "DELETE FROM search_batches WHERE batch_id = ?",
+                (batch_id,),
+            ).rowcount
+        return bool(deleted)
 
     def save_platform_search_run(self, run: PlatformSearchRun) -> None:
         with self.connection:
@@ -1408,6 +1531,17 @@ class SQLiteRepository:
         model = self._task_model(payload)
         return model.model_validate(payload)
 
+    def delete_task(self, task_id: str) -> bool:
+        """删除单条任务及其转写校对版本，不删除候选或已生成媒体文件。"""
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM transcript_revisions WHERE task_id = ?", (task_id,)
+            )
+            deleted = self.connection.execute(
+                "DELETE FROM tasks WHERE task_id = ?", (task_id,)
+            ).rowcount
+        return bool(deleted)
+
     @staticmethod
     def _task_model(payload: dict):
         if payload["kind"] == TaskKind.TRANSCRIPTION:
@@ -1549,6 +1683,47 @@ class SQLiteRepository:
             (limit,),
         ).fetchall()
         return [PipelineRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    # -- 生产批次 --
+
+    def save_production_batch(self, batch: ProductionBatch) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO production_batches
+            (batch_id, name, status, created_at, updated_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                batch.batch_id,
+                batch.name,
+                batch.status.value,
+                batch.created_at.isoformat(),
+                batch.updated_at.isoformat(),
+                batch.model_dump_json(),
+            ),
+        )
+        self.connection.commit()
+
+    def get_production_batch(self, batch_id: str) -> ProductionBatch | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM production_batches WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()
+        return ProductionBatch.model_validate_json(row["payload_json"]) if row else None
+
+    def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]:
+        rows = self.connection.execute(
+            "SELECT payload_json FROM production_batches ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [ProductionBatch.model_validate_json(row["payload_json"]) for row in rows]
+
+    def delete_pipeline_run(self, run_id: str) -> bool:
+        with self.connection:
+            deleted = self.connection.execute(
+                "DELETE FROM pipeline_runs WHERE run_id = ?", (run_id,)
+            ).rowcount
+        return bool(deleted)
 
     def seed(self, candidates: list[VideoCandidate], tasks: list[TaskRecord]) -> None:
         if (

@@ -16,6 +16,8 @@ import DashboardLayout from "./layouts/DashboardLayout";
 import DashboardPage from "./pages/DashboardPage";
 import CandidatesPage from "./pages/CandidatesPage";
 import PipelinePage from "./pages/PipelinePage";
+import ProductionPage from "./pages/ProductionPage";
+import FeedbackPage from "./pages/FeedbackPage";
 import TranscriptionPage from "./pages/TranscriptionPage";
 import TasksPage from "./pages/TasksPage";
 import AdminPage from "./pages/AdminPage";
@@ -56,6 +58,8 @@ function AppInner() {
               <Route path="/studio" element={<StudioPage />} />
               <Route path="/candidates" element={<CandidatesPage />} />
               <Route path="/pipeline" element={<PipelinePage />} />
+              <Route path="/production" element={<ProductionPage />} />
+              <Route path="/feedback" element={<FeedbackPage />} />
               <Route path="/transcription" element={<TranscriptionPage />} />
               <Route path="/tasks" element={<TasksPage />} />
 

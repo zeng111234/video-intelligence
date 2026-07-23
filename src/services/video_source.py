@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from time import monotonic
-from typing import Any
+from typing import Any, Mapping
 from urllib.error import URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -115,6 +115,7 @@ def fetch_authorized_video(
     max_elapsed_seconds: float = 60,
     require_extension: bool = True,
     fallback_name: str = "provider-video.mp4",
+    request_headers: Mapping[str, str] | None = None,
 ) -> DirectVideo:
     """Read an authorized public direct video URL without persisting the URL."""
 
@@ -135,12 +136,18 @@ def fetch_authorized_video(
     )
 
     def fetch_once() -> DirectVideo:
+        headers = {
+            "Accept": "video/mp4,video/quicktime,application/octet-stream",
+            "User-Agent": "video-transcription-mvp/1.0",
+        }
+        if request_headers:
+            for key in ("Referer", "User-Agent"):
+                value = request_headers.get(key)
+                if isinstance(value, str) and value.strip():
+                    headers[key] = value.strip()
         request = Request(
             normalized_url,
-            headers={
-                "Accept": "video/mp4,video/quicktime,application/octet-stream",
-                "User-Agent": "video-transcription-mvp/1.0",
-            },
+            headers=headers,
         )
         with opener(request, timeout=timeout_seconds) as response:
             final_url = _validate_direct_video_url(

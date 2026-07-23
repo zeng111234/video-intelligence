@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -25,15 +26,18 @@ from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from project.backend.app.core import config as backend_config  # noqa: E402
 from src.models import (  # noqa: E402
     CopywritingTask,
+    HotWordRecord,
     PipelineRun,
     PipelineRunStatus,
     PipelineStage,
     PipelineStepResult,
     Platform,
     PublishPlatform,
+    SourceCapability,
     TaskStatus,
 )
 from src.repositories import MockRepository  # noqa: E402
+from src.mock_data import build_mock_candidates  # noqa: E402
 from src.adapters.publishers.sandbox import SandboxPublisher  # noqa: E402
 from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
@@ -378,6 +382,15 @@ class TestPipelines:
         assert isinstance(data, list)
         assert any(item["keyword"] == "列表检查" for item in data)
 
+    def test_delete_pipeline_history(self, client: TestClient):
+        create_resp = client.post("/api/v1/pipelines", json={"keyword": "可删除批次"})
+        run_id = create_resp.json()["run_id"]
+
+        deleted = client.delete(f"/api/v1/pipelines/{run_id}")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"run_id": run_id, "deleted": True}
+        assert client.get(f"/api/v1/pipelines/{run_id}").status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # /api/v1/tasks
@@ -412,12 +425,18 @@ class TestTasks:
     def test_tasks_include_created_transcriptions(self, client: TestClient):
         """创建转写任务后应出现在任务列表中。"""
         before = client.get("/api/v1/tasks").json()["total"]
-        client.post(
+        created = client.post(
             "/api/v1/transcriptions",
             json={"media_name": "new_task.mp4", "rights_confirmed": True},
         )
         after = client.get("/api/v1/tasks").json()["total"]
         assert after >= before
+
+        task_id = created.json()["task_id"]
+        deleted = client.delete(f"/api/v1/tasks/{task_id}")
+        assert deleted.status_code == 200
+        assert deleted.json() == {"task_id": task_id, "deleted": True}
+        assert client.get(f"/api/v1/tasks/{task_id}").status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +448,21 @@ class TestCrawlerBatches:
     @pytest.fixture(autouse=True)
     def crawler_sandbox(self):
         """集成测试禁止读取本机 Production Key 并产生付费请求。"""
+
+        class FakeOfficialAdapter:
+            def __init__(self, provider_name: str) -> None:
+                self.provider_name = provider_name
+
+            def capabilities(self):
+                return SourceCapability(
+                    provider_name=self.provider_name,
+                    enabled=False,
+                    permission_status="credentials_missing",
+                    missing_configuration=[
+                        "DOUYIN_CLIENT_KEY",
+                        "DOUYIN_CLIENT_SECRET",
+                    ],
+                )
 
         repository = MockRepository(candidates=[], tasks=[])
         provider = SandboxLicensedSearchProvider()
@@ -446,6 +480,12 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
         )
+        app.dependency_overrides[
+            backend_deps.get_official_hot_billboard_adapter
+        ] = lambda: FakeOfficialAdapter("douyin_hot_billboard")
+        app.dependency_overrides[
+            backend_deps.get_official_hot_words_adapter
+        ] = lambda: FakeOfficialAdapter("douyin_hot_words")
         yield
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
@@ -454,6 +494,14 @@ class TestCrawlerBatches:
         )
         app.dependency_overrides.pop(
             backend_deps.get_commercial_search_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_official_hot_billboard_adapter,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_official_hot_words_adapter,
             None,
         )
 
@@ -466,13 +514,14 @@ class TestCrawlerBatches:
         assert "supported_platforms" in data
         assert data["active_platforms"] == ["douyin"]
         assert data["paused_platforms"] == ["xiaohongshu", "wechat_channels"]
+        assert data["official_hot_billboard"]["enabled"] is False
+        assert data["official_hot_words"]["provider_name"] == "douyin_hot_words"
 
     def test_preview_only_douyin(self, client: TestClient):
         resp = client.post(
             "/api/v1/crawler/preview",
             json={
                 "keyword": "二手车",
-                "published_window_days": 7,
                 "count_per_platform": 2,
                 "force_refresh": False,
             },
@@ -481,6 +530,9 @@ class TestCrawlerBatches:
         data = resp.json()
         assert [item["platform"] for item in data["platforms"]] == ["douyin"]
         assert data["ranking_mode"] == "keyword_hot"
+        assert data["published_window_days"] == 0
+        assert data["sampling_offsets_hours"] == [0, 6, 24]
+        assert data["max_api_calls_per_platform"] == 3
         assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
         assert all("estimated_cost_cny" in item for item in data["platforms"])
@@ -516,10 +568,119 @@ class TestCrawlerBatches:
         assert "system_rank" in first_candidate
         assert "component_scores" in first_candidate
         assert "data_quality_warnings" in first_candidate
+        assert first_candidate["relevance_basis"] == "title_or_hashtag"
+        assert "标题/话题包含" in first_candidate["relevance_reason"]
+        assert len(first_candidate["trend_points"]) == 1
+        assert first_candidate["trend_points"][0]["effective_interactions"] >= 0
+        first_run = detail["platform_runs"][0]
+        assert first_run["relevant_count"] == first_run["returned_count"]
+        assert "irrelevant_count" in first_run
+        assert first_run["relevance_rule_version"] == "title_or_hashtag_strict_v1"
 
         list_resp = client.get("/api/v1/crawler/batches")
         assert list_resp.status_code == 200
         assert any(item["batch_id"] == batch_id for item in list_resp.json()["items"])
+
+    def test_hotwords_endpoint_returns_cached_suggestions(self, client: TestClient):
+        now = __import__("datetime").datetime.now().astimezone()
+
+        class FakeHotPoolService:
+            def hot_word_suggestions(self, limit: int = 50):
+                return [HotWordRecord(word="AI数字人", hot_value=100, fetched_at=now)]
+
+        app.dependency_overrides[
+            backend_deps.get_official_hot_pool_service
+        ] = lambda: FakeHotPoolService()
+        try:
+            resp = client.get("/api/v1/crawler/hotwords")
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_official_hot_pool_service,
+                None,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["words"][0]["word"] == "AI数字人"
+        assert data["words"][0]["hot_value"] == 100
+
+    def test_official_hot_monitor_returns_candidates(self, client: TestClient):
+        repository = MockRepository(candidates=[], tasks=[])
+        candidate = build_mock_candidates(1)[0].model_copy(
+            update={
+                "title": "AI 数字人口播获客",
+                "matched_by": ["AI数字人"],
+                "official_hot": True,
+                "official_rank": 1,
+            }
+        )
+        repository.save_candidate(candidate)
+
+        class FakeHotPoolService:
+            def execute_due_recrawls(self):
+                return []
+
+            def monitor(self, **kwargs):
+                assert kwargs["keyword"] == "数字人"
+                return SimpleNamespace(
+                    matched=[candidate],
+                    trends=[],
+                    result_state="官方热榜匹配",
+                    user_notice=None,
+                    next_recrawl_at=None,
+                )
+
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        app.dependency_overrides[
+            backend_deps.get_official_hot_pool_service
+        ] = lambda: FakeHotPoolService()
+        try:
+            resp = client.post(
+                "/api/v1/crawler/official-hot/monitor",
+                json={"keyword": "数字人"},
+            )
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_official_hot_pool_service,
+                None,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["matched_count"] == 1
+        assert data["executed_recrawls"] == 0
+        assert data["candidates"][0]["title"] == "AI 数字人口播获客"
+        assert data["candidates"][0]["provider_hot_rank"] == 1
+
+    def test_original_script_endpoint_marks_metadata_not_transcript(
+        self, client: TestClient
+    ):
+        repository = MockRepository(candidates=[], tasks=[])
+        candidate = build_mock_candidates(1)[0].model_copy(
+            update={
+                "title": "AI 数字人口播获客",
+                "matched_by": ["AI数字人"],
+            }
+        )
+        repository.save_candidate(candidate)
+        copywriting = CopywritingService(repository, SandboxCopywritingEngine())
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: (
+            copywriting
+        )
+        try:
+            resp = client.post(
+                f"/api/v1/crawler/candidates/{candidate.video_id}/original-script"
+            )
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["copy_source"] == "metadata_original"
+        assert data["is_original_transcript"] is False
+        assert data["needs_manual_review"] is True
+        assert data["script"]
 
     def test_old_crawler_tasks_contract_removed(self, client: TestClient):
         resp = client.get("/api/v1/crawler/tasks")

@@ -8,17 +8,21 @@ from src.contracts import CandidateRepository
 from src.models import (
     AnomalyStatus,
     CandidateMatch,
+    GrowthStage,
     KeywordTrendLevel,
     KeywordTrendResult,
     Platform,
+    SamplingStatus,
     VideoCandidate,
     VideoMetricSnapshot,
 )
 
-MODEL_VERSION = "keyword-trend-v2"
+MODEL_VERSION = "keyword-trend-v3-low-cost"
 WINDOW_DAYS = 7
-REQUIRED_RECRAWLS = 3
-MIN_CONFIDENT_POOL_SIZE = 30
+# 单关键词低成本监测固定为 0/6/24 小时三点：首次 + 两次复搜。
+REQUIRED_RECRAWLS = 2
+MIN_COMPARABLE_POOL_SIZE = 3
+MIN_CONFIDENT_POOL_SIZE = 5
 COMPONENT_WEIGHTS = {
     "weighted_growth_velocity": 0.60,
     "acceleration": 0.20,
@@ -104,19 +108,33 @@ def _weighted_delta(
         current.shares,
         current.favorites,
     ]
-    if all(value is None for value in previous_values) or all(
-        value is None for value in current_values
-    ):
-        return None
     weights = (1, 3, 4, 4)
-    return float(
-        sum(
-            weight * ((current_value or 0) - (previous_value or 0))
-            for weight, previous_value, current_value in zip(
-                weights, previous_values, current_values, strict=True
-            )
-        )
-    )
+    total = 0.0
+    used = False
+    # 分享/收藏等字段缺失（None）时跳过该分量，不当作 0 参与增长计算
+    for weight, previous_value, current_value in zip(
+        weights, previous_values, current_values, strict=True
+    ):
+        if previous_value is None or current_value is None:
+            continue
+        used = True
+        total += weight * (current_value - previous_value)
+    return float(total) if used else None
+
+
+def _growth_stage(
+    *,
+    valid_snapshot_count: int,
+    display_tier: str,
+) -> GrowthStage:
+    """增长阶段标签：热门/爆发候选由三次真实快照门槛保证。"""
+    if display_tier == "exploding":
+        return GrowthStage.EXPLODING_CANDIDATE
+    if display_tier in {"hot", "potential"}:
+        return GrowthStage.HOT_CANDIDATE
+    if valid_snapshot_count <= 1:
+        return GrowthStage.OBSERVING_SAMPLE
+    return GrowthStage.CONFIRMING
 
 
 def _weighted_growth(
@@ -193,6 +211,7 @@ def _display_tier(
     anomaly_suspected: bool,
     recrawl_count: int,
     recall_count: int,
+    pool_size: int,
 ) -> tuple[str, float, list[str]]:
     """Classify display eligibility using confirmed recrawl growth evidence."""
     latest = max(history, key=lambda item: item.sampled_at) if history else None
@@ -203,24 +222,30 @@ def _display_tier(
         return (
             "observing",
             interactions,
-            [f"仅完成 {recrawl_count} 次复爬，需至少 {REQUIRED_RECRAWLS} 次"],
+            [f"仅完成 {recrawl_count} 次复搜，需至少 {REQUIRED_RECRAWLS} 次"],
         )
-    if recall_count < REQUIRED_RECRAWLS:
+    if recall_count < REQUIRED_RECRAWLS + 1:
         return (
             "observing",
             interactions,
-            [f"复爬再次召回 {recall_count} 次，稳定性不足"],
+            [f"仅再次召回 {recall_count} 次，需至少 {REQUIRED_RECRAWLS + 1} 次"],
         )
     if engagement_growth_per_hour is None or engagement_growth_per_hour <= 0:
         return "ordinary", interactions, ["复爬后未形成正向互动增长"]
     if (
-        score >= 85
+        pool_size >= MIN_CONFIDENT_POOL_SIZE
+        and score >= 85
         and confidence >= 0.80
         and (growth_percentile or 0) >= 95
         and (acceleration_percentile or 0) >= 80
     ):
         return "exploding", interactions, ["增长速度位于前 5%，且最近一段仍在加速"]
-    if score >= 75 and confidence >= 0.70 and (growth_percentile or 0) >= 90:
+    if (
+        pool_size >= MIN_CONFIDENT_POOL_SIZE
+        and score >= 75
+        and confidence >= 0.70
+        and (growth_percentile or 0) >= 90
+    ):
         return "hot", interactions, ["复爬确认增长速度位于候选前 10%"]
     if score >= 65 and confidence >= 0.60 and (growth_percentile or 0) >= 80:
         return "potential", interactions, ["复爬确认增长速度位于候选前 20%"]
@@ -420,6 +445,7 @@ class KeywordTrendService:
                 anomaly_suspected=bool(anomaly_reasons),
                 recrawl_count=recrawl_count,
                 recall_count=recall_count,
+                pool_size=pool_size,
             )
             latest_match = max(candidate_matches, key=lambda item: item.observed_at)
             reasons = [
@@ -446,10 +472,10 @@ class KeywordTrendService:
                     f"最近增长加速度 {acceleration_ratio:.2f}x，分位 P{acceleration_percentile:.0f}"
                 )
             if recrawl_count < REQUIRED_RECRAWLS:
-                reasons.append(f"未满 {REQUIRED_RECRAWLS} 次复爬，不进入热门榜")
-            if pool_size < MIN_CONFIDENT_POOL_SIZE:
+                reasons.append(f"未满 {REQUIRED_RECRAWLS} 次复搜，不进入热门榜")
+            if pool_size < MIN_COMPARABLE_POOL_SIZE:
                 reasons.append(
-                    f"当前仅有 {pool_size} 条同平台样本，正式等级会偏保守"
+                    f"当前仅有 {pool_size} 条同平台样本，无法形成可比较趋势榜"
                 )
             checkpoints = [
                 checkpoint
@@ -460,6 +486,15 @@ class KeywordTrendService:
             ]
             missed_count = sum(
                 checkpoint.status.value == "missed" for checkpoint in checkpoints
+            )
+            pending_due = [
+                checkpoint.due_at
+                for checkpoint in checkpoints
+                if checkpoint.status == SamplingStatus.PENDING
+            ]
+            next_recrawl_at = min(pending_due) if pending_due else None
+            latest_snapshot = (
+                max(history, key=lambda item: item.sampled_at) if history else None
             )
             if missed_count:
                 reasons.append(
@@ -508,6 +543,18 @@ class KeywordTrendService:
                     anomaly_penalty=anomaly_penalty,
                     display_tier=display_tier,
                     effective_interactions=effective_interactions,
+                    growth_stage=_growth_stage(
+                        valid_snapshot_count=valid_snapshot_count,
+                        display_tier=display_tier,
+                    ),
+                    snapshot_count=valid_snapshot_count,
+                    next_recrawl_at=next_recrawl_at,
+                    share_count=(
+                        latest_snapshot.shares if latest_snapshot else None
+                    ),
+                    collect_count=(
+                        latest_snapshot.favorites if latest_snapshot else None
+                    ),
                     tier_reasons=tier_reasons,
                     reasons=reasons,
                     model_version=MODEL_VERSION,
@@ -617,15 +664,15 @@ class KeywordTrendService:
     ) -> KeywordTrendLevel:
         if (
             anomaly_suspected
-            or pool_size < MIN_CONFIDENT_POOL_SIZE
+            or pool_size < MIN_COMPARABLE_POOL_SIZE
             or confidence < 0.60
             or growth_percentile is None
             or recrawl_count < REQUIRED_RECRAWLS
-            or recall_count < REQUIRED_RECRAWLS
+            or recall_count < REQUIRED_RECRAWLS + 1
         ):
             return KeywordTrendLevel.OBSERVING
         if (
-            pool_size >= 100
+            pool_size >= MIN_CONFIDENT_POOL_SIZE
             and score >= 85
             and growth_percentile >= 95
             and (acceleration_percentile or 0) >= 80

@@ -22,6 +22,7 @@ import {
 import {
   BankOutlined,
   CopyOutlined,
+  DeleteOutlined,
   EditOutlined,
   FileAddOutlined,
   FileTextOutlined,
@@ -34,6 +35,7 @@ import {
 } from "@ant-design/icons";
 import {
   generateCopywriting,
+  deleteTask,
   getCopywritingCapabilities,
   getCopywritingTask,
   listCopywritingTasks,
@@ -111,6 +113,7 @@ export default function AiCopyPage() {
   const [history, setHistory] = useState<CopywritingSummaryResponse[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [lastResponse, setLastResponse] = useState<CopywritingResponse | null>(null);
@@ -145,6 +148,24 @@ export default function AiCopyPage() {
       setHistoryLoading(false);
     }
   }, [toast]);
+
+  const handleDeleteHistory = async (item: CopywritingSummaryResponse) => {
+    setDeletingTaskId(item.task_id);
+    try {
+      await deleteTask(item.task_id);
+      if (taskId === item.task_id) {
+        setTaskId(null);
+        setLastResponse(null);
+        setVariants([]);
+      }
+      toast.success("文案历史已删除");
+      await refreshHistory();
+    } catch (err) {
+      toast.error((err as Error).message || "删除文案历史失败");
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -511,7 +532,19 @@ export default function AiCopyPage() {
           dataSource={history}
           locale={{ emptyText: "暂无独立文案任务" }}
           renderItem={(item) => (
-            <List.Item actions={[<Button type="link" onClick={() => handleLoadHistory(item)}>载入</Button>]}>
+            <List.Item actions={[
+              <Button type="link" onClick={() => handleLoadHistory(item)}>载入</Button>,
+              <Popconfirm
+                title="删除这条文案历史？"
+                description="只删除本条文案任务，不影响其他历史记录。"
+                okText="删除"
+                okButtonProps={{ danger: true }}
+                cancelText="取消"
+                onConfirm={() => handleDeleteHistory(item)}
+              >
+                <Button type="link" danger icon={<DeleteOutlined />} loading={deletingTaskId === item.task_id}>删除</Button>
+              </Popconfirm>,
+            ]}>
               <List.Item.Meta
                 title={<Space wrap><Text strong>{item.title}</Text><Tag>{item.creation_mode === "generate" ? "需求生成" : "改写"}</Tag></Space>}
                 description={

@@ -12,6 +12,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Popconfirm,
   Progress,
   Row,
   Select,
@@ -26,6 +27,7 @@ import type { ColumnsType } from "antd/es/table";
 import {
   AudioOutlined,
   CopyOutlined,
+  DeleteOutlined,
   DownloadOutlined,
   FileAddOutlined,
   HistoryOutlined,
@@ -37,11 +39,14 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createTranscriptionByUrl,
+  clearTranscriptionHistory,
+  createComplianceDraft,
   createVoiceoverDraft,
+  deleteTask,
   exportTranscription,
   getTranscription,
-  importManualTranscript,
   listTranscriptions,
+  listComplianceDrafts,
   listVoiceoverDrafts,
   saveTranscriptionRevision,
   updateVoiceoverDraft,
@@ -111,7 +116,6 @@ export default function TranscriptionPage() {
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
   const [segmentDrafts, setSegmentDrafts] = usePersistentState<Record<string, SegmentDraft>>("transcription_segment_drafts", {}, undefined, 1000);
   const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
-  const [manualText, setManualText] = usePersistentState("transcription_manual_text", "");
   const [reviewer, setReviewer] = usePersistentState("transcription_reviewer", "校对员");
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
@@ -119,22 +123,23 @@ export default function TranscriptionPage() {
   const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
   const [targetSeconds, setTargetSeconds] = usePersistentState("transcription_target_seconds", 45);
   const [activeDraftIndex, setActiveDraftIndex] = usePersistentState("transcription_active_draft_index", 0);
-  const [activePanel, setActivePanel] = usePersistentState<"review" | "voiceover">("transcription_active_panel", "review");
+  const [activePanel, setActivePanel] = usePersistentState<"review" | "voiceover" | "compliance">("transcription_active_panel", "review");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
   const [voiceoverDrafts, setVoiceoverDrafts] = useState<VoiceoverDraftResponse[]>([]);
   const [activeVoiceover, setActiveVoiceover] = useState<VoiceoverDraftResponse | null>(null);
+  const [complianceDrafts, setComplianceDrafts] = useState<VoiceoverDraftResponse[]>([]);
+  const [activeCompliance, setActiveCompliance] = useState<VoiceoverDraftResponse | null>(null);
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
-  const sourceUrlFromQuery = searchParams.get("source_url")?.trim() || "";
-  const manualFromQuery = searchParams.get("manual") === "1";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
 
   const filteredTasks = useMemo(() => {
@@ -163,6 +168,18 @@ export default function TranscriptionPage() {
     }
   }, [setActiveDraftIndex, toast]);
 
+  const loadComplianceDrafts = useCallback(async (taskId: string) => {
+    try {
+      const drafts = await listComplianceDrafts(taskId);
+      setComplianceDrafts(drafts);
+      setActiveCompliance(drafts[0] || null);
+    } catch (err) {
+      setComplianceDrafts([]);
+      setActiveCompliance(null);
+      toast.error((err as Error).message || "读取合规优化历史失败");
+    }
+  }, [toast]);
+
   const applyTask = useCallback((task: TranscriptionResponse, closeHistory = true) => {
     const serverSegments = normalizeSegments(task.segments);
     const localDraft = segmentDrafts[task.task_id];
@@ -190,8 +207,9 @@ export default function TranscriptionPage() {
       setSegments(serverSegments);
     }
     loadVoiceoverDrafts(task.task_id);
+    loadComplianceDrafts(task.task_id);
     if (closeHistory) setHistoryOpen(false);
-  }, [loadVoiceoverDrafts, segmentDrafts, setSegmentDrafts, setSelectedTaskId]);
+  }, [loadComplianceDrafts, loadVoiceoverDrafts, segmentDrafts, setSegmentDrafts, setSelectedTaskId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -210,14 +228,87 @@ export default function TranscriptionPage() {
     }
   }, [applyTask, selectedTaskId, taskFromQuery, toast]);
 
+  const handleDeleteTranscription = async (task: TranscriptionResponse) => {
+    setDeletingTaskId(task.task_id);
+    try {
+      await deleteTask(task.task_id);
+      setTasks((items) => items.filter((item) => item.task_id !== task.task_id));
+      setSegmentDrafts((drafts) => {
+        const next = { ...drafts };
+        delete next[task.task_id];
+        return next;
+      });
+      if (selectedTaskId === task.task_id) {
+        setSelected(null);
+        setSelectedTaskId(null);
+        setSegments([]);
+        setVoiceoverDrafts([]);
+        setActiveVoiceover(null);
+        setComplianceDrafts([]);
+        setActiveCompliance(null);
+      }
+      toast.success("转写历史已删除");
+    } catch (error) {
+      toast.error((error as Error).message || "删除转写历史失败");
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
+
+  const handleClearTranscriptionHistory = async () => {
+    setDeletingTaskId("__all_transcriptions__");
+    try {
+      const result = await clearTranscriptionHistory();
+      setTasks([]);
+      setSelected(null);
+      setSelectedTaskId(null);
+      setSegments([]);
+      setSegmentDrafts({});
+      setVoiceoverDrafts([]);
+      setActiveVoiceover(null);
+      setComplianceDrafts([]);
+      setActiveCompliance(null);
+      toast.success(`已删除 ${result.deleted_count} 条转写历史`);
+    } catch (error) {
+      toast.error((error as Error).message || "清空转写历史失败");
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
+
+  const handleDeleteDraft = async (draft: VoiceoverDraftResponse, kind: "voiceover" | "compliance") => {
+    setDeletingTaskId(draft.copywriting_task_id);
+    try {
+      await deleteTask(draft.copywriting_task_id);
+      if (kind === "voiceover") {
+        const remaining = voiceoverDrafts.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id);
+        setVoiceoverDrafts(remaining);
+        if (activeVoiceover?.copywriting_task_id === draft.copywriting_task_id) {
+          setActiveVoiceover(remaining[0] || null);
+        }
+      } else {
+        const remaining = complianceDrafts.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id);
+        setComplianceDrafts(remaining);
+        if (activeCompliance?.copywriting_task_id === draft.copywriting_task_id) {
+          setActiveCompliance(remaining[0] || null);
+        }
+      }
+      toast.success(kind === "voiceover" ? "口播稿历史已删除" : "合规优化历史已删除");
+    } catch (error) {
+      toast.error((error as Error).message || "删除历史失败");
+    } finally {
+      setDeletingTaskId(null);
+    }
+  };
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
   useEffect(() => {
     if (urlFromQuery) setVideoUrl(urlFromQuery);
-    if (candidateFromQuery || urlFromQuery || manualFromQuery) setCreateOpen(true);
-  }, [candidateFromQuery, manualFromQuery, setVideoUrl, urlFromQuery]);
+    if (candidateFromQuery || urlFromQuery) setCreateOpen(true);
+  }, [candidateFromQuery, setVideoUrl, urlFromQuery]);
 
   const handleNewTask = () => {
     setSelected(null);
@@ -225,6 +316,8 @@ export default function TranscriptionPage() {
     setSegments([]);
     setVoiceoverDrafts([]);
     setActiveVoiceover(null);
+    setComplianceDrafts([]);
+    setActiveCompliance(null);
     setCreateOpen(true);
   };
 
@@ -254,32 +347,6 @@ export default function TranscriptionPage() {
     try {
       const created = await uploadAndTranscribe(file, asrModel, rightsHolder);
       toast.success("文件已上传并创建转写任务");
-      setCreateOpen(false);
-      applyTask(created, false);
-      await refresh();
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleManualImport = async () => {
-    if (!manualText.trim()) {
-      toast.warning("请粘贴豆包或其他工具产出的文案");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const created = await importManualTranscript({
-        text: manualText,
-        rightsHolder,
-        mediaName: candidateTitleFromQuery || "豆包人工转写",
-        candidateId: candidateFromQuery || undefined,
-        sourceUrl: sourceUrlFromQuery || undefined,
-      });
-      toast.success("已导入，待人工复核后可确认成稿");
-      setManualText("");
       setCreateOpen(false);
       applyTask(created, false);
       await refresh();
@@ -431,6 +498,49 @@ export default function TranscriptionPage() {
     navigate(`/avatar?${params.toString()}`);
   };
 
+  const handleCreateComplianceDraft = async () => {
+    if (!selected || !activeVoiceover) {
+      toast.warning("请先生成并选择一份去重口播稿");
+      return;
+    }
+    const saved = await saveVoiceoverDraft();
+    if (!saved) return;
+    setDraftLoading(true);
+    try {
+      const draft = await createComplianceDraft({ taskId: selected.task_id, parentDraftId: activeVoiceover.copywriting_task_id });
+      setComplianceDrafts((prev) => [draft, ...prev.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id)]);
+      setActiveCompliance(draft);
+      setActivePanel("compliance");
+      toast.success("已生成待人工复核的合规优化稿");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  const complianceText = activeCompliance?.result_text || activeCompliance?.result_variants[0] || "";
+  const updateComplianceText = (text: string) => {
+    if (!activeCompliance) return;
+    const updated = { ...activeCompliance, result_text: text, result_variants: [text, ...activeCompliance.result_variants.slice(1)] };
+    setActiveCompliance(updated);
+    setComplianceDrafts((prev) => prev.map((item) => item.copywriting_task_id === updated.copywriting_task_id ? updated : item));
+  };
+  const saveComplianceDraft = async () => {
+    if (!selected || !activeCompliance || !complianceText.trim()) return;
+    setSaving(true);
+    try {
+      const saved = await updateVoiceoverDraft({ taskId: selected.task_id, draftId: activeCompliance.copywriting_task_id, resultText: complianceText, resultVariants: [complianceText] });
+      setActiveCompliance(saved);
+      setComplianceDrafts((prev) => prev.map((item) => item.copywriting_task_id === saved.copywriting_task_id ? saved : item));
+      toast.success("合规优化稿编辑已保存，仍需人工终审");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const segmentColumns: ColumnsType<TranscriptSegment> = [
     {
       title: "时间",
@@ -490,9 +600,7 @@ export default function TranscriptionPage() {
           message="已带入候选视频"
           description={urlFromQuery
             ? "已预填授权直链，请确认权利主体后创建转写。"
-            : manualFromQuery
-              ? `请打开抖音分享链接后在豆包等工具中转写，把文案粘贴回来即可；不会自动登录或调用第三方消费服务。`
-              : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
+            : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
         />
       )}
 
@@ -531,7 +639,7 @@ export default function TranscriptionPage() {
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
             <Tabs
               activeKey={activePanel}
-              onChange={(key) => setActivePanel(key as "review" | "voiceover")}
+              onChange={(key) => setActivePanel(key as "review" | "voiceover" | "compliance")}
               items={[
                 {
                   key: "review",
@@ -576,17 +684,28 @@ export default function TranscriptionPage() {
                       {voiceoverDrafts.length > 0 && (
                         <Space wrap>
                           {voiceoverDrafts.map((draft, index) => (
-                            <Button
-                              key={draft.copywriting_task_id}
-                              size="small"
-                              type={activeVoiceover?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"}
-                              onClick={() => {
-                                setActiveVoiceover(draft);
-                                setActiveDraftIndex(0);
-                              }}
-                            >
-                              历史 {index + 1}
-                            </Button>
+                            <Space key={draft.copywriting_task_id} size={0}>
+                              <Button
+                                size="small"
+                                type={activeVoiceover?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"}
+                                onClick={() => {
+                                  setActiveVoiceover(draft);
+                                  setActiveDraftIndex(0);
+                                }}
+                              >
+                                历史 {index + 1}
+                              </Button>
+                              <Popconfirm
+                                title="删除这份口播稿历史？"
+                                description="只删除该历史版本，不会影响原始转写。"
+                                okText="删除"
+                                okButtonProps={{ danger: true }}
+                                cancelText="取消"
+                                onConfirm={() => handleDeleteDraft(draft, "voiceover")}
+                              >
+                                <Button type="text" danger size="small" icon={<DeleteOutlined />} loading={deletingTaskId === draft.copywriting_task_id} />
+                              </Popconfirm>
+                            </Space>
                           ))}
                         </Space>
                       )}
@@ -606,6 +725,7 @@ export default function TranscriptionPage() {
                           <TextArea value={activeDraftText} autoSize={{ minRows: 6 }} onChange={(event) => updateActiveVoiceoverText(event.target.value)} />
                           <Space wrap>
                             <Button icon={<SaveOutlined />} loading={saving} onClick={saveVoiceoverDraft}>保存编辑</Button>
+                            <Button loading={draftLoading} disabled={!activeVoiceover || activeVoiceover.is_mock} onClick={handleCreateComplianceDraft}>生成合规优化稿</Button>
                             <Button icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(activeDraftText).then(() => toast.success("已复制"))}>复制口播稿</Button>
                             <Button type="primary" loading={saving} disabled={activeVoiceover?.is_mock} onClick={handleUseForAvatar}>保存并带到数字人</Button>
                           </Space>
@@ -613,6 +733,37 @@ export default function TranscriptionPage() {
                       ) : (
                         <Empty description="当前任务暂无口播稿历史" />
                       )}
+                    </Space>
+                  ),
+                },
+                {
+                  key: "compliance",
+                  label: "合规优化",
+                  children: (
+                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                      <Alert type="warning" showIcon message="AI 仅做表达风险提示与优化，不能替代法务、平台规则或人工终审。" description="不会补写事实、资质、数据或效果承诺；请在发布前逐项确认版权、广告、医疗金融等行业要求。" />
+                      {complianceDrafts.length > 0 && (
+                        <Space wrap>
+                          {complianceDrafts.map((draft, index) => (
+                            <Space key={draft.copywriting_task_id} size={0}>
+                              <Button size="small" type={activeCompliance?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"} onClick={() => setActiveCompliance(draft)}>
+                                历史 {index + 1}
+                              </Button>
+                              <Popconfirm
+                                title="删除这份合规优化历史？"
+                                description="只删除该历史版本，不会影响原始转写。"
+                                okText="删除"
+                                okButtonProps={{ danger: true }}
+                                cancelText="取消"
+                                onConfirm={() => handleDeleteDraft(draft, "compliance")}
+                              >
+                                <Button type="text" danger size="small" icon={<DeleteOutlined />} loading={deletingTaskId === draft.copywriting_task_id} />
+                              </Popconfirm>
+                            </Space>
+                          ))}
+                        </Space>
+                      )}
+                      {activeCompliance ? <Space direction="vertical" style={{ width: "100%" }}><Tag color="warning">待人工复核</Tag><TextArea value={complianceText} autoSize={{ minRows: 7 }} onChange={(event) => updateComplianceText(event.target.value)} /><Space><Button icon={<SaveOutlined />} loading={saving} onClick={saveComplianceDraft}>保存编辑</Button><Button icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(complianceText).then(() => toast.success("已复制"))}>复制合规稿</Button></Space></Space> : <Empty description="先在“数字人口播稿”生成并保存去重稿，再生成合规优化稿" />}
                     </Space>
                   ),
                 },
@@ -636,7 +787,7 @@ export default function TranscriptionPage() {
             type="warning"
             showIcon
             message="权利确认边界"
-            description="不会自动下载平台分享页或自动操作豆包。可上传有权处理的文件、填写授权直链，或把你在豆包等工具中得到的文案人工回填。"
+            description="不会自动下载平台分享页或自动操作第三方工具。可上传有权处理的文件，或填写授权直链。"
           />
           <Space wrap>
             <Select
@@ -681,27 +832,6 @@ export default function TranscriptionPage() {
                   </Upload.Dragger>
                 ),
               },
-              {
-                key: "manual",
-                label: "豆包人工回填（免费）",
-                children: (
-                  <Space direction="vertical" style={{ width: "100%" }}>
-                    <Alert
-                      type="info"
-                      showIcon
-                      message="把分享链接自行发送到豆包等工具，复制转写结果后粘贴到这里。"
-                      description="本系统不登录、不自动化操作第三方消费服务；人工回填只生成无时间轴文案，仍须完成复核。"
-                    />
-                    <TextArea
-                      value={manualText}
-                      onChange={(event) => setManualText(event.target.value)}
-                      placeholder="粘贴转写文案；空行会分成多个校对片段"
-                      rows={10}
-                    />
-                    <Button type="primary" loading={submitting} onClick={handleManualImport}>确认权利并导入文案</Button>
-                  </Space>
-                ),
-              },
             ]}
           />
         </Space>
@@ -712,7 +842,21 @@ export default function TranscriptionPage() {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         width={420}
-        extra={<Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>}
+        extra={(
+          <Space>
+            <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>
+            <Popconfirm
+              title="清空全部转写历史？"
+              description="会删除全部转写任务和校对版本，不会删除候选视频、素材或其他任务。"
+              okText="全部清空"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={handleClearTranscriptionHistory}
+            >
+              <Button danger icon={<DeleteOutlined />} loading={deletingTaskId === "__all_transcriptions__"} disabled={!tasks.length}>清空全部</Button>
+            </Popconfirm>
+          </Space>
+        )}
       >
         <Space direction="vertical" style={{ width: "100%" }} size={16}>
           <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="搜索媒体或任务 ID" />
@@ -732,7 +876,22 @@ export default function TranscriptionPage() {
             dataSource={filteredTasks}
             locale={{ emptyText: "暂无转写历史" }}
             renderItem={(item) => (
-              <List.Item actions={[<Button type="link" onClick={() => applyTask(item)}>载入</Button>]}>
+              <List.Item
+                actions={[
+                  <Button key="load" type="link" onClick={() => applyTask(item)}>载入</Button>,
+                  <Popconfirm
+                    key="delete"
+                    title="删除这条转写历史？"
+                    description="会删除转写任务和校对版本，不会删除候选视频或已下载素材。"
+                    okText="删除"
+                    okButtonProps={{ danger: true }}
+                    cancelText="取消"
+                    onConfirm={() => handleDeleteTranscription(item)}
+                  >
+                    <Button type="link" danger icon={<DeleteOutlined />} loading={deletingTaskId === item.task_id}>删除</Button>
+                  </Popconfirm>,
+                ]}
+              >
                 <List.Item.Meta
                   title={<Space wrap><Text strong>{item.media_name}</Text><Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag></Space>}
                   description={

@@ -91,6 +91,8 @@ class TranscriptionService:
         language: str = "zh",
         hotwords: str | None = None,
         max_media_bytes: int = MAX_MEDIA_BYTES,
+        source_kind: str = "asr",
+        source_url: str | None = None,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
     ) -> TranscriptionTask:
         if not rights_confirmed:
@@ -141,6 +143,8 @@ class TranscriptionService:
             media_sha256=hashlib.sha256(media_bytes).hexdigest(),
             model_name=model_name,
             asr_hotwords=normalized_hotwords or None,
+            source_kind=source_kind,
+            source_url=source_url,
             is_mock=False,
         )
         try:

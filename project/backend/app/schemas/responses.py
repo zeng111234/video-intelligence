@@ -54,9 +54,17 @@ class PipelineResponse(BaseModel):
     status: str
     current_stage: str | None = None
     stages: list[dict[str, Any]] = Field(default_factory=list)
+    candidate_video_id: str | None = None
+    copywriting_task_id: str | None = None
+    avatar_task_id: str | None = None
+    edit_task_id: str | None = None
+    publish_task_ids: list[str] = Field(default_factory=list)
+    config: dict[str, Any] = Field(default_factory=dict)
+    events: list[dict[str, Any]] = Field(default_factory=list)
     error_message: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    finished_at: datetime | None = None
 
 
 class TaskItem(BaseModel):

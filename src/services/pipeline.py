@@ -15,6 +15,7 @@ from src.contracts import TaskRepository
 from src.models import (
     PipelineRun,
     PipelineRunStatus,
+    PipelineEvent,
     PipelineStage,
     PipelineStepResult,
     Platform,
@@ -53,6 +54,25 @@ class PipelineService:
 
     # -- 流水线生命周期 --
 
+    @staticmethod
+    def _event(
+        run: PipelineRun,
+        *,
+        action: str,
+        message: str,
+        stage: PipelineStage | None = None,
+        details: dict[str, str] | None = None,
+    ) -> PipelineRun:
+        """追加不可变事件，不以阶段快照覆盖历史执行事实。"""
+        event = PipelineEvent(
+            action=action,
+            status=run.status,
+            stage=stage,
+            message=message,
+            details=details or {},
+        )
+        return run.model_copy(update={"events": [*run.events, event]})
+
     def create_run(
         self,
         *,
@@ -67,6 +87,11 @@ class PipelineService:
             created_at=now,
             updated_at=now,
             config=config or {},
+        )
+        run = self._event(
+            run,
+            action="created",
+            message="已创建生产流水线，等待开始执行。",
         )
         self.repository.save_pipeline_run(run)
         return run
@@ -136,6 +161,16 @@ class PipelineService:
                 update_kwargs[field] = task_id
 
         updated = run.model_copy(update=update_kwargs)
+        updated = self._event(
+            updated,
+            action="stage_updated",
+            stage=stage,
+            message=f"{stage.value} 状态更新为 {status.value}。",
+            details={
+                "task_id": task_id or "",
+                "error_message": error_message or "",
+            },
+        )
         self.repository.save_pipeline_run(updated)
         return updated
 
@@ -158,8 +193,121 @@ class PipelineService:
                 "error_message": error_message,
             }
         )
+        updated = self._event(
+            updated,
+            action="completed",
+            stage=updated.current_stage,
+            message="流水线已完成。" if success else "流水线已失败，可在核对原因后重试。",
+            details={"error_message": error_message or ""},
+        )
         self.repository.save_pipeline_run(updated)
         return updated
+
+    def review_candidate_script(
+        self,
+        *,
+        run_id: str,
+        approved: bool,
+        reviewer: str,
+        note: str = "",
+        approved_text: str = "",
+    ) -> PipelineRun:
+        """记录人工审核决策，并推进已批准的任务。
+
+        自动关键词任务会由后台 worker 继续数字人、剪辑和发布包；旧版手动
+        任务仍只更新阶段，避免改变已有工作流的授权边界。
+        """
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("流水线不存在。")
+        if run.status != PipelineRunStatus.PAUSED or run.current_stage != PipelineStage.HUMAN_REVIEW:
+            raise ValueError("当前流水线不处于等待人工审核状态。")
+
+        now = datetime.now().astimezone()
+        existing = next((item for item in run.stages if item.stage == PipelineStage.HUMAN_REVIEW), None)
+        if existing is None:
+            raise ValueError("流水线缺少待审核文案阶段。")
+        review_outputs = {
+            **existing.outputs,
+            "reviewer": reviewer.strip(),
+            "review_decision": "approved" if approved else "rework_required",
+            "review_note": note.strip(),
+            "approved_text": approved_text.strip(),
+        }
+        reviewed_step = existing.model_copy(
+            update={
+                "status": TaskStatus.SUCCEEDED if approved else TaskStatus.FAILED,
+                "finished_at": now,
+                "error_message": None if approved else (note.strip() or "人工审核要求返工。"),
+                "outputs": review_outputs,
+            }
+        )
+        stages = [reviewed_step if item.stage == PipelineStage.HUMAN_REVIEW else item for item in run.stages]
+        updated = run.model_copy(
+            update={
+                "stages": stages,
+                "status": PipelineRunStatus.PENDING if approved else PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.AVATAR_GENERATION if approved else PipelineStage.HUMAN_REVIEW,
+                "updated_at": now,
+                "config": {
+                    **run.config,
+                    "approved_script_text": approved_text.strip()
+                    or str(run.config.get("approved_script_text") or ""),
+                },
+                "error_message": None if approved else (note.strip() or "人工审核要求返工。"),
+            }
+        )
+        automatic_workflow = run.config.get("workflow") in {
+            "keyword_auto_candidate",
+            "production_batch_candidate",
+        }
+        updated = self._event(
+            updated,
+            action="review_approved" if approved else "review_rejected",
+            stage=PipelineStage.HUMAN_REVIEW,
+            message=(
+                (
+                    "文案审核已通过；后台将继续数字人、剪辑和人工发布包。"
+                    if automatic_workflow
+                    else "文案审核已通过；下一步需显式配置并提交数字人任务。"
+                )
+                if approved
+                else "文案审核要求返工；可使用重试重新执行媒体到文案链路。"
+            ),
+            details={"reviewer": reviewer.strip(), "note": note.strip()},
+        )
+        self.repository.save_pipeline_run(updated)
+        return updated
+
+    def start_keyword_auto_run(
+        self,
+        *,
+        keyword: str,
+        candidate_count: int,
+        profile: dict[str, Any],
+        rights_holder: str,
+        publish_platforms: list[str],
+    ) -> PipelineRun:
+        """创建由后台 worker 执行的关键词生产母任务，不在请求内调用供应商。"""
+        run = self.create_run(
+            keyword=keyword,
+            config={
+                "workflow": "keyword_auto_master",
+                "candidate_count": candidate_count,
+                "profile": profile,
+                "rights_holder": rights_holder,
+                "publish_platforms": publish_platforms,
+                "rights_confirmed": True,
+            },
+        )
+        run = self._event(
+            run,
+            action="queued",
+            stage=PipelineStage.KEYWORD_SEARCH,
+            message="关键词生产任务已入队，等待后台检索与候选选择。",
+        )
+        self.repository.save_pipeline_run(run)
+        return run
 
     def get_run(self, run_id: str) -> PipelineRun | None:
         return self.repository.get_pipeline_run(run_id)
@@ -181,6 +329,7 @@ class PipelineService:
         target_audience: str = "",
         style_prompt: str = "",
         variant_count: int = 2,
+        existing_run: PipelineRun | None = None,
     ) -> PipelineRun:
         """从单条候选执行：补媒体 -> 转写 -> 文案改写 -> 等待人工审核。
 
@@ -205,17 +354,38 @@ class PipelineService:
                 "小红书和视频号暂停媒体解析与转写，未发起付费请求。"
             )
 
-        run = self.create_run(
-            keyword=candidate.title[:200],
-            config={
-                "source": "crawler_candidate",
-                "candidate_id": candidate.video_id,
-                "platform": candidate.platform.value,
-                "platform_item_id": candidate.platform_item_id or "",
-                "rights_holder": rights_holder.strip(),
-                "flow": "media_to_asr_to_copy_review",
-            },
-        )
+        request_config = {
+            "rights_confirmed": rights_confirmed,
+            "rights_holder": rights_holder.strip(),
+            "model_name": model_name,
+            "hotwords": hotwords or "",
+            "target_length": target_length,
+            "tone": tone,
+            "target_audience": target_audience,
+            "style_prompt": style_prompt,
+            "variant_count": variant_count,
+        }
+        if existing_run is None:
+            run = self.create_run(
+                keyword=candidate.title[:200],
+                config={
+                    "source": "crawler_candidate",
+                    "candidate_id": candidate.video_id,
+                    "platform": candidate.platform.value,
+                    "platform_item_id": candidate.platform_item_id or "",
+                    "rights_holder": rights_holder.strip(),
+                    "flow": "media_to_asr_to_copy_review",
+                    "candidate_request": request_config,
+                },
+            )
+        else:
+            run = existing_run.model_copy(
+                update={
+                    "config": {**existing_run.config, "candidate_request": request_config},
+                    "finished_at": None,
+                    "error_message": None,
+                }
+            )
         run = run.model_copy(
             update={
                 "status": PipelineRunStatus.RUNNING,
@@ -223,6 +393,13 @@ class PipelineService:
                 "updated_at": datetime.now().astimezone(),
             }
         )
+        if existing_run is not None:
+            run = self._event(
+                run,
+                action="retry_started",
+                message="已从失败或返工状态重试媒体到文案链路。",
+                stage=PipelineStage.MEDIA_RESOLUTION,
+            )
         self.repository.save_pipeline_run(run)
 
         try:
@@ -360,6 +537,40 @@ class PipelineService:
                 error_message=error_msg,
             )
             return self.complete_run(run, success=False, error_message=error_msg)
+
+    def retry_candidate_script_pipeline(
+        self,
+        *,
+        run_id: str,
+        idempotency_key: str,
+    ) -> PipelineRun:
+        """以同一个运行 ID 重试失败或被要求返工的候选文案链路。"""
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("流水线不存在。")
+        if run.status not in {PipelineRunStatus.FAILED, PipelineRunStatus.PAUSED}:
+            raise ValueError("只有失败或等待人工处理的流水线可以重试。")
+        if run.config.get("source") not in {"crawler_candidate", "production_batch"} or not run.candidate_video_id:
+            raise ValueError("当前仅支持重试由候选创建的媒体到文案流水线。")
+        request = run.config.get("candidate_request")
+        if not isinstance(request, dict):
+            raise ValueError("该历史流水线未保存可重试参数；请从候选重新创建任务。")
+        if not bool(request.get("rights_confirmed")) or not str(request.get("rights_holder") or "").strip():
+            raise ValueError("重试前需要重新确认媒体处理授权信息。")
+        return self.execute_candidate_script_pipeline(
+            candidate_id=run.candidate_video_id,
+            rights_confirmed=True,
+            rights_holder=str(request["rights_holder"]),
+            idempotency_key=idempotency_key,
+            model_name=str(request.get("model_name") or "large-v3-turbo"),
+            hotwords=str(request.get("hotwords") or "") or None,
+            target_length=int(request.get("target_length") or 300),
+            tone=str(request.get("tone") or "casual"),
+            target_audience=str(request.get("target_audience") or ""),
+            style_prompt=str(request.get("style_prompt") or ""),
+            variant_count=int(request.get("variant_count") or 2),
+            existing_run=run,
+        )
 
     # -- 端到端执行 --
 

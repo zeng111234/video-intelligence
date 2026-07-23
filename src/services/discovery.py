@@ -20,9 +20,17 @@ from src.models import (
 from src.services.source import SourceService
 
 RECRAWL_OFFSETS_BY_WINDOW = {
+    0: (6, 24),
     1: (2, 6, 12),
     7: (6, 24, 48),
 }
+
+# video.search 关键词垂搜只覆盖最近 1 天公开视频，不等同于普通抖音搜索；
+# 默认搜索路径应优先走官方热榜池 + 本地关键词匹配（见 hot_pool 服务）。
+VIDEO_SEARCH_COVERAGE_NOTE = (
+    "video.search 关键词垂搜为可选路径，只覆盖最近 1 天公开视频，"
+    "不等同于普通抖音搜索。"
+)
 
 
 class KeywordDiscoveryService:
@@ -155,6 +163,7 @@ class KeywordDiscoveryService:
             import_report=report,
             errors=errors,
             request_fingerprint=request_fingerprint,
+            user_notice=VIDEO_SEARCH_COVERAGE_NOTE,
         )
         self.repository.save_discovery_result(result)
         if items:

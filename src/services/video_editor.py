@@ -45,6 +45,7 @@ class VideoEditingService:
         subtitle_style: str = "default",
         source_task_id: str | None = None,
         source_avatar_task_id: str | None = None,
+        task_id: str | None = None,
         on_progress: Callable[[VideoEditTask], None] | None = None,
     ) -> VideoEditTask:
         """创建并执行视频剪辑任务。"""
@@ -57,7 +58,7 @@ class VideoEditingService:
 
         now = datetime.now().astimezone()
         task = VideoEditTask(
-            task_id=f"edit-{uuid4().hex[:10]}",
+            task_id=task_id or f"edit-{uuid4().hex[:10]}",
             title=f"视频剪辑 · {source.name}",
             status=TaskStatus.RUNNING,
             progress=10,

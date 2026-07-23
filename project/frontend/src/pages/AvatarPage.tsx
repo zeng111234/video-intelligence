@@ -12,6 +12,7 @@ import {
   Input,
   InputNumber,
   List,
+  Popconfirm,
   Progress,
   Row,
   Select,
@@ -24,6 +25,7 @@ import {
 import {
   AudioOutlined,
   CheckCircleOutlined,
+  DeleteOutlined,
   CloudSyncOutlined,
   DownloadOutlined,
   ExclamationCircleOutlined,
@@ -35,6 +37,7 @@ import {
 } from "@ant-design/icons";
 import {
   createAvatarJob,
+  deleteTask,
   downloadAvatarJobMedia,
   getAvatarCapabilities,
   getAvatarJob,
@@ -205,11 +208,13 @@ export default function AvatarPage() {
         : "提交数字人口播任务";
 
   const refresh = useCallback(async () => {
-    const [nextCapability, nextAssets, nextJobs] = await Promise.all([
+    const [nextCapability, nextAssets] = await Promise.all([
       getAvatarCapabilities(),
       listAvatarAssets(),
-      listAvatarJobs(),
     ]);
+    const nextJobs = await listAvatarJobs({
+      includeSandbox: nextCapability.mode === "sandbox",
+    });
     setCapability(nextCapability);
     setAssets(nextAssets);
     setJobs(nextJobs);
@@ -221,6 +226,17 @@ export default function AvatarPage() {
     });
     setActiveJobId((current) => current || nextJobs[0]?.task_id || null);
   }, []);
+
+  const handleDeleteJob = async (taskId: string) => {
+    try {
+      await deleteTask(taskId);
+      setActiveJobId((current) => current === taskId ? null : current);
+      toast.success("数字人任务历史已删除");
+      await refresh();
+    } catch (error) {
+      toast.error((error as Error).message || "删除任务失败");
+    }
+  };
 
   useEffect(() => {
     refresh()
@@ -685,7 +701,7 @@ export default function AvatarPage() {
             )}
           </Card>
 
-          <Card title="真实任务历史">
+          <Card title={capability?.mode === "sandbox" ? "演示任务历史" : "真实任务历史"}>
             {jobs.length ? (
               <List
                 dataSource={jobs}
@@ -700,6 +716,17 @@ export default function AvatarPage() {
                           下载
                         </Button>
                       ) : null,
+                      <Popconfirm
+                        key="delete"
+                        title="删除这条数字人任务？"
+                        description="只删除任务记录，不会删除已下载到本地的成片。"
+                        okText="删除"
+                        okButtonProps={{ danger: true }}
+                        cancelText="取消"
+                        onConfirm={() => handleDeleteJob(item.task_id)}
+                      >
+                        <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                      </Popconfirm>,
                     ].filter(Boolean)}
                   >
                     <List.Item.Meta

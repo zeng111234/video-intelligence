@@ -1,11 +1,27 @@
 """数字人生成 API 测试。"""
 
 from fastapi.testclient import TestClient
+import pytest
 
-from project.backend.app.core.deps import get_avatar_service, get_repository
+from project.backend.app.core.deps import get_avatar_service
 from project.backend.app.main import app
-from src.adapters.avatar import LocalCommandAvatarProvider
+from src.adapters.avatar import LocalCommandAvatarProvider, SandboxAvatarProvider
+from src.repositories.mock import MockRepository
 from src.services.avatar import AvatarService
+
+
+@pytest.fixture(autouse=True)
+def sandbox_avatar_service():
+    """Keep API tests independent from the developer's configured provider and DB."""
+    repository = MockRepository()
+    app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
+        repository,
+        SandboxAvatarProvider(),
+    )
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_capabilities_are_explicit():
@@ -134,7 +150,7 @@ def test_local_asset_upload_updates_manifest(monkeypatch, tmp_path):
         natural_command="python sadtalker.py",
     )
     app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
-        get_repository(), provider
+        MockRepository(), provider
     )
 
     try:

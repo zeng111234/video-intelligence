@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from shutil import copyfileobj
+from shutil import copy2, copyfileobj
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from project.backend.app.core import config as backend_config
 from project.backend.app.core import deps as backend_deps
 from project.backend.app.core.config import PROJECT_ROOT
-from project.backend.app.core.deps import get_publish_service
+from project.backend.app.core.deps import get_publish_service, get_repository
 
 router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
 
@@ -374,6 +374,43 @@ def upload_asset(
         "name": target.name,
         "path": str(target),
         "size_bytes": target.stat().st_size,
+    }
+
+
+@router.post("/assets/from-edit/{task_id}")
+def import_edited_asset(
+    task_id: str,
+    repository=Depends(get_repository),
+):
+    """登记系统生成的真实剪辑成片，供发布页继续使用。"""
+    from src.models import TaskStatus, VideoEditTask
+
+    task = repository.get_task(task_id)
+    if not isinstance(task, VideoEditTask):
+        raise HTTPException(status_code=404, detail="未找到智能剪辑任务。")
+    if task.outputs.get("workflow") != "edit":
+        raise HTTPException(status_code=400, detail="该任务不是智能剪辑工作流生成的成片。")
+    if task.status != TaskStatus.SUCCEEDED or task.is_mock:
+        raise HTTPException(status_code=400, detail="仅可交接已成功生成的真实成片。")
+    if not task.result_path:
+        raise HTTPException(status_code=400, detail="剪辑任务没有可发布的成片。")
+
+    source = Path(task.result_path).resolve()
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="剪辑成片文件不存在，请重新执行任务。")
+    if source.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
+        raise HTTPException(status_code=400, detail="仅支持交接 mp4、mov、m4v 成片文件。")
+
+    PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    target = PUBLISH_ASSET_DIR / f"ai-edit-{task.task_id}{source.suffix.lower()}"
+    if not target.exists():
+        copy2(source, target)
+    stat = target.stat()
+    return {
+        "name": target.name,
+        "path": str(target),
+        "size_bytes": stat.st_size,
+        "updated_at": stat.st_mtime,
     }
 
 

@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from project.backend.app.core.deps import get_repository
 from project.backend.app.schemas.responses import TaskItem, TaskListResponse
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
+
+
+class TaskDeleteResponse(BaseModel):
+    task_id: str
+    deleted: bool
 
 
 @router.get("", response_model=TaskListResponse)
@@ -47,3 +53,13 @@ def get_task(
         progress=task.progress,
         created_at=task.created_at,
     )
+
+
+@router.delete("/{task_id}", response_model=TaskDeleteResponse)
+def delete_task(
+    task_id: str,
+    repo=Depends(get_repository),
+):
+    if not repo.delete_task(task_id):
+        raise HTTPException(status_code=404, detail=f"任务不存在或已删除: {task_id}")
+    return TaskDeleteResponse(task_id=task_id, deleted=True)

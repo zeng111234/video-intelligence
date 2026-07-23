@@ -25,7 +25,7 @@ const FAQ_DATA = [
     items: [
       {
         q: "如何开始使用系统？",
-        a: "优先进入「内容工作台」。从候选或关键词榜单带入素材后，重新确认权利，再上传文件或填写授权 MP4/MOV 直链进行转写。",
+        a: "从「候选检索」或「关键词爬虫」找到素材后，重新确认权利，再进入「语音转写」上传文件或填写授权 MP4/MOV 直链。",
       },
       {
         q: "生产批次和真正生成视频是什么关系？",
@@ -93,24 +93,18 @@ const FAQ_DATA = [
 const QUICK_START = [
   {
     step: 1,
-    title: "进入工作台",
-    desc: "从工作台查看素材、转写和生产批次",
-    path: "/studio",
-  },
-  {
-    step: 2,
     title: "提取视频文案",
     desc: "使用「语音转写」功能，将视频内容转为文字",
     path: "/transcription",
   },
   {
-    step: 3,
+    step: 2,
     title: "创建生产批次",
     desc: "只创建批次记录，不宣称已生成视频",
     path: "/pipeline",
   },
   {
-    step: 4,
+    step: 3,
     title: "生成数字人视频",
     desc: "使用「数字人生成」功能，创建口播视频",
     path: "/avatar",

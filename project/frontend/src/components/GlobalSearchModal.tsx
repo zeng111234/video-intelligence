@@ -17,7 +17,6 @@ interface SearchItem {
 
 const ALL_ITEMS: SearchItem[] = [
   { key: "dashboard", label: "数据仪表盘", path: "/dashboard", group: "核心功能" },
-  { key: "studio", label: "内容工作台", path: "/studio", group: "核心功能" },
   { key: "candidates", label: "候选检索", path: "/candidates", group: "核心功能" },
   { key: "pipeline", label: "生产批次", path: "/pipeline", group: "核心功能" },
   { key: "transcription", label: "语音转写", path: "/transcription", group: "核心功能" },

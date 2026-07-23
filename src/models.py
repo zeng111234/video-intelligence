@@ -64,6 +64,23 @@ class MomentumState(StrEnum):
     INSUFFICIENT = "insufficient"
 
 
+class GrowthStage(StrEnum):
+    """候选增长阶段标签（供前端直接展示）。"""
+
+    OBSERVING_SAMPLE = "观察样本"
+    CONFIRMING = "增长确认中"
+    HOT_CANDIDATE = "热门候选"
+    EXPLODING_CANDIDATE = "爆发候选"
+
+
+class CopySource(StrEnum):
+    """三档文案来源。"""
+
+    METADATA_ORIGINAL = "metadata_original"
+    DOUBAO_MOBILE_TRANSCRIPT = "doubao_mobile_transcript"
+    AUTHORIZED_ASR_TRANSCRIPT = "authorized_asr_transcript"
+
+
 class AnomalyStatus(StrEnum):
     NOT_EVALUATED = "not_evaluated"
     NORMAL = "normal"
@@ -103,6 +120,7 @@ class SamplingStatus(StrEnum):
 
 class ProviderMode(StrEnum):
     SANDBOX = "sandbox"
+    LOCAL_BROWSER = "local_browser"
     PRODUCTION = "production"
 
 
@@ -197,6 +215,32 @@ class PipelineRunStatus(StrEnum):
     FAILED = "failed"
 
 
+class ProductionBatchStatus(StrEnum):
+    """批次控制台的聚合状态；单条的真实执行状态保留在 PipelineRun。"""
+
+    PLANNED = "planned"
+    RUNNING = "running"
+    PAUSED = "paused"
+    AWAITING_REVIEW = "awaiting_review"
+    AWAITING_PUBLISH = "awaiting_publish"
+    PARTIAL = "partial"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class ProductionBatchItemStatus(StrEnum):
+    """批次项的调度状态，避免将预检受阻误报成流水线失败。"""
+
+    PLANNED = "planned"
+    BLOCKED = "blocked"
+    QUEUED = "queued"
+    RUNNING = "running"
+    AWAITING_REVIEW = "awaiting_review"
+    AWAITING_PUBLISH = "awaiting_publish"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
 class AvatarAssetKind(StrEnum):
     AVATAR = "avatar"
     VOICE = "voice"
@@ -277,8 +321,22 @@ class VideoCandidate(BaseModel):
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
     data_quality_warnings: list[str] = Field(default_factory=list)
+    # 分享/收藏在数据源未返回时保持 null，前端显示“未返回”，不当作 0
+    share_count: int | None = Field(default=None, ge=0)
+    collect_count: int | None = Field(default=None, ge=0)
     metrics: VideoMetricSnapshot
     heat: HeatResult
+
+
+class HotWordRecord(BaseModel):
+    """官方实时热点词持久化记录（供前端搜索建议读取）。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    word: str = Field(min_length=1)
+    hot_value: int | None = Field(default=None, ge=0)
+    fetched_at: datetime
+    source: str = "douyin_hot_words"
 
 
 class SourceRequest(BaseModel):
@@ -575,8 +633,11 @@ class DiscoveryResult(BaseModel):
     parsed_item_count: int = Field(default=0, ge=0)
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
+    irrelevant_count: int = Field(default=0, ge=0)
+    relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     payload_diagnostic: str | None = None
+    user_notice: str | None = None
     exhausted: bool = False
     partial: bool = False
     permission_status: str
@@ -596,7 +657,10 @@ class DiscoveryResult(BaseModel):
 class SearchBatch(BaseModel):
     batch_id: str = Field(default_factory=lambda: f"batch-{uuid4().hex[:12]}")
     keyword: str = Field(min_length=2, max_length=50)
-    published_window_days: int = Field(default=7)
+    # 0 表示不限发布时间；保留 1/7 以兼容历史批次。
+    published_window_days: int = Field(default=0)
+    monitoring_policy: str = "low_cost_three_point_v1"
+    sampling_offsets_hours: list[int] = Field(default_factory=lambda: [0, 6, 24])
     requested_count_per_platform: int = Field(default=10, ge=1, le=10)
     provider: str
     mode: ProviderMode
@@ -616,8 +680,8 @@ class SearchBatch(BaseModel):
 
     @model_validator(mode="after")
     def validate_window(self):
-        if self.published_window_days not in {1, 7}:
-            raise ValueError("发布时间范围只支持近 1 天或近 7 天。")
+        if self.published_window_days not in {0, 1, 7}:
+            raise ValueError("发布时间范围只支持不限、近 1 天或近 7 天。")
         return self
 
 
@@ -635,6 +699,8 @@ class PlatformSearchRun(BaseModel):
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     duplicate_count: int = Field(default=0, ge=0)
+    irrelevant_count: int = Field(default=0, ge=0, le=10)
+    relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     payload_diagnostic: str | None = None
     api_call_count: int = Field(default=0, ge=0, le=1)
@@ -682,6 +748,11 @@ class KeywordTrendResult(BaseModel):
     anomaly_penalty: float = Field(default=1.0, gt=0, le=1)
     display_tier: str = "ordinary"
     effective_interactions: float = Field(default=0, ge=0)
+    growth_stage: GrowthStage = GrowthStage.OBSERVING_SAMPLE
+    snapshot_count: int = Field(default=1, ge=0)
+    next_recrawl_at: datetime | None = None
+    share_count: int | None = Field(default=None, ge=0)
+    collect_count: int | None = Field(default=None, ge=0)
     tier_reasons: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     model_version: str = "keyword-trend-v1"
@@ -741,7 +812,7 @@ class SamplingCheckpoint(BaseModel):
     request_id: str
     platform: Platform = Platform.DOUYIN
     provider_name: str = "legacy"
-    published_window_days: int = Field(default=1)
+    published_window_days: int = Field(default=0)
     offset_hours: int = Field(gt=0)
     due_at: datetime
     status: SamplingStatus = SamplingStatus.PENDING
@@ -843,6 +914,28 @@ class CopywritingTask(TaskRecord):
     result_variants: list[str] = Field(default_factory=list)
     source_task_id: str | None = None
     source_revision_id: str | None = None
+    # 三档文案来源标记（见 CopySource），默认空表示历史改写任务
+    copy_source: str | None = None
+    is_original_transcript: bool = False
+    needs_manual_review: bool = False
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+
+
+class CopyResult(BaseModel):
+    """三档文案来源的统一结果载荷。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    copy_id: str = Field(default_factory=lambda: f"copyres-{uuid4().hex[:12]}")
+    candidate_id: str | None = None
+    copy_source: CopySource
+    text: str = ""
+    is_original_transcript: bool
+    needs_manual_review: bool
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    source_basis: dict[str, Any] = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 
 
 # ---------------------------------------------------------------------------
@@ -941,6 +1034,20 @@ class PipelineStepResult(BaseModel):
     outputs: dict[str, str] = Field(default_factory=dict)
 
 
+class PipelineEvent(BaseModel):
+    """持久化的流水线状态变更事件，用于恢复、审计和人工排障。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str = Field(default_factory=lambda: f"pipeline-event-{uuid4().hex[:12]}")
+    action: str = Field(min_length=1)
+    status: PipelineRunStatus
+    stage: PipelineStage | None = None
+    message: str = ""
+    details: dict[str, str] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
 # ---------------------------------------------------------------------------
 # 转写支持格式
 # ---------------------------------------------------------------------------
@@ -1012,4 +1119,84 @@ class PipelineRun(BaseModel):
     edit_task_id: str | None = None
     publish_task_ids: list[str] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
+    events: list[PipelineEvent] = Field(default_factory=list)
     error_message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# 可复用 IP 资产与生产批次
+# ---------------------------------------------------------------------------
+
+
+class ProductionProfile(BaseModel):
+    """可复用的内容 IP 配方；只保存非敏感的创作与资产引用。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    profile_id: str = Field(default_factory=lambda: f"ip-{uuid4().hex[:12]}")
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=300)
+    target_audience: str = Field(default="", max_length=200)
+    platform: str = Field(default="douyin", max_length=40)
+    script_style: str = Field(default="", max_length=500)
+    avatar_id: str | None = None
+    voice_id: str | None = None
+    edit_template_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class ProductionBatchItem(BaseModel):
+    """批次中的单条候选计划与调度状态。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    candidate_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    status: ProductionBatchItemStatus = ProductionBatchItemStatus.PLANNED
+    blocked_reasons: list[str] = Field(default_factory=list)
+    current_stage: PipelineStage | None = None
+    error_message: str | None = None
+    video_path: str | None = None
+    publish_mode: str | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class ProductionBatch(BaseModel):
+    """可暂停、可恢复的批量生产控制记录。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    batch_id: str = Field(default_factory=lambda: f"production-batch-{uuid4().hex[:12]}")
+    name: str = Field(min_length=1, max_length=100)
+    profile_id: str = Field(min_length=1)
+    profile_name: str = Field(min_length=1)
+    items: list[ProductionBatchItem] = Field(default_factory=list)
+    status: ProductionBatchStatus = ProductionBatchStatus.PLANNED
+    is_paused: bool = False
+    execution_config: dict[str, Any] = Field(default_factory=dict)
+    estimated_cost_cny: float = Field(default=0.0, ge=0)
+    monthly_budget_used_cny: float = Field(default=0.0, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class PublishFeedback(BaseModel):
+    """仅记录人工确认已发布作品的真实反馈数据。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    feedback_id: str = Field(default_factory=lambda: f"feedback-{uuid4().hex[:12]}")
+    publish_task_id: str = Field(min_length=1)
+    pipeline_run_id: str | None = None
+    platform: str = Field(min_length=1)
+    views: int = Field(ge=0)
+    likes: int = Field(default=0, ge=0)
+    comments: int = Field(default=0, ge=0)
+    leads: int = Field(default=0, ge=0)
+    recorded_by: str = Field(min_length=1, max_length=80)
+    note: str = Field(default="", max_length=500)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())

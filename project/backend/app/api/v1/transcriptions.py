@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
     get_copywriting_service,
+    get_repository,
     get_transcription_service,
 )
 from project.backend.app.core.config import ASRMode, ASR_MODE
@@ -78,11 +79,22 @@ class VoiceoverDraftResponse(BaseModel):
     error_message: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+    draft_stage: str = "deduplicate"
+    parent_task_id: str | None = None
+    needs_manual_review: bool = True
 
 
 class VoiceoverDraftUpdateRequest(BaseModel):
     result_text: str = Field(..., min_length=1)
     result_variants: list[str] = Field(default_factory=list)
+
+
+class ComplianceDraftRequest(BaseModel):
+    parent_draft_id: str = Field(..., min_length=1)
+
+
+class TranscriptionHistoryDeleteResponse(BaseModel):
+    deleted_count: int
 
 
 def _to_response(task, service=None) -> TranscriptionResponse:
@@ -250,6 +262,19 @@ def list_transcriptions(
     return [_to_response(task, service) for task in tasks]
 
 
+@router.delete("/history", response_model=TranscriptionHistoryDeleteResponse)
+def clear_transcription_history(repo=Depends(get_repository)):
+    """删除右侧历史中的全部转写任务及其校对修订，不影响其他类型任务。"""
+    task_ids = [
+        task.task_id
+        for task in repo.list_tasks()
+        if isinstance(task, TranscriptionTask)
+    ]
+    for task_id in task_ids:
+        repo.delete_task(task_id)
+    return TranscriptionHistoryDeleteResponse(deleted_count=len(task_ids))
+
+
 @router.post("/manual-text", response_model=TranscriptionResponse)
 def import_manual_text(
     body: ManualTextImportRequest,
@@ -373,6 +398,8 @@ def create_voiceover_draft(
                 **task.outputs,
                 "voiceover_target_seconds": str(body.target_seconds),
                 "voiceover_speech_rate": str(body.speech_rate),
+                "draft_stage": "deduplicate",
+                "needs_manual_review": "true",
             },
             "updated_at": datetime.now().astimezone(),
         }
@@ -399,7 +426,7 @@ def list_voiceover_drafts(
     drafts = [
         task
         for task in copywriting_service.list_tasks()
-        if task.source_task_id == task_id
+        if task.source_task_id == task_id and task.outputs.get("draft_stage", "deduplicate") == "deduplicate"
     ][:safe_limit]
     return [_voiceover_to_response(task) for task in drafts]
 
@@ -444,6 +471,59 @@ def update_voiceover_draft(
     return _voiceover_to_response(updated)
 
 
+@router.post("/{task_id}/compliance-drafts", response_model=VoiceoverDraftResponse)
+def create_compliance_draft(
+    task_id: str,
+    body: ComplianceDraftRequest,
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+):
+    """Create a clearly labelled compliance review draft from a saved de-duplicated draft."""
+    if transcription_service.get_approved_revision(task_id) is None:
+        raise HTTPException(status_code=400, detail="请先确认转写成稿。")
+    parent = copywriting_service.get_task(body.parent_draft_id)
+    if parent is None or parent.source_task_id != task_id or parent.outputs.get("draft_stage", "deduplicate") != "deduplicate":
+        raise HTTPException(status_code=404, detail="去重口播稿不存在或不属于当前转写任务。")
+    source_text = (parent.result_text or (parent.result_variants[0] if parent.result_variants else "")).strip()
+    if not source_text:
+        raise HTTPException(status_code=400, detail="请先保存有内容的去重口播稿。")
+    capability = copywriting_service.capabilities()
+    if not capability.get("enabled", False):
+        raise HTTPException(status_code=503, detail="真实 LLM 文案服务未配置，暂不能生成合规优化稿。")
+    task = copywriting_service.rewrite(
+        source_text=source_text,
+        platform="douyin",
+        target_audience="",
+        style_prompt="清晰、克制、适合短视频口播",
+        target_length=parent.target_length,
+        tone="casual",
+        rewrite_goal=(
+            "在不增加事实的前提下做合规表达优化：删除绝对化、夸大收益、保证性承诺、"
+            "未经证实的比较、诱导性或可能侵害他人权利的模仿表达。保留必要限定条件；"
+            "不虚构资质、案例、数据、效果或授权。输出纯口播正文，并标记为待人工复核稿。"
+        ),
+        variant_count=1,
+        source_task_id=task_id,
+        source_revision_id=parent.source_revision_id,
+    )
+    task = task.model_copy(update={"outputs": {**task.outputs, "draft_stage": "compliance", "parent_task_id": parent.task_id, "needs_manual_review": "true"}, "updated_at": datetime.now().astimezone()})
+    copywriting_service.repository.save_task(task)
+    return _voiceover_to_response(task, source_characters=len(source_text))
+
+
+@router.get("/{task_id}/compliance-drafts", response_model=list[VoiceoverDraftResponse])
+def list_compliance_drafts(
+    task_id: str,
+    limit: int = 50,
+    transcription_service=Depends(get_transcription_service),
+    copywriting_service=Depends(get_copywriting_service),
+):
+    if not isinstance(transcription_service.repository.get_task(task_id), TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+    drafts = [task for task in copywriting_service.list_tasks() if task.source_task_id == task_id and task.outputs.get("draft_stage") == "compliance"]
+    return [_voiceover_to_response(task) for task in drafts[:max(1, min(limit, 100))]]
+
+
 def _voiceover_to_response(
     task: CopywritingTask,
     *,
@@ -469,6 +549,9 @@ def _voiceover_to_response(
         error_message=task.error_message,
         created_at=task.created_at.isoformat() if task.created_at else None,
         updated_at=task.updated_at.isoformat() if task.updated_at else None,
+        draft_stage=task.outputs.get("draft_stage", "deduplicate"),
+        parent_task_id=task.outputs.get("parent_task_id"),
+        needs_manual_review=task.outputs.get("needs_manual_review", "true").lower() != "false",
     )
 
 

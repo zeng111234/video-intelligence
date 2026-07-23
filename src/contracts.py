@@ -10,9 +10,11 @@ from src.models import (
     AvatarSubmitRequest,
     CandidateMatch,
     DiscoveryResult,
+    HotWordRecord,
     KeywordTrendResult,
     MediaResolutionAttempt,
     PipelineRun,
+    ProductionBatch,
     PlatformSearchRun,
     Platform,
     ProviderCapability,
@@ -56,6 +58,26 @@ class CrawlerAdapter(Protocol):
     def sync(self, request: SourceRequest) -> SourcePage: ...
 
 
+class HotWordEntryLike(Protocol):
+    """官方热点词条目的结构契约（与 adapters.official.HotWordEntry 对齐）。
+
+    服务层只依赖该结构，不直接 import 适配器实现，便于测试用 fake 替换。
+    """
+
+    word: str
+    hot_value: int | None
+    fetched_at: datetime
+    raw: dict
+
+
+class HotWordsProvider(Protocol):
+    """官方实时热点词适配器协议。"""
+
+    def capabilities(self) -> SourceCapability: ...
+
+    def fetch_hot_words(self) -> list[HotWordEntryLike]: ...
+
+
 class LicensedSearchProvider(Protocol):
     def capabilities(self) -> ProviderCapability: ...
 
@@ -63,7 +85,7 @@ class LicensedSearchProvider(Protocol):
         self,
         platform: Platform,
         keyword: str,
-        published_after: datetime,
+        published_after: datetime | None,
         limit: int,
         idempotency_key: str,
     ) -> ProviderSearchPage: ...
@@ -148,6 +170,8 @@ class CandidateRepository(Protocol):
 
     def list_search_batches(self, limit: int = 20) -> list[SearchBatch]: ...
 
+    def delete_search_batch(self, batch_id: str) -> bool: ...
+
     def save_platform_search_run(self, run: PlatformSearchRun) -> None: ...
 
     def list_platform_search_runs(self, batch_id: str) -> list[PlatformSearchRun]: ...
@@ -213,6 +237,16 @@ class CandidateRepository(Protocol):
 
     def has_unresolved_media_resolution(self, candidate_id: str) -> bool: ...
 
+    # -- 官方热榜池与热点词 --
+
+    def list_official_hot_pool(
+        self, platform: Platform = Platform.DOUYIN
+    ) -> list[VideoCandidate]: ...
+
+    def save_hot_words(self, words: list[HotWordRecord]) -> None: ...
+
+    def list_hot_words(self, limit: int = 50) -> list[HotWordRecord]: ...
+
 
 class TaskRepository(Protocol):
     def list_tasks(self) -> list[TaskRecord]: ...
@@ -220,6 +254,8 @@ class TaskRepository(Protocol):
     def get_task(self, task_id: str) -> TaskRecord | None: ...
 
     def save_task(self, task: TaskRecord) -> None: ...
+
+    def delete_task(self, task_id: str) -> bool: ...
 
     def save_transcript_revision(self, revision: TranscriptRevision) -> None: ...
 
@@ -236,6 +272,16 @@ class TaskRepository(Protocol):
     def get_pipeline_run(self, run_id: str) -> PipelineRun | None: ...
 
     def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]: ...
+
+    def delete_pipeline_run(self, run_id: str) -> bool: ...
+
+    # -- 生产批次 --
+
+    def save_production_batch(self, batch: ProductionBatch) -> None: ...
+
+    def get_production_batch(self, batch_id: str) -> ProductionBatch | None: ...
+
+    def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]: ...
 
 
 # ---------------------------------------------------------------------------

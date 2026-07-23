@@ -11,7 +11,6 @@ import {
   Alert,
 } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
-import { Link } from "react-router-dom";
 import type { ColumnsType } from "antd/es/table";
 import { searchCandidates } from "../api/client";
 import type { CandidateItem } from "../api/types";
@@ -112,15 +111,6 @@ export default function CandidatesPage() {
         ) : (
           "-"
         ),
-    },
-    {
-      title: "工作台",
-      width: 110,
-      render: (_, record) => (
-        <Link to={`/studio?candidate_id=${encodeURIComponent(record.video_id)}`}>
-          进入工作台
-        </Link>
-      ),
     },
   ];
 

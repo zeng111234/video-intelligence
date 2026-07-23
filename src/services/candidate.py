@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from src.contracts import CandidateRepository
 from src.models import HeatLevel, Platform, VideoCandidate

@@ -4,6 +4,7 @@ from src.services.commercial_search import CommercialSearchService
 from src.services.copywriting import CopywritingService
 from src.services.discovery import KeywordDiscoveryService
 from src.services.heat import HeatService
+from src.services.hot_pool import OfficialHotPoolService
 from src.services.keyword_trend import KeywordTrendService
 from src.services.pipeline import PipelineService
 from src.services.publisher import PublishService
@@ -20,6 +21,7 @@ __all__ = [
     "HeatService",
     "KeywordDiscoveryService",
     "KeywordTrendService",
+    "OfficialHotPoolService",
     "PipelineService",
     "PublishService",
     "SourceService",

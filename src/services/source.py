@@ -124,6 +124,8 @@ class SourceService:
             official_rank=item.official_rank,
             official_hot_value=item.official_hot_value,
             data_quality_warnings=item.data_quality_warnings,
+            share_count=item.metrics.shares,
+            collect_count=item.metrics.favorites,
             metrics=metrics,
             heat=HeatResult(
                 score=0,

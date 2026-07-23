@@ -64,7 +64,7 @@ class TestSandboxCopywritingEngine:
         engine = SandboxCopywritingEngine()
         cap = engine.capabilities()
         assert cap["enabled"] is True
-        assert cap["mode"] == "manual"
+        assert cap["mode"] == "sandbox"
 
     def test_rewrite_single(self):
         engine = SandboxCopywritingEngine()
@@ -465,6 +465,63 @@ class TestPipelineService:
         stored = self.repo.get_pipeline_run(run.run_id)
         assert stored is not None
         assert stored.status == PipelineRunStatus.PAUSED
+        assert [event.action for event in stored.events][-1] == "stage_updated"
+
+    def test_review_approval_persists_decision_without_submitting_avatar(self):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        self.svc.media_resolution_service = FakeMediaResolutionService()
+        self.svc.transcription_service = FakeTranscriptionService(self.repo)
+        run = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key="pipeline-review-approval",
+        )
+
+        approved = self.svc.review_candidate_script(
+            run_id=run.run_id,
+            approved=True,
+            reviewer="审核员",
+            note="事实与授权已核对。",
+            approved_text="确认后的最终口播文案。",
+        )
+
+        assert approved.status == PipelineRunStatus.PENDING
+        assert approved.current_stage == PipelineStage.AVATAR_GENERATION
+        review_step = next(item for item in approved.stages if item.stage == PipelineStage.HUMAN_REVIEW)
+        assert review_step.status == TaskStatus.SUCCEEDED
+        assert review_step.outputs["reviewer"] == "审核员"
+        assert approved.avatar_task_id is None
+        assert approved.config["approved_script_text"] == "确认后的最终口播文案。"
+        assert approved.events[-1].action == "review_approved"
+
+    def test_retry_failed_candidate_pipeline_reuses_run_id_and_keeps_events(self):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        self.svc.media_resolution_service = FakeMediaResolutionService(
+            error=MediaResolutionError("供应商未返回可用于转写的视频。")
+        )
+        self.svc.transcription_service = FakeTranscriptionService(self.repo)
+        failed = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key="pipeline-retry-initial",
+        )
+
+        self.svc.media_resolution_service = FakeMediaResolutionService()
+        retried = self.svc.retry_candidate_script_pipeline(
+            run_id=failed.run_id,
+            idempotency_key="pipeline-retry-second",
+        )
+
+        assert retried.run_id == failed.run_id
+        assert retried.status == PipelineRunStatus.PAUSED
+        assert retried.current_stage == PipelineStage.HUMAN_REVIEW
+        actions = [event.action for event in retried.events]
+        assert "completed" in actions
+        assert "retry_started" in actions
 
     def test_candidate_script_pipeline_records_media_resolution_failure(self):
         candidate = _pipeline_candidate()

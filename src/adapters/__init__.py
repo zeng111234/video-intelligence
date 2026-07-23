@@ -13,8 +13,10 @@ _EXPORT_MODULES = {
     "CloudASRProvider": "src.adapters.cloud_asr",
     "DisabledLicensedSearchProvider": "src.adapters.licensed",
     "DouyinHotBillboardAdapter": "src.adapters.official",
+    "DouyinHotWordsAdapter": "src.adapters.official",
     "DouyinKeywordAdapter": "src.adapters.official",
     "FFmpegVideoEditor": "src.adapters.video_editor",
+    "HotWordEntry": "src.adapters.official",
     "InternalAvatarProvider": "src.adapters.avatar",
     "LLMAdapterError": "src.adapters.llm",
     "LicensedProviderError": "src.adapters.licensed",
@@ -67,7 +69,9 @@ if TYPE_CHECKING:
     )
     from src.adapters.official import (
         DouyinHotBillboardAdapter,
+        DouyinHotWordsAdapter,
         DouyinKeywordAdapter,
+        HotWordEntry,
         OfficialApiError,
     )
     from src.adapters.public_metadata import PublicMetadataResearchAdapter

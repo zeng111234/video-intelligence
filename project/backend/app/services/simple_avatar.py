@@ -113,13 +113,7 @@ class SimpleAvatarService:
     ) -> str:
         """使用图片和音频创建视频"""
         try:
-            import cv2
-            import subprocess
-
             output_path = str(OUTPUT_DIR / f"video_{task_id}.mp4")
-
-            # 获取音频时长
-            duration = await self._get_audio_duration(audio_path)
 
             # 使用 ffmpeg 合成视频
             cmd = [
@@ -226,8 +220,6 @@ class SimpleAvatarService:
     async def _get_audio_duration(self, audio_path: str) -> float:
         """获取音频时长"""
         try:
-            import subprocess
-
             cmd = [
                 "ffprobe",
                 "-v", "error",
@@ -244,7 +236,7 @@ class SimpleAvatarService:
             stdout, _ = await process.communicate()
 
             return float(stdout.decode().strip())
-        except:
+        except Exception:
             return 10.0  # 默认 10 秒
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:

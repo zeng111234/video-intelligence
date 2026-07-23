@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -38,6 +39,7 @@ import type { ColumnsType } from "antd/es/table";
 import {
   createPublishBatch,
   getPublishConfig,
+  importEditedVideoToPublish,
   listPublishAssets,
   listPublishBatches,
   listPublishPlatforms,
@@ -143,6 +145,8 @@ function modeLabel(mode: string) {
 
 export default function PublishPage() {
   const toast = useToast();
+  const [searchParams] = useSearchParams();
+  const editTaskId = searchParams.get("editTask")?.trim() || "";
   const [workflowStep, setWorkflowStep] = useState<"config" | "publish">("config");
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [availablePlatforms, setAvailablePlatforms] = useState<PublishPlatformCapability[]>([]);
@@ -246,6 +250,25 @@ export default function PublishPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!editTaskId) return;
+    let active = true;
+    void importEditedVideoToPublish(editTaskId)
+      .then((asset) => {
+        if (!active) return;
+        setAssets((current) => [asset, ...current.filter((item) => item.path !== asset.path)]);
+        setVideoPath(asset.path);
+        setWorkflowStep("publish");
+        toast.success("已接收智能剪辑成片，请填写标题并完成发布预检。");
+      })
+      .catch((err) => {
+        if (active) toast.error((err as Error).message || "接收智能剪辑成片失败");
+      });
+    return () => {
+      active = false;
+    };
+  }, [editTaskId, toast]);
 
   const addTag = useCallback(() => {
     const trimmed = tagInput.trim().replace(/^#/, "");

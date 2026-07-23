@@ -104,7 +104,7 @@ class OneApiLicensedSearchProvider:
         self,
         platform: Platform,
         keyword: str,
-        published_after: datetime,
+        published_after: datetime | None,
         limit: int,
         idempotency_key: str,
     ) -> ProviderSearchPage:
@@ -338,14 +338,16 @@ class OneApiLicensedSearchProvider:
             )
 
     @staticmethod
-    def _window_days(published_after: datetime, observed_at: datetime) -> int:
+    def _window_days(published_after: datetime | None, observed_at: datetime) -> int:
+        if published_after is None:
+            return 0
         return 1 if observed_at - published_after <= timedelta(hours=25) else 7
 
     def _search_request(
         self,
         platform: Platform,
         keyword: str,
-        published_after: datetime,
+        published_after: datetime | None,
         observed_at: datetime,
         limit: int,
     ) -> tuple[str, dict[str, Any]]:
@@ -355,9 +357,9 @@ class OneApiLicensedSearchProvider:
                 "keyword": keyword,
                 "count": limit,
                 "offset": "0",
-                "publish_time": str(1 if window_days == 1 else 7),
+                "publish_time": str(window_days),
                 "filter_duration": "",
-                "sort_type": "1",
+                "sort_type": "0",
                 "search_id": "",
             }
         if platform == Platform.XIAOHONGSHU:
@@ -366,7 +368,7 @@ class OneApiLicensedSearchProvider:
                 "page": 1,
                 "sort_type": "popularity_descending",
                 "note_type": "不限",
-                "time_filter": "一天内" if window_days == 1 else "一周内",
+                "time_filter": "不限" if window_days == 0 else ("一天内" if window_days == 1 else "一周内"),
                 "search_id": "",
                 "search_session_id": "",
                 "source": "explore_feed",
@@ -376,7 +378,7 @@ class OneApiLicensedSearchProvider:
             "keyword": keyword,
             "duration": 0,
             "sort": 2,
-            "publish_time": 1 if window_days == 1 else 2,
+                "publish_time": 0 if window_days == 0 else (1 if window_days == 1 else 2),
             "offset": 0,
             "raw": False,
         }

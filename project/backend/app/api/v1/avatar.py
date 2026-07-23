@@ -15,7 +15,7 @@ import shutil
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -234,10 +234,18 @@ def create_job(
 
 
 @router.get("/jobs", response_model=list[AvatarJobResponse])
-def list_jobs(service: AvatarService = Depends(get_avatar_service)):
+def list_jobs(
+    include_sandbox: bool = Query(
+        False,
+        description="是否包含历史 Sandbox 演示任务；生产页面默认只显示真实任务。",
+    ),
+    service: AvatarService = Depends(get_avatar_service),
+):
     tasks = [
         item for item in service.repository.list_tasks() if isinstance(item, AvatarTask)
     ]
+    if not include_sandbox:
+        tasks = [task for task in tasks if not task.is_mock]
     return [_job_response(task) for task in tasks]
 
 

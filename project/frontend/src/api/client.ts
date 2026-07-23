@@ -18,17 +18,31 @@ import type {
   CopywritingSummaryResponse,
   CrawlerBatchListResponse,
   CrawlerBatchResponse,
+  CrawlerBrowserDiscoveryCapabilities,
+  CrawlerBrowserDiscoveryStartResponse,
   CrawlerCandidateMediaPreviewResponse,
   CrawlerCapabilitiesResponse,
   CrawlerDoubaoJobListResponse,
   CrawlerDoubaoMobileCapabilitiesResponse,
   CrawlerDoubaoWorkerStartResponse,
   CrawlerDueRecrawlResponse,
+  CrawlerHotWordsResponse,
+  CrawlerLinkTranscriptionCapabilities,
+  CrawlerLinkTranscriptionPreview,
+  CrawlerLinkTranscriptionResult,
+  CrawlerOfficialHotMonitorResponse,
+  CrawlerOriginalScriptResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
   EditTemplate,
   PipelineFromCandidateRequest,
   PipelineResponse,
+  ProductionBatch,
+  ProductionBatchPreflight,
+  ProductionProfile,
+  PublishFeedback,
+  FeedbackRecommendations,
+  KeywordRunPreflight,
   PublishAsset,
   PublishAssetListResponse,
   PublishBatchListResponse,
@@ -46,6 +60,10 @@ import type {
   TemplateListResponse,
   TranscriptionResponse,
   VideoCapabilitiesResponse,
+  VideoEditorAnalysis,
+  VideoEditorJob,
+  VideoEditorJobListResponse,
+  VideoEditorSourceListResponse,
   VideoEditRequest,
   VideoEditResponse,
   VoiceoverDraftResponse,
@@ -146,6 +164,14 @@ export function getTranscription(taskId: string): Promise<TranscriptionResponse>
 
 export function listTranscriptions(): Promise<TranscriptionResponse[]> {
   return request("/transcriptions");
+}
+
+export function clearTranscriptionHistory(): Promise<{ deleted_count: number }> {
+  return request("/transcriptions/history", { method: "DELETE" });
+}
+
+export function deleteTask(taskId: string): Promise<{ task_id: string; deleted: boolean }> {
+  return request(`/tasks/${taskId}`, { method: "DELETE" });
 }
 
 export function importManualTranscript(params: {
@@ -269,6 +295,103 @@ export function getPipeline(runId: string): Promise<PipelineResponse> {
   return request(`/pipelines/${runId}`);
 }
 
+export function reviewPipeline(
+  runId: string,
+  params: { approved: boolean; reviewer: string; note?: string; approvedText?: string },
+): Promise<PipelineResponse> {
+  return request(`/pipelines/${encodeURIComponent(runId)}/review`, {
+    method: "POST",
+    body: JSON.stringify({
+      approved: params.approved,
+      reviewer: params.reviewer,
+      note: params.note || "",
+      approved_text: params.approvedText || "",
+    }),
+  });
+}
+
+export function retryPipeline(runId: string, idempotencyKey: string): Promise<PipelineResponse> {
+  return request(`/pipelines/${encodeURIComponent(runId)}/retry`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+  });
+}
+
+export function listProductionProfiles(): Promise<{ items: ProductionProfile[] }> {
+  return request("/production/profiles");
+}
+
+export function createProductionProfile(params: Omit<ProductionProfile, "profile_id" | "created_at" | "updated_at">): Promise<ProductionProfile> {
+  return request("/production/profiles", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function listProductionBatches(): Promise<{ items: ProductionBatch[] }> {
+  return request("/production/batches");
+}
+
+export function createProductionBatch(params: {
+  name: string;
+  profile_id: string;
+  candidate_ids: string[];
+}): Promise<ProductionBatch> {
+  return request("/production/batches", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function preflightProductionBatch(batchId: string, params: { rightsHolder: string; rightsConfirmed: boolean; publishPlatforms: string[]; concurrency: number }): Promise<ProductionBatchPreflight> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/preflight`, { method: "POST", body: JSON.stringify({ rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, publish_platforms: params.publishPlatforms, concurrency: params.concurrency }) });
+}
+
+export function startProductionBatch(batchId: string, params: { rightsHolder: string; rightsConfirmed: boolean; publishPlatforms: string[]; concurrency: number }): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/start`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `production-start-${batchId}-${Date.now()}` }, body: JSON.stringify({ rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, publish_platforms: params.publishPlatforms, concurrency: params.concurrency }) });
+}
+
+export function pauseProductionBatch(batchId: string): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/pause`, { method: "POST" });
+}
+
+export function resumeProductionBatch(batchId: string): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/resume`, { method: "POST" });
+}
+
+export function retryProductionBatchFailed(batchId: string): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/retry-failed`, { method: "POST" });
+}
+
+export function preflightProductionBatchPublish(batchId: string, params: { runIds: string[]; publishPlatforms: string[] }): Promise<{ batch_id: string; blocked: boolean; items: Array<{ run_id: string; blocked: boolean; issues?: string[] }> }> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/publish/preflight`, { method: "POST", body: JSON.stringify({ run_ids: params.runIds, publish_platforms: params.publishPlatforms }) });
+}
+
+export function confirmProductionBatchPublish(batchId: string, params: { runIds: string[]; publishPlatforms: string[] }): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/publish`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `production-publish-${batchId}-${Date.now()}` }, body: JSON.stringify({ run_ids: params.runIds, publish_platforms: params.publishPlatforms, confirmation_accepted: true }) });
+}
+
+export function preflightKeywordAutoRun(params: {
+  keyword: string; candidate_count: number; profile_id: string; rights_holder: string; rights_confirmed: boolean; publish_platforms: string[];
+}): Promise<KeywordRunPreflight> {
+  return request("/production/keyword-runs/preflight", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function startKeywordAutoRun(params: {
+  keyword: string; candidate_count: number; profile_id: string; rights_holder: string; rights_confirmed: boolean; publish_platforms: string[];
+}): Promise<{ run_id: string; status: string; message: string }> {
+  return request("/production/keyword-runs", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function listPublishFeedback(): Promise<{ items: PublishFeedback[] }> {
+  return request("/feedback");
+}
+
+export function createPublishFeedback(params: Omit<PublishFeedback, "feedback_id" | "pipeline_run_id" | "platform" | "recorded_at">): Promise<PublishFeedback> {
+  return request("/feedback", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function getFeedbackRecommendations(): Promise<FeedbackRecommendations> {
+  return request("/feedback/recommendations");
+}
+
 export function createVoiceoverDraft(params: {
   taskId: string;
   targetSeconds: number;
@@ -313,8 +436,30 @@ export function updateVoiceoverDraft(params: {
   });
 }
 
-export function listPipelines(): Promise<PipelineResponse[]> {
-  return request("/pipelines");
+export function createComplianceDraft(params: {
+  taskId: string;
+  parentDraftId: string;
+}): Promise<VoiceoverDraftResponse> {
+  return request(`/transcriptions/${params.taskId}/compliance-drafts`, {
+    method: "POST",
+    body: JSON.stringify({ parent_draft_id: params.parentDraftId }),
+  });
+}
+
+export function listComplianceDrafts(taskId: string, limit = 50): Promise<VoiceoverDraftResponse[]> {
+  return request(`/transcriptions/${taskId}/compliance-drafts?limit=${limit}`);
+}
+
+export function listPipelines(params: { candidateId?: string; limit?: number } = {}): Promise<PipelineResponse[]> {
+  const query = new URLSearchParams();
+  if (params.candidateId) query.set("candidate_id", params.candidateId);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return request(`/pipelines${suffix}`);
+}
+
+export function deletePipeline(runId: string): Promise<{ run_id: string; deleted: boolean }> {
+  return request(`/pipelines/${runId}`, { method: "DELETE" });
 }
 
 /* ---- 任务列表 ---- */
@@ -350,8 +495,43 @@ export function getDashboardStats(): Promise<DashboardStatsResponse> {
 
 /* ---- 关键词爬虫 ---- */
 
-export function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesResponse> {
-  return request("/crawler/capabilities");
+export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesResponse> {
+  const caps = await request<CrawlerCapabilitiesResponse>("/crawler/capabilities");
+  // 后端未上线官方热榜字段时兜底，避免页面白屏
+  return {
+    ...caps,
+    official_hot_billboard: caps.official_hot_billboard ?? null,
+    official_hot_words: caps.official_hot_words ?? null,
+  };
+}
+
+export function getCrawlerBrowserDiscoveryCapabilities(): Promise<CrawlerBrowserDiscoveryCapabilities> {
+  return request("/crawler/browser-discovery/capabilities");
+}
+
+export function startCrawlerBrowserDiscovery(): Promise<CrawlerBrowserDiscoveryStartResponse> {
+  return request("/crawler/browser-discovery/start", { method: "POST" });
+}
+
+/** 官方实时热点词（用于搜索框建议）；后端未上线时由调用方 catch 降级 */
+export async function getCrawlerHotWords(): Promise<CrawlerHotWordsResponse> {
+  const resp = await request<CrawlerHotWordsResponse>("/crawler/hotwords");
+  return { words: Array.isArray(resp?.words) ? resp.words : [] };
+}
+
+/** 官方热榜一键监测：内部先执行到期复爬，再同步热榜并匹配关键词 */
+export function officialHotMonitor(keyword?: string): Promise<CrawlerOfficialHotMonitorResponse> {
+  return request("/crawler/official-hot/monitor", {
+    method: "POST",
+    body: JSON.stringify(keyword ? { keyword } : {}),
+  });
+}
+
+/** 基于平台信息生成数字人口播文案。 */
+export function generateOriginalScript(videoId: string): Promise<CrawlerOriginalScriptResponse> {
+  return request(`/crawler/candidates/${encodeURIComponent(videoId)}/original-script`, {
+    method: "POST",
+  });
 }
 
 export function previewCrawlerBatch(
@@ -378,6 +558,10 @@ export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
 
 export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> {
   return request(`/crawler/batches/${batchId}`);
+}
+
+export function deleteCrawlerBatch(batchId: string): Promise<{ batch_id: string; deleted: boolean }> {
+  return request(`/crawler/batches/${batchId}`, { method: "DELETE" });
 }
 
 export function executeDueCrawlerRecrawls(limit = 5): Promise<CrawlerDueRecrawlResponse> {
@@ -415,6 +599,36 @@ export function createCrawlerCandidateTranscription(params: {
   });
 }
 
+export function getCrawlerLinkTranscriptionCapabilities(): Promise<CrawlerLinkTranscriptionCapabilities> {
+  return request("/crawler/link-transcriptions/capabilities");
+}
+
+export function previewCrawlerLinkTranscription(shareText: string): Promise<CrawlerLinkTranscriptionPreview> {
+  return request("/crawler/link-transcriptions/preview", {
+    method: "POST",
+    body: JSON.stringify({ share_text: shareText }),
+  });
+}
+
+export function createCrawlerLinkTranscription(params: {
+  shareText: string; rightsHolder: string; rightsConfirmed: boolean; modelName?: string;
+}): Promise<CrawlerLinkTranscriptionResult> {
+  return request("/crawler/link-transcriptions", {
+    method: "POST",
+    body: JSON.stringify({ share_text: params.shareText, rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, model_name: params.modelName || "large-v3-turbo" }),
+  });
+}
+
+export function fallbackCrawlerLinkTranscription(params: {
+  shareText: string; workId: string; rightsHolder: string; rightsConfirmed: boolean; idempotencyKey: string; modelName?: string;
+}): Promise<CrawlerLinkTranscriptionResult> {
+  return request("/crawler/link-transcriptions/fallback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": params.idempotencyKey },
+    body: JSON.stringify({ share_text: params.shareText, work_id: params.workId, rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, model_name: params.modelName || "large-v3-turbo", confirmed: true }),
+  });
+}
+
 export function createCrawlerDoubaoJobs(candidateIds: string[]): Promise<CrawlerDoubaoJobListResponse> {
   return request("/crawler/doubao-browser/jobs", {
     method: "POST",
@@ -439,8 +653,14 @@ export function startCrawlerDoubaoWorker(): Promise<CrawlerDoubaoWorkerStartResp
   });
 }
 
-export function getCrawlerDoubaoMobileCapabilities(): Promise<CrawlerDoubaoMobileCapabilitiesResponse> {
-  return request("/crawler/doubao-mobile/capabilities");
+export async function getCrawlerDoubaoMobileCapabilities(): Promise<CrawlerDoubaoMobileCapabilitiesResponse> {
+  const caps = await request<CrawlerDoubaoMobileCapabilitiesResponse>("/crawler/doubao-mobile/capabilities");
+  // 后端未上线 prerequisites / estimated_cost_cny 字段时兜底
+  return {
+    ...caps,
+    prerequisites: caps.prerequisites ?? null,
+    estimated_cost_cny: caps.estimated_cost_cny ?? 0,
+  };
 }
 
 export function createCrawlerDoubaoMobileJobs(candidateIds: string[]): Promise<CrawlerDoubaoJobListResponse> {
@@ -546,6 +766,12 @@ export function updatePublishConfig(
 
 export function listPublishAssets(): Promise<PublishAssetListResponse> {
   return request("/publish/assets");
+}
+
+export function importEditedVideoToPublish(taskId: string): Promise<PublishAsset> {
+  return request(`/publish/assets/from-edit/${encodeURIComponent(taskId)}`, {
+    method: "POST",
+  });
 }
 
 export async function uploadPublishAsset(file: File): Promise<PublishAsset> {
@@ -656,8 +882,9 @@ export function createAvatarJob(params: AvatarJobCreateRequest): Promise<AvatarJ
   });
 }
 
-export function listAvatarJobs(): Promise<AvatarJob[]> {
-  return request("/avatar/jobs");
+export function listAvatarJobs(params: { includeSandbox?: boolean } = {}): Promise<AvatarJob[]> {
+  const suffix = params.includeSandbox ? "?include_sandbox=true" : "";
+  return request(`/avatar/jobs${suffix}`);
 }
 
 export function getAvatarJob(taskId: string): Promise<AvatarJob> {
@@ -757,4 +984,72 @@ export async function applyTemplate(
 
 export async function getSubtitleStatus(): Promise<SubtitleStatusResponse> {
   return request<SubtitleStatusResponse>("/subtitles/status");
+}
+
+export function listVideoEditorSources(): Promise<VideoEditorSourceListResponse> {
+  return request("/video-editor/sources");
+}
+
+export function createVideoEditorAnalysis(params: {
+  sourceId: string;
+  targetPlatform: string;
+  subtitleEnabled: boolean;
+  subtitleModel: "large-v3-turbo" | "base";
+  language?: string;
+}): Promise<VideoEditorAnalysis> {
+  return request("/video-editor/analyses", {
+    method: "POST",
+    body: JSON.stringify({
+      source_id: params.sourceId,
+      target_platform: params.targetPlatform,
+      subtitle_enabled: params.subtitleEnabled,
+      subtitle_model: params.subtitleModel,
+      language: params.language || "zh",
+    }),
+  });
+}
+
+export function getVideoEditorAnalysis(analysisId: string): Promise<VideoEditorAnalysis> {
+  return request(`/video-editor/analyses/${encodeURIComponent(analysisId)}`);
+}
+
+export function generateVideoEditorContentAdvice(analysisId: string): Promise<{
+  enabled: boolean;
+  message: string;
+  advice: string[];
+}> {
+  return request(`/video-editor/analyses/${encodeURIComponent(analysisId)}/content-advice`, {
+    method: "POST",
+  });
+}
+
+export function createVideoEditorJob(params: {
+  analysisId: string;
+  steps: { kind: string; params: Record<string, unknown>; enabled: boolean }[];
+  outputFormat: string;
+  outputResolution: string;
+  outputFps: number;
+  outputBitrate: string;
+  subtitleEnabled: boolean;
+}): Promise<VideoEditorJob> {
+  return request("/video-editor/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      analysis_id: params.analysisId,
+      steps: params.steps,
+      output_format: params.outputFormat,
+      output_resolution: params.outputResolution,
+      output_fps: params.outputFps,
+      output_bitrate: params.outputBitrate,
+      subtitle_enabled: params.subtitleEnabled,
+    }),
+  });
+}
+
+export function getVideoEditorJob(taskId: string): Promise<VideoEditorJob> {
+  return request(`/video-editor/jobs/${encodeURIComponent(taskId)}`);
+}
+
+export function listVideoEditorJobs(): Promise<VideoEditorJobListResponse> {
+  return request("/video-editor/jobs");
 }

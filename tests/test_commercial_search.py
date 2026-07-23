@@ -17,7 +17,10 @@ from src.models import (
 )
 from src.repositories import MockRepository, SQLiteRepository
 from src.services import HeatService, KeywordTrendService, SourceService
-from src.services.commercial_search import CommercialSearchService
+from src.services.commercial_search import (
+    CommercialSearchService,
+    title_matches_keyword,
+)
 
 
 class FixtureProvider:
@@ -159,7 +162,7 @@ def test_douyin_only_service_never_calls_other_platforms() -> None:
     runs = repository.list_platform_search_runs(batch.batch_id)
 
     assert [item.platform for item in preview] == [Platform.DOUYIN]
-    assert preview[0].estimated_cost_cny == 0.03
+    assert preview[0].estimated_cost_cny == 0.09
     assert batch.platforms == [Platform.DOUYIN]
     assert [run.platform for run in runs] == [Platform.DOUYIN]
     assert provider.search_calls == [Platform.DOUYIN]
@@ -399,6 +402,132 @@ def test_empty_provider_response_is_recorded_as_provider_empty() -> None:
     assert provider.search_calls == [Platform.DOUYIN]
 
 
+def test_strict_keyword_relevance_keeps_title_or_hashtag_matches_only() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="title-match",
+                title="2026 带货实战拆解 #带货",
+                author_id="author-title",
+                author_name="普通作者",
+                published_at=now - timedelta(hours=2),
+                source_url="https://www.douyin.com/video/title-match",
+                provider_rank=1,
+                metrics={
+                    "item_id": "title-match",
+                    "sampled_at": now,
+                    "likes": 100,
+                    "confidence": 0.9,
+                },
+            ),
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="author-only",
+                title="今天去钓鱼",
+                author_id="author-only",
+                author_name="带货达人",
+                published_at=now - timedelta(hours=2),
+                source_url="https://www.douyin.com/video/author-only",
+                provider_rank=2,
+                metrics={
+                    "item_id": "author-only",
+                    "sampled_at": now,
+                    "likes": 90,
+                    "confidence": 0.9,
+                },
+            ),
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="unrelated",
+                title="日常 vlog 记录",
+                author_id="author-unrelated",
+                author_name="普通作者",
+                published_at=now - timedelta(hours=2),
+                source_url="https://www.douyin.com/video/unrelated",
+                provider_rank=3,
+                metrics={
+                    "item_id": "unrelated",
+                    "sampled_at": now,
+                    "likes": 80,
+                    "confidence": 0.9,
+                },
+            ),
+        ],
+        observed_at=now,
+        request_id="provider-relevance",
+        api_call_count=1,
+        billable_units=0.03,
+        raw_item_count=3,
+        parsed_item_count=3,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="带货")
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.returned_count == 1
+    assert run.irrelevant_count == 2
+    assert run.result_state == "no_hot"
+    assert [candidate.video_id for candidate in repository.list_candidates()] == [
+        "douyin-title-match"
+    ]
+    assert len(repository.list_candidate_matches(run.run_id)) == 1
+    assert len(repository.list_sampling_checkpoints("带货")) == 2
+
+
+def test_all_strictly_irrelevant_results_are_reported_without_importing() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="author-only",
+                title="今天去钓鱼",
+                author_id="author-only",
+                author_name="带货达人",
+                published_at=now - timedelta(hours=2),
+                source_url="https://www.douyin.com/video/author-only",
+                provider_rank=1,
+                metrics={
+                    "item_id": "author-only",
+                    "sampled_at": now,
+                    "likes": 90,
+                    "confidence": 0.9,
+                },
+            )
+        ],
+        observed_at=now,
+        request_id="provider-all-irrelevant",
+        api_call_count=1,
+        billable_units=0.03,
+        raw_item_count=1,
+        parsed_item_count=1,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="带货")
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.result_state == "all_irrelevant"
+    assert run.returned_count == 0
+    assert run.irrelevant_count == 1
+    assert repository.list_candidates() == []
+    assert repository.list_sampling_checkpoints("带货") == []
+
+
+def test_strict_keyword_relevance_normalizes_spacing_and_punctuation() -> None:
+    assert title_matches_keyword(title="AI-获客案例 #AI获客", keyword="ＡＩ 获客")
+    assert not title_matches_keyword(title="日常 vlog", keyword="获客")
+
+
 def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
@@ -449,6 +578,70 @@ def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> N
     assert run.returned_count == 0
     assert len(repository.list_candidates()) == 0
     assert provider.search_calls == [Platform.DOUYIN]
+
+
+def test_unlimited_monitoring_keeps_older_related_videos_and_schedules_three_points() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="older-but-related",
+                title="租房避坑完整指南",
+                author_id="author-rent",
+                author_name="租房作者",
+                published_at=now - timedelta(days=90),
+                source_url="https://www.douyin.com/video/older-but-related",
+                provider_rank=1,
+                metrics={
+                    "item_id": "older-but-related",
+                    "sampled_at": now,
+                    "likes": 1200,
+                    "comments": 90,
+                    "shares": 30,
+                    "favorites": 70,
+                    "confidence": 0.9,
+                },
+            )
+        ],
+        observed_at=now,
+        request_id="provider-unlimited",
+        api_call_count=1,
+        billable_units=0.03,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="租房")
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+    checkpoints = repository.list_sampling_checkpoints("租房")
+
+    assert batch.published_window_days == 0
+    assert run.out_of_window_count == 0
+    assert run.returned_count == 1
+    assert [item.offset_hours for item in checkpoints] == [6, 24]
+
+
+def test_unlimited_monitoring_executes_only_due_zero_window_recrawls() -> None:
+    first_seen = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(first_seen)
+    service = _douyin_only_service(repository, provider, first_seen)
+    service.execute(keyword="租房")
+
+    provider.now = first_seen + timedelta(hours=6)
+    due_service = _douyin_only_service(repository, provider, provider.now)
+    executed = due_service.execute_due_recrawls(
+        max_groups=5,
+        published_window_days=0,
+    )
+
+    assert len(executed) == 1
+    checkpoints = repository.list_sampling_checkpoints("租房")
+    assert next(item for item in checkpoints if item.offset_hours == 6).status == SamplingStatus.OBSERVED
+    assert next(item for item in checkpoints if item.offset_hours == 24).status == SamplingStatus.PENDING
 
 
 def test_low_engagement_search_result_is_not_labeled_hot() -> None:
@@ -544,6 +737,20 @@ def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses()
     ] == [SamplingStatus.MISSED]
 
 
+def test_low_cost_fallback_can_skip_commercial_recrawl_schedule() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+
+    _douyin_only_service(repository, provider, now).execute(
+        keyword="二手车",
+        cache_ttl_minutes=24 * 60,
+        schedule_recrawls=False,
+    )
+
+    assert repository.list_sampling_checkpoints("二手车") == []
+
+
 def test_monthly_hard_limit_blocks_network_calls() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
 
@@ -606,7 +813,7 @@ def test_preview_reports_price_and_uses_six_hour_cache() -> None:
     ).preview(keyword="二手车")
 
     assert all(not item.cache_hit for item in later_preview)
-    assert sum(item.estimated_cost_cny or 0 for item in later_preview) == 0.3
+    assert sum(item.estimated_cost_cny or 0 for item in later_preview) == 0.9
 
 
 def test_search_batch_model_rejects_unsupported_window() -> None:
@@ -618,6 +825,6 @@ def test_search_batch_model_rejects_unsupported_window() -> None:
             mode=ProviderMode.SANDBOX,
         )
     except ValueError as exc:
-        assert "近 1 天或近 7 天" in str(exc)
+        assert "不限、近 1 天或近 7 天" in str(exc)
     else:
         raise AssertionError("unsupported window must be rejected")

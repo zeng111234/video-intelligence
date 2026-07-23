@@ -19,6 +19,7 @@ import {
   Select,
   Progress,
   Empty,
+  Popconfirm,
   Switch,
   Divider,
   Timeline,
@@ -41,9 +42,19 @@ import {
   SendOutlined,
   SettingOutlined,
   WarningOutlined,
+  DeleteOutlined,
 } from "@ant-design/icons";
-import { createPipeline, listPipelines, listTasks } from "../api/client";
-import type { PipelineResponse, TaskItem } from "../api/types";
+import {
+  listPipelines,
+  deletePipeline,
+  listTasks,
+  listProductionProfiles,
+  preflightKeywordAutoRun,
+  retryPipeline,
+  reviewPipeline,
+  startKeywordAutoRun,
+} from "../api/client";
+import type { PipelineResponse, ProductionProfile, TaskItem } from "../api/types";
 import { Link, useSearchParams } from "react-router-dom";
 
 const { Title, Text } = Typography;
@@ -141,6 +152,15 @@ export default function PipelinePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [pipelineHistory, setPipelineHistory] = useState<PipelineResponse[]>([]);
   const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [reviewer, setReviewer] = useState("当前操作人");
+  const [reviewNote, setReviewNote] = useState("");
+  const [approvedText, setApprovedText] = useState("");
+  const [controlLoading, setControlLoading] = useState(false);
+  const [profiles, setProfiles] = useState<ProductionProfile[]>([]);
+  const [profileId, setProfileId] = useState<string>();
+  const [rightsHolder, setRightsHolder] = useState("");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [preflightMessage, setPreflightMessage] = useState("");
 
   /** 统计数据 - 从真实数据计算 */
   const stats = useMemo(() => {
@@ -159,15 +179,20 @@ export default function PipelinePage() {
   const loadData = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [pipelineData, taskData] = await Promise.allSettled([
+      const [pipelineData, taskData, profileData] = await Promise.allSettled([
         listPipelines(),
         listTasks(),
+        listProductionProfiles(),
       ]);
       if (pipelineData.status === "fulfilled") {
         setPipelineHistory(pipelineData.value || []);
       }
       if (taskData.status === "fulfilled") {
         setTasks(taskData.value?.items || []);
+      }
+      if (profileData.status === "fulfilled") {
+        setProfiles(profileData.value.items || []);
+        setProfileId((current) => current || profileData.value.items[0]?.profile_id);
       }
     } catch {
       // 独立处理错误
@@ -209,6 +234,64 @@ export default function PipelinePage() {
     toast.success("任务列表已刷新");
   }, [loadData, toast]);
 
+  const replacePipeline = useCallback((updated: PipelineResponse) => {
+    setSelectedPipeline(updated);
+    setPipelineHistory((items) => items.map((item) => item.run_id === updated.run_id ? updated : item));
+  }, []);
+
+  const handleDeletePipeline = async (run: PipelineResponse) => {
+    try {
+      await deletePipeline(run.run_id);
+      setPipelineHistory((items) => items.filter((item) => item.run_id !== run.run_id));
+      setSelectedPipeline((current) => current?.run_id === run.run_id ? null : current);
+      toast.success("生产批次历史已删除");
+    } catch (error) {
+      toast.error((error as Error).message || "删除生产批次失败");
+    }
+  };
+
+  const handleReview = async (approved: boolean) => {
+    if (!selectedPipeline) return;
+    if (!reviewer.trim()) {
+      toast.warning("请填写审核人");
+      return;
+    }
+    setControlLoading(true);
+    try {
+      const updated = await reviewPipeline(selectedPipeline.run_id, {
+        approved,
+        reviewer: reviewer.trim(),
+        note: reviewNote.trim(),
+        approvedText: approvedText.trim(),
+      });
+      replacePipeline(updated);
+      setReviewNote("");
+      setApprovedText("");
+      toast.success(approved ? "审核已通过，后台将继续数字人、剪辑与发布包" : "已记录返工意见，可重试候选链路");
+    } catch (err) {
+      toast.error((err as Error).message || "保存审核结果失败");
+    } finally {
+      setControlLoading(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!selectedPipeline) return;
+    setControlLoading(true);
+    try {
+      const updated = await retryPipeline(
+        selectedPipeline.run_id,
+        `retry-${selectedPipeline.run_id}-${Date.now()}`,
+      );
+      replacePipeline(updated);
+      toast.success("已使用同一生产任务重新执行候选文案链路");
+    } catch (err) {
+      toast.error((err as Error).message || "重试失败");
+    } finally {
+      setControlLoading(false);
+    }
+  };
+
   /** 添加关键词 */
   const handleAddKeyword = () => {
     const trimmed = keyword.trim();
@@ -236,22 +319,28 @@ export default function PipelinePage() {
       return;
     }
 
-    const activeStages = Object.entries(enabledStages)
-      .filter(([_, enabled]) => enabled)
-      .map(([key]) => key);
-
-    if (activeStages.length === 0) {
-      toast.warning("请至少启用一个流水线阶段");
+    if (!profileId || !rightsHolder.trim() || !rightsConfirmed) {
+      toast.warning("请选择完整 IP 配方并确认媒体处理授权");
       return;
     }
 
     setLoading(true);
     try {
-      const results = await Promise.all(
-        keywords.map((kw) => createPipeline(kw, { count: videoCount, style: videoStyle, stages: activeStages }))
-      );
-      toast.success(`已创建 ${keywords.length} 个生产批次`);
-      setPipelineHistory((prev) => [...results, ...prev]);
+      const count = Math.min(10, Number(videoCount));
+      const requests = keywords.map((kw) => ({
+        keyword: kw, candidate_count: count, profile_id: profileId, rights_holder: rightsHolder.trim(), rights_confirmed: true, publish_platforms: ["douyin"],
+      }));
+      const checks = await Promise.all(requests.map(preflightKeywordAutoRun));
+      const missing = checks.flatMap((item) => item.missing);
+      if (missing.length) {
+        setPreflightMessage(missing.join("；"));
+        toast.warning("预检未通过，请补全 IP 配方或授权信息");
+        return;
+      }
+      const results = await Promise.all(requests.map(startKeywordAutoRun));
+      setPreflightMessage(checks[0]?.message || "");
+      toast.success(`已将 ${results.length} 个关键词任务加入真实执行队列`);
+      await loadData();
       setKeywords([]);
     } catch (err) {
       toast.error((err as Error).message || "创建失败");
@@ -324,11 +413,23 @@ export default function PipelinePage() {
     },
     {
       title: "操作",
-      width: 80,
+      width: 150,
       render: (_: unknown, record: PipelineResponse) => (
-        <Button type="link" size="small" onClick={() => setSelectedPipeline(record)}>
-          详情
-        </Button>
+        <Space size={0}>
+          <Button type="link" size="small" onClick={() => setSelectedPipeline(record)}>
+            详情
+          </Button>
+          <Popconfirm
+            title="删除这条生产批次？"
+            description="只删除本次流水线记录，不会删除关联的候选内容或素材。"
+            okText="删除"
+            okButtonProps={{ danger: true }}
+            cancelText="取消"
+            onConfirm={() => handleDeletePipeline(record)}
+          >
+            <Button type="link" danger size="small" icon={<DeleteOutlined />}>删除</Button>
+          </Popconfirm>
+        </Space>
       ),
     },
   ];
@@ -340,7 +441,7 @@ export default function PipelinePage() {
         <Title level={4} style={{ margin: 0 }}>
           <ThunderboltOutlined /> 生产批次
         </Title>
-        <Text type="secondary">创建和查看生产批次记录；创建记录不代表已经开始生成视频。</Text>
+        <Text type="secondary">关键词任务会进入后台执行：检索、选片、媒体转写与文案自动完成；文案审核后才继续数字人与成片。</Text>
       </div>
 
       {/* 统计卡片 */}
@@ -434,7 +535,7 @@ export default function PipelinePage() {
 
               {/* 流水线阶段配置 */}
               <div>
-                <Text strong style={{ display: "block", marginBottom: 12 }}>
+                  <Text strong style={{ display: "block", marginBottom: 12 }}>
                   <SettingOutlined style={{ marginRight: 8 }} />
                   流水线阶段配置
                 </Text>
@@ -463,6 +564,7 @@ export default function PipelinePage() {
                       <Switch
                         size="small"
                         checked={enabledStages[stage.key]}
+                        disabled
                         onChange={() => toggleStage(stage.key)}
                       />
                     </div>
@@ -479,8 +581,6 @@ export default function PipelinePage() {
                   <Select value={videoCount} onChange={setVideoCount} style={{ width: "100%" }}>
                     <Option value="5">每个关键词 5 条</Option>
                     <Option value="10">每个关键词 10 条</Option>
-                    <Option value="20">每个关键词 20 条</Option>
-                    <Option value="50">每个关键词 50 条</Option>
                   </Select>
                 </Col>
                 <Col span={12}>
@@ -494,6 +594,16 @@ export default function PipelinePage() {
                 </Col>
               </Row>
 
+              <Select
+                value={profileId}
+                onChange={setProfileId}
+                options={profiles.map((item) => ({ value: item.profile_id, label: item.name }))}
+                placeholder="选择完整 IP 配方（形象、音色、剪辑模板）"
+              />
+              <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} placeholder="媒体处理授权主体" maxLength={80} />
+              <Space><Switch checked={rightsConfirmed} onChange={setRightsConfirmed} /><Text>我确认拥有所选候选的媒体处理授权</Text></Space>
+              {preflightMessage && <Text type="secondary">预检：{preflightMessage}</Text>}
+
               {/* 创建按钮 */}
               <Button
                 type="primary"
@@ -504,7 +614,7 @@ export default function PipelinePage() {
                 onClick={handleCreate}
                 disabled={keywords.length === 0}
               >
-                创建生产批次
+                预检并启动真实流水线
               </Button>
             </Space>
           </Card>
@@ -535,6 +645,54 @@ export default function PipelinePage() {
                   </Col>
                 </Row>
 
+                {selectedPipeline.status === "paused" && selectedPipeline.current_stage === "human_review" && (
+                  <Card size="small" title="人工审核" style={{ background: "#fffbe6" }}>
+                    <Space direction="vertical" style={{ width: "100%" }}>
+                      <Input
+                        value={reviewer}
+                        onChange={(event) => setReviewer(event.target.value)}
+                        placeholder="审核人"
+                        maxLength={80}
+                      />
+                      <Input.TextArea
+                        value={approvedText}
+                        onChange={(event) => setApprovedText(event.target.value)}
+                        placeholder="最终口播文案（可选；留空则使用 AI 生成的审核稿）"
+                        maxLength={2000}
+                        autoSize={{ minRows: 3, maxRows: 8 }}
+                      />
+                      <Input.TextArea
+                        value={reviewNote}
+                        onChange={(event) => setReviewNote(event.target.value)}
+                        placeholder="审核意见（返工时建议填写）"
+                        maxLength={500}
+                        autoSize={{ minRows: 2, maxRows: 4 }}
+                      />
+                      <Space wrap>
+                        <Button type="primary" loading={controlLoading} onClick={() => handleReview(true)}>
+                          审核通过，继续生成成片
+                        </Button>
+                        <Button danger loading={controlLoading} onClick={() => handleReview(false)}>
+                          要求返工
+                        </Button>
+                      </Space>
+                    </Space>
+                  </Card>
+                )}
+
+                {(selectedPipeline.status === "failed" || selectedPipeline.status === "paused") &&
+                  selectedPipeline.config.source === "crawler_candidate" && (
+                    <Button loading={controlLoading} onClick={handleRetry}>
+                      重试候选文案链路
+                    </Button>
+                  )}
+
+                {selectedPipeline.status === "pending" && selectedPipeline.current_stage === "avatar_generation" && (
+                  <Text type="secondary">
+                    文案已审核通过，后台 worker 正在使用 IP 配方继续数字人、剪辑和人工发布包阶段。
+                  </Text>
+                )}
+
                 {/* 流水线步骤 */}
                 {selectedPipeline.stages && selectedPipeline.stages.length > 0 && (
                   <div>
@@ -553,6 +711,27 @@ export default function PipelinePage() {
                               : stage.status === "failed"
                                 ? "error"
                                 : "wait",
+                      }))}
+                    />
+                  </div>
+                )}
+
+                {selectedPipeline.events.length > 0 && (
+                  <div>
+                    <Text strong style={{ marginBottom: 12, display: "block" }}>状态事件</Text>
+                    <Timeline
+                      items={[...selectedPipeline.events].reverse().map((event) => ({
+                        color: event.action.includes("failed") || event.action.includes("rejected") ? "red" : "blue",
+                        children: (
+                          <div>
+                            <Text strong>{event.message}</Text>
+                            <br />
+                            <Text type="secondary">
+                              {event.created_at ? new Date(event.created_at).toLocaleString("zh-CN") : ""}
+                              {event.stage ? ` · ${STAGE_LABEL[event.stage] || event.stage}` : ""}
+                            </Text>
+                          </div>
+                        ),
                       }))}
                     />
                   </div>
