@@ -619,6 +619,15 @@ export function createCrawlerLinkTranscription(params: {
   });
 }
 
+export function createCrawlerCandidateLinkTranscription(params: {
+  candidateId: string; rightsHolder: string; rightsConfirmed: boolean; modelName?: string;
+}): Promise<CrawlerLinkTranscriptionResult> {
+  return request(`/crawler/link-transcriptions/candidates/${encodeURIComponent(params.candidateId)}`, {
+    method: "POST",
+    body: JSON.stringify({ rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, model_name: params.modelName || "large-v3-turbo" }),
+  });
+}
+
 export function fallbackCrawlerLinkTranscription(params: {
   shareText: string; workId: string; rightsHolder: string; rightsConfirmed: boolean; idempotencyKey: string; modelName?: string;
 }): Promise<CrawlerLinkTranscriptionResult> {

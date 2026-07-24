@@ -7,11 +7,14 @@ rewrite media URLs to remove watermarks.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
+
+import httpx
 
 
 _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -29,6 +32,8 @@ _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
+_PUBLIC_PAGE_TIMEOUT_SECONDS = 12.0
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
 class DouyinParserError(RuntimeError):
@@ -126,6 +131,58 @@ class LocalDouyinBrowserParserClient:
             _BROWSER_LOCK.release()
 
     def _resolve_once(self, link: ParsedDouyinLink) -> ParsedDouyinMedia:
+        """Prefer the public page payload, then use an ephemeral browser fallback."""
+        try:
+            return self._resolve_from_public_page(link)
+        except Exception:
+            # Public page markup changes frequently.  The browser fallback observes
+            # the normal page load without relying on a private account session.
+            return self._resolve_with_browser(link)
+
+    def _resolve_from_public_page(self, link: ParsedDouyinLink) -> ParsedDouyinMedia:
+        current_url, html = self._fetch_public_share_page(link.share_url)
+        marker = re.search(r"window\._ROUTER_DATA\s*=\s*", html)
+        if marker is None:
+            raise RuntimeError("公开分享页未提供可读取的作品数据")
+        payload, _ = json.JSONDecoder().raw_decode(html[marker.end() :].lstrip())
+        captured: dict[str, str] = {}
+        self._capture_router_payload(payload, captured)
+        work_id = captured.get("work_id") or link.work_id
+        media_url = captured.get("media_url")
+        if not media_url:
+            raise RuntimeError("公开分享页未提供可转写的视频流")
+        if not work_id or not work_id.isdigit():
+            raise RuntimeError("公开分享页未返回有效作品 ID")
+        title = captured.get("title") or f"抖音作品 {work_id}"
+        return ParsedDouyinMedia(
+            share_url=current_url,
+            work_id=work_id,
+            media_url=media_url,
+            title=title[:200],
+        )
+
+    @staticmethod
+    def _fetch_public_share_page(share_url: str) -> tuple[str, str]:
+        """Follow only public Douyin redirects before reading the public HTML."""
+        current_url = share_url
+        with httpx.Client(timeout=_PUBLIC_PAGE_TIMEOUT_SECONDS, follow_redirects=False) as client:
+            for _ in range(5):
+                response = client.get(current_url, headers={"User-Agent": _BROWSER_USER_AGENT})
+                if response.status_code not in _REDIRECT_STATUS_CODES:
+                    response.raise_for_status()
+                    return current_url, response.text
+                location = response.headers.get("location")
+                if not location:
+                    raise RuntimeError("分享链接重定向缺少目标地址")
+                next_url = urljoin(current_url, location)
+                parsed = urlparse(next_url)
+                host = parsed.hostname.casefold() if parsed.hostname else ""
+                if parsed.scheme != "https" or host not in _ALLOWED_SHARE_HOSTS:
+                    raise RuntimeError("分享链接重定向到了不受支持的地址")
+                current_url = next_url
+        raise RuntimeError("分享链接重定向次数过多")
+
+    def _resolve_with_browser(self, link: ParsedDouyinLink) -> ParsedDouyinMedia:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
 
@@ -222,3 +279,26 @@ class LocalDouyinBrowserParserClient:
                     if isinstance(value, str) and value.startswith("https://"):
                         captured["media_url"] = value
                         return
+
+    @staticmethod
+    def _capture_router_payload(payload: Any, captured: dict[str, str]) -> None:
+        """Read the public page's original play address without altering it."""
+        if not isinstance(payload, dict):
+            return
+        loader_data = payload.get("loaderData")
+        if not isinstance(loader_data, dict):
+            return
+        for page_data in loader_data.values():
+            if not isinstance(page_data, dict):
+                continue
+            detail = page_data.get("videoInfoRes")
+            if not isinstance(detail, dict):
+                continue
+            items = detail.get("item_list") or detail.get("itemList")
+            if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+                continue
+            LocalDouyinBrowserParserClient._capture_detail_payload(
+                {"aweme_detail": items[0]}, captured
+            )
+            if captured.get("media_url"):
+                return

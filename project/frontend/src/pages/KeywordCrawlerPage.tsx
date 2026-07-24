@@ -28,6 +28,7 @@ import {
 } from "@ant-design/icons";
 import {
   createCrawlerBatch,
+  createCrawlerCandidateLinkTranscription,
   createCrawlerLinkTranscription,
   createPipelineFromCandidate,
   deleteCrawlerBatch,
@@ -252,6 +253,7 @@ export default function KeywordCrawlerPage() {
   const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
   const [linkRightsConfirmed, setLinkRightsConfirmed] = useState(false);
   const [linkSubmitting, setLinkSubmitting] = useState(false);
+  const [candidateLinkSubmittingId, setCandidateLinkSubmittingId] = useState<string | null>(null);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
@@ -347,6 +349,56 @@ export default function KeywordCrawlerPage() {
     } finally {
       setLinkSubmitting(false);
     }
+  };
+
+  const handleCreateCandidateLinkTranscription = async (candidate: CrawlerCandidateResult) => {
+    if (!candidate.source_url) {
+      toast.warning("该候选没有可用的原视频链接");
+      return;
+    }
+    const submit = async () => {
+      setCandidateLinkSubmittingId(candidate.video_id);
+      try {
+        const result = await createCrawlerCandidateLinkTranscription({
+          candidateId: candidate.video_id,
+          rightsHolder,
+          rightsConfirmed: true,
+        });
+        if (result.status === "fallback_required") {
+          toast.warning(`${result.message} 未产生解析费用；如确有必要，请单独使用“付费自动解析”。`);
+          return;
+        }
+        if (result.transcription) {
+          toast.success(result.message);
+          await refresh();
+          navigate(`/transcription?task=${encodeURIComponent(result.transcription.task_id)}`);
+        }
+      } catch (err) {
+        toast.error((err as Error).message);
+      } finally {
+        setCandidateLinkSubmittingId(null);
+      }
+    };
+    if (linkRightsConfirmed) {
+      await submit();
+      return;
+    }
+    Modal.confirm({
+      title: "确认免费提取原文案",
+      content: (
+        <Space direction="vertical" size={6}>
+          <Text>将从“{candidate.title}”的公开原视频链接读取音轨，并在本机转写；不会调用 OneAPI 或云端 ASR。</Text>
+          <Text type="secondary">权利主体：{rightsHolder}</Text>
+          <Text type="secondary">确认后即表示你有权处理该内容；转写完成后仍需人工校对。</Text>
+        </Space>
+      ),
+      okText: "确认并免费提取",
+      cancelText: "取消",
+      onOk: async () => {
+        setLinkRightsConfirmed(true);
+        await submit();
+      },
+    });
   };
 
   useEffect(() => {
@@ -826,6 +878,10 @@ export default function KeywordCrawlerPage() {
                   item={item}
                   onResolveMedia={handleOpenCandidateMedia}
                   mediaSubmitting={mediaSubmitting}
+                  onCreateCandidateLinkTranscription={handleCreateCandidateLinkTranscription}
+                  candidateLinkSubmitting={candidateLinkSubmittingId === item.video_id}
+                  linkParserEnabled={linkCapabilities?.parser_enabled === true}
+                  linkParserMessage={linkCapabilities?.parser_message || undefined}
                   onGenerateOriginalScript={handleGenerateOriginalScript}
                   originalScriptLoading={originalScriptLoadingId === item.video_id}
                 />
@@ -840,6 +896,10 @@ export default function KeywordCrawlerPage() {
           batch={selectedBatch}
           onResolveMedia={handleOpenCandidateMedia}
           mediaSubmitting={mediaSubmitting}
+          onCreateCandidateLinkTranscription={handleCreateCandidateLinkTranscription}
+          candidateLinkSubmittingId={candidateLinkSubmittingId}
+          linkParserEnabled={linkCapabilities?.parser_enabled === true}
+          linkParserMessage={linkCapabilities?.parser_message || undefined}
           onGenerateOriginalScript={handleGenerateOriginalScript}
           originalScriptLoadingId={originalScriptLoadingId}
         />
@@ -999,12 +1059,20 @@ function BatchDetail({
   batch,
   onResolveMedia,
   mediaSubmitting,
+  onCreateCandidateLinkTranscription,
+  candidateLinkSubmittingId,
+  linkParserEnabled,
+  linkParserMessage,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
   batch: CrawlerBatchResponse;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
+  candidateLinkSubmittingId: string | null;
+  linkParserEnabled: boolean;
+  linkParserMessage?: string;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
 }) {
@@ -1047,6 +1115,10 @@ function BatchDetail({
             rankingMode={rankingMode}
             onResolveMedia={onResolveMedia}
             mediaSubmitting={mediaSubmitting}
+            onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
+            candidateLinkSubmittingId={candidateLinkSubmittingId}
+            linkParserEnabled={linkParserEnabled}
+            linkParserMessage={linkParserMessage}
             onGenerateOriginalScript={onGenerateOriginalScript}
             originalScriptLoadingId={originalScriptLoadingId}
           />
@@ -1061,6 +1133,10 @@ function PlatformRunDetail({
   rankingMode,
   onResolveMedia,
   mediaSubmitting,
+  onCreateCandidateLinkTranscription,
+  candidateLinkSubmittingId,
+  linkParserEnabled,
+  linkParserMessage,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
@@ -1068,6 +1144,10 @@ function PlatformRunDetail({
   rankingMode: RankingMode;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
+  candidateLinkSubmittingId: string | null;
+  linkParserEnabled: boolean;
+  linkParserMessage?: string;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
 }) {
@@ -1132,6 +1212,10 @@ function PlatformRunDetail({
                       item={item}
                       onResolveMedia={onResolveMedia}
                       mediaSubmitting={mediaSubmitting}
+                      onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
+                      candidateLinkSubmitting={candidateLinkSubmittingId === item.video_id}
+                      linkParserEnabled={linkParserEnabled}
+                      linkParserMessage={linkParserMessage}
                       onGenerateOriginalScript={onGenerateOriginalScript}
                       originalScriptLoading={originalScriptLoadingId === item.video_id}
                     />
@@ -1150,12 +1234,20 @@ function CandidateListItem({
   item,
   onResolveMedia,
   mediaSubmitting,
+  onCreateCandidateLinkTranscription,
+  candidateLinkSubmitting,
+  linkParserEnabled,
+  linkParserMessage,
   onGenerateOriginalScript,
   originalScriptLoading,
 }: {
   item: CrawlerCandidateResult;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   mediaSubmitting: boolean;
+  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
+  candidateLinkSubmitting: boolean;
+  linkParserEnabled: boolean;
+  linkParserMessage?: string;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoading: boolean;
 }) {
@@ -1174,6 +1266,23 @@ function CandidateListItem({
     <List.Item
       actions={[
         item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
+        item.media_transcription_task_id ? (
+          <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看原文案</Button>
+        ) : (
+          <Tooltip title={!item.source_url ? "该候选没有可用原视频链接。" : !linkParserEnabled ? (linkParserMessage || "本机免费解析器未就绪。") : "读取公开分享页并在本机转写，不调用 OneAPI。"}>
+            <span>
+              <Button
+                type="link"
+                size="small"
+                loading={candidateLinkSubmitting}
+                disabled={!item.source_url || !linkParserEnabled}
+                onClick={() => onCreateCandidateLinkTranscription(item)}
+              >
+                免费提取原文案
+              </Button>
+            </span>
+          </Tooltip>
+        ),
         !hasOriginalTranscript ? (
           <Tooltip title="基于标题、热点词与互动数据，生成适合数字人口播的短句文案；使用前请人工核对。">
             <Button
@@ -1183,13 +1292,11 @@ function CandidateListItem({
               loading={originalScriptLoading}
               onClick={() => onGenerateOriginalScript(item)}
             >
-              生成文案
+              生成原创文案
             </Button>
           </Tooltip>
         ) : null,
-        item.media_transcription_task_id ? (
-          <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看转写</Button>
-        ) : <Tooltip
+        item.media_transcription_task_id ? null : <Tooltip
           title={automationPaused ? "本阶段只跑通抖音自动化，不会对该平台发起付费媒体解析。" : undefined}
         >
           <span>

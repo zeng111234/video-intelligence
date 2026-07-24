@@ -1816,7 +1816,22 @@ def _doubao_job_to_response(task) -> CrawlerDoubaoJobResponse:
     )
 
 
-def _candidate_copy_fields(repo, candidate, media_task_id: str | None) -> dict:
+def _latest_local_link_transcription(repo, candidate_id: str) -> TranscriptionTask | None:
+    """Return the latest zero-cost local link transcription for this candidate."""
+    try:
+        for task in repo.list_tasks():
+            if (
+                isinstance(task, TranscriptionTask)
+                and task.candidate_id == candidate_id
+                and task.source_kind == "douyin_local_browser"
+            ):
+                return task
+    except Exception:
+        return None
+    return None
+
+
+def _candidate_copy_fields(repo, candidate, media_task: TranscriptionTask | None) -> dict:
     """推导候选的三档文案来源字段。
 
     优先级：手机豆包任务 > 授权 ASR 媒体任务 > 无（前端再决定给原创脚本）。
@@ -1843,11 +1858,13 @@ def _candidate_copy_fields(repo, candidate, media_task_id: str | None) -> dict:
                 and (doubao_mobile.outputs or {}).get("review_required") == "true"
             ),
         }
-    if media_task_id:
+    if media_task is not None:
+        succeeded = media_task.status == TaskStatus.SUCCEEDED
         return {
             "copy_source": CopySource.AUTHORIZED_ASR_TRANSCRIPT.value,
-            "is_original_transcript": True,
-            "needs_manual_review": False,
+            "is_original_transcript": succeeded,
+            "needs_manual_review": succeeded
+            and any(segment.needs_review and not segment.reviewed for segment in media_task.segments),
         }
     return {
         "copy_source": None,
@@ -1869,11 +1886,26 @@ def _candidate_to_response(
     relevance_basis: str | None = None,
     relevance_reason: str | None = None,
 ) -> CrawlerCandidateResult:
-    media_resolution = repo.find_latest_media_resolution_for_candidate(
-        candidate.video_id
+    media_resolution = repo.find_latest_media_resolution_for_candidate(candidate.video_id)
+    resolved_task = (
+        repo.get_task(media_resolution.task_id)
+        if media_resolution and media_resolution.task_id
+        else None
     )
-    media_task_id = media_resolution.task_id if media_resolution else None
-    copy_fields = _candidate_copy_fields(repo, candidate, media_task_id)
+    resolved_task = resolved_task if isinstance(resolved_task, TranscriptionTask) else None
+    local_link_task = _latest_local_link_transcription(repo, candidate.video_id)
+    media_task = max(
+        (task for task in (resolved_task, local_link_task) if task is not None),
+        key=lambda task: task.created_at,
+        default=None,
+    )
+    media_task_id = media_task.task_id if media_task else None
+    media_status = (
+        media_resolution.status.value
+        if media_task is not None and media_task is resolved_task and media_resolution
+        else media_task.status.value if media_task else None
+    )
+    copy_fields = _candidate_copy_fields(repo, candidate, media_task)
     trend_points: list[CrawlerTrendPoint] = []
     previous_interactions: float | None = None
     previous_at: datetime | None = None
@@ -1941,7 +1973,7 @@ def _candidate_to_response(
         model_version=trend.model_version if trend else None,
         evidence=evidence or candidate.evidence,
         reasons=trend.reasons if trend else [],
-        media_resolution_status=media_resolution.status.value if media_resolution else None,
+        media_resolution_status=media_status,
         media_transcription_task_id=media_task_id,
         growth_stage=trend.growth_stage.value if trend else None,
         snapshot_count=trend.snapshot_count if trend else None,

@@ -45,3 +45,36 @@ def test_parser_extracts_media_from_normal_detail_payload(monkeypatch):
     assert item.title == "测试标题"
     assert item.media_url == "https://media.example/video.mp4"
     assert item.media_request_headers["Referer"] == "https://www.douyin.com/"
+
+
+def test_router_payload_keeps_the_public_play_address_unchanged():
+    captured: dict[str, str] = {}
+    LocalDouyinBrowserParserClient._capture_router_payload(
+        {
+            "loaderData": {
+                "video_(id)/page": {
+                    "videoInfoRes": {
+                        "item_list": [
+                            {
+                                "aweme_id": "7351002003004005000",
+                                "desc": "公开页面标题",
+                                "video": {
+                                    "play_addr": {
+                                        "url_list": [
+                                            "https://media.example/aweme/v1/playwm/?video_id=1"
+                                        ]
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        },
+        captured,
+    )
+    assert captured == {
+        "work_id": "7351002003004005000",
+        "title": "公开页面标题",
+        "media_url": "https://media.example/aweme/v1/playwm/?video_id=1",
+    }

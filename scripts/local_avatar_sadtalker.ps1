@@ -45,6 +45,13 @@ if (-not [System.IO.Directory]::Exists($resultRoot)) {
     [System.IO.Directory]::CreateDirectory($resultRoot) | Out-Null
 }
 
+# The backend adds the product root to PYTHONPATH so it can import this
+# project's `src` package. SadTalker also has a top-level `src` package;
+# inheritance would make Python select the product package and fail to import
+# `src.utils`. This wrapper runs in its own process, so isolating PYTHONPATH
+# here does not affect the backend.
+$env:PYTHONPATH = $repo
+
 Push-Location $repo
 try {
     & $pythonPath "inference.py" `

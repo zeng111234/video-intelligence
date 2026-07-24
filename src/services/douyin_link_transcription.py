@@ -51,6 +51,7 @@ class DouyinLinkTranscriptionService:
         rights_holder: str,
         rights_confirmed: bool,
         model_name: str = "large-v3-turbo",
+        candidate_id: str | None = None,
     ) -> TranscriptionTask:
         media = self.parser.resolve(share_text)
         return self._create_task(
@@ -64,6 +65,7 @@ class DouyinLinkTranscriptionService:
             rights_holder=rights_holder,
             rights_confirmed=rights_confirmed,
             model_name=model_name,
+            candidate_id=candidate_id,
         )
 
     def transcribe_oneapi_fallback(
@@ -109,6 +111,7 @@ class DouyinLinkTranscriptionService:
         rights_holder: str,
         rights_confirmed: bool,
         model_name: str,
+        candidate_id: str | None = None,
     ) -> TranscriptionTask:
         try:
             video = fetch_authorized_video(
@@ -124,7 +127,7 @@ class DouyinLinkTranscriptionService:
                 media_bytes=video.content,
                 rights_confirmed=rights_confirmed,
                 rights_holder=rights_holder,
-                candidate_id=f"douyin-{work_id}",
+                candidate_id=candidate_id or f"douyin-{work_id}",
                 model_name=model_name,
                 max_media_bytes=MAX_PROVIDER_MEDIA_BYTES,
                 source_kind=source_kind,
