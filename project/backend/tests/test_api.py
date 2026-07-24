@@ -45,6 +45,17 @@ from src.services.publisher import PublishService  # noqa: E402
 from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 
+PUBLISH_DOUYIN_CONNECTION_KEYS = (
+    "PUBLISH_DOUYIN_ACCESS_TOKEN",
+    "PUBLISH_DOUYIN_REFRESH_TOKEN",
+    "PUBLISH_DOUYIN_OPEN_ID",
+    "PUBLISH_DOUYIN_TOKEN_EXPIRES_AT",
+    "PUBLISH_DOUYIN_REFRESH_EXPIRES_AT",
+    "PUBLISH_DOUYIN_CLIENT_KEY",
+    "PUBLISH_DOUYIN_CLIENT_SECRET",
+    "PUBLISH_DOUYIN_REDIRECT_URI",
+)
+
 
 @pytest.fixture()
 def client():
@@ -531,8 +542,9 @@ class TestCrawlerBatches:
         assert [item["platform"] for item in data["platforms"]] == ["douyin"]
         assert data["ranking_mode"] == "keyword_hot"
         assert data["published_window_days"] == 0
-        assert data["sampling_offsets_hours"] == [0, 6, 24]
-        assert data["max_api_calls_per_platform"] == 3
+        assert data["sampling_offsets_hours"] == [0]
+        assert data["max_api_calls_per_platform"] == 1
+        assert data["trend_tracking_enabled"] is False
         assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
         assert all("estimated_cost_cny" in item for item in data["platforms"])
@@ -857,6 +869,8 @@ class TestCopywriting:
         assert data["model_name"] == "sandbox-template"
         assert data["is_mock"] is True
         assert len(data["result_variants"]) == 1
+        assert data["compliance_status"] == "passed"
+        assert data["compliance_notes"]
 
     def test_rewrite_basic(self, client: TestClient):
         """基本文案改写。"""
@@ -875,6 +889,7 @@ class TestCopywriting:
         assert len(data["result_text"]) > 0
         assert data["provider_name"] == "sandbox_copywriting"
         assert data["is_mock"] is True
+        assert data["compliance_status"] == "passed"
 
     def test_rewrite_with_variants(self, client: TestClient):
         """请求多个变体。"""
@@ -1175,6 +1190,35 @@ class TestPublish:
         get_resp = client.get("/api/v1/publish/config")
         assert get_resp.status_code == 200
         assert "token-secret-value" not in get_resp.text
+
+    def test_douyin_connection_requires_admin_oauth_setup(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(backend_config, "ENV_PATH", tmp_path / ".env")
+        for key in PUBLISH_DOUYIN_CONNECTION_KEYS:
+            monkeypatch.delenv(key, raising=False)
+
+        status = client.get("/api/v1/publish/connections/douyin")
+        assert status.status_code == 200
+        assert status.json()["state"] == "not_configured"
+        assert "access_token" not in status.text
+
+        start = client.post("/api/v1/publish/connections/douyin/start")
+        assert start.status_code == 410
+        assert "旧版抖音开发者平台授权已停用" in start.json()["message"]
+
+    def test_douyin_connection_start_is_disabled_in_local_browser_mode(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        start = client.post("/api/v1/publish/connections/douyin/start")
+        assert start.status_code == 410
+        assert "打开官方扫码窗口" in start.json()["message"]
 
 
 # ---------------------------------------------------------------------------

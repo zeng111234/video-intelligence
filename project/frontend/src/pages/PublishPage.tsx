@@ -14,52 +14,51 @@ import {
   Select,
   Space,
   Spin,
-  Steps,
   Table,
   Tag,
   Typography,
   Upload,
 } from "antd";
 import {
-  CheckCircleOutlined,
   ClockCircleOutlined,
-  CloseCircleOutlined,
+  DeleteOutlined,
   FileTextOutlined,
-  LinkOutlined,
   ReloadOutlined,
   RocketOutlined,
   SendOutlined,
-  SettingOutlined,
-  SyncOutlined,
   TagOutlined,
   UploadOutlined,
+  UserAddOutlined,
   VideoCameraOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import {
+  connectPublishAccount,
+  createPublishAccount,
   createPublishBatch,
-  getPublishConfig,
+  deletePublishAccount,
+  getPublishAccountStatus,
   importEditedVideoToPublish,
+  listPublishAccounts,
   listPublishAssets,
   listPublishBatches,
   listPublishPlatforms,
   preflightPublish,
   recordManualPublishResult,
   retryPublishTask,
-  updatePublishConfig,
   uploadPublishAsset,
 } from "../api/client";
 import type {
+  PublishAccount,
   PublishAsset,
-  PublishConfigResponse,
   PublishPlatformCapability,
   PublishPreflightResponse,
   PublishResponse,
 } from "../api/types";
-import { useToast } from "../components/Toast";
 import { SkeletonCard } from "../components/SkeletonLoader";
+import { useToast } from "../components/Toast";
 
-const { Title, Text, Link } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -69,812 +68,333 @@ const PLATFORM_LABELS: Record<string, string> = {
   wechat_channels: "视频号",
 };
 
-const PLATFORM_ENV_KEYS: Record<string, string[]> = {
-  douyin: ["PUBLISH_DOUYIN_MODE", "PUBLISH_DOUYIN_ACCESS_TOKEN", "PUBLISH_DOUYIN_OPEN_ID"],
-  kuaishou: ["PUBLISH_KUAISHOU_MODE", "PUBLISH_KUAISHOU_ACCESS_TOKEN", "PUBLISH_KUAISHOU_OPEN_ID"],
-  xiaohongshu: [
-    "PUBLISH_XIAOHONGSHU_MODE",
-    "PUBLISH_XIAOHONGSHU_ACCESS_TOKEN",
-    "PUBLISH_XIAOHONGSHU_OPEN_ID",
-  ],
-  wechat_channels: [
-    "PUBLISH_WECHAT_CHANNELS_MODE",
-    "PUBLISH_WECHAT_CHANNELS_ACCESS_TOKEN",
-    "PUBLISH_WECHAT_CHANNELS_OPEN_ID",
-  ],
-};
-
-type PlatformConfigDraft = {
-  mode: "manual" | "official";
-  access_token: string;
-  open_id: string;
-  client_key: string;
-  client_secret: string;
-};
-
-const EMPTY_CONFIG_DRAFT: PlatformConfigDraft = {
-  mode: "manual",
-  access_token: "",
-  open_id: "",
-  client_key: "",
-  client_secret: "",
-};
-
-const CONFIG_INPUTS: Array<{
-  field: keyof PlatformConfigDraft;
-  label: string;
-  password?: boolean;
-}> = [
-  { field: "access_token", label: "Access Token", password: true },
-  { field: "open_id", label: "Open ID" },
-  { field: "client_key", label: "Client Key" },
-  { field: "client_secret", label: "Client Secret", password: true },
-];
-
-const STATUS_MAP: Record<
-  string,
-  { color: string; icon: React.ReactNode; label: string }
-> = {
-  pending: { color: "default", icon: <ClockCircleOutlined />, label: "等待中" },
-  manual_ready: {
-    color: "warning",
-    icon: <ClockCircleOutlined />,
-    label: "待人工发布",
-  },
-  uploading: { color: "processing", icon: <SyncOutlined spin />, label: "上传中" },
-  processing: { color: "processing", icon: <SyncOutlined spin />, label: "处理中" },
-  succeeded: { color: "success", icon: <CheckCircleOutlined />, label: "已确认发布" },
-  failed: { color: "error", icon: <CloseCircleOutlined />, label: "失败" },
-  outcome_unknown: {
-    color: "default",
-    icon: <ClockCircleOutlined />,
-    label: "结果待确认",
-  },
+const STATUS_COLOR: Record<string, string> = {
+  succeeded: "success",
+  failed: "error",
+  outcome_unknown: "warning",
+  manual_ready: "gold",
+  waiting_user: "processing",
 };
 
 function platformLabel(platform: string) {
   return PLATFORM_LABELS[platform] || platform;
 }
 
-function modeLabel(mode: string) {
-  if (mode === "manual") return "人工兜底";
-  if (mode === "official_unimplemented") return "官方接口待联调";
-  if (mode === "disabled") return "未启用";
-  return mode;
+function deliveryLabel(platform: PublishPlatformCapability) {
+  if (platform.mode === "local_browser") return "本机扫码";
+  if (platform.mode === "manual") return "人工发布";
+  return "暂未接入";
 }
 
 export default function PublishPage() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
-  const editTaskId = searchParams.get("editTask")?.trim() || "";
-  const [workflowStep, setWorkflowStep] = useState<"config" | "publish">("config");
-  const [platforms, setPlatforms] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [accounts, setAccounts] = useState<PublishAccount[]>([]);
+  const [accountName, setAccountName] = useState("");
+  const [selectedAccountId, setSelectedAccountId] = useState<string>();
   const [availablePlatforms, setAvailablePlatforms] = useState<PublishPlatformCapability[]>([]);
-  const [publishConfig, setPublishConfig] = useState<PublishConfigResponse | null>(null);
-  const [configDrafts, setConfigDrafts] = useState<Record<string, PlatformConfigDraft>>({});
   const [assets, setAssets] = useState<PublishAsset[]>([]);
+  const [tasks, setTasks] = useState<PublishResponse[]>([]);
+  const [platforms, setPlatforms] = useState<string[]>(["douyin"]);
   const [videoPath, setVideoPath] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
   const [preflight, setPreflight] = useState<PublishPreflightResponse | null>(null);
-  const [tasks, setTasks] = useState<PublishResponse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [manualTask, setManualTask] = useState<PublishResponse | null>(null);
   const [manualOutcome, setManualOutcome] = useState<"success" | "failed" | "unknown">("success");
   const [manualUrl, setManualUrl] = useState("");
   const [manualNote, setManualNote] = useState("");
-  const [savingPlatform, setSavingPlatform] = useState<string | null>(null);
-
-  const selectedPlatformNames = useMemo(
-    () => platforms.map(platformLabel).join("、"),
-    [platforms],
-  );
-
-  const enabledPlatformCount = useMemo(
-    () => availablePlatforms.filter((item) => item.enabled).length,
-    [availablePlatforms],
-  );
 
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [platformResp, assetResp, batchResp] = await Promise.all([
+      const [platformData, assetData, batchData, accountData] = await Promise.all([
         listPublishPlatforms(),
         listPublishAssets(),
         listPublishBatches(),
+        listPublishAccounts("douyin"),
       ]);
-      const configResp = await getPublishConfig();
-      setAvailablePlatforms(platformResp.platforms);
-      setPublishConfig(configResp);
-      setConfigDrafts(
-        Object.fromEntries(
-          configResp.platforms.map((item) => [
-            item.platform,
-            {
-              ...EMPTY_CONFIG_DRAFT,
-              mode: item.mode === "official" ? "official" : "manual",
-            },
-          ]),
-        ),
-      );
-      setAssets(assetResp.items);
-      setTasks(batchResp.items.flatMap((batch) => batch.tasks));
-      setPlatforms((current) =>
-        current.length > 0
-          ? current
-          : platformResp.platforms.filter((item) => item.enabled).map((item) => item.platform),
-      );
-    } catch (err) {
-      toast.error((err as Error).message || "加载发布数据失败");
+      setAvailablePlatforms(platformData.platforms);
+      setAssets(assetData.items);
+      setTasks(batchData.items.flatMap((batch) => batch.tasks));
+      setAccounts(accountData);
+      setSelectedAccountId((current) => current || accountData[0]?.account_id);
+    } catch (error) {
+      toast.error((error as Error).message || "加载发布数据失败");
     } finally {
       setLoading(false);
     }
   }, [toast]);
 
-  const updateConfigDraft = useCallback(
-    (platform: string, patch: Partial<PlatformConfigDraft>) => {
-      setConfigDrafts((prev) => ({
-        ...prev,
-        [platform]: {
-          ...(prev[platform] || EMPTY_CONFIG_DRAFT),
-          ...patch,
-        },
-      }));
-    },
-    [],
-  );
-
-  const savePlatformConfig = useCallback(async (platform: string) => {
-    const draft = configDrafts[platform] || EMPTY_CONFIG_DRAFT;
-    setSavingPlatform(platform);
-    try {
-      await updatePublishConfig(platform, {
-        mode: draft.mode,
-        access_token: draft.access_token.trim() || undefined,
-        open_id: draft.open_id.trim() || undefined,
-        client_key: draft.client_key.trim() || undefined,
-        client_secret: draft.client_secret.trim() || undefined,
-      });
-      toast.success(`${platformLabel(platform)} 配置已保存`);
-      await loadData();
-    } catch (err) {
-      toast.error((err as Error).message || "保存发布配置失败");
-    } finally {
-      setSavingPlatform(null);
-    }
-  }, [configDrafts, loadData, toast]);
+  useEffect(() => { void loadData(); }, [loadData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    if (!editTaskId) return;
-    let active = true;
-    void importEditedVideoToPublish(editTaskId)
+    const taskId = searchParams.get("from_edit_task");
+    if (!taskId) return;
+    void importEditedVideoToPublish(taskId)
       .then((asset) => {
-        if (!active) return;
         setAssets((current) => [asset, ...current.filter((item) => item.path !== asset.path)]);
         setVideoPath(asset.path);
-        setWorkflowStep("publish");
-        toast.success("已接收智能剪辑成片，请填写标题并完成发布预检。");
+        toast.success("已带入剪辑成片");
       })
-      .catch((err) => {
-        if (active) toast.error((err as Error).message || "接收智能剪辑成片失败");
-      });
-    return () => {
-      active = false;
-    };
-  }, [editTaskId, toast]);
+      .catch((error) => toast.error((error as Error).message || "带入剪辑成片失败"));
+  }, [searchParams, toast]);
 
-  const addTag = useCallback(() => {
-    const trimmed = tagInput.trim().replace(/^#/, "");
-    if (!trimmed) return;
-    if (tags.includes(trimmed)) {
-      toast.warning("标签已存在");
-      return;
-    }
-    setTags((prev) => [...prev, trimmed]);
-    setTagInput("");
-  }, [tagInput, tags, toast]);
-
-  const buildPayload = useCallback(
-    () => ({
-      video_path: videoPath.trim(),
-      platforms,
-      title: title.trim(),
-      description: description.trim(),
-      tags,
-    }),
-    [description, platforms, tags, title, videoPath],
+  const accountIds = useMemo<Record<string, string>>(
+    () => (platforms.includes("douyin") && selectedAccountId ? { douyin: selectedAccountId } : ({} as Record<string, string>)),
+    [platforms, selectedAccountId],
   );
 
-  const validateForm = useCallback(() => {
-    if (!videoPath.trim()) {
-      toast.warning("请先上传或选择成片文件");
-      return false;
+  const addAccount = async () => {
+    if (!accountName.trim()) {
+      toast.error("先给这个抖音账号起个名称，例如“公司主号”");
+      return;
     }
-    if (!title.trim()) {
-      toast.warning("请输入发布标题");
-      return false;
+    setAddingAccount(true);
+    try {
+      const account = await createPublishAccount({ platform: "douyin", name: accountName.trim() });
+      setAccounts((current) => [...current, account]);
+      setSelectedAccountId(account.account_id);
+      setAccountName("");
+      toast.success("账号已添加，现在点击“打开官方扫码窗口”即可登录");
+    } catch (error) {
+      toast.error((error as Error).message || "添加账号失败");
+    } finally {
+      setAddingAccount(false);
     }
-    if (platforms.length === 0) {
-      toast.warning("请至少选择一个平台");
-      return false;
-    }
-    return true;
-  }, [platforms.length, title, toast, videoPath]);
+  };
 
-  const runPreflight = useCallback(async () => {
-    if (!validateForm()) return null;
-    const result = await preflightPublish(buildPayload());
-    setPreflight(result);
-    if (result.blocked) {
-      toast.warning("发布预检未通过，请处理提示后再创建任务");
-    } else {
-      toast.success("预检通过，可以创建发布任务");
+  const connectAccount = async (accountId: string) => {
+    setConnecting(accountId);
+    try {
+      const updated = await connectPublishAccount(accountId);
+      setAccounts((current) => current.map((item) => item.account_id === accountId ? updated : item));
+      toast.success("已打开抖音官方窗口，请在新窗口扫码或完成验证");
+    } catch (error) {
+      toast.error((error as Error).message || "无法打开官方扫码窗口");
+    } finally {
+      setConnecting(null);
     }
-    return result;
-  }, [buildPayload, toast, validateForm]);
+  };
 
-  const createBatch = useCallback(async () => {
-    if (!validateForm()) return;
+  const refreshAccount = async (accountId: string) => {
+    try {
+      const updated = await getPublishAccountStatus(accountId);
+      setAccounts((current) => current.map((item) => item.account_id === accountId ? updated : item));
+    } catch (error) {
+      toast.error((error as Error).message || "账号状态检查失败");
+    }
+  };
+
+  const removeAccount = (account: PublishAccount) => {
+    Modal.confirm({
+      title: `移除“${account.name}”？`,
+      content: "这会删除本机保存的专用浏览器登录档案，不会注销或影响抖音平台账号。",
+      okText: "移除本机账号",
+      okButtonProps: { danger: true },
+      cancelText: "取消",
+      onOk: async () => {
+        await deletePublishAccount(account.account_id);
+        setAccounts((current) => current.filter((item) => item.account_id !== account.account_id));
+        setSelectedAccountId((current) => current === account.account_id ? undefined : current);
+        toast.success("本机账号档案已移除");
+      },
+    });
+  };
+
+  const addTag = () => {
+    const normalized = tagInput.trim().replace(/^#/, "");
+    if (!normalized || tags.includes(normalized)) return;
+    setTags((current) => [...current, normalized]);
+    setTagInput("");
+  };
+
+  const runPreflight = async () => {
+    try {
+      const result = await preflightPublish({ video_path: videoPath, platforms, title, description, tags, account_ids: accountIds });
+      setPreflight(result);
+      result.blocked ? toast.error("发布前检查未通过") : toast.success("发布前检查通过");
+    } catch (error) {
+      toast.error((error as Error).message || "发布前检查失败");
+    }
+  };
+
+  const createBatch = async () => {
+    if (platforms.includes("douyin") && !selectedAccountId) {
+      toast.error("请选择一个抖音账号；首次使用请先打开官方扫码窗口");
+      return;
+    }
     setSubmitting(true);
     try {
-      const result = await runPreflight();
-      if (!result || result.blocked) return;
-      Modal.confirm({
-        title: "确认创建发布任务",
-        content: `将为 ${selectedPlatformNames} 创建发布包。当前未接入官方真实发布，任务创建后需要人工到平台后台完成并回填结果。`,
-        okText: "确认创建",
-        cancelText: "取消",
-        onOk: async () => {
-          const batch = await createPublishBatch({
-            ...buildPayload(),
-            confirmation_accepted: true,
-          });
-          setTasks((prev) => [...batch.tasks, ...prev]);
-          setPreflight(null);
-          toast.success(`已创建 ${batch.total} 个发布任务`);
-        },
+      const batch = await createPublishBatch({
+        video_path: videoPath,
+        platforms,
+        title,
+        description,
+        tags,
+        account_ids: accountIds,
+        confirmation_accepted: true,
       });
-    } catch (err) {
-      toast.error((err as Error).message || "创建发布任务失败");
+      setTasks((current) => [...batch.tasks, ...current]);
+      setPreflight(null);
+      toast.success("发布任务已创建；抖音官方窗口已打开，请由你完成最终发布");
+    } catch (error) {
+      toast.error((error as Error).message || "创建发布任务失败");
     } finally {
       setSubmitting(false);
     }
-  }, [buildPayload, runPreflight, selectedPlatformNames, toast, validateForm]);
+  };
 
-  const submitManualResult = useCallback(async () => {
+  const submitManualResult = async () => {
     if (!manualTask) return;
-    const succeeded =
-      manualOutcome === "success" ? true : manualOutcome === "failed" ? false : null;
     try {
       const updated = await recordManualPublishResult(manualTask.task_id, {
-        succeeded,
-        platform_url: manualUrl.trim() || undefined,
-        note: manualNote.trim(),
+        succeeded: manualOutcome === "unknown" ? null : manualOutcome === "success",
+        platform_url: manualUrl || undefined,
+        note: manualNote,
       });
-      setTasks((prev) =>
-        prev.map((item) => (item.task_id === updated.task_id ? updated : item)),
-      );
+      setTasks((current) => current.map((item) => item.task_id === updated.task_id ? updated : item));
       setManualTask(null);
-      setManualUrl("");
-      setManualNote("");
-      toast.success("发布结果已记录");
-    } catch (err) {
-      toast.error((err as Error).message || "记录发布结果失败");
+      toast.success("发布结果已保存");
+    } catch (error) {
+      toast.error((error as Error).message || "保存发布结果失败");
     }
-  }, [manualNote, manualOutcome, manualTask, manualUrl, toast]);
+  };
 
-  const retryTask = useCallback(async (task: PublishResponse) => {
+  const retryTask = async (task: PublishResponse) => {
     try {
-      const retried = await retryPublishTask(task.task_id);
-      setTasks((prev) => [retried, ...prev]);
-      toast.success("已创建一次重试任务");
-    } catch (err) {
-      toast.error((err as Error).message || "重试失败");
+      const updated = await retryPublishTask(task.task_id);
+      setTasks((current) => current.map((item) => item.task_id === updated.task_id ? updated : item));
+      toast.success("已重新打开发布准备流程");
+    } catch (error) {
+      toast.error((error as Error).message || "重试失败");
     }
-  }, [toast]);
+  };
 
   const columns: ColumnsType<PublishResponse> = [
+    { title: "平台", dataIndex: "platform", width: 90, render: (value) => platformLabel(value) },
+    { title: "标题", dataIndex: "title", ellipsis: true },
+    { title: "状态", dataIndex: "publish_status", width: 130, render: (value) => <Tag color={STATUS_COLOR[value] || "default"}>{value}</Tag> },
+    { title: "进度", dataIndex: "stage", ellipsis: true },
     {
-      title: "任务ID",
-      dataIndex: "task_id",
-      width: 160,
-      ellipsis: true,
-      render: (value: string) => <Text code>{value}</Text>,
-    },
-    {
-      title: "平台",
-      dataIndex: "platform",
-      width: 100,
-      render: (value: string) => <Tag color="blue">{platformLabel(value)}</Tag>,
-    },
-    {
-      title: "标题",
-      dataIndex: "title",
-      ellipsis: true,
-    },
-    {
-      title: "状态",
-      dataIndex: "publish_status",
-      width: 140,
-      render: (value: string) => {
-        const cfg = STATUS_MAP[value] || STATUS_MAP.pending;
-        return <Tag color={cfg.color} icon={cfg.icon}>{cfg.label}</Tag>;
-      },
-    },
-    {
-      title: "阶段",
-      dataIndex: "stage",
-      ellipsis: true,
-    },
-    {
-      title: "链接",
-      dataIndex: "platform_url",
-      width: 90,
-      render: (value: string | null) =>
-        value ? <Link href={value} target="_blank">打开</Link> : <Text type="secondary">未填</Text>,
-    },
-    {
-      title: "操作",
-      width: 180,
-      render: (_: unknown, record) => (
-        <Space>
-          <Button
-            size="small"
-            onClick={() => {
-              setManualTask(record);
-              setManualOutcome("success");
-              setManualUrl(record.platform_url || "");
-              setManualNote("");
-            }}
-          >
-            回填结果
-          </Button>
-          {["failed", "outcome_unknown"].includes(record.publish_status) && (
-            <Button size="small" icon={<ReloadOutlined />} onClick={() => retryTask(record)}>
-              重试
-            </Button>
-          )}
-        </Space>
-      ),
+      title: "操作", width: 180, render: (_value, task) => <Space>
+        <Button size="small" onClick={() => { setManualTask(task); setManualOutcome("success"); setManualUrl(task.platform_url || ""); setManualNote(""); }}>确认结果</Button>
+        {["failed", "outcome_unknown"].includes(task.publish_status) && <Button size="small" icon={<ReloadOutlined />} onClick={() => retryTask(task)}>重试</Button>}
+      </Space>,
     },
   ];
 
-  return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <RocketOutlined /> 多平台发布
-        </Title>
-        <Text type="secondary">
-          先确认平台发布配置，再选择成片和目标平台创建发布任务。
-        </Text>
-      </div>
-
-      <Card style={{ marginBottom: 16 }}>
-        <Space wrap>
-          <Button
-            type={workflowStep === "config" ? "primary" : "default"}
-            icon={<SettingOutlined />}
-            onClick={() => setWorkflowStep("config")}
-          >
-            配置平台
-          </Button>
-          <Button
-            type={workflowStep === "publish" ? "primary" : "default"}
-            icon={<RocketOutlined />}
-            disabled={enabledPlatformCount === 0}
-            onClick={() => setWorkflowStep("publish")}
-          >
-            选择发布
-          </Button>
-          <Text type="secondary">
-            当前：{workflowStep === "config" ? "平台配置" : "发布选择"}
-          </Text>
-        </Space>
-      </Card>
-
-      <Card style={{ marginBottom: 24 }}>
-        <Steps
-          current={workflowStep === "config" ? 0 : 1}
-          items={[
-            { title: "平台配置", description: "确认账号、权限和发布模式" },
-            { title: "发布选择", description: "选择成片、平台和发布内容" },
-          ]}
-        />
-      </Card>
-
-      {workflowStep === "config" ? (
-        <Row gutter={[24, 24]}>
-          <Col xs={24} lg={16}>
-            <Card
-              title={<Space><SettingOutlined /> 平台配置</Space>}
-              extra={<Button onClick={loadData}>刷新状态</Button>}
-            >
-              <Spin spinning={loading}>
-                <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="当前版本默认使用人工发布包"
-                    description="只有拿到平台官方发布权限并完成适配器联调后，才会切换到官方自动发布。这里先把每个平台的模式和缺失配置讲清楚。"
-                  />
-                  {availablePlatforms.map((item) => {
-                    const config = publishConfig?.platforms.find(
-                      (candidate) => candidate.platform === item.platform,
-                    );
-                    const draft = configDrafts[item.platform] || EMPTY_CONFIG_DRAFT;
-                    const variableStatus = (field: string) =>
-                      config?.variables.find((variable) => variable.field === field);
-                    const envKeys = item.missing_configuration.length > 0
-                      ? item.missing_configuration
-                      : PLATFORM_ENV_KEYS[item.platform] || [];
-                    return (
-                      <div
-                        key={item.platform}
-                        style={{
-                          border: "1px solid var(--border-default)",
-                          borderRadius: "var(--radius-md)",
-                          padding: 16,
-                        }}
-                      >
-                        <Row gutter={[16, 12]} align="middle">
-                          <Col xs={24} md={7}>
-                            <Space direction="vertical" size={2}>
-                              <Text strong>{platformLabel(item.platform)}</Text>
-                              <Text type="secondary">{item.display_name}</Text>
-                            </Space>
-                          </Col>
-                          <Col xs={24} md={5}>
-                            <Tag color={item.enabled ? "success" : "default"}>
-                              {item.enabled ? "可创建任务" : "不可创建任务"}
-                            </Tag>
-                            <Tag color={item.mode === "manual" ? "warning" : "default"}>
-                              {modeLabel(item.mode)}
-                            </Tag>
-                          </Col>
-                          <Col xs={24} md={6}>
-                            <Text type="secondary">支持能力</Text>
-                            <div style={{ marginTop: 4 }}>
-                              <Tag>{item.supports_tags ? "话题标签" : "无标签"}</Tag>
-                              <Tag>{item.supports_cover ? "封面" : "无封面"}</Tag>
-                              <Tag>{item.supports_scheduled ? "定时" : "即时"}</Tag>
-                            </div>
-                          </Col>
-                          <Col xs={24} md={6}>
-                            <Text type="secondary">配置变量</Text>
-                            <div style={{ marginTop: 4 }}>
-                              {envKeys.map((key) => (
-                                <Tag key={key}>{key}</Tag>
-                              ))}
-                            </div>
-                          </Col>
-                        </Row>
-                        <Divider style={{ margin: "16px 0" }} />
-                        <Row gutter={[12, 12]} align="bottom">
-                          <Col xs={24} md={8}>
-                            <Text strong style={{ display: "block", marginBottom: 8 }}>
-                              发布模式
-                            </Text>
-                            <Select
-                              style={{ width: "100%" }}
-                              value={draft.mode}
-                              options={[
-                                { label: "人工发布包", value: "manual" },
-                                { label: "官方接口", value: "official" },
-                              ]}
-                              onChange={(value) =>
-                                updateConfigDraft(item.platform, { mode: value })
-                              }
-                            />
-                          </Col>
-                          {CONFIG_INPUTS.map((input) => {
-                            const status = variableStatus(input.field);
-                            const placeholder = status?.configured
-                              ? `已配置：${status.masked_value || "***"}`
-                              : `填写 ${input.label}`;
-                            const value = draft[input.field];
-                            const inputNode = input.password ? (
-                              <Input.Password
-                                placeholder={placeholder}
-                                value={value}
-                                onChange={(event) =>
-                                  updateConfigDraft(item.platform, {
-                                    [input.field]: event.target.value,
-                                  })
-                                }
-                              />
-                            ) : (
-                              <Input
-                                placeholder={placeholder}
-                                value={value}
-                                onChange={(event) =>
-                                  updateConfigDraft(item.platform, {
-                                    [input.field]: event.target.value,
-                                  })
-                                }
-                              />
-                            );
-                            return (
-                              <Col xs={24} md={8} key={input.field}>
-                                <Text strong style={{ display: "block", marginBottom: 8 }}>
-                                  {input.label}
-                                </Text>
-                                {inputNode}
-                              </Col>
-                            );
-                          })}
-                          <Col xs={24}>
-                            <Space wrap>
-                              <Button
-                                type="primary"
-                                loading={savingPlatform === item.platform}
-                                onClick={() => savePlatformConfig(item.platform)}
-                              >
-                                保存 {platformLabel(item.platform)} 配置
-                              </Button>
-                              <Text type="secondary">
-                                空白字段会保留已有值；密钥不会完整回显。
-                              </Text>
-                            </Space>
-                          </Col>
-                        </Row>
-                      </div>
-                    );
-                  })}
-                </Space>
-              </Spin>
-            </Card>
-          </Col>
-
-          <Col xs={24} lg={8}>
-            <Card title="发布前置条件">
-              <Space direction="vertical" style={{ width: "100%" }} size={14}>
-                <div>
-                  <Text type="secondary">可创建任务的平台</Text>
-                  <Title level={3} style={{ margin: "4px 0 0" }}>{enabledPlatformCount}</Title>
-                </div>
-                <Alert
-                  type="warning"
-                  showIcon
-                  message="官方权限未配置时不会自动发布"
-                  description="系统会生成发布包，人工到平台后台发布后再回填链接或失败原因。"
-                />
-                <Button
-                  type="primary"
-                  icon={<RocketOutlined />}
-                  block
-                  disabled={enabledPlatformCount === 0}
-                  onClick={() => setWorkflowStep("publish")}
-                >
-                  进入发布选择
-                </Button>
-              </Space>
-            </Card>
-          </Col>
-        </Row>
-      ) : (
-      <Row gutter={[24, 24]}>
-        <Col xs={24} lg={10}>
-          <Card title={<Space><SendOutlined /> 发布配置</Space>}>
-            <Spin spinning={loading}>
-              <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                <Button icon={<SettingOutlined />} onClick={() => setWorkflowStep("config")}>
-                  配置平台
-                </Button>
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>选择平台</Text>
-                  <Space wrap>
-                    {availablePlatforms.map((item) => {
-                      const selected = platforms.includes(item.platform);
-                      return (
-                        <Button
-                          key={item.platform}
-                          type={selected ? "primary" : "default"}
-                          onClick={() =>
-                            setPlatforms((prev) =>
-                              selected
-                                ? prev.filter((value) => value !== item.platform)
-                                : [...prev, item.platform],
-                            )
-                          }
-                        >
-                          {platformLabel(item.platform)}
-                        </Button>
-                      );
-                    })}
-                  </Space>
-                  <div style={{ marginTop: 8 }}>
-                    {availablePlatforms.map((item) => (
-                      <Tag key={item.platform} color={item.mode === "manual" ? "warning" : "default"}>
-                        {platformLabel(item.platform)}：{item.mode === "manual" ? "人工兜底" : item.mode}
-                      </Tag>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>
-                    <VideoCameraOutlined /> 成片文件
-                  </Text>
-                  <Space.Compact style={{ width: "100%" }}>
-                    <Select
-                      showSearch
-                      allowClear
-                      style={{ width: "100%" }}
-                      placeholder="选择已上传成片，或直接上传新文件"
-                      value={videoPath || undefined}
-                      options={assets.map((asset) => ({ label: asset.name, value: asset.path }))}
-                      onChange={(value) => setVideoPath(value || "")}
-                    />
-                    <Upload
-                      accept=".mp4,.mov,.m4v"
-                      showUploadList={false}
-                      customRequest={async (options) => {
-                        try {
-                          const asset = await uploadPublishAsset(options.file as File);
-                          setAssets((prev) => [asset, ...prev]);
-                          setVideoPath(asset.path);
-                          options.onSuccess?.(asset);
-                          toast.success("成片已上传");
-                        } catch (err) {
-                          options.onError?.(err as Error);
-                          toast.error((err as Error).message || "上传失败");
-                        }
-                      }}
-                    >
-                      <Button icon={<UploadOutlined />}>上传</Button>
-                    </Upload>
-                  </Space.Compact>
-                  {videoPath && (
-                    <Text code style={{ marginTop: 8, display: "block" }}>{videoPath}</Text>
-                  )}
-                </div>
-
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>
-                    <FileTextOutlined /> 标题
-                  </Text>
-                  <Input
-                    placeholder="输入发布标题"
-                    value={title}
-                    onChange={(event) => setTitle(event.target.value)}
-                    maxLength={100}
-                    showCount
-                  />
-                </div>
-
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>描述</Text>
-                  <TextArea
-                    placeholder="输入发布描述"
-                    rows={4}
-                    value={description}
-                    onChange={(event) => setDescription(event.target.value)}
-                    maxLength={1000}
-                    showCount
-                    style={{ resize: "none" }}
-                  />
-                </div>
-
-                <div>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>
-                    <TagOutlined /> 话题标签
-                  </Text>
-                  <Space.Compact style={{ width: "100%" }}>
-                    <Input
-                      placeholder="输入标签，按回车添加"
-                      value={tagInput}
-                      onChange={(event) => setTagInput(event.target.value)}
-                      onPressEnter={addTag}
-                    />
-                    <Button onClick={addTag}>添加</Button>
-                  </Space.Compact>
-                  <div style={{ marginTop: 8 }}>
-                    {tags.map((tag) => (
-                      <Tag
-                        key={tag}
-                        closable
-                        color="blue"
-                        onClose={() => setTags((prev) => prev.filter((item) => item !== tag))}
-                      >
-                        #{tag}
-                      </Tag>
-                    ))}
-                  </div>
-                </div>
-
-                {preflight && (
-                  <Alert
-                    type={preflight.blocked ? "warning" : "success"}
-                    showIcon
-                    message={preflight.blocked ? "预检未通过" : "预检通过"}
-                    description={
-                      preflight.blocked
-                        ? preflight.issues.join("；") || "存在不可创建任务的平台"
-                        : "当前会创建人工发布包，发布完成后需要回填平台结果。"
-                    }
-                  />
-                )}
-
-                <Divider style={{ margin: "4px 0" }} />
-                <Space style={{ width: "100%" }}>
-                  <Button onClick={runPreflight}>预检</Button>
-                  <Button
-                    type="primary"
-                    icon={<RocketOutlined />}
-                    loading={submitting}
-                    onClick={createBatch}
-                  >
-                    创建发布任务
-                  </Button>
-                </Space>
-              </Space>
-            </Spin>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={14}>
-          <Card
-            title={<Space><ClockCircleOutlined /> 发布任务 <Tag color="blue">{tasks.length}</Tag></Space>}
-            extra={<Button size="small" onClick={loadData}>刷新</Button>}
-          >
-            {loading ? (
-              <SkeletonCard rows={4} />
-            ) : tasks.length > 0 ? (
-              <Table
-                rowKey="task_id"
-                columns={columns}
-                dataSource={tasks}
-                pagination={{ pageSize: 10 }}
-                size="middle"
-              />
-            ) : (
-              <Empty description="暂无发布任务" />
-            )}
-          </Card>
-        </Col>
-      </Row>
-      )}
-
-      <Modal
-        title={manualTask ? `回填 ${platformLabel(manualTask.platform)} 发布结果` : "回填发布结果"}
-        open={Boolean(manualTask)}
-        okText="保存结果"
-        cancelText="取消"
-        onOk={submitManualResult}
-        onCancel={() => setManualTask(null)}
-      >
-        <Space direction="vertical" style={{ width: "100%" }} size={12}>
-          <Radio.Group
-            value={manualOutcome}
-            onChange={(event) => setManualOutcome(event.target.value)}
-            options={[
-              { label: "已发布", value: "success" },
-              { label: "发布失败", value: "failed" },
-              { label: "结果不确定", value: "unknown" },
-            ]}
-          />
-          <Input
-            prefix={<LinkOutlined />}
-            placeholder="作品链接，可选"
-            value={manualUrl}
-            onChange={(event) => setManualUrl(event.target.value)}
-          />
-          <TextArea
-            rows={3}
-            placeholder="备注或失败原因，可选"
-            value={manualNote}
-            onChange={(event) => setManualNote(event.target.value)}
-          />
-        </Space>
-      </Modal>
+  return <div>
+    <div style={{ marginBottom: 24 }}>
+      <Title level={4} style={{ margin: 0 }}><RocketOutlined /> 多平台发布</Title>
+      <Text type="secondary">先连接账号，再选择成片。系统只打开和填写官方页面，最终发布始终由你确认。</Text>
     </div>
-  );
+
+    <Alert
+      showIcon
+      type="info"
+      message="不需要 Key、Secret 或回调地址"
+      description="点击“打开官方扫码窗口”后，在新开的抖音创作者窗口扫码。登录状态只保存于这台电脑的专用浏览器档案中。"
+      style={{ marginBottom: 24 }}
+    />
+
+    <Card title={<Space><UserAddOutlined /> 第一步：连接抖音账号</Space>} style={{ marginBottom: 24 }}>
+      <Space.Compact style={{ width: "100%", maxWidth: 520, marginBottom: 16 }}>
+        <Input aria-label="抖音账号名称" placeholder="账号名称，例如：公司主号" value={accountName} onChange={(event) => setAccountName(event.target.value)} onPressEnter={addAccount} />
+        <Button type="primary" icon={<UserAddOutlined />} loading={addingAccount} onClick={addAccount}>添加账号</Button>
+      </Space.Compact>
+      {accounts.length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有抖音账号，添加后扫码一次即可长期使用" /> : (
+        <Row gutter={[12, 12]}>
+          {accounts.map((account) => <Col xs={24} md={12} xl={8} key={account.account_id}>
+            <Card size="small" title={account.name} extra={<Tag color={account.status === "ready" ? "success" : account.status === "browser_open" ? "processing" : "default"}>{account.status === "ready" ? "档案已保存" : account.status === "browser_open" ? "等待扫码" : "未登录"}</Tag>}>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{account.message}</Text>
+                <Space wrap>
+                  <Button size="small" type="primary" loading={connecting === account.account_id} onClick={() => connectAccount(account.account_id)}>打开官方扫码窗口</Button>
+                  <Button size="small" onClick={() => refreshAccount(account.account_id)}>检查状态</Button>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeAccount(account)}>移除</Button>
+                </Space>
+              </Space>
+            </Card>
+          </Col>)}
+        </Row>
+      )}
+    </Card>
+
+    <Row gutter={[24, 24]}>
+      <Col xs={24} lg={10}>
+        <Card title={<Space><SendOutlined /> 第二步：准备发布</Space>}>
+          <Spin spinning={loading}>
+            <Space direction="vertical" size={18} style={{ width: "100%" }}>
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>选择平台</Text>
+                <Row gutter={[10, 10]}>{availablePlatforms.map((platform) => {
+                  const selected = platforms.includes(platform.platform);
+                  const usable = platform.enabled || platform.manual_fallback;
+                  return <Col xs={12} key={platform.platform}><Card size="small">
+                    <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                      <Space><Text strong>{platformLabel(platform.platform)}</Text><Tag color={platform.mode === "local_browser" ? "success" : "gold"}>{deliveryLabel(platform)}</Tag></Space>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{platform.mode === "local_browser" ? "扫码后复用本机登录状态" : "保留人工发布助手"}</Text>
+                      <Button block type={selected ? "primary" : "default"} disabled={!usable} onClick={() => setPlatforms((current) => selected ? current.filter((item) => item !== platform.platform) : [...current, platform.platform])}>{selected ? "已选择" : "选择"}</Button>
+                    </Space>
+                  </Card></Col>;
+                })}</Row>
+              </div>
+
+              {platforms.includes("douyin") && <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>抖音发布账号</Text>
+                <Select aria-label="抖音发布账号" style={{ width: "100%" }} value={selectedAccountId} placeholder="选择已添加的抖音账号" options={accounts.map((item) => ({ value: item.account_id, label: `${item.name} · ${item.status === "ready" ? "已保存" : "需扫码"}` }))} onChange={setSelectedAccountId} />
+              </div>}
+
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}><VideoCameraOutlined /> 选择成片</Text>
+                <Space.Compact style={{ width: "100%" }}>
+                  <Select showSearch allowClear style={{ width: "100%" }} placeholder="选择已上传成片，或直接上传新文件" value={videoPath || undefined} options={assets.map((asset) => ({ label: asset.name, value: asset.path }))} onChange={(value) => setVideoPath(value || "")} />
+                  <Upload accept=".mp4,.mov,.m4v" showUploadList={false} customRequest={async (options) => {
+                    try { const asset = await uploadPublishAsset(options.file as File); setAssets((current) => [asset, ...current]); setVideoPath(asset.path); options.onSuccess?.(asset); toast.success("成片已上传"); }
+                    catch (error) { options.onError?.(error as Error); toast.error((error as Error).message || "上传失败"); }
+                  }}><Button icon={<UploadOutlined />}>上传</Button></Upload>
+                </Space.Compact>
+              </div>
+
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}><FileTextOutlined /> 填写内容</Text>
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  <Input aria-label="发布标题" placeholder="输入发布标题" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={100} showCount />
+                  <TextArea aria-label="发布描述" placeholder="输入发布描述" rows={4} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={1000} showCount />
+                  <Space.Compact style={{ width: "100%" }}><Input aria-label="添加话题标签" prefix={<TagOutlined />} placeholder="输入标签，按回车添加" value={tagInput} onChange={(event) => setTagInput(event.target.value)} onPressEnter={addTag} /><Button onClick={addTag}>添加</Button></Space.Compact>
+                  <div>{tags.map((tag) => <Tag key={tag} closable color="blue" onClose={() => setTags((current) => current.filter((item) => item !== tag))}>#{tag}</Tag>)}</div>
+                </Space>
+              </div>
+
+              {preflight && <Alert type={preflight.blocked ? "warning" : "success"} showIcon message={preflight.blocked ? "发布前检查未通过" : "发布前检查通过"} description={preflight.blocked ? preflight.issues.join("；") || "请检查平台和账号" : "将打开官方创作者窗口，由你完成最终发布。"} />}
+              <Divider style={{ margin: "2px 0" }} />
+              <Space wrap><Button onClick={runPreflight}>发布前检查</Button><Button type="primary" icon={<RocketOutlined />} loading={submitting} onClick={createBatch}>开始发布</Button></Space>
+            </Space>
+          </Spin>
+        </Card>
+      </Col>
+
+      <Col xs={24} lg={14}>
+        <Card title={<Space><ClockCircleOutlined /> 发布任务 <Tag color="blue">{tasks.length}</Tag></Space>} extra={<Button size="small" onClick={loadData}>刷新</Button>}>
+          <Alert type="info" showIcon message="最后一步由你确认" description="系统不会代替你点击平台最终发布按钮。完成后在这里回填真实结果，避免把准备动作误认为已发布。" style={{ marginBottom: 16 }} />
+          {loading ? <SkeletonCard rows={4} /> : tasks.length ? <Table rowKey="task_id" columns={columns} dataSource={tasks} pagination={{ pageSize: 10 }} size="middle" /> : <Empty description="还没有发布任务" />}
+        </Card>
+      </Col>
+    </Row>
+
+    <Modal title={manualTask ? `确认 ${platformLabel(manualTask.platform)} 发布结果` : "确认发布结果"} open={Boolean(manualTask)} okText="保存结果" cancelText="取消" onOk={submitManualResult} onCancel={() => setManualTask(null)}>
+      <Space direction="vertical" style={{ width: "100%" }} size={12}>
+        <Radio.Group value={manualOutcome} onChange={(event) => setManualOutcome(event.target.value)} options={[{ label: "已发布", value: "success" }, { label: "发布失败", value: "failed" }, { label: "结果不确定", value: "unknown" }]} />
+        <Input placeholder="作品链接，可选" value={manualUrl} onChange={(event) => setManualUrl(event.target.value)} />
+        <TextArea rows={3} placeholder="备注或失败原因，可选" value={manualNote} onChange={(event) => setManualNote(event.target.value)} />
+      </Space>
+    </Modal>
+  </div>;
 }

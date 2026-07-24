@@ -14,6 +14,7 @@ from src.models import (
     ProductionBatch,
     Platform,
     PlatformSearchRun,
+    ProviderSafetyState,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -52,6 +53,7 @@ class MockRepository:
         self._search_batches: dict[str, SearchBatch] = {}
         self._platform_search_runs: dict[str, PlatformSearchRun] = {}
         self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
+        self._provider_safety_states: dict[str, ProviderSafetyState] = {}
         self._media_resolution_attempts: dict[str, MediaResolutionAttempt] = {}
         self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
@@ -279,6 +281,90 @@ class MockRepository:
             key=lambda item: item.created_at,
             reverse=True,
         )[:limit]
+
+    def get_provider_safety_state(self, provider: str) -> ProviderSafetyState | None:
+        return self._provider_safety_states.get(provider)
+
+    def claim_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        lease_seconds: int,
+        max_runs_in_window: int | None = None,
+        rolling_window_seconds: int = 24 * 60 * 60,
+    ) -> bool:
+        state = self._provider_safety_states.get(provider)
+        if state is not None:
+            if state.blocked_until and state.blocked_until > now:
+                return False
+            if state.next_allowed_at and state.next_allowed_at > now:
+                return False
+            if (
+                state.active_run_id
+                and state.active_run_id != run_id
+                and state.lease_expires_at
+                and state.lease_expires_at > now
+            ):
+                return False
+        window_start = state.rolling_window_started_at if state else None
+        active_window = bool(
+            window_start and now - window_start < timedelta(seconds=rolling_window_seconds)
+        )
+        current_runs = state.real_runs_in_window if state and active_window else 0
+        if max_runs_in_window is not None and current_runs >= max_runs_in_window:
+            return False
+        self._provider_safety_states[provider] = ProviderSafetyState(
+            provider=provider,
+            active_run_id=run_id,
+            lease_expires_at=now + timedelta(seconds=max(1, lease_seconds)),
+            rolling_window_started_at=window_start if active_window else now,
+            real_runs_in_window=current_runs + 1,
+            updated_at=now,
+        )
+        return True
+
+    def release_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        cooldown_seconds: int,
+        safety_pause_seconds: int = 0,
+        safety_reason: str | None = None,
+    ) -> ProviderSafetyState:
+        current = self._provider_safety_states.get(provider)
+        existing_block = (
+            current.blocked_until
+            if current and current.blocked_until and current.blocked_until > now
+            else None
+        )
+        requested_block = (
+            now + timedelta(seconds=max(1, safety_pause_seconds))
+            if safety_pause_seconds
+            else None
+        )
+        blocked_until = max(
+            (item for item in (existing_block, requested_block) if item is not None),
+            default=None,
+        )
+        state = ProviderSafetyState(
+            provider=provider,
+            active_run_id=(current.active_run_id if current and current.active_run_id != run_id else None),
+            lease_expires_at=(current.lease_expires_at if current and current.active_run_id != run_id else None),
+            next_allowed_at=now + timedelta(seconds=max(1, cooldown_seconds)),
+            blocked_until=blocked_until,
+            blocked_reason=safety_reason if requested_block else (current.blocked_reason if current else None),
+            rolling_window_started_at=(
+                current.rolling_window_started_at if current else None
+            ),
+            real_runs_in_window=current.real_runs_in_window if current else 0,
+            updated_at=now,
+        )
+        self._provider_safety_states[provider] = state
+        return state
 
     def delete_search_batch(self, batch_id: str) -> bool:
         if self._search_batches.pop(batch_id, None) is None:

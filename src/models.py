@@ -116,6 +116,7 @@ class SamplingStatus(StrEnum):
     PENDING = "pending"
     OBSERVED = "observed"
     MISSED = "missed"
+    CANCELLED = "cancelled"
 
 
 class ProviderMode(StrEnum):
@@ -371,7 +372,7 @@ class ProviderCapability(BaseModel):
     mode: ProviderMode
     enabled: bool
     supported_platforms: list[Platform] = Field(default_factory=list)
-    max_page_size: int = Field(default=10, ge=1, le=10)
+    max_page_size: int = Field(default=10, ge=1, le=100)
     supports_published_after: bool = True
     supports_metric_refresh: bool = False
     supports_usage: bool = False
@@ -396,7 +397,7 @@ class ProviderSearchItem(BaseModel):
     author_name: str = Field(min_length=1)
     published_at: datetime
     source_url: HttpUrl | None = None
-    provider_rank: int = Field(ge=1, le=10)
+    provider_rank: int = Field(ge=1, le=100)
     metrics: VideoMetricSnapshot
     evidence: str | None = None
     data_quality_warnings: list[str] = Field(default_factory=list)
@@ -414,6 +415,9 @@ class ProviderSearchPage(BaseModel):
     has_more: bool = False
     raw_item_count: int = Field(default=0, ge=0)
     parsed_item_count: int = Field(default=0, ge=0)
+    duration_filtered_count: int = Field(default=0, ge=0)
+    incremental_play_filtered_count: int = Field(default=0, ge=0)
+    relevance_filtered_count: int = Field(default=0, ge=0)
     payload_diagnostic: str | None = None
     errors: list[ProviderSearchError] = Field(default_factory=list)
 
@@ -612,7 +616,7 @@ class CandidateMatch(BaseModel):
     cohort_key: str
     platform: Platform = Platform.DOUYIN
     provider_name: str = "legacy"
-    platform_rank: int = Field(default=10, ge=1, le=10)
+    platform_rank: int = Field(default=10, ge=1, le=100)
     observed_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     publish_time: int = Field(default=1)
     sort_type: int = Field(default=0)
@@ -634,6 +638,8 @@ class DiscoveryResult(BaseModel):
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     irrelevant_count: int = Field(default=0, ge=0)
+    duration_filtered_count: int = Field(default=0, ge=0)
+    incremental_play_filtered_count: int = Field(default=0, ge=0)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     payload_diagnostic: str | None = None
@@ -661,7 +667,7 @@ class SearchBatch(BaseModel):
     published_window_days: int = Field(default=0)
     monitoring_policy: str = "low_cost_three_point_v1"
     sampling_offsets_hours: list[int] = Field(default_factory=lambda: [0, 6, 24])
-    requested_count_per_platform: int = Field(default=10, ge=1, le=10)
+    requested_count_per_platform: int = Field(default=10, ge=1, le=100)
     provider: str
     mode: ProviderMode
     status: SearchBatchStatus = SearchBatchStatus.PENDING
@@ -674,6 +680,9 @@ class SearchBatch(BaseModel):
     )
     platform_run_ids: list[str] = Field(default_factory=list)
     force_refresh: bool = False
+    # 只有用户在批次详情中明确确认后，才允许定时任务发起后续付费采样。
+    tracking_authorized: bool = False
+    tracking_parent_batch_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     finished_at: datetime | None = None
     error: str | None = None
@@ -685,6 +694,20 @@ class SearchBatch(BaseModel):
         return self
 
 
+class ProviderSafetyState(BaseModel):
+    """Persistent, provider-wide pacing state for user-authorized collection."""
+
+    provider: str
+    active_run_id: str | None = None
+    lease_expires_at: datetime | None = None
+    next_allowed_at: datetime | None = None
+    blocked_until: datetime | None = None
+    blocked_reason: str | None = None
+    rolling_window_started_at: datetime | None = None
+    real_runs_in_window: int = Field(default=0, ge=0)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
 class PlatformSearchRun(BaseModel):
     run_id: str = Field(default_factory=lambda: f"platform-{uuid4().hex[:12]}")
     batch_id: str
@@ -692,14 +715,16 @@ class PlatformSearchRun(BaseModel):
     provider: str
     mode: ProviderMode
     status: PlatformRunStatus = PlatformRunStatus.QUEUED
-    requested_count: int = Field(default=10, ge=1, le=10)
-    returned_count: int = Field(default=0, ge=0, le=10)
+    requested_count: int = Field(default=10, ge=1, le=100)
+    returned_count: int = Field(default=0, ge=0, le=100)
     raw_item_count: int = Field(default=0, ge=0)
     parsed_item_count: int = Field(default=0, ge=0)
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     duplicate_count: int = Field(default=0, ge=0)
-    irrelevant_count: int = Field(default=0, ge=0, le=10)
+    irrelevant_count: int = Field(default=0, ge=0, le=100)
+    duration_filtered_count: int = Field(default=0, ge=0)
+    incremental_play_filtered_count: int = Field(default=0, ge=0)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     payload_diagnostic: str | None = None
@@ -729,7 +754,7 @@ class KeywordTrendResult(BaseModel):
     level: KeywordTrendLevel
     confidence: float = Field(ge=0, le=1)
     provisional: bool = True
-    platform_rank: int = Field(ge=1, le=10)
+    platform_rank: int = Field(ge=1, le=100)
     likes_per_hour: float | None = None
     engagement_per_hour: float | None = None
     like_growth_per_hour: float | None = None
@@ -817,6 +842,9 @@ class SamplingCheckpoint(BaseModel):
     due_at: datetime
     status: SamplingStatus = SamplingStatus.PENDING
     observed_at: datetime | None = None
+    # 旧检查点默认不具备付费复搜授权，避免升级后意外产生调用。
+    tracking_batch_id: str | None = None
+    billing_authorized: bool = False
 
 
 class TaskRecord(BaseModel):
@@ -912,6 +940,11 @@ class CopywritingTask(TaskRecord):
     token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
+    # 文案风险表达优化的结果。旧任务缺省为未检测，保证历史记录可继续读取。
+    compliance_status: str = "not_checked"
+    compliance_notes: list[str] = Field(default_factory=list)
+    compliance_rewritten: bool = False
+    compliance_retry_used: bool = False
     source_task_id: str | None = None
     source_revision_id: str | None = None
     # 三档文案来源标记（见 CopySource），默认空表示历史改写任务
@@ -992,6 +1025,7 @@ class PublishTarget(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     platform: PublishPlatform
+    account_id: str | None = None
     title: str = Field(min_length=1, max_length=100)
     description: str = ""
     tags: list[str] = Field(default_factory=list)

@@ -51,6 +51,32 @@ class _SlowEngine:
         return []
 
 
+class _ComplianceRetryEngine:
+    """首次返回高风险表达，第二次返回可复核表达。"""
+
+    def __init__(self, *, remains_risky: bool = False) -> None:
+        self.remains_risky = remains_risky
+        self.rewrite_calls: list[dict] = []
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "compliance-test",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 3,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls.append(kwargs)
+        if len(self.rewrite_calls) == 1 or self.remains_risky:
+            return ["月入5万，保证有效。"]
+        return ["这是个人经历，实际效果会因条件不同而不同。"]
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
+
+
 class TestCopywritingServiceEdgeCases:
     """补充 CopywritingService 边界和异常路径。"""
 
@@ -91,6 +117,24 @@ class TestCopywritingServiceEdgeCases:
         assert task.result_text is None
         assert task.result_variants == []
         assert "未返回有效内容" in task.error_message
+
+    def test_rewrite_retries_once_when_risk_expression_remains(self):
+        engine = _ComplianceRetryEngine()
+        task = CopywritingService(self.repo, engine).rewrite(source_text="分享经验")
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.compliance_status == "passed"
+        assert task.compliance_rewritten is True
+        assert task.compliance_retry_used is True
+        assert len(engine.rewrite_calls) == 2
+        assert any("自动进行一次复核改写" in note for note in task.compliance_notes)
+
+    def test_rewrite_marks_manual_review_after_single_retry(self):
+        engine = _ComplianceRetryEngine(remains_risky=True)
+        task = CopywritingService(self.repo, engine).rewrite(source_text="分享经验")
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.compliance_status == "review_required"
+        assert task.compliance_retry_used is True
+        assert len(engine.rewrite_calls) == 2
 
     def test_rewrite_with_source_ids(self):
         """source_task_id 和 source_revision_id 应正确存储。"""

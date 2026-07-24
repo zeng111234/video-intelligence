@@ -20,6 +20,7 @@ from src.models import (
     ProductionBatch,
     Platform,
     PlatformSearchRun,
+    ProviderSafetyState,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -74,12 +75,14 @@ class SQLiteRepository:
             self._ensure_media_resolution_tables()
             self._ensure_hot_word_tables()
             self._ensure_production_batch_tables()
+            self._ensure_provider_safety_tables()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
         self._ensure_media_resolution_tables()
         self._ensure_hot_word_tables()
         self._ensure_production_batch_tables()
+        self._ensure_provider_safety_tables()
 
     def _ensure_hot_word_tables(self) -> None:
         self.connection.executescript(
@@ -114,6 +117,32 @@ class SQLiteRepository:
             CREATE INDEX IF NOT EXISTS idx_production_batches_status
             ON production_batches(status, created_at DESC);
             """
+        )
+        self.connection.commit()
+
+    def _ensure_provider_safety_tables(self) -> None:
+        """Persist provider-wide collection pacing across API restarts."""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS provider_safety_states (
+                provider TEXT PRIMARY KEY,
+                active_run_id TEXT,
+                lease_expires_at TEXT,
+                next_allowed_at TEXT,
+                blocked_until TEXT,
+                blocked_reason TEXT,
+                rolling_window_started_at TEXT,
+                real_runs_in_window INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_provider_safety_next_allowed
+            ON provider_safety_states(next_allowed_at);
+            """
+        )
+        self._ensure_column("provider_safety_states", "rolling_window_started_at", "TEXT")
+        self._ensure_column(
+            "provider_safety_states", "real_runs_in_window", "INTEGER NOT NULL DEFAULT 0"
         )
         self.connection.commit()
 
@@ -1162,6 +1191,193 @@ class SQLiteRepository:
             (limit,),
         ).fetchall()
         return [SearchBatch.model_validate_json(row["payload_json"]) for row in rows]
+
+    def get_provider_safety_state(self, provider: str) -> ProviderSafetyState | None:
+        row = self.connection.execute(
+            """
+            SELECT provider, active_run_id, lease_expires_at, next_allowed_at,
+                   blocked_until, blocked_reason, rolling_window_started_at,
+                   real_runs_in_window, updated_at
+            FROM provider_safety_states WHERE provider = ?
+            """,
+            (provider,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ProviderSafetyState(
+            provider=str(row["provider"]),
+            active_run_id=row["active_run_id"],
+            lease_expires_at=(
+                datetime.fromisoformat(str(row["lease_expires_at"]))
+                if row["lease_expires_at"]
+                else None
+            ),
+            next_allowed_at=(
+                datetime.fromisoformat(str(row["next_allowed_at"]))
+                if row["next_allowed_at"]
+                else None
+            ),
+            blocked_until=(
+                datetime.fromisoformat(str(row["blocked_until"]))
+                if row["blocked_until"]
+                else None
+            ),
+            blocked_reason=row["blocked_reason"],
+            rolling_window_started_at=(
+                datetime.fromisoformat(str(row["rolling_window_started_at"]))
+                if row["rolling_window_started_at"]
+                else None
+            ),
+            real_runs_in_window=int(row["real_runs_in_window"] or 0),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        )
+
+    def claim_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        lease_seconds: int,
+        max_runs_in_window: int | None = None,
+        rolling_window_seconds: int = 24 * 60 * 60,
+    ) -> bool:
+        """Atomically claim one provider-wide collection slot if it is safe."""
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            state = self.get_provider_safety_state(provider)
+            if state is not None:
+                if state.blocked_until and state.blocked_until > now:
+                    connection.rollback()
+                    return False
+                if state.next_allowed_at and state.next_allowed_at > now:
+                    connection.rollback()
+                    return False
+                if (
+                    state.active_run_id
+                    and state.active_run_id != run_id
+                    and state.lease_expires_at
+                    and state.lease_expires_at > now
+                ):
+                    connection.rollback()
+                    return False
+            window_start = state.rolling_window_started_at if state else None
+            active_window = bool(
+                window_start and now - window_start < timedelta(seconds=rolling_window_seconds)
+            )
+            current_runs = state.real_runs_in_window if state and active_window else 0
+            if max_runs_in_window is not None and current_runs >= max_runs_in_window:
+                connection.rollback()
+                return False
+            lease_expires_at = now + timedelta(seconds=max(1, lease_seconds))
+            next_window_start = window_start if active_window else now
+            connection.execute(
+                """
+                INSERT INTO provider_safety_states(
+                    provider, active_run_id, lease_expires_at, next_allowed_at,
+                    blocked_until, blocked_reason, rolling_window_started_at,
+                    real_runs_in_window, updated_at
+                ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    active_run_id = excluded.active_run_id,
+                    lease_expires_at = excluded.lease_expires_at,
+                    rolling_window_started_at = excluded.rolling_window_started_at,
+                    real_runs_in_window = excluded.real_runs_in_window,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    provider,
+                    run_id,
+                    lease_expires_at.isoformat(),
+                    next_window_start.isoformat(),
+                    current_runs + 1,
+                    now.isoformat(),
+                ),
+            )
+            connection.commit()
+            return True
+        except Exception:
+            connection.rollback()
+            raise
+
+    def release_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        cooldown_seconds: int,
+        safety_pause_seconds: int = 0,
+        safety_reason: str | None = None,
+    ) -> ProviderSafetyState:
+        """Release a slot and persist either normal cooldown or a safety pause."""
+        current = self.get_provider_safety_state(provider)
+        existing_block = (
+            current.blocked_until
+            if current and current.blocked_until and current.blocked_until > now
+            else None
+        )
+        requested_block = (
+            now + timedelta(seconds=max(1, safety_pause_seconds))
+            if safety_pause_seconds
+            else None
+        )
+        blocked_until = max(
+            (item for item in (existing_block, requested_block) if item is not None),
+            default=None,
+        )
+        blocked_reason = safety_reason if requested_block else (current.blocked_reason if current else None)
+        next_allowed_at = now + timedelta(seconds=max(1, cooldown_seconds))
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO provider_safety_states(
+                    provider, active_run_id, lease_expires_at, next_allowed_at,
+                    blocked_until, blocked_reason, rolling_window_started_at,
+                    real_runs_in_window, updated_at
+                ) VALUES (?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    active_run_id = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.active_run_id
+                    END,
+                    lease_expires_at = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.lease_expires_at
+                    END,
+                    next_allowed_at = excluded.next_allowed_at,
+                    blocked_until = excluded.blocked_until,
+                    blocked_reason = excluded.blocked_reason,
+                    rolling_window_started_at = excluded.rolling_window_started_at,
+                    real_runs_in_window = excluded.real_runs_in_window,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    provider,
+                    next_allowed_at.isoformat(),
+                    blocked_until.isoformat() if blocked_until else None,
+                    blocked_reason,
+                    current.rolling_window_started_at.isoformat()
+                    if current and current.rolling_window_started_at
+                    else None,
+                    current.real_runs_in_window if current else 0,
+                    now.isoformat(),
+                    run_id,
+                    run_id,
+                ),
+            )
+        return self.get_provider_safety_state(provider) or ProviderSafetyState(
+            provider=provider,
+            next_allowed_at=next_allowed_at,
+            blocked_until=blocked_until,
+            blocked_reason=blocked_reason,
+            rolling_window_started_at=(
+                current.rolling_window_started_at if current else None
+            ),
+            real_runs_in_window=current.real_runs_in_window if current else 0,
+            updated_at=now,
+        )
 
     def delete_search_batch(self, batch_id: str) -> bool:
         """删除一条历史搜索批次及其平台运行记录，不删除共享候选数据。"""

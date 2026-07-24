@@ -84,17 +84,17 @@ async def lifespan(application: FastAPI):
                 from project.backend.app.core.deps import get_commercial_search_service
 
                 service = get_commercial_search_service()
-                if (
-                    service.provider.capabilities().provider_name == "oneapi"
-                    and not CRAWLER_ONEAPI_AUTO_ENABLED
-                ):
-                    logger.debug("已关闭 OneAPI 自动复爬；跳过本轮到期采样。")
-                else:
-                    await asyncio.to_thread(
-                        service.execute_due_recrawls,
-                        max_groups=5,
-                        published_window_days=0,
-                    )
+                # 全局自动复爬关闭时，仍只执行用户在批次详情里明确授权的追踪；
+                # 旧检查点不会因版本升级而产生新的付费调用。
+                await asyncio.to_thread(
+                    service.execute_due_recrawls,
+                    max_groups=5,
+                    published_window_days=0,
+                    authorized_only=(
+                        service.provider.capabilities().provider_name == "oneapi"
+                        and not CRAWLER_ONEAPI_AUTO_ENABLED
+                    ),
+                )
             except Exception as exc:
                 logger.warning("关键词趋势定时采样失败（将在下轮重试）: %s", exc)
             await asyncio.sleep(300)

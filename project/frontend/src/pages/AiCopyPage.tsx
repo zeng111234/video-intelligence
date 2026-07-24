@@ -13,7 +13,6 @@ import {
   Row,
   Segmented,
   Select,
-  Slider,
   Space,
   Spin,
   Tag,
@@ -77,12 +76,6 @@ const TONE_OPTIONS = [
   { value: "urgent", label: "紧迫" },
 ];
 
-const PLATFORM_OPTIONS = [
-  { value: "douyin", label: "抖音" },
-  { value: "xiaohongshu", label: "小红书" },
-  { value: "wechat_channels", label: "微信视频号" },
-];
-
 type CopyMode = "generate" | "rewrite";
 
 function formatTime(value: string | null) {
@@ -101,10 +94,8 @@ export default function AiCopyPage() {
   const [targetAudience, setTargetAudience, clearTargetAudience] = usePersistentState("ai_copy_target_audience", "");
   const [sellingPoints, setSellingPoints, clearSellingPoints] = usePersistentState("ai_copy_selling_points", "");
   const [callToAction, setCallToAction, clearCallToAction] = usePersistentState("ai_copy_call_to_action", "");
-  const [platform, setPlatform] = usePersistentState("ai_copy_platform", "douyin");
   const [stylePreset, setStylePreset] = usePersistentState("ai_copy_style_preset", "engaging");
   const [tone, setTone] = usePersistentState("ai_copy_tone", "casual");
-  const [targetLength, setTargetLength] = usePersistentState("ai_copy_target_length", 200);
   const [variantCount, setVariantCount] = usePersistentState("ai_copy_variant_count", 3);
   const [activeVariant, setActiveVariant] = usePersistentState("ai_copy_active_variant", 0);
 
@@ -208,13 +199,11 @@ export default function AiCopyPage() {
     }
     setLoading(true);
     setVariants([]);
-    setLastResponse(null);
+      setLastResponse(null);
     try {
       const common = {
-        platform,
         target_audience: targetAudience,
         style_prompt: STYLE_PROMPTS[stylePreset] || STYLE_PROMPTS.engaging,
-        target_length: targetLength,
         tone,
         variant_count: variantCount,
       };
@@ -249,13 +238,11 @@ export default function AiCopyPage() {
     enabled,
     inputReady,
     mode,
-    platform,
     refreshHistory,
     sellingPoints,
     sourceText,
     stylePreset,
     targetAudience,
-    targetLength,
     tone,
     toast,
     variantCount,
@@ -272,9 +259,7 @@ export default function AiCopyPage() {
       setTargetAudience(detail.target_audience);
       setSellingPoints(detail.selling_points);
       setCallToAction(detail.call_to_action);
-      setPlatform(detail.platform);
       setTone(detail.tone);
-      setTargetLength(detail.target_length);
       setStylePreset(stylePresetFromPrompt(detail.style_prompt));
       applyResult(detail);
       setHistoryOpen(false);
@@ -316,7 +301,7 @@ export default function AiCopyPage() {
   }, [toast]);
 
   const tokenUsage = lastResponse?.token_usage ?? {};
-  const settingsSummary = `${PLATFORM_OPTIONS.find((item) => item.value === platform)?.label || platform} / ${TONE_OPTIONS.find((item) => item.value === tone)?.label || tone} / ${selectedStyle.label} / ${targetLength} 字 / ${variantCount} 版`;
+  const settingsSummary = `${TONE_OPTIONS.find((item) => item.value === tone)?.label || tone} / ${selectedStyle.label} / ${variantCount} 版`;
   const activeText = variants[activeVariant] || "";
 
   return (
@@ -326,7 +311,7 @@ export default function AiCopyPage() {
           <Title level={4} style={{ margin: 0 }}>
             <EditOutlined /> AI 文案生成
           </Title>
-          <Text type="secondary">真实大模型生成短视频口播文案，支持需求生成与原文改写</Text>
+          <Text type="secondary">真实大模型生成自然口播文案，支持需求生成、口播优化与风险表达改写</Text>
         </Col>
         <Col>
           <Space wrap>
@@ -410,10 +395,7 @@ export default function AiCopyPage() {
                     children: (
                       <Space direction="vertical" style={{ width: "100%" }} size={16}>
                         <Row gutter={12}>
-                          <Col span={12}>
-                            <Select value={platform} onChange={setPlatform} options={PLATFORM_OPTIONS} style={{ width: "100%" }} />
-                          </Col>
-                          <Col span={12}>
+                          <Col span={24}>
                             <Select value={tone} onChange={setTone} options={TONE_OPTIONS} style={{ width: "100%" }} />
                           </Col>
                         </Row>
@@ -430,10 +412,6 @@ export default function AiCopyPage() {
                           ))}
                         </div>
                         <Text type="secondary" style={{ fontSize: 12 }}>{selectedStyle.desc}</Text>
-                        <div>
-                          <Text strong>目标字数：{targetLength} 字</Text>
-                          <Slider min={50} max={800} step={50} value={targetLength} onChange={setTargetLength} />
-                        </div>
                         <Select
                           value={variantCount}
                           onChange={setVariantCount}
@@ -455,7 +433,7 @@ export default function AiCopyPage() {
                 onClick={handleSubmit}
                 disabled={!inputReady || !enabled}
               >
-                {mode === "generate" ? "生成文案" : "改写文案"}
+                {mode === "generate" ? "生成口播文案" : "优化口播文案"}
               </Button>
             </Space>
           </Card>
@@ -500,8 +478,19 @@ export default function AiCopyPage() {
                     <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制当前变体</Button>
                     <Button onClick={() => handleCopy(variants.join("\n\n---\n\n"))}>复制全部变体</Button>
                   </Space>
+                  <Alert
+                    type={lastResponse?.compliance_status === "review_required" ? "warning" : "info"}
+                    showIcon
+                    message={lastResponse?.compliance_status === "review_required" ? "仍有风险表达，建议人工复核" : "表达风险优化已完成"}
+                    description={
+                      <Space direction="vertical" size={2}>
+                        {(lastResponse?.compliance_notes || ["已按自然口播节奏优化表达。"])
+                          .map((note) => <Text key={note}>{note}</Text>)}
+                        <Text type="secondary">风险优化不代表平台审核保证，请结合实际内容复核。</Text>
+                      </Space>
+                    }
+                  />
                   <Space wrap size={[16, 8]}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>字数：{activeText.length}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>变体数：{variants.length}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>供应商：{lastResponse?.provider_name || "-"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>Token：{tokenUsage.total_tokens ?? "-"}</Text>

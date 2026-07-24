@@ -477,7 +477,7 @@ def test_strict_keyword_relevance_keeps_title_or_hashtag_matches_only() -> None:
         "douyin-title-match"
     ]
     assert len(repository.list_candidate_matches(run.run_id)) == 1
-    assert len(repository.list_sampling_checkpoints("带货")) == 2
+    assert [item.offset_hours for item in repository.list_sampling_checkpoints("带货")] == [2]
 
 
 def test_all_strictly_irrelevant_results_are_reported_without_importing() -> None:
@@ -621,7 +621,7 @@ def test_unlimited_monitoring_keeps_older_related_videos_and_schedules_three_poi
     assert batch.published_window_days == 0
     assert run.out_of_window_count == 0
     assert run.returned_count == 1
-    assert [item.offset_hours for item in checkpoints] == [6, 24]
+    assert [item.offset_hours for item in checkpoints] == [2]
 
 
 def test_unlimited_monitoring_executes_only_due_zero_window_recrawls() -> None:
@@ -631,7 +631,7 @@ def test_unlimited_monitoring_executes_only_due_zero_window_recrawls() -> None:
     service = _douyin_only_service(repository, provider, first_seen)
     service.execute(keyword="租房")
 
-    provider.now = first_seen + timedelta(hours=6)
+    provider.now = first_seen + timedelta(hours=2)
     due_service = _douyin_only_service(repository, provider, provider.now)
     executed = due_service.execute_due_recrawls(
         max_groups=5,
@@ -640,8 +640,35 @@ def test_unlimited_monitoring_executes_only_due_zero_window_recrawls() -> None:
 
     assert len(executed) == 1
     checkpoints = repository.list_sampling_checkpoints("租房")
-    assert next(item for item in checkpoints if item.offset_hours == 6).status == SamplingStatus.OBSERVED
-    assert next(item for item in checkpoints if item.offset_hours == 24).status == SamplingStatus.PENDING
+    assert next(item for item in checkpoints if item.offset_hours == 2).status == SamplingStatus.OBSERVED
+    assert next(item for item in checkpoints if item.offset_hours in {4, 12}).status == SamplingStatus.PENDING
+
+
+def test_explicit_tracking_authorization_is_required_for_due_paid_recrawls() -> None:
+    first_seen = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(first_seen)
+    service = _douyin_only_service(repository, provider, first_seen)
+    batch = service.execute(keyword="租房", schedule_recrawls=False)
+
+    assert repository.list_sampling_checkpoints("租房") == []
+    tracked, created, due_at = service.start_batch_tracking(batch.batch_id)
+    assert tracked.tracking_authorized is True
+    assert created == 1
+    assert due_at == first_seen + timedelta(hours=2)
+    checkpoint = repository.list_sampling_checkpoints("租房")[0]
+    assert checkpoint.billing_authorized is True
+    assert checkpoint.tracking_batch_id == batch.batch_id
+
+    provider.now = first_seen + timedelta(hours=2)
+    due_service = _douyin_only_service(repository, provider, provider.now)
+    executed = due_service.execute_due_recrawls(
+        max_groups=5,
+        published_window_days=0,
+        authorized_only=True,
+    )
+
+    assert len(executed) == 1
 
 
 def test_low_engagement_search_result_is_not_labeled_hot() -> None:
@@ -700,23 +727,22 @@ def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses()
     service.execute(keyword="二手车", published_window_days=1)
     checkpoints = repository.list_sampling_checkpoints("二手车")
 
-    assert [item.offset_hours for item in checkpoints] == [2, 6, 12]
+    assert [item.offset_hours for item in checkpoints] == [2]
     assert all(item.status == SamplingStatus.PENDING for item in checkpoints)
 
-    six_hours_later = first_seen + timedelta(hours=6)
-    provider.now = six_hours_later
-    later_service = _douyin_only_service(repository, provider, six_hours_later)
+    two_hours_later = first_seen + timedelta(hours=2)
+    provider.now = two_hours_later
+    later_service = _douyin_only_service(repository, provider, two_hours_later)
     later_service.execute(keyword="二手车", published_window_days=1, force_refresh=True)
 
     checkpoints = repository.list_sampling_checkpoints("二手车")
     assert [
-        item.status for item in checkpoints if item.offset_hours in {2, 6}
-    ] == [SamplingStatus.OBSERVED, SamplingStatus.OBSERVED]
-    assert [
-        item.status for item in checkpoints if item.offset_hours == 12
-    ] == [SamplingStatus.PENDING]
+        item.status for item in checkpoints if item.offset_hours == 2
+    ] == [SamplingStatus.OBSERVED]
+    next_checkpoint = next(item for item in checkpoints if item.offset_hours in {4, 12})
+    assert next_checkpoint.status == SamplingStatus.PENDING
 
-    thirteen_hours_later = first_seen + timedelta(hours=13)
+    thirteen_hours_later = first_seen + timedelta(hours=15)
     provider.now = thirteen_hours_later
     provider.page_override = ProviderSearchPage(
         platform=Platform.DOUYIN,
@@ -733,7 +759,7 @@ def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses()
 
     checkpoints = repository.list_sampling_checkpoints("二手车")
     assert [
-        item.status for item in checkpoints if item.offset_hours == 12
+        item.status for item in checkpoints if item.offset_hours == next_checkpoint.offset_hours
     ] == [SamplingStatus.MISSED]
 
 

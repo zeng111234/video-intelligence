@@ -133,13 +133,14 @@ class PlatformPublisherAdapter:
 
 
 def build_publisher(platform: PublishPlatform):
-    """工厂：默认返回人工发布包生成器。
+    """工厂：在真实官方适配器完成联调前，始终返回发布助手。
 
-    官方 API 适配器尚未完成真实联调，即使本地存在 token 也不直接启用真实发布。
+    旧配置可能把模式标记为 ``official``，但当前 ``PlatformPublisherAdapter``
+    只是骨架。不能因为这个标记让普通用户创建一个必然失败的任务；真实适配器
+    上线后再在这里显式切换，并配套验收其平台权限与回调链路。
     """
-    import os
+    if platform == PublishPlatform.DOUYIN:
+        from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
 
-    mode_key = f"PUBLISH_{platform.value.upper()}_MODE"
-    if os.getenv(mode_key, "").strip().lower() == "official":
-        return PlatformPublisherAdapter(platform)
+        return DouyinBrowserPublisher()
     return SandboxPublisher(platform)

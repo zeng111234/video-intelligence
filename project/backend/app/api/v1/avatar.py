@@ -34,7 +34,7 @@ from src.services.avatar import AvatarService
 router = APIRouter(prefix="/api/v1/avatar", tags=["avatar"])
 
 AVATAR_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a"}
+VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a", ".webm"}
 MAX_AVATAR_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_VOICE_UPLOAD_BYTES = 50 * 1024 * 1024
 

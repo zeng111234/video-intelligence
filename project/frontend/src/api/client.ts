@@ -34,8 +34,12 @@ import type {
   CrawlerOriginalScriptResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
+  CrawlerTrackingResponse,
   EditTemplate,
   PipelineFromCandidateRequest,
+  GuidedPipelinePreflight,
+  GuidedPipelineRequest,
+  PipelineReviewDraft,
   PipelineResponse,
   ProductionBatch,
   ProductionBatchPreflight,
@@ -47,12 +51,15 @@ import type {
   PublishAssetListResponse,
   PublishBatchListResponse,
   PublishBatchResponse,
+  PublishConnection,
+  PublishConnectionStartResponse,
   PublishConfigResponse,
   PublishPlatformConfig,
   PublishPlatformConfigUpdate,
   PublishPlatformsResponse,
   PublishPreflightResponse,
   PublishResponse,
+  PublishAccount,
   StepKindsResponse,
   SubtitleStatusResponse,
   TaskListResponse,
@@ -97,6 +104,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
+    const detail = typeof body.detail === "string"
+      ? body.detail
+      : typeof body.detail?.message === "string"
+        ? body.detail.message
+        : undefined;
     const statusMessages: Record<number, string> = {
       400: "请求参数错误",
       404: "请求的资源不存在",
@@ -105,7 +117,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       503: "服务暂时不可用",
     };
     throw new Error(
-      body.detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
+      detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
     );
   }
   return resp.json();
@@ -289,6 +301,30 @@ export function createPipelineFromCandidate(
       variant_count: params.variant_count ?? 2,
     }),
   });
+}
+
+export function preflightGuidedPipeline(
+  params: GuidedPipelineRequest,
+): Promise<GuidedPipelinePreflight> {
+  return request("/pipelines/guided/preflight", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function createGuidedPipeline(
+  params: GuidedPipelineRequest & { idempotencyKey: string },
+): Promise<PipelineResponse> {
+  const { idempotencyKey, ...body } = params;
+  return request("/pipelines/guided", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getPipelineReviewDraft(runId: string): Promise<PipelineReviewDraft> {
+  return request(`/pipelines/${encodeURIComponent(runId)}/review-draft`);
 }
 
 export function getPipeline(runId: string): Promise<PipelineResponse> {
@@ -502,6 +538,7 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
     ...caps,
     official_hot_billboard: caps.official_hot_billboard ?? null,
     official_hot_words: caps.official_hot_words ?? null,
+    hotspot_browser: caps.hotspot_browser ?? null,
   };
 }
 
@@ -562,6 +599,14 @@ export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> 
 
 export function deleteCrawlerBatch(batchId: string): Promise<{ batch_id: string; deleted: boolean }> {
   return request(`/crawler/batches/${batchId}`, { method: "DELETE" });
+}
+
+export function startCrawlerBatchTracking(batchId: string): Promise<CrawlerTrackingResponse> {
+  return request(`/crawler/batches/${encodeURIComponent(batchId)}/tracking`, { method: "POST" });
+}
+
+export function cancelCrawlerBatchTracking(batchId: string): Promise<CrawlerTrackingResponse> {
+  return request(`/crawler/batches/${encodeURIComponent(batchId)}/tracking`, { method: "DELETE" });
 }
 
 export function executeDueCrawlerRecrawls(limit = 5): Promise<CrawlerDueRecrawlResponse> {
@@ -700,10 +745,8 @@ export function startCrawlerDoubaoMobileWorker(): Promise<CrawlerDoubaoWorkerSta
 
 export function rewriteCopywriting(params: {
   source_text: string;
-  platform?: string;
   target_audience?: string;
   style_prompt?: string;
-  target_length?: number;
   tone?: string;
   variant_count?: number;
 }): Promise<CopywritingResponse> {
@@ -759,6 +802,27 @@ export function listPublishPlatforms(): Promise<PublishPlatformsResponse> {
   return request("/publish/platforms");
 }
 
+export function listPublishAccounts(platform?: string): Promise<PublishAccount[]> {
+  const query = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+  return request(`/publish/accounts${query}`);
+}
+
+export function createPublishAccount(params: { platform: string; name: string }): Promise<PublishAccount> {
+  return request("/publish/accounts", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function connectPublishAccount(accountId: string): Promise<PublishAccount> {
+  return request(`/publish/accounts/${encodeURIComponent(accountId)}/connect`, { method: "POST" });
+}
+
+export function getPublishAccountStatus(accountId: string): Promise<PublishAccount> {
+  return request(`/publish/accounts/${encodeURIComponent(accountId)}/status`);
+}
+
+export function deletePublishAccount(accountId: string): Promise<void> {
+  return request(`/publish/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" });
+}
+
 export function getPublishConfig(): Promise<PublishConfigResponse> {
   return request("/publish/config");
 }
@@ -771,6 +835,18 @@ export function updatePublishConfig(
     method: "PUT",
     body: JSON.stringify(params),
   });
+}
+
+export function getDouyinPublishConnection(): Promise<PublishConnection> {
+  return request("/publish/connections/douyin");
+}
+
+export function startDouyinPublishConnection(): Promise<PublishConnectionStartResponse> {
+  return request("/publish/connections/douyin/start", { method: "POST" });
+}
+
+export function disconnectDouyinPublishConnection(): Promise<PublishConnection> {
+  return request("/publish/connections/douyin/disconnect", { method: "POST" });
 }
 
 export function listPublishAssets(): Promise<PublishAssetListResponse> {
@@ -805,6 +881,7 @@ export function preflightPublish(params: {
   title: string;
   description?: string;
   tags?: string[];
+  account_ids?: Record<string, string>;
 }): Promise<PublishPreflightResponse> {
   return request("/publish/preflight", {
     method: "POST",
@@ -818,6 +895,7 @@ export function createPublishBatch(params: {
   title: string;
   description?: string;
   tags?: string[];
+  account_ids?: Record<string, string>;
   confirmation_accepted: boolean;
 }): Promise<PublishBatchResponse> {
   return request("/publish/batches", {

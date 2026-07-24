@@ -41,10 +41,15 @@ RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
 RELEVANCE_RULE_VERSION = "title_or_hashtag_strict_v1"
+# 新批次采用自适应三点采样：首次 2 小时后复搜；第二个间隔按真实互动
+# 变化缩短为 4 小时或延长为 12 小时。保留窗口映射仅供历史入口兼容。
+ADAPTIVE_FIRST_RECRAWL_HOURS = 2
+ADAPTIVE_FAST_RECRAWL_HOURS = 4
+ADAPTIVE_SLOW_RECRAWL_HOURS = 12
 RECRAWL_OFFSETS_BY_WINDOW = {
-    0: (6, 24),
-    1: (2, 6, 12),
-    7: (6, 24, 48),
+    0: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    1: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    7: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
 }
 RECRAWL_MISS_GRACE_MINUTES = 30
 
@@ -115,6 +120,7 @@ class CommercialSearchService:
         force_refresh: bool = False,
         platforms: tuple[Platform, ...] | None = None,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
+        include_monitoring: bool = True,
     ) -> list[PlatformSearchPreview]:
         keyword = self._validate_request(keyword, published_window_days, count)
         selected_platforms = self._selected_platforms(platforms)
@@ -141,12 +147,12 @@ class CommercialSearchService:
                     cache_ttl_minutes=safe_cache_ttl_minutes,
                 )
             )
-            # 首次、6 小时、24 小时共三次真实搜索；缓存批次不重复预约费用。
+            # 首次 + 两次自适应复搜；用户未开启趋势跟踪时只预估首次调用。
             estimated_calls = (
                 0
                 if cached
                 or capability.mode in {ProviderMode.SANDBOX, ProviderMode.LOCAL_BROWSER}
-                else 3
+                else (3 if include_monitoring else 1)
             )
             unit_price = prices.get(platform)
             estimated_cost = (
@@ -195,6 +201,7 @@ class CommercialSearchService:
         platforms: tuple[Platform, ...] | None = None,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
         schedule_recrawls: bool = True,
+        tracking_parent_batch_id: str | None = None,
     ) -> SearchBatch:
         keyword = self._validate_request(keyword, published_window_days, count)
         selected_platforms = self._selected_platforms(platforms)
@@ -210,6 +217,14 @@ class CommercialSearchService:
             mode=capability.mode,
             platforms=list(selected_platforms),
             force_refresh=force_refresh,
+            tracking_authorized=bool(tracking_parent_batch_id),
+            tracking_parent_batch_id=tracking_parent_batch_id,
+            monitoring_policy=(
+                "adaptive_three_sample_v1" if schedule_recrawls else "manual_tracking_v1"
+            ),
+            sampling_offsets_hours=(
+                [0, ADAPTIVE_FIRST_RECRAWL_HOURS] if schedule_recrawls else [0]
+            ),
         )
         self.repository.save_search_batch(batch)
         batch = batch.model_copy(update={"status": SearchBatchStatus.RUNNING})
@@ -227,6 +242,7 @@ class CommercialSearchService:
                     force_refresh=force_refresh,
                     cache_ttl_minutes=safe_cache_ttl_minutes,
                     schedule_recrawls=schedule_recrawls,
+                    tracking_parent_batch_id=tracking_parent_batch_id,
                 )
             )
 
@@ -260,17 +276,101 @@ class CommercialSearchService:
         self.repository.save_search_batch(batch)
         return batch
 
+    def start_batch_tracking(self, batch_id: str) -> tuple[SearchBatch, int, datetime | None]:
+        """Authorize exactly the next two real snapshots for a completed batch.
+
+        The first search never creates a billable follow-up on its own.  This
+        method is the only place that marks checkpoints as user-authorized.
+        """
+        batch = self.repository.get_search_batch(batch_id)
+        if batch is None:
+            raise ValueError("搜索批次不存在。")
+        if batch.status not in {SearchBatchStatus.SUCCEEDED, SearchBatchStatus.PARTIAL}:
+            raise ValueError("仅成功或部分成功的批次可以开启走势追踪。")
+        if batch.provider == "douyin_local_browser":
+            raise ValueError("热点宝近7天五榜为单次新增播放量排序，不支持复爬走势追踪。")
+        now = self.clock()
+        candidates = []
+        for run_id in batch.platform_run_ids:
+            for match in self.repository.list_candidate_matches(run_id):
+                candidate = self.repository.get_candidate(match.video_id)
+                if candidate is None:
+                    continue
+                metrics = candidate.metrics
+                heat = (
+                    float(metrics.likes or 0)
+                    + float(metrics.comments or 0) * 3
+                    + float(metrics.shares or 0) * 4
+                    + float(metrics.favorites or 0) * 4
+                )
+                if heat >= 100:
+                    candidates.append(candidate)
+        unique_candidates = {item.video_id: item for item in candidates}.values()
+        if not unique_candidates:
+            raise ValueError("本批次没有达到互动热度门槛的候选，无法开启走势追踪。")
+        existing = self.repository.list_sampling_checkpoints(batch.keyword.casefold())
+        due_at = now + timedelta(hours=ADAPTIVE_FIRST_RECRAWL_HOURS)
+        created = 0
+        for candidate in unique_candidates:
+            if any(
+                checkpoint.tracking_batch_id == batch.batch_id
+                and checkpoint.candidate_id == candidate.video_id
+                and checkpoint.status == SamplingStatus.PENDING
+                for checkpoint in existing
+            ):
+                continue
+            checkpoint = SamplingCheckpoint(
+                checkpoint_id=f"sample-{hashlib.sha256(f'{batch.batch_id}|{candidate.video_id}|{due_at.isoformat()}'.encode()).hexdigest()[:12]}",
+                keyword=batch.keyword.casefold(),
+                candidate_id=candidate.video_id,
+                request_id=batch.platform_run_ids[0] if batch.platform_run_ids else batch.batch_id,
+                platform=candidate.platform,
+                provider_name=batch.provider,
+                published_window_days=batch.published_window_days,
+                offset_hours=ADAPTIVE_FIRST_RECRAWL_HOURS,
+                due_at=due_at,
+                tracking_batch_id=batch.batch_id,
+                billing_authorized=True,
+            )
+            self.repository.save_sampling_checkpoint(checkpoint)
+            created += 1
+        batch = batch.model_copy(
+            update={
+                "tracking_authorized": True,
+                "monitoring_policy": "adaptive_three_sample_v1",
+                "sampling_offsets_hours": [0, ADAPTIVE_FIRST_RECRAWL_HOURS],
+            }
+        )
+        self.repository.save_search_batch(batch)
+        return batch, created, due_at if created else None
+
+    def cancel_batch_tracking(self, batch_id: str) -> int:
+        cancelled = 0
+        for checkpoint in self.repository.list_sampling_checkpoints():
+            if (
+                checkpoint.tracking_batch_id == batch_id
+                and checkpoint.status == SamplingStatus.PENDING
+            ):
+                self.repository.save_sampling_checkpoint(
+                    checkpoint.model_copy(update={"status": SamplingStatus.CANCELLED})
+                )
+                cancelled += 1
+        return cancelled
+
     def execute_due_recrawls(
         self,
         *,
         max_groups: int = 5,
         published_window_days: int | None = None,
+        authorized_only: bool = False,
     ) -> list[SearchBatch]:
         capability = self.provider.capabilities()
         now = self.clock()
-        grouped: dict[tuple[str, Platform, str, int], list[SamplingCheckpoint]] = {}
+        grouped: dict[tuple[str, Platform, str, int, str | None], list[SamplingCheckpoint]] = {}
         for checkpoint in self.repository.list_sampling_checkpoints():
             if checkpoint.status != SamplingStatus.PENDING:
+                continue
+            if authorized_only and not checkpoint.billing_authorized:
                 continue
             if checkpoint.due_at > now:
                 continue
@@ -288,6 +388,7 @@ class CommercialSearchService:
                 checkpoint.platform,
                 checkpoint.provider_name,
                 checkpoint.published_window_days,
+                checkpoint.tracking_batch_id,
             )
             grouped.setdefault(key, []).append(checkpoint)
 
@@ -296,7 +397,7 @@ class CommercialSearchService:
             grouped.items(),
             key=lambda item: min(checkpoint.due_at for checkpoint in item[1]),
         )
-        for (keyword, _platform, _provider_name, window_days), _checkpoints in ordered_groups[
+        for (keyword, _platform, _provider_name, window_days, tracking_batch_id), _checkpoints in ordered_groups[
             : max(1, max_groups)
         ]:
             batches.append(
@@ -305,6 +406,7 @@ class CommercialSearchService:
                     published_window_days=window_days,
                     count=10,
                     force_refresh=True,
+                    tracking_parent_batch_id=tracking_batch_id,
                 )
             )
         return batches
@@ -330,6 +432,7 @@ class CommercialSearchService:
         force_refresh: bool,
         cache_ttl_minutes: int,
         schedule_recrawls: bool,
+        tracking_parent_batch_id: str | None,
     ) -> PlatformSearchRun:
         capability = self.provider.capabilities()
         started_at = self.clock()
@@ -386,6 +489,8 @@ class CommercialSearchService:
                 invalid_count=cached.invalid_count,
                 duplicate_count=cached.duplicate_count,
                 irrelevant_count=cached.irrelevant_count,
+                duration_filtered_count=cached.duration_filtered_count,
+                incremental_play_filtered_count=cached.incremental_play_filtered_count,
                 relevance_rule_version=cached.relevance_rule_version,
                 result_state=cached.result_state,
                 payload_diagnostic=cached.payload_diagnostic,
@@ -489,9 +594,14 @@ class CommercialSearchService:
                 out_of_window_count=validation_counts["out_of_window_count"],
                 invalid_count=validation_counts["invalid_count"],
                 irrelevant_count=validation_counts["irrelevant_count"],
+                duration_filtered_count=validation_counts["duration_filtered_count"],
+                incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 exhausted=not page.has_more,
-                partial=bool(provider_errors) or len(normalized) < count,
+                # 热点宝五榜是“筛选后的榜单”，结果少于上限并不等同于供应商缺页。
+                partial=bool(provider_errors) or (
+                    capability.provider_name != "douyin_local_browser" and len(normalized) < count
+                ),
                 permission_status=capability.permission_status,
                 publish_time=published_window_days,
                 sort_type=KEYWORD_HOT_SORT_TYPE,
@@ -519,15 +629,24 @@ class CommercialSearchService:
                     if item.platform == platform
                 },
                 schedule_recrawls=schedule_recrawls,
+                tracking_parent_batch_id=tracking_parent_batch_id,
             )
-            trends = self.trend_service.recompute(
-                keyword,
-                platform=platform,
-                provider_name=capability.provider_name,
+            trends = (
+                []
+                if capability.provider_name == "douyin_local_browser" and not schedule_recrawls
+                else self.trend_service.recompute(
+                    keyword,
+                    platform=platform,
+                    provider_name=capability.provider_name,
+                )
             )
             run_status = (
                 PlatformRunStatus.PARTIAL
-                if provider_errors or len(normalized) < count
+                if provider_errors
+                or (
+                    capability.provider_name != "douyin_local_browser"
+                    and len(normalized) < count
+                )
                 else PlatformRunStatus.SUCCEEDED
             )
             result_state = self._result_state(
@@ -552,6 +671,8 @@ class CommercialSearchService:
                 invalid_count=validation_counts["invalid_count"],
                 duplicate_count=validation_counts["duplicate_count"],
                 irrelevant_count=validation_counts["irrelevant_count"],
+                duration_filtered_count=validation_counts["duration_filtered_count"],
+                incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 result_state=result_state,
                 payload_diagnostic=page.payload_diagnostic,
@@ -644,7 +765,9 @@ class CommercialSearchService:
             "out_of_window_count": 0,
             "invalid_count": 0,
             "duplicate_count": 0,
-            "irrelevant_count": 0,
+            "irrelevant_count": page.relevance_filtered_count,
+            "duration_filtered_count": page.duration_filtered_count,
+            "incremental_play_filtered_count": page.incremental_play_filtered_count,
         }
         if page.platform != platform or page.provider != provider:
             raise LicensedProviderError(
@@ -699,6 +822,13 @@ class CommercialSearchService:
                     cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
                     eligibility_status=EligibilityStatus.AUTO_MATCHED,
                     evidence=item.evidence,
+                    official_hot=(provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:")),
+                    official_rank=(item.provider_rank if provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:") else None),
+                    official_hot_value=(
+                        float(item.metrics.plays)
+                        if provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:") and item.metrics.plays is not None
+                        else None
+                    ),
                     data_quality_warnings=item.data_quality_warnings,
                 )
             )
@@ -743,6 +873,7 @@ class CommercialSearchService:
         published_window_days: int,
         rank_by_item: dict[str, int],
         schedule_recrawls: bool = True,
+        tracking_parent_batch_id: str | None = None,
     ) -> None:
         candidate_ids = {
             (item.platform, item.platform_item_id): item.video_id
@@ -780,6 +911,7 @@ class CommercialSearchService:
                 and checkpoint.platform == platform
                 and checkpoint.provider_name == provider
                 and checkpoint.published_window_days == published_window_days
+                and checkpoint.tracking_batch_id == tracking_parent_batch_id
             ]
             if schedule_recrawls:
                 for checkpoint in existing_checkpoints:
@@ -794,30 +926,57 @@ class CommercialSearchService:
                             }
                         )
                         self.repository.save_sampling_checkpoint(updated)
-            has_plan = any(
-                checkpoint.candidate_id == video_id
+            if not schedule_recrawls:
+                continue
+            matching_checkpoints = [
+                checkpoint
+                for checkpoint in all_checkpoints
+                if checkpoint.candidate_id == video_id
                 and checkpoint.platform == platform
                 and checkpoint.provider_name == provider
                 and checkpoint.published_window_days == published_window_days
-                for checkpoint in all_checkpoints
+                and checkpoint.tracking_batch_id == tracking_parent_batch_id
+            ]
+            pending = [
+                checkpoint
+                for checkpoint in matching_checkpoints
+                if checkpoint.status == SamplingStatus.PENDING
+                and item.metrics.sampled_at < checkpoint.due_at
+            ]
+            observed_count = sum(
+                checkpoint.status == SamplingStatus.OBSERVED
+                for checkpoint in matching_checkpoints
             )
-            if has_plan or not schedule_recrawls:
+            # 刚在本轮命中的到期采样也要计入，才能安排第三个点。
+            observed_count += sum(
+                checkpoint.status == SamplingStatus.PENDING
+                and item.metrics.sampled_at >= checkpoint.due_at
+                for checkpoint in matching_checkpoints
+            )
+            if pending or observed_count >= 2:
                 continue
-            for offset in RECRAWL_OFFSETS_BY_WINDOW[published_window_days]:
-                checkpoint = SamplingCheckpoint(
-                    checkpoint_id=(
-                        f"sample-{hashlib.sha256(f'{discovery.request_id}|{video_id}|{offset}'.encode()).hexdigest()[:12]}"
-                    ),
-                    keyword=keyword_key,
-                    candidate_id=video_id,
-                    request_id=discovery.request_id,
-                    platform=platform,
-                    provider_name=provider,
-                    published_window_days=published_window_days,
-                    offset_hours=offset,
-                    due_at=item.metrics.sampled_at + timedelta(hours=offset),
-                )
-                self.repository.save_sampling_checkpoint(checkpoint)
+            interval = (
+                ADAPTIVE_FIRST_RECRAWL_HOURS
+                if not matching_checkpoints
+                else self._adaptive_next_interval(video_id)
+            )
+            checkpoint = SamplingCheckpoint(
+                checkpoint_id=(
+                    f"sample-{hashlib.sha256(f'{discovery.request_id}|{video_id}|{interval}|{observed_count}'.encode()).hexdigest()[:12]}"
+                ),
+                keyword=keyword_key,
+                candidate_id=video_id,
+                request_id=discovery.request_id,
+                platform=platform,
+                provider_name=provider,
+                published_window_days=published_window_days,
+                offset_hours=interval,
+                due_at=item.metrics.sampled_at + timedelta(hours=interval),
+                tracking_batch_id=tracking_parent_batch_id,
+                billing_authorized=bool(tracking_parent_batch_id),
+            )
+            self.repository.save_sampling_checkpoint(checkpoint)
+            all_checkpoints.append(checkpoint)
 
         if schedule_recrawls:
             miss_cutoff = discovery.finished_at - timedelta(
@@ -829,6 +988,7 @@ class CommercialSearchService:
                     and checkpoint.platform == platform
                     and checkpoint.provider_name == provider
                     and checkpoint.published_window_days == published_window_days
+                    and checkpoint.tracking_batch_id == tracking_parent_batch_id
                     and checkpoint.due_at < miss_cutoff
                     and checkpoint.candidate_id not in observed_ids
                 ):
@@ -866,6 +1026,34 @@ class CommercialSearchService:
             return cached
         return None
 
+    def _adaptive_next_interval(self, video_id: str) -> int:
+        """Use the latest actual interaction delta to choose the final sample gap."""
+        snapshots = self.repository.list_snapshots(video_id)
+        if len(snapshots) < 2:
+            return ADAPTIVE_SLOW_RECRAWL_HOURS
+        previous, current = snapshots[-2:]
+        previous_value = sum(
+            weight * (value or 0)
+            for weight, value in zip(
+                (1, 3, 4, 4),
+                (previous.likes, previous.comments, previous.shares, previous.favorites),
+                strict=True,
+            )
+        )
+        current_value = sum(
+            weight * (value or 0)
+            for weight, value in zip(
+                (1, 3, 4, 4),
+                (current.likes, current.comments, current.shares, current.favorites),
+                strict=True,
+            )
+        )
+        return (
+            ADAPTIVE_FAST_RECRAWL_HOURS
+            if current_value > previous_value
+            else ADAPTIVE_SLOW_RECRAWL_HOURS
+        )
+
     def _selected_platforms(
         self, platforms: tuple[Platform, ...] | None
     ) -> tuple[Platform, ...]:
@@ -890,8 +1078,8 @@ class CommercialSearchService:
             raise ValueError("关键词长度必须为 2 到 50 个字符。")
         if published_window_days not in RECRAWL_OFFSETS_BY_WINDOW:
             raise ValueError("召回时间范围只支持不限、近 24 小时或近 7 天。")
-        if not 1 <= count <= 10:
-            raise ValueError("每个平台获取数量必须为 1 到 10 条。")
+        if not 1 <= count <= 100:
+            raise ValueError("每个平台获取数量必须为 1 到 100 条。")
         return normalized
 
     @staticmethod

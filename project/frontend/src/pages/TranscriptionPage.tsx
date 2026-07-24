@@ -39,6 +39,10 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createTranscriptionByUrl,
+  createCrawlerLinkTranscription,
+  fallbackCrawlerLinkTranscription,
+  getCrawlerLinkTranscriptionCapabilities,
+  previewCrawlerLinkTranscription,
   clearTranscriptionHistory,
   createComplianceDraft,
   createVoiceoverDraft,
@@ -55,6 +59,8 @@ import {
 import type {
   TranscriptSegment,
   TranscriptionResponse,
+  CrawlerLinkTranscriptionCapabilities,
+  CrawlerLinkTranscriptionPreview,
   VoiceoverDraftResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
@@ -116,6 +122,10 @@ export default function TranscriptionPage() {
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
   const [segmentDrafts, setSegmentDrafts] = usePersistentState<Record<string, SegmentDraft>>("transcription_segment_drafts", {}, undefined, 1000);
   const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
+  const [shareText, setShareText] = useState("");
+  const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
+  const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
+  const [linkRightsConfirmed, setLinkRightsConfirmed] = useState(false);
   const [reviewer, setReviewer] = usePersistentState("transcription_reviewer", "校对员");
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
@@ -139,6 +149,7 @@ export default function TranscriptionPage() {
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
+  const shareTextFromQuery = searchParams.get("share_text")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
 
@@ -306,9 +317,50 @@ export default function TranscriptionPage() {
   }, [refresh]);
 
   useEffect(() => {
+    if (shareTextFromQuery) setShareText(shareTextFromQuery);
     if (urlFromQuery) setVideoUrl(urlFromQuery);
-    if (candidateFromQuery || urlFromQuery) setCreateOpen(true);
-  }, [candidateFromQuery, setVideoUrl, urlFromQuery]);
+    if (candidateFromQuery || shareTextFromQuery || urlFromQuery) setCreateOpen(true);
+  }, [candidateFromQuery, setVideoUrl, shareTextFromQuery, urlFromQuery]);
+
+  useEffect(() => {
+    getCrawlerLinkTranscriptionCapabilities().then(setLinkCapabilities).catch(() => setLinkCapabilities(null));
+  }, []);
+
+  const handlePreviewShareLink = async () => {
+    if (!shareText.trim()) return toast.warning("请粘贴抖音分享链接");
+    setSubmitting(true);
+    try {
+      setLinkPreview(await previewCrawlerLinkTranscription(shareText));
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleShareLinkTranscribe = async (fallback = false) => {
+    if (!linkPreview || !linkRightsConfirmed) return toast.warning("请先确认拥有内容处理权");
+    setSubmitting(true);
+    try {
+      const result = fallback
+        ? await fallbackCrawlerLinkTranscription({ shareText, workId: linkPreview.work_id || "", rightsHolder, rightsConfirmed: true, idempotencyKey: `link-${Date.now()}` })
+        : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: asrModel });
+      if (result.status === "fallback_required") {
+        toast.warning(result.message);
+        return;
+      }
+      if (result.transcription) {
+        toast.success(result.message);
+        await refresh();
+        applyTask(result.transcription);
+        setCreateOpen(false);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const handleNewTask = () => {
     setSelected(null);
@@ -810,6 +862,37 @@ export default function TranscriptionPage() {
                   <Space direction="vertical" style={{ width: "100%" }}>
                     <TextArea value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载" rows={3} />
                     <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>确认权利并创建转写</Button>
+                  </Space>
+                ),
+              },
+              {
+                key: "douyin-share",
+                label: <span><LinkOutlined /> 抖音分享链接</span>,
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <Alert
+                      type={linkCapabilities?.parser_enabled ? "info" : "warning"}
+                      showIcon
+                      message={linkCapabilities?.parser_enabled ? "本机解析已安装，待实际链接验证" : "本机解析器未就绪"}
+                      description="仅处理单条、已获授权的抖音分享链接。解析失败会保留具体错误；只有你明确确认后才可使用 OneAPI 付费回退。"
+                    />
+                    <TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} placeholder="粘贴抖音分享文案或 v.douyin.com 分享链接" rows={3} />
+                    <Checkbox checked={linkRightsConfirmed} onChange={(event) => setLinkRightsConfirmed(event.target.checked)}>我确认有权处理此内容</Checkbox>
+                    <Button loading={submitting} onClick={handlePreviewShareLink}>识别链接</Button>
+                    {linkPreview && (
+                      <Alert
+                        type={linkPreview.parser_enabled ? "info" : "warning"}
+                        showIcon
+                        message={linkPreview.parser_enabled ? `已识别作品 ID：${linkPreview.work_id || "未返回"}` : "本机解析不可用"}
+                        description={
+                          <Space wrap>
+                            <Text>{linkPreview.parser_message || "可开始本机解析并转写。"}</Text>
+                            <Button type="primary" loading={submitting} disabled={!linkPreview.parser_enabled || !linkRightsConfirmed} onClick={() => handleShareLinkTranscribe(false)}>本机解析并转写</Button>
+                            {linkPreview.oneapi_fallback_available && <Button danger loading={submitting} disabled={!linkRightsConfirmed} onClick={() => Modal.confirm({ title: "确认 OneAPI 付费回退", content: `预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleShareLinkTranscribe(true) })}>确认后付费回退</Button>}
+                          </Space>
+                        }
+                      />
+                    )}
                   </Space>
                 ),
               },

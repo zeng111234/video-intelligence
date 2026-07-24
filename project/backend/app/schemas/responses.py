@@ -65,6 +65,7 @@ class PipelineResponse(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     finished_at: datetime | None = None
+    result_media_url: str | None = None
 
 
 class TaskItem(BaseModel):

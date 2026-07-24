@@ -185,7 +185,8 @@ def _env_int(key: str, default: int) -> int:
 # 发现与付费解析分离：默认用专用本机 Chrome 发现公开作品；OneAPI
 # 仍保留给明确确认的媒体解析和关闭浏览器发现后的人工兜底。
 DOUYIN_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
-    "DOUYIN_BROWSER_DISCOVERY_ENABLED", False
+    # 仅在用户点击“连接热点宝”时启动独立浏览器；默认开启能力不等于自动登录或采集。
+    "DOUYIN_BROWSER_DISCOVERY_ENABLED", True
 )
 DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
     _env(

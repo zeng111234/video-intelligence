@@ -10,7 +10,7 @@ import tempfile
 
 import pytest
 
-from src.adapters.publishers.sandbox import SandboxPublisher
+from src.adapters.publishers.sandbox import SandboxPublisher, build_publisher
 from src.models import (
     PublishPlatform,
     PublishStatus,
@@ -228,3 +228,13 @@ def test_sqlite_repository_reads_publish_task(tmp_path):
     fetched = fresh_repo.get_task(created.task_id)
     assert isinstance(fetched, PublishTask)
     assert fetched.publish_status == PublishStatus.MANUAL_READY
+
+
+def test_unimplemented_official_mode_falls_back_to_publish_assistant(monkeypatch):
+    """旧官方模式配置不能让用户得到一个必然失败的发布任务。"""
+    monkeypatch.setenv("PUBLISH_DOUYIN_MODE", "official")
+
+    publisher = build_publisher(PublishPlatform.DOUYIN)
+
+    assert isinstance(publisher, SandboxPublisher)
+    assert publisher.capabilities()["mode"] == "manual"

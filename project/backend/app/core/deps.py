@@ -123,16 +123,31 @@ def get_licensed_search_provider():
 
 @lru_cache
 def get_discovery_search_provider():
-    """选择候选发现来源；不影响 OneAPI 的受控媒体解析回退。"""
-    if DOUYIN_BROWSER_DISCOVERY_ENABLED:
-        return LocalDouyinBrowserSearchProvider(
-            enabled=True,
-            profile_dir=DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
-            browser_channel=DOUYIN_BROWSER_CHANNEL,
-            debug_port=DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
-            timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
-        )
+    """付费兜底发现源；热点宝由独立的本机浏览器来源优先处理。"""
     return get_licensed_search_provider()
+
+
+@lru_cache
+def get_hotspot_browser_provider() -> LocalDouyinBrowserSearchProvider:
+    """热点宝只使用独立、用户可见的 Chrome 资料目录。"""
+    return LocalDouyinBrowserSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_hotspot_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_hotspot_browser_provider(),
+        active_platforms=(Platform.DOUYIN,),
+    )
 
 
 @lru_cache
@@ -408,6 +423,7 @@ def get_pipeline_worker() -> PipelineWorker:
         publish_service=get_publish_service(),
         template_service=get_template_service(),
         production_service=get_production_service(),
+        douyin_link_transcription_service=get_douyin_link_transcription_service(),
     )
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -385,6 +386,14 @@ class TestOfficialHotBatches:
         app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
             lambda: service
         )
+        # 智能模式现在优先真实热点宝；本单元测试只验证官方免费池分支，
+        # 因而显式隔离本机已登录浏览器状态，避免环境依赖。
+        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
+            lambda: SimpleNamespace(
+                capabilities=lambda: SimpleNamespace(enabled=False),
+                session_status=lambda: None,
+            )
+        )
         try:
             resp = client.post(
                 "/api/v1/crawler/batches",
@@ -400,6 +409,7 @@ class TestOfficialHotBatches:
             app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
                 lambda: official_env["service"]
             )
+            app.dependency_overrides.pop(backend_deps.get_hotspot_browser_provider, None)
 
         assert resp.status_code == 200
         data = resp.json()

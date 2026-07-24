@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import time
 
 from src.adapters.avatar import LocalCommandAvatarProvider
 from src.models import AvatarAssetKind, AvatarProviderStatus, AvatarSubmitRequest
@@ -183,3 +185,57 @@ def test_recorded_audio_profile_does_not_require_tts_command(tmp_path: Path):
     assert capability.enabled is True
     assert recorded.enabled is True
     assert "LOCAL_AVATAR_TTS_COMMAND" not in recorded.missing_configuration
+
+
+def test_local_provider_recovers_completed_result_after_restart(tmp_path: Path):
+    output_directory = tmp_path / "jobs"
+    result_path = output_directory / "local-avatar-recovered001" / "result.mp4"
+    result_path.parent.mkdir(parents=True)
+    payload = b"\x00\x00\x00\x18ftypisom" + b"video-data"
+    result_path.write_bytes(payload)
+    provider = LocalCommandAvatarProvider(output_directory=str(output_directory))
+
+    snapshot = provider.get_job("local-avatar-recovered001")
+    downloaded, mime_type = provider.download_result("local-avatar-recovered001")
+
+    assert snapshot.status == AvatarProviderStatus.SUCCEEDED
+    assert snapshot.progress == 100
+    assert snapshot.result_size_bytes == len(payload)
+    assert downloaded == payload
+    assert mime_type == "video/mp4"
+
+
+def test_local_provider_marks_stale_interrupted_job_failed(tmp_path: Path):
+    output_directory = tmp_path / "jobs"
+    job_directory = output_directory / "local-avatar-stale001"
+    job_directory.mkdir(parents=True)
+    intermediate = job_directory / "speech.wav"
+    intermediate.write_bytes(b"audio")
+    old_timestamp = time.time() - LocalCommandAvatarProvider.RECOVERY_GRACE_SECONDS - 60
+    os.utime(intermediate, (old_timestamp, old_timestamp))
+    os.utime(job_directory, (old_timestamp, old_timestamp))
+    provider = LocalCommandAvatarProvider(output_directory=str(output_directory))
+
+    snapshot = provider.get_job("local-avatar-stale001")
+
+    assert snapshot.status == AvatarProviderStatus.FAILED
+    assert snapshot.progress == 100
+    assert snapshot.stage == "本地生成已中断"
+    assert "后端重启" in (snapshot.error_message or "")
+
+
+def test_local_provider_rechecks_recent_recovered_job_for_result(tmp_path: Path):
+    output_directory = tmp_path / "jobs"
+    job_directory = output_directory / "local-avatar-recent001"
+    job_directory.mkdir(parents=True)
+    (job_directory / "speech.wav").write_bytes(b"audio")
+    provider = LocalCommandAvatarProvider(output_directory=str(output_directory))
+
+    pending = provider.get_job("local-avatar-recent001")
+    payload = b"\x00\x00\x00\x18ftypisom" + b"completed-video"
+    (job_directory / "result.mp4").write_bytes(payload)
+    recovered = provider.get_job("local-avatar-recent001")
+
+    assert pending.status == AvatarProviderStatus.OUTCOME_UNKNOWN
+    assert recovered.status == AvatarProviderStatus.SUCCEEDED
+    assert provider.download_result("local-avatar-recent001") == (payload, "video/mp4")

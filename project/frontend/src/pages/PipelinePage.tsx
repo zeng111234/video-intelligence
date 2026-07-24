@@ -1,825 +1,416 @@
-/**
- * 生产批次页面
- * 串联内容生产记录：候选检索 → 语音转写 → AI文案 → 数字人 → 发布
- * 所有数据来自后端 API，无硬编码测试数据
- */
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Typography,
-  Card,
-  Input,
+  Alert,
   Button,
-  Space,
-  Table,
-  Tag,
-  Steps,
-  Row,
-  Col,
-  Statistic,
-  Select,
-  Progress,
+  Card,
+  Collapse,
   Empty,
-  Popconfirm,
+  Input,
+  List,
+  Modal,
+  Progress,
+  Select,
+  Space,
+  Steps,
   Switch,
-  Divider,
-  Timeline,
+  Tag,
+  Typography,
 } from "antd";
-import { useToast } from "../components/Toast";
 import {
-  ThunderboltOutlined,
-  PlayCircleOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined,
-  ClockCircleOutlined,
-  ReloadOutlined,
-  PlusOutlined,
   FileTextOutlined,
-  VideoCameraOutlined,
+  LinkOutlined,
+  PlayCircleOutlined,
+  ReloadOutlined,
   RocketOutlined,
-  SearchOutlined,
-  AudioOutlined,
-  EditOutlined,
   SendOutlined,
-  SettingOutlined,
-  WarningOutlined,
-  DeleteOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import {
+  createCrawlerBatch,
+  createGuidedPipeline,
+  getPipelineReviewDraft,
   listPipelines,
-  deletePipeline,
-  listTasks,
   listProductionProfiles,
-  preflightKeywordAutoRun,
-  retryPipeline,
+  listPublishPlatforms,
+  preflightGuidedPipeline,
+  previewCrawlerBatch,
   reviewPipeline,
-  startKeywordAutoRun,
 } from "../api/client";
-import type { PipelineResponse, ProductionProfile, TaskItem } from "../api/types";
-import { Link, useSearchParams } from "react-router-dom";
+import type {
+  CrawlerCandidateResult,
+  CrawlerSearchRequest,
+  GuidedPipelineRequest,
+  PipelineResponse,
+  PipelineReviewDraft,
+  ProductionProfile,
+  PublishPlatformCapability,
+} from "../api/types";
+import { useToast } from "../components/Toast";
 
-const { Title, Text } = Typography;
-const { Option } = Select;
+const { Title, Text, Paragraph } = Typography;
 
-/** 流水线阶段定义 - 按内容生产流程排序 */
-const PIPELINE_STAGES = [
-  {
-    key: "crawler",
-    label: "关键词爬取",
-    icon: <SearchOutlined />,
-    description: "爬取热门关键词和趋势视频",
-    color: "#6366f1",
-  },
-  {
-    key: "transcription",
-    label: "文案提取",
-    icon: <AudioOutlined />,
-    description: "从视频中提取语音转为文案",
-    color: "#10b981",
-  },
-  {
-    key: "copywriting",
-    label: "AI文案改写",
-    icon: <EditOutlined />,
-    description: "AI 智能改写文案，生成多版本",
-    color: "#f59e0b",
-  },
-  {
-    key: "avatar",
-    label: "数字人生成",
-    icon: <VideoCameraOutlined />,
-    description: "用改写后的文案生成口播视频",
-    color: "#8b5cf6",
-  },
-  {
-    key: "publish",
-    label: "多平台发布",
-    icon: <SendOutlined />,
-    description: "一键发布到抖音/小红书/视频号",
-    color: "#ef4444",
-  },
-];
-
-/** 流水线状态颜色 */
-const STATUS_COLOR: Record<string, string> = {
-  succeeded: "success",
-  running: "processing",
-  failed: "error",
-  pending: "default",
-  paused: "warning",
-};
-
-/** 流水线状态图标 */
-const STATUS_ICON: Record<string, React.ReactNode> = {
-  succeeded: <CheckCircleOutlined />,
-  running: <PlayCircleOutlined />,
-  failed: <CloseCircleOutlined />,
-  pending: <ClockCircleOutlined />,
-  paused: <ClockCircleOutlined />,
-};
+const PROFILE_STORAGE_KEY = "pipeline.lastProfileId";
+const HOLDER_STORAGE_KEY = "pipeline.lastRightsHolder";
 
 const STAGE_LABEL: Record<string, string> = {
-  keyword_search: "关键词爬取",
-  media_resolution: "补媒体",
-  transcription: "语音转写",
-  copywriting: "文案改写",
-  human_review: "人工审核",
-  avatar_generation: "数字人",
-  video_editing: "视频剪辑",
-  publishing: "发布",
+  media_resolution: "解析素材",
+  transcription: "提取文案",
+  copywriting: "AI 改写",
+  human_review: "确认文案",
+  avatar_generation: "生成数字人",
+  video_editing: "生成口播成片",
+  publishing: "多平台发布",
 };
 
-function statusText(status: string) {
-  const labels: Record<string, string> = {
-    succeeded: "已完成",
-    running: "运行中",
-    failed: "失败",
-    pending: "等待中",
-    paused: "待审核",
-  };
-  return labels[status] || status;
+function isShareLink(value: string) {
+  return /https?:\/\//i.test(value);
+}
+
+function isCompleteProfile(profile: ProductionProfile) {
+  return Boolean(profile.avatar_id && profile.voice_id && profile.edit_template_id);
+}
+
+function displayStage(stage: string | null) {
+  return stage ? STAGE_LABEL[stage] || stage : "等待开始";
 }
 
 export default function PipelinePage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [keyword, setKeyword] = useState("");
-  const [keywords, setKeywords] = useState<string[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedPipeline, setSelectedPipeline] = useState<PipelineResponse | null>(null);
-  const [filterStatus, setFilterStatus] = useState<string>("all");
-  const [videoCount, setVideoCount] = useState<string>("10");
-  const [videoStyle, setVideoStyle] = useState<string>("engaging");
-  const [refreshing, setRefreshing] = useState(false);
-  const [pipelineHistory, setPipelineHistory] = useState<PipelineResponse[]>([]);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [reviewer, setReviewer] = useState("当前操作人");
-  const [reviewNote, setReviewNote] = useState("");
-  const [approvedText, setApprovedText] = useState("");
-  const [controlLoading, setControlLoading] = useState(false);
+  const [input, setInput] = useState("");
   const [profiles, setProfiles] = useState<ProductionProfile[]>([]);
   const [profileId, setProfileId] = useState<string>();
-  const [rightsHolder, setRightsHolder] = useState("");
+  const [rightsHolder, setRightsHolder] = useState(() => localStorage.getItem(HOLDER_STORAGE_KEY) || "本人/公司已授权");
   const [rightsConfirmed, setRightsConfirmed] = useState(false);
-  const [preflightMessage, setPreflightMessage] = useState("");
+  const [publishEnabled, setPublishEnabled] = useState(false);
+  const [publishPlatforms, setPublishPlatforms] = useState<string[]>([]);
+  const [availablePlatforms, setAvailablePlatforms] = useState<PublishPlatformCapability[]>([]);
+  const [candidates, setCandidates] = useState<CrawlerCandidateResult[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState<CrawlerCandidateResult | null>(null);
+  const [pipelines, setPipelines] = useState<PipelineResponse[]>([]);
+  const [selectedPipeline, setSelectedPipeline] = useState<PipelineResponse | null>(null);
+  const [reviewDraft, setReviewDraft] = useState<PipelineReviewDraft | null>(null);
+  const [approvedText, setApprovedText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
-  /** 统计数据 - 从真实数据计算 */
-  const stats = useMemo(() => {
-    const totalPipelines = pipelineHistory.length;
-    const succeededCount = pipelineHistory.filter((p) => p.status === "succeeded").length;
-    const successRate = totalPipelines > 0 ? Math.round((succeededCount / totalPipelines) * 1000) / 10 : 0;
-    return {
-      totalPipelines,
-      successRate,
-      totalVideos: tasks.filter((t) => t.status === "succeeded").length,
-      avgDuration: "-",
-    };
-  }, [pipelineHistory, tasks]);
+  const completeProfiles = useMemo(() => profiles.filter(isCompleteProfile), [profiles]);
+  const selectedProfile = useMemo(
+    () => completeProfiles.find((profile) => profile.profile_id === profileId),
+    [completeProfiles, profileId],
+  );
+  const selectablePlatforms = useMemo(
+    () => availablePlatforms.filter((item) => item.enabled || item.manual_fallback),
+    [availablePlatforms],
+  );
+  const linkMode = isShareLink(input.trim());
 
-  /** 加载流水线和任务数据 */
   const loadData = useCallback(async () => {
-    setRefreshing(true);
     try {
-      const [pipelineData, taskData, profileData] = await Promise.allSettled([
-        listPipelines(),
-        listTasks(),
+      const [profileData, platformData, pipelineData] = await Promise.all([
         listProductionProfiles(),
+        listPublishPlatforms(),
+        listPipelines({ limit: 30 }),
       ]);
-      if (pipelineData.status === "fulfilled") {
-        setPipelineHistory(pipelineData.value || []);
-      }
-      if (taskData.status === "fulfilled") {
-        setTasks(taskData.value?.items || []);
-      }
-      if (profileData.status === "fulfilled") {
-        setProfiles(profileData.value.items || []);
-        setProfileId((current) => current || profileData.value.items[0]?.profile_id);
-      }
-    } catch {
-      // 独立处理错误
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  useEffect(() => {
-    const runId = searchParams.get("run");
-    if (!runId || pipelineHistory.length === 0) return;
-    const found = pipelineHistory.find((item) => item.run_id === runId);
-    if (found) {
-      setSelectedPipeline(found);
-    }
-  }, [pipelineHistory, searchParams]);
-
-  /** 流水线阶段开关 */
-  const [enabledStages, setEnabledStages] = useState<Record<string, boolean>>({
-    crawler: true,
-    transcription: true,
-    copywriting: true,
-    avatar: true,
-    publish: false,
-  });
-
-  /** 切换阶段开关 */
-  const toggleStage = (key: string) => {
-    setEnabledStages((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  /** 刷新任务列表 */
-  const handleRefresh = useCallback(() => {
-    loadData();
-    toast.success("任务列表已刷新");
-  }, [loadData, toast]);
-
-  const replacePipeline = useCallback((updated: PipelineResponse) => {
-    setSelectedPipeline(updated);
-    setPipelineHistory((items) => items.map((item) => item.run_id === updated.run_id ? updated : item));
-  }, []);
-
-  const handleDeletePipeline = async (run: PipelineResponse) => {
-    try {
-      await deletePipeline(run.run_id);
-      setPipelineHistory((items) => items.filter((item) => item.run_id !== run.run_id));
-      setSelectedPipeline((current) => current?.run_id === run.run_id ? null : current);
-      toast.success("生产批次历史已删除");
-    } catch (error) {
-      toast.error((error as Error).message || "删除生产批次失败");
-    }
-  };
-
-  const handleReview = async (approved: boolean) => {
-    if (!selectedPipeline) return;
-    if (!reviewer.trim()) {
-      toast.warning("请填写审核人");
-      return;
-    }
-    setControlLoading(true);
-    try {
-      const updated = await reviewPipeline(selectedPipeline.run_id, {
-        approved,
-        reviewer: reviewer.trim(),
-        note: reviewNote.trim(),
-        approvedText: approvedText.trim(),
+      const validProfiles = profileData.items.filter(isCompleteProfile);
+      setProfiles(profileData.items);
+      setAvailablePlatforms(platformData.platforms);
+      setPipelines(pipelineData);
+      setProfileId((current) => {
+        const remembered = localStorage.getItem(PROFILE_STORAGE_KEY);
+        const next = validProfiles.find((item) => item.profile_id === current)
+          || validProfiles.find((item) => item.profile_id === remembered)
+          || validProfiles[0];
+        return next?.profile_id;
       });
-      replacePipeline(updated);
-      setReviewNote("");
-      setApprovedText("");
-      toast.success(approved ? "审核已通过，后台将继续数字人、剪辑与发布包" : "已记录返工意见，可重试候选链路");
-    } catch (err) {
-      toast.error((err as Error).message || "保存审核结果失败");
-    } finally {
-      setControlLoading(false);
+      const requestedRun = searchParams.get("run");
+      if (requestedRun) {
+        setSelectedPipeline(pipelineData.find((item) => item.run_id === requestedRun) || null);
+      }
+    } catch (error) {
+      toast.error((error as Error).message || "加载生产配置失败");
     }
-  };
+  }, [searchParams, toast]);
 
-  const handleRetry = async () => {
-    if (!selectedPipeline) return;
-    setControlLoading(true);
-    try {
-      const updated = await retryPipeline(
-        selectedPipeline.run_id,
-        `retry-${selectedPipeline.run_id}-${Date.now()}`,
-      );
-      replacePipeline(updated);
-      toast.success("已使用同一生产任务重新执行候选文案链路");
-    } catch (err) {
-      toast.error((err as Error).message || "重试失败");
-    } finally {
-      setControlLoading(false);
-    }
-  };
+  useEffect(() => { void loadData(); }, [loadData]);
 
-  /** 添加关键词 */
-  const handleAddKeyword = () => {
-    const trimmed = keyword.trim();
-    if (!trimmed) {
-      toast.warning("请输入关键词");
+  useEffect(() => {
+    if (!selectedPipeline || selectedPipeline.status !== "paused" || selectedPipeline.current_stage !== "human_review") {
+      setReviewDraft(null);
       return;
     }
-    if (keywords.includes(trimmed)) {
-      toast.warning("关键词已存在");
-      return;
+    void getPipelineReviewDraft(selectedPipeline.run_id)
+      .then((draft) => {
+        setReviewDraft(draft);
+        setApprovedText(draft.default_text);
+      })
+      .catch((error) => toast.error((error as Error).message || "读取待确认文案失败"));
+  }, [selectedPipeline?.run_id, selectedPipeline?.status, selectedPipeline?.current_stage, toast]);
+
+  const makePayload = useCallback((sourceType: "share_link" | "candidate", paidFallbackConfirmed = false): GuidedPipelineRequest | null => {
+    if (!profileId) {
+      toast.warning("请先配置一个完整的数字人 IP 配方");
+      return null;
     }
-    setKeywords([...keywords, trimmed]);
-    setKeyword("");
-  };
+    return {
+      source_type: sourceType,
+      candidate_id: sourceType === "candidate" ? selectedCandidate?.video_id : undefined,
+      share_text: sourceType === "share_link" ? input.trim() : undefined,
+      profile_id: profileId,
+      rights_confirmed: rightsConfirmed,
+      rights_holder: rightsHolder.trim(),
+      publish_enabled: publishEnabled,
+      publish_platforms: publishEnabled ? publishPlatforms : [],
+      paid_fallback_confirmed: paidFallbackConfirmed,
+    };
+  }, [input, profileId, publishEnabled, publishPlatforms, rightsConfirmed, rightsHolder, selectedCandidate, toast]);
 
-  /** 删除关键词 */
-  const handleRemoveKeyword = (kw: string) => {
-    setKeywords(keywords.filter((k) => k !== kw));
-  };
-
-  /** 创建流水线 */
-  const handleCreate = async () => {
-    if (keywords.length === 0) {
-      toast.warning("请至少添加一个关键词");
-      return;
-    }
-
-    if (!profileId || !rightsHolder.trim() || !rightsConfirmed) {
-      toast.warning("请选择完整 IP 配方并确认媒体处理授权");
-      return;
-    }
-
+  const queueGuidedPipeline = useCallback(async (
+    sourceType: "share_link" | "candidate",
+    paidFallbackConfirmed = false,
+  ) => {
+    const payload = makePayload(sourceType, paidFallbackConfirmed);
+    if (!payload) return;
     setLoading(true);
     try {
-      const count = Math.min(10, Number(videoCount));
-      const requests = keywords.map((kw) => ({
-        keyword: kw, candidate_count: count, profile_id: profileId, rights_holder: rightsHolder.trim(), rights_confirmed: true, publish_platforms: ["douyin"],
-      }));
-      const checks = await Promise.all(requests.map(preflightKeywordAutoRun));
-      const missing = checks.flatMap((item) => item.missing);
-      if (missing.length) {
-        setPreflightMessage(missing.join("；"));
-        toast.warning("预检未通过，请补全 IP 配方或授权信息");
+      const preflight = await preflightGuidedPipeline(payload);
+      if (!preflight.ready) {
+        if (preflight.source.requires_paid_fallback_confirmation && !paidFallbackConfirmed) {
+          Modal.confirm({
+            title: "确认 OneAPI 付费回退？",
+            content: `本机抖音解析当前不可用，预计费用 ¥${Number(preflight.source.estimated_cost_cny || 0).toFixed(2)}。确认后才会创建任务。`,
+            okText: "确认并继续",
+            cancelText: "取消",
+            onOk: () => queueGuidedPipeline(sourceType, true),
+          });
+          return;
+        }
+        toast.warning(preflight.missing.join("；"));
         return;
       }
-      const results = await Promise.all(requests.map(startKeywordAutoRun));
-      setPreflightMessage(checks[0]?.message || "");
-      toast.success(`已将 ${results.length} 个关键词任务加入真实执行队列`);
+      const run = await createGuidedPipeline({
+        ...payload,
+        idempotencyKey: `guided-${sourceType}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      });
+      localStorage.setItem(PROFILE_STORAGE_KEY, payload.profile_id);
+      localStorage.setItem(HOLDER_STORAGE_KEY, payload.rights_holder);
+      setSelectedPipeline(run);
+      toast.success("已加入生产队列，将自动处理到待确认文案");
       await loadData();
-      setKeywords([]);
-    } catch (err) {
-      toast.error((err as Error).message || "创建失败");
+      navigate(`/pipeline?run=${encodeURIComponent(run.run_id)}`);
+    } catch (error) {
+      toast.error((error as Error).message || "启动生产流水线失败");
     } finally {
       setLoading(false);
     }
+  }, [loadData, makePayload, navigate, toast]);
+
+  const searchKeyword = async () => {
+    const keyword = input.trim();
+    if (keyword.length < 2 || keyword.length > 50) {
+      toast.warning("关键词需为 2–50 个字符");
+      return;
+    }
+    setSearching(true);
+    const request: CrawlerSearchRequest = {
+      keyword,
+      published_window_days: 7,
+      count_per_platform: 10,
+      force_refresh: false,
+      mode: "smart",
+      related_terms: [],
+      allow_related_fallback: false,
+      track_trend: false,
+      target_main_count: 10,
+      max_paid_calls: 1,
+      allow_paid_fallback: false,
+      hotspot_result_limit: 100,
+    };
+    try {
+      const preview = await previewCrawlerBatch(request);
+      Modal.confirm({
+        title: "确认检索相关视频？",
+        content: `将先检索严格相关候选。预计费用 ¥${preview.estimated_total_cost_cny.toFixed(2)}；不会自动选择或生成视频。`,
+        okText: "确认检索",
+        cancelText: "取消",
+        onOk: async () => {
+          const batch = await createCrawlerBatch(request);
+          const foundCandidates = batch.platform_runs.flatMap((item) => item.candidates);
+          setCandidates(foundCandidates);
+          setSelectedCandidate(null);
+          if (!foundCandidates.length) toast.info("没有找到严格相关候选，请换一个关键词");
+          else toast.success(`已找到 ${foundCandidates.length} 条严格相关视频，请选择一条`);
+        },
+      });
+    } catch (error) {
+      toast.error((error as Error).message || "关键词检索失败");
+    } finally {
+      setSearching(false);
+    }
   };
 
-  /** 过滤后的流水线 */
-  const filteredPipelines = useMemo(() => {
-    if (filterStatus === "all") return pipelineHistory;
-    return pipelineHistory.filter((p) => p.status === filterStatus);
-  }, [filterStatus, pipelineHistory]);
+  const approveScript = async () => {
+    if (!selectedPipeline || !approvedText.trim()) {
+      toast.warning("请确认或编辑最终口播文案");
+      return;
+    }
+    setReviewing(true);
+    try {
+      const run = await reviewPipeline(selectedPipeline.run_id, {
+        approved: true,
+        reviewer: "当前操作人",
+        approvedText: approvedText.trim(),
+      });
+      setSelectedPipeline(run);
+      setReviewDraft(null);
+      toast.success("文案已确认，正在生成数字人口播视频");
+      await loadData();
+    } catch (error) {
+      toast.error((error as Error).message || "确认文案失败");
+    } finally {
+      setReviewing(false);
+    }
+  };
 
-  /** 计算流水线进度 */
-  const getPipelineProgress = useCallback((pipeline: PipelineResponse) => {
-    if (!pipeline.stages || pipeline.stages.length === 0) return 0;
-    const succeeded = pipeline.stages.filter((s) => s.status === "succeeded").length;
-    return Math.round((succeeded / pipeline.stages.length) * 100);
-  }, []);
-
-  /** 表格列定义 */
-  const columns = [
-    {
-      title: "任务ID",
-      dataIndex: "run_id",
-      width: 160,
-      render: (id: string) => <Text code>{id}</Text>,
-    },
-    {
-      title: "关键词",
-      dataIndex: "keyword",
-      render: (keyword: string) => <Tag color="blue">{keyword}</Tag>,
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 100,
-      render: (status: string) => (
-        <Tag icon={STATUS_ICON[status]} color={STATUS_COLOR[status]}>
-          {statusText(status)}
-        </Tag>
-      ),
-    },
-    {
-      title: "当前阶段",
-      dataIndex: "current_stage",
-      width: 120,
-      render: (stage: string | null) => stage ? STAGE_LABEL[stage] || stage : "-",
-    },
-    {
-      title: "进度",
-      width: 150,
-      render: (_: unknown, record: PipelineResponse) => {
-        const progress = getPipelineProgress(record);
-        return (
-          <Progress
-            percent={progress}
-            size="small"
-            status={record.status === "failed" ? "exception" : record.status === "succeeded" ? "success" : "active"}
-          />
-        );
-      },
-    },
-    {
-      title: "创建时间",
-      dataIndex: "created_at",
-      width: 180,
-      render: (v: string | null) => v ? new Date(v).toLocaleString("zh-CN") : "-",
-    },
-    {
-      title: "操作",
-      width: 150,
-      render: (_: unknown, record: PipelineResponse) => (
-        <Space size={0}>
-          <Button type="link" size="small" onClick={() => setSelectedPipeline(record)}>
-            详情
-          </Button>
-          <Popconfirm
-            title="删除这条生产批次？"
-            description="只删除本次流水线记录，不会删除关联的候选内容或素材。"
-            okText="删除"
-            okButtonProps={{ danger: true }}
-            cancelText="取消"
-            onConfirm={() => handleDeletePipeline(record)}
-          >
-            <Button type="link" danger size="small" icon={<DeleteOutlined />}>删除</Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+  const currentStep = selectedPipeline?.current_stage
+    ? ["media_resolution", "transcription", "copywriting", "human_review", "avatar_generation", "video_editing", "publishing"].indexOf(selectedPipeline.current_stage)
+    : 0;
 
   return (
     <div>
-      {/* 页面头部 */}
       <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <ThunderboltOutlined /> 生产批次
-        </Title>
-        <Text type="secondary">关键词任务会进入后台执行：检索、选片、媒体转写与文案自动完成；文案审核后才继续数字人与成片。</Text>
+        <Title level={4} style={{ marginBottom: 4 }}><RocketOutlined /> 一键生成数字人口播</Title>
+        <Text type="secondary">粘贴抖音分享链接直接生成；输入关键词先挑一条视频。最终都会产出数字人口播成片。</Text>
       </div>
 
-      {/* 统计卡片 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="总任务数"
-              value={stats.totalPipelines}
-              prefix={<ThunderboltOutlined style={{ color: "#6366f1" }} />}
-              valueStyle={{ color: "#6366f1" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="成功率"
-              value={stats.successRate}
-              suffix="%"
-              prefix={<CheckCircleOutlined style={{ color: "#10b981" }} />}
-              valueStyle={{ color: "#10b981" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="已完成任务"
-              value={stats.totalVideos}
-              prefix={<VideoCameraOutlined style={{ color: "#f59e0b" }} />}
-              valueStyle={{ color: "#f59e0b" }}
-            />
-          </Card>
-        </Col>
-        <Col xs={12} sm={6}>
-          <Card hoverable>
-            <Statistic
-              title="平均耗时"
-              value={stats.avgDuration}
-              prefix={<ClockCircleOutlined style={{ color: "#8b5cf6" }} />}
-              valueStyle={{ color: "#8b5cf6" }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <Card title="开始生产" style={{ marginBottom: 16 }}>
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Input.Search
+            size="large"
+            value={input}
+            onChange={(event) => {
+              setInput(event.target.value);
+              setCandidates([]);
+              setSelectedCandidate(null);
+            }}
+            placeholder="粘贴抖音分享链接，或输入关键词，例如：AI 获客"
+            enterButton={linkMode ? "开始提取并生成" : "查找相关视频"}
+            loading={linkMode ? loading : searching}
+            onSearch={() => linkMode ? void queueGuidedPipeline("share_link") : void searchKeyword()}
+          />
+          <Alert
+            type={linkMode ? "success" : "info"}
+            showIcon
+            message={linkMode ? "已识别为抖音分享链接：将跳过关键词爬取" : "输入关键词后，先选择一条严格相关的视频"}
+          />
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        {/* 创建任务 */}
-        <Col xs={24} lg={10}>
-          <Card title={<Space><PlusOutlined /> 创建生产批次</Space>}>
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              {/* 关键词输入 */}
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>视频关键词</Text>
-                <Space.Compact style={{ width: "100%" }}>
-                  <Input
-                    placeholder="输入关键词，如：二手车、美食、旅游..."
-                    value={keyword}
-                    onChange={(e) => setKeyword(e.target.value)}
-                    onPressEnter={handleAddKeyword}
-                  />
-                  <Button type="primary" onClick={handleAddKeyword}>
-                    添加
-                  </Button>
-                </Space.Compact>
-              </div>
+          <Collapse
+            size="small"
+            items={[{
+              key: "profile",
+              label: "生产配置（数字人形象、音色和剪辑模板）",
+              children: completeProfiles.length ? (
+                <Select
+                  value={profileId}
+                  onChange={setProfileId}
+                  style={{ width: "100%" }}
+                  options={completeProfiles.map((profile) => ({ value: profile.profile_id, label: profile.name }))}
+                />
+              ) : <Alert type="warning" showIcon message="没有完整 IP 配方" description={<Link to="/production">去生产管理配置数字人形象、音色和剪辑模板</Link>} />,
+            }]}
+          />
+          {selectedProfile && <Text type="secondary">当前使用：{selectedProfile.name}</Text>}
 
-              {/* 关键词列表 */}
-              {keywords.length > 0 && (
-                <div>
-                  <Text type="secondary" style={{ marginBottom: 8, display: "block" }}>
-                    已添加 {keywords.length} 个关键词：
-                  </Text>
-                  <Space wrap>
-                    {keywords.map((kw) => (
-                      <Tag
-                        key={kw}
-                        closable
-                        onClose={() => handleRemoveKeyword(kw)}
-                        color="blue"
-                      >
-                        {kw}
-                      </Tag>
-                    ))}
-                  </Space>
-                </div>
-              )}
+          <Input value={rightsHolder} maxLength={80} onChange={(event) => setRightsHolder(event.target.value)} placeholder="媒体处理授权主体" />
+          <Space><Switch checked={rightsConfirmed} onChange={setRightsConfirmed} /><Text>我确认拥有该视频、文案、肖像和声音的处理授权</Text></Space>
 
-              <Divider style={{ margin: "8px 0" }} />
-
-              {/* 流水线阶段配置 */}
-              <div>
-                  <Text strong style={{ display: "block", marginBottom: 12 }}>
-                  <SettingOutlined style={{ marginRight: 8 }} />
-                  流水线阶段配置
-                </Text>
-                <Space direction="vertical" style={{ width: "100%" }} size={8}>
-                  {PIPELINE_STAGES.map((stage) => (
-                    <div
-                      key={stage.key}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "8px 12px",
-                        background: enabledStages[stage.key] ? `${stage.color}10` : "var(--gray-50, #f8fafc)",
-                        borderRadius: 8,
-                        border: `1px solid ${enabledStages[stage.key] ? stage.color + "30" : "var(--border-light, #e2e8f0)"}`,
-                      }}
-                    >
-                      <Space>
-                        <span style={{ color: stage.color }}>{stage.icon}</span>
-                        <div>
-                          <Text strong style={{ fontSize: 13 }}>{stage.label}</Text>
-                          <br />
-                          <Text type="secondary" style={{ fontSize: 11 }}>{stage.description}</Text>
-                        </div>
-                      </Space>
-                      <Switch
-                        size="small"
-                        checked={enabledStages[stage.key]}
-                        disabled
-                        onChange={() => toggleStage(stage.key)}
-                      />
-                    </div>
-                  ))}
-                </Space>
-              </div>
-
-              <Divider style={{ margin: "8px 0" }} />
-
-              {/* 高级选项 */}
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>生产数量</Text>
-                  <Select value={videoCount} onChange={setVideoCount} style={{ width: "100%" }}>
-                    <Option value="5">每个关键词 5 条</Option>
-                    <Option value="10">每个关键词 10 条</Option>
-                  </Select>
-                </Col>
-                <Col span={12}>
-                  <Text strong style={{ display: "block", marginBottom: 8 }}>视频风格</Text>
-                  <Select value={videoStyle} onChange={setVideoStyle} style={{ width: "100%" }}>
-                    <Option value="engaging">吸引眼球</Option>
-                    <Option value="professional">专业权威</Option>
-                    <Option value="humorous">幽默风趣</Option>
-                    <Option value="storytelling">故事叙述</Option>
-                  </Select>
-                </Col>
-              </Row>
-
-              <Select
-                value={profileId}
-                onChange={setProfileId}
-                options={profiles.map((item) => ({ value: item.profile_id, label: item.name }))}
-                placeholder="选择完整 IP 配方（形象、音色、剪辑模板）"
-              />
-              <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} placeholder="媒体处理授权主体" maxLength={80} />
-              <Space><Switch checked={rightsConfirmed} onChange={setRightsConfirmed} /><Text>我确认拥有所选候选的媒体处理授权</Text></Space>
-              {preflightMessage && <Text type="secondary">预检：{preflightMessage}</Text>}
-
-              {/* 创建按钮 */}
-              <Button
-                type="primary"
-                icon={<RocketOutlined />}
-                size="large"
-                block
-                loading={loading}
-                onClick={handleCreate}
-                disabled={keywords.length === 0}
-              >
-                预检并启动真实流水线
-              </Button>
-            </Space>
-          </Card>
-        </Col>
-
-        {/* 流水线详情 */}
-        <Col xs={24} lg={14}>
-          <Card
-            title={<Space><FileTextOutlined /> 任务详情</Space>}
-            extra={
-              <Button icon={<ReloadOutlined />} size="small" loading={refreshing} onClick={handleRefresh}>
-                刷新
-              </Button>
-            }
-          >
-            {selectedPipeline ? (
-              <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                {/* 基本信息 */}
-                <Row gutter={16}>
-                  <Col span={8}>
-                    <Statistic title="任务ID" value={selectedPipeline.run_id} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                  <Col span={8}>
-                    <Statistic title="关键词" value={selectedPipeline.keyword} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                  <Col span={8}>
-                    <Statistic title="当前阶段" value={selectedPipeline.current_stage || "-"} valueStyle={{ fontSize: 14 }} />
-                  </Col>
-                </Row>
-
-                {selectedPipeline.status === "paused" && selectedPipeline.current_stage === "human_review" && (
-                  <Card size="small" title="人工审核" style={{ background: "#fffbe6" }}>
-                    <Space direction="vertical" style={{ width: "100%" }}>
-                      <Input
-                        value={reviewer}
-                        onChange={(event) => setReviewer(event.target.value)}
-                        placeholder="审核人"
-                        maxLength={80}
-                      />
-                      <Input.TextArea
-                        value={approvedText}
-                        onChange={(event) => setApprovedText(event.target.value)}
-                        placeholder="最终口播文案（可选；留空则使用 AI 生成的审核稿）"
-                        maxLength={2000}
-                        autoSize={{ minRows: 3, maxRows: 8 }}
-                      />
-                      <Input.TextArea
-                        value={reviewNote}
-                        onChange={(event) => setReviewNote(event.target.value)}
-                        placeholder="审核意见（返工时建议填写）"
-                        maxLength={500}
-                        autoSize={{ minRows: 2, maxRows: 4 }}
-                      />
-                      <Space wrap>
-                        <Button type="primary" loading={controlLoading} onClick={() => handleReview(true)}>
-                          审核通过，继续生成成片
-                        </Button>
-                        <Button danger loading={controlLoading} onClick={() => handleReview(false)}>
-                          要求返工
-                        </Button>
-                      </Space>
-                    </Space>
-                  </Card>
-                )}
-
-                {(selectedPipeline.status === "failed" || selectedPipeline.status === "paused") &&
-                  selectedPipeline.config.source === "crawler_candidate" && (
-                    <Button loading={controlLoading} onClick={handleRetry}>
-                      重试候选文案链路
-                    </Button>
-                  )}
-
-                {selectedPipeline.status === "pending" && selectedPipeline.current_stage === "avatar_generation" && (
-                  <Text type="secondary">
-                    文案已审核通过，后台 worker 正在使用 IP 配方继续数字人、剪辑和人工发布包阶段。
-                  </Text>
-                )}
-
-                {/* 流水线步骤 */}
-                {selectedPipeline.stages && selectedPipeline.stages.length > 0 && (
-                  <div>
-                    <Text strong style={{ marginBottom: 12, display: "block" }}>生产流程</Text>
-                    <Steps
-                      size="small"
-                      current={selectedPipeline.stages.findIndex((s) => s.status === "running")}
-                      items={selectedPipeline.stages.map((stage) => ({
-                        title: STAGE_LABEL[stage.stage] || stage.stage,
-                        description: stage.task_id || stage.error_message || "-",
-                        status:
-                          stage.status === "succeeded"
-                            ? "finish"
-                            : stage.status === "running"
-                              ? "process"
-                              : stage.status === "failed"
-                                ? "error"
-                                : "wait",
-                      }))}
-                    />
-                  </div>
-                )}
-
-                {selectedPipeline.events.length > 0 && (
-                  <div>
-                    <Text strong style={{ marginBottom: 12, display: "block" }}>状态事件</Text>
-                    <Timeline
-                      items={[...selectedPipeline.events].reverse().map((event) => ({
-                        color: event.action.includes("failed") || event.action.includes("rejected") ? "red" : "blue",
-                        children: (
-                          <div>
-                            <Text strong>{event.message}</Text>
-                            <br />
-                            <Text type="secondary">
-                              {event.created_at ? new Date(event.created_at).toLocaleString("zh-CN") : ""}
-                              {event.stage ? ` · ${STAGE_LABEL[event.stage] || event.stage}` : ""}
-                            </Text>
-                          </div>
-                        ),
-                      }))}
-                    />
-                  </div>
-                )}
-
-                {/* 时间线 */}
-                {selectedPipeline.stages && selectedPipeline.stages.length > 0 && (
-                  <div>
-                    <Text strong style={{ marginBottom: 12, display: "block" }}>执行日志</Text>
-                    <Timeline
-                      items={selectedPipeline.stages.map((stage) => ({
-                        color:
-                          stage.status === "succeeded"
-                            ? "green"
-                            : stage.status === "running"
-                              ? "blue"
-                              : stage.status === "failed"
-                                ? "red"
-                                : "gray",
-                        children: (
-                          <div>
-                            <Text strong>{stage.stage}</Text>
-                            <br />
-                            <Text type="secondary">
-                              {stage.task_id ? `任务ID: ${stage.task_id}` : ""}
-                              {stage.error_message ? ` 错误: ${stage.error_message}` : ""}
-                            </Text>
-                            {stage.outputs && Object.keys(stage.outputs).length > 0 && (
-                              <div style={{ marginTop: 4 }}>
-                                <Space wrap size={[4, 4]}>
-                                  {Object.entries(stage.outputs).map(([key, value]) => (
-                                    <Tag key={key}>{key}: {value}</Tag>
-                                  ))}
-                                  {stage.outputs.task_id && stage.stage === "transcription" && (
-                                    <Link to={`/transcription?task=${encodeURIComponent(stage.outputs.task_id)}`}>查看转写</Link>
-                                  )}
-                                  {stage.outputs.copywriting_task_id && (
-                                    <Link to="/ai-copy">查看文案页</Link>
-                                  )}
-                                </Space>
-                              </div>
-                            )}
-                          </div>
-                        ),
-                      }))}
-                    />
-                  </div>
-                )}
-
-                {/* 错误信息 */}
-                {selectedPipeline.error_message && (
-                  <div>
-                    <Text type="danger"><WarningOutlined /> {selectedPipeline.error_message}</Text>
-                  </div>
-                )}
+          <Card size="small" title={<Space><SendOutlined /> 多平台发布 <Switch checked={publishEnabled} onChange={setPublishEnabled} /></Space>}>
+            {publishEnabled ? (
+              <Space direction="vertical" style={{ width: "100%" }}>
+                <Select
+                  mode="multiple"
+                  size="large"
+                  value={publishPlatforms}
+                  onChange={setPublishPlatforms}
+                  placeholder="选择发布平台"
+                  style={{ width: "100%" }}
+                  options={selectablePlatforms.map((item) => ({ value: item.platform, label: `${item.display_name}${item.manual_only ? "（人工发布）" : ""}` }))}
+                />
+                <Text type="secondary">仅在数字人成片后创建所选平台的真实发布或人工发布任务。</Text>
+                <Link to="/publish">配置发布平台</Link>
               </Space>
-            ) : (
-              <Empty description="点击任务列表中的「详情」查看流水线执行情况" />
-            )}
+            ) : <Text type="secondary">关闭后，流水线在数字人口播成片生成后结束。</Text>}
           </Card>
-        </Col>
-      </Row>
+        </Space>
+      </Card>
 
-      {/* 任务历史 */}
+      {candidates.length > 0 && (
+        <Card title={`选择一条视频（${candidates.length}）`} style={{ marginBottom: 16 }}>
+          <List
+            dataSource={candidates}
+            renderItem={(candidate) => (
+              <List.Item
+                actions={[<Button key="choose" type={selectedCandidate?.video_id === candidate.video_id ? "primary" : "default"} onClick={() => setSelectedCandidate(candidate)}>{selectedCandidate?.video_id === candidate.video_id ? "已选择" : "选择这条"}</Button>]}
+              >
+                <List.Item.Meta
+                  title={<Space><Text strong>{candidate.title}</Text><Tag>{candidate.platform_label}</Tag></Space>}
+                  description={<Space wrap><span>{candidate.author_name}</span><span>点赞 {candidate.likes ?? "未返回"}</span><span>互动 {candidate.effective_interactions ?? "未返回"}</span>{candidate.source_url && <a href={candidate.source_url} target="_blank" rel="noreferrer"><LinkOutlined /> 原视频</a>}</Space>}
+                />
+              </List.Item>
+            )}
+          />
+          <Button type="primary" icon={<RocketOutlined />} disabled={!selectedCandidate} loading={loading} onClick={() => void queueGuidedPipeline("candidate")}>用所选视频生成数字人口播</Button>
+        </Card>
+      )}
+
       <Card
-        title={<Space><ClockCircleOutlined /> 任务历史</Space>}
-        extra={
-          <Space>
-            <Select
-              value={filterStatus}
-              onChange={setFilterStatus}
-              style={{ width: 120 }}
-              size="small"
-            >
-              <Option value="all">全部状态</Option>
-              <Option value="running">运行中</Option>
-              <Option value="succeeded">已完成</Option>
-              <Option value="failed">失败</Option>
-            </Select>
-          </Space>
-        }
+        title={<Space><FileTextOutlined /> 当前任务</Space>}
+        extra={<Button icon={<ReloadOutlined />} onClick={() => void loadData()}>刷新</Button>}
       >
-        <Table
-          columns={columns}
-          dataSource={filteredPipelines}
-          rowKey="run_id"
-          pagination={{ pageSize: 10 }}
-          size="middle"
+        {selectedPipeline ? (
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Space wrap>
+              <Tag color={selectedPipeline.status === "succeeded" ? "success" : selectedPipeline.status === "failed" ? "error" : "processing"}>{selectedPipeline.status === "paused" ? "等待客户操作" : selectedPipeline.status}</Tag>
+              <Text strong>{selectedPipeline.keyword}</Text>
+              <Text type="secondary">当前：{displayStage(selectedPipeline.current_stage)}</Text>
+            </Space>
+            <Steps size="small" current={Math.max(0, currentStep)} items={["解析素材", "提取文案", "AI 改写", "确认文案", "生成数字人", "生成口播成片", ...(publishEnabled || selectedPipeline.publish_task_ids.length ? ["多平台发布"] : [])].map((title) => ({ title }))} />
+            {selectedPipeline.error_message && <Alert type="error" showIcon message={selectedPipeline.error_message} />}
+
+            {reviewDraft && (
+              <Card size="small" title="确认最终口播文案" style={{ background: "#fffbe6" }}>
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  {reviewDraft.low_confidence_count > 0 && <Alert type="warning" showIcon message={`原转写中有 ${reviewDraft.low_confidence_count} 处低置信片段，请核对后使用。`} />}
+                  <Collapse size="small" items={[{ key: "source", label: "查看原转写", children: <Paragraph style={{ whiteSpace: "pre-wrap" }}>{reviewDraft.transcript_text || "暂无可展示的原转写"}</Paragraph> }]} />
+                  {reviewDraft.variants.length > 1 && <Select value={approvedText} onChange={setApprovedText} options={reviewDraft.variants.map((text, index) => ({ value: text, label: `AI 版本 ${index + 1}` }))} />}
+                  <Input.TextArea value={approvedText} onChange={(event) => setApprovedText(event.target.value)} autoSize={{ minRows: 5, maxRows: 12 }} maxLength={2000} />
+                  <Button type="primary" icon={<VideoCameraOutlined />} loading={reviewing} onClick={() => void approveScript()}>确认并生成数字人</Button>
+                </Space>
+              </Card>
+            )}
+
+            {selectedPipeline.result_media_url && (
+              <Card size="small" title={<Space><CheckCircleOutlined /> 数字人口播成片</Space>}>
+                <Space direction="vertical" style={{ width: "100%" }}>
+                  <video controls style={{ width: "100%", maxWidth: 420 }} src={selectedPipeline.result_media_url} />
+                  <a href={selectedPipeline.result_media_url} download>下载口播视频</a>
+                </Space>
+              </Card>
+            )}
+            <Progress percent={selectedPipeline.status === "succeeded" ? 100 : Math.round(selectedPipeline.stages.filter((item) => item.status === "succeeded").length / Math.max(selectedPipeline.stages.length, 1) * 100)} status={selectedPipeline.status === "failed" ? "exception" : "active"} />
+          </Space>
+        ) : <Empty description="启动任务后，执行进度和成片会显示在这里" />}
+      </Card>
+
+      <Card title="最近任务" style={{ marginTop: 16 }}>
+        <List
+          dataSource={pipelines}
+          locale={{ emptyText: "暂无任务" }}
+          renderItem={(run) => <List.Item actions={[<Button key="detail" type="link" onClick={() => setSelectedPipeline(run)}>查看</Button>]}><Space><PlayCircleOutlined /><Text>{run.keyword}</Text><Tag>{displayStage(run.current_stage)}</Tag><Tag color={run.status === "succeeded" ? "success" : run.status === "failed" ? "error" : "processing"}>{run.status}</Tag></Space></List.Item>}
         />
       </Card>
     </div>

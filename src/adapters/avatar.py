@@ -388,6 +388,8 @@ class LocalCommandAvatarProvider:
     时，档位保持禁用，绝不伪造视频结果。
     """
 
+    RECOVERY_GRACE_SECONDS = 1800
+
     PROFILE_CONFIG = {
         "local_fast": {
             "display_name": "本地极速版",
@@ -546,9 +548,18 @@ class LocalCommandAvatarProvider:
     def get_job(self, job_id: str) -> AvatarJobSnapshot:
         with self._lock:
             snapshot = self.jobs.get(job_id)
-        if snapshot is None:
-            raise AvatarProviderError("本地数字人任务不存在。", kind=ProviderErrorKind.VALIDATION)
-        return snapshot
+        if snapshot is not None and snapshot.status != AvatarProviderStatus.OUTCOME_UNKNOWN:
+            return snapshot
+
+        recovered, result_path = self._recover_job(job_id)
+        with self._lock:
+            current = self.jobs.get(job_id)
+            if current is None or current.status == AvatarProviderStatus.OUTCOME_UNKNOWN:
+                self.jobs[job_id] = recovered
+                if result_path is not None:
+                    self.result_paths[job_id] = result_path
+                return recovered
+            return current
 
     def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None:
         with self._lock:
@@ -558,9 +569,96 @@ class LocalCommandAvatarProvider:
     def download_result(self, job_id: str) -> tuple[bytes, str]:
         with self._lock:
             path = self.result_paths.get(job_id)
-        if path is None or not path.is_file():
+        if path is None:
+            path = self._valid_result_path(job_id)
+            if path is not None:
+                with self._lock:
+                    self.result_paths[job_id] = path
+        if path is None:
             raise AvatarProviderError("本地成片尚未生成。", kind=ProviderErrorKind.VALIDATION)
         return path.read_bytes(), "video/mp4"
+
+    def _recover_job(self, job_id: str) -> tuple[AvatarJobSnapshot, Path | None]:
+        job_directory = self._job_directory(job_id)
+        result_path = self._valid_result_path(job_id)
+        if result_path is not None:
+            return (
+                AvatarJobSnapshot(
+                    job_id=job_id,
+                    idempotency_key=job_id,
+                    status=AvatarProviderStatus.SUCCEEDED,
+                    progress=100,
+                    stage="本地成片已从磁盘恢复",
+                    provider_job_id=job_id,
+                    estimated_cost_cny=0,
+                    result_mime="video/mp4",
+                    result_size_bytes=result_path.stat().st_size,
+                ),
+                result_path,
+            )
+        if not job_directory.is_dir():
+            raise AvatarProviderError(
+                "本地数字人任务不存在。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+
+        latest_mtime = job_directory.stat().st_mtime
+        for path in job_directory.rglob("*"):
+            try:
+                latest_mtime = max(latest_mtime, path.stat().st_mtime)
+            except OSError:
+                continue
+        age_seconds = max(0, datetime.now(timezone.utc).timestamp() - latest_mtime)
+        if age_seconds <= self.RECOVERY_GRACE_SECONDS:
+            return (
+                AvatarJobSnapshot(
+                    job_id=job_id,
+                    idempotency_key=job_id,
+                    status=AvatarProviderStatus.OUTCOME_UNKNOWN,
+                    progress=60,
+                    stage="后端重启，正在恢复本地生成结果",
+                    provider_job_id=job_id,
+                    estimated_cost_cny=0,
+                    error_kind=ProviderErrorKind.OUTCOME_UNKNOWN,
+                    error_message="本地任务状态因后端重启而丢失，正在等待成片落盘。",
+                ),
+                None,
+            )
+        return (
+            AvatarJobSnapshot(
+                job_id=job_id,
+                idempotency_key=job_id,
+                status=AvatarProviderStatus.FAILED,
+                progress=100,
+                stage="本地生成已中断",
+                provider_job_id=job_id,
+                estimated_cost_cny=0,
+                error_kind=ProviderErrorKind.SERVICE,
+                error_message="后端重启后未找到完整成片，本次本地生成已中断，请重新提交。",
+            ),
+            None,
+        )
+
+    def _job_directory(self, job_id: str) -> Path:
+        suffix = job_id.removeprefix("local-avatar-")
+        if not job_id.startswith("local-avatar-") or not suffix or not suffix.isalnum():
+            raise AvatarProviderError(
+                "本地数字人任务编号无效。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        return self.output_directory.resolve() / job_id
+
+    def _valid_result_path(self, job_id: str) -> Path | None:
+        result_path = self._job_directory(job_id) / "result.mp4"
+        try:
+            if result_path.stat().st_size < 12:
+                return None
+            with result_path.open("rb") as result_file:
+                if b"ftyp" not in result_file.read(12)[4:12]:
+                    return None
+        except OSError:
+            return None
+        return result_path
 
     def _profile(self, profile_id: str) -> AvatarProfile:
         config = self.PROFILE_CONFIG.get(profile_id)

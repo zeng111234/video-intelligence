@@ -235,11 +235,11 @@ class OpenAICompatibleCopywritingEngine:
             variant_count,
         )
         user_prompt = (
-            "任务：改写已有短视频文案。\n"
-            f"目标平台：{platform}\n"
+            "任务：优化已有短视频口播文案。\n"
             f"目标受众：{target_audience or '未指定'}\n"
-            "要求：保持原文事实和核心信息不变，重组表达，增强开场吸引力、主体清晰度和 CTA。\n"
-            f"本次改写目标：{rewrite_goal or '常规短视频口播改写'}\n"
+            "要求：保持原文事实和核心信息不变，重组表达为自然、短句、便于停顿的口播稿。"
+            "涉及收入、效果或经历时不得改写成可复制的保证。\n"
+            f"本次优化目标：{rewrite_goal or '自然口播与风险表达优化'}\n"
             f"原文：\n{source_text}"
         )
         return self._generate_variants(system_prompt, user_prompt, variant_count)
@@ -261,18 +261,18 @@ class OpenAICompatibleCopywritingEngine:
         parts = [
             "你是一位专业的短视频口播文案撰写专家。",
             "只能使用用户提供的事实，不得虚构价格、资质、客户案例、数据、效果承诺或平台背书。",
-            "输出必须围绕短视频结构：开场钩子、主体、行动号召。",
+            "输出应口语化、短句、自然停顿，开头直接进入重点；不要输出开场钩子、主体、CTA 等栏目标题。",
+            "面对收益、效果、医疗金融或官方背书等风险表达，改为个人经历、条件性或可核实的表述；不得承诺审核通过。",
+            "按信息完整度决定篇幅，删除重复句，不为凑字数扩写。",
             "每个变体都要有实质差异，不能只是替换同义词。",
             "返回严格 JSON，不要 Markdown，不要解释。",
             'JSON 格式：{"variants":["文案1","文案2"],"notes":[]}',
         ]
         if style_prompt:
             parts.append(f"风格要求：{style_prompt}")
-        parts.append(f"目标平台：{platform}")
         if target_audience:
             parts.append(f"目标受众：{target_audience}")
         parts.append(f"语气：{tone}")
-        parts.append(f"目标字数：每个变体约{target_length}字")
         parts.append(f"变体数量：{max(1, min(variant_count, 5))}")
         return "\n".join(parts)
 
@@ -288,7 +288,6 @@ class OpenAICompatibleCopywritingEngine:
         return "\n".join(
             [
                 "任务：从需求生成短视频文案。",
-                f"目标平台：{platform}",
                 f"内容概要：{content_brief}",
                 f"目标受众：{target_audience or '未指定'}",
                 f"核心卖点：{selling_points or '未指定'}",

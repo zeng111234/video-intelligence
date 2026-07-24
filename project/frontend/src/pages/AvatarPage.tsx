@@ -2,7 +2,7 @@
  * 数字人口播生成页面。
  * 首版只开放公共形象 + 文本驱动，所有任务状态均来自 FastAPI。
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -10,8 +10,8 @@ import {
   Col,
   Empty,
   Input,
-  InputNumber,
   List,
+  Modal,
   Popconfirm,
   Progress,
   Row,
@@ -24,6 +24,7 @@ import {
 } from "antd";
 import {
   AudioOutlined,
+  CameraOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
   CloudSyncOutlined,
@@ -32,6 +33,7 @@ import {
   PlayCircleOutlined,
   ReloadOutlined,
   RocketOutlined,
+  StopOutlined,
   UploadOutlined,
   UserOutlined,
 } from "@ant-design/icons";
@@ -106,13 +108,21 @@ export default function AvatarPage() {
   const [submitting, setSubmitting] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState("");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const currentTaskRef = useRef<HTMLDivElement>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
 
   const [scriptText, setScriptText] = useState("");
   const [avatarId, setAvatarId] = useState<string>();
   const [voiceId, setVoiceId] = useState<string>();
   const [profileId, setProfileId] = useState("default");
-  const [targetSeconds, setTargetSeconds] = useState(45);
   const [speechRate, setSpeechRate] = useState(1);
   const [targetPlatforms, setTargetPlatforms] = useState<string[]>(["douyin"]);
 
@@ -158,13 +168,7 @@ export default function AvatarPage() {
     [profileId, profiles],
   );
 
-  const estimatedCost = useMemo(() => {
-    if (selectedProfile?.estimated_cost_cny === null || !selectedProfile?.estimated_seconds) return null;
-    return (
-      selectedProfile.estimated_cost_cny *
-      (targetSeconds / selectedProfile.estimated_seconds)
-    );
-  }, [selectedProfile, targetSeconds]);
+  const estimatedCost = selectedProfile?.estimated_cost_cny ?? null;
 
   const serviceUnavailable = Boolean(capability && !capability.enabled);
   const selectedProfileUnavailable = Boolean(selectedProfile && !selectedProfile.enabled);
@@ -238,6 +242,21 @@ export default function AvatarPage() {
     }
   };
 
+  const handleViewJob = useCallback(async (taskId: string) => {
+    setActiveJobId(taskId);
+    window.requestAnimationFrame(() => {
+      currentTaskRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    try {
+      const latest = await getAvatarJob(taskId);
+      setJobs((items) =>
+        items.map((item) => (item.task_id === latest.task_id ? latest : item)),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "读取任务详情失败");
+    }
+  }, [toast]);
+
   useEffect(() => {
     refresh()
       .catch((error) => toast.error(error.message || "读取数字人服务失败"))
@@ -264,6 +283,17 @@ export default function AvatarPage() {
     }, 3000);
     return () => window.clearTimeout(timer);
   }, [activeJob, toast]);
+
+  useEffect(() => {
+    if (!cameraOpen || !cameraStream || !cameraVideoRef.current) return;
+    cameraVideoRef.current.srcObject = cameraStream;
+    void cameraVideoRef.current.play().catch(() => undefined);
+  }, [cameraOpen, cameraStream]);
+
+  useEffect(() => () => {
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!capability?.enabled) {
@@ -295,7 +325,6 @@ export default function AvatarPage() {
         avatar_id: avatarId,
         voice_id: voiceId,
         profile_id: selectedProfile?.profile_id,
-        target_seconds: targetSeconds,
         speech_rate: speechRate,
         aspect_ratio: "9:16",
         resolution: "1080x1920",
@@ -319,7 +348,6 @@ export default function AvatarPage() {
     sourceRevisionId,
     sourceTaskId,
     targetPlatforms,
-    targetSeconds,
     toast,
     voiceId,
     selectedProfile,
@@ -366,6 +394,105 @@ export default function AvatarPage() {
     return false;
   }, [refresh, supportsLocalUpload, toast]);
 
+  const closeCamera = useCallback(() => {
+    setCameraOpen(false);
+    setCameraError("");
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+  }, []);
+
+  const handleOpenCamera = useCallback(async () => {
+    if (!supportsLocalUpload) {
+      toast.warning("当前供应商不支持录入本地形象。");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      toast.error("当前浏览器不支持直接调用摄像头，请改用上传照片。");
+      return;
+    }
+    setCameraError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      cameraStreamRef.current = stream;
+      setCameraStream(stream);
+      setCameraOpen(true);
+    } catch (error) {
+      setCameraError(error instanceof Error ? error.message : "无法打开摄像头，请检查权限后重试。");
+      setCameraOpen(true);
+    }
+  }, [supportsLocalUpload, toast]);
+
+  const handleTakePhoto = useCallback(() => {
+    const video = cameraVideoRef.current;
+    if (!video?.videoWidth || !video.videoHeight) {
+      toast.warning("摄像头正在启动，请稍候再拍照。");
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      toast.error("当前浏览器无法处理拍摄的照片。");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        toast.error("拍照失败，请重试。");
+        return;
+      }
+      closeCamera();
+      void handleAssetUpload("avatar", new File([blob], `本人形象-${Date.now()}.jpg`, { type: "image/jpeg" }));
+    }, "image/jpeg", 0.92);
+  }, [closeCamera, handleAssetUpload, toast]);
+
+  const handleRecordVoice = useCallback(async () => {
+    if (!supportsLocalUpload) {
+      toast.warning("当前供应商不支持录入本地录音。");
+      return;
+    }
+    if (recording && mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      toast.error("当前浏览器不支持直接录音，请改用上传完整口播录音。");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const chunks: BlobPart[] = [];
+      const recorder = new MediaRecorder(stream);
+      recordingStreamRef.current = stream;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size) chunks.push(event.data);
+      };
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setRecording(false);
+        const type = recorder.mimeType || "audio/webm";
+        const audio = new Blob(chunks, { type });
+        if (!audio.size) {
+          toast.error("没有录到声音，请检查麦克风权限后重试。");
+          return;
+        }
+        const extension = type.includes("mp4") ? "m4a" : "webm";
+        void handleAssetUpload("voice", new File([audio], `完整口播录音-${Date.now()}.${extension}`, { type }));
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch (error) {
+      recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
+      recordingStreamRef.current = null;
+      toast.error(error instanceof Error ? error.message : "无法打开麦克风，请检查权限后重试。");
+    }
+  }, [handleAssetUpload, recording, supportsLocalUpload, toast]);
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
@@ -399,6 +526,13 @@ export default function AvatarPage() {
           <Card title={<Space><UserOutlined /> 形象素材</Space>} loading={loading}>
             <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
+                role="button"
+                tabIndex={0}
+                aria-label="点击打开摄像头拍照"
+                onClick={() => void handleOpenCamera()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") void handleOpenCamera();
+                }}
                 style={{
                   width: "100%",
                   aspectRatio: "3/4",
@@ -410,6 +544,8 @@ export default function AvatarPage() {
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
                   overflow: "hidden",
+                  cursor: supportsLocalUpload ? "pointer" : "not-allowed",
+                  opacity: supportsLocalUpload ? 1 : 0.6,
                 }}
               >
                 {selectedAvatar?.preview_url ? (
@@ -421,8 +557,8 @@ export default function AvatarPage() {
                 ) : (
                   <>
                     <UserOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
-                    <Text strong>{selectedAvatar?.name || "请选择公共形象"}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>已授权素材库</Text>
+                    <Text strong>{selectedAvatar?.asset_id.startsWith("local-") ? "点击重新拍照" : "点击拍照"}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>使用摄像头录入本人形象</Text>
                   </>
                 )}
               </div>
@@ -451,7 +587,7 @@ export default function AvatarPage() {
                   loading={uploadingAvatar}
                   disabled={!supportsLocalUpload}
                 >
-                  上传本人照片
+                  从设备上传照片
                 </Button>
               </Upload>
               <Alert
@@ -467,6 +603,13 @@ export default function AvatarPage() {
           <Card title={<Space><AudioOutlined /> 声音素材</Space>} loading={loading}>
             <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
+                role="button"
+                tabIndex={0}
+                aria-label={recording ? "点击结束录音" : "点击开始录音"}
+                onClick={() => void handleRecordVoice()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") void handleRecordVoice();
+                }}
                 style={{
                   width: "100%",
                   height: 160,
@@ -477,11 +620,13 @@ export default function AvatarPage() {
                   alignItems: "center",
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
+                  cursor: supportsLocalUpload ? "pointer" : "not-allowed",
+                  opacity: supportsLocalUpload ? 1 : 0.6,
                 }}
               >
-                <AudioOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
-                <Text strong>{selectedVoice?.name || "请选择公共音色"}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>已授权音色库</Text>
+                {recording ? <StopOutlined style={{ fontSize: 48, color: "#ef4444", marginBottom: 12 }} /> : <AudioOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />}
+                <Text strong>{recording ? "正在录音，点击结束" : selectedVoice?.asset_id.startsWith("local-") ? "点击重新录音" : "点击开始录音"}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>浏览器会请求麦克风权限，结束后自动上传</Text>
               </div>
               <Select
                 value={voiceId}
@@ -495,7 +640,7 @@ export default function AvatarPage() {
                 style={{ width: "100%" }}
               />
               <Upload
-                accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"
+                accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/webm,.wav,.mp3,.m4a,.webm"
                 showUploadList={false}
                 beforeUpload={(file) => {
                   void handleAssetUpload("voice", file);
@@ -508,7 +653,7 @@ export default function AvatarPage() {
                   loading={uploadingVoice}
                   disabled={!supportsLocalUpload}
                 >
-                  上传完整口播录音
+                  从设备上传录音
                 </Button>
               </Upload>
               <Alert
@@ -531,21 +676,13 @@ export default function AvatarPage() {
                   onChange={(event) => setScriptText(event.target.value)}
                   maxLength={capability?.max_script_chars || 240}
                   showCount
-                  placeholder="输入数字人要说的内容，建议 15–60 秒内说完。"
+                  placeholder="输入数字人要说的内容，数字人会按文案自然播完。"
                   style={{ marginTop: 8 }}
                 />
                 {sourceTaskId && (
                   <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
                     已带入人工确认后的 LLM 口播稿，来源任务：{sourceTaskId}
                   </Text>
-                )}
-                {scriptText.length > targetSeconds * 5 && (
-                  <Alert
-                    style={{ marginTop: 8 }}
-                    type="warning"
-                    showIcon
-                    message={`当前 ${scriptText.length} 字，可能超过 ${targetSeconds} 秒；建议返回转写页继续压缩。`}
-                  />
                 )}
               </div>
 
@@ -578,23 +715,10 @@ export default function AvatarPage() {
                 )}
               </div>
 
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Text strong>目标时长</Text>
-                  <InputNumber
-                    min={15}
-                    max={60}
-                    value={targetSeconds}
-                    onChange={(value) => setTargetSeconds(Number(value || 45))}
-                    addonAfter="秒"
-                    style={{ width: "100%", marginTop: 8 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text strong>输出规格</Text>
-                  <Input value="1080x1920 · 9:16" disabled style={{ marginTop: 8 }} />
-                </Col>
-              </Row>
+              <div>
+                <Text strong>输出规格</Text>
+                <Input value="1080x1920 · 9:16" disabled style={{ marginTop: 8 }} />
+              </div>
 
               <div>
                 <Text strong>语速：{speechRate.toFixed(1)}x</Text>
@@ -650,11 +774,12 @@ export default function AvatarPage() {
         </Col>
 
         <Col xs={24} lg={12}>
-          <Card
-            title={<Space><PlayCircleOutlined /> 当前任务</Space>}
-            extra={<Button size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
-            style={{ marginBottom: 24 }}
-          >
+          <div ref={currentTaskRef}>
+            <Card
+              title={<Space><PlayCircleOutlined /> 当前任务</Space>}
+              extra={<Button size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
+              style={{ marginBottom: 24 }}
+            >
             {activeJob ? (
               <Space direction="vertical" size={16} style={{ width: "100%" }}>
                 <Space wrap>
@@ -699,47 +824,49 @@ export default function AvatarPage() {
             ) : (
               <Empty description="暂无真实任务" />
             )}
-          </Card>
+            </Card>
+          </div>
 
           <Card title={capability?.mode === "sandbox" ? "演示任务历史" : "真实任务历史"}>
             {jobs.length ? (
               <List
                 dataSource={jobs}
                 renderItem={(item) => (
-                  <List.Item
-                    actions={[
-                      <Button key="view" type="link" onClick={() => setActiveJobId(item.task_id)}>
-                        查看
-                      </Button>,
-                      item.result_url ? (
-                        <Button key="download" type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(item)}>
-                          下载
+                  <List.Item style={{ display: "block" }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", flexWrap: "wrap", gap: 8, width: "100%" }}>
+                      <List.Item.Meta
+                        style={{ flex: "1 1 200px", minWidth: 0, marginBottom: 0 }}
+                        avatar={<CheckCircleOutlined style={{ color: item.status === "succeeded" ? "#10b981" : "#64748b" }} />}
+                        title={
+                          <Space wrap>
+                            <Text strong>{item.title}</Text>
+                            <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
+                            {item.is_mock && <Tag>演示</Tag>}
+                          </Space>
+                        }
+                        description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
+                      />
+                      <Space size={0} wrap>
+                        <Button type="link" onClick={() => void handleViewJob(item.task_id)}>
+                          查看
                         </Button>
-                      ) : null,
-                      <Popconfirm
-                        key="delete"
-                        title="删除这条数字人任务？"
-                        description="只删除任务记录，不会删除已下载到本地的成片。"
-                        okText="删除"
-                        okButtonProps={{ danger: true }}
-                        cancelText="取消"
-                        onConfirm={() => handleDeleteJob(item.task_id)}
-                      >
-                        <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-                      </Popconfirm>,
-                    ].filter(Boolean)}
-                  >
-                    <List.Item.Meta
-                      avatar={<CheckCircleOutlined style={{ color: item.status === "succeeded" ? "#10b981" : "#64748b" }} />}
-                      title={
-                        <Space>
-                          <Text strong>{item.title}</Text>
-                          <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
-                          {item.is_mock && <Tag>演示</Tag>}
-                        </Space>
-                      }
-                      description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
-                    />
+                        {item.result_url && (
+                          <Button type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(item)}>
+                            下载
+                          </Button>
+                        )}
+                        <Popconfirm
+                          title="删除这条数字人任务？"
+                          description="只删除任务记录，不会删除已下载到本地的成片。"
+                          okText="删除"
+                          okButtonProps={{ danger: true }}
+                          cancelText="取消"
+                          onConfirm={() => handleDeleteJob(item.task_id)}
+                        >
+                          <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                        </Popconfirm>
+                      </Space>
+                    </div>
                   </List.Item>
                 )}
               />
@@ -749,6 +876,25 @@ export default function AvatarPage() {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title="拍摄本人形象"
+        open={cameraOpen}
+        onCancel={closeCamera}
+        destroyOnClose
+        footer={[
+          <Button key="cancel" onClick={closeCamera}>取消</Button>,
+          <Button key="take-photo" type="primary" icon={<CameraOutlined />} onClick={handleTakePhoto} disabled={!cameraStream}>
+            拍照并使用
+          </Button>,
+        ]}
+      >
+        {cameraError ? (
+          <Alert type="error" showIcon message="无法打开摄像头" description={cameraError} />
+        ) : (
+          <video ref={cameraVideoRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8, background: "#0f172a" }} />
+        )}
+      </Modal>
     </div>
   );
 }

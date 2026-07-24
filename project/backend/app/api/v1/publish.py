@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 import os
+import secrets
+import json
+from datetime import datetime, timedelta, timezone
+from html import escape
 from pathlib import Path
 from shutil import copy2, copyfileobj
 from typing import Any
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import httpx
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from project.backend.app.core import config as backend_config
 from project.backend.app.core import deps as backend_deps
 from project.backend.app.core.config import PROJECT_ROOT
 from project.backend.app.core.deps import get_publish_service, get_repository
+from src.services.publish_accounts import PublishAccountError, publish_account_manager
 
 router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
 
@@ -26,6 +34,10 @@ PUBLISH_CONFIG_FIELDS: dict[str, dict[str, str]] = {
         "open_id": "PUBLISH_DOUYIN_OPEN_ID",
         "client_key": "PUBLISH_DOUYIN_CLIENT_KEY",
         "client_secret": "PUBLISH_DOUYIN_CLIENT_SECRET",
+        "redirect_uri": "PUBLISH_DOUYIN_REDIRECT_URI",
+        "refresh_token": "PUBLISH_DOUYIN_REFRESH_TOKEN",
+        "token_expires_at": "PUBLISH_DOUYIN_TOKEN_EXPIRES_AT",
+        "refresh_expires_at": "PUBLISH_DOUYIN_REFRESH_EXPIRES_AT",
     },
     "kuaishou": {
         "mode": "PUBLISH_KUAISHOU_MODE",
@@ -50,7 +62,11 @@ PUBLISH_CONFIG_FIELDS: dict[str, dict[str, str]] = {
     },
 }
 
-SECRET_CONFIG_FIELDS = {"access_token", "client_secret"}
+SECRET_CONFIG_FIELDS = {"access_token", "client_secret", "refresh_token"}
+DOUYIN_AUTH_SCOPES = "user_info,video.create.bind"
+DOUYIN_OAUTH_CONNECT_URL = "https://open.douyin.com/platform/oauth/connect/"
+DOUYIN_OAUTH_TOKEN_URL = "https://open.douyin.com/oauth/access_token/"
+_DOUYIN_PENDING_STATES: dict[str, datetime] = {}
 
 
 class PublishRequest(BaseModel):
@@ -67,6 +83,7 @@ class PublishPreflightRequest(BaseModel):
     title: str = Field(..., min_length=1, description="标题")
     description: str = Field("", description="描述")
     tags: list[str] = Field(default_factory=list, description="标签")
+    account_ids: dict[str, str] = Field(default_factory=dict, description="平台对应的本机发布账号")
 
 
 class PublishBatchRequest(PublishPreflightRequest):
@@ -110,6 +127,41 @@ class PublishPlatformConfigUpdate(BaseModel):
     open_id: str | None = None
     client_key: str | None = None
     client_secret: str | None = None
+    redirect_uri: str | None = None
+
+
+class PublishConnectionResponse(BaseModel):
+    platform: str
+    state: str
+    ready: bool
+    account: str | None = None
+    expires_at: str | None = None
+    message: str
+    authorization_available: bool
+
+
+class PublishConnectionStartResponse(BaseModel):
+    platform: str
+    authorization_url: str
+
+
+class PublishAccountCreateRequest(BaseModel):
+    platform: str = Field("douyin", pattern="^(douyin)$")
+    name: str = Field(..., min_length=1, max_length=40)
+
+
+class PublishAccountUpdateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=40)
+
+
+class PublishAccountResponse(BaseModel):
+    account_id: str
+    platform: str
+    name: str
+    status: str
+    message: str
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class PublishResponse(BaseModel):
@@ -157,9 +209,14 @@ def _build_targets(body: PublishPreflightRequest):
                 title=body.title,
                 description=body.description,
                 tags=body.tags,
+                account_id=body.account_ids.get(platform_key),
             )
         )
     return targets
+
+
+def _account_response(account) -> PublishAccountResponse:
+    return PublishAccountResponse(**account.to_public_dict())
 
 
 def _task_response(task) -> PublishResponse:
@@ -207,7 +264,9 @@ def _mask_value(value: str, *, secret: bool) -> str:
 
 
 def _env_value(key: str) -> str:
-    return os.getenv(key, backend_config._parse_env_file(backend_config.ENV_PATH).get(key, "")).strip()
+    return os.getenv(
+        key, backend_config._parse_env_file(backend_config.ENV_PATH).get(key, "")
+    ).strip()
 
 
 def _platform_config(platform: str) -> PublishPlatformConfig:
@@ -285,11 +344,170 @@ def _config_updates(platform: str, body: PublishPlatformConfigUpdate) -> dict[st
         raise HTTPException(status_code=400, detail=f"不支持的平台: {platform}")
     fields = PUBLISH_CONFIG_FIELDS[platform]
     updates = {fields["mode"]: body.mode}
-    for field in ("access_token", "open_id", "client_key", "client_secret"):
+    for field in (
+        "access_token",
+        "open_id",
+        "client_key",
+        "client_secret",
+        "redirect_uri",
+    ):
+        if field not in fields:
+            continue
         value = getattr(body, field)
         if value is not None and value.strip():
             updates[fields[field]] = value.strip()
     return updates
+
+
+def _parse_timestamp(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _douyin_connection() -> PublishConnectionResponse:
+    fields = PUBLISH_CONFIG_FIELDS["douyin"]
+    client_key = _env_value(fields["client_key"])
+    client_secret = _env_value(fields["client_secret"])
+    redirect_uri = _env_value(fields["redirect_uri"])
+    access_token = _env_value(fields["access_token"])
+    open_id = _env_value(fields["open_id"])
+    expires_at = _parse_timestamp(_env_value(fields["token_expires_at"]))
+    auth_ready = bool(client_key and client_secret and redirect_uri)
+
+    if not auth_ready:
+        return PublishConnectionResponse(
+            platform="douyin",
+            state="not_configured",
+            ready=False,
+            message="管理员需先配置抖音网站应用、Client Key、Client Secret 和 HTTPS 授权回调地址。",
+            authorization_available=False,
+        )
+    if not access_token or not open_id:
+        return PublishConnectionResponse(
+            platform="douyin",
+            state="disconnected",
+            ready=False,
+            message="应用已就绪，请扫码连接抖音账号。",
+            authorization_available=True,
+        )
+    if expires_at and expires_at <= datetime.now(timezone.utc):
+        return PublishConnectionResponse(
+            platform="douyin",
+            state="expired",
+            ready=False,
+            account=_mask_value(open_id, secret=True),
+            expires_at=expires_at.isoformat(),
+            message="抖音授权已过期，请重新扫码连接。",
+            authorization_available=True,
+        )
+    return PublishConnectionResponse(
+        platform="douyin",
+        state="connected",
+        ready=True,
+        account=_mask_value(open_id, secret=True),
+        expires_at=expires_at.isoformat() if expires_at else None,
+        message="抖音账号已连接。授权凭证仅保存在本机服务端，不会回显到页面。",
+        authorization_available=True,
+    )
+
+
+def _make_douyin_authorization_url() -> str:
+    fields = PUBLISH_CONFIG_FIELDS["douyin"]
+    client_key = _env_value(fields["client_key"])
+    redirect_uri = _env_value(fields["redirect_uri"])
+    if not client_key or not redirect_uri:
+        raise HTTPException(status_code=400, detail="抖音网站应用尚未完成管理员接入。")
+    if not redirect_uri.startswith("https://"):
+        raise HTTPException(
+            status_code=400,
+            detail="抖音授权回调地址必须使用已配置的 HTTPS 地址。",
+        )
+    now = datetime.now(timezone.utc)
+    _DOUYIN_PENDING_STATES.clear()
+    state = secrets.token_urlsafe(24)
+    _DOUYIN_PENDING_STATES[state] = now + timedelta(minutes=10)
+    query = urlencode(
+        {
+            "client_key": client_key,
+            "response_type": "code",
+            "scope": DOUYIN_AUTH_SCOPES,
+            "redirect_uri": redirect_uri,
+            "state": state,
+        }
+    )
+    return f"{DOUYIN_OAUTH_CONNECT_URL}?{query}"
+
+
+def _exchange_douyin_code(code: str) -> dict[str, Any]:
+    fields = PUBLISH_CONFIG_FIELDS["douyin"]
+    response = httpx.post(
+        DOUYIN_OAUTH_TOKEN_URL,
+        data={
+            "client_key": _env_value(fields["client_key"]),
+            "client_secret": _env_value(fields["client_secret"]),
+            "code": code,
+            "grant_type": "authorization_code",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15.0,
+    )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502, detail="抖音授权响应无效，请重新扫码。"
+        ) from exc
+    data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    if response.is_error or not isinstance(data, dict) or not data.get("access_token"):
+        raise HTTPException(
+            status_code=502, detail="抖音未返回有效授权，请重新扫码或检查应用权限。"
+        )
+    return data
+
+
+def _save_douyin_tokens(token_data: dict[str, Any]) -> None:
+    fields = PUBLISH_CONFIG_FIELDS["douyin"]
+    now = datetime.now(timezone.utc)
+
+    def expires_at(seconds: Any) -> str:
+        try:
+            return (now + timedelta(seconds=max(0, int(seconds)))).isoformat()
+        except (TypeError, ValueError):
+            return ""
+
+    updates = {
+        fields["access_token"]: str(token_data["access_token"]).strip(),
+        fields["open_id"]: str(token_data.get("open_id", "")).strip(),
+        fields["refresh_token"]: str(token_data.get("refresh_token", "")).strip(),
+        fields["token_expires_at"]: expires_at(token_data.get("expires_in")),
+        fields["refresh_expires_at"]: expires_at(token_data.get("refresh_expires_in")),
+    }
+    _update_env_file(updates)
+
+
+def _connection_callback_page(message: str, *, succeeded: bool) -> HTMLResponse:
+    event = json.dumps(
+        {
+            "type": "publish-connection",
+            "platform": "douyin",
+            "succeeded": succeeded,
+        }
+    )
+    title = "抖音账号已连接" if succeeded else "抖音连接未完成"
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+            f"<title>{title}</title><body><p>{escape(message)}</p>"
+            f"<script>window.opener&&window.opener.postMessage({event}, '*');"
+            "window.setTimeout(()=>window.close(), 1600);</script></body></html>"
+        )
+    )
 
 
 @router.get("/config", response_model=PublishConfigResponse)
@@ -320,6 +538,79 @@ def update_publish_config(
     return _platform_config(platform)
 
 
+@router.get("/connections/douyin", response_model=PublishConnectionResponse)
+def get_douyin_connection():
+    """返回抖音授权状态，绝不返回用户 token。"""
+    return _douyin_connection()
+
+
+@router.post(
+    "/connections/douyin/start",
+    response_model=PublishConnectionStartResponse,
+)
+def start_douyin_connection():
+    """Stop the obsolete OAuth route used by stale browser pages.
+
+    Local browser publishing must never send a normal publisher into the
+    developer-platform OAuth flow, which requires an app key and callback.
+    """
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "旧版抖音开发者平台授权已停用。请刷新“多平台发布”页面，"
+            "先添加账号，再点击“打开官方扫码窗口”。"
+        ),
+    )
+
+
+@router.get("/connections/douyin/callback", response_class=HTMLResponse)
+def complete_douyin_connection(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+    error_description: str | None = Query(default=None),
+):
+    """接收抖音 OAuth 回调，交换并仅在服务端保存授权凭证。"""
+    expires_at = _DOUYIN_PENDING_STATES.pop(state or "", None)
+    if not state or expires_at is None or expires_at < datetime.now(timezone.utc):
+        return _connection_callback_page(
+            "授权请求已失效，请回到系统重新扫码。", succeeded=False
+        )
+    if error:
+        detail = error_description or error
+        return _connection_callback_page(f"抖音未完成授权：{detail}", succeeded=False)
+    if not code:
+        return _connection_callback_page(
+            "抖音未返回授权码，请重新扫码。", succeeded=False
+        )
+    try:
+        token_data = _exchange_douyin_code(code)
+        if not str(token_data.get("open_id", "")).strip():
+            raise HTTPException(
+                status_code=502, detail="抖音未返回账号标识，请重新扫码。"
+            )
+        _save_douyin_tokens(token_data)
+    except HTTPException as exc:
+        return _connection_callback_page(str(exc.detail), succeeded=False)
+    return _connection_callback_page("抖音账号已连接，可关闭此页面。", succeeded=True)
+
+
+@router.post("/connections/douyin/disconnect", response_model=PublishConnectionResponse)
+def disconnect_douyin_connection():
+    """仅清除本机保存的抖音用户授权，不会操作平台账号。"""
+    fields = PUBLISH_CONFIG_FIELDS["douyin"]
+    _update_env_file(
+        {
+            fields["access_token"]: "",
+            fields["open_id"]: "",
+            fields["refresh_token"]: "",
+            fields["token_expires_at"]: "",
+            fields["refresh_expires_at"]: "",
+        }
+    )
+    return _douyin_connection()
+
+
 @router.get("/platforms")
 def list_platforms(
     service=Depends(get_publish_service),
@@ -328,12 +619,61 @@ def list_platforms(
     return {"platforms": service.available_platforms()}
 
 
+@router.get("/accounts", response_model=list[PublishAccountResponse])
+def list_publish_accounts(platform: str | None = None):
+    return [_account_response(item) for item in publish_account_manager.list(platform)]
+
+
+@router.post("/accounts", response_model=PublishAccountResponse)
+def create_publish_account(body: PublishAccountCreateRequest):
+    try:
+        return _account_response(
+            publish_account_manager.create(platform=body.platform, name=body.name)
+        )
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/accounts/{account_id}/status", response_model=PublishAccountResponse)
+def get_publish_account_status(account_id: str):
+    try:
+        return _account_response(publish_account_manager.status(account_id))
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/accounts/{account_id}/connect", response_model=PublishAccountResponse)
+def connect_publish_account(account_id: str):
+    try:
+        return _account_response(publish_account_manager.open_login_browser(account_id))
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.patch("/accounts/{account_id}", response_model=PublishAccountResponse)
+def update_publish_account(account_id: str, body: PublishAccountUpdateRequest):
+    try:
+        return _account_response(publish_account_manager.rename(account_id, name=body.name))
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/accounts/{account_id}", status_code=204)
+def delete_publish_account(account_id: str):
+    try:
+        publish_account_manager.delete(account_id)
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/assets")
 def list_assets():
     """列出已上传到本机的待发布成片。"""
     PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     items = []
-    for path in sorted(PUBLISH_ASSET_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+    for path in sorted(
+        PUBLISH_ASSET_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True
+    ):
         if not path.is_file():
             continue
         stat = path.stat()
@@ -364,7 +704,10 @@ def upload_asset(
     PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     target = PUBLISH_ASSET_DIR / filename
     if target.exists():
-        target = PUBLISH_ASSET_DIR / f"{target.stem}-{len(list(PUBLISH_ASSET_DIR.glob(target.stem + '*')))}{target.suffix}"
+        target = (
+            PUBLISH_ASSET_DIR
+            / f"{target.stem}-{len(list(PUBLISH_ASSET_DIR.glob(target.stem + '*')))}{target.suffix}"
+        )
     try:
         with target.open("wb") as out_file:
             copyfileobj(file.file, out_file)
@@ -389,7 +732,9 @@ def import_edited_asset(
     if not isinstance(task, VideoEditTask):
         raise HTTPException(status_code=404, detail="未找到智能剪辑任务。")
     if task.outputs.get("workflow") != "edit":
-        raise HTTPException(status_code=400, detail="该任务不是智能剪辑工作流生成的成片。")
+        raise HTTPException(
+            status_code=400, detail="该任务不是智能剪辑工作流生成的成片。"
+        )
     if task.status != TaskStatus.SUCCEEDED or task.is_mock:
         raise HTTPException(status_code=400, detail="仅可交接已成功生成的真实成片。")
     if not task.result_path:
@@ -397,9 +742,13 @@ def import_edited_asset(
 
     source = Path(task.result_path).resolve()
     if not source.is_file():
-        raise HTTPException(status_code=404, detail="剪辑成片文件不存在，请重新执行任务。")
+        raise HTTPException(
+            status_code=404, detail="剪辑成片文件不存在，请重新执行任务。"
+        )
     if source.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
-        raise HTTPException(status_code=400, detail="仅支持交接 mp4、mov、m4v 成片文件。")
+        raise HTTPException(
+            status_code=400, detail="仅支持交接 mp4、mov、m4v 成片文件。"
+        )
 
     PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     target = PUBLISH_ASSET_DIR / f"ai-edit-{task.task_id}{source.suffix.lower()}"
@@ -433,7 +782,9 @@ def create_publish_batch(
     targets = _build_targets(body)
     preflight = service.preflight(video_path=body.video_path, targets=targets)
     if preflight["blocked"]:
-        raise HTTPException(status_code=400, detail={"message": "发布预检未通过", **preflight})
+        raise HTTPException(
+            status_code=400, detail={"message": "发布预检未通过", **preflight}
+        )
     if not body.confirmation_accepted:
         raise HTTPException(status_code=400, detail="请先完成发布预检并确认。")
     summary = service.create_batch(

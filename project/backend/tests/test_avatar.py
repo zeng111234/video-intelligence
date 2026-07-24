@@ -175,3 +175,35 @@ def test_local_asset_upload_updates_manifest(monkeypatch, tmp_path):
     assert data["authorized"] is True
     assert data["preview_url"].startswith("/api/v1/avatar/assets/")
     assert manifest.exists()
+
+
+def test_local_asset_upload_accepts_browser_recording_webm(monkeypatch, tmp_path):
+    """浏览器 MediaRecorder 的默认 WebM 录音可作为本地口播素材上传。"""
+    manifest = tmp_path / "assets.json"
+    monkeypatch.setenv("LOCAL_AVATAR_ASSETS_MANIFEST", str(manifest))
+    provider = LocalCommandAvatarProvider(
+        assets_manifest=str(manifest),
+        natural_command="python sadtalker.py",
+    )
+    app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
+        MockRepository(), provider
+    )
+
+    try:
+        with TestClient(app) as client:
+            resp = client.post(
+                "/api/v1/avatar/assets/upload",
+                data={
+                    "kind": "voice",
+                    "name": "浏览器录音",
+                    "rights_confirmed": "true",
+                    "rights_holder": "测试公司",
+                },
+                files={"file": ("recording.webm", b"webm-bytes", "audio/webm")},
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kind"] == "voice"
+    assert resp.json()["name"] == "浏览器录音"

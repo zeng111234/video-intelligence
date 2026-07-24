@@ -80,6 +80,49 @@ export interface PipelineResponse {
   created_at: string | null;
   updated_at: string | null;
   finished_at: string | null;
+  result_media_url?: string | null;
+}
+
+export interface GuidedPipelineRequest {
+  source_type: "share_link" | "candidate";
+  candidate_id?: string;
+  share_text?: string;
+  profile_id: string;
+  rights_confirmed: boolean;
+  rights_holder: string;
+  publish_enabled: boolean;
+  publish_platforms: string[];
+  paid_fallback_confirmed?: boolean;
+}
+
+export interface GuidedPipelinePreflight {
+  ready: boolean;
+  missing: string[];
+  warnings: string[];
+  source: {
+    type: "share_link" | "candidate";
+    title?: string;
+    candidate_id?: string;
+    share_url?: string;
+    resolvable?: boolean;
+    estimated_cost_cny?: number | null;
+    message?: string | null;
+    parser_enabled?: boolean;
+    parser_message?: string | null;
+    uses_paid_fallback?: boolean;
+    requires_paid_fallback_confirmation?: boolean;
+  };
+  profile_name: string | null;
+  platforms: PublishPlatformCapability[];
+}
+
+export interface PipelineReviewDraft {
+  run_id: string;
+  transcription_task_id: string | null;
+  transcript_text: string;
+  low_confidence_count: number;
+  variants: string[];
+  default_text: string;
 }
 
 export interface PipelineFromCandidateRequest {
@@ -240,12 +283,16 @@ export interface CrawlerCapabilitiesResponse {
   official_hot_billboard?: CrawlerOfficialHotCapability | null;
   /** 官方实时热点词能力状态 */
   official_hot_words?: CrawlerOfficialHotCapability | null;
+  hotspot_browser?: CrawlerBrowserDiscoveryCapabilities | null;
 }
 
 export interface CrawlerBrowserDiscoveryCapabilities {
   enabled: boolean;
   running: boolean;
   login_required: boolean;
+  ready_to_crawl?: boolean;
+  phase?: "disabled" | "browser_closed" | "starting" | "waiting_login" | "ready" | "browser_open" | string;
+  adapter_version?: string;
   provider_name: string;
   message: string;
 }
@@ -370,10 +417,19 @@ export interface CrawlerSearchRequest {
   published_window_days: 0 | 1 | 7;
   count_per_platform: number;
   force_refresh: boolean;
-  /** smart 先走免费官方池，候选不足才使用一次低价兜底。 */
+  /** smart 先走热点宝；OneAPI 只在明确二次确认后使用。 */
   mode?: "official_hot" | "smart";
   /** 用户明确给出的相关赛道词；不会由系统自动扩词。 */
   related_terms?: string[];
+  /** 候选不足时，是否允许仅用首个相关词做一次额外检索。 */
+  allow_related_fallback?: boolean;
+  /** 是否启用会产生后续调用的真实趋势跟踪。 */
+  track_trend?: boolean;
+  target_main_count?: number;
+  max_paid_calls?: number;
+  allow_paid_fallback?: boolean;
+  /** 热点宝近 7 天五榜最终保留上限（不会扩大 OneAPI 单次上限）。 */
+  hotspot_result_limit?: number;
 }
 
 export interface CrawlerPlatformPreview {
@@ -384,6 +440,19 @@ export interface CrawlerPlatformPreview {
   platform_unit_price_cny: number | null;
   estimated_cost_cny: number | null;
   blocked_reason: string | null;
+}
+
+export interface CrawlerSafetyStatus {
+  profile: string;
+  state: "ready" | "cached" | "running" | "cooldown" | "safety_pause" | string;
+  cache_ttl_minutes: number;
+  estimated_duration_seconds: number;
+  cooldown_remaining_seconds: number;
+  next_available_at: string | null;
+  real_runs_in_window?: number;
+  real_run_limit?: number;
+  rolling_window_ends_at?: string | null;
+  message: string;
 }
 
 export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
@@ -403,9 +472,22 @@ export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
   max_api_calls_per_platform?: number;
   blocked: boolean;
   free_candidate_count?: number;
+  free_pool_status?: "ready" | "empty" | "unavailable" | string;
+  free_pool_message?: string | null;
   paid_fallback_required?: boolean;
   paid_fallback_cache_ttl_minutes?: number | null;
   paid_fallback_blocked_reason?: string | null;
+  related_fallback_possible?: boolean;
+  related_fallback_term?: string | null;
+  trend_tracking_enabled?: boolean;
+  hotspot_ready?: boolean;
+  hotspot_message?: string | null;
+  hotspot_time_strategy?: string;
+  target_main_count?: number;
+  paid_call_cap?: number;
+  hotspot_result_limit?: number;
+  hotspot_list_types?: string[];
+  crawl_safety?: CrawlerSafetyStatus | null;
 }
 
 export interface CrawlerCandidateResult {
@@ -439,6 +521,12 @@ export interface CrawlerCandidateResult {
   comments: number | null;
   shares: number | null;
   favorites: number | null;
+  /** 热点宝的 play_cnt，语义为近 7 天榜单新增播放量。 */
+  new_plays?: number | null;
+  /** 热点宝的 like_cnt，语义为近 7 天榜单新增点赞量。 */
+  new_likes?: number | null;
+  duration_seconds?: number | null;
+  hotspot_list_labels?: string[];
   component_scores: Record<string, number | null>;
   data_quality_warnings: string[];
   model_version: string | null;
@@ -545,8 +633,14 @@ export interface CrawlerPlatformRun {
   duplicate_count: number;
   /** 严格关键词匹配后可展示的候选数；旧后端缺失时回退 returned_count */
   relevant_count?: number;
+  strict_relevant_count?: number;
+  below_heat_floor_count?: number;
   /** 已解析但未通过标题/话题严格匹配的候选数 */
   irrelevant_count?: number;
+  /** 热点宝过滤：时长为 0 或未返回时长。 */
+  duration_filtered_count?: number;
+  /** 热点宝过滤：新增播放量不大于 1000。 */
+  incremental_play_filtered_count?: number;
   relevance_rule_version?: string | null;
   result_state: string;
   payload_diagnostic: string | null;
@@ -584,6 +678,20 @@ export interface CrawlerBatchResponse {
   paid_fallback_used?: boolean;
   paid_fallback_blocked_reason?: string | null;
   related_terms?: string[];
+  related_fallback_used?: boolean;
+  trend_tracking_enabled?: boolean;
+  tracking_status?: "not_started" | "scheduled" | "complete" | "cancelled" | "partial" | string;
+  next_tracking_at?: string | null;
+  crawl_safety?: CrawlerSafetyStatus | null;
+}
+
+export interface CrawlerTrackingResponse {
+  batch: CrawlerBatchResponse;
+  scheduled_candidates: number;
+  additional_api_calls: number;
+  estimated_additional_cost_cny: number | null;
+  next_tracking_at: string | null;
+  message: string;
 }
 
 export interface CrawlerBatchListResponse {
@@ -607,6 +715,10 @@ export interface CopywritingResponse {
   token_usage: Record<string, number>;
   result_text: string | null;
   result_variants: string[];
+  compliance_status: "passed" | "review_required" | "not_checked" | string;
+  compliance_notes: string[];
+  compliance_rewritten: boolean;
+  compliance_retry_used: boolean;
   error_message: string | null;
 }
 
@@ -645,22 +757,18 @@ export interface CopywritingCapabilitiesResponse {
 
 export interface CopywritingGenerateRequest {
   content_brief: string;
-  platform?: string;
   target_audience?: string;
   selling_points?: string;
   call_to_action?: string;
   style_prompt?: string;
-  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
 
 export interface CopywritingRewriteRequest {
   source_text: string;
-  platform?: string;
   target_audience?: string;
   style_prompt?: string;
-  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
@@ -723,6 +831,16 @@ export interface PublishPreflightResponse {
   platforms: PublishPreflightPlatform[];
 }
 
+export interface PublishAccount {
+  account_id: string;
+  platform: string;
+  name: string;
+  status: "needs_login" | "browser_open" | "ready" | "error" | string;
+  message: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface PublishBatchResponse {
   batch_id: string;
   status: string;
@@ -780,6 +898,22 @@ export interface PublishPlatformConfigUpdate {
   open_id?: string;
   client_key?: string;
   client_secret?: string;
+  redirect_uri?: string;
+}
+
+export interface PublishConnection {
+  platform: string;
+  state: "not_configured" | "disconnected" | "connected" | "expired" | string;
+  ready: boolean;
+  account: string | null;
+  expires_at: string | null;
+  message: string;
+  authorization_available: boolean;
+}
+
+export interface PublishConnectionStartResponse {
+  platform: string;
+  authorization_url: string;
 }
 
 /* ---- 数字人生成 ---- */
@@ -854,7 +988,6 @@ export interface AvatarJobCreateRequest {
   avatar_id: string;
   voice_id: string;
   profile_id?: string;
-  target_seconds: number;
   speech_rate: number;
   aspect_ratio: string;
   resolution: string;

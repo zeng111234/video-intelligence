@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import re
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -31,6 +32,29 @@ SUPPORTED_COPYWRITING_PLATFORMS = {
 METADATA_ORIGINAL_NOTE = (
     "本脚本基于标题/热点词/互动数据原创生成，不是原视频转写，"
     "使用前请人工复核。"
+)
+
+COMPLIANCE_RISK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    (
+        "收益或效果承诺",
+        re.compile(r"(?:月入|日入|年入|赚[到]?)[0-9一二三四五六七八九十百千万wW]+(?:元|万|w|W)?|稳赚|躺赚|保本"),
+        "已将收益或效果承诺改为个人经历或条件性表达。",
+    ),
+    (
+        "绝对化保证",
+        re.compile(r"百分之百|100%|一定(?:能|会|有效|成功|赚钱)|保证(?:有效|成功|成交|赚钱)|必定|绝不"),
+        "已弱化绝对化、保证性表述。",
+    ),
+    (
+        "医疗或金融效果断言",
+        re.compile(r"根治|治愈|药到病除|立刻见效|秒见效|稳赚不赔|投资必赚"),
+        "已移除医疗、金融等高风险效果断言。",
+    ),
+    (
+        "虚假官方背书",
+        re.compile(r"官方(?:认证|推荐|背书)|平台(?:认证|背书)"),
+        "已删除无法核实的官方或平台背书表达。",
+    ),
 )
 
 
@@ -57,6 +81,54 @@ class CopywritingService:
 
     def capabilities(self) -> dict[str, Any]:
         return self.engine.capabilities()
+
+    @staticmethod
+    def _risk_categories(texts: list[str]) -> list[str]:
+        combined = "\n".join(texts)
+        return [category for category, pattern, _ in COMPLIANCE_RISK_RULES if pattern.search(combined)]
+
+    @staticmethod
+    def _compliance_hint(categories: list[str]) -> str:
+        if not categories:
+            return ""
+        return (
+            "风险表达优化：保留可核实事实，但不要复述原敏感措辞；"
+            f"重点处理：{'、'.join(categories)}。"
+        )
+
+    @staticmethod
+    def _compliance_notes(categories: list[str], *, retry_used: bool, residual: list[str]) -> list[str]:
+        notes = ["已按自然口播节奏优化表达。"]
+        for category, _, note in COMPLIANCE_RISK_RULES:
+            if category in categories:
+                notes.append(note)
+        if retry_used:
+            notes.append("检测到风险表达后已自动进行一次复核改写。")
+        if residual:
+            notes.append("仍检测到部分风险表达，建议人工复核后再发布。")
+        return list(dict.fromkeys(notes))
+
+    def _run_with_compliance(
+        self,
+        *,
+        source_texts: list[str],
+        run: Callable[[str], list[str]],
+    ) -> tuple[list[str], str, list[str], bool, bool]:
+        source_categories = self._risk_categories(source_texts)
+        results = run(self._compliance_hint(source_categories))
+        output_categories = self._risk_categories(results)
+        retry_used = bool(output_categories)
+        if retry_used:
+            results = run(self._compliance_hint(list(dict.fromkeys(source_categories + output_categories))))
+        residual = self._risk_categories(results)
+        categories = list(dict.fromkeys(source_categories + output_categories + residual))
+        return (
+            results,
+            "review_required" if residual else "passed",
+            self._compliance_notes(categories, retry_used=retry_used, residual=residual),
+            bool(categories),
+            retry_used,
+        )
 
     # ------------------------------------------------------------------
     # 三档文案来源
@@ -308,15 +380,21 @@ class CopywritingService:
         )
         self._save(task, on_progress)
         try:
-            results = self.engine.rewrite(
-                source_text,
-                platform=platform_enum.value,
-                target_audience=target_audience,
-                style_prompt=style_prompt,
-                target_length=target_length,
-                tone=tone,
-                rewrite_goal=rewrite_goal,
-                variant_count=variant_count,
+            def run(retry_hint: str) -> list[str]:
+                goal = "；".join(item for item in [rewrite_goal.strip(), retry_hint] if item)
+                return self.engine.rewrite(
+                    source_text,
+                    platform=platform_enum.value,
+                    target_audience=target_audience,
+                    style_prompt=style_prompt,
+                    target_length=target_length,
+                    tone=tone,
+                    rewrite_goal=goal,
+                    variant_count=variant_count,
+                )
+
+            results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
+                source_texts=[source_text], run=run
             )
             if not results:
                 raise RuntimeError("LLM 未返回有效内容。")
@@ -329,6 +407,10 @@ class CopywritingService:
                     "token_usage": self._last_usage(),
                     "result_text": results[0] if results else None,
                     "result_variants": results,
+                    "compliance_status": compliance_status,
+                    "compliance_notes": compliance_notes,
+                    "compliance_rewritten": compliance_rewritten,
+                    "compliance_retry_used": compliance_retry_used,
                 }
             )
             self._save(task, on_progress)
@@ -395,16 +477,22 @@ class CopywritingService:
         )
         self._save(task, on_progress)
         try:
-            results = self.engine.generate(
-                content_brief=content_brief,
-                platform=platform_enum.value,
-                target_audience=target_audience,
-                selling_points=selling_points,
-                call_to_action=call_to_action,
-                style_prompt=style_prompt,
-                target_length=target_length,
-                tone=tone,
-                variant_count=variant_count,
+            def run(retry_hint: str) -> list[str]:
+                prompt = "\n".join(item for item in [style_prompt.strip(), retry_hint] if item)
+                return self.engine.generate(
+                    content_brief=content_brief,
+                    platform=platform_enum.value,
+                    target_audience=target_audience,
+                    selling_points=selling_points,
+                    call_to_action=call_to_action,
+                    style_prompt=prompt,
+                    target_length=target_length,
+                    tone=tone,
+                    variant_count=variant_count,
+                )
+
+            results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
+                source_texts=[content_brief, selling_points, call_to_action], run=run
             )
             if not results:
                 raise RuntimeError("LLM 未返回有效内容。")
@@ -417,6 +505,10 @@ class CopywritingService:
                     "token_usage": self._last_usage(),
                     "result_text": results[0],
                     "result_variants": results,
+                    "compliance_status": compliance_status,
+                    "compliance_notes": compliance_notes,
+                    "compliance_rewritten": compliance_rewritten,
+                    "compliance_retry_used": compliance_retry_used,
                 }
             )
             self._save(task, on_progress)

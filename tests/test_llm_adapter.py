@@ -164,7 +164,8 @@ class TestOpenAICompatibleCopywritingEngine:
         prompt = engine._build_system_prompt("", 300, "professional")
         assert "短视频口播文案" in prompt
         assert "professional" in prompt
-        assert "300" in prompt
+        assert "目标字数" not in prompt
+        assert "目标平台" not in prompt
         assert "严格 JSON" in prompt
 
     def test_build_system_prompt_with_style(self):

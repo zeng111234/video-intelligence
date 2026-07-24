@@ -3,7 +3,7 @@
  * 支持 success / warning / error / info 四种类型
  * 自动消失、可堆叠、支持手动关闭
  */
-import { useState, useCallback, useRef, createContext, useContext, type ReactNode } from "react";
+import { useState, useCallback, useMemo, useRef, createContext, useContext, type ReactNode } from "react";
 import {
   CheckCircleOutlined,
   WarningOutlined,
@@ -95,12 +95,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }, 300);
   }, []);
 
-  const toast = {
-    success: (msg: string, dur?: number) => addToast("success", msg, dur),
-    warning: (msg: string, dur?: number) => addToast("warning", msg, dur),
-    error: (msg: string, dur?: number) => addToast("error", msg, dur),
-    info: (msg: string, dur?: number) => addToast("info", msg, dur),
-  };
+  const toast = useMemo(
+    () => ({
+      success: (msg: string, dur?: number) => addToast("success", msg, dur),
+      warning: (msg: string, dur?: number) => addToast("warning", msg, dur),
+      error: (msg: string, dur?: number) => addToast("error", msg, dur),
+      info: (msg: string, dur?: number) => addToast("info", msg, dur),
+    }),
+    [addToast],
+  );
 
   return (
     <ToastContext.Provider value={{ toast }}>

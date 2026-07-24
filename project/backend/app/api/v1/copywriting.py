@@ -12,22 +12,23 @@ router = APIRouter(prefix="/api/v1/copywriting", tags=["copywriting"])
 
 class CopywritingGenerateRequest(BaseModel):
     content_brief: str = Field(..., min_length=1, description="内容概要")
-    platform: str = Field("douyin", description="目标平台")
+    # 兼容旧客户端；新页面不再以平台作为文案生成条件。
+    platform: str | None = Field(None, description="已废弃的目标平台")
     target_audience: str = Field("", description="目标受众")
     selling_points: str = Field("", description="核心卖点")
     call_to_action: str = Field("", description="行动号召")
     style_prompt: str = Field("", description="风格提示")
-    target_length: int = Field(300, ge=50, le=800, description="目标长度")
+    target_length: int | None = Field(None, description="已废弃的目标长度")
     tone: str = Field("professional", description="语调")
     variant_count: int = Field(1, ge=1, le=5, description="变体数量")
 
 
 class CopywritingRewriteRequest(BaseModel):
     source_text: str = Field(..., min_length=1, description="源文案")
-    platform: str = Field("douyin", description="目标平台")
+    platform: str | None = Field(None, description="已废弃的目标平台")
     target_audience: str = Field("", description="目标受众")
     style_prompt: str = Field("", description="风格提示")
-    target_length: int = Field(300, ge=50, le=800, description="目标长度")
+    target_length: int | None = Field(None, description="已废弃的目标长度")
     tone: str = Field("professional", description="语调")
     variant_count: int = Field(1, ge=1, le=5, description="变体数量")
 
@@ -41,6 +42,10 @@ class CopywritingResponse(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
+    compliance_status: str = "not_checked"
+    compliance_notes: list[str] = Field(default_factory=list)
+    compliance_rewritten: bool = False
+    compliance_retry_used: bool = False
     error_message: str | None = None
 
 
@@ -134,12 +139,13 @@ def generate(
     try:
         task = service.generate(
             content_brief=body.content_brief,
-            platform=body.platform,
+            # 旧字段仅为兼容旧客户端保留；新文案使用通用短视频口播规则。
+            platform="douyin",
             target_audience=body.target_audience,
             selling_points=body.selling_points,
             call_to_action=body.call_to_action,
             style_prompt=body.style_prompt,
-            target_length=body.target_length,
+            target_length=300,
             tone=body.tone,
             variant_count=body.variant_count,
         )
@@ -157,10 +163,10 @@ def rewrite(
     try:
         task = service.rewrite(
             source_text=body.source_text,
-            platform=body.platform,
+            platform="douyin",
             target_audience=body.target_audience,
             style_prompt=body.style_prompt,
-            target_length=body.target_length,
+            target_length=300,
             tone=body.tone,
             variant_count=body.variant_count,
         )
@@ -179,6 +185,10 @@ def _to_response(task) -> CopywritingResponse:
         token_usage=task.token_usage,
         result_text=task.result_text,
         result_variants=task.result_variants,
+        compliance_status=task.compliance_status,
+        compliance_notes=task.compliance_notes,
+        compliance_rewritten=task.compliance_rewritten,
+        compliance_retry_used=task.compliance_retry_used,
         error_message=task.error_message,
     )
 

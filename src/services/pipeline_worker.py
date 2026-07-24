@@ -20,6 +20,7 @@ from src.models import (
     VideoEditStep,
     VideoEditStepKind,
 )
+from src.adapters.douyin_parser import DouyinParserError
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class PipelineWorker:
         publish_service,
         template_service,
         production_service=None,
+        douyin_link_transcription_service=None,
         interval_seconds: float = 2.0,
     ) -> None:
         self.repository = repository
@@ -48,6 +50,7 @@ class PipelineWorker:
         self.publish_service = publish_service
         self.template_service = template_service
         self.production_service = production_service
+        self.douyin_link_transcription_service = douyin_link_transcription_service
         self.interval_seconds = interval_seconds
         self._task: asyncio.Task | None = None
         # 该 worker 由依赖缓存复用，但 TestClient 和服务重启可能使用新的事件循环。
@@ -91,6 +94,10 @@ class PipelineWorker:
                     self._run_keyword_master(run)
                 elif workflow == "keyword_auto_candidate":
                     self._run_candidate(run)
+                elif workflow == "guided_candidate":
+                    self._run_candidate(run)
+                elif workflow == "guided_share_link":
+                    self._run_guided_share_link(run)
                 elif workflow == "production_batch_candidate":
                     self._run_production_batch_candidate(run)
             except Exception as exc:
@@ -180,6 +187,72 @@ class PipelineWorker:
                 style_prompt=str(request.get("style_prompt") or ""),
                 variant_count=int(request.get("variant_count") or 2),
                 existing_run=run,
+            )
+            return
+        if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+            self._submit_avatar(run)
+            return
+        if run.status == PipelineRunStatus.RUNNING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+            self._poll_avatar_and_continue(run)
+            return
+        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
+            self._reconcile_publish(run)
+
+    def _run_guided_share_link(self, run: PipelineRun) -> None:
+        """从客户明确提供的抖音分享链接开始，不经过关键词发现。"""
+        if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
+            if self.douyin_link_transcription_service is None:
+                self._fail(run, PipelineStage.TRANSCRIPTION, "分享链接转写服务未配置。")
+                return
+            request = dict(run.config.get("candidate_request") or {})
+            share_text = str(run.config.get("share_text") or "")
+            if not share_text:
+                self._fail(run, PipelineStage.TRANSCRIPTION, "缺少抖音分享链接。")
+                return
+            run = self.pipeline_service.update_stage(run, PipelineStage.TRANSCRIPTION, TaskStatus.RUNNING)
+            try:
+                if bool(run.config.get("use_paid_fallback")):
+                    preview = self.douyin_link_transcription_service.preview(share_text)
+                    if not preview.work_id:
+                        raise DouyinParserError("链接缺少可用于授权回退的作品 ID。")
+                    transcription = self.douyin_link_transcription_service.transcribe_oneapi_fallback(
+                        share_text=share_text,
+                        work_id=preview.work_id,
+                        rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
+                        rights_confirmed=True,
+                        idempotency_key=f"worker-link-{run.run_id}",
+                        model_name=str(request.get("model_name") or "large-v3-turbo"),
+                    )
+                else:
+                    transcription = self.douyin_link_transcription_service.transcribe_experimental(
+                        share_text=share_text,
+                        rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
+                        rights_confirmed=True,
+                        model_name=str(request.get("model_name") or "large-v3-turbo"),
+                    )
+            except DouyinParserError as exc:
+                self._fail(run, PipelineStage.TRANSCRIPTION, exc.user_message)
+                return
+            run = self.pipeline_service.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.SUCCEEDED,
+                task_id=transcription.task_id,
+                outputs={
+                    "task_id": transcription.task_id,
+                    "duration_seconds": str(transcription.duration_seconds or ""),
+                    "segment_count": str(len(transcription.segments or [])),
+                    "review_state": "unapproved_asr",
+                    "source": transcription.source_kind,
+                },
+            )
+            profile = dict(run.config.get("profile") or {})
+            self.pipeline_service.create_copywriting_review(
+                run=run,
+                transcription=transcription,
+                platform=Platform.DOUYIN,
+                target_audience=str(profile.get("target_audience") or ""),
+                style_prompt=str(profile.get("script_style") or ""),
             )
             return
         if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.AVATAR_GENERATION:
@@ -323,6 +396,9 @@ class PipelineWorker:
             task_id=edit_task.task_id,
             outputs={"edit_task_id": edit_task.task_id, "video_path": edit_task.result_path},
         )
+        if run.config.get("publish_enabled") is False:
+            self.pipeline_service.complete_run(run, success=True)
+            return
         if run.config.get("workflow") == "production_batch_candidate":
             paused = run.model_copy(
                 update={

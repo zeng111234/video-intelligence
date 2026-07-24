@@ -92,8 +92,11 @@ class PublishService:
             missing_config = list(cap.get("missing_configuration", []))
             can_create_task = enabled or manual_mode or bool(cap.get("manual_fallback"))
             issue = None
+            if mode == "local_browser" and not target.account_id:
+                can_create_task = False
+                issue = "请先选择已扫码连接的抖音账号。"
             if not can_create_task:
-                issue = "未配置官方发布权限，也没有启用人工兜底。"
+                issue = issue or "未配置官方发布权限，也没有启用人工兜底。"
 
             platform_results.append(
                 {

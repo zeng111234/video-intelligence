@@ -260,6 +260,8 @@ class PipelineService:
         automatic_workflow = run.config.get("workflow") in {
             "keyword_auto_candidate",
             "production_batch_candidate",
+            "guided_candidate",
+            "guided_share_link",
         }
         updated = self._event(
             updated,
@@ -305,6 +307,69 @@ class PipelineService:
             action="queued",
             stage=PipelineStage.KEYWORD_SEARCH,
             message="关键词生产任务已入队，等待后台检索与候选选择。",
+        )
+        self.repository.save_pipeline_run(run)
+        return run
+
+    def start_guided_run(
+        self,
+        *,
+        source_type: str,
+        keyword: str,
+        profile: dict[str, Any],
+        rights_holder: str,
+        publish_enabled: bool,
+        publish_platforms: list[str],
+        candidate_id: str | None = None,
+        share_text: str | None = None,
+        use_paid_fallback: bool = False,
+        idempotency_key: str = "",
+    ) -> PipelineRun:
+        """创建面向单个客户操作的可恢复生产任务。
+
+        该方法只入队，不在 API 请求内调用解析、转写或生成供应商；由 worker
+        依次执行，避免重复点击造成重复扣费或重复生成。
+        """
+        if source_type not in {"candidate", "share_link"}:
+            raise ValueError("不支持的流水线来源。")
+        if idempotency_key:
+            for existing in self.repository.list_pipeline_runs(limit=100):
+                if existing.config.get("guided_idempotency_key") == idempotency_key:
+                    return existing
+        workflow = "guided_candidate" if source_type == "candidate" else "guided_share_link"
+        run = self.create_run(
+            keyword=keyword[:200],
+            config={
+                "workflow": workflow,
+                "source": source_type,
+                "profile": profile,
+                "rights_holder": rights_holder.strip(),
+                "rights_confirmed": True,
+                "publish_enabled": publish_enabled,
+                "publish_platforms": list(publish_platforms) if publish_enabled else [],
+                "share_text": share_text or "",
+                "use_paid_fallback": use_paid_fallback,
+                "guided_idempotency_key": idempotency_key,
+                "candidate_request": {
+                    "rights_confirmed": True,
+                    "rights_holder": rights_holder.strip(),
+                    "model_name": "large-v3-turbo",
+                    "target_length": 300,
+                    "tone": "casual",
+                    "target_audience": str(profile.get("target_audience") or ""),
+                    "style_prompt": str(profile.get("script_style") or ""),
+                    "variant_count": 2,
+                },
+            },
+        )
+        if candidate_id:
+            run = run.model_copy(update={"candidate_video_id": candidate_id})
+        run = self._event(
+            run,
+            action="guided_queued",
+            stage=PipelineStage.TRANSCRIPTION,
+            message="已加入生产队列，将依次完成文案提取、改写、确认和数字人成片。",
+            details={"source_type": source_type},
         )
         self.repository.save_pipeline_run(run)
         return run
@@ -474,6 +539,30 @@ class PipelineService:
             )
             return self.complete_run(run, success=False, error_message=exc.user_message)
 
+        return self.create_copywriting_review(
+            run=run,
+            transcription=transcription,
+            platform=candidate.platform,
+            target_audience=target_audience,
+            style_prompt=style_prompt,
+            target_length=target_length,
+            tone=tone,
+            variant_count=variant_count,
+        )
+
+    def create_copywriting_review(
+        self,
+        *,
+        run: PipelineRun,
+        transcription: TranscriptionTask,
+        platform: Platform,
+        target_audience: str = "",
+        style_prompt: str = "",
+        target_length: int = 300,
+        tone: str = "casual",
+        variant_count: int = 2,
+    ) -> PipelineRun:
+        """将一条真实转写改写为待客户确认的口播稿。"""
         source_text = self._transcription_text(transcription)
         try:
             run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
@@ -485,7 +574,7 @@ class PipelineService:
             )
             copy_task = self.copywriting_service.rewrite(
                 source_text=source_text,
-                platform=candidate.platform.value,
+                platform=platform.value,
                 target_audience=target_audience,
                 style_prompt=style_prompt or "短视频口播，清晰直接，保留原视频爆款表达结构",
                 target_length=target_length,

@@ -8,7 +8,7 @@ $ErrorActionPreference = "SilentlyContinue"
 Write-Host "[INFO] Killing all processes on port 2001..."
 $maxAttempts = 5
 for ($i = 0; $i -lt $maxAttempts; $i++) {
-    $connections = Get-NetTCPConnection -LocalPort 2001 -ErrorAction SilentlyContinue
+    $connections = Get-NetTCPConnection -LocalPort 2001 -State Listen -ErrorAction SilentlyContinue
     if (-not $connections) {
         Write-Host "[INFO] Port 2001 is free"
         break
@@ -24,7 +24,7 @@ for ($i = 0; $i -lt $maxAttempts; $i++) {
 }
 
 # Final check
-$finalCheck = Get-NetTCPConnection -LocalPort 2001 -ErrorAction SilentlyContinue
+$finalCheck = Get-NetTCPConnection -LocalPort 2001 -State Listen -ErrorAction SilentlyContinue
 if ($finalCheck) {
     Write-Host "[ERROR] Port 2001 still occupied after $maxAttempts attempts"
     exit 1

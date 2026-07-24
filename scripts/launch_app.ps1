@@ -7,6 +7,8 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $appUrl = "http://127.0.0.1:1001/"
 $healthUrl = "http://127.0.0.1:1001/"
+$crawlerCapabilityUrl = "http://127.0.0.1:2001/api/v1/crawler/browser-discovery/capabilities"
+$requiredHotspotAdapterVersion = "hotspot_fiber_v2"
 
 function Test-AppHealth {
     try {
@@ -15,6 +17,39 @@ function Test-AppHealth {
     }
     catch {
         return $false
+    }
+}
+
+function Test-HotspotBackendReady {
+    try {
+        $response = Invoke-RestMethod -Uri $crawlerCapabilityUrl -TimeoutSec 3
+        return (
+            $response.provider_name -eq "douyin_local_browser" -and
+            $response.adapter_version -eq $requiredHotspotAdapterVersion
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-HotspotBackendReady {
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        if (Test-HotspotBackendReady) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
+if (-not (Test-HotspotBackendReady)) {
+    Write-Host "[UPDATE] Restarting backend to load the Hotspot crawler adapter..." -ForegroundColor Yellow
+    $backendRestart = Join-Path $projectRoot "scripts\restart_backend.ps1"
+    & $backendRestart
+    if (-not (Wait-HotspotBackendReady)) {
+        Write-Host "[ERROR] Backend started but the Hotspot crawler adapter was not confirmed." -ForegroundColor Red
+        exit 1
     }
 }
 
