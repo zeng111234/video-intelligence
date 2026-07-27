@@ -12,6 +12,7 @@ from src.models import (
     PublishTarget,
     TaskStatus,
 )
+from src.adapters.publishers.local_browser import LocalBrowserAutoPublisher
 
 
 class SandboxPublisher:
@@ -151,4 +152,11 @@ def build_publisher(platform: PublishPlatform):
         from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
 
         return DouyinBrowserPublisher()
+    if platform in {
+        PublishPlatform.KUAISHOU,
+        PublishPlatform.WECHAT_CHANNELS,
+        PublishPlatform.XIAOHONGSHU,
+        PublishPlatform.BILIBILI,
+    }:
+        return LocalBrowserAutoPublisher(platform)
     return SandboxPublisher(platform)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 import re
 from typing import Any, Callable
 from uuid import uuid4
@@ -327,6 +328,81 @@ class CopywritingService:
             source_basis=source_basis or {},
             notes=result_notes,
         )
+
+    def generate_publish_metadata(
+        self,
+        *,
+        source_text: str,
+        platforms: list[str] | None = None,
+        source_task_id: str | None = None,
+    ) -> tuple[CopywritingTask, dict[str, object] | None]:
+        """Generate publish metadata and persist its source/result for audit."""
+        if not source_text.strip():
+            raise ValueError("原始文案不能为空。")
+        cap = self.engine.capabilities()
+        max_input = int(cap.get("max_input_chars", 5000))
+        if len(source_text) > max_input:
+            raise ValueError(f"原始文案超过最大长度限制（{max_input}字符）。")
+        now = datetime.now().astimezone()
+        task = CopywritingTask(
+            task_id=f"copy-{uuid4().hex[:10]}",
+            title=f"发布信息生成 · {source_text[:20]}...",
+            status=TaskStatus.RUNNING,
+            progress=10,
+            created_at=now,
+            updated_at=now,
+            creation_mode="publish_metadata",
+            source_text=source_text,
+            source_task_id=source_task_id,
+            platform=Platform.DOUYIN,
+            provider_name=str(cap.get("provider_name", "unknown")),
+            model_name=str(cap.get("model", "")),
+            stage="正在生成发布信息",
+            is_mock=bool(cap.get("mode") == "sandbox"),
+        )
+        self._save(task, None)
+        try:
+            generator = getattr(self.engine, "generate_publish_metadata", None)
+            if not callable(generator):
+                raise RuntimeError("当前文案引擎不支持生成发布信息。")
+            metadata = generator(source_text, platforms=platforms or [])
+            if not isinstance(metadata, dict):
+                raise RuntimeError("LLM 未返回有效的发布信息。")
+            title = str(metadata.get("title") or "").strip()[:100]
+            description = str(metadata.get("description") or "").strip()[:1000]
+            raw_tags = metadata.get("tags")
+            tags = (
+                list(dict.fromkeys(str(item).strip().lstrip("#")[:30] for item in raw_tags if str(item).strip()))[:8]
+                if isinstance(raw_tags, list)
+                else []
+            )
+            if not title or not description:
+                raise RuntimeError("LLM 未返回完整的标题和发布描述。")
+            result = {"title": title, "description": description, "tags": tags}
+            task = task.model_copy(
+                update={
+                    "status": TaskStatus.SUCCEEDED,
+                    "progress": 100,
+                    "stage": "发布信息生成完成",
+                    "updated_at": datetime.now().astimezone(),
+                    "token_usage": self._last_usage(),
+                    "result_text": json.dumps(result, ensure_ascii=False),
+                    "result_variants": [description],
+                }
+            )
+            self._save(task, None)
+            return task, result
+        except Exception as exc:
+            task = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "stage": "发布信息生成失败",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": str(exc),
+                }
+            )
+            self._save(task, None)
+            return task, None
 
     def rewrite(
         self,

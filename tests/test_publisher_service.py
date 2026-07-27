@@ -11,6 +11,7 @@ import tempfile
 import pytest
 
 from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
+from src.adapters.publishers.local_browser import LocalBrowserAutoPublisher
 from src.adapters.publishers.sandbox import SandboxPublisher, build_publisher
 from src.models import (
     PublishPlatform,
@@ -23,6 +24,7 @@ from src.models import (
 from src.repositories.mock import MockRepository
 from src.repositories.sqlite import SQLiteRepository
 from src.services.publisher import PublishService
+from src.services.publish_worker import PublishWorker
 
 
 class _FailingPublisher:
@@ -220,6 +222,37 @@ class TestPublishServiceEdgeCases:
         with pytest.raises(ValueError, match="已重试过一次"):
             svc.retry_task(retried.task_id)
 
+    def test_final_publish_task_cannot_be_retried(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="最终点击后不可重试")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        clicked = task.model_copy(update={"final_publish_started_at": task.created_at, "outputs": {"final_publish_clicked": "true"}})
+        self.repo.save_task(clicked)
+        with pytest.raises(ValueError, match="已经点击最终发布"):
+            self.svc.retry_task(clicked.task_id)
+
+    def test_action_required_task_can_resume_before_final_click(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="验证后继续")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        paused = task.model_copy(update={"status": TaskStatus.PAUSED, "publish_status": PublishStatus.ACTION_REQUIRED})
+        self.repo.save_task(paused)
+        resumed = self.svc.resume_task(paused.task_id)
+        assert resumed.status == TaskStatus.QUEUED
+        assert resumed.publish_status == PublishStatus.PENDING
+
+    def test_delete_publish_task_removes_a_paused_or_finished_record(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="删除历史任务")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+
+        assert self.svc.delete_task(task.task_id) == task.task_id
+        assert self.svc.get_task(task.task_id) is None
+
+    def test_delete_publish_tasks_rejects_an_active_queue_item(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="排队任务")
+        queued = self.svc.create_batch(video_path=str(self._temp_video), targets=[target])["tasks"][0]
+
+        with pytest.raises(ValueError, match="正在队列中"):
+            self.svc.delete_tasks([queued.task_id])
+
 
 def test_sqlite_repository_reads_publish_task(tmp_path):
     repo = SQLiteRepository(tmp_path / "publish.db")
@@ -233,7 +266,9 @@ def test_sqlite_repository_reads_publish_task(tmp_path):
     assert fetched.publish_status == PublishStatus.MANUAL_READY
 
 
-def test_douyin_uses_local_browser_publisher_even_when_old_official_mode_exists(monkeypatch):
+def test_douyin_uses_local_browser_publisher_even_when_old_official_mode_exists(
+    monkeypatch,
+):
     """旧官方模式配置不能覆盖已验证的本机扫码发布流程。"""
     monkeypatch.setenv("PUBLISH_DOUYIN_MODE", "official")
 
@@ -243,3 +278,94 @@ def test_douyin_uses_local_browser_publisher_even_when_old_official_mode_exists(
     assert publisher.capabilities()["mode"] == "local_browser"
     assert publisher.capabilities()["requires_account"] is True
     assert publisher.capabilities()["setup_required"] is True
+
+
+def test_douyin_publisher_navigates_from_home_to_upload_page():
+    assert DouyinBrowserPublisher._is_upload_page(
+        "https://creator.douyin.com/creator-micro/content/upload"
+    )
+    assert not DouyinBrowserPublisher._is_upload_page(
+        "https://creator.douyin.com/creator-micro/home"
+    )
+
+
+def test_douyin_publisher_selects_large_file_by_local_cdp_path(tmp_path):
+    video = tmp_path / "large-video.mp4"
+    video.write_bytes(b"video")
+
+    class FakeSession:
+        def __init__(self):
+            self.calls = []
+
+        def send(self, method, params):
+            self.calls.append((method, params))
+            if method == "DOM.getDocument":
+                return {"root": {"nodeId": 1}}
+            if method == "DOM.querySelector":
+                return {"nodeId": 9}
+            return {}
+
+    session = FakeSession()
+
+    class FakeContext:
+        @staticmethod
+        def new_cdp_session(_page):
+            return session
+
+    class FakePage:
+        context = FakeContext()
+
+    DouyinBrowserPublisher._set_local_file(FakePage(), str(video))
+
+    assert session.calls[-1] == (
+        "DOM.setFileInputFiles",
+        {"nodeId": 9, "files": [str(video.resolve())]},
+    )
+
+
+def test_local_browser_auto_publisher_is_explicit_and_does_not_hide_challenges():
+    publisher = LocalBrowserAutoPublisher(PublishPlatform.XIAOHONGSHU)
+
+    assert publisher.capabilities()["manual_only"] is False
+    assert publisher._requires_user("请完成短信验证码和安全验证")
+    assert not publisher._requires_user("正常的发布表单")
+
+
+def test_local_browser_auto_publisher_formats_tags_without_private_api():
+    publisher = LocalBrowserAutoPublisher(PublishPlatform.KUAISHOU)
+    target = PublishTarget(
+        platform=PublishPlatform.KUAISHOU,
+        title="标题",
+        description="描述",
+        tags=["品牌", "#活动"],
+    )
+
+    assert publisher._content(target) == "描述\n#品牌 #活动"
+
+
+def test_publish_worker_claims_only_one_queued_task(tmp_path):
+    repo = MockRepository()
+    service = PublishService(
+        repo,
+        {
+            "douyin": SandboxPublisher(PublishPlatform.DOUYIN),
+            "kuaishou": SandboxPublisher(PublishPlatform.KUAISHOU),
+        },
+    )
+    video = tmp_path / "queued.mp4"
+    video.write_bytes(b"video")
+    batch = service.create_batch(
+        video_path=str(video),
+        targets=[
+            PublishTarget(platform=PublishPlatform.DOUYIN, title="第一条"),
+            PublishTarget(platform=PublishPlatform.KUAISHOU, title="第二条"),
+        ],
+    )
+    worker = PublishWorker(service)
+
+    first = worker.tick_once()
+
+    assert first is not None
+    assert first.status == TaskStatus.PAUSED
+    remaining = [task for task in batch["tasks"] if service.get_task(task.task_id).status == TaskStatus.QUEUED]
+    assert len(remaining) == 1

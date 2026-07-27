@@ -44,6 +44,7 @@ def _request(key: str = "avatar-test-123") -> AvatarSubmitRequest:
 class FakeAvatarProvider:
     def __init__(self, *, outcome_unknown: bool = False) -> None:
         self.outcome_unknown = outcome_unknown
+        self.submitted_requests: list[AvatarSubmitRequest] = []
         self.snapshot = AvatarJobSnapshot(
             job_id="provider-job-1",
             idempotency_key="avatar-test-123",
@@ -84,6 +85,7 @@ class FakeAvatarProvider:
         ]
 
     def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot:
+        self.submitted_requests.append(request)
         if self.outcome_unknown:
             raise AvatarProviderError(
                 "提交响应丢失",
@@ -176,6 +178,53 @@ def test_avatar_service_persists_real_task_and_refreshes_status() -> None:
     refreshed = service.refresh_task(task.task_id)
     assert refreshed.status == TaskStatus.SUCCEEDED
     assert refreshed.provider_status == AvatarProviderStatus.SUCCEEDED
+
+
+def test_avatar_service_assigns_video_names_and_passes_final_name_to_provider() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FakeAvatarProvider()
+    service = AvatarService(repository, provider)
+
+    first = service.submit(
+        _request("avatar-name-0001").model_copy(update={"keyword": "AI获客"}),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+    second = service.submit(
+        _request("avatar-name-0002").model_copy(update={"keyword": "AI获客"}),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+    custom = service.submit(
+        _request("avatar-name-0003").model_copy(update={"video_name": "产品介绍"}),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+    duplicate_custom = service.submit(
+        _request("avatar-name-0004").model_copy(update={"video_name": "产品介绍"}),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+    fallback = service.submit(
+        _request("avatar-name-0005"),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+
+    assert [task.title for task in (first, second, custom, duplicate_custom, fallback)] == [
+        "AI获客1",
+        "AI获客2",
+        "产品介绍",
+        "产品介绍2",
+        "数字人视频1",
+    ]
+    assert [item.video_name for item in provider.submitted_requests] == [
+        "AI获客1",
+        "AI获客2",
+        "产品介绍",
+        "产品介绍2",
+        "数字人视频1",
+    ]
 
 
 def test_avatar_service_rejects_profile_when_provider_has_no_profiles() -> None:

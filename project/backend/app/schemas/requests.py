@@ -28,6 +28,10 @@ class TranscriptSegmentRequest(BaseModel):
     confidence: float | None = Field(None, ge=0, le=1)
     needs_review: bool = False
     reviewed: bool = False
+    quality_status: str = "pending"
+    quality_source: str = "primary_asr"
+    quality_note: str | None = None
+    alternatives: list[str] = Field(default_factory=list)
 
 
 class TranscriptionRevisionRequest(BaseModel):

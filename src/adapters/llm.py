@@ -55,6 +55,16 @@ class DisabledCopywritingEngine:
             "AI 文案生成未配置 COPYWRITING_API_KEY，无法调用真实模型。"
         )
 
+    def generate_publish_metadata(self, source_text: str, **kwargs) -> dict[str, Any]:
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法生成发布标题、描述和标签。"
+        )
+
+    def review_transcript_candidates(self, **kwargs) -> dict[str, Any]:
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行低置信口播修订。"
+        )
+
 
 class SandboxCopywritingEngine:
     """离线沙箱文案引擎，不发起真实 LLM 调用。"""
@@ -90,7 +100,9 @@ class SandboxCopywritingEngine:
     ) -> list[str]:
         snippet = content_brief[:80].replace("\n", " ")
         if "适合数字人口播" in style_prompt:
-            title = content_brief.partition("参考视频标题：")[2].split("\n", 1)[0].strip()
+            title = (
+                content_brief.partition("参考视频标题：")[2].split("\n", 1)[0].strip()
+            )
             return [
                 "做数字人口播，最怕什么？\n"
                 "内容讲了很久，用户却划走了。\n"
@@ -130,6 +142,30 @@ class SandboxCopywritingEngine:
         ]
         count = max(1, min(variant_count, len(templates)))
         return templates[:count]
+
+    def generate_publish_metadata(self, source_text: str, **kwargs) -> dict[str, Any]:
+        """明确标注的演示结果，绝不伪装成真实模型推理。"""
+        snippet = source_text.strip().replace("\n", " ")[:28]
+        words = re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,8}", source_text)
+        tags = list(dict.fromkeys(words))[:3] or ["内容分享"]
+        return {
+            "title": f"【演示】{snippet}"[:100],
+            "description": f"【演示结果】{source_text.strip()[:300]}",
+            "tags": tags,
+        }
+
+    def review_transcript_candidates(
+        self,
+        *,
+        candidates: list[str],
+        **kwargs,
+    ) -> dict[str, Any]:
+        # 沙箱不伪造真实语义判断；依赖注入层不会将它用于真实转写。
+        return {
+            "corrected_text": candidates[0] if candidates else "",
+            "note": "演示模式未执行真实低置信口播修订。",
+            "is_mock": True,
+        }
 
 
 class OpenAICompatibleCopywritingEngine:
@@ -243,6 +279,94 @@ class OpenAICompatibleCopywritingEngine:
             f"原文：\n{source_text}"
         )
         return self._generate_variants(system_prompt, user_prompt, variant_count)
+
+    def generate_publish_metadata(self, source_text: str, **kwargs) -> dict[str, Any]:
+        """Produce bounded publish metadata from user-provided source facts only."""
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        platforms = [str(item) for item in kwargs.get("platforms", []) if str(item)]
+        system_prompt = "\n".join(
+            [
+                "你是企业短视频发布助手。只能使用用户提供的事实，不得编造价格、资质、案例、数据、效果、平台背书或审核承诺。",
+                "输出适合短视频平台的标题、描述和话题标签；表达清晰、克制，不能承诺收益或效果。",
+                "只返回严格 JSON，不要 Markdown 或解释。",
+                'JSON 格式：{"title":"不超过100字","description":"不超过1000字","tags":["不带#的话题", "最多8个"]}',
+            ]
+        )
+        user_prompt = "\n".join(
+            [
+                f"目标平台：{'、'.join(platforms) or '短视频平台'}",
+                f"原始文案：\n{source_text}",
+            ]
+        )
+        content = self._chat_completion(system_prompt, user_prompt)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("LLM 未返回有效的发布信息 JSON。") from exc
+        if not isinstance(payload, dict):
+            raise LLMAdapterError("LLM 未返回有效的发布信息对象。")
+        title = str(payload.get("title") or "").strip()[:100]
+        description = str(payload.get("description") or "").strip()[:1000]
+        raw_tags = payload.get("tags")
+        tags = (
+            list(dict.fromkeys(str(item).strip().lstrip("#")[:30] for item in raw_tags if str(item).strip()))[:8]
+            if isinstance(raw_tags, list)
+            else []
+        )
+        if not title or not description:
+            raise LLMAdapterError("LLM 未返回完整的标题和发布描述。")
+        return {"title": title, "description": description, "tags": tags}
+
+    def review_transcript_candidates(
+        self,
+        *,
+        previous_text: str,
+        next_text: str,
+        candidates: list[str],
+    ) -> dict[str, Any]:
+        """将低置信片段修订为自然口播句，保留上下文和候选供追溯。"""
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        if not candidates:
+            raise LLMAdapterError("低置信口播修订至少需要一个候选文本。")
+        system_prompt = (
+            "你是短视频口播修订助手。只修订当前低置信片段，使它成为自然、"
+            "简短、便于数字人口播的中文句子；不得改写前后句。结合候选和上下文"
+            "选择最佳理解，但不得凭空添加候选中不存在的具体数字、金额、人名、"
+            "型号、效果或承诺。只返回严格 JSON。"
+        )
+        numbered = "\n".join(
+            f"{index}: {text}" for index, text in enumerate(candidates)
+        )
+        user_prompt = "\n".join(
+            [
+                f"上一句：{previous_text or '无'}",
+                f"下一句：{next_text or '无'}",
+                "当前低置信片段候选：",
+                numbered,
+                'JSON 格式：{"corrected_text":"修订后的当前句","note":"不超过40字"}',
+            ]
+        )
+        content = self._chat_completion(system_prompt, user_prompt)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("LLM 未返回有效的转写复核 JSON。") from exc
+        if not isinstance(payload, dict):
+            raise LLMAdapterError("LLM 未返回有效的转写复核对象。")
+        corrected_text = str(payload.get("corrected_text") or "").strip()
+        if not corrected_text:
+            raise LLMAdapterError("LLM 未返回有效的低置信口播修订文本。")
+        if len(corrected_text) > 400:
+            raise LLMAdapterError("LLM 返回的低置信口播修订文本过长。")
+        note = str(payload.get("note") or "").strip()[:120]
+        return {
+            "corrected_text": corrected_text,
+            "note": note,
+        }
 
     def _provider_name(self) -> str:
         if "deepseek.com" in self.base_url.lower():

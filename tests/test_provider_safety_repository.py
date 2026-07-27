@@ -4,7 +4,22 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.models import Platform, PlatformRunStatus, PlatformSearchRun, ProviderMode, SearchBatch
 from src.repositories import MockRepository, SQLiteRepository
+
+
+def test_sqlite_crawler_history_indexes_are_created(tmp_path) -> None:
+    repository = SQLiteRepository(tmp_path / "crawler-history.db")
+
+    batch_indexes = {
+        row[1] for row in repository.connection.execute("PRAGMA index_list('search_batches')")
+    }
+    guard_indexes = {
+        row[1] for row in repository.connection.execute("PRAGMA index_list('provider_request_guards')")
+    }
+
+    assert "idx_search_batches_created" in batch_indexes
+    assert "idx_provider_request_guards_run" in guard_indexes
 
 
 @pytest.mark.parametrize("repository_factory", [MockRepository, SQLiteRepository])
@@ -45,6 +60,61 @@ def test_provider_safety_lease_blocks_parallel_runs_and_persists_cooldown(
         now=now + timedelta(minutes=11),
         lease_seconds=600,
     )
+
+
+@pytest.mark.parametrize("repository_factory", [MockRepository, SQLiteRepository])
+def test_hotspot_cache_isolated_by_statistical_window(repository_factory, tmp_path) -> None:
+    repository = (
+        repository_factory()
+        if repository_factory is MockRepository
+        else repository_factory(tmp_path / "hotspot-window.db")
+    )
+    now = datetime(2026, 7, 24, 9, tzinfo=timezone.utc)
+    runs_by_window = {}
+    for window_hours in (1, 168):
+        batch = SearchBatch(
+            keyword="二手车",
+            published_window_days=0,
+            hotspot_window_hours=window_hours,
+            requested_count_per_platform=100,
+            provider="douyin_local_browser",
+            mode=ProviderMode.LOCAL_BROWSER,
+            platforms=[Platform.DOUYIN],
+        )
+        repository.save_search_batch(batch)
+        run = PlatformSearchRun(
+            batch_id=batch.batch_id,
+            platform=Platform.DOUYIN,
+            provider="douyin_local_browser",
+            mode=ProviderMode.LOCAL_BROWSER,
+            status=PlatformRunStatus.SUCCEEDED,
+            requested_count=100,
+            idempotency_key=f"window-{window_hours}",
+            request_fingerprint=f"window-{window_hours}",
+            started_at=now,
+            finished_at=now,
+        )
+        repository.save_platform_search_run(run)
+        runs_by_window[window_hours] = run
+
+    assert repository.find_cached_platform_search_run(
+        provider="douyin_local_browser",
+        platform=Platform.DOUYIN,
+        keyword="二手车",
+        published_window_days=0,
+        hotspot_window_hours=1,
+        requested_count=100,
+        since=now - timedelta(minutes=30),
+    ).run_id == runs_by_window[1].run_id
+    assert repository.find_cached_platform_search_run(
+        provider="douyin_local_browser",
+        platform=Platform.DOUYIN,
+        keyword="二手车",
+        published_window_days=0,
+        hotspot_window_hours=24,
+        requested_count=100,
+        since=now - timedelta(minutes=30),
+    ) is None
 
 
 def test_sqlite_provider_safety_pause_survives_reopen(tmp_path) -> None:

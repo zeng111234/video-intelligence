@@ -431,6 +431,14 @@ def delete_pipeline(
     return {"run_id": run_id, "deleted": True}
 
 
+@router.delete("")
+def delete_all_pipelines(
+    repo=Depends(get_repository),
+):
+    """删除全部流水线记录；不会删除候选、素材或数字人成片。"""
+    return {"deleted_count": repo.delete_all_pipeline_runs()}
+
+
 @router.get("", response_model=list[PipelineResponse])
 def list_pipelines(
     limit: int = 20,

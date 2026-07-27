@@ -71,6 +71,13 @@ class TestSandboxCopywritingEngineExtended:
         results = self.engine.rewrite("独特的关键词测试")
         assert any("独特的关键词测试" in r for r in results)
 
+    def test_publish_metadata_is_explicitly_demo_output(self):
+        result = self.engine.generate_publish_metadata("新品活动，欢迎了解")
+
+        assert result["title"].startswith("【演示】")
+        assert result["description"].startswith("【演示结果】")
+        assert result["tags"]
+
 
 class TestLLMAdapterError:
     """测试 LLMAdapterError 异常类。"""
@@ -130,6 +137,78 @@ class TestOpenAICompatibleCopywritingEngine:
         engine = OpenAICompatibleCopywritingEngine(api_key="")
         with pytest.raises(LLMAdapterError, match="未配置 COPYWRITING_API_KEY"):
             engine.rewrite("测试文案")
+
+    @patch("src.adapters.llm.urlopen")
+    def test_generate_publish_metadata_returns_bounded_json_fields(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title": "新品活动介绍",
+                                    "description": "介绍产品活动的核心信息。",
+                                    "tags": ["#新品", "品牌活动"],
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        result = engine.generate_publish_metadata(
+            "新品活动，欢迎了解",
+            platforms=["douyin", "xiaohongshu"],
+        )
+
+        assert result == {
+            "title": "新品活动介绍",
+            "description": "介绍产品活动的核心信息。",
+            "tags": ["新品", "品牌活动"],
+        }
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert "抖音" not in sent["messages"][1]["content"]
+        assert "douyin、xiaohongshu" in sent["messages"][1]["content"]
+
+    @patch("src.adapters.llm.urlopen")
+    def test_review_transcript_candidates_returns_voiceover_rewrite(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"corrected_text":"今天的优惠是八十块。","note":"按上下文修订。"}'
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        result = engine.review_transcript_candidates(
+            previous_text="今天有活动。",
+            next_text="数量有限。",
+            candidates=["今天优惠八十元", "今天优惠八十块"],
+        )
+
+        assert result == {
+            "corrected_text": "今天的优惠是八十块。",
+            "note": "按上下文修订。",
+        }
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert "低置信片段" in sent["messages"][1]["content"]
 
     def test_from_env_defaults(self):
         """from_env 应使用环境变量。"""

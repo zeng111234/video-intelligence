@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -28,12 +29,15 @@ import {
   HeartOutlined,
   HistoryOutlined,
   ReloadOutlined,
+  SendOutlined,
   SmileOutlined,
   StarOutlined,
   ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
+  clearCopywritingHistory,
   generateCopywriting,
+  generatePublishMetadata,
   deleteTask,
   getCopywritingCapabilities,
   getCopywritingTask,
@@ -45,6 +49,7 @@ import type {
   CopywritingDetailResponse,
   CopywritingResponse,
   CopywritingSummaryResponse,
+  PublishMetadataResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
@@ -88,6 +93,7 @@ function stylePresetFromPrompt(prompt: string) {
 
 export default function AiCopyPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
   const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
   const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
@@ -105,10 +111,13 @@ export default function AiCopyPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+  const [clearingHistory, setClearingHistory] = useState(false);
   const [loading, setLoading] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [lastResponse, setLastResponse] = useState<CopywritingResponse | null>(null);
   const [variants, setVariants] = useState<string[]>([]);
+  const [publishMetadata, setPublishMetadata] = useState<PublishMetadataResponse | null>(null);
+  const [metadataLoading, setMetadataLoading] = useState(false);
 
   const selectedStyle = useMemo(
     () => STYLE_PRESETS.find((item) => item.key === stylePreset) ?? STYLE_PRESETS[0],
@@ -148,6 +157,7 @@ export default function AiCopyPage() {
         setTaskId(null);
         setLastResponse(null);
         setVariants([]);
+        setPublishMetadata(null);
       }
       toast.success("文案历史已删除");
       await refreshHistory();
@@ -155,6 +165,24 @@ export default function AiCopyPage() {
       toast.error((err as Error).message || "删除文案历史失败");
     } finally {
       setDeletingTaskId(null);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    setClearingHistory(true);
+    try {
+      const result = await clearCopywritingHistory();
+      setHistory([]);
+      setTaskId(null);
+      setLastResponse(null);
+      setVariants([]);
+      setPublishMetadata(null);
+      setActiveVariant(0);
+      toast.success(`已删除 ${result.deleted_count} 条文案历史`);
+    } catch (err) {
+      toast.error((err as Error).message || "清空文案历史失败");
+    } finally {
+      setClearingHistory(false);
     }
   };
 
@@ -186,6 +214,7 @@ export default function AiCopyPage() {
         : [];
     setVariants(resultVariants);
     setActiveVariant(0);
+    setPublishMetadata(null);
   }, [setActiveVariant]);
 
   const handleSubmit = useCallback(async () => {
@@ -199,7 +228,8 @@ export default function AiCopyPage() {
     }
     setLoading(true);
     setVariants([]);
-      setLastResponse(null);
+    setLastResponse(null);
+    setPublishMetadata(null);
     try {
       const common = {
         target_audience: targetAudience,
@@ -280,6 +310,7 @@ export default function AiCopyPage() {
     setLastResponse(null);
     setVariants([]);
     setActiveVariant(0);
+    setPublishMetadata(null);
   };
 
   const handleClearDraft = () => {
@@ -293,6 +324,7 @@ export default function AiCopyPage() {
     setLastResponse(null);
     setVariants([]);
     setActiveVariant(0);
+    setPublishMetadata(null);
     toast.success("本机草稿已清空");
   };
 
@@ -303,6 +335,42 @@ export default function AiCopyPage() {
   const tokenUsage = lastResponse?.token_usage ?? {};
   const settingsSummary = `${TONE_OPTIONS.find((item) => item.value === tone)?.label || tone} / ${selectedStyle.label} / ${variantCount} 版`;
   const activeText = variants[activeVariant] || "";
+
+  const handleGeneratePublishMetadata = useCallback(async () => {
+    if (!activeText.trim()) {
+      toast.warning("请先生成并选择一个文案变体");
+      return;
+    }
+    setMetadataLoading(true);
+    try {
+      const result = await generatePublishMetadata({
+        source_text: activeText,
+        platforms: ["douyin", "kuaishou", "wechat_channels", "xiaohongshu", "bilibili"],
+        source_task_id: taskId || undefined,
+      });
+      setPublishMetadata(result);
+      if (result.is_mock) toast.warning("当前为演示结果，请配置真实模型后再用于正式发布");
+      else toast.success("已生成发布标题、描述和话题，请检查后带入发布");
+    } catch (err) {
+      toast.error((err as Error).message || "生成发布信息失败");
+    } finally {
+      setMetadataLoading(false);
+    }
+  }, [activeText, taskId, toast]);
+
+  const handleSendToPublish = useCallback(() => {
+    if (!publishMetadata?.title.trim() || !publishMetadata.description.trim()) {
+      toast.warning("请先检查并补齐发布标题和描述");
+      return;
+    }
+    window.sessionStorage.setItem("publish_ai_draft", JSON.stringify({
+      title: publishMetadata.title.trim(),
+      description: publishMetadata.description.trim(),
+      tags: publishMetadata.tags,
+      source_task_id: publishMetadata.task_id,
+    }));
+    navigate("/publish?from_ai_copy=1");
+  }, [navigate, publishMetadata, toast]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -463,7 +531,7 @@ export default function AiCopyPage() {
                   {variants.length > 1 && (
                     <Space wrap>
                       {variants.map((_, idx) => (
-                        <Button key={idx} size="small" type={activeVariant === idx ? "primary" : "default"} onClick={() => setActiveVariant(idx)}>
+                        <Button key={idx} size="small" type={activeVariant === idx ? "primary" : "default"} onClick={() => { setActiveVariant(idx); setPublishMetadata(null); }}>
                           变体 {idx + 1}
                         </Button>
                       ))}
@@ -478,6 +546,29 @@ export default function AiCopyPage() {
                     <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制当前变体</Button>
                     <Button onClick={() => handleCopy(variants.join("\n\n---\n\n"))}>复制全部变体</Button>
                   </Space>
+                  <Card
+                    size="small"
+                    title="发布标题、描述和话题"
+                    extra={<Button type="primary" loading={metadataLoading} onClick={handleGeneratePublishMetadata}>{publishMetadata ? "重新生成" : "AI 生成发布信息"}</Button>}
+                    style={{ background: "#faf7ff" }}
+                  >
+                    {publishMetadata ? (
+                      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                        <Text strong>主题（发布标题）</Text>
+                        <Input aria-label="AI 发布标题" value={publishMetadata.title} maxLength={100} showCount onChange={(event) => setPublishMetadata((current) => current ? { ...current, title: event.target.value } : current)} />
+                        <Text strong>描述</Text>
+                        <TextArea aria-label="AI 发布描述" value={publishMetadata.description} rows={4} maxLength={1000} showCount onChange={(event) => setPublishMetadata((current) => current ? { ...current, description: event.target.value } : current)} />
+                        <Text strong>话题</Text>
+                        <Select aria-label="AI 发布话题" mode="tags" value={publishMetadata.tags} tokenSeparators={[",", "，", " "]} placeholder="输入话题后回车" style={{ width: "100%" }} onChange={(values) => setPublishMetadata((current) => current ? { ...current, tags: values.map((value) => value.replace(/^#/, "")).filter(Boolean).slice(0, 8) } : current)} />
+                        <Space wrap>
+                          <Button type="primary" icon={<SendOutlined />} onClick={handleSendToPublish}>带入多平台发布</Button>
+                          <Text type="secondary" style={{ fontSize: 12 }}>{publishMetadata.model_name} · {publishMetadata.is_mock ? "演示" : "真实模型"}</Text>
+                        </Space>
+                      </Space>
+                    ) : (
+                      <Text type="secondary">基于当前选中的文案变体生成，生成后可修改并带入多平台发布。</Text>
+                    )}
+                  </Card>
                   <Alert
                     type={lastResponse?.compliance_status === "review_required" ? "warning" : "info"}
                     showIcon
@@ -514,7 +605,21 @@ export default function AiCopyPage() {
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         width={420}
-        extra={<Button icon={<ReloadOutlined />} loading={historyLoading} onClick={refreshHistory}>刷新</Button>}
+        extra={(
+          <Space>
+            <Button icon={<ReloadOutlined />} loading={historyLoading} disabled={clearingHistory} onClick={refreshHistory}>刷新</Button>
+            <Popconfirm
+              title="删除全部文案历史？"
+              description="只删除此处的独立文案任务，不会删除转写生成的口播稿或其他任务。"
+              okText="全部删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={handleClearHistory}
+            >
+              <Button danger icon={<DeleteOutlined />} loading={clearingHistory} disabled={!history.length || historyLoading}>全部删除</Button>
+            </Popconfirm>
+          </Space>
+        )}
       >
         <List
           loading={historyLoading}
@@ -531,7 +636,7 @@ export default function AiCopyPage() {
                 cancelText="取消"
                 onConfirm={() => handleDeleteHistory(item)}
               >
-                <Button type="link" danger icon={<DeleteOutlined />} loading={deletingTaskId === item.task_id}>删除</Button>
+                <Button type="link" danger icon={<DeleteOutlined />} loading={deletingTaskId === item.task_id} disabled={clearingHistory}>删除</Button>
               </Popconfirm>,
             ]}>
               <List.Item.Meta

@@ -50,9 +50,7 @@ class PublishService:
                     "supports_scheduled": bool(cap.get("supports_scheduled", False)),
                     "supports_tags": bool(cap.get("supports_tags", False)),
                     "supports_cover": bool(cap.get("supports_cover", False)),
-                    "missing_configuration": list(
-                        cap.get("missing_configuration", [])
-                    ),
+                    "missing_configuration": list(cap.get("missing_configuration", [])),
                 }
             )
         return result
@@ -111,6 +109,8 @@ class PublishService:
                     "manual_only": bool(cap.get("manual_only", False)),
                     "can_create_task": can_create_task,
                     "issue": issue,
+                    "issue_code": None,
+                    "account_status": None,
                     "missing_configuration": missing_config,
                     "manual_steps": self._manual_steps(target.platform),
                 }
@@ -226,14 +226,114 @@ class PublishService:
         targets: list[PublishTarget],
         source_pipeline_run_id: str | None = None,
     ) -> dict[str, Any]:
+        """Persist one-at-a-time work; browser automation never runs in the API call."""
         batch_id = f"batch-{uuid4().hex[:10]}"
-        tasks = self.multi_platform_publish(
-            video_path=video_path,
-            targets=targets,
-            source_pipeline_run_id=source_pipeline_run_id,
-            batch_id=batch_id,
-        )
+        tasks = [
+            self.enqueue(
+                video_path=video_path,
+                target=target,
+                source_pipeline_run_id=source_pipeline_run_id,
+                batch_id=batch_id,
+            )
+            for target in targets
+        ]
         return self.batch_summary(batch_id, tasks)
+
+    def enqueue(
+        self,
+        *,
+        video_path: str,
+        target: PublishTarget,
+        source_pipeline_run_id: str | None = None,
+        batch_id: str | None = None,
+    ) -> PublishTask:
+        publisher = self.publishers.get(target.platform.value)
+        if publisher is None:
+            raise ValueError(f"未找到 {target.platform.value} 的发布适配器。")
+        now = datetime.now().astimezone()
+        task = PublishTask(
+            task_id=f"pub-{uuid4().hex[:10]}",
+            title=f"发布 · {target.title[:20]}",
+            status=TaskStatus.QUEUED,
+            progress=0,
+            created_at=now,
+            updated_at=now,
+            video_path=video_path,
+            batch_id=batch_id,
+            target=target,
+            publish_status=PublishStatus.PENDING,
+            provider_name=str(publisher.capabilities().get("provider_name", "")),
+            source_pipeline_run_id=source_pipeline_run_id,
+            stage="等待本机发布队列",
+            is_mock=False,
+        )
+        self._save(task, None)
+        return task
+
+    def execute_queued_task(self, task_id: str) -> PublishTask | None:
+        """Execute exactly one queued task.  Called only by PublishWorker."""
+        task = self.get_task(task_id)
+        if task is None or task.status != TaskStatus.QUEUED:
+            return task
+        publisher = self.publishers.get(task.target.platform.value)
+        if publisher is None:
+            failed = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "publish_status": PublishStatus.FAILED,
+                    "stage": "发布适配器不存在",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": f"未找到 {task.target.platform.value} 的发布适配器。",
+                }
+            )
+            self._save(failed, None)
+            return failed
+        running = task.model_copy(
+            update={
+                "status": TaskStatus.RUNNING,
+                "progress": 10,
+                "publish_status": PublishStatus.UPLOADING,
+                "stage": "正在打开官方创作者窗口",
+                "updated_at": datetime.now().astimezone(),
+            }
+        )
+        self._save(running, None)
+        try:
+            result = publisher.publish(task.video_path, task.target)
+            paused = result.status == TaskStatus.PAUSED or result.publish_status in {
+                PublishStatus.MANUAL_READY,
+                PublishStatus.ACTION_REQUIRED,
+            }
+            updated = running.model_copy(
+                update={
+                    "status": TaskStatus.PAUSED if paused else result.status,
+                    "progress": result.progress,
+                    "publish_status": result.publish_status,
+                    "platform_video_id": result.platform_video_id,
+                    "platform_url": result.platform_url,
+                    "stage": result.stage,
+                    "action_required": result.action_required,
+                    "final_publish_started_at": result.final_publish_started_at,
+                    "outcome_evidence": result.outcome_evidence,
+                    "updated_at": datetime.now().astimezone(),
+                    "is_mock": result.is_mock,
+                    "outputs": {**running.outputs, **result.outputs},
+                }
+            )
+            self._save(updated, None)
+            return updated
+        except Exception as exc:
+            failed = running.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "publish_status": PublishStatus.FAILED,
+                    "stage": "发布失败",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": str(exc),
+                }
+            )
+            self._save(failed, None)
+            return failed
 
     def list_batches(self) -> list[dict[str, Any]]:
         grouped: dict[str, list[PublishTask]] = {}
@@ -258,9 +358,7 @@ class PublishService:
             return None
         return self.batch_summary(batch_id, tasks)
 
-    def batch_summary(
-        self, batch_id: str, tasks: list[PublishTask]
-    ) -> dict[str, Any]:
+    def batch_summary(self, batch_id: str, tasks: list[PublishTask]) -> dict[str, Any]:
         succeeded = sum(1 for task in tasks if task.status == TaskStatus.SUCCEEDED)
         failed = sum(1 for task in tasks if task.status == TaskStatus.FAILED)
         unknown = sum(1 for task in tasks if task.status == TaskStatus.OUTCOME_UNKNOWN)
@@ -355,17 +453,77 @@ class PublishService:
         task = self.get_task(task_id)
         if task is None:
             raise ValueError("发布任务不存在。")
+        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
+            raise ValueError("系统已经点击最终发布，结果可能已进入平台处理；请先人工核对平台后台，不能自动重试。")
         if task.retry_count >= 1:
             raise ValueError("该发布任务已重试过一次，请先人工核对平台后台状态。")
-        retried = self.publish(
-            video_path=task.video_path,
-            target=task.target,
-            source_pipeline_run_id=task.source_pipeline_run_id,
-            batch_id=task.batch_id,
+        updated = task.model_copy(
+            update={
+                "status": TaskStatus.QUEUED,
+                "publish_status": PublishStatus.PENDING,
+                "progress": 0,
+                "stage": "已重新进入本机发布队列",
+                "updated_at": datetime.now().astimezone(),
+                "error_message": None,
+                "action_required": None,
+                "retry_count": task.retry_count + 1,
+            }
         )
-        updated = retried.model_copy(update={"retry_count": task.retry_count + 1})
         self._save(updated, None)
         return updated
+
+    def resume_task(self, task_id: str) -> PublishTask:
+        """Resume a user-gated task only while no final publish click happened."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError("发布任务不存在。")
+        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
+            raise ValueError("系统已经点击最终发布，不能继续或重试；请先人工核对平台后台。")
+        if task.status != TaskStatus.PAUSED or task.publish_status != PublishStatus.ACTION_REQUIRED:
+            raise ValueError("当前任务不处于可继续的等待状态。")
+        updated = task.model_copy(
+            update={
+                "status": TaskStatus.QUEUED,
+                "publish_status": PublishStatus.PENDING,
+                "progress": 0,
+                "stage": "已恢复本机发布队列",
+                "updated_at": datetime.now().astimezone(),
+                "error_message": None,
+                "action_required": None,
+            }
+        )
+        self._save(updated, None)
+        return updated
+
+    def delete_task(self, task_id: str) -> str:
+        """Delete a completed or user-paused publish record, never an active job."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError("发布任务不存在。")
+        if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+            raise ValueError("任务正在队列中或执行中，不能删除。")
+        if not self.repository.delete_task(task_id):
+            raise ValueError("发布任务不存在或已被删除。")
+        return task_id
+
+    def delete_tasks(self, task_ids: list[str]) -> list[str]:
+        """Atomically validate a selected set before removing any task record."""
+        unique_ids = list(dict.fromkeys(task_id for task_id in task_ids if task_id))
+        if not unique_ids:
+            raise ValueError("请至少选择一条发布任务。")
+        tasks = [self.get_task(task_id) for task_id in unique_ids]
+        missing = [task_id for task_id, task in zip(unique_ids, tasks) if task is None]
+        if missing:
+            raise ValueError("部分发布任务不存在或已被删除，请刷新列表。")
+        active = [task.task_id for task in tasks if task and task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}]
+        if active:
+            raise ValueError("选中任务包含正在队列中或执行中的任务，不能删除。")
+        deleted: list[str] = []
+        for task_id in unique_ids:
+            if not self.repository.delete_task(task_id):
+                raise ValueError("部分发布任务删除失败，请刷新列表。")
+            deleted.append(task_id)
+        return deleted
 
     def list_tasks(self) -> list[PublishTask]:
         return [t for t in self.repository.list_tasks() if isinstance(t, PublishTask)]
@@ -393,6 +551,7 @@ class PublishService:
             PublishPlatform.KUAISHOU: "快手创作者服务平台",
             PublishPlatform.WECHAT_CHANNELS: "微信视频号助手",
             PublishPlatform.XIAOHONGSHU: "小红书创作者中心",
+            PublishPlatform.BILIBILI: "Bilibili 创作中心",
         }
         return [
             f"打开{labels[platform]}并登录已授权账号。",

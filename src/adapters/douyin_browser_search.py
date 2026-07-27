@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -40,16 +41,19 @@ from src.services.commercial_search import title_matches_keyword
 
 _VIDEO_ID_RE = re.compile(r"/video/(\d{10,})")
 _LOGIN_MARKERS = ("安全验证", "扫码登录", "请完成验证")
-_HOTSPOT_WINDOW_HOURS = 168
+_HOTSPOT_SUPPORTED_WINDOW_HOURS = {1, 24, 72, 168}
+_HOTSPOT_DEFAULT_WINDOW_HOURS = 168
 _HOTSPOT_LIST_TYPES = (1001, 1002, 1003, 1004, 1005)
 _HOTSPOT_MAX_ROWS_PER_LIST = 50
 _HOTSPOT_MAX_SCROLL_ROUNDS = 8
 _HOTSPOT_MAX_RESULT_LIMIT = 100
-_HOTSPOT_PAGE_SETTLE_MS = 4_000
-_HOTSPOT_SEARCH_SETTLE_MS = 4_000
-_HOTSPOT_SCROLL_SETTLE_MS = 2_000
-_HOTSPOT_LIST_COOLDOWN_MS = 8_000
+_HOTSPOT_PAGE_SETTLE_RANGE_MS = (3_500, 5_500)
+_HOTSPOT_SEARCH_SETTLE_RANGE_MS = (3_000, 5_000)
+_HOTSPOT_SCROLL_REFRESH_RANGE_MS = (450, 850)
+_HOTSPOT_LIST_COOLDOWN_RANGE_MS = (7_000, 11_000)
 _HOTSPOT_SCROLL_PIXELS = 500
+_HOTSPOT_KEYSTROKE_DELAY_MIN_MS = 120
+_HOTSPOT_KEYSTROKE_DELAY_MAX_MS = 220
 _HOTSPOT_LIST_LABELS = {
     1001: "视频总榜",
     1002: "低粉爆款",
@@ -110,11 +114,11 @@ class LocalDouyinBrowserSearchProvider:
             supports_published_after=False,
             supports_metric_refresh=False,
             supports_usage=True,
-            permission_status=(
-                "local_browser_session_ready"
-                if not missing and self.session_status().running
-                else "local_browser_login_required"
-            ),
+            # Keep capability discovery side-effect free and fast.  The live
+            # browser/session state is reported by ``session_status`` exactly
+            # where the API needs it, rather than probing the debug port again
+            # while assembling static capability metadata.
+            permission_status="local_browser_login_required",
             credential_alias="local-dedicated-browser-profile",
             missing_configuration=missing,
         )
@@ -244,6 +248,7 @@ class LocalDouyinBrowserSearchProvider:
         published_after: datetime | None,
         limit: int,
         idempotency_key: str,
+        hotspot_window_hours: int | None = None,
     ) -> ProviderSearchPage:
         capability = self.capabilities()
         if not capability.enabled:
@@ -259,9 +264,14 @@ class LocalDouyinBrowserSearchProvider:
         if not status.running:
             raise LicensedProviderError(status.message, kind=ProviderErrorKind.AUTHORIZATION)
 
+        window_hours = self._resolve_hotspot_window_hours(hotspot_window_hours)
         observed_at = self.clock()
-        raw_rows, collection_errors = self._collect_hotspot_rows(keyword)
-        items, warnings, filter_counts = self._to_items(raw_rows, keyword, observed_at, limit)
+        raw_rows, collection_errors = self._collect_hotspot_rows(
+            keyword, window_hours=window_hours
+        )
+        items, low_incremental_items, warnings, filter_counts = self._to_items(
+            raw_rows, keyword, observed_at, limit
+        )
         diagnostic = None
         if raw_rows and not items:
             diagnostic = "热点宝页面出现榜单内容，但未能读取可用视频标题；页面结构可能已变化。"
@@ -271,6 +281,7 @@ class LocalDouyinBrowserSearchProvider:
             platform=platform,
             provider=self.provider_name,
             items=items,
+            low_incremental_items=low_incremental_items if not items else [],
             observed_at=observed_at,
             request_id=f"browser-{idempotency_key[:20]}",
             api_call_count=0,
@@ -318,8 +329,10 @@ class LocalDouyinBrowserSearchProvider:
     def _collect_hotspot_rows(
         self,
         keyword: str,
+        *,
+        window_hours: int = _HOTSPOT_DEFAULT_WINDOW_HOURS,
     ) -> tuple[list[dict[str, Any]], list[ProviderSearchError]]:
-        """Read all five visible 7-day Hotspot leaderboards and merge duplicate videos.
+        """Read all five visible Hotspot leaderboards for one selected period.
 
         The operator owns the login step. This routine never reads browser
         cookies, calls private APIs, or attempts to defeat a verification page.
@@ -345,7 +358,7 @@ class LocalDouyinBrowserSearchProvider:
                         for list_type in _HOTSPOT_LIST_TYPES:
                             url = (
                                 "https://douhot.douyin.com/square/hotspot?"
-                                f"active_tab=hotspot_video&date_window={_HOTSPOT_WINDOW_HOURS}"
+                                f"active_tab=hotspot_video&date_window={window_hours}"
                                 f"&sub_type={list_type}"
                             )
                             try:
@@ -355,7 +368,9 @@ class LocalDouyinBrowserSearchProvider:
                                         f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
                                         kind=ProviderErrorKind.RATE_LIMIT,
                                     )
-                                page.wait_for_timeout(_HOTSPOT_PAGE_SETTLE_MS)
+                                page.wait_for_timeout(
+                                    self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS)
+                                )
                                 body_text = page.locator("body").inner_text(timeout=3_000)
                                 if any(marker in body_text for marker in _LOGIN_MARKERS):
                                     raise LicensedProviderError(
@@ -368,7 +383,9 @@ class LocalDouyinBrowserSearchProvider:
                                         kind=ProviderErrorKind.RATE_LIMIT,
                                     )
                                 self._fill_hotspot_keyword(page, keyword)
-                                page.wait_for_timeout(_HOTSPOT_SEARCH_SETTLE_MS)
+                                page.wait_for_timeout(
+                                    self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                                )
                                 list_rows: dict[str, dict[str, Any]] = {}
                                 stagnant_rounds = 0
                                 previous_count = -1
@@ -385,18 +402,26 @@ class LocalDouyinBrowserSearchProvider:
                                         break
                                     previous_count = current_count
                                     page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
-                                    page.wait_for_timeout(_HOTSPOT_SCROLL_SETTLE_MS)
+                                    page.wait_for_timeout(
+                                        self._random_delay_ms(
+                                            *_HOTSPOT_SCROLL_REFRESH_RANGE_MS
+                                        )
+                                    )
                                 for row in list_rows.values():
                                     row.update(
                                         {
-                                            "window_hours": _HOTSPOT_WINDOW_HOURS,
+                                            "window_hours": window_hours,
                                             "list_type": list_type,
                                             "list_label": _HOTSPOT_LIST_LABELS[list_type],
                                         }
                                     )
                                     rows.append(row)
                                 if list_type != _HOTSPOT_LIST_TYPES[-1]:
-                                    page.wait_for_timeout(_HOTSPOT_LIST_COOLDOWN_MS)
+                                    page.wait_for_timeout(
+                                        self._random_delay_ms(
+                                            *_HOTSPOT_LIST_COOLDOWN_RANGE_MS
+                                        )
+                                    )
                             except LicensedProviderError:
                                 raise
                             except PlaywrightError as exc:
@@ -423,8 +448,23 @@ class LocalDouyinBrowserSearchProvider:
         ) from last_error
 
     @staticmethod
+    def _resolve_hotspot_window_hours(value: int | None) -> int:
+        window_hours = _HOTSPOT_DEFAULT_WINDOW_HOURS if value is None else value
+        if window_hours not in _HOTSPOT_SUPPORTED_WINDOW_HOURS:
+            raise LicensedProviderError(
+                "热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        return window_hours
+
+    @staticmethod
+    def _random_delay_ms(lower: int, upper: int) -> int:
+        """Return one fresh delay for each visible browser action."""
+        return random.SystemRandom().randint(lower, upper)
+
+    @staticmethod
     def _fill_hotspot_keyword(page, keyword: str) -> None:
-        """Use the visible Hotspot search box; failure leaves the page intact."""
+        """Enter the keyword gradually so the visible input receives normal key events."""
         selectors = (
             "input[placeholder*='搜索']",
             "input[placeholder*='搜']",
@@ -438,7 +478,16 @@ class LocalDouyinBrowserSearchProvider:
                 target = locator.first
                 if not target.is_visible():
                     continue
-                target.fill(keyword)
+                target.click()
+                target.press("Control+A")
+                target.press("Backspace")
+                target.type(
+                    keyword,
+                    delay=random.SystemRandom().randint(
+                        _HOTSPOT_KEYSTROKE_DELAY_MIN_MS,
+                        _HOTSPOT_KEYSTROKE_DELAY_MAX_MS,
+                    ),
+                )
                 target.press("Enter")
                 return
             except Exception:  # The page can expose several unrelated inputs.
@@ -546,8 +595,14 @@ class LocalDouyinBrowserSearchProvider:
         keyword: str,
         observed_at: datetime,
         limit: int,
-    ) -> tuple[list[ProviderSearchItem], list[ProviderSearchError], dict[str, int]]:
+    ) -> tuple[
+        list[ProviderSearchItem],
+        list[ProviderSearchItem],
+        list[ProviderSearchError],
+        dict[str, int],
+    ]:
         items: list[ProviderSearchItem] = []
+        low_incremental_items: list[ProviderSearchItem] = []
         errors: list[ProviderSearchError] = []
         filter_counts = {"duration": 0, "incremental_plays": 0, "relevance": 0}
         seen: set[str] = set()
@@ -590,50 +645,93 @@ class LocalDouyinBrowserSearchProvider:
             if duration_seconds is None or duration_seconds <= 0:
                 filter_counts["duration"] += 1
                 continue
-            incremental_plays = LocalDouyinBrowserSearchProvider._as_int(row.get("plays"))
-            if incremental_plays is None or incremental_plays <= 1000:
-                filter_counts["incremental_plays"] += 1
-                continue
             if not title_matches_keyword(title=title, keyword=keyword):
                 filter_counts["relevance"] += 1
                 continue
             seen.add(item_id)
-            list_labels = list(row.get("list_labels") or [row.get("list_label", "")])
+            incremental_plays = LocalDouyinBrowserSearchProvider._as_int(row.get("plays"))
+            if incremental_plays is None or incremental_plays <= 1000:
+                filter_counts["incremental_plays"] += 1
+                if incremental_plays is not None and len(low_incremental_items) < limit:
+                    low_incremental_items.append(
+                        LocalDouyinBrowserSearchProvider._to_provider_item(
+                            row=row,
+                            item_id=item_id,
+                            title=title,
+                            duration_seconds=duration_seconds,
+                            incremental_plays=incremental_plays,
+                            observed_at=observed_at,
+                            keyword=keyword,
+                            provider_rank=len(low_incremental_items) + 1,
+                        )
+                    )
+                continue
             items.append(
-                ProviderSearchItem(
-                    platform=Platform.DOUYIN,
-                    platform_item_id=item_id,
+                LocalDouyinBrowserSearchProvider._to_provider_item(
+                    row=row,
+                    item_id=item_id,
                     title=title,
-                    author_id=f"hotspot-{item_id}",
-                    author_name=str(row.get("author_name") or "热点宝作者待补充"),
-                    published_at=observed_at,
-                    source_url=HttpUrl(f"https://www.douyin.com/video/{item_id}"),
+                    duration_seconds=duration_seconds,
+                    incremental_plays=incremental_plays,
+                    observed_at=observed_at,
+                    keyword=keyword,
                     provider_rank=len(items) + 1,
-                    metrics=VideoMetricSnapshot(
-                        item_id=item_id,
-                        sampled_at=observed_at,
-                        plays=incremental_plays,
-                        likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
-                        confidence=(0.8 if row.get("list_type") is not None else 0.4),
-                    ),
-                    evidence=(
-                        f"hotspot:{'|'.join(list_labels) or '爆款榜'}:"
-                        f"{row.get('window_hours', '?')}h:关键词={keyword};"
-                        f"热度={row.get('score') if row.get('score') is not None else '未返回'};"
-                        f"新增播放量={incremental_plays};"
-                        f"新增点赞量={row.get('likes') if row.get('likes') is not None else '未返回'};"
-                        f"点赞率={row.get('like_rate') if row.get('like_rate') is not None else '未返回'};"
-                        f"粉丝={row.get('fans') if row.get('fans') is not None else '未返回'};"
-                        f"时长秒={duration_seconds}"
-                        if row.get("list_type") is not None
-                        else f"browser_visible_search:{keyword}"
-                    ),
-                    data_quality_warnings=[],
                 )
             )
             if len(items) >= limit:
                 break
-        return items, errors, filter_counts
+        return items, low_incremental_items, errors, filter_counts
+
+    @staticmethod
+    def _to_provider_item(
+        *,
+        row: dict[str, Any],
+        item_id: str,
+        title: str,
+        duration_seconds: int,
+        incremental_plays: int,
+        observed_at: datetime,
+        keyword: str,
+        provider_rank: int,
+    ) -> ProviderSearchItem:
+        list_labels = list(row.get("list_labels") or [row.get("list_label", "")])
+        published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
+            row.get("published_text"), observed_at
+        )
+        warnings: list[str] = []
+        if published_at is None:
+            published_at = observed_at
+            warnings.append("未取得有效发布时间，页面展示为采样时间。")
+        return ProviderSearchItem(
+            platform=Platform.DOUYIN,
+            platform_item_id=item_id,
+            title=title,
+            author_id=f"hotspot-{item_id}",
+            author_name=str(row.get("author_name") or "热点宝作者待补充"),
+            published_at=published_at,
+            source_url=HttpUrl(f"https://www.douyin.com/video/{item_id}"),
+            provider_rank=provider_rank,
+            metrics=VideoMetricSnapshot(
+                item_id=item_id,
+                sampled_at=observed_at,
+                plays=incremental_plays,
+                likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
+                confidence=(0.8 if row.get("list_type") is not None else 0.4),
+            ),
+            evidence=(
+                f"hotspot:{'|'.join(list_labels) or '爆款榜'}:"
+                f"{row.get('window_hours', '?')}h:关键词={keyword};"
+                f"热度={row.get('score') if row.get('score') is not None else '未返回'};"
+                f"新增播放量={incremental_plays};"
+                f"新增点赞量={row.get('likes') if row.get('likes') is not None else '未返回'};"
+                f"点赞率={row.get('like_rate') if row.get('like_rate') is not None else '未返回'};"
+                f"粉丝={row.get('fans') if row.get('fans') is not None else '未返回'};"
+                f"时长秒={duration_seconds}"
+                if row.get("list_type") is not None
+                else f"browser_visible_search:{keyword}"
+            ),
+            data_quality_warnings=warnings,
+        )
 
     @staticmethod
     def _as_int(value: Any) -> int | None:
@@ -641,6 +739,30 @@ class LocalDouyinBrowserSearchProvider:
             return max(0, int(float(value))) if value is not None else None
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _parse_published_at(value: Any, observed_at: datetime) -> datetime | None:
+        """Parse a visible Hotspot publication time without guessing relative dates."""
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.isdigit():
+            timestamp = float(text)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            try:
+                return datetime.fromtimestamp(timestamp, tz=observed_at.tzinfo)
+            except (OSError, OverflowError, ValueError):
+                return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=observed_at.tzinfo)
+        return parsed.astimezone(observed_at.tzinfo)
 
     def _debug_url(self) -> str:
         return f"http://127.0.0.1:{self.debug_port}/json/version"

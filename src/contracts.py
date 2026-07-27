@@ -34,6 +34,7 @@ from src.models import (
     TranscriptRevision,
     VideoCandidate,
     VideoEditConfig,
+    VideoEditorBatch,
     VideoMetricSnapshot,
 )
 
@@ -88,6 +89,7 @@ class LicensedSearchProvider(Protocol):
         published_after: datetime | None,
         limit: int,
         idempotency_key: str,
+        hotspot_window_hours: int | None = None,
     ) -> ProviderSearchPage: ...
 
     def refresh_metrics(
@@ -183,6 +185,7 @@ class CandidateRepository(Protocol):
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
     ) -> PlatformSearchRun | None: ...
@@ -275,6 +278,8 @@ class TaskRepository(Protocol):
 
     def delete_pipeline_run(self, run_id: str) -> bool: ...
 
+    def delete_all_pipeline_runs(self) -> int: ...
+
     # -- 生产批次 --
 
     def save_production_batch(self, batch: ProductionBatch) -> None: ...
@@ -282,6 +287,12 @@ class TaskRepository(Protocol):
     def get_production_batch(self, batch_id: str) -> ProductionBatch | None: ...
 
     def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]: ...
+
+    def save_video_editor_batch(self, batch: VideoEditorBatch) -> None: ...
+
+    def get_video_editor_batch(self, batch_id: str) -> VideoEditorBatch | None: ...
+
+    def list_video_editor_batches(self, limit: int = 100) -> list[VideoEditorBatch]: ...
 
 
 # ---------------------------------------------------------------------------

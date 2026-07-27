@@ -1,14 +1,12 @@
 /**
  * 顶部栏组件
- * 页面标题 + 主题切换 + 通知 + 消息 + 用户头像
+ * 页面标题 + 用户头像菜单
  * 所有数据来自后端 API，无硬编码测试数据
  */
 import { useMemo, useState, useCallback, useEffect } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
 import {
-  SunOutlined,
-  MoonOutlined,
   BellOutlined,
   UserOutlined,
   LogoutOutlined,
@@ -22,7 +20,6 @@ import {
   MobileOutlined,
   RightOutlined,
 } from "@ant-design/icons";
-import { useTheme } from "../contexts/ThemeContext";
 import { getNotifications, getMessages, getUserProfile } from "../api/client";
 
 const { Text } = Typography;
@@ -41,6 +38,7 @@ const PAGE_TITLE_MAP: Record<string, string> = {
   "/publish": "多平台发布",
   "/crawler": "关键词爬虫",
   "/avatar": "数字人生成",
+  "/video-editor": "AI智能剪辑",
   "/help": "帮助中心",
 };
 
@@ -86,8 +84,6 @@ interface UserProfile {
  */
 export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const location = useLocation();
-  const navigate = useNavigate();
-  const { isDark, toggleTheme } = useTheme();
 
   /** 抽屉状态 */
   const [notifOpen, setNotifOpen] = useState(false);
@@ -183,12 +179,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       label: "个人中心",
       onClick: () => setProfileOpen(true),
     },
-    {
-      key: "settings",
-      icon: <SettingOutlined />,
-      label: "账号设置",
-      onClick: () => navigate("/admin"),
-    },
     { type: "divider" as const },
     { key: "logout", icon: <LogoutOutlined />, label: "退出登录", danger: true },
   ];
@@ -207,13 +197,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
         {/* 右侧：操作区 */}
         <div className="vi-header-right">
-          {/* 主题切换 */}
-          <Tooltip title={isDark ? "切换到亮色模式" : "切换到深色模式"}>
-            <button className="vi-header-action" onClick={toggleTheme}>
-              {isDark ? <SunOutlined /> : <MoonOutlined />}
-            </button>
-          </Tooltip>
-
           {/* 用户头像 */}
           <Dropdown
             menu={{ items: userMenuItems }}
@@ -276,32 +259,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           display: flex;
           align-items: center;
           gap: 12px;
-        }
-
-        .vi-header-action {
-          width: 40px;
-          height: 40px;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: var(--gray-100);
-          color: var(--gray-600);
-          cursor: pointer;
-          transition: var(--transition-fast);
-          border: none;
-          font-size: 16px;
-          position: relative;
-        }
-
-        [data-theme="dark"] .vi-header-action {
-          background: var(--gray-200);
-          color: var(--gray-500);
-        }
-
-        .vi-header-action:hover {
-          background: var(--primary-100);
-          color: var(--primary-600);
         }
 
         .vi-user-avatar {

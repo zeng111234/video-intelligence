@@ -89,11 +89,15 @@ def test_uploaded_media_is_processed_and_temp_files_are_removed() -> None:
         "视频检查",
         "音频提取",
         "语音识别",
-        "待校对",
+        "低置信片段AI口播修订中",
+        "AI口播成稿",
+        "AI自动成稿",
     ]
     revisions = repository.list_transcript_revisions(task.task_id)
     assert len(revisions) == 1
-    assert revisions[0].status == TranscriptStatus.DRAFT
+    assert revisions[0].status == TranscriptStatus.APPROVED
+    assert revisions[0].approval_mode == "ai_auto"
+    assert task.approved_revision_id == revisions[0].revision_id
     assert all(not path.exists() for path in seen_paths)
 
 
@@ -185,7 +189,7 @@ def test_progress_callback_failure_does_not_change_task_lifecycle() -> None:
     assert task.status == TaskStatus.SUCCEEDED
     assert saved is not None
     assert saved.status == TaskStatus.SUCCEEDED
-    assert callback_attempts == 4
+    assert callback_attempts == 6
 
 
 def test_correction_approval_persists_after_sqlite_restart(tmp_path: Path) -> None:
@@ -285,7 +289,7 @@ def test_model_loading_retries_once_then_reports_failure() -> None:
             rights_confirmed=True,
             rights_holder="测试公司",
         )
-    assert attempts == 3
+    assert attempts == 2
 
 
 @pytest.mark.parametrize("duration", ["0", "-1", "NaN", "Infinity", "901"])
@@ -388,6 +392,158 @@ def test_low_confidence_segments_require_explicit_review_before_new_approval() -
     assert approved.corrected_segments[0].reviewed is True
 
 
+def test_low_confidence_segment_is_rewritten_for_voiceover_even_when_rerecognition_matches() -> (
+    None
+):
+    class LowConfidenceModel:
+        def transcribe(self, path: str, **options):
+            if Path(path).name == "audio.wav":
+                assert options["beam_size"] == 5
+                return (
+                    [
+                        SimpleNamespace(
+                            start=0.0, end=1.0, text="原始文本", avg_logprob=-0.7
+                        )
+                    ],
+                    SimpleNamespace(language="zh"),
+                )
+            assert options["beam_size"] == 8
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0, end=1.0, text="原始文本", avg_logprob=-0.1
+                    )
+                ],
+                SimpleNamespace(language="zh"),
+            )
+
+    repository = MockRepository(candidates=[], tasks=[])
+    reviewer_called = False
+
+    def reviewer(**kwargs):
+        nonlocal reviewer_called
+        reviewer_called = True
+        return {"corrected_text": "这是更自然的原始文本。", "note": "已按上下文修订。"}
+
+    task = TranscriptionService(
+        repository,
+        model_loader=lambda _name: LowConfidenceModel(),
+        command_runner=fake_media_runner([]),
+        transcript_reviewer=reviewer,
+    ).create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+
+    revision = repository.get_transcript_revision(task.approved_revision_id or "")
+    assert revision is not None
+    assert revision.corrected_segments[0].text == "这是更自然的原始文本。"
+    assert revision.corrected_segments[0].quality_status == "llm_rewritten"
+    assert revision.corrected_segments[0].alternatives == ["原始文本"]
+    assert task.secondary_asr_count == 1
+    assert task.llm_review_count == 1
+    assert task.uncertain_segment_count == 0
+    assert reviewer_called is True
+
+
+def test_conflicting_rerecognition_uses_llm_voiceover_rewrite_and_preserves_candidates() -> (
+    None
+):
+    class ConflictingModel:
+        def transcribe(self, path: str, **options):
+            if Path(path).name == "audio.wav":
+                return (
+                    [
+                        SimpleNamespace(
+                            start=0.0, end=1.0, text="今天优惠八十元", avg_logprob=-0.7
+                        )
+                    ],
+                    SimpleNamespace(language="zh"),
+                )
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0, end=1.0, text="今天优惠八十块", avg_logprob=-0.1
+                    )
+                ],
+                SimpleNamespace(language="zh"),
+            )
+
+    seen: dict[str, object] = {}
+
+    def reviewer(**kwargs):
+        seen.update(kwargs)
+        return {
+            "corrected_text": "今天的优惠是八十块。",
+            "note": "已采用最佳口播判断。",
+        }
+
+    repository = MockRepository(candidates=[], tasks=[])
+    task = TranscriptionService(
+        repository,
+        model_loader=lambda _name: ConflictingModel(),
+        command_runner=fake_media_runner([]),
+        transcript_reviewer=reviewer,
+    ).create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+
+    revision = repository.get_transcript_revision(task.approved_revision_id or "")
+    assert revision is not None
+    segment = revision.corrected_segments[0]
+    assert segment.text == "今天的优惠是八十块。"
+    assert segment.quality_status == "llm_rewritten"
+    assert segment.alternatives == ["今天优惠八十元", "今天优惠八十块"]
+    assert task.llm_review_count == 1
+    assert task.uncertain_segment_count == 0
+    assert seen["candidates"] == ["今天优惠八十元", "今天优惠八十块"]
+
+
+def test_failed_llm_review_retries_once_and_auto_completes_as_uncertain() -> None:
+    class ConflictingModel:
+        def transcribe(self, path: str, **options):
+            text = "第一候选" if Path(path).name == "audio.wav" else "第二候选"
+            return (
+                [SimpleNamespace(start=0.0, end=1.0, text=text, avg_logprob=-0.7)],
+                SimpleNamespace(language="zh"),
+            )
+
+    attempts = 0
+
+    def reviewer(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise TimeoutError("network unavailable")
+
+    repository = MockRepository(candidates=[], tasks=[])
+    task = TranscriptionService(
+        repository,
+        model_loader=lambda _name: ConflictingModel(),
+        command_runner=fake_media_runner([]),
+        transcript_reviewer=reviewer,
+    ).create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+
+    revision = repository.get_transcript_revision(task.approved_revision_id or "")
+    assert revision is not None
+    assert revision.corrected_segments[0].quality_status == "uncertain"
+    assert task.uncertain_segment_count == 1
+    assert task.auto_review_error
+    assert attempts == 2
+
+
 def test_manual_text_import_creates_untimed_reviewable_task() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     service = TranscriptionService(repository)
@@ -454,7 +610,7 @@ def test_export_revision_lookup_strictly_follows_task_pointer() -> None:
     )
     repository.save_transcript_revision(approved)
 
-    assert service.get_approved_revision(task.task_id) is None
+    assert service.get_approved_revision(task.task_id) is not None
     repository.save_task(
         task.model_copy(update={"approved_revision_id": approved.revision_id})
     )

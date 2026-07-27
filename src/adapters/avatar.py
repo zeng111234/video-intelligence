@@ -8,14 +8,18 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
+import tempfile
 import threading
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import quote, urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+
+import httpx
 
 from src.models import (
     AvatarAsset,
@@ -33,8 +37,31 @@ from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 JsonTransport = Callable[
     [str, str, dict[str, str], bytes | None, float], tuple[bytes, str]
 ]
+AudioRenderer = Callable[[str, float, str], bytes]
+FileUploadTransport = Callable[[str, str, str, Path, float], tuple[bytes, str]]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MAX_AVATAR_DOWNLOAD_BYTES = 100 * 1024 * 1024
+
+
+def _default_file_upload_transport(
+    url: str, filename: str, mime_type: str, path: Path, timeout: float
+) -> tuple[bytes, str]:
+    """Use a file handle so training media is not loaded into process memory."""
+    try:
+        with path.open("rb") as source, httpx.Client(
+            timeout=timeout, follow_redirects=False
+        ) as client:
+            response = client.post(url, files={"file": (filename, source, mime_type)})
+            response.raise_for_status()
+            return response.content, response.headers.get(
+                "Content-Type", "application/octet-stream"
+            )
+    except httpx.HTTPError as exc:
+        raise AvatarProviderError(
+            "公司素材上传连接失败，结果未确认，请勿直接重复提交。",
+            outcome_unknown=True,
+        ) from exc
 
 
 def _float_env(name: str, default: float) -> float:
@@ -72,7 +99,9 @@ def _int_env(name: str, default: int) -> int:
 
 
 def _split_env_paths(value: str) -> list[str]:
-    return [item.strip() for item in value.replace("\n", ";").split(";") if item.strip()]
+    return [
+        item.strip() for item in value.replace("\n", ";").split(";") if item.strip()
+    ]
 
 
 def _missing_required_paths(paths: list[str], *, base_directory: Path) -> list[str]:
@@ -119,6 +148,47 @@ def _default_transport(
         ) from exc
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _default_no_redirect_transport(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes | None,
+    timeout: float,
+) -> tuple[bytes, str]:
+    request = Request(url, data=body, headers=headers, method=method)
+    opener = build_opener(_NoRedirectHandler())
+    try:
+        with opener.open(request, timeout=timeout) as response:  # noqa: S310
+            payload = response.read(MAX_AVATAR_DOWNLOAD_BYTES + 1)
+            return payload, response.headers.get_content_type()
+    except HTTPError as exc:
+        detail = exc.read(300).decode("utf-8", errors="replace")
+        kind = (
+            ProviderErrorKind.VALIDATION
+            if 300 <= exc.code < 400
+            else ProviderErrorKind.AUTHORIZATION
+            if exc.code in {401, 403}
+            else ProviderErrorKind.RATE_LIMIT
+            if exc.code == 429
+            else ProviderErrorKind.VALIDATION
+            if 400 <= exc.code < 500
+            else ProviderErrorKind.SERVICE
+        )
+        raise AvatarProviderError(
+            f"数字人服务 HTTP {exc.code}：{detail or '请求失败'}", kind=kind
+        ) from exc
+    except (TimeoutError, URLError) as exc:
+        raise AvatarProviderError(
+            "无法下载数字人结果，请检查结果地址和网络状态。",
+            kind=ProviderErrorKind.CONNECTION,
+        ) from exc
+
+
 class InternalAvatarProvider:
     def __init__(
         self,
@@ -135,7 +205,7 @@ class InternalAvatarProvider:
         self.enabled = enabled
         self.timeout_seconds = max(1.0, timeout_seconds)
         self.result_timeout_seconds = max(1.0, result_timeout_seconds)
-        self.transport = transport or _default_transport
+        self.transport = transport or _default_no_redirect_transport
 
     @classmethod
     def from_env(cls) -> InternalAvatarProvider:
@@ -366,7 +436,9 @@ class SandboxAvatarProvider:
     def get_job(self, job_id: str) -> AvatarJobSnapshot:
         snapshot = self.jobs.get(job_id)
         if snapshot is None:
-            raise AvatarProviderError("数字人任务不存在。", kind=ProviderErrorKind.VALIDATION)
+            raise AvatarProviderError(
+                "数字人任务不存在。", kind=ProviderErrorKind.VALIDATION
+            )
         return snapshot
 
     def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None:
@@ -491,7 +563,9 @@ class LocalCommandAvatarProvider:
             display_name="本地数字人（GTX 1650 单任务）",
             mode=ProviderMode.PRODUCTION,
             enabled=bool(enabled_profiles),
-            permission_status="authorized" if enabled_profiles else "configuration_missing",
+            permission_status="authorized"
+            if enabled_profiles
+            else "configuration_missing",
             max_script_chars=240,
             supported_aspect_ratios=["9:16"],
             estimated_cost_cny=0 if enabled_profiles else None,
@@ -521,7 +595,9 @@ class LocalCommandAvatarProvider:
         avatar = assets.get(request.avatar_id)
         voice = assets.get(request.voice_id)
         if avatar is None or voice is None:
-            raise AvatarProviderError("所选本地授权形象或声音不存在。", kind=ProviderErrorKind.VALIDATION)
+            raise AvatarProviderError(
+                "所选本地授权形象或声音不存在。", kind=ProviderErrorKind.VALIDATION
+            )
         job_id = f"local-avatar-{uuid.uuid4().hex[:12]}"
         snapshot = AvatarJobSnapshot(
             job_id=job_id,
@@ -548,13 +624,19 @@ class LocalCommandAvatarProvider:
     def get_job(self, job_id: str) -> AvatarJobSnapshot:
         with self._lock:
             snapshot = self.jobs.get(job_id)
-        if snapshot is not None and snapshot.status != AvatarProviderStatus.OUTCOME_UNKNOWN:
+        if (
+            snapshot is not None
+            and snapshot.status != AvatarProviderStatus.OUTCOME_UNKNOWN
+        ):
             return snapshot
 
         recovered, result_path = self._recover_job(job_id)
         with self._lock:
             current = self.jobs.get(job_id)
-            if current is None or current.status == AvatarProviderStatus.OUTCOME_UNKNOWN:
+            if (
+                current is None
+                or current.status == AvatarProviderStatus.OUTCOME_UNKNOWN
+            ):
                 self.jobs[job_id] = recovered
                 if result_path is not None:
                     self.result_paths[job_id] = result_path
@@ -575,7 +657,9 @@ class LocalCommandAvatarProvider:
                 with self._lock:
                     self.result_paths[job_id] = path
         if path is None:
-            raise AvatarProviderError("本地成片尚未生成。", kind=ProviderErrorKind.VALIDATION)
+            raise AvatarProviderError(
+                "本地成片尚未生成。", kind=ProviderErrorKind.VALIDATION
+            )
         return path.read_bytes(), "video/mp4"
 
     def _recover_job(self, job_id: str) -> tuple[AvatarJobSnapshot, Path | None]:
@@ -745,7 +829,9 @@ class LocalCommandAvatarProvider:
 
     def _asset_path(self, asset_id: str) -> Path:
         if self.assets_manifest is None:
-            raise AvatarProviderError("本地资产清单不存在。", kind=ProviderErrorKind.VALIDATION)
+            raise AvatarProviderError(
+                "本地资产清单不存在。", kind=ProviderErrorKind.VALIDATION
+            )
         payload = json.loads(self.assets_manifest.read_text(encoding="utf-8"))
         items = payload.get("assets", payload) if isinstance(payload, dict) else payload
         for item in items:
@@ -753,7 +839,9 @@ class LocalCommandAvatarProvider:
                 path = self._manifest_relative_path(str(item.get("path", "")))
                 if path.is_file():
                     return path.resolve()
-        raise AvatarProviderError("本地授权素材文件不存在。", kind=ProviderErrorKind.VALIDATION)
+        raise AvatarProviderError(
+            "本地授权素材文件不存在。", kind=ProviderErrorKind.VALIDATION
+        )
 
     def _manifest_relative_path(self, raw_path: str) -> Path:
         path = Path(raw_path)
@@ -779,10 +867,14 @@ class LocalCommandAvatarProvider:
                 avatar_path = self._asset_path(avatar.asset_id)
                 voice_path = self._asset_path(voice.asset_id)
                 if config.get("uses_recorded_audio"):
-                    self._update(job_id, AvatarProviderStatus.RUNNING, 20, "使用本人录音驱动中")
+                    self._update(
+                        job_id, AvatarProviderStatus.RUNNING, 20, "使用本人录音驱动中"
+                    )
                     self._prepare_recorded_audio(voice_path, audio_path)
                 else:
-                    self._update(job_id, AvatarProviderStatus.RUNNING, 20, "本地文字转语音生成中")
+                    self._update(
+                        job_id, AvatarProviderStatus.RUNNING, 20, "本地文字转语音生成中"
+                    )
                     self._run_command(
                         self.tts_command,
                         request=request,
@@ -793,7 +885,9 @@ class LocalCommandAvatarProvider:
                     )
                 if not audio_path.is_file() or audio_path.stat().st_size == 0:
                     raise AvatarProviderError("本地任务未生成有效驱动音频。")
-                self._update(job_id, AvatarProviderStatus.RUNNING, 60, "本地数字人视频生成中")
+                self._update(
+                    job_id, AvatarProviderStatus.RUNNING, 60, "本地数字人视频生成中"
+                )
                 self._run_command(
                     self.commands[request.profile_id],
                     request=request,
@@ -806,7 +900,9 @@ class LocalCommandAvatarProvider:
                     raise AvatarProviderError("本地模型未生成有效 MP4 成片。")
                 with self._lock:
                     self.result_paths[job_id] = output_path
-                self._update(job_id, AvatarProviderStatus.SUCCEEDED, 100, "本地成片已生成")
+                self._update(
+                    job_id, AvatarProviderStatus.SUCCEEDED, 100, "本地成片已生成"
+                )
             except AvatarProviderError as exc:
                 self._fail(job_id, str(exc))
             except Exception as exc:  # noqa: BLE001
@@ -818,7 +914,9 @@ class LocalCommandAvatarProvider:
             return
         ffmpeg = shutil.which("ffmpeg")
         if ffmpeg is None:
-            raise AvatarProviderError("上传录音不是 WAV，且未找到 FFmpeg，无法转换音频。")
+            raise AvatarProviderError(
+                "上传录音不是 WAV，且未找到 FFmpeg，无法转换音频。"
+            )
         completed = subprocess.run(
             [
                 ffmpeg,
@@ -860,7 +958,10 @@ class LocalCommandAvatarProvider:
             "output_path": str(output_path.resolve()),
         }
         try:
-            command = [part.format(**values) for part in shlex.split(template, posix=os.name != "nt")]
+            command = [
+                part.format(**values)
+                for part in shlex.split(template, posix=os.name != "nt")
+            ]
         except (KeyError, ValueError) as exc:
             raise AvatarProviderError(f"本地命令模板无效：{exc}") from exc
         if not command:
@@ -888,7 +989,9 @@ class LocalCommandAvatarProvider:
             detail = (completed.stderr or completed.stdout or "未知错误").strip()[:300]
             raise AvatarProviderError(f"本地模型命令执行失败：{detail}")
 
-    def _update(self, job_id: str, status: AvatarProviderStatus, progress: int, stage: str) -> None:
+    def _update(
+        self, job_id: str, status: AvatarProviderStatus, progress: int, stage: str
+    ) -> None:
         with self._lock:
             snapshot = self.jobs[job_id]
             self.jobs[job_id] = snapshot.model_copy(
@@ -948,7 +1051,9 @@ class BaiduXilingAvatarProvider:
             app_key=os.getenv("BAIDU_XILING_APP_KEY", ""),
             figure_id=os.getenv("BAIDU_XILING_FIGURE_ID", ""),
             voice_id=os.getenv("BAIDU_XILING_VOICE_ID", ""),
-            base_url=os.getenv("BAIDU_XILING_BASE_URL", "https://open.xiling.baidu.com"),
+            base_url=os.getenv(
+                "BAIDU_XILING_BASE_URL", "https://open.xiling.baidu.com"
+            ),
             figure_name=os.getenv("BAIDU_XILING_FIGURE_NAME", "百度曦灵公共数字人"),
             voice_name=os.getenv("BAIDU_XILING_VOICE_NAME", "百度曦灵公共音色"),
             callback_url=os.getenv("BAIDU_XILING_CALLBACK_URL", ""),
@@ -1032,7 +1137,9 @@ class BaiduXilingAvatarProvider:
         if self.callback_url:
             payload["callbackUrl"] = self.callback_url
 
-        data = self._json_request("POST", "/api/digitalhuman/open/v1/video/submit", payload)
+        data = self._json_request(
+            "POST", "/api/digitalhuman/open/v1/video/submit", payload
+        )
         provider_job_id = str(data.get("taskId") or "").strip()
         if not provider_job_id:
             raise AvatarProviderError("百度曦灵未返回任务 ID。")
@@ -1046,8 +1153,12 @@ class BaiduXilingAvatarProvider:
 
     def get_job(self, job_id: str) -> AvatarJobSnapshot:
         self._ensure_configured()
-        query = urlencode({"taskId": job_id, "requestId": f"poll-{uuid.uuid4().hex[:12]}"})
-        data = self._json_request("GET", f"/api/digitalhuman/open/v1/video/task?{query}")
+        query = urlencode(
+            {"taskId": job_id, "requestId": f"poll-{uuid.uuid4().hex[:12]}"}
+        )
+        data = self._json_request(
+            "GET", f"/api/digitalhuman/open/v1/video/task?{query}"
+        )
         return self._snapshot_from_result(data, idempotency_key="")
 
     def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None:
@@ -1095,7 +1206,9 @@ class BaiduXilingAvatarProvider:
         if payload is not None:
             headers["Content-Type"] = "application/json;charset=utf-8"
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        raw, _ = self.transport(method, f"{self.base_url}{path}", headers, body, self.timeout_seconds)
+        raw, _ = self.transport(
+            method, f"{self.base_url}{path}", headers, body, self.timeout_seconds
+        )
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -1133,8 +1246,1035 @@ class BaiduXilingAvatarProvider:
             estimated_cost_cny=None,
             estimated_seconds=round(int(data.get("duration") or 0) / 1000) or None,
             result_mime="video/mp4" if video_url.endswith(".mp4") else None,
-            error_kind=ProviderErrorKind.SERVICE if status == AvatarProviderStatus.FAILED else None,
+            error_kind=ProviderErrorKind.SERVICE
+            if status == AvatarProviderStatus.FAILED
+            else None,
             error_message=error_message,
+        )
+
+
+class ShuyingLegacyAvatarProvider:
+    """数影公司旧网关适配器：云 TTS/上传后用 api_code 合成并查询视频。"""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_code: str,
+        avatars_json: str = "[]",
+        voices_json: str = "[]",
+        result_allowed_hosts: str = "",
+        audio_mode: str = "gateway_voice",
+        audio_upload_url: str = "",
+        audio_allowed_hosts: str = "",
+        assets_manifest_path: str = "",
+        model_upload_url: str = "",
+        model_upload_allowed_hosts: str = "",
+        voice_base_url: str = "",
+        voice_api_code: str = "",
+        edge_tts_voice: str = "zh-CN-XiaoxiaoNeural",
+        enabled: bool = False,
+        timeout_seconds: float = 120,
+        result_timeout_seconds: float = 120,
+        max_script_chars: int = 2000,
+        estimated_cost_cny: float | None = None,
+        estimated_seconds: int | None = None,
+        transport: JsonTransport | None = None,
+        download_transport: JsonTransport | None = None,
+        audio_renderer: AudioRenderer | None = None,
+        file_upload_transport: FileUploadTransport | None = None,
+    ) -> None:
+        self.base_url = base_url.strip().rstrip("/")
+        self.api_code = api_code.strip()
+        self.enabled = enabled
+        self.timeout_seconds = max(1.0, timeout_seconds)
+        self.result_timeout_seconds = max(1.0, result_timeout_seconds)
+        self.max_script_chars = max(1, max_script_chars)
+        self.estimated_cost_cny = estimated_cost_cny
+        self.estimated_seconds = estimated_seconds
+        self.transport = transport or _default_transport
+        self.download_transport = download_transport or _default_no_redirect_transport
+        self.audio_renderer = audio_renderer or self._render_edge_tts
+        self.file_upload_transport = file_upload_transport or _default_file_upload_transport
+        self.avatars = self._parse_assets(avatars_json, AvatarAssetKind.AVATAR)
+        self.voices = self._parse_assets(voices_json, AvatarAssetKind.VOICE)
+        self.audio_mode = audio_mode.strip().casefold() or "gateway_voice"
+        self.audio_upload_url = audio_upload_url.strip()
+        self.edge_tts_voice = edge_tts_voice.strip()
+        self.audio_allowed_hosts = {
+            item.strip().casefold()
+            for item in audio_allowed_hosts.replace(";", ",").split(",")
+            if item.strip()
+        }
+        raw_manifest_path = assets_manifest_path.strip() or str(
+            Path("data") / "avatar_assets" / "shuying_cloud.json"
+        )
+        manifest_path = Path(raw_manifest_path)
+        self.assets_manifest_path = (
+            manifest_path if manifest_path.is_absolute() else PROJECT_ROOT / manifest_path
+        ).resolve()
+        self.model_upload_url = (model_upload_url.strip() or self.audio_upload_url).rstrip("/")
+        self.model_upload_allowed_hosts = {
+            item.strip().casefold()
+            for item in (model_upload_allowed_hosts or audio_allowed_hosts)
+            .replace(";", ",")
+            .split(",")
+            if item.strip()
+        }
+        self.voice_base_url = voice_base_url.strip().rstrip("/")
+        self.voice_api_code = voice_api_code.strip()
+        self.result_allowed_hosts = {
+            item.strip().casefold()
+            for item in result_allowed_hosts.replace(";", ",").split(",")
+            if item.strip()
+        }
+        self.idempotency_index: dict[str, AvatarJobSnapshot] = {}
+        self.job_idempotency: dict[str, str] = {}
+        self.result_urls: dict[str, str] = {}
+
+    @classmethod
+    def from_env(cls) -> ShuyingLegacyAvatarProvider:
+        cost = _float_env("SHUYING_AVATAR_ESTIMATED_COST_CNY", 0)
+        seconds = _int_env("SHUYING_AVATAR_ESTIMATED_SECONDS", 0)
+        return cls(
+            base_url=os.getenv("SHUYING_AVATAR_BASE_URL", ""),
+            api_code=os.getenv("SHUYING_AVATAR_API_CODE", ""),
+            avatars_json=os.getenv("SHUYING_AVATAR_AVATARS_JSON", "[]"),
+            voices_json=os.getenv("SHUYING_AVATAR_VOICES_JSON", "[]"),
+            result_allowed_hosts=os.getenv("SHUYING_AVATAR_RESULT_ALLOWED_HOSTS", ""),
+            audio_mode=os.getenv("SHUYING_AVATAR_AUDIO_MODE", "gateway_voice"),
+            audio_upload_url=os.getenv("SHUYING_AVATAR_AUDIO_UPLOAD_URL", ""),
+            audio_allowed_hosts=os.getenv("SHUYING_AVATAR_AUDIO_ALLOWED_HOSTS", ""),
+            assets_manifest_path=os.getenv("SHUYING_AVATAR_ASSETS_MANIFEST", ""),
+            model_upload_url=os.getenv("SHUYING_AVATAR_MODEL_UPLOAD_URL", ""),
+            model_upload_allowed_hosts=os.getenv(
+                "SHUYING_AVATAR_MODEL_UPLOAD_ALLOWED_HOSTS", ""
+            ),
+            voice_base_url=os.getenv("SHUYING_VOICE_BASE_URL", ""),
+            voice_api_code=os.getenv("SHUYING_VOICE_API_CODE", ""),
+            edge_tts_voice=os.getenv(
+                "SHUYING_AVATAR_EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural"
+            ),
+            enabled=_bool_env("SHUYING_AVATAR_ENABLED", False),
+            timeout_seconds=_float_env("SHUYING_AVATAR_TIMEOUT_SECONDS", 120),
+            result_timeout_seconds=_float_env(
+                "SHUYING_AVATAR_RESULT_TIMEOUT_SECONDS", 120
+            ),
+            max_script_chars=_int_env("SHUYING_AVATAR_MAX_SCRIPT_CHARS", 2000),
+            estimated_cost_cny=cost if cost > 0 else None,
+            estimated_seconds=seconds if seconds > 0 else None,
+        )
+
+    @staticmethod
+    def _parse_assets(raw: str, kind: AvatarAssetKind) -> list[AvatarAsset]:
+        try:
+            payload = json.loads(raw or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+        assets: list[AvatarAsset] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            asset_id = str(
+                item.get("asset_id")
+                or item.get("id")
+                or item.get("robotId")
+                or item.get("speaker_id")
+                or ""
+            ).strip()
+            name = str(item.get("name") or item.get("title") or asset_id).strip()
+            if not asset_id or not name:
+                continue
+            assets.append(
+                AvatarAsset(
+                    asset_id=asset_id,
+                    kind=kind,
+                    name=name,
+                    preview_url=str(item.get("preview_url") or "").strip() or None,
+                    authorized=bool(item.get("authorized", True)),
+                    preview_type=str(
+                        item.get("preview_type")
+                        or (
+                            "video"
+                            if str(item.get("preview_url") or "").casefold().split("?", 1)[0].endswith((".mp4", ".mov", ".webm"))
+                            else "image"
+                        )
+                    ),
+                    status=str(item.get("status") or "ready"),
+                    status_message=str(item.get("status_message") or "").strip() or None,
+                    source_type=str(item.get("source_type") or "built_in"),
+                )
+            )
+        return assets
+
+    def _missing_configuration(self) -> list[str]:
+        missing = []
+        if not self.enabled:
+            missing.append("SHUYING_AVATAR_ENABLED")
+        if not self.base_url:
+            missing.append("SHUYING_AVATAR_BASE_URL")
+        elif not self._is_safe_https_url(self.base_url):
+            missing.append("SHUYING_AVATAR_BASE_URL(必须为HTTPS)")
+        if not self.api_code:
+            missing.append("SHUYING_AVATAR_API_CODE")
+        if not any(item.authorized for item in self.avatars):
+            missing.append("SHUYING_AVATAR_AVATARS_JSON")
+        if not any(item.authorized for item in self.voices):
+            missing.append("SHUYING_AVATAR_VOICES_JSON")
+        if self.audio_mode not in {"gateway_voice", "edge_tts_upload"}:
+            missing.append("SHUYING_AVATAR_AUDIO_MODE")
+        elif self.audio_mode == "edge_tts_upload":
+            if not self.audio_upload_url:
+                missing.append("SHUYING_AVATAR_AUDIO_UPLOAD_URL")
+            elif not self._is_safe_https_url(self.audio_upload_url):
+                missing.append("SHUYING_AVATAR_AUDIO_UPLOAD_URL(必须为HTTPS)")
+            if not self.audio_allowed_hosts:
+                missing.append("SHUYING_AVATAR_AUDIO_ALLOWED_HOSTS")
+            if not self.edge_tts_voice:
+                missing.append("SHUYING_AVATAR_EDGE_TTS_VOICE")
+        if not self.result_allowed_hosts:
+            missing.append("SHUYING_AVATAR_RESULT_ALLOWED_HOSTS")
+        return missing
+
+    def capabilities(self) -> AvatarCapability:
+        missing = self._missing_configuration()
+        return AvatarCapability(
+            provider_name="shuying_legacy_cloud",
+            display_name="公司数影云数字人",
+            mode=ProviderMode.PRODUCTION,
+            enabled=not missing,
+            permission_status="authorized" if not missing else "configuration_missing",
+            max_script_chars=self.max_script_chars,
+            supported_aspect_ratios=["9:16"],
+            estimated_cost_cny=self.estimated_cost_cny,
+            estimated_seconds=self.estimated_seconds,
+            missing_configuration=missing,
+            supports_cloud_avatar_training=not missing and self._can_train_avatar(),
+            supports_voice_cloning=not missing and self._can_clone_voice(),
+            supports_voice_sample_upload=not missing,
+        )
+
+    def list_assets(self) -> list[AvatarAsset]:
+        self._ensure_configured()
+        custom_assets = self._refresh_custom_assets(self._load_custom_assets())
+        return [*self.avatars, *self.voices, *custom_assets]
+
+    def create_cloud_avatar(
+        self, *, name: str, training_video_path: Path, filename: str
+    ) -> AvatarAsset:
+        self._ensure_configured()
+        if not self._can_train_avatar():
+            raise AvatarProviderError(
+                "公司云形象训练尚未配置素材上传线路。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+        video_url = self._upload_training_file(
+            training_video_path,
+            filename=filename,
+            mime_type="video/mp4",
+            upload_url=self._model_upload_endpoint(),
+            allowed_hosts=self.model_upload_allowed_hosts,
+        )
+        response = self._form_request(
+            "/model", {"name": name, "videoUrl": video_url}, submit_operation=True
+        )
+        data = response.get("data")
+        provider_id = (
+            str(data.get("id") or "").strip() if isinstance(data, dict) else ""
+        )
+        if not provider_id:
+            raise AvatarProviderError("公司云形象训练未返回模型编号。")
+        asset = AvatarAsset(
+            asset_id=f"shuying-avatar-{provider_id}",
+            kind=AvatarAssetKind.AVATAR,
+            name=name,
+            preview_url=video_url,
+            preview_type="video",
+            authorized=True,
+            status="training",
+            status_message="公司云端正在训练形象。",
+            source_type="custom",
+        )
+        self._upsert_custom_asset(asset, provider_asset_id=provider_id)
+        return asset
+
+    def create_voice_clone(
+        self, *, name: str, sample_path: Path, filename: str, mime_type: str
+    ) -> AvatarAsset:
+        self._ensure_configured()
+        if not self._can_clone_voice():
+            raise AvatarProviderError(
+                "声音克隆线路未配置独立凭证。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+        sample_url = self._upload_training_file(
+            sample_path,
+            filename=filename,
+            mime_type=mime_type,
+            upload_url=self.audio_upload_url,
+            allowed_hosts=self.audio_allowed_hosts,
+        )
+        response = self._voice_form_request(
+            "/voice_clone",
+            {
+                "speaker_id": "",
+                "url": sample_url,
+                "language": "cn",
+                "name": name,
+                "type": 2,
+            },
+            submit_operation=True,
+            zero_code_success=True,
+        )
+        data = response.get("data")
+        provider_id = (
+            str(data.get("task_id") or "").strip() if isinstance(data, dict) else ""
+        )
+        if not provider_id:
+            raise AvatarProviderError("声音克隆未返回训练任务编号。")
+        asset = AvatarAsset(
+            asset_id=f"shuying-voice-{provider_id}",
+            kind=AvatarAssetKind.VOICE,
+            name=name,
+            authorized=True,
+            status="training",
+            status_message="公司云端正在训练声音。",
+            source_type="custom_clone",
+        )
+        self._upsert_custom_asset(asset, provider_asset_id=provider_id)
+        return asset
+
+    def store_pending_voice_sample(
+        self, *, name: str, sample_path: Path, filename: str
+    ) -> AvatarAsset:
+        """Accept authorised samples before the separate clone credential is ready.
+
+        Saving the sample is deliberately not a clone submission: enabling a key later
+        must never silently create a billable training task.
+        """
+        self._ensure_configured()
+        suffix = Path(filename).suffix.lower() or ".mp3"
+        asset_id = f"shuying-voice-sample-{uuid.uuid4().hex[:12]}"
+        samples_root = (self.assets_manifest_path.parent / "voice_samples").resolve()
+        samples_root.mkdir(parents=True, exist_ok=True)
+        destination = (samples_root / f"{asset_id}{suffix}").resolve()
+        if samples_root not in destination.parents:
+            raise AvatarProviderError("声音样本存储路径越界。")
+        shutil.copyfile(sample_path, destination)
+        asset = AvatarAsset(
+            asset_id=asset_id,
+            kind=AvatarAssetKind.VOICE,
+            name=name,
+            authorized=True,
+            status="pending_configuration",
+            status_message="声音样本已保存，等待独立声音线路配置后再发起克隆。",
+            source_type="pending_clone",
+        )
+        self._upsert_custom_asset(
+            asset,
+            provider_asset_id="",
+            extra={"sample_path": str(destination)},
+        )
+        return asset
+
+    def _can_train_avatar(self) -> bool:
+        return bool(
+            self.model_upload_url
+            and self.model_upload_allowed_hosts
+            and self._is_safe_upload_url(self.model_upload_url)
+        )
+
+    def _can_clone_voice(self) -> bool:
+        return bool(
+            self.voice_base_url
+            and self.voice_api_code
+            and self.audio_upload_url
+            and self.audio_allowed_hosts
+            and self._is_safe_https_url(self.voice_base_url)
+        )
+
+    def _model_upload_endpoint(self) -> str:
+        separator = "&" if "?" in self.model_upload_url else "?"
+        return (
+            self.model_upload_url
+            if "is_video=" in self.model_upload_url
+            else f"{self.model_upload_url}{separator}is_video=1"
+        )
+
+    def _load_custom_assets(self) -> list[dict[str, Any]]:
+        if not self.assets_manifest_path.exists():
+            return []
+        try:
+            payload = json.loads(self.assets_manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        items = payload.get("assets", []) if isinstance(payload, dict) else []
+        return [item for item in items if isinstance(item, dict)]
+
+    def _save_custom_assets(self, items: list[dict[str, Any]]) -> None:
+        self.assets_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.assets_manifest_path.with_suffix(
+            f"{self.assets_manifest_path.suffix}.tmp"
+        )
+        temporary.write_text(
+            json.dumps({"assets": items}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temporary.replace(self.assets_manifest_path)
+
+    def _upsert_custom_asset(
+        self,
+        asset: AvatarAsset,
+        *,
+        provider_asset_id: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        items = self._load_custom_assets()
+        record = asset.model_dump()
+        record.update(
+            {
+                "provider_asset_id": provider_asset_id,
+                "updated_at": datetime.now().astimezone().isoformat(),
+            }
+        )
+        if extra:
+            record.update(extra)
+        self._save_custom_assets(
+            [item for item in items if item.get("asset_id") != asset.asset_id]
+            + [record]
+        )
+
+    def _refresh_custom_assets(
+        self, records: list[dict[str, Any]]
+    ) -> list[AvatarAsset]:
+        changed = False
+        assets: list[AvatarAsset] = []
+        for record in records:
+            try:
+                asset = AvatarAsset.model_validate(record)
+            except ValueError:
+                continue
+            if asset.status == "training":
+                try:
+                    refreshed = self._refresh_training_asset(asset, record)
+                except AvatarProviderError:
+                    refreshed = asset
+                if refreshed != asset:
+                    record.update(refreshed.model_dump())
+                    record["updated_at"] = datetime.now().astimezone().isoformat()
+                    changed = True
+                    asset = refreshed
+            assets.append(asset)
+        if changed:
+            self._save_custom_assets(records)
+        return assets
+
+    def _refresh_training_asset(
+        self, asset: AvatarAsset, record: dict[str, Any]
+    ) -> AvatarAsset:
+        provider_id = str(record.get("provider_asset_id") or "").strip()
+        if not provider_id:
+            return asset
+        if asset.kind == AvatarAssetKind.AVATAR:
+            response = self._form_request(
+                "/modelDetail", {"id": provider_id}, submit_operation=False
+            )
+            data = response.get("data")
+            if not isinstance(data, dict):
+                return asset
+            status = self._training_status(data.get("status"))
+            preview_url = str(data.get("coverUrl") or data.get("videoUrl") or "").strip()
+            return asset.model_copy(
+                update={
+                    "status": status,
+                    "status_message": self._training_status_message(status),
+                    "preview_url": preview_url or asset.preview_url,
+                    "preview_type": "image" if data.get("coverUrl") else "video",
+                }
+            )
+        if asset.kind == AvatarAssetKind.VOICE and self._can_clone_voice():
+            response = self._voice_form_request(
+                "/voice_clone_status_2",
+                {"speaker_id": provider_id, "type": 2},
+                submit_operation=False,
+            )
+            data = response.get("data")
+            raw_status = data.get("status") if isinstance(data, dict) else None
+            status = self._training_status(raw_status)
+            return asset.model_copy(
+                update={
+                    "status": status,
+                    "status_message": self._training_status_message(status),
+                }
+            )
+        return asset
+
+    @staticmethod
+    def _training_status(value: Any) -> str:
+        try:
+            status = int(value)
+        except (TypeError, ValueError):
+            return "training"
+        if status == 2:
+            return "ready"
+        if status in {3, 4, -1, 8}:
+            return "failed"
+        return "training"
+
+    @staticmethod
+    def _training_status_message(status: str) -> str:
+        return {
+            "ready": "训练完成，可用于数字人生成。",
+            "failed": "供应商训练失败或审核未通过。",
+        }.get(status, "公司云端正在训练，请稍后刷新。")
+
+    def _upload_training_file(
+        self,
+        path: Path,
+        *,
+        filename: str,
+        mime_type: str,
+        upload_url: str,
+        allowed_hosts: set[str],
+    ) -> str:
+        if not self._is_safe_upload_url(upload_url):
+            raise AvatarProviderError("公司素材上传地址必须是标准 HTTPS 地址。")
+        hostname = urlsplit(upload_url).hostname
+        if not hostname or hostname.casefold() not in allowed_hosts:
+            raise AvatarProviderError("公司素材上传地址不在允许的供应商域名中。")
+        raw, _ = self.file_upload_transport(
+            upload_url, filename, mime_type, path, self.timeout_seconds
+        )
+        try:
+            envelope = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AvatarProviderError("公司素材上传接口返回了无效 JSON。") from exc
+        try:
+            success = isinstance(envelope, dict) and int(envelope.get("code", 0)) == 1
+        except (TypeError, ValueError):
+            success = False
+        if not success:
+            raise AvatarProviderError(
+                str(envelope.get("msg") or "公司素材上传失败。")
+                if isinstance(envelope, dict)
+                else "公司素材上传响应格式不正确。"
+            )
+        result_url = self._upgrade_to_https(str(envelope.get("path") or "").strip())
+        result_host = urlsplit(result_url).hostname
+        if (
+            not self._is_safe_https_url(result_url, allow_path=True)
+            or not result_host
+            or result_host.casefold() not in allowed_hosts
+        ):
+            raise AvatarProviderError("公司素材上传结果不在允许的供应商域名中。")
+        return result_url
+
+    def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot:
+        self._ensure_configured()
+        previous = self.find_job(request.idempotency_key)
+        if previous is not None:
+            return previous
+
+        selected_voice = next(
+            (item for item in self.list_assets() if item.asset_id == request.voice_id),
+            None,
+        )
+        if selected_voice is not None and selected_voice.source_type == "custom_clone":
+            audio_url = self._synthesize_cloned_voice(request)
+        elif self.audio_mode == "edge_tts_upload":
+            audio_url = self._synthesize_and_upload_audio(request)
+        else:
+            voice = self._form_request(
+                "/voice",
+                {
+                    "text": request.script_text,
+                    "voice_type": request.voice_id,
+                    "member_id": 0,
+                    "voice_type_value": "tts",
+                    "language": "cn",
+                    "speed_ratio": request.speech_rate,
+                    "volume_ratio": 1,
+                    "pitch_ratio": 1,
+                },
+                submit_operation=True,
+            )
+            voice_data = voice.get("data")
+            audio_url = (
+                str(voice_data.get("ossurl") or "").strip()
+                if isinstance(voice_data, dict)
+                else ""
+            )
+            if not audio_url:
+                raise AvatarProviderError("公司数影网关未返回合成音频地址。")
+
+        video = self._form_request(
+            "/video",
+            {
+                "videoName": request.video_name or f"avatar-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                "modeid": request.avatar_id,
+                "audioUrl": audio_url,
+                "aspect_ratio": request.aspect_ratio,
+                "resolution": request.resolution,
+                "background": request.background,
+            },
+            submit_operation=True,
+        )
+        video_data = video.get("data")
+        provider_job_id = (
+            str(video_data.get("videoId") or "").strip()
+            if isinstance(video_data, dict)
+            else ""
+        )
+        if not provider_job_id:
+            raise AvatarProviderError("公司数影网关未返回视频任务编号。")
+
+        snapshot = AvatarJobSnapshot(
+            job_id=provider_job_id,
+            idempotency_key=request.idempotency_key,
+            status=AvatarProviderStatus.QUEUED,
+            progress=5,
+            stage="公司云端排队中",
+            provider_job_id=provider_job_id,
+            estimated_cost_cny=self.estimated_cost_cny,
+            estimated_seconds=self.estimated_seconds,
+        )
+        self.idempotency_index[request.idempotency_key] = snapshot
+        self.job_idempotency[provider_job_id] = request.idempotency_key
+        return snapshot
+
+    def _synthesize_cloned_voice(self, request: AvatarSubmitRequest) -> str:
+        if not self._can_clone_voice():
+            raise AvatarProviderError("声音克隆线路未配置独立凭证。")
+        provider_id = request.voice_id.removeprefix("shuying-voice-")
+        response = self._voice_form_request(
+            "/voice_2",
+            {
+                "text": request.script_text,
+                "clone_task_id": provider_id,
+                "language": "cn",
+                "speed_ratio": request.speech_rate,
+            },
+            submit_operation=True,
+        )
+        data = response.get("data")
+        tts_task_id = str(data or "").strip()
+        if not tts_task_id:
+            raise AvatarProviderError("克隆声音合成未返回任务编号。")
+        for _ in range(10):
+            detail = self._voice_form_request(
+                "/voice_tts_info",
+                {"tts_task_id": tts_task_id},
+                submit_operation=False,
+                allow_pending=True,
+            )
+            result = detail.get("data")
+            if isinstance(result, dict):
+                audio_url = str(
+                    result.get("ossurl") or result.get("url") or ""
+                ).strip()
+                if audio_url:
+                    return audio_url
+            # Voice TTS is an asynchronous query. Bound it rather than recursing.
+            threading.Event().wait(2)
+        raise AvatarProviderError("克隆声音合成等待超时，请稍后重试查询。")
+
+    def _synthesize_and_upload_audio(self, request: AvatarSubmitRequest) -> str:
+        audio = self.audio_renderer(
+            request.script_text, request.speech_rate, self.edge_tts_voice
+        )
+        if not audio:
+            raise AvatarProviderError("云端文字转语音未生成有效音频。")
+        boundary = f"----CodexAvatarAudio{uuid.uuid4().hex}"
+        body = self._multipart_file_body(
+            field_name="file",
+            filename="speech.mp3",
+            mime_type="audio/mpeg",
+            payload=audio,
+            boundary=boundary,
+        )
+        raw, _ = self.transport(
+            "POST",
+            self.audio_upload_url,
+            {
+                "Accept": "application/json",
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+            },
+            body,
+            self.timeout_seconds,
+        )
+        try:
+            envelope = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AvatarProviderError("公司音频上传接口返回了无效 JSON。") from exc
+        try:
+            success = isinstance(envelope, dict) and int(envelope.get("code", 0)) == 1
+        except (TypeError, ValueError):
+            success = False
+        if not success:
+            message = (
+                str(envelope.get("msg") or "公司音频上传失败。")
+                if isinstance(envelope, dict)
+                else "公司音频上传响应格式不正确。"
+            )
+            raise AvatarProviderError(message)
+        audio_url = self._upgrade_to_https(str(envelope.get("path") or "").strip())
+        if not self._is_safe_https_url(audio_url, allow_path=True):
+            raise AvatarProviderError(
+                "公司音频上传结果必须是标准 HTTPS 地址。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        hostname = urlsplit(audio_url).hostname
+        if not hostname or hostname.casefold() not in self.audio_allowed_hosts:
+            raise AvatarProviderError(
+                "公司音频上传结果不在允许的供应商域名中。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        return audio_url
+
+    @staticmethod
+    def _render_edge_tts(text: str, speech_rate: float, voice: str) -> bytes:
+        rate_percent = round((speech_rate - 1) * 100)
+        with tempfile.TemporaryDirectory(prefix="shuying-cloud-tts-") as directory:
+            output_path = Path(directory) / "speech.mp3"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "edge_tts",
+                    "--voice",
+                    voice,
+                    f"--rate={rate_percent:+d}%",
+                    "--text",
+                    text,
+                    "--write-media",
+                    str(output_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "未知错误").strip()[
+                    :300
+                ]
+                raise AvatarProviderError(f"云端文字转语音失败：{detail}")
+            if not output_path.is_file() or output_path.stat().st_size == 0:
+                raise AvatarProviderError("云端文字转语音未生成音频文件。")
+            return output_path.read_bytes()
+
+    @staticmethod
+    def _upgrade_to_https(value: str) -> str:
+        try:
+            parts = urlsplit(value)
+        except ValueError:
+            return value
+        if (
+            parts.scheme.casefold() == "http"
+            and parts.hostname
+            and parts.port in {None, 80}
+            and not parts.username
+            and not parts.password
+        ):
+            return parts._replace(scheme="https", netloc=parts.hostname).geturl()
+        return value
+
+    def get_job(self, job_id: str) -> AvatarJobSnapshot:
+        self._ensure_configured()
+        response = self._form_request(
+            "/videoDetail", {"videoId": job_id}, submit_operation=False
+        )
+        data = response.get("data")
+        if not isinstance(data, dict):
+            raise AvatarProviderError("公司数影网关状态响应缺少 data。")
+        try:
+            provider_status = int(data.get("synthesisStatus", 0))
+        except (TypeError, ValueError):
+            provider_status = 0
+        video_url = str(data.get("videoUrl") or "").strip()
+        idempotency_key = self.job_idempotency.get(job_id, "")
+
+        if provider_status == 3 and video_url:
+            self.result_urls[job_id] = video_url
+            return AvatarJobSnapshot(
+                job_id=job_id,
+                idempotency_key=idempotency_key,
+                status=AvatarProviderStatus.SUCCEEDED,
+                progress=100,
+                stage="公司云端生成成功",
+                provider_job_id=job_id,
+                estimated_cost_cny=self.estimated_cost_cny,
+                estimated_seconds=self.estimated_seconds,
+                result_mime="video/mp4",
+                result_size_bytes=self._optional_positive_int(data.get("videoSize")),
+            )
+        if provider_status in {-1, 8}:
+            return AvatarJobSnapshot(
+                job_id=job_id,
+                idempotency_key=idempotency_key,
+                status=AvatarProviderStatus.FAILED,
+                progress=100,
+                stage="公司云端生成失败",
+                provider_job_id=job_id,
+                estimated_cost_cny=self.estimated_cost_cny,
+                estimated_seconds=self.estimated_seconds,
+                error_kind=ProviderErrorKind.SERVICE,
+                error_message=str(data.get("message") or "供应商生成失败。"),
+            )
+        return AvatarJobSnapshot(
+            job_id=job_id,
+            idempotency_key=idempotency_key,
+            status=AvatarProviderStatus.RUNNING,
+            progress=70 if provider_status == 2 else 30,
+            stage="公司云端渲染中" if provider_status == 2 else "公司云端处理中",
+            provider_job_id=job_id,
+            estimated_cost_cny=self.estimated_cost_cny,
+            estimated_seconds=self.estimated_seconds,
+        )
+
+    def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None:
+        return self.idempotency_index.get(idempotency_key)
+
+    def download_result(self, job_id: str) -> tuple[bytes, str]:
+        url = self.result_urls.get(job_id)
+        if not url:
+            snapshot = self.get_job(job_id)
+            if snapshot.status != AvatarProviderStatus.SUCCEEDED:
+                raise AvatarProviderError("公司数影任务尚未成功，不能下载结果。")
+            url = self.result_urls.get(job_id)
+        if not url:
+            raise AvatarProviderError("公司数影网关未返回视频下载地址。")
+
+        if not self._is_safe_https_url(url, allow_path=True):
+            raise AvatarProviderError(
+                "公司数影结果地址必须是标准 HTTPS 地址。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        parts = urlsplit(url)
+        if parts.hostname.casefold() not in self.result_allowed_hosts:
+            raise AvatarProviderError(
+                "公司数影结果地址不在允许的供应商域名中。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        payload, mime_type = self.download_transport(
+            "GET",
+            url,
+            {"Accept": "video/mp4,application/octet-stream"},
+            None,
+            self.result_timeout_seconds,
+        )
+        if len(payload) > MAX_AVATAR_DOWNLOAD_BYTES:
+            raise AvatarProviderError(
+                "公司数影结果超过 100 MB 安全限制。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        return payload, mime_type
+
+    def _ensure_configured(self) -> None:
+        missing = self._missing_configuration()
+        if missing:
+            raise AvatarProviderError(
+                "公司数影云数字人尚未配置：" + "、".join(missing),
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+
+    def _form_request(
+        self,
+        path: str,
+        fields: dict[str, Any],
+        *,
+        submit_operation: bool,
+    ) -> dict[str, Any]:
+        boundary = f"----CodexAvatar{uuid.uuid4().hex}"
+        body = self._multipart_form_body(
+            {**fields, "api_code": self.api_code}, boundary=boundary
+        )
+        try:
+            raw, _ = self.transport(
+                "POST",
+                f"{self.base_url}{path}",
+                {
+                    "Accept": "application/json",
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                },
+                body,
+                self.timeout_seconds,
+            )
+        except AvatarProviderError as exc:
+            if exc.outcome_unknown and not submit_operation:
+                raise AvatarProviderError(
+                    str(exc), kind=exc.kind, outcome_unknown=False
+                ) from exc
+            raise
+        try:
+            envelope = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AvatarProviderError("公司数影网关返回了无效 JSON。") from exc
+        if not isinstance(envelope, dict):
+            raise AvatarProviderError("公司数影网关响应格式不正确。")
+        try:
+            success = int(envelope.get("code", 0)) == 1
+        except (TypeError, ValueError):
+            success = False
+        if not success:
+            message = str(envelope.get("msg") or "公司数影网关请求失败。")
+            kind = (
+                ProviderErrorKind.AUTHORIZATION
+                if any(
+                    token in message.casefold()
+                    for token in ("key", "code", "鉴权", "授权")
+                )
+                else ProviderErrorKind.SERVICE
+            )
+            raise AvatarProviderError(message, kind=kind)
+        return envelope
+
+    def _voice_form_request(
+        self,
+        path: str,
+        fields: dict[str, Any],
+        *,
+        submit_operation: bool,
+        zero_code_success: bool = False,
+        allow_pending: bool = False,
+    ) -> dict[str, Any]:
+        """Primary voice route has a legacy success code that differs for cloning."""
+        boundary = f"----CodexAvatarVoice{uuid.uuid4().hex}"
+        body = self._multipart_form_body(
+            {**fields, "api_code": self.voice_api_code}, boundary=boundary
+        )
+        try:
+            raw, _ = self.transport(
+                "POST",
+                f"{self.voice_base_url}{path}",
+                {
+                    "Accept": "application/json",
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                },
+                body,
+                self.timeout_seconds,
+            )
+        except AvatarProviderError as exc:
+            if exc.outcome_unknown and not submit_operation:
+                raise AvatarProviderError(
+                    str(exc), kind=exc.kind, outcome_unknown=False
+                ) from exc
+            raise
+        try:
+            envelope = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise AvatarProviderError("公司声音线路返回了无效 JSON。") from exc
+        if not isinstance(envelope, dict):
+            raise AvatarProviderError("公司声音线路响应格式不正确。")
+        try:
+            code = int(envelope.get("code"))
+        except (TypeError, ValueError):
+            code = -999
+        success = code == 0 if zero_code_success else code == 1
+        if allow_pending and code != -1:
+            success = True
+        if not success:
+            raise AvatarProviderError(
+                str(envelope.get("msg") or "公司声音线路请求失败。"),
+                kind=(
+                    ProviderErrorKind.AUTHORIZATION
+                    if any(
+                        token in str(envelope.get("msg") or "").casefold()
+                        for token in ("key", "code", "鉴权", "授权")
+                    )
+                    else ProviderErrorKind.SERVICE
+                ),
+            )
+        return envelope
+
+    @staticmethod
+    def _multipart_form_body(fields: dict[str, Any], *, boundary: str) -> bytes:
+        chunks: list[bytes] = []
+        for name, value in fields.items():
+            safe_name = str(name).replace('"', "")
+            chunks.extend(
+                [
+                    f"--{boundary}\r\n".encode("ascii"),
+                    (
+                        f'Content-Disposition: form-data; name="{safe_name}"\r\n\r\n'
+                    ).encode("ascii"),
+                    str(value).encode("utf-8"),
+                    b"\r\n",
+                ]
+            )
+        chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+        return b"".join(chunks)
+
+    @staticmethod
+    def _multipart_file_body(
+        *,
+        field_name: str,
+        filename: str,
+        mime_type: str,
+        payload: bytes,
+        boundary: str,
+    ) -> bytes:
+        safe_field = field_name.replace('"', "")
+        safe_filename = filename.replace('"', "")
+        return b"".join(
+            [
+                f"--{boundary}\r\n".encode("ascii"),
+                (
+                    f'Content-Disposition: form-data; name="{safe_field}"; '
+                    f'filename="{safe_filename}"\r\n'
+                ).encode("ascii"),
+                f"Content-Type: {mime_type}\r\n\r\n".encode("ascii"),
+                payload,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("ascii"),
+            ]
+        )
+
+    @staticmethod
+    def _optional_positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed >= 0 else None
+
+    @staticmethod
+    def _is_safe_https_url(value: str, *, allow_path: bool = True) -> bool:
+        try:
+            parts = urlsplit(value)
+            port = parts.port
+        except ValueError:
+            return False
+        if (
+            parts.scheme.casefold() != "https"
+            or not parts.hostname
+            or parts.username
+            or parts.password
+            or port not in {None, 443}
+            or parts.query
+            or parts.fragment
+        ):
+            return False
+        return allow_path or parts.path in {"", "/"}
+
+    @staticmethod
+    def _is_safe_upload_url(value: str) -> bool:
+        """The recovered video uploader needs only its explicit is_video flag."""
+        try:
+            parts = urlsplit(value)
+            port = parts.port
+        except ValueError:
+            return False
+        return (
+            parts.scheme.casefold() == "https"
+            and bool(parts.hostname)
+            and not parts.username
+            and not parts.password
+            and port in {None, 443}
+            and not parts.fragment
+            and parts.query in {"", "is_video=1"}
         )
 
 
@@ -1144,6 +2284,8 @@ def build_avatar_provider():
         return LocalCommandAvatarProvider.from_env()
     if mode in {"baidu", "baidu_xiling", "xiling"}:
         return BaiduXilingAvatarProvider.from_env()
+    if mode in {"shuying", "shuying_cloud", "shuying_legacy"}:
+        return ShuyingLegacyAvatarProvider.from_env()
     if mode in {"internal", "cloud"}:
         return InternalAvatarProvider.from_env()
     return SandboxAvatarProvider()
@@ -1173,7 +2315,9 @@ def _baidu_status(
         "SUCCESS": AvatarProviderStatus.SUCCEEDED,
         "FAILED": AvatarProviderStatus.FAILED,
     }
-    return status_map.get(value.upper(), default_status or AvatarProviderStatus.OUTCOME_UNKNOWN)
+    return status_map.get(
+        value.upper(), default_status or AvatarProviderStatus.OUTCOME_UNKNOWN
+    )
 
 
 def _status_progress(status: AvatarProviderStatus) -> int:

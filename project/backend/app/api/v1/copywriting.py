@@ -82,6 +82,28 @@ class CopywritingCapabilitiesResponse(BaseModel):
     missing_configuration: list[str]
 
 
+class CopywritingHistoryDeleteResponse(BaseModel):
+    """独立 AI 文案历史的批量删除结果。"""
+
+    deleted_count: int
+
+
+class PublishMetadataRequest(BaseModel):
+    source_text: str = Field(..., min_length=1, max_length=12000)
+    platforms: list[str] = Field(default_factory=list, max_length=5)
+    source_task_id: str | None = None
+
+
+class PublishMetadataResponse(BaseModel):
+    task_id: str
+    provider_name: str
+    model_name: str
+    is_mock: bool
+    title: str
+    description: str
+    tags: list[str]
+
+
 @router.get("/capabilities", response_model=CopywritingCapabilitiesResponse)
 def capabilities(service=Depends(get_copywriting_service)):
     """返回文案模型能力，不包含任何密钥。"""
@@ -116,6 +138,15 @@ def list_copywriting(
         if getattr(task, "source_task_id", None) is None
     ][:safe_limit]
     return [_to_summary(task) for task in tasks]
+
+
+@router.delete("/history", response_model=CopywritingHistoryDeleteResponse)
+def clear_copywriting_history(service=Depends(get_copywriting_service)):
+    """删除历史抽屉中的全部独立文案任务，保留转写生成的口播稿。"""
+    task_ids = [task.task_id for task in service.list_tasks() if task.source_task_id is None]
+    for task_id in task_ids:
+        service.repository.delete_task(task_id)
+    return CopywritingHistoryDeleteResponse(deleted_count=len(task_ids))
 
 
 @router.get("/{task_id}", response_model=CopywritingDetailResponse)
@@ -173,6 +204,33 @@ def rewrite(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _to_response(task)
+
+
+@router.post("/publish-metadata", response_model=PublishMetadataResponse)
+def generate_publish_metadata(
+    body: PublishMetadataRequest,
+    service=Depends(get_copywriting_service),
+):
+    """基于已生成或已确认的文案生成发布标题、描述和话题。"""
+    try:
+        task, metadata = service.generate_publish_metadata(
+            source_text=body.source_text,
+            platforms=body.platforms,
+            source_task_id=body.source_task_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if metadata is None:
+        raise HTTPException(status_code=400, detail=task.error_message or "发布信息生成失败。")
+    return PublishMetadataResponse(
+        task_id=task.task_id,
+        provider_name=task.provider_name,
+        model_name=task.model_name,
+        is_mock=task.is_mock,
+        title=str(metadata["title"]),
+        description=str(metadata["description"]),
+        tags=[str(item) for item in metadata["tags"]],
+    )
 
 
 def _to_response(task) -> CopywritingResponse:

@@ -152,6 +152,21 @@ class TestUpgrade:
         result2 = runner.upgrade()
         assert result1 == result2
 
+    def test_repository_bootstrap_adds_hotspot_window_to_managed_schema(self, runner):
+        """A migrated database still receives runtime-compatible crawler columns."""
+        runner.upgrade()
+
+        from src.repositories.sqlite import SQLiteRepository
+
+        SQLiteRepository(runner._database_path)
+        conn = sqlite3.connect(str(runner._database_path))
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(search_batches)")
+        }
+        conn.close()
+
+        assert "hotspot_window_hours" in columns
+
     def test_upgrade_to_specific_version(self, runner):
         """升级到指定版本。"""
         result = runner.upgrade(target_version=1)
@@ -234,7 +249,7 @@ class TestUpgrade:
         conn.commit()
         conn.close()
 
-        assert runner.upgrade() == 4
+        assert runner.upgrade() == 5
 
         conn = sqlite3.connect(str(runner._database_path))
         quarantined = conn.execute(
@@ -243,6 +258,54 @@ class TestUpgrade:
         assert quarantined == [("checkpoint-1", "candidate-1", "missing_candidate")]
         assert conn.execute("SELECT count(*) FROM sampling_checkpoints").fetchone()[0] == 0
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        conn.close()
+
+    def test_upgrade_marks_hotspot_sample_time_fallback(self, runner):
+        """The v005 repair keeps the timestamp but exposes that it is not publication time."""
+        runner.upgrade(target_version=4)
+        conn = sqlite3.connect(str(runner._database_path))
+        conn.execute(
+            """
+            INSERT INTO candidates(
+                video_id, platform, platform_item_id, title, author_id,
+                author_name, category, published_at, source_url, source_type,
+                rights_status, matched_by_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "candidate-hotspot-1", "douyin", "item-hotspot-1", "candidate",
+                "author-1", "author", "test", "2026-07-24T12:00:00+08:00",
+                "https://example.test/video", "licensed_commercial_provider", "metadata_only", "[]",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO discovery_runs(request_id, finished_at, payload_json)
+            VALUES ('request-hotspot-1', '2026-07-24T12:00:00+08:00', '{}')
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO candidate_matches(
+                request_id, video_id, keyword, cohort_key, platform_rank,
+                observed_at, publish_time, sort_type, platform, provider_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "request-hotspot-1", "candidate-hotspot-1", "test", "test", 1,
+                "2026-07-24T12:00:00+08:00", 1, 0, "douyin", "douyin_local_browser",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        assert runner.upgrade() == 5
+
+        conn = sqlite3.connect(str(runner._database_path))
+        warning = conn.execute(
+            "SELECT data_quality_warnings_json FROM candidates WHERE video_id = 'candidate-hotspot-1'"
+        ).fetchone()[0]
+        assert "页面展示为采样时间" in warning
         conn.close()
 
 

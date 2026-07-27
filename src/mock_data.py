@@ -100,9 +100,13 @@ def demo_segments() -> list[TranscriptSegment]:
         TranscriptSegment(
             start=9.8,
             end=14.6,
-            text="先判断你是通勤、户外，还是长时间带妆。",
+            text="先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。",
             confidence=0.67,
-            needs_review=True,
+            needs_review=False,
+            quality_status="llm_rewritten",
+            quality_source="demo_llm",
+            quality_note="演示：低置信片段已按上下文改成自然口播句。",
+            alternatives=["先判断你是通勤、户外，还是长时间带妆。"],
         ),
         TranscriptSegment(
             start=14.6,

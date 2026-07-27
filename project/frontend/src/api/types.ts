@@ -10,11 +10,24 @@ export interface CandidateItem {
   heat_level: string;
   source_url: string | null;
   published_at: string | null;
+  observed_at: string | null;
+  publication_time_state: "platform" | "sampled_fallback" | string;
+  official_hot: boolean;
+  official_rank: number | null;
+  snapshot_count: number;
+  growth_window_hours: number | null;
+  heat_reasons: string[];
+}
+
+export interface CandidateCategoryOption {
+  value: string;
+  count: number;
 }
 
 export interface CandidateListResponse {
   items: CandidateItem[];
   total: number;
+  category_options: CandidateCategoryOption[];
 }
 
 export interface TranscriptSegment {
@@ -24,6 +37,10 @@ export interface TranscriptSegment {
   confidence: number | null;
   needs_review: boolean;
   reviewed?: boolean;
+  quality_status?: "pending" | "accepted" | "auto_verified" | "auto_corrected" | "llm_rewritten" | "uncertain" | string;
+  quality_source?: "primary_asr" | "secondary_asr" | "llm_context" | string;
+  quality_note?: string | null;
+  alternatives?: string[];
 }
 
 export interface TranscriptionResponse {
@@ -39,6 +56,12 @@ export interface TranscriptionResponse {
   duration_seconds: number | null;
   approved_revision_id: string | null;
   low_confidence_count: number;
+  is_mock: boolean;
+  auto_reviewed: boolean;
+  uncertain_segment_count: number;
+  secondary_asr_count: number;
+  llm_review_count: number;
+  auto_review_error: string | null;
   segments: TranscriptSegment[];
   error_message: string | null;
   created_at: string | null;
@@ -436,6 +459,8 @@ export interface CrawlerProviderUsage {
 export interface CrawlerSearchRequest {
   keyword: string;
   published_window_days: 0 | 1 | 7;
+  /** 热点宝榜单统计周期；不等同于视频发布时间。 */
+  hotspot_window_hours?: 1 | 24 | 72 | 168;
   count_per_platform: number;
   force_refresh: boolean;
   /** smart 先走热点宝；OneAPI 只在明确二次确认后使用。 */
@@ -449,7 +474,7 @@ export interface CrawlerSearchRequest {
   target_main_count?: number;
   max_paid_calls?: number;
   allow_paid_fallback?: boolean;
-  /** 热点宝近 7 天五榜最终保留上限（不会扩大 OneAPI 单次上限）。 */
+  /** 热点宝所选统计周期五榜最终保留上限（不会扩大 OneAPI 单次上限）。 */
   hotspot_result_limit?: number;
 }
 
@@ -542,11 +567,12 @@ export interface CrawlerCandidateResult {
   comments: number | null;
   shares: number | null;
   favorites: number | null;
-  /** 热点宝的 play_cnt，语义为近 7 天榜单新增播放量。 */
+  /** 热点宝的 play_cnt，语义由 hotspot_window_hours 决定。 */
   new_plays?: number | null;
-  /** 热点宝的 like_cnt，语义为近 7 天榜单新增点赞量。 */
+  /** 热点宝的 like_cnt，语义由 hotspot_window_hours 决定。 */
   new_likes?: number | null;
   duration_seconds?: number | null;
+  hotspot_window_hours?: number | null;
   hotspot_list_labels?: string[];
   component_scores: Record<string, number | null>;
   data_quality_warnings: string[];
@@ -675,12 +701,15 @@ export interface CrawlerPlatformRun {
   started_at: string | null;
   finished_at: string | null;
   candidates: CrawlerCandidateResult[];
+  /** 热点宝主榜为空时，返回严格相关但新增播放量不超过 1,000 的参考视频。 */
+  low_incremental_candidates?: CrawlerCandidateResult[];
 }
 
 export interface CrawlerBatchResponse {
   batch_id: string;
   keyword: string;
   published_window_days: number;
+  hotspot_window_hours?: number | null;
   count_per_platform: number;
   provider: string;
   mode: string;
@@ -809,8 +838,21 @@ export interface PublishResponse {
   platform_url: string | null;
   is_mock: boolean;
   error_message: string | null;
+  action_required?: string | null;
+  final_publish_started_at?: string | null;
+  outcome_evidence?: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface PublishMetadataResponse {
+  task_id: string;
+  provider_name: string;
+  model_name: string;
+  is_mock: boolean;
+  title: string;
+  description: string;
+  tags: string[];
 }
 
 export interface PublishPlatformsResponse {
@@ -843,6 +885,8 @@ export interface PublishPreflightPlatform {
   manual_only: boolean;
   can_create_task: boolean;
   issue: string | null;
+  issue_code: "account_missing" | "account_not_ready" | string | null;
+  account_status: "needs_login" | "browser_open" | "ready" | "missing" | string | null;
   missing_configuration: string[];
   manual_steps: string[];
 }
@@ -860,6 +904,8 @@ export interface PublishAccount {
   name: string;
   status: "needs_login" | "browser_open" | "ready" | "error" | string;
   message: string;
+  auto_publish_authorized: boolean;
+  last_verified_at: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -887,6 +933,7 @@ export interface PublishAsset {
   path: string;
   size_bytes: number;
   updated_at?: number;
+  recommended_title?: string | null;
 }
 
 export interface PublishAssetListResponse {
@@ -953,6 +1000,9 @@ export interface AvatarCapability {
   estimated_seconds: number | null;
   missing_configuration: string[];
   profiles: AvatarProfile[];
+  supports_cloud_avatar_training: boolean;
+  supports_voice_cloning: boolean;
+  supports_voice_sample_upload: boolean;
 }
 
 export interface AvatarProfile {
@@ -972,6 +1022,10 @@ export interface AvatarAsset {
   name: string;
   preview_url: string | null;
   authorized: boolean;
+  preview_type: "image" | "video" | string;
+  status: "ready" | "training" | "failed" | string;
+  status_message: string | null;
+  source_type: string;
 }
 
 export interface AvatarJob {
@@ -980,6 +1034,7 @@ export interface AvatarJob {
   progress: number;
   stage: string;
   title: string;
+  video_name: string;
   script_text: string;
   avatar_id: string;
   avatar_name: string;
@@ -1007,6 +1062,8 @@ export interface AvatarJobCreateRequest {
   template_version_id?: string | null;
   source_task_id?: string | null;
   source_revision_id?: string | null;
+  video_name?: string | null;
+  keyword?: string | null;
   script_text: string;
   avatar_id: string;
   voice_id: string;
@@ -1083,7 +1140,7 @@ export interface VideoEditResponse {
 
 export interface VideoEditorSource {
   source_id: string;
-  source_type: "avatar" | "pipeline";
+  source_type: "avatar" | "pipeline" | "upload";
   source_task_id: string;
   title: string;
   file_name: string;
@@ -1135,6 +1192,7 @@ export interface VideoEditorAnalysis {
   subtitle_task_id?: string | null;
   subtitle_error?: string | null;
   content_advice?: string | null;
+  title_candidates?: string[];
 }
 
 export interface VideoEditorJob {
@@ -1148,10 +1206,83 @@ export interface VideoEditorJob {
   download_url: string | null;
   source_id: string | null;
   analysis_id: string | null;
+  publish_title: string | null;
 }
 
 export interface VideoEditorJobListResponse {
   items: VideoEditorJob[];
+  total: number;
+}
+
+export interface VideoEditorBatchItem {
+  item_id: string;
+  source_id: string;
+  title: string;
+  status: string;
+  analysis_id: string | null;
+  subtitle_task_id: string | null;
+  edit_task_id: string | null;
+  title_candidates: string[];
+  selected_title: string | null;
+  selected_bgm_id: string | null;
+  bgm_reason: string | null;
+  error_message: string | null;
+  confirmed_at: string | null;
+  analysis: VideoEditorAnalysis | null;
+  job: VideoEditorJob | null;
+}
+
+export interface VideoEditorBatch {
+  batch_id: string;
+  status: string;
+  target_platform: string;
+  subtitle_enabled: boolean;
+  subtitle_model: string;
+  bgm_enabled: boolean;
+  bgm_id: string | null;
+  bgm_volume: number;
+  bgm: VideoEditorBgmAsset | null;
+  items: VideoEditorBatchItem[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoEditorBatchListResponse {
+  items: VideoEditorBatch[];
+  total: number;
+}
+
+export interface VideoEditorBgmAsset {
+  asset_id: string;
+  title: string;
+  original_name: string;
+  media_type: string;
+  mood: string;
+  rights_holder: string;
+  rights_confirmed_at: string;
+  created_at: string;
+  duration_seconds: number;
+  size_bytes: number;
+  media_url: string;
+}
+
+export interface VideoEditorBgmListResponse {
+  items: VideoEditorBgmAsset[];
+  total: number;
+}
+
+export interface VideoEditorLocalModel {
+  model_name: "base" | "large-v3-turbo";
+  repository: string;
+  installed: boolean;
+  size_bytes: number;
+  device: "cpu";
+  compute_type: "int8";
+  loaded_lazily: boolean;
+}
+
+export interface VideoEditorLocalModelListResponse {
+  items: VideoEditorLocalModel[];
   total: number;
 }
 

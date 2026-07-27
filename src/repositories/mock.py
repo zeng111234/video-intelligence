@@ -58,6 +58,7 @@ class MockRepository:
         self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
         self._production_batches: dict[str, ProductionBatch] = {}
+        self._video_editor_batches = {}
         self._hot_words: dict[tuple[str, datetime], HotWordRecord] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
@@ -403,6 +404,7 @@ class MockRepository:
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
     ) -> PlatformSearchRun | None:
@@ -418,6 +420,7 @@ class MockRepository:
                 and run.finished_at >= since
                 and batch.keyword.casefold() == keyword.casefold()
                 and batch.published_window_days == published_window_days
+                and batch.hotspot_window_hours == hotspot_window_hours
                 and batch.requested_count_per_platform == requested_count
             ):
                 candidates.append(run)
@@ -562,6 +565,11 @@ class MockRepository:
     def delete_pipeline_run(self, run_id: str) -> bool:
         return self._pipeline_runs.pop(run_id, None) is not None
 
+    def delete_all_pipeline_runs(self) -> int:
+        deleted_count = len(self._pipeline_runs)
+        self._pipeline_runs.clear()
+        return deleted_count
+
     def save_production_batch(self, batch: ProductionBatch) -> None:
         self._production_batches[batch.batch_id] = batch
 
@@ -571,6 +579,19 @@ class MockRepository:
     def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]:
         return sorted(
             self._production_batches.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
+
+    def save_video_editor_batch(self, batch) -> None:
+        self._video_editor_batches[batch.batch_id] = batch
+
+    def get_video_editor_batch(self, batch_id: str):
+        return self._video_editor_batches.get(batch_id)
+
+    def list_video_editor_batches(self, limit: int = 100):
+        return sorted(
+            self._video_editor_batches.values(),
             key=lambda item: item.created_at,
             reverse=True,
         )[:limit]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -102,6 +102,30 @@ class EditJobCreateRequest(BaseModel):
     output_fps: int = Field(30, ge=15, le=60)
     output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
     subtitle_enabled: bool = True
+    publish_title: str | None = Field(None, max_length=100)
+
+
+class BatchCreateRequest(BaseModel):
+    source_ids: list[str] = Field(min_length=1, max_length=10)
+    target_platform: str = Field("douyin", pattern="^(douyin|kuaishou|wechat_channels|xiaohongshu)$")
+    subtitle_enabled: bool = True
+    subtitle_model: str = Field("large-v3-turbo", pattern="^(large-v3-turbo|base)$")
+    steps: list[WorkflowStepRequest] = Field(default_factory=list)
+    output_format: str = Field("mp4", pattern="^(mp4|webm|avi|mov)$")
+    output_resolution: str = Field("1080x1920", pattern="^\\d{2,5}x\\d{2,5}$")
+    output_fps: int = Field(30, ge=15, le=60)
+    output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
+    bgm_enabled: bool = False
+    bgm_id: str | None = None
+    bgm_volume: float = Field(0.24, ge=0, le=1)
+
+
+class BatchItemIdsRequest(BaseModel):
+    item_ids: list[str] = Field(min_length=1, max_length=10)
+
+
+class BatchItemTitleRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=100)
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +200,79 @@ def list_sources(workflow: VideoEditorWorkflowService = Depends(get_workflow_ser
     return {"items": items, "total": len(items)}
 
 
+@router.post("/uploads")
+async def upload_sources(
+    files: list[UploadFile] = File(..., description="已授权的 MP4 / MOV 素材"),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="单次最多上传 10 条素材。")
+    items = []
+    try:
+        for file in files:
+            if not file.filename:
+                raise VideoEditorWorkflowError("上传文件名不能为空。")
+            items.append(
+                workflow.upload_source(
+                    file_name=file.filename,
+                    media_type=file.content_type or "video/mp4",
+                    media_bytes=await file.read(),
+                    rights_confirmed=rights_confirmed,
+                    rights_holder=rights_holder,
+                )
+            )
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/bgm")
+def list_bgm(workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    items = workflow.list_bgm_assets()
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/bgm")
+async def upload_bgm(
+    file: UploadFile = File(..., description="已授权的背景音乐"),
+    mood: str = Form("通用"),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="背景音乐文件名不能为空。")
+    try:
+        return workflow.upload_bgm(
+            file_name=file.filename,
+            media_type=file.content_type or "audio/mpeg",
+            media_bytes=await file.read(),
+            mood=mood,
+            rights_confirmed=rights_confirmed,
+            rights_holder=rights_holder,
+        )
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/bgm/{asset_id}/media")
+def get_bgm_media(
+    asset_id: str,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        asset = workflow.resolve_bgm_asset(asset_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    return FileResponse(
+        asset["_path"],
+        media_type=asset["media_type"],
+        filename=asset["original_name"],
+    )
+
+
 @router.get("/sources/{source_id}/media")
 def get_source_media(source_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
     try:
@@ -194,6 +291,86 @@ def create_analysis(
     try:
         task = workflow.create_analysis(**body.model_dump())
         return workflow.get_analysis(task.task_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/batches")
+def create_batch(
+    body: BatchCreateRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return workflow.create_batch(
+            source_ids=body.source_ids,
+            target_platform=body.target_platform,
+            subtitle_enabled=body.subtitle_enabled,
+            subtitle_model=body.subtitle_model,
+            steps=[item.model_dump() for item in body.steps],
+            output_format=body.output_format,
+            output_resolution=body.output_resolution,
+            output_fps=body.output_fps,
+            output_bitrate=body.output_bitrate,
+            bgm_enabled=body.bgm_enabled,
+            bgm_id=body.bgm_id,
+            bgm_volume=body.bgm_volume,
+        )
+    except (VideoEditorWorkflowError, ValueError) as exc:
+        raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
+
+
+@router.get("/batches")
+def list_batches(limit: int = 20, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    limit = max(1, min(limit, 100))
+    items = workflow.list_batches(limit=limit)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/batches/{batch_id}")
+def get_batch(batch_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.get_batch(batch_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/batches/{batch_id}/items/{item_id}/continue")
+def continue_batch_item(batch_id: str, item_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.continue_batch_item(batch_id, item_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.put("/batches/{batch_id}/items/{item_id}/title")
+def select_batch_item_title(
+    batch_id: str,
+    item_id: str,
+    body: BatchItemTitleRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return workflow.select_batch_item_title(batch_id, item_id, body.title)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/batches/{batch_id}/items/{item_id}/retry")
+def retry_batch_item(batch_id: str, item_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
+    try:
+        return workflow.retry_batch_item(batch_id, item_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.post("/batches/{batch_id}/confirm-results")
+def confirm_batch_results(
+    batch_id: str,
+    body: BatchItemIdsRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        return workflow.confirm_batch_results(batch_id, body.item_ids)
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
 
@@ -228,6 +405,7 @@ def create_edit_job(
             output_fps=body.output_fps,
             output_bitrate=body.output_bitrate,
             subtitle_enabled=body.subtitle_enabled,
+            publish_title=body.publish_title,
         )
         return workflow.get_job(task.task_id)
     except (VideoEditorWorkflowError, ValueError) as exc:
@@ -318,6 +496,24 @@ def capabilities(
 ):
     """获取视频编辑器能力（含 AI 步骤支持状态）。"""
     return service.capabilities()
+
+
+@router.get("/models")
+def local_models():
+    from src.resources import list_asr_model_statuses
+
+    items = list_asr_model_statuses()
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/models/{model_name}/prepare")
+def prepare_local_model(model_name: str):
+    from src.resources import prepare_asr_model
+
+    try:
+        return prepare_asr_model(model_name)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/step-kinds")

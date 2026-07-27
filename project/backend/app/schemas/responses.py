@@ -22,11 +22,24 @@ class CandidateItem(BaseModel):
     heat_level: str = ""
     source_url: str | None = None
     published_at: datetime | None = None
+    observed_at: datetime | None = None
+    publication_time_state: str = "platform"
+    official_hot: bool = False
+    official_rank: int | None = None
+    snapshot_count: int = 0
+    growth_window_hours: float | None = None
+    heat_reasons: list[str] = Field(default_factory=list)
+
+
+class CandidateCategoryOption(BaseModel):
+    value: str
+    count: int
 
 
 class CandidateListResponse(BaseModel):
     items: list[CandidateItem]
     total: int
+    category_options: list[CandidateCategoryOption] = Field(default_factory=list)
 
 
 class TranscriptionResponse(BaseModel):
@@ -42,6 +55,12 @@ class TranscriptionResponse(BaseModel):
     duration_seconds: float | None = None
     approved_revision_id: str | None = None
     low_confidence_count: int = 0
+    is_mock: bool = False
+    auto_reviewed: bool = False
+    uncertain_segment_count: int = 0
+    secondary_asr_count: int = 0
+    llm_review_count: int = 0
+    auto_review_error: str | None = None
     segments: list[dict[str, Any]] = Field(default_factory=list)
     error_message: str | None = None
     created_at: datetime | None = None

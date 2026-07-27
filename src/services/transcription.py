@@ -73,10 +73,12 @@ class TranscriptionService:
         *,
         model_loader=load_asr_model,
         command_runner=subprocess.run,
+        transcript_reviewer: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.repository = repository
         self.model_loader = model_loader
         self.command_runner = command_runner
+        self.transcript_reviewer = transcript_reviewer
 
     def create_task(
         self,
@@ -177,26 +179,41 @@ class TranscriptionService:
                     progress=50,
                     on_progress=on_progress,
                 )
-                segments, language = self._transcribe(
+                model = self._load_asr_model(model_name)
+                segments, language = self._transcribe_with_model(
+                    model,
                     wav_path,
-                    model_name,
                     normalized_hotwords,
                     language=language,
                 )
                 self._validate_segments(segments)
+                task = self._update_task(
+                    task,
+                    stage="低置信片段AI口播修订中",
+                    progress=75,
+                    on_progress=on_progress,
+                )
+                auto_segments, review_summary = self._auto_review_segments(
+                    model,
+                    wav_path,
+                    segments,
+                    language=language,
+                )
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
-                    "stage": "待校对",
+                    "stage": "AI口播成稿",
                     "progress": 100,
                     "updated_at": datetime.now().astimezone(),
                     "elapsed_seconds": round(monotonic() - started, 2),
                     "segments": segments,
                     "language": language,
+                    **review_summary,
                 }
             )
             self._save_task(task, on_progress)
-            self.save_revision(task.task_id, segments, reviewer=rights_holder)
+            _, task = self._save_auto_revision(task, auto_segments)
+            self._save_task(task, on_progress)
             return task
         except Exception as exc:
             safe_error = self._safe_error(exc, task.task_id)
@@ -304,6 +321,20 @@ class TranscriptionService:
         if result.returncode != 0 or not wav_path.exists():
             raise MediaValidationError("音频提取失败，请检查媒体文件。")
 
+    def _load_asr_model(self, model_name: str) -> Any:
+        try:
+            return retry_with_policy(
+                lambda: self.model_loader(model_name),
+                policy=RetryPolicy(max_attempts=2, base_delay=1.0),
+                retry_for=(ConnectionError, TimeoutError, OSError, RuntimeError),
+                error_message="识别模型加载失败，已自动重试 1 次；请稍后重新上传。",
+            )
+        except ExternalServiceError as exc:
+            raise TranscriptionError(
+                "识别模型加载失败，已自动重试 1 次；请稍后重新上传。",
+                code="model_unavailable",
+            ) from exc.__cause__
+
     def _transcribe(
         self,
         wav_path: Path,
@@ -312,18 +343,17 @@ class TranscriptionService:
         *,
         language: str = "zh",
     ) -> tuple[list[TranscriptSegment], str]:
-        try:
-            model = retry_with_policy(
-                lambda: self.model_loader(model_name),
-                policy=RetryPolicy(max_attempts=3, base_delay=1.0),
-                retry_for=(ConnectionError, TimeoutError, OSError, RuntimeError),
-                error_message="识别模型加载失败，已自动重试 2 次；请稍后重新上传。",
-            )
-        except ExternalServiceError as exc:
-            raise TranscriptionError(
-                "识别模型加载失败，已自动重试 2 次；请稍后重新上传。",
-                code="model_unavailable",
-            ) from exc.__cause__
+        model = self._load_asr_model(model_name)
+        return self._transcribe_with_model(model, wav_path, hotwords, language=language)
+
+    def _transcribe_with_model(
+        self,
+        model: Any,
+        wav_path: Path,
+        hotwords: str = "",
+        *,
+        language: str = "zh",
+    ) -> tuple[list[TranscriptSegment], str]:
         try:
             options: dict[str, Any] = {"vad_filter": True, "beam_size": 5}
             if language != "auto":
@@ -354,6 +384,194 @@ class TranscriptionService:
         if not segments:
             raise MediaValidationError("没有识别到有效语音内容。")
         return segments, str(getattr(info, "language", "zh"))
+
+    def _extract_review_clip(
+        self,
+        wav_path: Path,
+        segment: TranscriptSegment,
+        index: int,
+    ) -> Path:
+        assert segment.start is not None and segment.end is not None
+        clip_start = max(0.0, segment.start - 0.6)
+        clip_duration = max(0.1, (segment.end - segment.start) + 1.2)
+        clip_path = wav_path.parent / f"review-{index}.wav"
+        result = self.command_runner(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-ss",
+                f"{clip_start:.3f}",
+                "-t",
+                f"{clip_duration:.3f}",
+                "-i",
+                str(wav_path),
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                "-y",
+                str(clip_path),
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0 or not clip_path.exists():
+            raise TranscriptionError(
+                "低置信片段二次识别失败。", code="segment_rerecognition_failed"
+            )
+        return clip_path
+
+    @staticmethod
+    def _candidate_from_clip(
+        model: Any, clip_path: Path, language: str
+    ) -> tuple[str, float] | None:
+        options: dict[str, Any] = {
+            "vad_filter": False,
+            "beam_size": 8,
+            "condition_on_previous_text": False,
+        }
+        if language != "auto":
+            options["language"] = language
+        raw_segments, _ = model.transcribe(str(clip_path), **options)
+        items = [
+            item for item in raw_segments if str(getattr(item, "text", "")).strip()
+        ]
+        if not items:
+            return None
+        text = "".join(str(item.text).strip() for item in items)
+        confidence = max(
+            max(0.0, min(1.0, math.exp(float(item.avg_logprob)))) for item in items
+        )
+        return text, confidence
+
+    @staticmethod
+    def _normalized_transcript_text(value: str) -> str:
+        return re.sub(r"[\s，。！？、,.!?]", "", value).casefold()
+
+    @classmethod
+    def _has_sensitive_disagreement(cls, candidates: list[str]) -> bool:
+        pattern = re.compile(r"\d+(?:\.\d+)?(?:元|块|%|号|岁|年|月|日|次|公里|斤)?")
+        values = [
+            {match.group(0) for match in pattern.finditer(item)} for item in candidates
+        ]
+        return len({tuple(sorted(value)) for value in values}) > 1
+
+    def _call_transcript_reviewer(
+        self,
+        *,
+        previous_text: str,
+        next_text: str,
+        candidates: list[str],
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if self.transcript_reviewer is None:
+            return None, "低置信口播修订未配置，已使用本地识别最佳结果。"
+        for attempt in range(2):
+            try:
+                result = self.transcript_reviewer(
+                    previous_text=previous_text,
+                    next_text=next_text,
+                    candidates=candidates,
+                )
+                if not isinstance(result, dict):
+                    raise ValueError("无效的AI复核结果")
+                return result, None
+            except Exception as exc:
+                retryable = bool(getattr(exc, "retryable", False)) or isinstance(
+                    exc, (ConnectionError, TimeoutError)
+                )
+                if attempt == 0 and retryable:
+                    continue
+                return None, "低置信口播修订不可用，已使用本地识别最佳结果。"
+        return None, "低置信口播修订不可用，已使用本地识别最佳结果。"
+
+    def _auto_review_segments(
+        self,
+        model: Any,
+        wav_path: Path,
+        segments: list[TranscriptSegment],
+        *,
+        language: str,
+    ) -> tuple[list[TranscriptSegment], dict[str, Any]]:
+        reviewed: list[TranscriptSegment] = []
+        secondary_asr_count = 0
+        llm_review_count = 0
+        uncertain_segment_count = 0
+        review_error: str | None = None
+        for index, segment in enumerate(segments):
+            confidence = segment.confidence or 0.0
+            if confidence >= 0.75 or segment.start is None or segment.end is None:
+                reviewed.append(
+                    segment.model_copy(
+                        update={
+                            "needs_review": False,
+                            "quality_status": "accepted",
+                            "quality_source": "primary_asr",
+                        }
+                    )
+                )
+                continue
+
+            candidates = [segment.text]
+            secondary_confidence = confidence
+            try:
+                clip_path = self._extract_review_clip(wav_path, segment, index)
+                retry_candidate = self._candidate_from_clip(model, clip_path, language)
+                if retry_candidate is not None:
+                    secondary_asr_count += 1
+                    retry_text, secondary_confidence = retry_candidate
+                    if self._normalized_transcript_text(
+                        retry_text
+                    ) != self._normalized_transcript_text(segment.text):
+                        candidates.append(retry_text)
+            except Exception:
+                review_error = "部分低置信片段未能完成二次识别，已保留首次识别结果。"
+
+            decision, decision_error = self._call_transcript_reviewer(
+                previous_text=segments[index - 1].text if index else "",
+                next_text=segments[index + 1].text if index + 1 < len(segments) else "",
+                candidates=candidates,
+            )
+            if decision_error:
+                review_error = decision_error
+            if decision is not None:
+                llm_review_count += 1
+            corrected_text = str((decision or {}).get("corrected_text") or "").strip()
+            if not corrected_text:
+                uncertain_segment_count += 1
+                corrected_text = candidates[0]
+            reviewed.append(
+                segment.model_copy(
+                    update={
+                        "text": corrected_text,
+                        "confidence": max(confidence, secondary_confidence),
+                        "needs_review": False,
+                        "quality_status": "llm_rewritten"
+                        if decision is not None
+                        else "uncertain",
+                        "quality_source": "llm_context"
+                        if decision is not None
+                        else "secondary_asr",
+                        "quality_note": str(
+                            (decision or {}).get("note")
+                            or decision_error
+                            or "低置信片段已保留本地识别最佳结果。"
+                        )[:120],
+                        "alternatives": candidates,
+                    }
+                )
+            )
+        return reviewed, {
+            "auto_reviewed": True,
+            "uncertain_segment_count": uncertain_segment_count,
+            "secondary_asr_count": secondary_asr_count,
+            "llm_review_count": llm_review_count,
+            "auto_review_error": review_error,
+        }
 
     def _update_task(
         self,
@@ -402,7 +620,10 @@ class TranscriptionService:
     def _validate_segments(segments: list[TranscriptSegment]) -> None:
         if not segments:
             raise TranscriptionError("转写结果不能为空。", code="empty_transcript")
-        has_timing = [segment.start is not None and segment.end is not None for segment in segments]
+        has_timing = [
+            segment.start is not None and segment.end is not None
+            for segment in segments
+        ]
         if any(has_timing) and not all(has_timing):
             raise TranscriptionError(
                 "同一份文案不能混用有时间轴和无时间轴片段。",
@@ -467,6 +688,7 @@ class TranscriptionService:
             created_at=now,
             updated_at=now,
             reviewer=reviewer,
+            approval_mode="manual",
             language=task.language or "zh",
             model_name=task.model_name or "base",
             media_sha256=task.media_sha256 or "",
@@ -497,6 +719,50 @@ class TranscriptionService:
             )
         return revision
 
+    def _save_auto_revision(
+        self,
+        task: TranscriptionTask,
+        segments: list[TranscriptSegment],
+    ) -> tuple[TranscriptRevision, TranscriptionTask]:
+        """保存 AI 自动成稿，和人工版本保持可追溯的明确边界。"""
+        revisions = self.repository.list_transcript_revisions(task.task_id)
+        now = datetime.now().astimezone()
+        revision = TranscriptRevision(
+            revision_id=f"revision-{uuid4().hex[:12]}",
+            task_id=task.task_id,
+            revision_number=len(revisions) + 1,
+            status=TranscriptStatus.APPROVED,
+            created_at=now,
+            updated_at=now,
+            reviewer="AI自动质检",
+            approval_mode="ai_auto",
+            language=task.language or "zh",
+            model_name=task.model_name or "base",
+            media_sha256=task.media_sha256 or "",
+            original_segments=task.segments,
+            corrected_segments=segments,
+        )
+        try:
+            self.repository.save_transcript_revision(revision)
+        except ValueError as exc:
+            raise TranscriptionError(
+                "AI自动成稿保存冲突，请刷新后重试。",
+                code="revision_conflict",
+                task_id=task.task_id,
+            ) from exc
+        updated_task = task.model_copy(
+            update={
+                "approved_revision_id": revision.revision_id,
+                "stage": "AI自动成稿",
+                "outputs": {
+                    "transcript.txt": "ready",
+                    "transcript.json": "ready",
+                    "subtitles.srt": "ready",
+                },
+            }
+        )
+        return revision, updated_task
+
     def import_manual_text(
         self,
         *,
@@ -517,11 +783,11 @@ class TranscriptionService:
             raise TranscriptionError("请先确认拥有媒体处理权。", code="rights_required")
         owner = rights_holder.strip()
         if not owner:
-            raise TranscriptionError("请填写权利确认人。", code="rights_holder_required")
+            raise TranscriptionError(
+                "请填写权利确认人。", code="rights_holder_required"
+            )
         paragraphs = [
-            item.strip()
-            for item in re.split(r"\n\s*\n", text.strip())
-            if item.strip()
+            item.strip() for item in re.split(r"\n\s*\n", text.strip()) if item.strip()
         ]
         if not paragraphs:
             raise TranscriptionError("请粘贴需要回填的文案。", code="empty_transcript")
@@ -590,6 +856,7 @@ class TranscriptionService:
             segments=demo_segments(),
             stage="演示完成",
             is_mock=True,
+            model_name="演示数据",
         )
         self.repository.save_task(task)
         return task

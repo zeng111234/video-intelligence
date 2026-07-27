@@ -11,7 +11,10 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import re
 import shutil
+import subprocess
+import tempfile
 from typing import Any
 from uuid import uuid4
 
@@ -20,7 +23,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from project.backend.app.core.deps import get_avatar_service
-from src.adapters.avatar import PROJECT_ROOT
+from src.adapters.avatar import AvatarProviderError, PROJECT_ROOT, ShuyingLegacyAvatarProvider
 from src.models import (
     AvatarAsset,
     AvatarAssetKind,
@@ -37,6 +40,10 @@ AVATAR_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a", ".webm"}
 MAX_AVATAR_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_VOICE_UPLOAD_BYTES = 50 * 1024 * 1024
+CLOUD_AVATAR_UPLOAD_EXTENSIONS = {".mp4", ".mov"}
+CLOUD_VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a"}
+MAX_CLOUD_AVATAR_UPLOAD_BYTES = 500 * 1024 * 1024
+MAX_CLOUD_VOICE_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 class AvatarJobCreate(BaseModel):
@@ -46,6 +53,8 @@ class AvatarJobCreate(BaseModel):
     template_version_id: str | None = None
     source_task_id: str | None = None
     source_revision_id: str | None = None
+    video_name: str | None = Field(default=None, max_length=100)
+    keyword: str | None = Field(default=None, max_length=100)
     script_text: str = Field(..., min_length=1)
     avatar_id: str = Field(..., min_length=1)
     voice_id: str = Field(..., min_length=1)
@@ -79,6 +88,7 @@ class AvatarJobResponse(BaseModel):
     progress: int
     stage: str
     title: str
+    video_name: str
     script_text: str
     avatar_id: str
     avatar_name: str
@@ -190,6 +200,90 @@ def upload_asset(
     )
 
 
+@router.post("/assets/cloud-avatar", response_model=AvatarAsset)
+def train_cloud_avatar(
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    service: AvatarService = Depends(get_avatar_service),
+):
+    capability = service.capabilities()
+    if not capability.supports_cloud_avatar_training:
+        raise HTTPException(status_code=503, detail="公司云形象训练线路尚未配置。")
+    if not rights_confirmed:
+        raise HTTPException(status_code=400, detail="必须确认拥有训练视频中的肖像授权。")
+    display_name = name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="请输入形象名称。")
+    path = _stage_cloud_upload(
+        file,
+        allowed_extensions=CLOUD_AVATAR_UPLOAD_EXTENSIONS,
+        max_bytes=MAX_CLOUD_AVATAR_UPLOAD_BYTES,
+        label="训练视频",
+    )
+    try:
+        _validate_cloud_avatar_video(path)
+        provider = service.provider
+        if not isinstance(provider, ShuyingLegacyAvatarProvider):
+            raise HTTPException(status_code=503, detail="当前数字人供应商不支持云形象训练。")
+        return provider.create_cloud_avatar(
+            name=display_name, training_video_path=path, filename=file.filename or "training.mp4"
+        )
+    except AvatarProviderError as exc:
+        status_code = 503 if exc.kind.value == "authorization" else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@router.post("/assets/cloud-voice", response_model=AvatarAsset)
+def train_cloud_voice(
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    service: AvatarService = Depends(get_avatar_service),
+):
+    capability = service.capabilities()
+    if not capability.supports_voice_sample_upload:
+        raise HTTPException(status_code=503, detail="公司云数字人服务尚未配置。")
+    if not rights_confirmed:
+        raise HTTPException(status_code=400, detail="必须确认拥有声音样本的使用授权。")
+    display_name = name.strip()
+    if not display_name:
+        raise HTTPException(status_code=400, detail="请输入声音名称。")
+    path = _stage_cloud_upload(
+        file,
+        allowed_extensions=CLOUD_VOICE_UPLOAD_EXTENSIONS,
+        max_bytes=MAX_CLOUD_VOICE_UPLOAD_BYTES,
+        label="声音样本",
+    )
+    try:
+        _validate_cloud_voice_sample(path)
+        provider = service.provider
+        if not isinstance(provider, ShuyingLegacyAvatarProvider):
+            raise HTTPException(status_code=503, detail="当前数字人供应商不支持声音克隆。")
+        mime_type = mimetypes.guess_type(file.filename or "")[0] or "audio/mpeg"
+        if capability.supports_voice_cloning:
+            return provider.create_voice_clone(
+                name=display_name,
+                sample_path=path,
+                filename=file.filename or "voice-sample.mp3",
+                mime_type=mime_type,
+            )
+        return provider.store_pending_voice_sample(
+            name=display_name,
+            sample_path=path,
+            filename=file.filename or "voice-sample.mp3",
+        )
+    except AvatarProviderError as exc:
+        status_code = 503 if exc.kind.value == "authorization" else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    finally:
+        path.unlink(missing_ok=True)
+
+
 @router.get("/assets/{asset_id}/media")
 def get_asset_media(asset_id: str):
     manifest_path = _local_assets_manifest_path()
@@ -211,6 +305,8 @@ def create_job(
     avatar_name, voice_name = _asset_names(service, body.avatar_id, body.voice_id)
     request = AvatarSubmitRequest(
         script_text=body.script_text,
+        video_name=body.video_name,
+        keyword=body.keyword,
         source_task_id=body.source_task_id or body.industry_config_id,
         source_revision_id=body.source_revision_id or body.template_version_id,
         avatar_id=body.avatar_id,
@@ -268,7 +364,9 @@ def get_job_media(task_id: str, service: AvatarService = Depends(get_avatar_serv
     if not path.exists():
         raise HTTPException(status_code=404, detail="视频文件不存在。")
     return FileResponse(
-        path, media_type=task.result_mime or "video/mp4", filename=f"{task_id}.mp4"
+        path,
+        media_type=task.result_mime or "video/mp4",
+        filename=f"{_safe_download_name(task.title)}.mp4",
     )
 
 
@@ -355,6 +453,9 @@ def get_config(service: AvatarService = Depends(get_avatar_service)) -> dict[str
         "provider_name": capability.provider_name,
         "enabled": capability.enabled,
         "supports_upload": capability.provider_name == "local_avatar",
+        "supports_cloud_avatar_training": capability.supports_cloud_avatar_training,
+        "supports_voice_cloning": capability.supports_voice_cloning,
+        "supports_voice_sample_upload": capability.supports_voice_sample_upload,
         "supports_download": capability.enabled and capability.mode.value != "sandbox",
         "missing_configuration": capability.missing_configuration,
         "description": capability.display_name,
@@ -376,6 +477,118 @@ def _asset_names(
         if item.kind == AvatarAssetKind.VOICE
     }
     return avatars.get(avatar_id, avatar_id), voices.get(voice_id, voice_id)
+
+
+def _stage_cloud_upload(
+    file: UploadFile,
+    *,
+    allowed_extensions: set[str],
+    max_bytes: int,
+    label: str,
+) -> Path:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in allowed_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label}格式不支持，请上传 {'、'.join(sorted(allowed_extensions))}。",
+        )
+    upload_root = (PROJECT_ROOT / "data" / "avatar_uploads").resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix="cloud-training-", suffix=suffix, dir=upload_root, delete=False
+    ) as temporary:
+        shutil.copyfileobj(file.file, temporary, length=1024 * 1024)
+        path = Path(temporary.name).resolve()
+    if upload_root not in path.parents:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="上传路径越界。")
+    if not path.stat().st_size:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"{label}为空。")
+    if path.stat().st_size > max_bytes:
+        path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"{label}超过大小限制。")
+    return path
+
+
+def _ffprobe_json(path: Path) -> dict[str, Any]:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise HTTPException(status_code=503, detail="服务器未安装 FFprobe，不能安全校验训练素材。")
+    completed = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration:stream=codec_type,width,height,duration",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise HTTPException(status_code=400, detail="无法读取训练素材，请确认文件没有损坏。")
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="训练素材元数据无效。") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="训练素材元数据无效。")
+    return payload
+
+
+def _duration_seconds(payload: dict[str, Any]) -> float:
+    values: list[Any] = [payload.get("format", {}).get("duration")]
+    values.extend(
+        stream.get("duration")
+        for stream in payload.get("streams", [])
+        if isinstance(stream, dict)
+    )
+    for value in values:
+        try:
+            duration = float(value)
+        except (TypeError, ValueError):
+            continue
+        if duration > 0:
+            return duration
+    raise HTTPException(status_code=400, detail="训练素材缺少有效时长。")
+
+
+def _validate_cloud_avatar_video(path: Path) -> None:
+    payload = _ffprobe_json(path)
+    duration = _duration_seconds(payload)
+    streams = [
+        item
+        for item in payload.get("streams", [])
+        if isinstance(item, dict) and item.get("codec_type") == "video"
+    ]
+    if not streams:
+        raise HTTPException(status_code=400, detail="训练视频未检测到视频轨。")
+    video = streams[0]
+    try:
+        width, height = int(video.get("width")), int(video.get("height"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="训练视频缺少有效分辨率。") from exc
+    if not 30 <= duration <= 30 * 60:
+        raise HTTPException(status_code=400, detail="训练视频时长必须在 30 秒至 30 分钟之间。")
+    if min(width, height) < 360 or max(width, height) > 4096:
+        raise HTTPException(status_code=400, detail="训练视频分辨率必须在 360p 至 4K 之间。")
+
+
+def _validate_cloud_voice_sample(path: Path) -> None:
+    payload = _ffprobe_json(path)
+    if not any(
+        isinstance(item, dict) and item.get("codec_type") == "audio"
+        for item in payload.get("streams", [])
+    ):
+        raise HTTPException(status_code=400, detail="声音样本未检测到音频轨。")
+    if _duration_seconds(payload) > 30:
+        raise HTTPException(status_code=400, detail="声音样本必须在 30 秒以内。")
 
 
 def _local_assets_manifest_path() -> Path:
@@ -440,6 +653,7 @@ def _job_response(task: AvatarTask) -> AvatarJobResponse:
         stage=task.stage,
         title=task.title,
         script_text=task.script_text,
+        video_name=task.title,
         avatar_id=task.avatar_id,
         avatar_name=task.avatar_name,
         voice_id=task.voice_id,
@@ -460,6 +674,11 @@ def _job_response(task: AvatarTask) -> AvatarJobResponse:
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+
+
+def _safe_download_name(name: str) -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|]+', "_", name).strip(". ")
+    return cleaned[:100] or "数字人视频"
 
 
 def _legacy_response(

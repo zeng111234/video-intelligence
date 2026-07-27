@@ -105,6 +105,7 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     OUTCOME_UNKNOWN = "outcome_unknown"
+    PAUSED = "paused"
 
 
 class TranscriptStatus(StrEnum):
@@ -184,6 +185,7 @@ class PublishPlatform(StrEnum):
     KUAISHOU = "kuaishou"
     WECHAT_CHANNELS = "wechat_channels"
     XIAOHONGSHU = "xiaohongshu"
+    BILIBILI = "bilibili"
 
 
 class PublishStatus(StrEnum):
@@ -194,6 +196,7 @@ class PublishStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     OUTCOME_UNKNOWN = "outcome_unknown"
+    ACTION_REQUIRED = "action_required"
 
 
 class PipelineStage(StrEnum):
@@ -408,6 +411,8 @@ class ProviderSearchPage(BaseModel):
     platform: Platform
     provider: str
     items: list[ProviderSearchItem] = Field(default_factory=list)
+    # 仅热点宝使用：标题相关、时长有效，但新增播放量未超过主榜阈值的候选。
+    low_incremental_items: list[ProviderSearchItem] = Field(default_factory=list)
     observed_at: datetime
     request_id: str
     api_call_count: int = Field(default=0, ge=0, le=1)
@@ -478,6 +483,10 @@ class AvatarCapability(BaseModel):
     estimated_seconds: int | None = Field(default=None, ge=0)
     missing_configuration: list[str] = Field(default_factory=list)
     profiles: list["AvatarProfile"] = Field(default_factory=list)
+    # 素材录入能力独立于供应商名称，前端不应通过 provider_name 猜测。
+    supports_cloud_avatar_training: bool = False
+    supports_voice_cloning: bool = False
+    supports_voice_sample_upload: bool = False
 
 
 class AvatarProfile(BaseModel):
@@ -499,10 +508,18 @@ class AvatarAsset(BaseModel):
     name: str = Field(min_length=1)
     preview_url: str | None = None
     authorized: bool = False
+    # image/video 决定前端的媒体元素；不能再通过 URL 后缀猜测。
+    preview_type: str = "image"
+    # ready 之外的素材可展示训练进度，但不可用于提交生成任务。
+    status: str = "ready"
+    status_message: str | None = None
+    source_type: str = "built_in"
 
 
 class AvatarSubmitRequest(BaseModel):
     script_text: str = Field(min_length=1)
+    video_name: str | None = Field(default=None, max_length=100)
+    keyword: str | None = Field(default=None, max_length=100)
     source_task_id: str | None = None
     source_revision_id: str | None = None
     avatar_id: str = Field(min_length=1)
@@ -666,6 +683,8 @@ class SearchBatch(BaseModel):
     keyword: str = Field(min_length=2, max_length=50)
     # 0 表示不限发布时间；保留 1/7 以兼容历史批次。
     published_window_days: int = Field(default=0)
+    # 热点宝的榜单统计周期，和发布时间筛选分开保存。
+    hotspot_window_hours: int | None = None
     monitoring_policy: str = "low_cost_three_point_v1"
     sampling_offsets_hours: list[int] = Field(default_factory=lambda: [0, 6, 24])
     requested_count_per_platform: int = Field(default=10, ge=1, le=100)
@@ -692,6 +711,8 @@ class SearchBatch(BaseModel):
     def validate_window(self):
         if self.published_window_days not in {0, 1, 7}:
             raise ValueError("发布时间范围只支持不限、近 1 天或近 7 天。")
+        if self.hotspot_window_hours not in {None, 1, 24, 72, 168}:
+            raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
         return self
 
 
@@ -726,6 +747,7 @@ class PlatformSearchRun(BaseModel):
     irrelevant_count: int = Field(default=0, ge=0, le=100)
     duration_filtered_count: int = Field(default=0, ge=0)
     incremental_play_filtered_count: int = Field(default=0, ge=0)
+    low_incremental_items: list[ProviderSearchItem] = Field(default_factory=list)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     payload_diagnostic: str | None = None
@@ -804,6 +826,11 @@ class TranscriptSegment(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     needs_review: bool = False
     reviewed: bool = False
+    # AI 自动质检结果；保留旧的 needs_review/reviewed 以兼容历史人工校对版本。
+    quality_status: str = "pending"
+    quality_source: str = "primary_asr"
+    quality_note: str | None = None
+    alternatives: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_time_range(self):
@@ -824,6 +851,7 @@ class TranscriptRevision(BaseModel):
     created_at: datetime
     updated_at: datetime
     reviewer: str | None = None
+    approval_mode: str = "manual"
     language: str = "zh"
     model_name: str = "base"
     media_sha256: str
@@ -884,6 +912,11 @@ class TranscriptionTask(TaskRecord):
     source_url: str | None = None
     timing_available: bool = True
     approved_revision_id: str | None = None
+    auto_reviewed: bool = False
+    uncertain_segment_count: int = Field(default=0, ge=0)
+    secondary_asr_count: int = Field(default=0, ge=0)
+    llm_review_count: int = Field(default=0, ge=0)
+    auto_review_error: str | None = None
 
 
 class AvatarTask(TaskRecord):
@@ -1015,6 +1048,49 @@ class VideoEditTask(TaskRecord):
     source_avatar_task_id: str | None = None
 
 
+class VideoEditorBatchItem(BaseModel):
+    """智能剪辑自动批次中的单个素材状态。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    item_id: str = Field(default_factory=lambda: f"edit-item-{uuid4().hex[:12]}")
+    source_id: str
+    title: str = ""
+    status: str = "queued"
+    analysis_id: str | None = None
+    subtitle_task_id: str | None = None
+    edit_task_id: str | None = None
+    title_candidates: list[str] = Field(default_factory=list)
+    selected_title: str | None = None
+    selected_bgm_id: str | None = None
+    bgm_reason: str | None = None
+    error_message: str | None = None
+    confirmed_at: datetime | None = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class VideoEditorBatch(BaseModel):
+    """可恢复的自动剪辑批次。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    batch_id: str = Field(default_factory=lambda: f"edit-batch-{uuid4().hex[:12]}")
+    target_platform: str = "douyin"
+    subtitle_enabled: bool = True
+    subtitle_model: str = "large-v3-turbo"
+    bgm_enabled: bool = False
+    bgm_id: str | None = None
+    bgm_volume: float = Field(default=0.24, ge=0, le=1)
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+    output_format: str = "mp4"
+    output_resolution: str = "1080x1920"
+    output_fps: int = Field(default=30, ge=15, le=60)
+    output_bitrate: str = "4M"
+    items: list[VideoEditorBatchItem] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
 # ---------------------------------------------------------------------------
 # 发布
 # ---------------------------------------------------------------------------
@@ -1048,6 +1124,9 @@ class PublishTask(TaskRecord):
     provider_name: str = ""
     source_pipeline_run_id: str | None = None
     stage: str = "等待发布"
+    action_required: str | None = None
+    final_publish_started_at: datetime | None = None
+    outcome_evidence: str | None = None
 
 
 # ---------------------------------------------------------------------------

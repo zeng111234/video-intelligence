@@ -51,6 +51,35 @@ def fake_video(tmp_path: Path) -> Path:
     return v
 
 
+def test_background_music_uses_ducking_and_aac(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        if "-select_streams" in cmd:
+            return FakeCompletedProcess(0, "0\n", "")
+        if "format=duration" in cmd:
+            return FakeCompletedProcess(0, "12.0\n", "")
+        return FakeCompletedProcess(0, "", "")
+
+    bgm = tmp_path / "music.mp3"
+    bgm.write_bytes(b"audio")
+    editor = make_editor(command_runner=runner)
+    editor._apply_bgm(
+        fake_video(tmp_path),
+        tmp_path / "out.mp4",
+        {"bgm_path": str(bgm), "bgm_volume": 0.24, "ducking": True},
+    )
+
+    render_cmd = calls[-1]
+    filter_value = render_cmd[render_cmd.index("-filter_complex") + 1]
+    assert "sidechaincompress" in filter_value
+    assert "loudnorm=I=-23" in filter_value
+    assert "afade=t=in" in filter_value
+    assert "afade=t=out:st=11.200" in filter_value
+    assert render_cmd[render_cmd.index("-c:a") + 1] == "aac"
+
+
 # ---------------------------------------------------------------------------
 # _apply_ai_subtitle
 # ---------------------------------------------------------------------------

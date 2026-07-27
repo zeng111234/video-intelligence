@@ -353,6 +353,7 @@ class PipelineWorker:
         run = self.pipeline_service.update_stage(run, PipelineStage.AVATAR_GENERATION, TaskStatus.RUNNING)
         request = AvatarSubmitRequest(
             script_text=script,
+            keyword=run.keyword,
             source_task_id=copy_task.task_id,
             avatar_id=avatar.asset_id,
             voice_id=voice.asset_id,

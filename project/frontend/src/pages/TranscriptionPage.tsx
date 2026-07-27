@@ -5,7 +5,6 @@ import {
   Card,
   Checkbox,
   Col,
-  Collapse,
   Drawer,
   Empty,
   Input,
@@ -39,6 +38,7 @@ import {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createTranscriptionByUrl,
+  createCrawlerCandidateLinkTranscription,
   createCrawlerLinkTranscription,
   fallbackCrawlerLinkTranscription,
   getCrawlerLinkTranscriptionCapabilities,
@@ -52,7 +52,6 @@ import {
   listTranscriptions,
   listComplianceDrafts,
   listVoiceoverDrafts,
-  saveTranscriptionRevision,
   updateVoiceoverDraft,
   uploadAndTranscribe,
 } from "../api/client";
@@ -69,6 +68,22 @@ import { usePersistentState } from "../hooks/usePersistentState";
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
+const DEMO_LOW_CONFIDENCE_ORIGINAL = "先判断你是通勤、户外，还是长时间带妆。";
+const DEMO_LOW_CONFIDENCE_REWRITE = "先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。";
+
+function isDemoLlmRewrite(segment: TranscriptSegment, isMock: boolean | undefined) {
+  return Boolean(isMock && (
+    segment.quality_status === "llm_rewritten"
+    || segment.text === DEMO_LOW_CONFIDENCE_ORIGINAL
+  ));
+}
+
+function displaySegmentText(segment: TranscriptSegment, isMock: boolean | undefined) {
+  return isDemoLlmRewrite(segment, isMock) && segment.text === DEMO_LOW_CONFIDENCE_ORIGINAL
+    ? DEMO_LOW_CONFIDENCE_REWRITE
+    : segment.text;
+}
+
 const STATUS_COLOR: Record<string, string> = {
   queued: "default",
   pending: "default",
@@ -76,12 +91,6 @@ const STATUS_COLOR: Record<string, string> = {
   succeeded: "success",
   failed: "error",
 };
-
-interface SegmentDraft {
-  taskId: string;
-  serverUpdatedAt: string | null;
-  segments: TranscriptSegment[];
-}
 
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
@@ -120,13 +129,11 @@ export default function TranscriptionPage() {
   const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
-  const [segmentDrafts, setSegmentDrafts] = usePersistentState<Record<string, SegmentDraft>>("transcription_segment_drafts", {}, undefined, 1000);
   const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
   const [shareText, setShareText] = useState("");
   const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
   const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
   const [linkRightsConfirmed, setLinkRightsConfirmed] = useState(false);
-  const [reviewer, setReviewer] = usePersistentState("transcription_reviewer", "校对员");
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
   const [asrModel, setAsrModel] = usePersistentState("transcription_asr_model", "large-v3-turbo");
@@ -193,34 +200,13 @@ export default function TranscriptionPage() {
 
   const applyTask = useCallback((task: TranscriptionResponse, closeHistory = true) => {
     const serverSegments = normalizeSegments(task.segments);
-    const localDraft = segmentDrafts[task.task_id];
     setSelected(task);
     setSelectedTaskId(task.task_id);
-    if (localDraft && localDraft.serverUpdatedAt === task.updated_at) {
-      setSegments(localDraft.segments);
-    } else if (localDraft) {
-      Modal.confirm({
-        title: "发现本机校对草稿",
-        content: "服务端任务已更新，本机草稿可能基于旧版本。请选择恢复草稿或丢弃草稿。",
-        okText: "恢复草稿",
-        cancelText: "丢弃草稿",
-        onOk: () => setSegments(localDraft.segments),
-        onCancel: () => {
-          setSegmentDrafts((prev) => {
-            const next = { ...prev };
-            delete next[task.task_id];
-            return next;
-          });
-          setSegments(serverSegments);
-        },
-      });
-    } else {
-      setSegments(serverSegments);
-    }
+    setSegments(serverSegments);
     loadVoiceoverDrafts(task.task_id);
     loadComplianceDrafts(task.task_id);
     if (closeHistory) setHistoryOpen(false);
-  }, [loadComplianceDrafts, loadVoiceoverDrafts, segmentDrafts, setSegmentDrafts, setSelectedTaskId]);
+  }, [loadComplianceDrafts, loadVoiceoverDrafts, setSelectedTaskId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -244,11 +230,6 @@ export default function TranscriptionPage() {
     try {
       await deleteTask(task.task_id);
       setTasks((items) => items.filter((item) => item.task_id !== task.task_id));
-      setSegmentDrafts((drafts) => {
-        const next = { ...drafts };
-        delete next[task.task_id];
-        return next;
-      });
       if (selectedTaskId === task.task_id) {
         setSelected(null);
         setSelectedTaskId(null);
@@ -274,7 +255,6 @@ export default function TranscriptionPage() {
       setSelected(null);
       setSelectedTaskId(null);
       setSegments([]);
-      setSegmentDrafts({});
       setVoiceoverDrafts([]);
       setActiveVoiceover(null);
       setComplianceDrafts([]);
@@ -344,7 +324,9 @@ export default function TranscriptionPage() {
     try {
       const result = fallback
         ? await fallbackCrawlerLinkTranscription({ shareText, workId: linkPreview.work_id || "", rightsHolder, rightsConfirmed: true, idempotencyKey: `link-${Date.now()}` })
-        : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: asrModel });
+        : candidateFromQuery
+          ? await createCrawlerCandidateLinkTranscription({ candidateId: candidateFromQuery, rightsHolder, rightsConfirmed: true, modelName: asrModel })
+          : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: asrModel });
       if (result.status === "fallback_required") {
         toast.warning(result.message);
         return;
@@ -409,54 +391,6 @@ export default function TranscriptionPage() {
     }
   };
 
-  const updateSegment = (index: number, patch: Partial<TranscriptSegment>) => {
-    setSegments((prev) => {
-      const nextSegments = prev.map((item, i) => (i === index ? { ...item, ...patch } : item));
-      if (selected) {
-        setSegmentDrafts((current) => ({
-          ...current,
-          [selected.task_id]: {
-            taskId: selected.task_id,
-            serverUpdatedAt: selected.updated_at,
-            segments: nextSegments,
-          },
-        }));
-      }
-      return nextSegments;
-    });
-  };
-
-  const saveRevision = async (approve: boolean) => {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      await saveTranscriptionRevision({
-        taskId: selected.task_id,
-        segments: segments.map((segment) => ({
-          start: segment.start,
-          end: segment.end,
-          text: segment.text,
-          confidence: segment.confidence,
-          needs_review: segment.needs_review,
-          reviewed: Boolean(segment.reviewed),
-        })),
-        reviewer,
-        approve,
-      });
-      setSegmentDrafts((prev) => {
-        const next = { ...prev };
-        delete next[selected.task_id];
-        return next;
-      });
-      toast.success(approve ? "已确认成稿" : "校对版本已保存");
-      await refresh();
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const handleExport = async (format: "txt" | "json" | "srt" | "ass") => {
     if (!selected) return;
     try {
@@ -471,7 +405,7 @@ export default function TranscriptionPage() {
   const handleCreateVoiceoverDraft = async () => {
     if (!selected) return;
     if (!selected.approved_revision_id) {
-      toast.warning("请先复核低置信片段并确认成稿");
+      toast.warning("转写尚未完成 AI 自动成稿");
       return;
     }
     setDraftLoading(true);
@@ -604,9 +538,20 @@ export default function TranscriptionPage() {
     {
       title: "文本",
       dataIndex: "text",
-      render: (value: string, _record, index) => (
-        <TextArea value={value} autoSize onChange={(event) => updateSegment(index, { text: event.target.value })} />
-      ),
+      render: (value: string, record) => {
+        const isDemoRewrite = isDemoLlmRewrite(record, selected?.is_mock);
+        const displayText = displaySegmentText(record, selected?.is_mock);
+        const originalText = record.alternatives?.[0]
+          || (isDemoRewrite ? value : null);
+        return (
+          <Space direction="vertical" size={0}>
+            <Text>{displayText}</Text>
+            {originalText && originalText !== displayText && (
+              <Text type="secondary" style={{ fontSize: 12 }}>原识别：{originalText}</Text>
+            )}
+          </Space>
+        );
+      },
     },
     {
       title: "置信度",
@@ -615,17 +560,31 @@ export default function TranscriptionPage() {
       render: (value: number | null) => value === null ? "人工导入" : `${Math.round(value * 100)}%`,
     },
     {
-      title: "复核",
-      width: 100,
-      render: (_, record, index) => (
-        <Checkbox
-          checked={!record.needs_review || Boolean(record.reviewed)}
-          disabled={!record.needs_review}
-          onChange={(event) => updateSegment(index, { reviewed: event.target.checked })}
-        >
-          已复核
-        </Checkbox>
-      ),
+      title: selected?.is_mock ? "演示结果" : "AI质检",
+      width: 160,
+      render: (_, record) => {
+        if (selected?.is_mock) {
+          const isDemoRewrite = isDemoLlmRewrite(record, true);
+          const isUncertain = record.needs_review || (record.confidence !== null && record.confidence < 0.75);
+          return <Tag color={isDemoRewrite ? "processing" : isUncertain ? "warning" : "success"}>{isDemoRewrite ? "演示：LLM拟修订" : isUncertain ? "演示存疑" : "演示通过"}</Tag>;
+        }
+        const labels: Record<string, { color: string; text: string }> = {
+          accepted: { color: "success", text: "识别通过" },
+          auto_verified: { color: "success", text: "二次确认" },
+          auto_corrected: { color: "processing", text: "AI已修正" },
+          llm_rewritten: { color: "processing", text: "LLM已修订" },
+          uncertain: { color: "warning", text: "AI标记存疑" },
+        };
+        const isManualText = selected?.source_kind === "manual_text";
+        const isProcessing = ["queued", "pending", "running"].includes(selected?.status || "");
+        const item = labels[record.quality_status || ""]
+          || (isManualText
+            ? { color: "blue", text: "人工导入" }
+            : isProcessing
+              ? { color: "processing", text: "质检中" }
+              : { color: "error", text: "质检状态异常" });
+        return <Tag color={item.color}>{item.text}</Tag>;
+      },
     },
   ];
 
@@ -634,7 +593,7 @@ export default function TranscriptionPage() {
       <Row justify="space-between" align="middle" gutter={[16, 12]}>
         <Col>
           <Title level={4} style={{ margin: 0 }}>语音转写</Title>
-          <Text type="secondary">SQLite 保存转写历史；浏览器只保留当前选择和未提交校对草稿。</Text>
+          <Text type="secondary">低置信片段会自动二次识别，并由 LLM 修订为自然口播句。</Text>
         </Col>
         <Col>
           <Space wrap>
@@ -661,7 +620,7 @@ export default function TranscriptionPage() {
         extra={selected && (
           <Space wrap>
             <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
-            {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
+            {selected.approved_revision_id && <Tag color="success">已自动成稿</Tag>}
             <Select
               value="txt"
               style={{ width: 90 }}
@@ -682,37 +641,38 @@ export default function TranscriptionPage() {
             <Space wrap>
               <Text strong>{selected.media_name}</Text>
               <Text code>{selected.task_id}</Text>
-              <Tag>{selected.model_name || "未知模型"}</Tag>
+              <Tag>{selected.is_mock ? "演示数据" : (selected.model_name || "识别模型未记录")}</Tag>
               {selected.source_kind === "manual_text" && <Tag color="blue">人工回填 · 无时间轴</Tag>}
               {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
-              {selected.low_confidence_count > 0 && <Tag color="warning">待复核 {selected.low_confidence_count} 段</Tag>}
+              {selected.auto_reviewed && <Tag color="success">{selected.llm_review_count > 0 ? `LLM自动修订 ${selected.llm_review_count} 段` : "AI自动质检完成"}</Tag>}
+              {selected.uncertain_segment_count > 0 && <Tag color="warning">AI标记存疑 {selected.uncertain_segment_count} 段</Tag>}
               <Text type="secondary">{selected.stage}</Text>
             </Space>
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
+            {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
             <Tabs
               activeKey={activePanel}
               onChange={(key) => setActivePanel(key as "review" | "voiceover" | "compliance")}
               items={[
                 {
                   key: "review",
-                  label: "校对成稿",
+                  label: selected.is_mock ? "演示结果" : "AI质检结果",
                   children: segments.length > 0 ? (
                     <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Space wrap>
-                        <Input value={reviewer} onChange={(event) => setReviewer(event.target.value)} addonBefore="校对人" style={{ width: 240 }} />
-                        <Button icon={<SaveOutlined />} loading={saving} onClick={() => saveRevision(false)}>保存校对版本</Button>
-                        <Button type="primary" loading={saving} onClick={() => saveRevision(true)}>确认成稿</Button>
-                      </Space>
+                      <Alert
+                        type={selected.is_mock ? "info" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
+                        showIcon
+                        message={selected.is_mock
+                          ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
+                          : selected.llm_review_count > 0
+                            ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
+                          : selected.uncertain_segment_count > 0
+                            ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
+                            : "AI 已完成自动质检并生成成稿。"}
+                      />
                       {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
                       <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
-                      <Collapse
-                        size="small"
-                        items={[{
-                          key: "plain",
-                          label: "纯文本预览",
-                          children: <Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => segment.text).join("\n")}</Paragraph>,
-                        }]}
-                      />
+                      <Card size="small" title="AI修订口播稿预览"><Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph></Card>
                     </Space>
                   ) : <Empty description="该任务暂无可校对片段" />,
                 },
@@ -724,7 +684,7 @@ export default function TranscriptionPage() {
                       <Alert
                         type={selected.approved_revision_id ? "info" : "warning"}
                         showIcon
-                        message={selected.approved_revision_id ? "基于已确认成稿生成，不覆盖原始转写" : "先完成校对并确认成稿"}
+                        message={selected.approved_revision_id ? "基于 AI 自动成稿生成，不覆盖原始转写" : "等待 AI 自动成稿完成"}
                       />
                       <Space wrap>
                         <Text>目标时长</Text>

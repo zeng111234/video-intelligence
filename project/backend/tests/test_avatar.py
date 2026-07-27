@@ -72,10 +72,37 @@ def test_create_and_get_job():
         assert created["status"] == "running"
         assert created["is_mock"] is True
         assert created["result_url"] is None
+        assert created["video_name"] == "数字人视频1"
 
         get_resp = client.get(f"/api/v1/avatar/jobs/{created['task_id']}")
         assert get_resp.status_code == 200
         assert get_resp.json()["task_id"] == created["task_id"]
+
+
+def test_create_job_uses_keyword_and_auto_increments_name():
+    with TestClient(app) as client:
+        assets = client.get("/api/v1/avatar/assets").json()
+        avatar = next(item for item in assets if item["kind"] == "avatar")
+        voice = next(item for item in assets if item["kind"] == "voice")
+        payload = {
+            "script_text": "关键词命名测试。",
+            "avatar_id": avatar["asset_id"],
+            "voice_id": voice["asset_id"],
+            "keyword": "企业获客",
+        }
+        first = client.post(
+            "/api/v1/avatar/jobs",
+            json={**payload, "idempotency_key": "avatar-keyword-name-0001"},
+        )
+        second = client.post(
+            "/api/v1/avatar/jobs",
+            json={**payload, "idempotency_key": "avatar-keyword-name-0002"},
+        )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["video_name"] == "企业获客1"
+    assert second.json()["video_name"] == "企业获客2"
 
 
 def test_jobs_list_uses_real_history_not_hardcoded_samples():

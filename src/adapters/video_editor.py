@@ -364,19 +364,41 @@ class FFmpegVideoEditor:
     def _apply_bgm(
         self, input_path: Path, output_path: Path, params: dict[str, Any]
     ) -> None:
-        bgm_path = params.get("bgm_path", "")
-        bgm_volume = float(params.get("bgm_volume", 0.3))
+        bgm_path = params.get("bgm_path") or params.get("audio_path", "")
+        bgm_volume = float(params.get("bgm_volume", params.get("volume", 0.3)))
         video_volume = float(params.get("video_volume", 1.0))
+        ducking = bool(params.get("ducking", True))
         if not bgm_path:
             raise VideoEditorError("背景音乐步骤缺少 bgm_path 参数。")
         bgm = Path(bgm_path)
         if not bgm.exists():
             raise VideoEditorError("背景音乐文件不存在。")
-        filter_complex = (
-            f"[0:a]volume={video_volume}[a0];"
-            f"[1:a]volume={bgm_volume},aloop=loop=-1:size=2e+09[a1];"
-            f"[a0][a1]amix=inputs=2:duration=first[aout]"
+        has_voice = self._has_audio_stream(input_path)
+        duration = self._probe_duration_seconds(input_path)
+        fade_out_start = max(duration - 0.8, 0)
+        music_filters = (
+            f"loudnorm=I=-23:TP=-2:LRA=7,"
+            f"afade=t=in:st=0:d=0.6,"
+            f"afade=t=out:st={fade_out_start:.3f}:d={min(0.8, duration):.3f},"
+            f"volume={bgm_volume}"
         )
+        if not has_voice:
+            filter_complex = f"[1:a]{music_filters}[aout]"
+        elif ducking:
+            filter_complex = (
+                f"[0:a]asplit=2[voice][side];"
+                f"[1:a]{music_filters}[music];"
+                f"[music][side]sidechaincompress=threshold=0.035:ratio=8:"
+                f"attack=20:release=500[ducked];"
+                f"[voice]volume={video_volume}[voicelevel];"
+                f"[voicelevel][ducked]amix=inputs=2:duration=first[aout]"
+            )
+        else:
+            filter_complex = (
+                f"[0:a]volume={video_volume}[voice];"
+                f"[1:a]{music_filters}[music];"
+                f"[voice][music]amix=inputs=2:duration=first[aout]"
+            )
         cmd = [
             self.ffmpeg,
             "-nostdin",
@@ -384,6 +406,8 @@ class FFmpegVideoEditor:
             "error",
             "-i",
             str(input_path),
+            "-stream_loop",
+            "-1",
             "-i",
             str(bgm),
             "-filter_complex",
@@ -394,11 +418,61 @@ class FFmpegVideoEditor:
             "[aout]",
             "-c:v",
             "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
             "-shortest",
             "-y",
             str(output_path),
         ]
         self._run(cmd, "添加背景音乐失败。")
+
+    def _has_audio_stream(self, path: Path) -> bool:
+        result = self.command_runner(
+            [
+                self.ffprobe,
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        return result.returncode == 0 and bool((result.stdout or "").strip())
+
+    def _probe_duration_seconds(self, path: Path) -> float:
+        result = self.command_runner(
+            [
+                self.ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        try:
+            duration = float((result.stdout or "").strip())
+        except (TypeError, ValueError):
+            duration = 0
+        if result.returncode != 0 or duration <= 0:
+            raise VideoEditorError("无法读取视频时长，不能自动调整背景音乐。")
+        return duration
 
     # -- AI 智能剪辑方法 --
 

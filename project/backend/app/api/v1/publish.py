@@ -83,7 +83,9 @@ class PublishPreflightRequest(BaseModel):
     title: str = Field(..., min_length=1, description="标题")
     description: str = Field("", description="描述")
     tags: list[str] = Field(default_factory=list, description="标签")
-    account_ids: dict[str, str] = Field(default_factory=dict, description="平台对应的本机发布账号")
+    account_ids: dict[str, str] = Field(
+        default_factory=dict, description="平台对应的本机发布账号"
+    )
 
 
 class PublishBatchRequest(PublishPreflightRequest):
@@ -98,6 +100,10 @@ class ManualPublishResultRequest(BaseModel):
     platform_url: str | None = None
     platform_video_id: str | None = None
     note: str = ""
+
+
+class PublishTaskBatchDeleteRequest(BaseModel):
+    task_ids: list[str] = Field(..., min_length=1, max_length=100)
 
 
 class PublishVariableStatus(BaseModel):
@@ -146,12 +152,16 @@ class PublishConnectionStartResponse(BaseModel):
 
 
 class PublishAccountCreateRequest(BaseModel):
-    platform: str = Field("douyin", pattern="^(douyin)$")
+    platform: str = Field(
+        "douyin",
+        pattern="^(douyin|kuaishou|wechat_channels|xiaohongshu|bilibili)$",
+    )
     name: str = Field(..., min_length=1, max_length=40)
 
 
 class PublishAccountUpdateRequest(BaseModel):
-    name: str = Field(..., min_length=1, max_length=40)
+    name: str | None = Field(default=None, min_length=1, max_length=40)
+    auto_publish_authorized: bool | None = None
 
 
 class PublishAccountResponse(BaseModel):
@@ -160,6 +170,8 @@ class PublishAccountResponse(BaseModel):
     name: str
     status: str
     message: str
+    auto_publish_authorized: bool = False
+    last_verified_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -177,6 +189,9 @@ class PublishResponse(BaseModel):
     platform_url: str | None = None
     is_mock: bool
     error_message: str | None = None
+    action_required: str | None = None
+    final_publish_started_at: str | None = None
+    outcome_evidence: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -219,6 +234,55 @@ def _account_response(account) -> PublishAccountResponse:
     return PublishAccountResponse(**account.to_public_dict())
 
 
+def _validate_local_browser_accounts(
+    preflight: dict[str, Any], targets: list[Any]
+) -> dict[str, Any]:
+    """Fail closed when a browser-publisher account was deleted or expired.
+
+    The UI can keep an old selected account during a long-lived browser session,
+    so account identity and profile state must be checked again on the server.
+    """
+    for target, platform_result in zip(targets, preflight["platforms"]):
+        if platform_result.get("mode") != "local_browser":
+            continue
+
+        account_id = target.account_id
+        if not account_id:
+            platform_result.update(
+                can_create_task=False,
+                issue="请先连接并选择该平台的账号。",
+                issue_code="account_missing",
+                account_status="missing",
+            )
+            continue
+
+        try:
+            account = publish_account_manager.status(account_id)
+            if account.platform != target.platform.value:
+                raise PublishAccountError("发布账号不存在或不属于该平台。")
+        except PublishAccountError:
+            platform_result.update(
+                can_create_task=False,
+                issue="该账号记录已失效，请重新添加并扫码连接。",
+                issue_code="account_missing",
+                account_status="missing",
+            )
+            continue
+
+        platform_result["account_status"] = account.status
+        if account.status != "ready":
+            platform_result.update(
+                can_create_task=False,
+                issue="账号尚未实际核验登录，请在官方窗口完成扫码后点击“我已扫码，核验”。",
+                issue_code="account_not_ready",
+            )
+
+    preflight["blocked"] = bool(preflight["issues"]) or any(
+        not item["can_create_task"] for item in preflight["platforms"]
+    )
+    return preflight
+
+
 def _task_response(task) -> PublishResponse:
     return PublishResponse(
         task_id=task.task_id,
@@ -233,6 +297,9 @@ def _task_response(task) -> PublishResponse:
         platform_url=task.platform_url,
         is_mock=task.is_mock,
         error_message=task.error_message,
+        action_required=task.action_required,
+        final_publish_started_at=task.final_publish_started_at.isoformat() if task.final_publish_started_at else None,
+        outcome_evidence=task.outcome_evidence,
         created_at=task.created_at.isoformat() if task.created_at else None,
         updated_at=task.updated_at.isoformat() if task.updated_at else None,
     )
@@ -621,7 +688,14 @@ def list_platforms(
 
 @router.get("/accounts", response_model=list[PublishAccountResponse])
 def list_publish_accounts(platform: str | None = None):
-    return [_account_response(item) for item in publish_account_manager.list(platform)]
+    accounts = []
+    for account in publish_account_manager.list(platform):
+        # Refreshing here prevents a removed dedicated profile from being shown
+        # as a reusable login after the page reloads.
+        accounts.append(
+            _account_response(publish_account_manager.status(account.account_id))
+        )
+    return accounts
 
 
 @router.post("/accounts", response_model=PublishAccountResponse)
@@ -650,10 +724,26 @@ def connect_publish_account(account_id: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/accounts/{account_id}/verify", response_model=PublishAccountResponse)
+def verify_publish_account(account_id: str):
+    """Verify the currently visible official creator page, never profile files."""
+    try:
+        return _account_response(publish_account_manager.verify_session(account_id))
+    except PublishAccountError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.patch("/accounts/{account_id}", response_model=PublishAccountResponse)
 def update_publish_account(account_id: str, body: PublishAccountUpdateRequest):
     try:
-        return _account_response(publish_account_manager.rename(account_id, name=body.name))
+        account = publish_account_manager.get(account_id)
+        if body.name is not None:
+            account = publish_account_manager.rename(account_id, name=body.name)
+        if body.auto_publish_authorized is not None:
+            account = publish_account_manager.set_auto_publish_authorized(
+                account.account_id, authorized=body.auto_publish_authorized
+            )
+        return _account_response(account)
     except PublishAccountError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -760,6 +850,7 @@ def import_edited_asset(
         "path": str(target),
         "size_bytes": stat.st_size,
         "updated_at": stat.st_mtime,
+        "recommended_title": task.outputs.get("publish_title") or None,
     }
 
 
@@ -770,7 +861,8 @@ def preflight_publish(
 ):
     """发布前检查，不创建任务。"""
     targets = _build_targets(body)
-    return service.preflight(video_path=body.video_path, targets=targets)
+    result = service.preflight(video_path=body.video_path, targets=targets)
+    return _validate_local_browser_accounts(result, targets)
 
 
 @router.post("/batches", response_model=PublishBatchResponse)
@@ -780,7 +872,9 @@ def create_publish_batch(
 ):
     """创建多平台发布批次。"""
     targets = _build_targets(body)
-    preflight = service.preflight(video_path=body.video_path, targets=targets)
+    preflight = _validate_local_browser_accounts(
+        service.preflight(video_path=body.video_path, targets=targets), targets
+    )
     if preflight["blocked"]:
         raise HTTPException(
             status_code=400, detail={"message": "发布预检未通过", **preflight}
@@ -844,6 +938,42 @@ def retry_publish_task(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _task_response(task)
+
+
+@router.post("/tasks/{task_id}/resume", response_model=PublishResponse)
+def resume_publish_task(
+    task_id: str,
+    service=Depends(get_publish_service),
+):
+    try:
+        task = service.resume_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _task_response(task)
+
+
+@router.delete("/tasks/{task_id}")
+def delete_publish_task(
+    task_id: str,
+    service=Depends(get_publish_service),
+):
+    try:
+        deleted_task_id = service.delete_task(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"task_id": deleted_task_id, "deleted": True}
+
+
+@router.post("/tasks/delete-batch")
+def delete_publish_tasks(
+    body: PublishTaskBatchDeleteRequest,
+    service=Depends(get_publish_service),
+):
+    try:
+        deleted_task_ids = service.delete_tasks(body.task_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"deleted_task_ids": deleted_task_ids, "deleted": len(deleted_task_ids)}
 
 
 @router.post("", response_model=PublishResponse)

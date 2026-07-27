@@ -16,6 +16,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from project.backend.app.main import app  # noqa: E402
+from project.backend.app.api.v1 import publish as publish_api  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
     CopywritingProviderMode,
@@ -33,15 +34,19 @@ from src.models import (  # noqa: E402
     PipelineStepResult,
     Platform,
     PublishPlatform,
+    PublishStatus,
+    PublishTarget,
     SourceCapability,
     TaskStatus,
 )
 from src.repositories import MockRepository  # noqa: E402
 from src.mock_data import build_mock_candidates  # noqa: E402
 from src.adapters.publishers.sandbox import SandboxPublisher  # noqa: E402
+from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher  # noqa: E402
 from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
+from src.services.publish_accounts import PublishAccountError  # noqa: E402
 from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 
@@ -137,7 +142,7 @@ class TestCandidatesSearch:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] <= 5
+        assert data["total"] >= len(data["items"])
 
     def test_search_respects_limit(self, client: TestClient):
         resp = client.post(
@@ -164,6 +169,9 @@ class TestCandidatesSearch:
             assert "platform" in item
             assert "heat_score" in item
             assert "heat_level" in item
+            assert "publication_time_state" in item
+            assert "official_hot" in item
+        assert "category_options" in data
 
     def test_search_limit_too_large(self, client: TestClient):
         resp = client.post(
@@ -402,6 +410,20 @@ class TestPipelines:
         assert deleted.json() == {"run_id": run_id, "deleted": True}
         assert client.get(f"/api/v1/pipelines/{run_id}").status_code == 404
 
+    def test_delete_all_pipeline_history(self, client: TestClient):
+        repository = MockRepository(candidates=[], tasks=[])
+        repository.save_pipeline_run(PipelineRun(run_id="pipeline-clear-1", keyword="待清空 1"))
+        repository.save_pipeline_run(PipelineRun(run_id="pipeline-clear-2", keyword="待清空 2"))
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        try:
+            deleted = client.delete("/api/v1/pipelines")
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_repository, None)
+
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted_count": 2}
+        assert repository.list_pipeline_runs() == []
+
 
 # ---------------------------------------------------------------------------
 # /api/v1/tasks
@@ -491,12 +513,12 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
         )
-        app.dependency_overrides[
-            backend_deps.get_official_hot_billboard_adapter
-        ] = lambda: FakeOfficialAdapter("douyin_hot_billboard")
-        app.dependency_overrides[
-            backend_deps.get_official_hot_words_adapter
-        ] = lambda: FakeOfficialAdapter("douyin_hot_words")
+        app.dependency_overrides[backend_deps.get_official_hot_billboard_adapter] = (
+            lambda: FakeOfficialAdapter("douyin_hot_billboard")
+        )
+        app.dependency_overrides[backend_deps.get_official_hot_words_adapter] = lambda: (
+            FakeOfficialAdapter("douyin_hot_words")
+        )
         yield
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
@@ -528,7 +550,9 @@ class TestCrawlerBatches:
         assert data["official_hot_billboard"]["enabled"] is False
         assert data["official_hot_words"]["provider_name"] == "douyin_hot_words"
 
-    def test_browser_discovery_capabilities_include_prerequisites(self, client: TestClient):
+    def test_browser_discovery_capabilities_include_prerequisites(
+        self, client: TestClient
+    ):
         resp = client.get("/api/v1/crawler/browser-discovery/capabilities")
 
         assert resp.status_code == 200
@@ -608,9 +632,9 @@ class TestCrawlerBatches:
             def hot_word_suggestions(self, limit: int = 50):
                 return [HotWordRecord(word="AI数字人", hot_value=100, fetched_at=now)]
 
-        app.dependency_overrides[
-            backend_deps.get_official_hot_pool_service
-        ] = lambda: FakeHotPoolService()
+        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = lambda: (
+            FakeHotPoolService()
+        )
         try:
             resp = client.get("/api/v1/crawler/hotwords")
         finally:
@@ -651,9 +675,9 @@ class TestCrawlerBatches:
                 )
 
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
-        app.dependency_overrides[
-            backend_deps.get_official_hot_pool_service
-        ] = lambda: FakeHotPoolService()
+        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = lambda: (
+            FakeHotPoolService()
+        )
         try:
             resp = client.post(
                 "/api/v1/crawler/official-hot/monitor",
@@ -962,6 +986,33 @@ class TestCopywriting:
         finally:
             app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
 
+    def test_clear_history_deletes_only_independent_copywriting(
+        self, client: TestClient
+    ):
+        repository = MockRepository(candidates=[], tasks=[])
+        service = CopywritingService(repository, SandboxCopywritingEngine())
+        independent = service.generate(
+            content_brief="介绍 AI 短视频获客系统",
+            platform="douyin",
+            target_length=100,
+        )
+        voiceover = service.rewrite(
+            source_text="已确认的转写成稿",
+            source_task_id="transcription-history-test",
+            source_revision_id="revision-1",
+            target_length=100,
+        )
+
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: service
+        try:
+            resp = client.delete("/api/v1/copywriting/history")
+            assert resp.status_code == 200
+            assert resp.json() == {"deleted_count": 1}
+            assert repository.get_task(independent.task_id) is None
+            assert repository.get_task(voiceover.task_id) is not None
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
+
 
 class TestCopywritingProductionConfig:
     def test_missing_key_disables_capabilities(
@@ -1118,7 +1169,7 @@ class TestPublish:
             assert batch["status"] == "manual_ready"
             assert batch["total"] == 2
             task_id = batch["tasks"][0]["task_id"]
-            assert batch["tasks"][0]["publish_status"] == "manual_ready"
+            assert batch["tasks"][0]["publish_status"] == "pending"
 
             manual_resp = client.post(
                 f"/api/v1/publish/tasks/{task_id}/manual-result",
@@ -1133,6 +1184,127 @@ class TestPublish:
             assert manual["status"] == "succeeded"
             assert manual["publish_status"] == "succeeded"
             assert manual["platform_url"] == "https://example.com/published/1"
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+
+    def test_resume_paused_publish_task(self, client: TestClient):
+        service = self.install_publish_service_override()
+        try:
+            batch = service.create_batch(
+                video_path="/some/video.mp4",
+                targets=[PublishTarget(platform=PublishPlatform.DOUYIN, title="验证后继续")],
+            )
+            task = batch["tasks"][0].model_copy(
+                update={"status": TaskStatus.PAUSED, "publish_status": PublishStatus.ACTION_REQUIRED}
+            )
+            service.repository.save_task(task)
+            resp = client.post(f"/api/v1/publish/tasks/{task.task_id}/resume")
+            assert resp.status_code == 200
+            assert resp.json()["status"] == "queued"
+            assert resp.json()["publish_status"] == "pending"
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+
+    def test_delete_publish_tasks(self, client: TestClient):
+        service = self.install_publish_service_override()
+        try:
+            first = service.publish(
+                video_path="/some/video.mp4",
+                target=PublishTarget(platform=PublishPlatform.DOUYIN, title="删除一条"),
+            )
+            single = client.delete(f"/api/v1/publish/tasks/{first.task_id}")
+            assert single.status_code == 200
+            assert single.json() == {"task_id": first.task_id, "deleted": True}
+
+            second = service.publish(
+                video_path="/some/video.mp4",
+                target=PublishTarget(platform=PublishPlatform.DOUYIN, title="批量删除 A"),
+            )
+            third = service.publish(
+                video_path="/some/video.mp4",
+                target=PublishTarget(platform=PublishPlatform.KUAISHOU, title="批量删除 B"),
+            )
+            batch = client.post(
+                "/api/v1/publish/tasks/delete-batch",
+                json={"task_ids": [second.task_id, third.task_id]},
+            )
+            assert batch.status_code == 200
+            assert batch.json()["deleted_task_ids"] == [second.task_id, third.task_id]
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+
+    def test_generate_publish_metadata_from_source_copy(self, client: TestClient):
+        service = CopywritingService(MockRepository(), SandboxCopywritingEngine())
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: service
+        try:
+            resp = client.post(
+                "/api/v1/copywriting/publish-metadata",
+                json={
+                    "source_text": "新品活动，欢迎了解",
+                    "platforms": ["douyin"],
+                    "source_task_id": "copy-source-1",
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["is_mock"] is True
+            assert data["title"].startswith("【演示】")
+            assert data["description"].startswith("【演示结果】")
+            task = service.get_task(data["task_id"])
+            assert task is not None
+            assert task.source_task_id == "copy-source-1"
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
+
+    def test_generate_publish_metadata_rejects_engine_input_over_limit(self, client: TestClient):
+        service = CopywritingService(MockRepository(), SandboxCopywritingEngine())
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: service
+        try:
+            resp = client.post(
+                "/api/v1/copywriting/publish-metadata",
+                json={"source_text": "文" * 5001, "platforms": ["douyin"]},
+            )
+            assert resp.status_code == 400
+            assert "超过最大长度限制" in resp.json()["message"]
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
+
+    def test_preflight_blocks_a_missing_local_browser_account(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        service = PublishService(
+            MockRepository(),
+            {"douyin": DouyinBrowserPublisher()},
+        )
+
+        class MissingAccountManager:
+            @staticmethod
+            def status(_account_id: str):
+                raise PublishAccountError("发布账号不存在或不属于该平台。")
+
+        app.dependency_overrides[backend_deps.get_publish_service] = lambda: service
+        monkeypatch.setattr(
+            publish_api, "publish_account_manager", MissingAccountManager()
+        )
+        payload = {
+            "video_path": "/some/video.mp4",
+            "platforms": ["douyin"],
+            "title": "测试发布任务",
+            "account_ids": {"douyin": "pubacc-stale"},
+        }
+        try:
+            preflight = client.post("/api/v1/publish/preflight", json=payload)
+            assert preflight.status_code == 200
+            platform = preflight.json()["platforms"][0]
+            assert preflight.json()["blocked"] is True
+            assert platform["issue_code"] == "account_missing"
+            assert platform["account_status"] == "missing"
+
+            batch = client.post(
+                "/api/v1/publish/batches",
+                json={**payload, "confirmation_accepted": True},
+            )
+            assert batch.status_code == 400
         finally:
             app.dependency_overrides.pop(backend_deps.get_publish_service, None)
 

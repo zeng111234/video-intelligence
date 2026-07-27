@@ -47,6 +47,7 @@ import type {
   ProductionBatchSourceItem,
   ProductionProfile,
   PublishFeedback,
+  PublishMetadataResponse,
   FeedbackRecommendations,
   KeywordRunPreflight,
   PublishAsset,
@@ -70,8 +71,14 @@ import type {
   TranscriptionResponse,
   VideoCapabilitiesResponse,
   VideoEditorAnalysis,
+  VideoEditorBatch,
+  VideoEditorBatchListResponse,
+  VideoEditorBgmAsset,
+  VideoEditorBgmListResponse,
   VideoEditorJob,
   VideoEditorJobListResponse,
+  VideoEditorLocalModel,
+  VideoEditorLocalModelListResponse,
   VideoEditorSourceListResponse,
   VideoEditRequest,
   VideoEditResponse,
@@ -511,6 +518,10 @@ export function deletePipeline(runId: string): Promise<{ run_id: string; deleted
   return request(`/pipelines/${runId}`, { method: "DELETE" });
 }
 
+export function deleteAllPipelines(): Promise<{ deleted_count: number }> {
+  return request("/pipelines", { method: "DELETE" });
+}
+
 /* ---- 任务列表 ---- */
 
 export function listTasks(): Promise<TaskListResponse> {
@@ -777,6 +788,10 @@ export function listCopywritingTasks(limit = 50): Promise<CopywritingSummaryResp
   return request(`/copywriting?limit=${limit}`);
 }
 
+export function clearCopywritingHistory(): Promise<{ deleted_count: number }> {
+  return request("/copywriting/history", { method: "DELETE" });
+}
+
 export function getCopywritingTask(taskId: string): Promise<CopywritingDetailResponse> {
   return request(`/copywriting/${taskId}`);
 }
@@ -826,6 +841,14 @@ export function createPublishAccount(params: { platform: string; name: string })
 
 export function connectPublishAccount(accountId: string): Promise<PublishAccount> {
   return request(`/publish/accounts/${encodeURIComponent(accountId)}/connect`, { method: "POST" });
+}
+
+export function verifyPublishAccount(accountId: string): Promise<PublishAccount> {
+  return request(`/publish/accounts/${encodeURIComponent(accountId)}/verify`, { method: "POST" });
+}
+
+export function updatePublishAccount(accountId: string, params: { name?: string; auto_publish_authorized?: boolean }): Promise<PublishAccount> {
+  return request(`/publish/accounts/${encodeURIComponent(accountId)}`, { method: "PATCH", body: JSON.stringify(params) });
 }
 
 export function getPublishAccountStatus(accountId: string): Promise<PublishAccount> {
@@ -902,6 +925,17 @@ export function preflightPublish(params: {
   });
 }
 
+export function generatePublishMetadata(params: {
+  source_text: string;
+  platforms?: string[];
+  source_task_id?: string;
+}): Promise<PublishMetadataResponse> {
+  return request("/copywriting/publish-metadata", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 export function createPublishBatch(params: {
   video_path: string;
   platforms: string[];
@@ -942,6 +976,23 @@ export function retryPublishTask(taskId: string): Promise<PublishResponse> {
   });
 }
 
+export function resumePublishTask(taskId: string): Promise<PublishResponse> {
+  return request(`/publish/tasks/${taskId}/resume`, {
+    method: "POST",
+  });
+}
+
+export function deletePublishTask(taskId: string): Promise<{ task_id: string; deleted: boolean }> {
+  return request(`/publish/tasks/${taskId}`, { method: "DELETE" });
+}
+
+export function deletePublishTasks(taskIds: string[]): Promise<{ deleted_task_ids: string[]; deleted: number }> {
+  return request("/publish/tasks/delete-batch", {
+    method: "POST",
+    body: JSON.stringify({ task_ids: taskIds }),
+  });
+}
+
 /* ---- 数字人生成 ---- */
 
 export function getAvatarCapabilities(): Promise<AvatarCapability> {
@@ -973,6 +1024,31 @@ export async function uploadAvatarAsset(params: {
     throw new Error(body.detail || body.message || "上传数字人素材失败");
   }
   return resp.json();
+}
+
+async function uploadCloudAvatarMaterial(
+  endpoint: "/avatar/assets/cloud-avatar" | "/avatar/assets/cloud-voice",
+  params: { file: File; name: string },
+): Promise<AvatarAsset> {
+  const formData = new FormData();
+  formData.append("file", params.file);
+  formData.append("name", params.name);
+  formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", "本人/公司已授权");
+  const resp = await fetch(`${BASE}${endpoint}`, { method: "POST", body: formData });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "上传云端训练素材失败");
+  }
+  return resp.json();
+}
+
+export function trainCloudAvatar(params: { file: File; name: string }): Promise<AvatarAsset> {
+  return uploadCloudAvatarMaterial("/avatar/assets/cloud-avatar", params);
+}
+
+export function trainCloudVoice(params: { file: File; name: string }): Promise<AvatarAsset> {
+  return uploadCloudAvatarMaterial("/avatar/assets/cloud-voice", params);
 }
 
 export function createAvatarJob(params: AvatarJobCreateRequest): Promise<AvatarJob> {
@@ -1152,4 +1228,119 @@ export function getVideoEditorJob(taskId: string): Promise<VideoEditorJob> {
 
 export function listVideoEditorJobs(): Promise<VideoEditorJobListResponse> {
   return request("/video-editor/jobs");
+}
+
+export async function uploadVideoEditorSources(
+  files: File[],
+  rightsHolder: string,
+): Promise<VideoEditorSourceListResponse> {
+  const formData = new FormData();
+  files.forEach((file) => formData.append("files", file));
+  formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", rightsHolder);
+  const resp = await fetch(`${BASE}/video-editor/uploads`, { method: "POST", body: formData });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "素材上传失败");
+  }
+  return resp.json();
+}
+
+export function listVideoEditorBgm(): Promise<VideoEditorBgmListResponse> {
+  return request("/video-editor/bgm");
+}
+
+export async function uploadVideoEditorBgm(params: {
+  file: File;
+  mood: string;
+  rightsHolder: string;
+}): Promise<VideoEditorBgmAsset> {
+  const formData = new FormData();
+  formData.append("file", params.file);
+  formData.append("mood", params.mood);
+  formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", params.rightsHolder);
+  const resp = await fetch(`${BASE}/video-editor/bgm`, { method: "POST", body: formData });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "背景音乐上传失败");
+  }
+  return resp.json();
+}
+
+export function listVideoEditorLocalModels(): Promise<VideoEditorLocalModelListResponse> {
+  return request("/video-editor/models");
+}
+
+export function prepareVideoEditorLocalModel(
+  modelName: "base" | "large-v3-turbo",
+): Promise<VideoEditorLocalModel> {
+  return request(`/video-editor/models/${encodeURIComponent(modelName)}/prepare`, { method: "POST" });
+}
+
+export function createVideoEditorBatch(params: {
+  sourceIds: string[];
+  targetPlatform: string;
+  subtitleEnabled: boolean;
+  subtitleModel: "large-v3-turbo" | "base";
+  steps: { kind: string; params: Record<string, unknown>; enabled: boolean }[];
+  outputFormat: string;
+  outputResolution: string;
+  outputFps: number;
+  outputBitrate: string;
+  bgmEnabled: boolean;
+  bgmId?: string;
+  bgmVolume: number;
+}): Promise<VideoEditorBatch> {
+  return request("/video-editor/batches", {
+    method: "POST",
+    body: JSON.stringify({
+      source_ids: params.sourceIds,
+      target_platform: params.targetPlatform,
+      subtitle_enabled: params.subtitleEnabled,
+      subtitle_model: params.subtitleModel,
+      steps: params.steps,
+      output_format: params.outputFormat,
+      output_resolution: params.outputResolution,
+      output_fps: params.outputFps,
+      output_bitrate: params.outputBitrate,
+      bgm_enabled: params.bgmEnabled,
+      bgm_id: params.bgmId || null,
+      bgm_volume: params.bgmVolume,
+    }),
+  });
+}
+
+export function listVideoEditorBatches(): Promise<VideoEditorBatchListResponse> {
+  return request("/video-editor/batches");
+}
+
+export function getVideoEditorBatch(batchId: string): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}`);
+}
+
+export function continueVideoEditorBatchItem(batchId: string, itemId: string): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/continue`, { method: "POST" });
+}
+
+export function selectVideoEditorBatchItemTitle(
+  batchId: string,
+  itemId: string,
+  title: string,
+): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/title`, {
+    method: "PUT",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function retryVideoEditorBatchItem(batchId: string, itemId: string): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/retry`, { method: "POST" });
+}
+
+export function confirmVideoEditorBatchResults(batchId: string, itemIds: string[]): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}/confirm-results`, {
+    method: "POST",
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
 }

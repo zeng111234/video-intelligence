@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 # 确保项目根目录在 Python 路径中
 _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -37,6 +38,12 @@ from src.models import (  # noqa: E402
     HotWordRecord,
     NormalizedCandidate,
     Platform,
+    PlatformRunStatus,
+    PlatformSearchRun,
+    ProviderCapability,
+    ProviderMode,
+    ProviderSearchItem,
+    SearchBatch,
     SourceCapability,
     SourcePage,
     SourceRequest,
@@ -52,6 +59,88 @@ from src.services.hot_pool import (  # noqa: E402
     HOT_POOL_NO_MATCH_STATE,
     OfficialHotPoolService,
 )
+
+
+@pytest.mark.parametrize("window_hours", [1, 24, 72, 168])
+def test_hotspot_request_accepts_exact_statistical_windows(window_hours):
+    request = crawler_module.CrawlerSearchRequest(
+        keyword="二手车", hotspot_window_hours=window_hours
+    )
+
+    assert request.hotspot_window_hours == window_hours
+    assert request.published_window_days == 0
+
+
+def test_hotspot_request_rejects_unsupported_statistical_window():
+    with pytest.raises(ValidationError):
+        crawler_module.CrawlerSearchRequest(keyword="二手车", hotspot_window_hours=2)
+
+
+def test_hotspot_real_run_cooldown_uses_random_eight_to_twelve_minute_window(
+    monkeypatch,
+):
+    requested_bounds: list[tuple[int, int]] = []
+
+    class FakeRandom:
+        def randint(self, lower, upper):
+            requested_bounds.append((lower, upper))
+            return 9 * 60 + 17
+
+    monkeypatch.setattr(crawler_module.random, "SystemRandom", FakeRandom)
+
+    assert crawler_module._next_hotspot_cooldown_seconds() == 9 * 60 + 17
+    assert requested_bounds == [(8 * 60, 12 * 60)]
+
+
+def test_hotspot_real_run_limit_supports_multi_customer_usage():
+    assert crawler_module.HOTSPOT_MAX_REAL_RUNS_PER_WINDOW == 48
+
+
+def test_hotspot_run_returns_low_incremental_candidates_only_as_reference_items():
+    now = datetime(2026, 7, 27, 12, tzinfo=timezone.utc)
+    item = ProviderSearchItem(
+        platform=Platform.DOUYIN,
+        platform_item_id="douyin-low-1",
+        title="租房预算怎么做",
+        author_id="hotspot-douyin-low-1",
+        author_name="测试作者",
+        published_at=now,
+        provider_rank=1,
+        metrics=VideoMetricSnapshot(
+            item_id="douyin-low-1", sampled_at=now, plays=800, confidence=0.8
+        ),
+        evidence="hotspot:视频总榜:1h:关键词=租房;新增播放量=800;时长秒=20",
+    )
+    batch = SearchBatch(
+        keyword="租房",
+        published_window_days=0,
+        hotspot_window_hours=1,
+        requested_count_per_platform=100,
+        provider="douyin_local_browser",
+        mode=ProviderMode.LOCAL_BROWSER,
+        platforms=[Platform.DOUYIN],
+    )
+    run = PlatformSearchRun(
+        batch_id=batch.batch_id,
+        platform=Platform.DOUYIN,
+        provider="douyin_local_browser",
+        mode=ProviderMode.LOCAL_BROWSER,
+        status=PlatformRunStatus.SUCCEEDED,
+        requested_count=100,
+        idempotency_key="low-incremental",
+        request_fingerprint="low-incremental",
+        started_at=now,
+        finished_at=now,
+        low_incremental_items=[item],
+    )
+
+    response = crawler_module._run_to_response(
+        batch, run, MockRepository(candidates=[], tasks=[]), include_candidates=True
+    )
+
+    assert response.candidates == []
+    assert [item.new_plays for item in response.low_incremental_candidates] == [800]
+    assert response.low_incremental_candidates[0].hotspot_window_hours == 1
 
 
 @dataclass
@@ -245,6 +334,37 @@ def official_env():
 
 
 class TestOfficialCapabilities:
+    def test_capability_payload_never_calls_remote_usage(self):
+        class Service:
+            active_platforms: tuple[Platform, ...] = ()
+
+            @staticmethod
+            def monthly_query_count() -> int:
+                return 0
+
+            @staticmethod
+            def monthly_query_cost() -> float:
+                return 0.0
+
+        class Provider:
+            @staticmethod
+            def capabilities() -> ProviderCapability:
+                return ProviderCapability(
+                    provider_name="usage-test",
+                    display_name="usage-test",
+                    mode=ProviderMode.PRODUCTION,
+                    enabled=True,
+                    permission_status="configured",
+                )
+
+            @staticmethod
+            def usage():
+                raise AssertionError("capability payload must not make a remote usage call")
+
+        response = crawler_module._capability_payload(Service(), Provider())
+
+        assert response.usage is None
+
     def test_capabilities_reports_official_adapters(self, client, official_env):
         resp = client.get("/api/v1/crawler/capabilities")
         assert resp.status_code == 200

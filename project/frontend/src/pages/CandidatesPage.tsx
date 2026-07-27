@@ -8,10 +8,12 @@ import {
   Card,
   Typography,
   Select,
+  Tooltip,
   Alert,
 } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import { useNavigate } from "react-router-dom";
 import { searchCandidates } from "../api/client";
 import type { CandidateItem } from "../api/types";
 import { useToast } from "../components/Toast";
@@ -30,14 +32,20 @@ const HEAT_COLORS: Record<string, string> = {
   B: "blue",
 };
 
+function keywordRecordLabel(value: string) {
+  return value.startsWith("关键词/") ? value.slice("关键词/".length) : value;
+}
+
 export default function CandidatesPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [keyword, setKeyword] = useState("");
   const [limit, setLimit] = useState(10);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [category, setCategory] = useState<string | undefined>();
   const [data, setData] = useState<CandidateItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [categoryOptions, setCategoryOptions] = useState<{ value: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
   const doSearch = useCallback(async () => {
@@ -46,6 +54,16 @@ export default function CandidatesPage() {
       const resp = await searchCandidates(keyword, limit, platforms, category);
       setData(resp.items);
       setTotal(resp.total);
+      setCategoryOptions(
+        resp.category_options?.length
+          ? resp.category_options
+          : Array.from(new Set(resp.items.map((item) => item.category)))
+            .filter(Boolean)
+            .map((value) => ({
+              value,
+              count: resp.items.filter((item) => item.category === value).length,
+            })),
+      );
     } catch (err) {
       // 静默处理网络错误，避免 StrictMode 双重调用时显示两次错误
       if ((err as Error).message?.includes("网络连接失败")) {
@@ -58,9 +76,16 @@ export default function CandidatesPage() {
     }
   }, [keyword, limit, platforms, category]);
 
-  const categoryOptions = Array.from(
-    new Set(data.map((item) => item.category).filter(Boolean)),
-  ).map((value) => ({ value, label: value }));
+  const goToTranscription = (item: CandidateItem) => {
+    const params = new URLSearchParams({
+      candidate: item.video_id,
+      title: item.title,
+    });
+    if (item.platform === "douyin" && item.source_url) {
+      params.set("share_text", item.source_url);
+    }
+    navigate(`/transcription?${params.toString()}`);
+  };
 
   useEffect(() => {
     doSearch();
@@ -77,7 +102,7 @@ export default function CandidatesPage() {
     },
     { title: "标题", dataIndex: "title", ellipsis: true },
     { title: "作者", dataIndex: "author_name", width: 120 },
-    { title: "赛道", dataIndex: "category", width: 100 },
+    { title: "分类", dataIndex: "category", width: 120 },
     {
       title: "热度分",
       dataIndex: "heat_score",
@@ -86,18 +111,33 @@ export default function CandidatesPage() {
       render: (v: number) => v.toFixed(1),
     },
     {
-      title: "热度等级",
+      title: "热度状态",
       dataIndex: "heat_level",
-      width: 100,
-      render: (v: string) => (
-        <Tag color={HEAT_COLORS[v] || "default"}>{v}</Tag>
+      width: 190,
+      render: (v: string, item) => (
+        <Tooltip title={item.heat_reasons?.join("；") || "官方榜单来源与模型增长结论独立展示。"}>
+          <Space size={[2, 2]} wrap>
+            {item.official_hot && <Tag color="purple">官方榜单</Tag>}
+            <Tag color={HEAT_COLORS[v] || "default"}>模型：{v}</Tag>
+          </Space>
+        </Tooltip>
       ),
     },
     {
-      title: "发布时间",
+      title: "时间",
       dataIndex: "published_at",
-      width: 180,
-      render: (v: string | null) => (v ? new Date(v).toLocaleString("zh-CN") : "-"),
+      width: 210,
+      render: (v: string | null, item) => {
+        const published = v ? new Date(v).toLocaleString("zh-CN") : "-";
+        if (item.publication_time_state === "sampled_fallback") {
+          const observed = item.observed_at ? new Date(item.observed_at).toLocaleString("zh-CN") : "-";
+          return <Tooltip title="供应商未返回可核验的发布时间，此处不能当作作品发布日期。"><Typography.Text type="secondary">发布时间未知<br />采样于 {observed}</Typography.Text></Tooltip>;
+        }
+        if (!item.publication_time_state) {
+          return <Tooltip title="运行中的后端尚未返回时间来源。重启 2001 后会区分真实发布时间与采样时间。"><Typography.Text type="warning">时间来源待后端更新</Typography.Text></Tooltip>;
+        }
+        return <span>发布于 {published}</span>;
+      },
     },
     {
       title: "链接",
@@ -111,6 +151,17 @@ export default function CandidatesPage() {
         ) : (
           "-"
         ),
+    },
+    {
+      title: "操作",
+      width: 100,
+      render: (_, item) => (
+        <Tooltip title="进入转写页后仍需确认内容处理权；不会自动下载或创建任务。">
+          <Button size="small" type="primary" onClick={() => goToTranscription(item)}>
+            文案转写
+          </Button>
+        </Tooltip>
+      ),
     },
   ];
 
@@ -135,12 +186,6 @@ export default function CandidatesPage() {
             allowClear
           />
           <Select
-            value={limit}
-            onChange={setLimit}
-            style={{ width: 100 }}
-            options={[5, 10, 20, 50].map((n) => ({ value: n, label: `${n} 条` }))}
-          />
-          <Select
             mode="multiple"
             allowClear
             placeholder="平台筛选"
@@ -150,12 +195,23 @@ export default function CandidatesPage() {
             options={Object.entries(PLATFORM_LABELS).map(([value, label]) => ({ value, label }))}
           />
           <Select
+            showSearch
             allowClear
-            placeholder="分类筛选"
+            optionFilterProp="label"
+            placeholder="选择已有关键词"
             value={category}
             onChange={setCategory}
-            style={{ width: 220 }}
-            options={categoryOptions}
+            style={{ width: 240 }}
+            options={categoryOptions.map((item) => ({
+              value: item.value,
+              label: `${keywordRecordLabel(item.value)} (${item.count})`,
+            }))}
+          />
+          <Select
+            value={limit}
+            onChange={setLimit}
+            style={{ width: 100 }}
+            options={[5, 10, 20, 50].map((n) => ({ value: n, label: `${n} 条` }))}
           />
           <Button type="primary" onClick={doSearch} loading={loading}>
             搜索

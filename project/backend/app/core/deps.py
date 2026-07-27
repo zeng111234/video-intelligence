@@ -39,6 +39,7 @@ from src.services.pipeline_worker import PipelineWorker  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
+from src.services.publish_worker import PublishWorker  # noqa: E402
 from src.services.avatar import AvatarService  # noqa: E402
 from src.services.heat import HeatService  # noqa: E402
 from src.services.keyword_trend import KeywordTrendService  # noqa: E402
@@ -249,7 +250,18 @@ def _sandbox_model_loader(*args, **kwargs):
 @lru_cache
 def get_transcription_service() -> TranscriptionService:
     model_loader = _build_asr_model_loader()
-    return TranscriptionService(get_repository(), model_loader=model_loader)
+    copywriting_engine = get_copywriting_engine()
+    capabilities = copywriting_engine.capabilities()
+    review_method = (
+        getattr(copywriting_engine, "review_transcript_candidates", None)
+        if capabilities.get("mode") == "production" and capabilities.get("enabled")
+        else None
+    )
+    return TranscriptionService(
+        get_repository(),
+        model_loader=model_loader,
+        transcript_reviewer=review_method if callable(review_method) else None,
+    )
 
 
 @lru_cache
@@ -359,6 +371,7 @@ def get_publishers():
             PublishPlatform.KUAISHOU,
             PublishPlatform.WECHAT_CHANNELS,
             PublishPlatform.XIAOHONGSHU,
+            PublishPlatform.BILIBILI,
         )
     }
 
@@ -366,6 +379,11 @@ def get_publishers():
 @lru_cache
 def get_publish_service() -> PublishService:
     return PublishService(get_repository(), get_publishers())
+
+
+@lru_cache
+def get_publish_worker() -> PublishWorker:
+    return PublishWorker(get_publish_service())
 
 
 @lru_cache

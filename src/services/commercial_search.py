@@ -116,13 +116,16 @@ class CommercialSearchService:
         *,
         keyword: str,
         published_window_days: int = 0,
+        hotspot_window_hours: int | None = None,
         count: int = 10,
         force_refresh: bool = False,
         platforms: tuple[Platform, ...] | None = None,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
         include_monitoring: bool = True,
     ) -> list[PlatformSearchPreview]:
-        keyword = self._validate_request(keyword, published_window_days, count)
+        keyword = self._validate_request(
+            keyword, published_window_days, count, hotspot_window_hours
+        )
         selected_platforms = self._selected_platforms(platforms)
         safe_cache_ttl_minutes = max(1, int(cache_ttl_minutes))
         capability = self.provider.capabilities()
@@ -142,6 +145,7 @@ class CommercialSearchService:
                     platform=platform,
                     keyword=keyword,
                     published_window_days=published_window_days,
+                    hotspot_window_hours=hotspot_window_hours,
                     count=count,
                     now=now,
                     cache_ttl_minutes=safe_cache_ttl_minutes,
@@ -196,6 +200,7 @@ class CommercialSearchService:
         *,
         keyword: str,
         published_window_days: int = 0,
+        hotspot_window_hours: int | None = None,
         count: int = 10,
         force_refresh: bool = False,
         platforms: tuple[Platform, ...] | None = None,
@@ -203,7 +208,9 @@ class CommercialSearchService:
         schedule_recrawls: bool = True,
         tracking_parent_batch_id: str | None = None,
     ) -> SearchBatch:
-        keyword = self._validate_request(keyword, published_window_days, count)
+        keyword = self._validate_request(
+            keyword, published_window_days, count, hotspot_window_hours
+        )
         selected_platforms = self._selected_platforms(platforms)
         safe_cache_ttl_minutes = max(1, int(cache_ttl_minutes))
         capability = self.provider.capabilities()
@@ -212,6 +219,7 @@ class CommercialSearchService:
         batch = SearchBatch(
             keyword=keyword,
             published_window_days=published_window_days,
+            hotspot_window_hours=hotspot_window_hours,
             requested_count_per_platform=count,
             provider=capability.provider_name,
             mode=capability.mode,
@@ -238,6 +246,7 @@ class CommercialSearchService:
                     platform=platform,
                     keyword=keyword,
                     published_window_days=published_window_days,
+                    hotspot_window_hours=hotspot_window_hours,
                     count=count,
                     force_refresh=force_refresh,
                     cache_ttl_minutes=safe_cache_ttl_minutes,
@@ -428,6 +437,7 @@ class CommercialSearchService:
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         count: int,
         force_refresh: bool,
         cache_ttl_minutes: int,
@@ -441,6 +451,7 @@ class CommercialSearchService:
             platform,
             keyword,
             published_window_days,
+            hotspot_window_hours,
             count,
         )
         idempotency_key = hashlib.sha256(
@@ -473,7 +484,8 @@ class CommercialSearchService:
                 platform=platform,
                 keyword=keyword,
                 published_window_days=published_window_days,
-                    count=count,
+                hotspot_window_hours=hotspot_window_hours,
+                count=count,
                     now=started_at,
                     cache_ttl_minutes=cache_ttl_minutes,
             )
@@ -491,6 +503,7 @@ class CommercialSearchService:
                 irrelevant_count=cached.irrelevant_count,
                 duration_filtered_count=cached.duration_filtered_count,
                 incremental_play_filtered_count=cached.incremental_play_filtered_count,
+                low_incremental_items=cached.low_incremental_items,
                 relevance_rule_version=cached.relevance_rule_version,
                 result_state=cached.result_state,
                 payload_diagnostic=cached.payload_diagnostic,
@@ -545,12 +558,17 @@ class CommercialSearchService:
             else started_at - timedelta(days=published_window_days)
         )
         try:
+            search_kwargs = {
+                "platform": platform,
+                "keyword": keyword,
+                "published_after": published_after,
+                "limit": count,
+                "idempotency_key": idempotency_key,
+            }
+            if hotspot_window_hours is not None:
+                search_kwargs["hotspot_window_hours"] = hotspot_window_hours
             page = self._search_with_retry(
-                platform=platform,
-                keyword=keyword,
-                published_after=published_after,
-                limit=count,
-                idempotency_key=idempotency_key,
+                **search_kwargs,
             )
             normalized, validation_errors, validation_counts = self._normalize_page(
                 page,
@@ -596,6 +614,7 @@ class CommercialSearchService:
                 irrelevant_count=validation_counts["irrelevant_count"],
                 duration_filtered_count=validation_counts["duration_filtered_count"],
                 incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
+                low_incremental_items=page.low_incremental_items,
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 exhausted=not page.has_more,
                 # 热点宝五榜是“筛选后的榜单”，结果少于上限并不等同于供应商缺页。
@@ -1003,6 +1022,7 @@ class CommercialSearchService:
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         count: int,
         now: datetime,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
@@ -1012,6 +1032,7 @@ class CommercialSearchService:
             platform,
             keyword,
             published_window_days,
+            hotspot_window_hours,
             count,
         )
         cached = self.repository.find_cached_platform_search_run(
@@ -1019,6 +1040,7 @@ class CommercialSearchService:
             platform=platform,
             keyword=keyword,
             published_window_days=published_window_days,
+            hotspot_window_hours=hotspot_window_hours,
             requested_count=count,
             since=now - timedelta(minutes=max(1, cache_ttl_minutes)),
         )
@@ -1072,12 +1094,19 @@ class CommercialSearchService:
         return finished
 
     @staticmethod
-    def _validate_request(keyword: str, published_window_days: int, count: int) -> str:
+    def _validate_request(
+        keyword: str,
+        published_window_days: int,
+        count: int,
+        hotspot_window_hours: int | None = None,
+    ) -> str:
         normalized = keyword.strip()
         if not 2 <= len(normalized) <= 50:
             raise ValueError("关键词长度必须为 2 到 50 个字符。")
         if published_window_days not in RECRAWL_OFFSETS_BY_WINDOW:
             raise ValueError("召回时间范围只支持不限、近 24 小时或近 7 天。")
+        if hotspot_window_hours not in {None, 1, 24, 72, 168}:
+            raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
         if not 1 <= count <= 100:
             raise ValueError("每个平台获取数量必须为 1 到 100 条。")
         return normalized
@@ -1088,11 +1117,12 @@ class CommercialSearchService:
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         count: int,
     ) -> str:
         payload = (
             f"{provider}|{platform.value}|{RANKING_MODE}|{keyword.casefold()}|"
-            f"{published_window_days}|{count}"
+            f"{published_window_days}|{hotspot_window_hours or '-'}|{count}"
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

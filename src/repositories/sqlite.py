@@ -75,14 +75,31 @@ class SQLiteRepository:
             self._ensure_media_resolution_tables()
             self._ensure_hot_word_tables()
             self._ensure_production_batch_tables()
+            self._ensure_video_editor_batch_tables()
             self._ensure_provider_safety_tables()
+            self._ensure_crawler_history_indexes()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
         self._ensure_media_resolution_tables()
         self._ensure_hot_word_tables()
         self._ensure_production_batch_tables()
+        self._ensure_video_editor_batch_tables()
         self._ensure_provider_safety_tables()
+        self._ensure_crawler_history_indexes()
+
+    def _ensure_crawler_history_indexes(self) -> None:
+        """Keep history listing and batch cleanup quick as customer data grows."""
+        self.connection.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_search_batches_created
+            ON search_batches(created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_provider_request_guards_run
+            ON provider_request_guards(run_id);
+            """
+        )
+        self.connection.commit()
 
     def _ensure_hot_word_tables(self) -> None:
         self.connection.executescript(
@@ -116,6 +133,23 @@ class SQLiteRepository:
 
             CREATE INDEX IF NOT EXISTS idx_production_batches_status
             ON production_batches(status, created_at DESC);
+            """
+        )
+        self.connection.commit()
+
+    def _ensure_video_editor_batch_tables(self) -> None:
+        """保存智能剪辑批次，以便页面刷新和服务重启后继续查看。"""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS video_editor_batches (
+                batch_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_video_editor_batches_created
+            ON video_editor_batches(created_at DESC);
             """
         )
         self.connection.commit()
@@ -269,6 +303,7 @@ class SQLiteRepository:
                 batch_id TEXT PRIMARY KEY,
                 keyword TEXT NOT NULL,
                 published_window_days INTEGER NOT NULL,
+                hotspot_window_hours INTEGER,
                 requested_count_per_platform INTEGER NOT NULL,
                 provider TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -325,6 +360,7 @@ class SQLiteRepository:
         self.connection.commit()
 
     def _ensure_runtime_columns(self) -> None:
+        self._ensure_column("search_batches", "hotspot_window_hours", "INTEGER")
         self._ensure_column("candidates", "feed_id", "TEXT")
         self._ensure_column("candidates", "finder_user_name", "TEXT")
         self._ensure_column(
@@ -540,6 +576,7 @@ class SQLiteRepository:
             """
         )
         self._migrate_keyword_trend_results_platform()
+        self._ensure_column("search_batches", "hotspot_window_hours", "INTEGER")
         self._ensure_column("candidates", "cohort_key", "TEXT")
         self._ensure_column(
             "candidates",
@@ -1149,13 +1186,14 @@ class SQLiteRepository:
             self.connection.execute(
                 """
                 INSERT INTO search_batches(
-                    batch_id, keyword, published_window_days,
+                    batch_id, keyword, published_window_days, hotspot_window_hours,
                     requested_count_per_platform, provider, status, created_at,
                     finished_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(batch_id) DO UPDATE SET
                     keyword = excluded.keyword,
                     published_window_days = excluded.published_window_days,
+                    hotspot_window_hours = excluded.hotspot_window_hours,
                     requested_count_per_platform = excluded.requested_count_per_platform,
                     provider = excluded.provider,
                     status = excluded.status,
@@ -1167,6 +1205,7 @@ class SQLiteRepository:
                     batch.batch_id,
                     batch.keyword.casefold(),
                     batch.published_window_days,
+                    batch.hotspot_window_hours,
                     batch.requested_count_per_platform,
                     batch.provider,
                     batch.status.value,
@@ -1451,6 +1490,7 @@ class SQLiteRepository:
         platform: Platform,
         keyword: str,
         published_window_days: int,
+        hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
     ) -> PlatformSearchRun | None:
@@ -1464,6 +1504,7 @@ class SQLiteRepository:
               AND run.finished_at >= ?
               AND batch.keyword = ?
               AND batch.published_window_days = ?
+              AND batch.hotspot_window_hours IS ?
               AND batch.requested_count_per_platform = ?
             ORDER BY run.finished_at DESC LIMIT 1
             """,
@@ -1473,6 +1514,7 @@ class SQLiteRepository:
                 since.isoformat(),
                 keyword.casefold(),
                 published_window_days,
+                hotspot_window_hours,
                 requested_count,
             ),
         ).fetchone()
@@ -1934,12 +1976,50 @@ class SQLiteRepository:
         ).fetchall()
         return [ProductionBatch.model_validate_json(row["payload_json"]) for row in rows]
 
+    def save_video_editor_batch(self, batch) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO video_editor_batches
+            (batch_id, created_at, updated_at, payload_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                batch.batch_id,
+                batch.created_at.isoformat(),
+                batch.updated_at.isoformat(),
+                batch.model_dump_json(),
+            ),
+        )
+        self.connection.commit()
+
+    def get_video_editor_batch(self, batch_id: str):
+        from src.models import VideoEditorBatch
+
+        row = self.connection.execute(
+            "SELECT payload_json FROM video_editor_batches WHERE batch_id = ?",
+            (batch_id,),
+        ).fetchone()
+        return VideoEditorBatch.model_validate_json(row["payload_json"]) if row else None
+
+    def list_video_editor_batches(self, limit: int = 100):
+        from src.models import VideoEditorBatch
+
+        rows = self.connection.execute(
+            "SELECT payload_json FROM video_editor_batches ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [VideoEditorBatch.model_validate_json(row["payload_json"]) for row in rows]
+
     def delete_pipeline_run(self, run_id: str) -> bool:
         with self.connection:
             deleted = self.connection.execute(
                 "DELETE FROM pipeline_runs WHERE run_id = ?", (run_id,)
             ).rowcount
         return bool(deleted)
+
+    def delete_all_pipeline_runs(self) -> int:
+        with self.connection:
+            return self.connection.execute("DELETE FROM pipeline_runs").rowcount
 
     def seed(self, candidates: list[VideoCandidate], tasks: list[TaskRecord]) -> None:
         if (

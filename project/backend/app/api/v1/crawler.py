@@ -7,9 +7,10 @@ import sys
 import os
 import shutil
 import re
+import random
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
@@ -72,25 +73,50 @@ PLATFORM_LABELS: dict[str, str] = {
 SMART_FREE_CANDIDATE_THRESHOLD = 3
 # 主榜只展示有足够互动基础的严格相关内容；官方热榜候选不受此门槛限制。
 INTERACTION_HEAT_FLOOR = 100.0
-HOTSPOT_CACHE_TTL_MINUTES = 30
-HOTSPOT_COOLDOWN_SECONDS = 30 * 60
+HOTSPOT_CACHE_TTL_MINUTES = 10
+HOTSPOT_COOLDOWN_MIN_SECONDS = 8 * 60
+HOTSPOT_COOLDOWN_MAX_SECONDS = 12 * 60
 HOTSPOT_SAFETY_PAUSE_SECONDS = 60 * 60
 HOTSPOT_LEASE_SECONDS = 10 * 60
 HOTSPOT_ROLLING_WINDOW_SECONDS = 24 * 60 * 60
-HOTSPOT_MAX_REAL_RUNS_PER_WINDOW = 12
+# The 8–12 minute randomized cooldown still spaces browser work; the rolling
+# cap is sized for several active customers rather than a single operator.
+HOTSPOT_MAX_REAL_RUNS_PER_WINDOW = 48
 HOTSPOT_PROVIDER_KEY = "douyin_hotspot_browser"
+HOTSPOT_WINDOW_LABELS = {
+    1: "近1小时",
+    24: "近1天",
+    72: "近3天",
+    168: "近7天",
+}
+
+
+def _hotspot_window_label(hours: int | None) -> str:
+    return HOTSPOT_WINDOW_LABELS.get(hours or 168, f"近{hours}小时")
+
+
+def _next_hotspot_cooldown_seconds() -> int:
+    """Choose one cooldown per real run; the stored deadline remains authoritative."""
+    return random.SystemRandom().randint(
+        HOTSPOT_COOLDOWN_MIN_SECONDS,
+        HOTSPOT_COOLDOWN_MAX_SECONDS,
+    )
 
 
 class CrawlerSearchRequest(BaseModel):
     keyword: str = Field(..., min_length=2, max_length=50, description="搜索关键词")
-    # OneAPI/官方热榜兼容字段；热点宝智能发现固定使用近 7 天。
-    published_window_days: int = Field(0, description="0=不限；1/7 兼容其他发现模式，热点宝固定近 7 天")
+    # OneAPI/官方热榜兼容字段；热点宝不使用它限制视频发布时间。
+    published_window_days: int = Field(0, description="0=不限；1/7 兼容其他发现模式")
+    hotspot_window_hours: Literal[1, 24, 72, 168] = Field(
+        168,
+        description="热点宝榜单统计周期：1/24/72/168 小时；不限制视频发布时间。",
+    )
     count_per_platform: int = Field(10, ge=1, le=10, description="当前启用平台返回数量")
     hotspot_result_limit: int = Field(
         100,
         ge=1,
         le=100,
-        description="热点宝近 7 天五榜合并、筛选后的最多保留数量；不影响 OneAPI 的 10 条上限。",
+        description="热点宝所选周期五榜合并、筛选后的最多保留数量；不影响 OneAPI 的 10 条上限。",
     )
     force_refresh: bool = Field(False, description="是否绕过缓存强制刷新")
     mode: str | None = Field(
@@ -142,6 +168,7 @@ class CrawlerSafetyStatus(BaseModel):
 class CrawlerPreviewResponse(BaseModel):
     keyword: str
     published_window_days: int
+    hotspot_window_hours: int | None = None
     count_per_platform: int
     force_refresh: bool
     mode: str | None = None
@@ -291,6 +318,7 @@ class CrawlerCandidateResult(BaseModel):
     likes: int | None = None
     new_likes: int | None = None
     duration_seconds: int | None = None
+    hotspot_window_hours: int | None = None
     hotspot_list_labels: list[str] = Field(default_factory=list)
     comments: int | None = None
     shares: int | None = None
@@ -449,12 +477,15 @@ class CrawlerPlatformRunResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
+    # 仅在热点宝主榜为空时返回：严格相关但新增播放量不超过 1,000 的参考视频。
+    low_incremental_candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
 
 
 class CrawlerBatchResponse(BaseModel):
     batch_id: str
     keyword: str
     published_window_days: int
+    hotspot_window_hours: int | None = None
     count_per_platform: int
     provider: str
     mode: str
@@ -543,10 +574,10 @@ def _capability_payload(
         for item in capability.supported_platforms
         if item not in active_platforms
     ]
-    try:
-        usage = provider.usage()
-    except LicensedProviderError:
-        usage = None
+    # Capability discovery must not call a remote supplier.  This page no
+    # longer exposes paid fallback controls, and a usage probe can otherwise
+    # delay every page open while also creating unnecessary external traffic.
+    usage = None
     hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
     hotspot_capability = hotspot_provider.capabilities() if hotspot_provider is not None else None
     return CrawlerCapabilitiesResponse(
@@ -1000,7 +1031,8 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
         try:
             previews = hotspot_service.preview(
                 keyword=body.keyword,
-                published_window_days=7,
+                published_window_days=0,
+                hotspot_window_hours=body.hotspot_window_hours,
                 count=body.hotspot_result_limit,
                 force_refresh=False,
                 platforms=(Platform.DOUYIN,),
@@ -1021,7 +1053,7 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
     if cache_hit:
         return CrawlerSafetyStatus(
             state="cached",
-            message="命中 30 分钟本地缓存，可立即查看，不会打开热点宝页面。",
+            message="命中 10 分钟本地缓存，可立即查看，不会打开热点宝页面。",
             **common,
         )
 
@@ -1050,7 +1082,7 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
             cooldown_remaining_seconds=remaining,
             next_available_at=window_ends_at,
             message=(
-                "为降低账号风险，滚动 24 小时的真实热点宝采集已达到 12 次上限；"
+                "为降低账号风险，滚动 24 小时的真实热点宝采集已达到 48 次上限；"
                 "缓存结果仍可立即查看。"
             ),
             **common,
@@ -1061,14 +1093,14 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
             state="cooldown",
             cooldown_remaining_seconds=remaining,
             next_available_at=state.next_allowed_at,
-            message="为降低账号风险，真实采集完成后需要冷却 30 分钟；缓存结果不受影响。",
+            message="真实采集完成后会随机冷却 8–12 分钟；本次按已生成的截止时间倒计时，缓存结果不受影响。",
             **common,
         )
     return CrawlerSafetyStatus(
         state="ready",
         message=(
-            "安全优先：预计约 2–3 分钟，五个榜单顺序采集；同关键词 30 分钟缓存，"
-            "完成后冷却 30 分钟，滚动 24 小时最多 12 次真实采集。"
+            "安全优先：预计约 2–3 分钟，五个榜单顺序采集；同关键词 10 分钟缓存，"
+            "完成后随机冷却 8–12 分钟，滚动 24 小时最多 48 次真实采集。"
         ),
         **common,
     )
@@ -1099,11 +1131,13 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
         and hotspot_status.ready_to_crawl
     )
     if hotspot_ready:
+        hotspot_window_label = _hotspot_window_label(body.hotspot_window_hours)
         crawl_safety = _hotspot_safety_status(body, hotspot_service, repo)
         blocked = crawl_safety.state in {"safety_pause", "cooldown", "running", "daily_limit"}
         return CrawlerPreviewResponse(
             keyword=body.keyword.strip(),
-            published_window_days=7,
+            published_window_days=0,
+            hotspot_window_hours=body.hotspot_window_hours,
             count_per_platform=body.hotspot_result_limit,
             force_refresh=body.force_refresh,
             mode="smart",
@@ -1119,7 +1153,7 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
             platforms=[
                 CrawlerPlatformPreview(
                     platform="douyin_hotspot",
-                    platform_label="热点宝近7天五类爆款榜（本机授权）",
+                    platform_label=f"热点宝{hotspot_window_label}五类爆款榜（本机授权）",
                     cache_hit=crawl_safety.state == "cached",
                     estimated_api_calls=0,
                     platform_unit_price_cny=0.0,
@@ -1134,13 +1168,16 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
             blocked=blocked,
             free_candidate_count=0,
             free_pool_status="not_used",
-            free_pool_message="热点宝已授权：本次固定扫描近7天的五类榜单。",
+            free_pool_message=f"热点宝已授权：本次扫描{hotspot_window_label}的五类榜单。",
             paid_fallback_required=False,
             paid_fallback_blocked_reason="本次热点宝采集不自动调用 OneAPI，也不安排复爬。",
             trend_tracking_enabled=False,
             hotspot_ready=True,
-            hotspot_message="将扫描近7天的视频总榜、低粉爆款、高完播率、高涨粉率和高点赞率，按新增播放量排序。",
-            hotspot_time_strategy="fixed_7d_five_lists",
+            hotspot_message=(
+                f"将扫描{hotspot_window_label}的视频总榜、低粉爆款、高完播率、高涨粉率和高点赞率，"
+                "按所选周期新增播放量排序。"
+            ),
+            hotspot_time_strategy="selectable_1h_24h_72h_168h",
             target_main_count=body.hotspot_result_limit,
             paid_call_cap=0,
             hotspot_result_limit=body.hotspot_result_limit,
@@ -1284,7 +1321,7 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
         trend_tracking_enabled=body.track_trend,
         hotspot_ready=hotspot_ready,
         hotspot_message=(
-            "热点宝已连接：将固定读取近7天并采集五类爆款榜。"
+            f"热点宝已连接：将读取{_hotspot_window_label(body.hotspot_window_hours)}并采集五类爆款榜。"
             if hotspot_ready
             else (hotspot_status.message if hotspot_status else "请先连接热点宝专用浏览器。")
         ),
@@ -1404,7 +1441,7 @@ def _execute_hotspot_single_snapshot_batch(
     hotspot_service,
     repo,
 ) -> CrawlerBatchResponse:
-    """Run the fixed 7-day, five-list Hotspot flow without trend checkpoints."""
+    """Run one selected-period, five-list Hotspot flow without trend checkpoints."""
     now = datetime.now().astimezone()
     safety_before = _hotspot_safety_status(body, hotspot_service, repo)
     if safety_before.state in {"safety_pause", "cooldown", "running", "daily_limit"}:
@@ -1427,10 +1464,12 @@ def _execute_hotspot_single_snapshot_batch(
 
     response: CrawlerBatchResponse
     safety_after: CrawlerSafetyStatus | None = None
+    cooldown_seconds: int | None = None
     try:
         batch = hotspot_service.execute(
             keyword=body.keyword,
-            published_window_days=7,
+            published_window_days=0,
+            hotspot_window_hours=body.hotspot_window_hours,
             count=body.hotspot_result_limit,
             force_refresh=body.force_refresh,
             platforms=(Platform.DOUYIN,),
@@ -1441,7 +1480,8 @@ def _execute_hotspot_single_snapshot_batch(
         response = CrawlerBatchResponse(
             batch_id=f"hotspot-{int(now.timestamp())}",
             keyword=body.keyword.strip(),
-            published_window_days=7,
+            published_window_days=0,
+            hotspot_window_hours=body.hotspot_window_hours,
             count_per_platform=body.hotspot_result_limit,
             provider="douyin_local_browser",
             mode="smart",
@@ -1464,6 +1504,7 @@ def _execute_hotspot_single_snapshot_batch(
         response = _batch_to_response(batch, repo)
     finally:
         if lease_id is not None:
+            cooldown_seconds = _next_hotspot_cooldown_seconds()
             error_text = " ".join(
                 part
                 for part in [
@@ -1483,7 +1524,7 @@ def _execute_hotspot_single_snapshot_batch(
                 provider=HOTSPOT_PROVIDER_KEY,
                 run_id=lease_id,
                 now=datetime.now().astimezone(),
-                cooldown_seconds=HOTSPOT_COOLDOWN_SECONDS,
+                cooldown_seconds=cooldown_seconds,
                 safety_pause_seconds=HOTSPOT_SAFETY_PAUSE_SECONDS if is_safety_event else 0,
                 safety_reason=(
                     "热点宝出现安全验证或访问频繁提示，已自动暂停真实采集 60 分钟。"
@@ -1508,7 +1549,7 @@ def _execute_hotspot_single_snapshot_batch(
                     if is_safety_event
                     else max(1, int((window_ends_at - datetime.now().astimezone()).total_seconds()))
                     if daily_limit_reached and window_ends_at
-                    else HOTSPOT_COOLDOWN_SECONDS
+                    else cooldown_seconds
                 ),
                 next_available_at=(
                     released.blocked_until
@@ -1522,9 +1563,12 @@ def _execute_hotspot_single_snapshot_batch(
                 message=(
                     released.blocked_reason
                     if is_safety_event
-                    else "滚动 24 小时的真实热点宝采集已达到 12 次上限；缓存结果仍可立即查看。"
+                    else "滚动 24 小时的真实热点宝采集已达到 48 次上限；缓存结果仍可立即查看。"
                     if daily_limit_reached
-                    else "本次真实采集已完成；为降低账号风险，下次真实采集将在 30 分钟后开放。"
+                    else (
+                        "本次真实采集已完成；"
+                        f"下次真实采集约在 {(cooldown_seconds + 59) // 60} 分钟后开放。"
+                    )
                 ) or "热点宝安全状态已更新。",
             )
         else:
@@ -1534,7 +1578,7 @@ def _execute_hotspot_single_snapshot_batch(
             )
             safety_after = CrawlerSafetyStatus(
                 state="cached",
-                message="本次返回 30 分钟本地缓存，未打开热点宝页面，也不会进入冷却。",
+                message="本次返回 10 分钟本地缓存，未打开热点宝页面，也不会进入冷却。",
                 real_runs_in_window=real_runs,
                 rolling_window_ends_at=window_ends_at,
             )
@@ -1543,7 +1587,11 @@ def _execute_hotspot_single_snapshot_batch(
             "monitoring_policy": "hotspot_single_snapshot_v1",
             "trend_tracking_enabled": False,
             "free_candidate_count": response.total_candidates,
-            "paid_fallback_blocked_reason": "热点宝近7天五榜单次采集，不自动调用 OneAPI，也不安排复爬。",
+            "hotspot_window_hours": body.hotspot_window_hours,
+            "paid_fallback_blocked_reason": (
+                f"热点宝{_hotspot_window_label(body.hotspot_window_hours)}五榜单次采集，"
+                "不自动调用 OneAPI，也不安排复爬。"
+            ),
             "crawl_safety": safety_after,
         }
     )
@@ -2483,6 +2531,10 @@ def _transcription_to_response(task) -> TranscriptionResponse:
             "confidence": s.confidence,
             "needs_review": s.needs_review,
             "reviewed": s.reviewed,
+            "quality_status": s.quality_status,
+            "quality_source": s.quality_source,
+            "quality_note": s.quality_note,
+            "alternatives": s.alternatives,
         }
         for s in (task.segments or [])
     ]
@@ -2498,11 +2550,21 @@ def _transcription_to_response(task) -> TranscriptionResponse:
         timing_available=task.timing_available,
         duration_seconds=task.duration_seconds,
         approved_revision_id=task.approved_revision_id,
-        low_confidence_count=sum(
-            1
-            for segment in (task.segments or [])
-            if segment.needs_review and not segment.reviewed
+        low_confidence_count=(
+            task.uncertain_segment_count
+            if task.auto_reviewed
+            else sum(
+                1
+                for segment in (task.segments or [])
+                if segment.needs_review and not segment.reviewed
+            )
         ),
+        is_mock=task.is_mock,
+        auto_reviewed=task.auto_reviewed,
+        uncertain_segment_count=task.uncertain_segment_count,
+        secondary_asr_count=task.secondary_asr_count,
+        llm_review_count=task.llm_review_count,
+        auto_review_error=task.auto_review_error,
         segments=segments,
         error_message=task.error_message,
         created_at=task.created_at,
@@ -2597,7 +2659,7 @@ def _candidate_to_response(
     relevance_reason: str | None = None,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
-    hotspot_lists, duration_seconds = _hotspot_evidence_details(resolved_evidence)
+    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(resolved_evidence)
     is_hotspot = bool(resolved_evidence and resolved_evidence.startswith("hotspot:"))
     media_resolution = repo.find_latest_media_resolution_for_candidate(candidate.video_id)
     resolved_task = (
@@ -2681,6 +2743,7 @@ def _candidate_to_response(
         likes=candidate.metrics.likes,
         new_likes=candidate.metrics.likes if is_hotspot else None,
         duration_seconds=duration_seconds,
+        hotspot_window_hours=hotspot_window_hours,
         hotspot_list_labels=hotspot_lists,
         comments=candidate.metrics.comments,
         shares=candidate.metrics.shares,
@@ -2708,14 +2771,48 @@ def _candidate_to_response(
     )
 
 
-def _hotspot_evidence_details(evidence: str | None) -> tuple[list[str], int | None]:
+def _provider_item_to_crawler_response(item) -> CrawlerCandidateResult:
+    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
+        item.evidence
+    )
+    return CrawlerCandidateResult(
+        video_id=item.platform_item_id,
+        title=item.title,
+        author_name=item.author_name,
+        platform=item.platform.value,
+        platform_label=_platform_label(item.platform.value),
+        source_url=str(item.source_url) if item.source_url else None,
+        published_at=item.published_at,
+        confidence=item.metrics.confidence,
+        provider_hot_rank=item.provider_rank,
+        plays=item.metrics.plays,
+        new_plays=item.metrics.plays,
+        likes=item.metrics.likes,
+        new_likes=item.metrics.likes,
+        duration_seconds=duration_seconds,
+        hotspot_window_hours=hotspot_window_hours,
+        hotspot_list_labels=hotspot_lists,
+        comments=item.metrics.comments,
+        shares=item.metrics.shares,
+        favorites=item.metrics.favorites,
+        data_quality_warnings=item.data_quality_warnings,
+        evidence=item.evidence,
+    )
+
+
+def _hotspot_evidence_details(evidence: str | None) -> tuple[list[str], int | None, int | None]:
     if not evidence or not evidence.startswith("hotspot:"):
-        return [], None
+        return [], None, None
     header, *_ = evidence.split(";", 1)
     header_parts = header.split(":")
     labels = [label for label in (header_parts[1].split("|") if len(header_parts) > 1 else []) if label]
+    window_match = re.search(r":(\d+)h:", header)
     duration_match = re.search(r"时长秒=(\d+)", evidence)
-    return labels, int(duration_match.group(1)) if duration_match else None
+    return (
+        labels,
+        int(duration_match.group(1)) if duration_match else None,
+        int(window_match.group(1)) if window_match else None,
+    )
 
 
 def _batch_to_response(
@@ -2750,6 +2847,7 @@ def _batch_to_response(
         batch_id=batch.batch_id,
         keyword=batch.keyword,
         published_window_days=batch.published_window_days,
+        hotspot_window_hours=batch.hotspot_window_hours,
         count_per_platform=batch.requested_count_per_platform,
         provider=batch.provider,
         mode=batch.mode.value,
@@ -2797,6 +2895,7 @@ def _run_to_response(
     include_candidates: bool,
 ) -> CrawlerPlatformRunResponse:
     candidates: list[CrawlerCandidateResult] = []
+    low_incremental_candidates: list[CrawlerCandidateResult] = []
     visible_matches: list[tuple[Any, Any]] = []
     historical_irrelevant_count = 0
     if run.status in {
@@ -2868,6 +2967,17 @@ def _run_to_response(
                     keyword=batch.keyword,
                 )
             )
+    if (
+        include_candidates
+        and run.provider == "douyin_local_browser"
+        and not candidates
+        and run.low_incremental_items
+    ):
+        low_incremental_candidates = [
+            _provider_item_to_crawler_response(item)
+            for item in run.low_incremental_items
+            if title_matches_keyword(title=item.title, keyword=batch.keyword)
+        ]
     return CrawlerPlatformRunResponse(
         run_id=run.run_id,
         platform=run.platform.value,
@@ -2903,4 +3013,5 @@ def _run_to_response(
         started_at=run.started_at,
         finished_at=run.finished_at,
         candidates=candidates,
+        low_incremental_candidates=low_incremental_candidates,
     )

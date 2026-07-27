@@ -45,6 +45,8 @@ import {
   getAvatarJob,
   listAvatarAssets,
   listAvatarJobs,
+  trainCloudAvatar,
+  trainCloudVoice,
   uploadAvatarAsset,
 } from "../api/client";
 import type { AvatarAsset, AvatarCapability, AvatarJob, AvatarProfile } from "../api/types";
@@ -100,6 +102,7 @@ export default function AvatarPage() {
   const [searchParams] = useSearchParams();
   const sourceTaskId = searchParams.get("sourceTask")?.trim() || null;
   const sourceRevisionId = searchParams.get("sourceRevision")?.trim() || null;
+  const keywordFromQuery = searchParams.get("keyword")?.trim() || "";
   const scriptFromQuery = searchParams.get("script")?.trim() || "";
   const [capability, setCapability] = useState<AvatarCapability | null>(null);
   const [assets, setAssets] = useState<AvatarAsset[]>([]);
@@ -113,6 +116,9 @@ export default function AvatarPage() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState("");
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [playbackJob, setPlaybackJob] = useState<AvatarJob | null>(null);
+  const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
+  const [playbackLoading, setPlaybackLoading] = useState(false);
   const currentTaskRef = useRef<HTMLDivElement>(null);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -120,6 +126,7 @@ export default function AvatarPage() {
   const recordingStreamRef = useRef<MediaStream | null>(null);
 
   const [scriptText, setScriptText] = useState("");
+  const [videoName, setVideoName] = useState("");
   const [avatarId, setAvatarId] = useState<string>();
   const [voiceId, setVoiceId] = useState<string>();
   const [profileId, setProfileId] = useState("default");
@@ -173,11 +180,23 @@ export default function AvatarPage() {
   const serviceUnavailable = Boolean(capability && !capability.enabled);
   const selectedProfileUnavailable = Boolean(selectedProfile && !selectedProfile.enabled);
   const supportsLocalUpload = capability?.provider_name === "local_avatar";
+  const supportsCloudAvatarTraining = Boolean(capability?.supports_cloud_avatar_training);
+  const supportsVoiceCloning = Boolean(capability?.supports_voice_cloning);
+  const supportsVoiceSampleUpload = Boolean(capability?.supports_voice_sample_upload);
+  const canAddAvatarMaterial = supportsLocalUpload || supportsCloudAvatarTraining;
+  const canAddVoiceMaterial = supportsLocalUpload || supportsVoiceSampleUpload;
   const selectedRecordedProfile = selectedProfile?.profile_id === "local_recorded_natural";
+
+  const isReadyAsset = (asset: AvatarAsset) => asset.authorized && asset.status === "ready";
+  const selectedAvatarReady = Boolean(selectedAvatar && isReadyAsset(selectedAvatar));
+  const selectedVoiceReady = Boolean(selectedVoice && isReadyAsset(selectedVoice));
 
   const estimatedCostText = useMemo(() => {
     if (!capability) return "读取中";
     if (capability.mode === "sandbox") return "演示任务，不计费";
+    if (capability.provider_name === "shuying_legacy_cloud" && estimatedCost === null) {
+      return "供应商未返回预估";
+    }
     if (estimatedCost === null) return "待方案就绪后返回";
     if (estimatedCost === 0) return "本地算力（不含硬件摊销）";
     return `¥${estimatedCost.toFixed(2)}`;
@@ -186,6 +205,20 @@ export default function AvatarPage() {
   const capabilityDescription = useMemo(() => {
     if (!capability) return "";
     if (serviceUnavailable) {
+      if (capability.provider_name === "shuying_legacy_cloud") {
+        const missingLabels = capability.missing_configuration
+          .map((item) => {
+            if (item.startsWith("SHUYING_AVATAR_BASE_URL")) return "公司旧网关 HTTPS 地址";
+            if (item === "SHUYING_AVATAR_AVATARS_JSON") return "当前有效数字人 ID";
+            if (item === "SHUYING_AVATAR_VOICES_JSON") return "当前有效音色 ID";
+            if (item === "SHUYING_AVATAR_RESULT_ALLOWED_HOSTS") return "成片域名白名单";
+            if (item.startsWith("SHUYING_AVATAR_AUDIO_UPLOAD_URL")) return "公司音频上传地址";
+            if (item === "SHUYING_AVATAR_AUDIO_ALLOWED_HOSTS") return "音频域名白名单";
+            if (item === "SHUYING_AVATAR_API_CODE") return "公司接口 Key";
+            return item;
+          });
+        return `已切换到公司单 Key 云数字人，不再使用客户本地显卡。仍需补齐：${missingLabels.join("、")}。配置完成前不会提交计费任务。`;
+      }
       return capability.missing_configuration.length
         ? "缺少供应商配置，请管理员在服务端完成配置后再开放真实生成。"
         : "服务端当前未开放数字人生成能力。";
@@ -196,11 +229,16 @@ export default function AvatarPage() {
     if (capability.provider_name === "local_avatar") {
       return "当前支持上传本人照片和完整口播录音。录音驱动不是声音克隆：最终口播以录音内容为准。";
     }
+    if (capability.provider_name === "shuying_legacy_cloud") {
+      return "公司数影云数字人已连接。文字转语音、音频上传和视频合成都在云端完成，不占用客户本地显卡；费用以公司接口实际结算为准。";
+    }
     return "当前支持从已授权的公共形象和公共音色库中选择。自定义克隆入口将在后端能力接通后开放。";
   }, [capability, serviceUnavailable]);
 
   const profileStatusText = selectedProfileUnavailable
-    ? "该方案尚未部署完成：请管理员先完成本地语音、视频模型与授权素材配置。"
+    ? capability?.provider_name === "shuying_legacy_cloud"
+      ? "公司云网关或授权素材尚未补齐。"
+      : "该方案尚未部署完成：请管理员先完成本地语音、视频模型与授权素材配置。"
     : "";
 
   const submitButtonText = serviceUnavailable
@@ -295,6 +333,10 @@ export default function AvatarPage() {
     recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
 
+  useEffect(() => () => {
+    if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+  }, [playbackUrl]);
+
   const handleSubmit = useCallback(async () => {
     if (!capability?.enabled) {
       toast.warning("数字人服务尚未可用，请先配置供应商。");
@@ -304,8 +346,8 @@ export default function AvatarPage() {
       toast.warning("缺少可用公共形象或音色。");
       return;
     }
-    if (!selectedAvatar?.authorized || !selectedVoice?.authorized) {
-      toast.warning("所选公共形象或音色尚未授权。");
+    if (!selectedAvatarReady || !selectedVoiceReady) {
+      toast.warning("所选形象或音色尚未训练完成或未授权。");
       return;
     }
     if (selectedProfile && !selectedProfile.enabled) {
@@ -321,6 +363,8 @@ export default function AvatarPage() {
       const job = await createAvatarJob({
         source_task_id: sourceTaskId,
         source_revision_id: sourceRevisionId,
+        video_name: videoName.trim() || undefined,
+        keyword: keywordFromQuery || undefined,
         script_text: scriptText.trim(),
         avatar_id: avatarId,
         voice_id: voiceId,
@@ -349,10 +393,14 @@ export default function AvatarPage() {
     sourceTaskId,
     targetPlatforms,
     toast,
+    videoName,
     voiceId,
+    keywordFromQuery,
     selectedProfile,
     selectedAvatar,
+    selectedAvatarReady,
     selectedVoice,
+    selectedVoiceReady,
   ]);
 
   const handleDownload = useCallback(async (job: AvatarJob) => {
@@ -361,13 +409,36 @@ export default function AvatarPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `avatar_${job.task_id}.mp4`;
+      link.download = `${job.video_name || job.title}.mp4`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "下载失败");
     }
   }, [toast]);
+
+  const handlePlayJob = useCallback(async (job: AvatarJob) => {
+    if (!job.result_url) return;
+    setPlaybackJob(job);
+    setPlaybackLoading(true);
+    try {
+      const blob = await downloadAvatarJobMedia(job.task_id);
+      setPlaybackUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return URL.createObjectURL(blob);
+      });
+    } catch (error) {
+      setPlaybackJob(null);
+      toast.error(error instanceof Error ? error.message : "读取成片失败");
+    } finally {
+      setPlaybackLoading(false);
+    }
+  }, [toast]);
+
+  const closePlayback = useCallback(() => {
+    setPlaybackJob(null);
+    setPlaybackUrl(null);
+  }, []);
 
   const handleAssetUpload = useCallback(async (kind: "avatar" | "voice", file: File) => {
     if (!supportsLocalUpload) {
@@ -393,6 +464,50 @@ export default function AvatarPage() {
     }
     return false;
   }, [refresh, supportsLocalUpload, toast]);
+
+  const handleCloudAvatarTraining = useCallback(async (file: File) => {
+    if (!supportsCloudAvatarTraining) {
+      toast.warning("公司云形象训练线路尚未配置。");
+      return false;
+    }
+    setUploadingAvatar(true);
+    try {
+      const asset = await trainCloudAvatar({
+        file,
+        name: file.name.replace(/\.[^.]+$/, "") || "新建云形象",
+      });
+      await refresh();
+      setAvatarId(asset.asset_id);
+      toast.success("云形象训练已提交，可在素材列表查看状态。");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "提交云形象训练失败");
+    } finally {
+      setUploadingAvatar(false);
+    }
+    return false;
+  }, [refresh, supportsCloudAvatarTraining, toast]);
+
+  const handleCloudVoiceTraining = useCallback(async (file: File) => {
+    if (!supportsVoiceSampleUpload) {
+      toast.warning("公司云数字人服务尚未配置，暂不能保存声音样本。");
+      return false;
+    }
+    setUploadingVoice(true);
+    try {
+      const asset = await trainCloudVoice({
+        file,
+        name: file.name.replace(/\.[^.]+$/, "") || "新建克隆声音",
+      });
+      await refresh();
+      setVoiceId(asset.asset_id);
+      toast.success(asset.status === "pending_configuration" ? "声音样本已保存，待配置声音线路后再克隆。" : "声音克隆训练已提交，可在素材列表查看状态。");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "提交声音克隆失败");
+    } finally {
+      setUploadingVoice(false);
+    }
+    return false;
+  }, [refresh, supportsVoiceSampleUpload, toast]);
 
   const closeCamera = useCallback(() => {
     setCameraOpen(false);
@@ -526,12 +641,12 @@ export default function AvatarPage() {
           <Card title={<Space><UserOutlined /> 形象素材</Space>} loading={loading}>
             <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
-                role="button"
-                tabIndex={0}
-                aria-label="点击打开摄像头拍照"
-                onClick={() => void handleOpenCamera()}
+                role={supportsLocalUpload ? "button" : undefined}
+                tabIndex={supportsLocalUpload ? 0 : -1}
+                aria-label={supportsLocalUpload ? "点击打开摄像头拍照" : "当前选择的形象预览"}
+                onClick={supportsLocalUpload ? () => void handleOpenCamera() : undefined}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") void handleOpenCamera();
+                  if (supportsLocalUpload && (event.key === "Enter" || event.key === " ")) void handleOpenCamera();
                 }}
                 style={{
                   width: "100%",
@@ -544,16 +659,28 @@ export default function AvatarPage() {
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
                   overflow: "hidden",
-                  cursor: supportsLocalUpload ? "pointer" : "not-allowed",
-                  opacity: supportsLocalUpload ? 1 : 0.6,
+                  cursor: canAddAvatarMaterial ? "pointer" : "not-allowed",
+                  opacity: canAddAvatarMaterial ? 1 : 0.6,
                 }}
               >
                 {selectedAvatar?.preview_url ? (
-                  <img
-                    src={selectedAvatar.preview_url}
-                    alt={selectedAvatar.name}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
+                  selectedAvatar.preview_type === "video" ? (
+                    <video
+                      src={selectedAvatar.preview_url}
+                      aria-label={`${selectedAvatar.name} 视频预览`}
+                      controls
+                      muted
+                      playsInline
+                      preload="metadata"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", background: "#0f172a" }}
+                    />
+                  ) : (
+                    <img
+                      src={selectedAvatar.preview_url}
+                      alt={selectedAvatar.name}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    />
+                  )
                 ) : (
                   <>
                     <UserOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
@@ -566,18 +693,18 @@ export default function AvatarPage() {
                 value={avatarId}
                 onChange={setAvatarId}
                 options={avatars.map((item) => ({
-                  label: item.authorized ? item.name : `${item.name}（未授权）`,
+                  label: isReadyAsset(item) ? item.name : `${item.name}（${item.status === "training" ? "训练中" : item.status === "failed" ? "训练失败" : "未授权"}）`,
                   value: item.asset_id,
-                  disabled: !item.authorized,
+                  disabled: !isReadyAsset(item),
                 }))}
                 placeholder="选择公共形象"
                 style={{ width: "100%" }}
               />
               <Upload
-                accept="image/png,image/jpeg,image/webp"
+                accept={supportsLocalUpload ? "image/png,image/jpeg,image/webp" : "video/mp4,video/quicktime,.mp4,.mov"}
                 showUploadList={false}
                 beforeUpload={(file) => {
-                  void handleAssetUpload("avatar", file);
+                  void (supportsLocalUpload ? handleAssetUpload("avatar", file) : handleCloudAvatarTraining(file));
                   return false;
                 }}
               >
@@ -585,17 +712,19 @@ export default function AvatarPage() {
                   block
                   icon={<UploadOutlined />}
                   loading={uploadingAvatar}
-                  disabled={!supportsLocalUpload}
+                  disabled={supportsLocalUpload ? false : !supportsCloudAvatarTraining}
                 >
-                  从设备上传照片
+                  {supportsLocalUpload ? "从设备上传照片" : "新增云形象（训练视频）"}
                 </Button>
               </Upload>
-              <Alert
-                type="info"
-                showIcon
-                message="本人形象可直接使用"
-                description="建议上传正脸清晰照片，需确认拥有肖像授权。"
-              />
+              {supportsLocalUpload && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="本人形象可直接使用"
+                  description="建议上传正脸清晰照片，需确认拥有肖像授权。"
+                />
+              )}
             </Space>
           </Card>
         </Col>
@@ -603,12 +732,12 @@ export default function AvatarPage() {
           <Card title={<Space><AudioOutlined /> 声音素材</Space>} loading={loading}>
             <Space direction="vertical" style={{ width: "100%" }} size={14}>
               <div
-                role="button"
-                tabIndex={0}
-                aria-label={recording ? "点击结束录音" : "点击开始录音"}
-                onClick={() => void handleRecordVoice()}
+                role={supportsLocalUpload ? "button" : undefined}
+                tabIndex={supportsLocalUpload ? 0 : -1}
+                aria-label={supportsLocalUpload ? (recording ? "点击结束录音" : "点击开始录音") : "声音克隆样本说明"}
+                onClick={supportsLocalUpload ? () => void handleRecordVoice() : undefined}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") void handleRecordVoice();
+                  if (supportsLocalUpload && (event.key === "Enter" || event.key === " ")) void handleRecordVoice();
                 }}
                 style={{
                   width: "100%",
@@ -620,30 +749,30 @@ export default function AvatarPage() {
                   alignItems: "center",
                   justifyContent: "center",
                   border: "2px dashed var(--border-default)",
-                  cursor: supportsLocalUpload ? "pointer" : "not-allowed",
-                  opacity: supportsLocalUpload ? 1 : 0.6,
+                  cursor: canAddVoiceMaterial ? "pointer" : "not-allowed",
+                  opacity: canAddVoiceMaterial ? 1 : 0.6,
                 }}
               >
                 {recording ? <StopOutlined style={{ fontSize: 48, color: "#ef4444", marginBottom: 12 }} /> : <AudioOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />}
-                <Text strong>{recording ? "正在录音，点击结束" : selectedVoice?.asset_id.startsWith("local-") ? "点击重新录音" : "点击开始录音"}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>浏览器会请求麦克风权限，结束后自动上传</Text>
+                <Text strong>{supportsLocalUpload ? (recording ? "正在录音，点击结束" : selectedVoice?.asset_id.startsWith("local-") ? "点击重新录音" : "点击开始录音") : "上传声音样本训练克隆音色"}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{supportsLocalUpload ? "浏览器会请求麦克风权限，结束后自动上传" : "声音克隆不会占用客户本地显卡"}</Text>
               </div>
               <Select
                 value={voiceId}
                 onChange={setVoiceId}
                 options={voices.map((item) => ({
-                  label: item.authorized ? item.name : `${item.name}（未授权）`,
+                  label: isReadyAsset(item) ? item.name : `${item.name}（${item.status === "training" ? "训练中" : item.status === "pending_configuration" ? "待训练" : item.status === "failed" ? "训练失败" : "未授权"}）`,
                   value: item.asset_id,
-                  disabled: !item.authorized,
+                  disabled: !isReadyAsset(item),
                 }))}
                 placeholder="选择公共音色"
                 style={{ width: "100%" }}
               />
               <Upload
-                accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/webm,.wav,.mp3,.m4a,.webm"
+                accept={supportsLocalUpload ? "audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/webm,.wav,.mp3,.m4a,.webm" : "audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"}
                 showUploadList={false}
                 beforeUpload={(file) => {
-                  void handleAssetUpload("voice", file);
+                  void (supportsLocalUpload ? handleAssetUpload("voice", file) : handleCloudVoiceTraining(file));
                   return false;
                 }}
               >
@@ -651,16 +780,16 @@ export default function AvatarPage() {
                   block
                   icon={<UploadOutlined />}
                   loading={uploadingVoice}
-                  disabled={!supportsLocalUpload}
+                  disabled={supportsLocalUpload ? false : !supportsVoiceSampleUpload}
                 >
-                  从设备上传录音
+                  {supportsLocalUpload ? "从设备上传录音" : supportsVoiceCloning ? "克隆声音（上传样本）" : "上传声音样本"}
                 </Button>
               </Upload>
               <Alert
                 type="info"
                 showIcon
-                message="当前是录音驱动，不是声音克隆"
-                description="请上传已经念完整段文案的音频；选择本人录音驱动版后，视频会按这段录音生成。"
+                message={supportsLocalUpload ? "当前是录音驱动，不是声音克隆" : supportsVoiceCloning ? "训练个人克隆声音" : "可先上传声音样本"}
+                description={supportsLocalUpload ? "请上传已经念完整段文案的音频；选择本人录音驱动版后，视频会按这段录音生成。" : supportsVoiceCloning ? "支持 mp3、m4a、wav，30 秒以内、最大 20MB；请确认拥有声音授权。" : "样本会安全保存，不会自动产生克隆费用；补齐 /apiai/ai 声音凭证后再由你主动发起训练。"}
               />
             </Space>
           </Card>
@@ -668,6 +797,20 @@ export default function AvatarPage() {
         <Col xs={24} lg={12}>
           <Card title={<Space><RocketOutlined /> 生成配置</Space>} loading={loading}>
             <Space direction="vertical" size={16} style={{ width: "100%" }}>
+              <div>
+                <Text strong>视频名称（选填）</Text>
+                <Input
+                  value={videoName}
+                  onChange={(event) => setVideoName(event.target.value)}
+                  maxLength={100}
+                  placeholder={keywordFromQuery ? `留空自动命名为“${keywordFromQuery}1”` : "留空自动命名为“数字人视频1”"}
+                  style={{ marginTop: 8 }}
+                />
+                <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
+                  重名时系统会自动追加序号。
+                </Text>
+              </div>
+
               <div>
                 <Text strong>口播文案</Text>
                 <TextArea
@@ -762,8 +905,8 @@ export default function AvatarPage() {
                 disabled={
                   serviceUnavailable ||
                   selectedProfileUnavailable ||
-                  !selectedAvatar?.authorized ||
-                  !selectedVoice?.authorized
+                  !selectedAvatarReady ||
+                  !selectedVoiceReady
                 }
                 onClick={handleSubmit}
               >
@@ -803,13 +946,18 @@ export default function AvatarPage() {
                   />
                 )}
                 {activeJob.result_url ? (
-                  <Button
-                    type="primary"
-                    icon={<DownloadOutlined />}
-                    onClick={() => handleDownload(activeJob)}
-                  >
-                    下载真实成片
-                  </Button>
+                  <Space wrap>
+                    <Button
+                      type="primary"
+                      icon={<PlayCircleOutlined />}
+                      onClick={() => void handlePlayJob(activeJob)}
+                    >
+                      在线播放成片
+                    </Button>
+                    <Button icon={<DownloadOutlined />} onClick={() => handleDownload(activeJob)}>
+                      下载真实成片
+                    </Button>
+                  </Space>
                 ) : activeJob.status === "succeeded" ? (
                   <Alert type="warning" showIcon message="任务已成功，但媒体尚未转存或不可下载。" />
                 ) : (
@@ -832,7 +980,25 @@ export default function AvatarPage() {
               <List
                 dataSource={jobs}
                 renderItem={(item) => (
-                  <List.Item style={{ display: "block" }}>
+                  <List.Item
+                    style={{
+                      display: "block",
+                      cursor: "pointer",
+                      borderRadius: 8,
+                      padding: 12,
+                      background: activeJobId === item.task_id ? "#f5f0ff" : undefined,
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`查看${item.title}任务进度`}
+                    onClick={() => void handleViewJob(item.task_id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        void handleViewJob(item.task_id);
+                      }
+                    }}
+                  >
                     <div style={{ display: "flex", alignItems: "flex-start", flexWrap: "wrap", gap: 8, width: "100%" }}>
                       <List.Item.Meta
                         style={{ flex: "1 1 200px", minWidth: 0, marginBottom: 0 }}
@@ -847,24 +1013,42 @@ export default function AvatarPage() {
                         description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
                       />
                       <Space size={0} wrap>
-                        <Button type="link" onClick={() => void handleViewJob(item.task_id)}>
-                          查看
-                        </Button>
                         {item.result_url && (
-                          <Button type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(item)}>
+                          <Button
+                            type="link"
+                            icon={<PlayCircleOutlined />}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handlePlayJob(item);
+                            }}
+                          >
+                            播放
+                          </Button>
+                        )}
+                        {item.result_url && (
+                          <Button
+                            type="link"
+                            icon={<DownloadOutlined />}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleDownload(item);
+                            }}
+                          >
                             下载
                           </Button>
                         )}
-                        <Popconfirm
-                          title="删除这条数字人任务？"
-                          description="只删除任务记录，不会删除已下载到本地的成片。"
-                          okText="删除"
-                          okButtonProps={{ danger: true }}
-                          cancelText="取消"
-                          onConfirm={() => handleDeleteJob(item.task_id)}
-                        >
-                          <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-                        </Popconfirm>
+                        <span onClick={(event) => event.stopPropagation()}>
+                          <Popconfirm
+                            title="删除这条数字人任务？"
+                            description="只删除任务记录，不会删除已下载到本地的成片。"
+                            okText="删除"
+                            okButtonProps={{ danger: true }}
+                            cancelText="取消"
+                            onConfirm={() => handleDeleteJob(item.task_id)}
+                          >
+                            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                          </Popconfirm>
+                        </span>
                       </Space>
                     </div>
                   </List.Item>
@@ -893,6 +1077,26 @@ export default function AvatarPage() {
           <Alert type="error" showIcon message="无法打开摄像头" description={cameraError} />
         ) : (
           <video ref={cameraVideoRef} autoPlay playsInline muted style={{ width: "100%", borderRadius: 8, background: "#0f172a" }} />
+        )}
+      </Modal>
+
+      <Modal
+        title={playbackJob ? `${playbackJob.title} · 成片播放` : "成片播放"}
+        open={Boolean(playbackJob)}
+        onCancel={closePlayback}
+        footer={playbackJob ? [
+          <Button key="download" icon={<DownloadOutlined />} onClick={() => handleDownload(playbackJob)}>下载成片</Button>,
+          <Button key="close" type="primary" onClick={closePlayback}>关闭</Button>,
+        ] : null}
+        width={460}
+        destroyOnClose
+      >
+        {playbackLoading ? (
+          <Progress percent={60} status="active" showInfo={false} />
+        ) : playbackUrl ? (
+          <video controls autoPlay playsInline src={playbackUrl} style={{ width: "100%", maxHeight: "70vh", background: "#0f172a", borderRadius: 8 }} />
+        ) : (
+          <Empty description="成片暂时不可播放" />
         )}
       </Modal>
     </div>

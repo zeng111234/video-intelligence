@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import threading
 from uuid import uuid4
 
 from src.adapters.avatar import AvatarProviderError
@@ -22,6 +23,8 @@ from src.models import (
 )
 
 MAX_RESULT_BYTES = 100 * 1024 * 1024
+MAX_VIDEO_NAME_LENGTH = 100
+AVATAR_NAME_LOCK = threading.Lock()
 
 
 class AvatarService:
@@ -78,7 +81,7 @@ class AvatarService:
         elif request.profile_id != "default":
             raise ValueError("当前供应商不支持所选数字人生成方案。")
 
-        assets = self.list_assets()
+        assets = [item for item in self.list_assets() if item.status == "ready"]
         avatar_ids = {
             item.asset_id for item in assets if item.kind == AvatarAssetKind.AVATAR
         }
@@ -88,36 +91,50 @@ class AvatarService:
         if request.avatar_id not in avatar_ids or request.voice_id not in voice_ids:
             raise ValueError("所选数字人形象或音色当前不可用。")
 
-        now = datetime.now().astimezone()
-        task = AvatarTask(
-            task_id=f"avatar-{uuid4().hex[:12]}",
-            title=f"数字人视频 · {avatar_name}",
-            status=TaskStatus.QUEUED,
-            progress=0,
-            created_at=now,
-            updated_at=now,
-            script_text=request.script_text,
-            source_task_id=request.source_task_id,
-            source_revision_id=request.source_revision_id,
-            avatar_id=request.avatar_id,
-            avatar_name=avatar_name,
-            voice_id=request.voice_id,
-            voice_name=voice_name,
-            profile_id=request.profile_id,
-            speech_rate=request.speech_rate,
-            aspect_ratio=request.aspect_ratio,
-            resolution=request.resolution,
-            background=request.background,
-            rights_holder=request.rights_holder,
-            rights_confirmed_at=now,
-            idempotency_key=request.idempotency_key,
-            provider_name=capability.provider_name,
-            stage="正在提交",
-            estimated_cost_cny=capability.estimated_cost_cny,
-            estimated_seconds=capability.estimated_seconds,
-            is_mock=capability.mode.value == "sandbox",
-        )
-        self.repository.save_task(task)
+        with AVATAR_NAME_LOCK:
+            existing = next(
+                (
+                    item
+                    for item in self.repository.list_tasks()
+                    if isinstance(item, AvatarTask)
+                    and item.idempotency_key == request.idempotency_key
+                ),
+                None,
+            )
+            if existing is not None:
+                return existing
+            video_name = self._allocate_video_name(request)
+            request = request.model_copy(update={"video_name": video_name})
+            now = datetime.now().astimezone()
+            task = AvatarTask(
+                task_id=f"avatar-{uuid4().hex[:12]}",
+                title=video_name,
+                status=TaskStatus.QUEUED,
+                progress=0,
+                created_at=now,
+                updated_at=now,
+                script_text=request.script_text,
+                source_task_id=request.source_task_id,
+                source_revision_id=request.source_revision_id,
+                avatar_id=request.avatar_id,
+                avatar_name=avatar_name,
+                voice_id=request.voice_id,
+                voice_name=voice_name,
+                profile_id=request.profile_id,
+                speech_rate=request.speech_rate,
+                aspect_ratio=request.aspect_ratio,
+                resolution=request.resolution,
+                background=request.background,
+                rights_holder=request.rights_holder,
+                rights_confirmed_at=now,
+                idempotency_key=request.idempotency_key,
+                provider_name=capability.provider_name,
+                stage="正在提交",
+                estimated_cost_cny=capability.estimated_cost_cny,
+                estimated_seconds=capability.estimated_seconds,
+                is_mock=capability.mode.value == "sandbox",
+            )
+            self.repository.save_task(task)
         try:
             snapshot = self.provider.submit(request)
         except AvatarProviderError as exc:
@@ -151,6 +168,36 @@ class AvatarService:
         updated = self._apply_snapshot(task, snapshot)
         self.repository.save_task(updated)
         return updated
+
+    def _allocate_video_name(self, request: AvatarSubmitRequest) -> str:
+        explicit_name = (request.video_name or "").strip()
+        base_name = explicit_name or (request.keyword or "").strip() or "数字人视频"
+        base_name = base_name[:MAX_VIDEO_NAME_LENGTH]
+        existing_titles = [
+            item.title.strip()
+            for item in self.repository.list_tasks()
+            if isinstance(item, AvatarTask)
+        ]
+        normalized_base = base_name.casefold()
+        exact_exists = any(title.casefold() == normalized_base for title in existing_titles)
+        if explicit_name and not exact_exists:
+            return base_name
+
+        max_sequence = 0
+        for title in existing_titles:
+            normalized_title = title.casefold()
+            if normalized_title == normalized_base:
+                max_sequence = max(max_sequence, 1)
+                continue
+            if not normalized_title.startswith(normalized_base):
+                continue
+            suffix = normalized_title[len(normalized_base):]
+            if suffix.isdigit():
+                max_sequence = max(max_sequence, int(suffix))
+
+        sequence = max(1 if not explicit_name else 2, max_sequence + 1)
+        suffix = str(sequence)
+        return f"{base_name[: MAX_VIDEO_NAME_LENGTH - len(suffix)]}{suffix}"
 
     def refresh_task(self, task_id: str) -> AvatarTask:
         task = self._get_avatar_task(task_id)

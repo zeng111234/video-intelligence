@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends
 
 from project.backend.app.core.deps import get_candidate_service
 from project.backend.app.schemas.requests import CandidateSearchRequest
-from project.backend.app.schemas.responses import CandidateItem, CandidateListResponse
+from project.backend.app.schemas.responses import (
+    CandidateCategoryOption,
+    CandidateItem,
+    CandidateListResponse,
+)
 from src.models import Platform
 
 logger = logging.getLogger(__name__)
@@ -29,12 +33,28 @@ def search_candidates(
                 platforms.append(Platform(value))
             except ValueError:
                 continue
-        candidates = service.search(
+        base_candidates = service.search(
             query=body.keyword,
             platforms=platforms or None,
-            category=body.category,
         )
-        # 限制数量
+        category_options = [
+            CandidateCategoryOption(value=category, count=count)
+            for category, count in sorted(
+                {
+                    category: sum(1 for candidate in base_candidates if candidate.category == category)
+                    for category in {candidate.category for candidate in base_candidates}
+                }.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
+        candidates = [
+            candidate
+            for candidate in base_candidates
+            if not body.category
+            or body.category == "全部赛道"
+            or candidate.category == body.category
+        ]
+        total = len(candidates)
         candidates = candidates[: body.limit]
         items = [
             CandidateItem(
@@ -47,11 +67,26 @@ def search_candidates(
                 heat_level=c.heat.level.value,
                 source_url=str(c.source_url) if c.source_url else None,
                 published_at=c.published_at,
+                observed_at=c.metrics.sampled_at,
+                publication_time_state=(
+                    "sampled_fallback"
+                    if any("采样时间" in warning for warning in c.data_quality_warnings)
+                    else "platform"
+                ),
+                official_hot=c.official_hot,
+                official_rank=c.official_rank,
+                snapshot_count=c.heat.snapshot_count,
+                growth_window_hours=c.heat.growth_window_hours,
+                heat_reasons=c.heat.reasons,
             )
             for c in candidates
         ]
         logger.info(f"候选搜索返回 {len(items)} 条结果")
-        return CandidateListResponse(items=items, total=len(items))
+        return CandidateListResponse(
+            items=items,
+            total=total,
+            category_options=category_options,
+        )
     except Exception as e:
         logger.error(f"候选搜索失败: {e}", exc_info=True)
         raise

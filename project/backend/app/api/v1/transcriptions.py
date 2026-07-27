@@ -111,6 +111,10 @@ def _to_response(task, service=None) -> TranscriptionResponse:
             "confidence": s.confidence,
             "needs_review": s.needs_review,
             "reviewed": s.reviewed,
+            "quality_status": s.quality_status,
+            "quality_source": s.quality_source,
+            "quality_note": s.quality_note,
+            "alternatives": s.alternatives,
         }
         for s in source_segments
     ]
@@ -126,11 +130,21 @@ def _to_response(task, service=None) -> TranscriptionResponse:
         timing_available=task.timing_available,
         duration_seconds=task.duration_seconds,
         approved_revision_id=task.approved_revision_id,
-        low_confidence_count=sum(
-            1
-            for segment in source_segments
-            if segment.needs_review and not segment.reviewed
+        low_confidence_count=(
+            task.uncertain_segment_count
+            if task.auto_reviewed
+            else sum(
+                1
+                for segment in source_segments
+                if segment.needs_review and not segment.reviewed
+            )
         ),
+        is_mock=task.is_mock,
+        auto_reviewed=task.auto_reviewed,
+        uncertain_segment_count=task.uncertain_segment_count,
+        secondary_asr_count=task.secondary_asr_count,
+        llm_review_count=task.llm_review_count,
+        auto_review_error=task.auto_review_error,
         segments=segments,
         error_message=task.error_message,
         created_at=task.created_at,
@@ -322,6 +336,10 @@ def save_transcription_revision(
             confidence=item.confidence,
             needs_review=item.needs_review,
             reviewed=item.reviewed,
+            quality_status=item.quality_status,
+            quality_source=item.quality_source,
+            quality_note=item.quality_note,
+            alternatives=item.alternatives,
         )
         for item in body.segments
     ]
