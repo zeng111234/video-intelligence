@@ -43,6 +43,8 @@ import type {
   PipelineResponse,
   ProductionBatch,
   ProductionBatchPreflight,
+  ProductionBatchReviewResult,
+  ProductionBatchSourceItem,
   ProductionProfile,
   PublishFeedback,
   FeedbackRecommendations,
@@ -371,9 +373,20 @@ export function listProductionBatches(): Promise<{ items: ProductionBatch[] }> {
 export function createProductionBatch(params: {
   name: string;
   profile_id: string;
-  candidate_ids: string[];
+  candidate_ids?: string[];
+  items?: ProductionBatchSourceItem[];
 }): Promise<ProductionBatch> {
   return request("/production/batches", { method: "POST", body: JSON.stringify(params) });
+}
+
+export function reviewProductionBatchItems(
+  batchId: string,
+  params: { stage: "script" | "output"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string }> },
+): Promise<{ batch: ProductionBatch; results: ProductionBatchReviewResult[] }> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/reviews`, {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
 export function preflightProductionBatch(batchId: string, params: { rightsHolder: string; rightsConfirmed: boolean; publishPlatforms: string[]; concurrency: number }): Promise<ProductionBatchPreflight> {

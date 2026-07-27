@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime
+from uuid import uuid4
 
 from src.models import (
     AvatarSubmitRequest,
@@ -98,13 +99,13 @@ class PipelineWorker:
                     self._run_candidate(run)
                 elif workflow == "guided_share_link":
                     self._run_guided_share_link(run)
-                elif workflow == "production_batch_candidate":
-                    self._run_production_batch_candidate(run)
+                elif workflow in {"production_batch_candidate", "production_batch_share_link", "production_batch_brief", "production_batch_script"}:
+                    self._run_production_batch(run)
             except Exception as exc:
                 logger.exception("流水线 %s 执行异常", run.run_id)
                 self._fail(run, run.current_stage or PipelineStage.KEYWORD_SEARCH, str(exc))
             finally:
-                if workflow == "production_batch_candidate" and self.production_service is not None:
+                if workflow.startswith("production_batch_") and self.production_service is not None:
                     self.production_service.sync_batch(str(run.config.get("batch_id") or ""))
 
     def _run_keyword_master(self, run: PipelineRun) -> None:
@@ -264,8 +265,8 @@ class PipelineWorker:
         if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
             self._reconcile_publish(run)
 
-    def _run_production_batch_candidate(self, run: PipelineRun) -> None:
-        """批次项沿用候选流水线，但在每次外部调用前领取批次并发槽位。"""
+    def _run_production_batch(self, run: PipelineRun) -> None:
+        """批次项统一领取并发槽位，再按来源进入对应的合规流水线。"""
         if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
             # 人工发布结果回填后无需重新占用生产并发槽位，只需汇总终态。
             if run.publish_task_ids:
@@ -276,6 +277,60 @@ class PipelineWorker:
         if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.PUBLISHING:
             if bool(run.config.get("publish_confirmed")):
                 self._submit_publish(run)
+            return
+        source_type = str(run.config.get("source_type") or "candidate")
+        if source_type == "candidate":
+            self._run_candidate(run)
+        elif source_type == "share_link":
+            self._run_guided_share_link(run)
+        else:
+            self._run_production_batch_text(run, source_type)
+
+    def _run_production_batch_text(self, run: PipelineRun, source_type: str) -> None:
+        """选题生成或人工成稿都必须进入同一个文案审核阶段。"""
+        if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
+            source_value = str(run.config.get("source_value") or "").strip()
+            if not source_value:
+                self._fail(run, PipelineStage.COPYWRITING, "批次项缺少选题或文案内容。")
+                return
+            profile = dict(run.config.get("profile") or {})
+            if source_type == "brief":
+                copy_service = self.pipeline_service.copywriting_service
+                if copy_service is None:
+                    self._fail(run, PipelineStage.COPYWRITING, "文案生成服务未配置。")
+                    return
+                task = copy_service.generate(
+                    content_brief=source_value,
+                    target_audience=str(profile.get("target_audience") or ""),
+                    style_prompt=str(profile.get("script_style") or ""),
+                    target_length=300,
+                    tone="casual",
+                    variant_count=2,
+                )
+                if task.status != TaskStatus.SUCCEEDED:
+                    self._fail(run, PipelineStage.COPYWRITING, task.error_message or "选题文案生成失败。")
+                    return
+            elif source_type == "script":
+                now = datetime.now().astimezone()
+                task = CopywritingTask(
+                    task_id=f"copy-manual-{uuid4().hex[:10]}",
+                    title=f"人工成稿 · {source_value[:20]}",
+                    status=TaskStatus.SUCCEEDED,
+                    progress=100,
+                    created_at=now,
+                    updated_at=now,
+                    creation_mode="manual",
+                    source_text=source_value,
+                    result_text=source_value,
+                    result_variants=[source_value],
+                    stage="等待人工审核",
+                    needs_manual_review=True,
+                )
+                self.repository.save_task(task)
+            else:
+                self._fail(run, PipelineStage.COPYWRITING, "不支持的文本批次来源。")
+                return
+            self.pipeline_service.pause_for_copy_review(run=run, copy_task=task)
             return
         self._run_candidate(run)
 
@@ -399,7 +454,7 @@ class PipelineWorker:
         if run.config.get("publish_enabled") is False:
             self.pipeline_service.complete_run(run, success=True)
             return
-        if run.config.get("workflow") == "production_batch_candidate":
+        if str(run.config.get("workflow") or "").startswith("production_batch_"):
             paused = run.model_copy(
                 update={
                     "status": PipelineRunStatus.PAUSED,

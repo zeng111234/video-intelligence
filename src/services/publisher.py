@@ -43,6 +43,8 @@ class PublishService:
                     "display_name": str(cap.get("display_name", pub.platform())),
                     "mode": str(cap.get("mode", "disabled")),
                     "provider_name": str(cap.get("provider_name", pub.platform())),
+                    "requires_account": bool(cap.get("requires_account", False)),
+                    "setup_required": bool(cap.get("setup_required", False)),
                     "manual_only": bool(cap.get("manual_only", False)),
                     "manual_fallback": bool(cap.get("manual_fallback", True)),
                     "supports_scheduled": bool(cap.get("supports_scheduled", False)),

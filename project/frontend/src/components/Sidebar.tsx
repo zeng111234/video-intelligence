@@ -87,7 +87,8 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
       {
         title: "批量管理",
         items: [
-          { key: "/pipeline", label: "生产批次", icon: <ThunderboltOutlined /> },
+          { key: "/production", label: "批量生产", icon: <AppstoreOutlined /> },
+          { key: "/pipeline", label: "单条生产", icon: <ThunderboltOutlined /> },
           { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
         ],
       },
@@ -110,7 +111,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
       {
         title: "规划中",
         items: [
-          { key: "/production", label: "IP资产与批量", icon: <AppstoreOutlined />, disabled: true },
           { key: "/feedback", label: "反馈与复盘", icon: <LineChartOutlined />, disabled: true },
         ],
       },

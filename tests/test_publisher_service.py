@@ -10,6 +10,7 @@ import tempfile
 
 import pytest
 
+from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
 from src.adapters.publishers.sandbox import SandboxPublisher, build_publisher
 from src.models import (
     PublishPlatform,
@@ -143,6 +144,8 @@ class TestPublishServiceEdgeCases:
         assert len(platforms) == 3
         assert all(p["enabled"] for p in platforms)
         assert all("mode" in p for p in platforms)
+        assert all("requires_account" in p for p in platforms)
+        assert all("setup_required" in p for p in platforms)
 
     def test_available_platforms_empty(self):
         svc = PublishService(self.repo, {})
@@ -230,11 +233,13 @@ def test_sqlite_repository_reads_publish_task(tmp_path):
     assert fetched.publish_status == PublishStatus.MANUAL_READY
 
 
-def test_unimplemented_official_mode_falls_back_to_publish_assistant(monkeypatch):
-    """旧官方模式配置不能让用户得到一个必然失败的发布任务。"""
+def test_douyin_uses_local_browser_publisher_even_when_old_official_mode_exists(monkeypatch):
+    """旧官方模式配置不能覆盖已验证的本机扫码发布流程。"""
     monkeypatch.setenv("PUBLISH_DOUYIN_MODE", "official")
 
     publisher = build_publisher(PublishPlatform.DOUYIN)
 
-    assert isinstance(publisher, SandboxPublisher)
-    assert publisher.capabilities()["mode"] == "manual"
+    assert isinstance(publisher, DouyinBrowserPublisher)
+    assert publisher.capabilities()["mode"] == "local_browser"
+    assert publisher.capabilities()["requires_account"] is True
+    assert publisher.capabilities()["setup_required"] is True

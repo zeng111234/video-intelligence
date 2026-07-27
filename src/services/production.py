@@ -122,38 +122,57 @@ class ProductionService:
         *,
         name: str,
         profile_id: str,
-        candidate_ids: list[str],
         pipeline_service,
+        candidate_ids: list[str] | None = None,
+        source_items: list[dict[str, Any]] | None = None,
     ) -> ProductionBatch:
         profile = self.get_profile(profile_id)
         if profile is None:
             raise ValueError("IP 配方不存在。")
-        normalized_ids = list(dict.fromkeys(item.strip() for item in candidate_ids if item.strip()))
-        if not normalized_ids:
-            raise ValueError("请至少选择一条候选。")
-        if len(normalized_ids) > 50:
-            raise ValueError("单个批次最多包含 50 条候选。")
+        normalized_sources = self._normalize_source_items(candidate_ids or [], source_items or [])
+        if not normalized_sources:
+            raise ValueError("请至少添加一条候选、链接、选题或完整文案。")
+        if len(normalized_sources) > 50:
+            raise ValueError("单个批次最多包含 50 条内容。")
         getter = getattr(self.repository, "get_candidate", None)
-        if getter is None:
-            raise RuntimeError("当前仓库不支持候选生产计划。")
 
         batch = ProductionBatch(name=name.strip(), profile_id=profile.profile_id, profile_name=profile.name)
         items: list[ProductionBatchItem] = []
-        for candidate_id in normalized_ids:
-            candidate = getter(candidate_id)
-            if candidate is None:
-                raise ValueError(f"候选不存在：{candidate_id}")
+        for source in normalized_sources:
+            source_type = source["source_type"]
+            source_value = source["source_value"]
+            overrides = source["profile_overrides"]
+            candidate = None
+            if source_type == "candidate":
+                if getter is None:
+                    raise RuntimeError("当前仓库不支持候选生产计划。")
+                candidate = getter(source_value)
+                if candidate is None:
+                    raise ValueError(f"候选不存在：{source_value}")
+            merged_profile = {**profile.model_dump(mode="json"), **overrides}
+            title = source["display_title"] or (candidate.title if candidate is not None else source_value[:80])
+            workflow = {
+                "candidate": "production_batch_candidate",
+                "share_link": "production_batch_share_link",
+                "brief": "production_batch_brief",
+                "script": "production_batch_script",
+            }[source_type]
             run = pipeline_service.create_run(
-                keyword=candidate.title[:200],
+                keyword=title[:200],
                 config={
                     "source": "production_batch_plan",
+                    "source_type": source_type,
+                    "source_value": source_value,
+                    "share_text": source_value if source_type == "share_link" else "",
+                    "workflow": workflow,
                     "batch_id": batch.batch_id,
-                    "profile": profile.model_dump(mode="json"),
-                    "candidate_id": candidate.video_id,
+                    "profile": merged_profile,
+                    "candidate_id": candidate.video_id if candidate is not None else "",
                     "next_action": "完成批次预检并启动后，后台将按队列执行。",
                 },
             )
-            run = run.model_copy(update={"candidate_video_id": candidate.video_id, "updated_at": datetime.now().astimezone()})
+            if candidate is not None:
+                run = run.model_copy(update={"candidate_video_id": candidate.video_id, "updated_at": datetime.now().astimezone()})
             run = pipeline_service._event(
                 run,
                 action="batch_plan_created",
@@ -161,10 +180,55 @@ class ProductionService:
                 details={"batch_id": batch.batch_id, "profile_id": profile.profile_id},
             )
             self.repository.save_pipeline_run(run)
-            items.append(ProductionBatchItem(candidate_id=candidate.video_id, run_id=run.run_id))
+            items.append(
+                ProductionBatchItem(
+                    candidate_id=candidate.video_id if candidate is not None else "",
+                    run_id=run.run_id,
+                    source_type=source_type,
+                    source_value=source_value,
+                    display_title=title,
+                    profile_overrides=overrides,
+                )
+            )
         batch = batch.model_copy(update={"items": items})
         self.repository.save_production_batch(batch)
         return batch
+
+    @staticmethod
+    def _normalize_source_items(candidate_ids: list[str], source_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """标准化混合来源并按来源和值去重，不在这里调用外部服务。"""
+        raw: list[dict[str, Any]] = [
+            {"source_type": "candidate", "source_value": value}
+            for value in candidate_ids
+        ] + source_items
+        normalized: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        allowed = {"candidate", "share_link", "brief", "script"}
+        for item in raw:
+            source_type = str(item.get("source_type") or "candidate").strip()
+            value = str(item.get("source_value") or item.get("value") or "").strip()
+            if source_type not in allowed:
+                raise ValueError(f"不支持的批量来源：{source_type}")
+            if not value:
+                raise ValueError("批量来源内容不能为空。")
+            if source_type == "share_link" and not value.lower().startswith(("http://", "https://")):
+                raise ValueError("分享链接必须以 http:// 或 https:// 开头。")
+            key = (source_type, value.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            overrides = item.get("profile_overrides") or {}
+            normalized.append({
+                "source_type": source_type,
+                "source_value": value,
+                "display_title": str(item.get("display_title") or item.get("title") or "").strip(),
+                "profile_overrides": {
+                    key: str(value)
+                    for key, value in overrides.items()
+                    if key in {"avatar_id", "voice_id", "edit_template_id"} and str(value).strip()
+                },
+            })
+        return normalized
 
     def preflight_batch(
         self,
@@ -183,6 +247,7 @@ class ProductionService:
         profile = self.get_profile(batch.profile_id)
         shared: list[str] = []
         platforms: list[PublishPlatform] = []
+        assets_by_id: dict[str, Any] = {}
         if not rights_confirmed or not rights_holder.strip():
             shared.append("必须确认拥有媒体、文案、肖像和声音处理授权，并填写授权主体。")
         if profile is None:
@@ -193,9 +258,9 @@ class ProductionService:
             if self.avatar_service is None:
                 shared.append("数字人服务未配置。")
             elif profile.avatar_id and profile.voice_id:
-                assets = {item.asset_id: item for item in self.avatar_service.list_assets()}
+                assets_by_id = {item.asset_id: item for item in self.avatar_service.list_assets()}
                 for asset_id, label in ((profile.avatar_id, "数字人形象"), (profile.voice_id, "音色")):
-                    asset = assets.get(asset_id)
+                    asset = assets_by_id.get(asset_id)
                     if asset is None:
                         shared.append(f"IP 配方绑定的{label}不存在。")
                     elif not asset.authorized:
@@ -230,18 +295,45 @@ class ProductionService:
         budget_used = 0.0
         for item in batch.items:
             reasons = list(shared)
-            candidate = getattr(self.repository, "get_candidate", lambda _: None)(item.candidate_id)
-            if candidate is None:
-                reasons.append("候选不存在或已被删除。")
-            elif self.media_resolution_service is None:
-                reasons.append("媒体解析服务未配置。")
-            else:
-                preview = self.media_resolution_service.preview(candidate)
-                total_cost += float(preview.estimated_cost_cny or 0)
-                budget_used = max(budget_used, float(preview.monthly_budget_used_cny or 0))
-                if not preview.resolvable:
-                    reasons.append(preview.block_reason or "候选不能进入媒体解析。")
-            items.append({"run_id": item.run_id, "candidate_id": item.candidate_id, "ready": not reasons, "reasons": reasons})
+            if item.profile_overrides:
+                if self.avatar_service is not None:
+                    for key, label in (("avatar_id", "数字人形象"), ("voice_id", "音色")):
+                        asset_id = item.profile_overrides.get(key)
+                        if not asset_id:
+                            continue
+                        asset = assets_by_id.get(asset_id)
+                        if asset is None:
+                            reasons.append(f"单条覆盖的{label}不存在。")
+                        elif not asset.authorized:
+                            reasons.append(f"单条覆盖的{label}未标记为已授权。")
+                if self.template_service is not None:
+                    template_id = item.profile_overrides.get("edit_template_id")
+                    if template_id and self.template_service.get_template(template_id) is None:
+                        reasons.append("单条覆盖的剪辑模板不存在。")
+            if item.source_type == "candidate":
+                candidate = getattr(self.repository, "get_candidate", lambda _: None)(item.candidate_id)
+                if candidate is None:
+                    reasons.append("候选不存在或已被删除。")
+                elif self.media_resolution_service is None:
+                    reasons.append("媒体解析服务未配置。")
+                else:
+                    preview = self.media_resolution_service.preview(candidate)
+                    total_cost += float(preview.estimated_cost_cny or 0)
+                    budget_used = max(budget_used, float(preview.monthly_budget_used_cny or 0))
+                    if not preview.resolvable:
+                        reasons.append(preview.block_reason or "候选不能进入媒体解析。")
+            elif item.source_type == "share_link" and not item.source_value.lower().startswith(("http://", "https://")):
+                reasons.append("分享链接格式无效。")
+            elif item.source_type not in {"share_link", "brief", "script"}:
+                reasons.append("批次项来源不受支持。")
+            items.append({
+                "run_id": item.run_id,
+                "candidate_id": item.candidate_id,
+                "source_type": item.source_type,
+                "display_title": item.display_title or item.source_value,
+                "ready": not reasons,
+                "reasons": reasons,
+            })
         return {
             "batch_id": batch_id,
             "ready_count": sum(1 for item in items if item["ready"]),
@@ -286,12 +378,12 @@ class ProductionService:
             if run is None:
                 updated_items.append(item.model_copy(update={"status": ProductionBatchItemStatus.BLOCKED, "blocked_reasons": ["流水线记录不存在。"], "updated_at": now}))
                 continue
+            item_profile = {**execution_config["profile"], **item.profile_overrides}
             config = {
                 **run.config,
                 "source": "production_batch",
-                "workflow": "production_batch_candidate",
                 "batch_id": batch.batch_id,
-                "profile": execution_config["profile"],
+                "profile": item_profile,
                 "rights_holder": execution_config["rights_holder"],
                 "rights_confirmed": True,
                 "publish_platforms": execution_config["publish_platforms"],
@@ -483,7 +575,7 @@ class ProductionService:
             **counts,
             "pending": counts[ProductionBatchItemStatus.PLANNED.value] + counts[ProductionBatchItemStatus.QUEUED.value],
             "running": counts[ProductionBatchItemStatus.RUNNING.value],
-            "paused": counts[ProductionBatchItemStatus.AWAITING_REVIEW.value] + counts[ProductionBatchItemStatus.AWAITING_PUBLISH.value],
+            "paused": counts[ProductionBatchItemStatus.AWAITING_REVIEW.value] + counts[ProductionBatchItemStatus.AWAITING_PUBLISH.value] + counts[ProductionBatchItemStatus.READY_TO_PUBLISH.value],
             "succeeded": counts[ProductionBatchItemStatus.SUCCEEDED.value],
             "failed": counts[ProductionBatchItemStatus.FAILED.value],
         }
@@ -507,10 +599,10 @@ class ProductionService:
         elif run.status == PipelineRunStatus.PAUSED and stage == PipelineStage.HUMAN_REVIEW:
             status = ProductionBatchItemStatus.AWAITING_REVIEW
         elif run.status == PipelineRunStatus.PAUSED and stage == PipelineStage.PUBLISHING:
-            status = ProductionBatchItemStatus.AWAITING_PUBLISH
+            status = ProductionBatchItemStatus.READY_TO_PUBLISH if bool(run.config.get("output_reviewed")) else ProductionBatchItemStatus.AWAITING_PUBLISH
         elif run.status == PipelineRunStatus.RUNNING:
             status = ProductionBatchItemStatus.RUNNING
-        elif item.status in {ProductionBatchItemStatus.BLOCKED, ProductionBatchItemStatus.PLANNED} and not str(run.config.get("workflow") or ""):
+        elif item.status in {ProductionBatchItemStatus.BLOCKED, ProductionBatchItemStatus.PLANNED}:
             status = item.status
         else:
             status = ProductionBatchItemStatus.QUEUED
@@ -541,7 +633,7 @@ class ProductionService:
             return ProductionBatchStatus.RUNNING
         if any(status == ProductionBatchItemStatus.AWAITING_REVIEW for status in statuses):
             return ProductionBatchStatus.AWAITING_REVIEW
-        if any(status == ProductionBatchItemStatus.AWAITING_PUBLISH for status in statuses):
+        if any(status in {ProductionBatchItemStatus.AWAITING_PUBLISH, ProductionBatchItemStatus.READY_TO_PUBLISH} for status in statuses):
             return ProductionBatchStatus.AWAITING_PUBLISH
         if statuses and all(status == ProductionBatchItemStatus.SUCCEEDED for status in statuses):
             return ProductionBatchStatus.SUCCEEDED

@@ -319,6 +319,9 @@ export default function KeywordCrawlerPage() {
           : "填写完成：下一步会预览抖音缓存、额度和费用。";
   const isSandboxMode = capabilities?.mode === "sandbox";
   const hotspotReady = Boolean(hotspotBrowser?.ready_to_crawl);
+  const hotspotMissing = hotspotBrowser?.missing_configuration || [];
+  const hotspotNeedsPlaywright = hotspotMissing.includes("Playwright Python 依赖");
+  const hotspotNeedsBrowser = hotspotMissing.includes("Google Chrome") || hotspotMissing.includes("Microsoft Edge");
   const crawlerDescription = hotspotReady
     ? "热点宝已通过本机浏览器授权：固定读取近 7 天五类视频榜，过滤图文/时长为 0 和新增播放量不超过 1,000 的内容；最多保留 100 条，按新增播放量排序。"
     : capabilities
@@ -774,12 +777,26 @@ export default function KeywordCrawlerPage() {
         </Space>
         <Alert
           style={{ marginTop: 12 }}
-          type={hotspotBrowser?.ready_to_crawl ? "success" : "info"}
+          type={hotspotBrowser?.ready_to_crawl ? "success" : hotspotMissing.length ? "warning" : "info"}
           showIcon
-          message={hotspotBrowser?.ready_to_crawl ? "热点宝已授权：可免费检索真实榜单" : "先连接并授权热点宝，获得更高质量的爆款视频"}
+          message={
+            hotspotBrowser?.ready_to_crawl
+              ? "热点宝已授权：可免费检索真实榜单"
+              : hotspotNeedsPlaywright
+                ? "热点宝依赖未安装"
+                : hotspotNeedsBrowser
+                  ? "热点宝浏览器未找到"
+                  : "先连接并授权热点宝，获得更高质量的爆款视频"
+          }
           description={
             <Space direction="vertical" size={6}>
               <Text>{hotspotBrowser?.message || "会打开独立Chrome窗口；请在其中扫码登录热点宝。系统仅读取已渲染的榜单元数据。"}</Text>
+              {hotspotNeedsPlaywright ? (
+                <Text type="secondary">请在项目根目录运行 <Text code>python -m pip install -r project/backend/requirements.txt</Text>，然后重启后端。</Text>
+              ) : null}
+              {hotspotNeedsBrowser ? (
+                <Text type="secondary">请安装 {hotspotBrowser?.browser_channel === "msedge" ? "Microsoft Edge" : "Google Chrome"}，或在根目录 .env 中将 <Text code>DOUYIN_BROWSER_CHANNEL</Text> 改为已安装的浏览器后重启后端。</Text>
+              ) : null}
               <Space wrap>
                 <Tag color="purple">视频总榜</Tag>
                 <Tag color="purple">低粉爆款</Tag>

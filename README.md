@@ -36,6 +36,8 @@
 - **FFmpeg**（视频处理必需）
 - **npm** 或 **yarn**
 
+一键启动会检查 FastAPI、Playwright 等后端依赖；缺少时会自动安装一次。关键词爬虫的“热点宝”发现功能还需要本机安装 Google Chrome 或 Microsoft Edge，且不会自动下载或启动 Playwright 自带浏览器。
+
 ### 一键启动（推荐）
 
 #### Windows 用户
@@ -61,8 +63,8 @@ start.bat
 
 #### 1. 启动 FastAPI 后端
 ```powershell
-# 设置 PYTHONPATH（后端需要访问 src/ 目录）
-$env:PYTHONPATH = "C:\Users\zeng\Desktop\video"
+# 在仓库根目录设置 PYTHONPATH（后端需要访问 src/ 目录）
+$env:PYTHONPATH = (Get-Location).Path
 
 # 进入后端目录
 cd project/backend

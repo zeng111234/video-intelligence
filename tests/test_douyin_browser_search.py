@@ -59,6 +59,40 @@ def test_browser_provider_reports_login_requirement_without_running_session(tmp_
     assert capability.max_page_size == 100
 
 
+def test_browser_provider_reports_missing_playwright_dependency(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29997,
+    )
+    monkeypatch.setattr(provider, "_playwright_available", lambda: False)
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+
+    capability = provider.capabilities()
+    status = provider.session_status()
+
+    assert capability.enabled is False
+    assert capability.missing_configuration == ["Playwright Python 依赖"]
+    assert status.phase == "dependency_missing"
+    assert "Playwright Python 依赖" in status.message
+
+
+def test_browser_provider_checks_the_configured_browser_channel(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        browser_channel="msedge",
+        debug_port=29996,
+    )
+    monkeypatch.setattr(provider, "_playwright_available", lambda: True)
+    monkeypatch.setattr(provider, "_browser_executable", lambda: None)
+
+    capability = provider.capabilities()
+
+    assert capability.enabled is False
+    assert capability.missing_configuration == ["Microsoft Edge"]
+
+
 def test_hotspot_filters_image_posts_low_incremental_plays_and_irrelevant_rows():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     rows = [

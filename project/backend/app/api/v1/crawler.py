@@ -215,6 +215,8 @@ class CrawlerBrowserDiscoveryCapabilities(BaseModel):
     enabled: bool
     running: bool
     login_required: bool
+    missing_configuration: list[str] = Field(default_factory=list)
+    browser_channel: str = "chrome"
     ready_to_crawl: bool = False
     phase: str = "unknown"
     adapter_version: str = "unknown"
@@ -589,6 +591,8 @@ def _capability_payload(
                 enabled=hotspot_capability.enabled,
                 running=bool(hotspot_status and hotspot_status.running),
                 login_required=bool(hotspot_status and hotspot_status.login_required),
+                missing_configuration=getattr(hotspot_capability, "missing_configuration", []),
+                browser_channel=getattr(hotspot_provider, "browser_channel", "chrome"),
                 ready_to_crawl=bool(hotspot_status and hotspot_status.ready_to_crawl),
                 phase=(hotspot_status.phase if hotspot_status is not None else "unavailable"),
                 adapter_version=getattr(hotspot_provider, "adapter_version", "hotspot_fiber_v2"),
@@ -633,6 +637,8 @@ def get_browser_discovery_capabilities(
         enabled=capability.enabled,
         running=bool(status and status.running),
         login_required=bool(status and status.login_required),
+        missing_configuration=getattr(capability, "missing_configuration", []),
+        browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=bool(status and status.ready_to_crawl),
         phase=(status.phase if status is not None else "unavailable"),
         adapter_version=getattr(provider, "adapter_version", "hotspot_fiber_v2"),
@@ -665,6 +671,8 @@ def start_browser_discovery_login(
         enabled=status.enabled,
         running=status.running,
         login_required=status.login_required,
+        missing_configuration=getattr(provider.capabilities(), "missing_configuration", []),
+        browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=status.ready_to_crawl,
         phase=status.phase,
         adapter_version=getattr(provider, "adapter_version", "hotspot_fiber_v2"),

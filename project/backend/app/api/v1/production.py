@@ -27,7 +27,15 @@ class ProfileCreateRequest(BaseModel):
 class BatchCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     profile_id: str = Field(..., min_length=1)
-    candidate_ids: list[str] = Field(..., min_length=1, max_length=50)
+    candidate_ids: list[str] = Field(default_factory=list, max_length=50)
+    items: list["BatchSourceItem"] = Field(default_factory=list, max_length=50)
+
+
+class BatchSourceItem(BaseModel):
+    source_type: str = Field(..., pattern="^(candidate|share_link|brief|script)$")
+    source_value: str = Field(..., min_length=1, max_length=5000)
+    display_title: str = Field("", max_length=120)
+    profile_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class KeywordAutoRunRequest(BaseModel):
@@ -52,6 +60,18 @@ class BatchPublishRequest(BaseModel):
     confirmation_accepted: bool = False
 
 
+class BatchReviewItem(BaseModel):
+    run_id: str = Field(..., min_length=1)
+    approved_text: str = Field("", max_length=2000)
+    note: str = Field("", max_length=500)
+
+
+class BatchReviewRequest(BaseModel):
+    stage: str = Field(..., pattern="^(script|output)$")
+    reviewer: str = Field(..., min_length=1, max_length=80)
+    items: list[BatchReviewItem] = Field(..., min_length=1, max_length=50)
+
+
 def _profile_response(profile) -> dict[str, Any]:
     return profile.model_dump(mode="json")
 
@@ -66,6 +86,10 @@ def _batch_response(batch, service) -> dict[str, Any]:
             {
                 "candidate_id": item.candidate_id,
                 "run_id": item.run_id,
+                "source_type": item.source_type,
+                "source_value": item.source_value,
+                "display_title": item.display_title,
+                "profile_overrides": item.profile_overrides,
                 "status": "pending" if item.status.value == "planned" else item.status.value,
                 "current_stage": item.current_stage.value if item.current_stage else (run.current_stage.value if run and run.current_stage else None),
                 "blocked_reasons": item.blocked_reasons,
@@ -117,11 +141,50 @@ def create_batch(
             name=body.name,
             profile_id=body.profile_id,
             candidate_ids=body.candidate_ids,
+            source_items=[item.model_dump() for item in body.items],
             pipeline_service=pipeline_service,
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _batch_response(batch, service)
+
+
+@router.post("/batches/{batch_id}/reviews")
+def review_batch_items(
+    batch_id: str,
+    body: BatchReviewRequest,
+    service=Depends(get_production_service),
+    pipeline_service=Depends(get_pipeline_service),
+):
+    batch = service.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="生产批次不存在。")
+    owned = {item.run_id for item in batch.items}
+    results: list[dict[str, Any]] = []
+    for item in body.items:
+        if item.run_id not in owned:
+            results.append({"run_id": item.run_id, "ok": False, "error": "该任务不属于当前批次。"})
+            continue
+        try:
+            if body.stage == "script":
+                pipeline_service.review_candidate_script(
+                    run_id=item.run_id,
+                    approved=True,
+                    reviewer=body.reviewer,
+                    note=item.note,
+                    approved_text=item.approved_text,
+                )
+            else:
+                pipeline_service.confirm_output_review(
+                    run_id=item.run_id,
+                    reviewer=body.reviewer,
+                    note=item.note,
+                )
+            results.append({"run_id": item.run_id, "ok": True})
+        except ValueError as exc:
+            results.append({"run_id": item.run_id, "ok": False, "error": str(exc)})
+    refreshed = service.sync_batch(batch_id) or batch
+    return {"batch": _batch_response(refreshed, service), "results": results}
 
 
 @router.post("/batches/{batch_id}/preflight")

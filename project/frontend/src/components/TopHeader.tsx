@@ -32,6 +32,7 @@ const PAGE_TITLE_MAP: Record<string, string> = {
   "/dashboard": "数据仪表盘",
   "/candidates": "候选检索",
   "/pipeline": "批量生产流水线",
+  "/production": "批量生产队列",
   "/transcription": "语音转写",
   "/tasks": "任务中心",
   "/admin": "系统管理",

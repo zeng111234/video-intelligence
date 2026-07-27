@@ -528,6 +528,14 @@ class TestCrawlerBatches:
         assert data["official_hot_billboard"]["enabled"] is False
         assert data["official_hot_words"]["provider_name"] == "douyin_hot_words"
 
+    def test_browser_discovery_capabilities_include_prerequisites(self, client: TestClient):
+        resp = client.get("/api/v1/crawler/browser-discovery/capabilities")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data["missing_configuration"], list)
+        assert data["browser_channel"] in {"chrome", "msedge"}
+
     def test_preview_only_douyin(self, client: TestClient):
         resp = client.post(
             "/api/v1/crawler/preview",

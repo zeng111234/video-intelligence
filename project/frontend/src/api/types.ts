@@ -156,12 +156,29 @@ export interface ProductionProfile {
 export interface ProductionBatchItem {
   candidate_id: string;
   run_id: string;
+  source_type: "candidate" | "share_link" | "brief" | "script" | string;
+  source_value: string;
+  display_title: string;
+  profile_overrides: Record<string, string>;
   status: string;
   current_stage: string | null;
   blocked_reasons: string[];
   error_message: string | null;
   video_path: string | null;
   publish_mode: string | null;
+}
+
+export interface ProductionBatchSourceItem {
+  source_type: "candidate" | "share_link" | "brief" | "script";
+  source_value: string;
+  display_title?: string;
+  profile_overrides?: Record<string, string>;
+}
+
+export interface ProductionBatchReviewResult {
+  run_id: string;
+  ok: boolean;
+  error?: string;
 }
 
 export interface ProductionBatch {
@@ -185,6 +202,8 @@ export interface ProductionBatch {
 export interface ProductionBatchPreflightItem {
   run_id: string;
   candidate_id: string;
+  source_type?: string;
+  display_title?: string;
   ready: boolean;
   reasons: string[];
 }
@@ -290,8 +309,10 @@ export interface CrawlerBrowserDiscoveryCapabilities {
   enabled: boolean;
   running: boolean;
   login_required: boolean;
+  missing_configuration: string[];
+  browser_channel: "chrome" | "msedge" | string;
   ready_to_crawl?: boolean;
-  phase?: "disabled" | "browser_closed" | "starting" | "waiting_login" | "ready" | "browser_open" | string;
+  phase?: "disabled" | "dependency_missing" | "browser_closed" | "starting" | "waiting_login" | "ready" | "browser_open" | string;
   adapter_version?: string;
   provider_name: string;
   message: string;
@@ -802,6 +823,8 @@ export interface PublishPlatformCapability {
   display_name: string;
   mode: string;
   provider_name: string;
+  requires_account: boolean;
+  setup_required: boolean;
   manual_only: boolean;
   manual_fallback: boolean;
   supports_scheduled: boolean;

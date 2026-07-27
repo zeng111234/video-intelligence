@@ -113,6 +113,63 @@ def test_production_api_creates_profile_and_pending_batch(tmp_path):
     assert batch["items"][0]["status"] == "pending"
 
 
+def test_mixed_source_batch_keeps_each_source_in_one_persistent_queue(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-mixed")
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="混合来源配方")
+
+    batch = service.create_batch(
+        name="混合批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        source_items=[
+            {"source_type": "share_link", "source_value": "https://example.com/share/1"},
+            {"source_type": "brief", "source_value": "面向企业老板讲解 AI 获客"},
+            {"source_type": "script", "source_value": "这是一条已写好的完整口播稿。"},
+            {"source_type": "brief", "source_value": "面向企业老板讲解 AI 获客"},
+        ],
+        pipeline_service=pipeline_service,
+    )
+
+    assert [item.source_type for item in batch.items] == ["candidate", "share_link", "brief", "script"]
+    workflows = [repository.get_pipeline_run(item.run_id).config["workflow"] for item in batch.items]
+    assert workflows == [
+        "production_batch_candidate",
+        "production_batch_share_link",
+        "production_batch_brief",
+        "production_batch_script",
+    ]
+    assert service.batch_progress(batch)["pending"] == 4
+
+
+def test_production_api_accepts_mixed_source_items(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    production_service = ProductionService(repository, tmp_path / "production")
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    try:
+        with TestClient(app) as client:
+            profile = client.post("/api/v1/production/profiles", json={"name": "混合 API 配方"}).json()
+            response = client.post("/api/v1/production/batches", json={
+                "name": "API 混合批次",
+                "profile_id": profile["profile_id"],
+                "items": [
+                    {"source_type": "brief", "source_value": "讲解 AI 获客"},
+                    {"source_type": "script", "source_value": "已写好的口播稿"},
+                ],
+            })
+    finally:
+        app.dependency_overrides.pop(backend_deps.get_production_service, None)
+        app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
+
+    assert response.status_code == 201, response.text
+    assert [item["source_type"] for item in response.json()["items"]] == ["brief", "script"]
+
+
 def test_keyword_auto_run_api_only_enqueues_after_preflight(tmp_path):
     repository = MockRepository()
     production_service = ProductionService(repository, tmp_path / "production")
@@ -221,6 +278,47 @@ def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_p
     assert started.items[1].status.value == "blocked"
     assert service.can_run(started.items[0].run_id) is True
     assert service.can_run(started.items[1].run_id) is False
+
+
+def test_batch_preflight_isolates_an_invalid_single_item_profile_override(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-override")
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="默认配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="带单条覆盖",
+        profile_id=profile.profile_id,
+        source_items=[{
+            "source_type": "candidate",
+            "source_value": candidate.video_id,
+            "profile_overrides": {"avatar_id": "avatar-missing"},
+        }],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+    )
+
+    assert preflight["ready_count"] == 0
+    assert "单条覆盖的数字人形象不存在。" in preflight["items"][0]["reasons"]
 
 
 def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):

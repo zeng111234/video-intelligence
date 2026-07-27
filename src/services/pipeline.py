@@ -17,6 +17,7 @@ from src.models import (
     PipelineRunStatus,
     PipelineEvent,
     PipelineStage,
+    CopywritingTask,
     PipelineStepResult,
     Platform,
     PublishPlatform,
@@ -260,6 +261,9 @@ class PipelineService:
         automatic_workflow = run.config.get("workflow") in {
             "keyword_auto_candidate",
             "production_batch_candidate",
+            "production_batch_share_link",
+            "production_batch_brief",
+            "production_batch_script",
             "guided_candidate",
             "guided_share_link",
         }
@@ -626,6 +630,78 @@ class PipelineService:
                 error_message=error_msg,
             )
             return self.complete_run(run, success=False, error_message=error_msg)
+
+    def pause_for_copy_review(
+        self,
+        *,
+        run: PipelineRun,
+        copy_task: CopywritingTask,
+        instruction: str = "人工审核后再进入数字人、剪辑或发布。",
+    ) -> PipelineRun:
+        """把已生成或人工提供的文案统一送入人工审核闸门。"""
+        now = datetime.now().astimezone()
+        run = self.update_stage(
+            run,
+            PipelineStage.COPYWRITING,
+            TaskStatus.SUCCEEDED,
+            task_id=copy_task.task_id,
+            outputs={
+                "task_id": copy_task.task_id,
+                "variant_count": str(len(copy_task.result_variants or [copy_task.result_text or ""])),
+                "review_state": "awaiting_human_approval",
+            },
+        )
+        run = self.update_stage(
+            run,
+            PipelineStage.HUMAN_REVIEW,
+            TaskStatus.RUNNING,
+            task_id=copy_task.task_id,
+            outputs={"copywriting_task_id": copy_task.task_id, "instruction": instruction},
+        )
+        paused = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.HUMAN_REVIEW,
+                "updated_at": now,
+            }
+        )
+        paused = self._event(
+            paused,
+            action="copy_review_required",
+            stage=PipelineStage.HUMAN_REVIEW,
+            message=instruction,
+        )
+        self.repository.save_pipeline_run(paused)
+        return paused
+
+    def confirm_output_review(self, *, run_id: str, reviewer: str, note: str = "") -> PipelineRun:
+        """记录成片复核；该操作不会创建或提交发布任务。"""
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("流水线不存在。")
+        if run.status != PipelineRunStatus.PAUSED or run.current_stage != PipelineStage.PUBLISHING:
+            raise ValueError("当前流水线尚未生成可复核成片。")
+        now = datetime.now().astimezone()
+        updated = run.model_copy(
+            update={
+                "updated_at": now,
+                "config": {
+                    **run.config,
+                    "output_reviewed": True,
+                    "output_reviewer": reviewer.strip(),
+                    "output_review_note": note.strip(),
+                },
+            }
+        )
+        updated = self._event(
+            updated,
+            action="output_review_approved",
+            stage=PipelineStage.PUBLISHING,
+            message="成片复核已通过，已标记为待发布；未创建发布任务。",
+            details={"reviewer": reviewer.strip(), "note": note.strip()},
+        )
+        self.repository.save_pipeline_run(updated)
+        return updated
 
     def retry_candidate_script_pipeline(
         self,

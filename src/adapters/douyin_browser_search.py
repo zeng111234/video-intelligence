@@ -9,6 +9,7 @@ be opened and logged in by the operator before collection can run.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -98,13 +99,7 @@ class LocalDouyinBrowserSearchProvider:
         self.clock = clock or (lambda: datetime.now().astimezone())
 
     def capabilities(self) -> ProviderCapability:
-        missing: list[str] = []
-        if not self.enabled:
-            missing.append("DOUYIN_BROWSER_DISCOVERY_ENABLED=true")
-        try:
-            import playwright.sync_api  # noqa: F401
-        except ImportError:
-            missing.append("Playwright Python 依赖")
+        missing = self._missing_prerequisites()
         return ProviderCapability(
             provider_name=self.provider_name,
             display_name="本机 Chrome 抖音热点宝采集",
@@ -125,9 +120,19 @@ class LocalDouyinBrowserSearchProvider:
         )
 
     def session_status(self) -> BrowserSessionStatus:
+        missing = self._missing_prerequisites()
         if not self.enabled:
             return BrowserSessionStatus(
                 False, False, False, False, "disabled", "本机浏览器发现已关闭。"
+            )
+        if missing:
+            return BrowserSessionStatus(
+                True,
+                False,
+                True,
+                False,
+                "dependency_missing",
+                f"本机浏览器发现尚未就绪：{'；'.join(missing)}。",
             )
         try:
             with urlopen(self._debug_url(), timeout=1.5) as response:  # noqa: S310 - localhost only
@@ -176,9 +181,24 @@ class LocalDouyinBrowserSearchProvider:
         status = self.session_status()
         if status.running:
             return status
-        if not self.capabilities().enabled:
+        capability = self.capabilities()
+        if not capability.enabled:
+            missing = capability.missing_configuration
+            if "Playwright Python 依赖" in missing:
+                message = (
+                    "缺少 Playwright Python 依赖。请在项目根目录运行 "
+                    "`python -m pip install -r project/backend/requirements.txt`，然后重启后端。"
+                )
+            elif any(item in {"Google Chrome", "Microsoft Edge"} for item in missing):
+                browser = "Google Chrome" if self.browser_channel == "chrome" else "Microsoft Edge"
+                message = (
+                    f"未找到 {browser}。请安装该浏览器，或将 "
+                    "DOUYIN_BROWSER_CHANNEL 改为已安装的浏览器后重启后端。"
+                )
+            else:
+                message = f"本机浏览器发现尚未就绪：{'；'.join(missing)}。"
             raise LicensedProviderError(
-                "本机浏览器发现尚未就绪，请检查开关和 Playwright 依赖。",
+                message,
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
         executable = self._browser_executable()
@@ -628,18 +648,45 @@ class LocalDouyinBrowserSearchProvider:
     def _debug_pages_url(self) -> str:
         return f"http://127.0.0.1:{self.debug_port}/json/list"
 
+    def _missing_prerequisites(self) -> list[str]:
+        missing: list[str] = []
+        if not self.enabled:
+            missing.append("DOUYIN_BROWSER_DISCOVERY_ENABLED=true")
+        if not self._playwright_available():
+            missing.append("Playwright Python 依赖")
+        if self._browser_executable() is None:
+            missing.append("Google Chrome" if self.browser_channel == "chrome" else "Microsoft Edge")
+        return missing
+
+    @staticmethod
+    def _playwright_available() -> bool:
+        try:
+            import playwright.sync_api  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
     def _browser_executable(self) -> Path | None:
         names = ["chrome", "chrome.exe"] if self.browser_channel == "chrome" else ["msedge", "msedge.exe"]
         for name in names:
             found = shutil.which(name)
             if found:
                 return Path(found)
-        base_paths = [
-            Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
-            Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
-            Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
-            Path("C:/Program Files/Microsoft/Edge/Application/msedge.exe"),
-        ]
+        if self.browser_channel == "chrome":
+            base_paths = [
+                Path("C:/Program Files/Google/Chrome/Application/chrome.exe"),
+                Path("C:/Program Files (x86)/Google/Chrome/Application/chrome.exe"),
+            ]
+            local_app_data = os.getenv("LOCALAPPDATA")
+            if local_app_data:
+                base_paths.append(
+                    Path(local_app_data) / "Google/Chrome/Application/chrome.exe"
+                )
+        else:
+            base_paths = [
+                Path("C:/Program Files/Microsoft/Edge/Application/msedge.exe"),
+                Path("C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"),
+            ]
         for path in base_paths:
             if path.exists():
                 return path

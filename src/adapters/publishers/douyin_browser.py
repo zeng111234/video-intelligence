@@ -25,6 +25,8 @@ class DouyinBrowserPublisher:
             "display_name": "抖音本机扫码发布",
             "mode": "local_browser",
             "enabled": True,
+            "requires_account": True,
+            "setup_required": True,
             "manual_only": False,
             "manual_fallback": True,
             "supports_scheduled": False,

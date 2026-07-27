@@ -21,7 +21,6 @@ import {
   message,
 } from "antd";
 import {
-  CheckCircleOutlined,
   DownloadOutlined,
   FileSearchOutlined,
   FileTextOutlined,
@@ -314,7 +313,7 @@ export default function VideoEditorPage() {
               {job.status === "succeeded" && job.media_url && <>
                 <video controls preload="metadata" style={{ width: "100%", borderRadius: 8, background: "#111" }} src={job.media_url} />
                 <Text type="secondary">成片大小：{formatBytes(job.result_size_bytes)}</Text>
-                <Space wrap><Button type="primary" icon={<DownloadOutlined />} href={job.download_url || undefined}>下载成片</Button><Button icon={<SendOutlined />} onClick={() => navigate(`/publish?editTask=${encodeURIComponent(job.task_id)}`)}>去发布</Button><Button onClick={() => { setSelectedSourceId(job.source_id || undefined); setAnalysis(null); setJob(null); }}>继续剪辑</Button></Space>
+                <Space wrap><Button type="primary" icon={<DownloadOutlined />} href={job.download_url || undefined}>下载成片</Button><Button icon={<SendOutlined />} onClick={() => navigate(`/publish?from_edit_task=${encodeURIComponent(job.task_id)}`)}>去发布</Button><Button onClick={() => { setSelectedSourceId(job.source_id || undefined); setAnalysis(null); setJob(null); }}>继续剪辑</Button></Space>
               </>}
             </Space>}
           </Card>

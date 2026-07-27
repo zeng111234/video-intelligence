@@ -238,6 +238,7 @@ class ProductionBatchItemStatus(StrEnum):
     RUNNING = "running"
     AWAITING_REVIEW = "awaiting_review"
     AWAITING_PUBLISH = "awaiting_publish"
+    READY_TO_PUBLISH = "ready_to_publish"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -1186,8 +1187,13 @@ class ProductionBatchItem(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    candidate_id: str = Field(min_length=1)
+    # 历史批次只有 candidate_id；新批次允许从链接、选题或已写成稿开始。
+    candidate_id: str = ""
     run_id: str = Field(min_length=1)
+    source_type: str = "candidate"
+    source_value: str = ""
+    display_title: str = ""
+    profile_overrides: dict[str, str] = Field(default_factory=dict)
     status: ProductionBatchItemStatus = ProductionBatchItemStatus.PLANNED
     blocked_reasons: list[str] = Field(default_factory=list)
     current_stage: PipelineStage | None = None

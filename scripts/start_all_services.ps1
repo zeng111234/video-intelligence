@@ -133,23 +133,47 @@ function Install-Dependencies {
         Write-Log "FFmpeg not installed, video processing may be limited" "WARN"
     }
     
-    # Install backend dependencies (incremental check)
+    # Install backend dependencies (incremental check). FastAPI/Uvicorn alone
+    # are insufficient: crawler browser discovery also needs Playwright.
     Write-Log "Checking backend dependencies..." "INFO"
-    $backendCheck = python -c "import fastapi, uvicorn" 2>&1
+    $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart; import playwright.sync_api" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Log "Backend dependencies already installed" "SUCCESS"
     } else {
-        Write-Log "Installing backend dependencies..." "INFO"
+        Write-Log "Backend dependencies incomplete; installing project/backend/requirements.txt once..." "WARN"
         Push-Location (Join-Path $projectRoot "project\backend")
         python -m pip install -r requirements.txt -q
         if ($LASTEXITCODE -eq 0) {
-            Write-Log "Backend dependencies installed" "SUCCESS"
+            $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart; import playwright.sync_api" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                Write-Log "Backend dependency verification failed. Run: python -m pip install -r project/backend/requirements.txt" "ERROR"
+                Pop-Location
+                return $false
+            }
+            Write-Log "Backend dependencies installed and verified" "SUCCESS"
         } else {
-            Write-Log "Backend dependencies installation failed" "ERROR"
+            Write-Log "Backend dependencies installation failed. Run: python -m pip install -r project/backend/requirements.txt" "ERROR"
             Pop-Location
             return $false
         }
         Pop-Location
+    }
+
+    # Browser discovery uses an installed branded browser channel. It does not
+    # require downloading Playwright's bundled Chromium binary.
+    $browserPaths = @(
+        "C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        "C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+    )
+    if ($env:LOCALAPPDATA) {
+        $browserPaths += Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe"
+    }
+    if ($browserPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1) {
+        Write-Log "Chrome/Edge browser detected for crawler discovery" "SUCCESS"
+    } else {
+        Write-Log "Chrome/Edge was not found. Crawler discovery will explain the required browser in the page." "WARN"
     }
     
     # Install frontend dependencies (incremental check)

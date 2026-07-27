@@ -29,11 +29,19 @@ class SandboxPublisher:
             PublishPlatform.WECHAT_CHANNELS,
             PublishPlatform.XIAOHONGSHU,
         }
+        display_names = {
+            PublishPlatform.DOUYIN: "抖音",
+            PublishPlatform.KUAISHOU: "快手",
+            PublishPlatform.WECHAT_CHANNELS: "视频号",
+            PublishPlatform.XIAOHONGSHU: "小红书",
+        }
         return {
             "provider_name": f"sandbox_{self._platform.value}",
-            "display_name": f"{self._platform.value} 人工发布",
+            "display_name": f"{display_names[self._platform]}人工发布助手",
             "mode": "manual",
             "enabled": True,
+            "requires_account": False,
+            "setup_required": False,
             "manual_only": manual_only,
             "supports_scheduled": False,
             "supports_tags": True,
