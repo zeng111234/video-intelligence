@@ -133,12 +133,35 @@ class SQLiteRepository:
 
             CREATE INDEX IF NOT EXISTS idx_production_batches_status
             ON production_batches(status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS production_operations (
+                operation_type TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(operation_type, idempotency_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_production_operations_resource
+            ON production_operations(resource_id, operation_type);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_production_operations_active_resource
+            ON production_operations(resource_id)
+            WHERE state = 'pending';
             """
         )
         self.connection.commit()
 
     def _ensure_video_editor_batch_tables(self) -> None:
-        """保存智能剪辑批次，以便页面刷新和服务重启后继续查看。"""
+        """保存智能剪辑批次、报价与供应商操作状态。
+
+        报价和幂等操作不能只放在进程内存中：服务重启后仍要能拒绝过期
+        报价、识别重复付费请求，并继续查询已经提交的云任务。
+        """
         self.connection.executescript(
             """
             CREATE TABLE IF NOT EXISTS video_editor_batches (
@@ -150,6 +173,49 @@ class SQLiteRepository:
 
             CREATE INDEX IF NOT EXISTS idx_video_editor_batches_created
             ON video_editor_batches(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS video_editor_quotes (
+                quote_id TEXT PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                output_profile TEXT NOT NULL,
+                target_platform TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_video_editor_quotes_expires
+            ON video_editor_quotes(expires_at);
+
+            CREATE TABLE IF NOT EXISTS video_editor_operations (
+                idempotency_key TEXT PRIMARY KEY,
+                operation_type TEXT NOT NULL,
+                request_hash TEXT NOT NULL,
+                state TEXT NOT NULL,
+                resource_id TEXT,
+                response_json TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS video_editor_cloud_jobs (
+                job_key TEXT PRIMARY KEY,
+                batch_id TEXT NOT NULL,
+                item_id TEXT NOT NULL,
+                provider_stage TEXT NOT NULL,
+                provider_name TEXT NOT NULL,
+                provider_job_id TEXT,
+                status TEXT NOT NULL,
+                usage_json TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                next_poll_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_video_editor_cloud_jobs_batch
+            ON video_editor_cloud_jobs(batch_id, item_id, provider_stage);
             """
         )
         self.connection.commit()
@@ -1942,6 +2008,43 @@ class SQLiteRepository:
         ).fetchall()
         return [PipelineRun.model_validate_json(row["payload_json"]) for row in rows]
 
+    def list_active_pipeline_runs(self) -> list[PipelineRun]:
+        """Return every unfinished run oldest-first so old work cannot starve."""
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM pipeline_runs
+            WHERE status IN ('pending', 'running', 'paused')
+            ORDER BY created_at ASC
+            """
+        ).fetchall()
+        return [PipelineRun.model_validate_json(row["payload_json"]) for row in rows]
+
+    def claim_pipeline_run_transition(
+        self,
+        *,
+        expected_run: PipelineRun,
+        claimed_run: PipelineRun,
+    ) -> bool:
+        """Optimistically claim one run transition without a read/write race."""
+        cursor = self.connection.execute(
+            """
+            UPDATE pipeline_runs
+            SET keyword = ?, status = ?, updated_at = ?, payload_json = ?
+            WHERE run_id = ? AND status = ? AND updated_at = ?
+            """,
+            (
+                claimed_run.keyword,
+                claimed_run.status.value,
+                claimed_run.updated_at.isoformat(),
+                claimed_run.model_dump_json(),
+                expected_run.run_id,
+                expected_run.status.value,
+                expected_run.updated_at.isoformat(),
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
     # -- 生产批次 --
 
     def save_production_batch(self, batch: ProductionBatch) -> None:
@@ -1976,6 +2079,152 @@ class SQLiteRepository:
         ).fetchall()
         return [ProductionBatch.model_validate_json(row["payload_json"]) for row in rows]
 
+    def claim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        resource_id: str,
+        created_at: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            INSERT OR IGNORE INTO production_operations
+            (operation_type, idempotency_key, request_hash, resource_id, state,
+             error_message, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'pending', NULL, ?, ?)
+            """,
+            (
+                operation_type,
+                idempotency_key,
+                request_hash,
+                resource_id,
+                created_at,
+                created_at,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def get_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+    ) -> dict | None:
+        row = self.connection.execute(
+            """
+            SELECT * FROM production_operations
+            WHERE operation_type = ? AND idempotency_key = ?
+            """,
+            (operation_type, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "operation_type": row["operation_type"],
+            "idempotency_key": row["idempotency_key"],
+            "request_hash": row["request_hash"],
+            "resource_id": row["resource_id"],
+            "state": row["state"],
+            "error_message": row["error_message"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def reclaim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        expected_updated_at: str,
+        updated_at: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            UPDATE production_operations
+            SET updated_at = ?, error_message = NULL
+            WHERE operation_type = ? AND idempotency_key = ?
+              AND state = 'pending' AND updated_at = ?
+            """,
+            (
+                updated_at,
+                operation_type,
+                idempotency_key,
+                expected_updated_at,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def complete_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        state: str,
+        updated_at: str,
+        resource_id: str,
+        batch: ProductionBatch | None = None,
+        runs: list[PipelineRun] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Commit run/batch mutations and the idempotency terminal state together."""
+        with self.connection:
+            for run in runs or []:
+                self.connection.execute(
+                    """
+                    INSERT OR REPLACE INTO pipeline_runs
+                    (run_id, keyword, status, created_at, updated_at, payload_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        run.run_id,
+                        run.keyword,
+                        run.status.value,
+                        run.created_at.isoformat(),
+                        run.updated_at.isoformat(),
+                        run.model_dump_json(),
+                    ),
+                )
+            if batch is not None:
+                self.connection.execute(
+                    """
+                    INSERT OR REPLACE INTO production_batches
+                    (batch_id, name, status, created_at, updated_at, payload_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        batch.batch_id,
+                        batch.name,
+                        batch.status.value,
+                        batch.created_at.isoformat(),
+                        batch.updated_at.isoformat(),
+                        batch.model_dump_json(),
+                    ),
+                )
+            cursor = self.connection.execute(
+                """
+                UPDATE production_operations
+                SET state = ?, resource_id = ?, error_message = ?, updated_at = ?
+                WHERE operation_type = ? AND idempotency_key = ?
+                  AND request_hash = ? AND state = 'pending'
+                """,
+                (
+                    state,
+                    resource_id,
+                    error_message,
+                    updated_at,
+                    operation_type,
+                    idempotency_key,
+                    request_hash,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("生产操作幂等记录不存在或请求哈希不一致。")
+
     def save_video_editor_batch(self, batch) -> None:
         self.connection.execute(
             """
@@ -2009,6 +2258,198 @@ class SQLiteRepository:
             (limit,),
         ).fetchall()
         return [VideoEditorBatch.model_validate_json(row["payload_json"]) for row in rows]
+
+    def save_video_editor_quote(
+        self,
+        *,
+        quote_id: str,
+        source_id: str,
+        output_profile: str,
+        target_platform: str,
+        expires_at: str,
+        created_at: str,
+        payload: dict,
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO video_editor_quotes
+            (quote_id, source_id, output_profile, target_platform, expires_at, created_at, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                quote_id,
+                source_id,
+                output_profile,
+                target_platform,
+                expires_at,
+                created_at,
+                json.dumps(payload, ensure_ascii=False),
+            ),
+        )
+        self.connection.commit()
+
+    def get_video_editor_quote(self, quote_id: str) -> dict | None:
+        row = self.connection.execute(
+            """
+            SELECT quote_id, source_id, output_profile, target_platform,
+                   expires_at, created_at, payload_json
+            FROM video_editor_quotes
+            WHERE quote_id = ?
+            """,
+            (quote_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "quote_id": row["quote_id"],
+            "source_id": row["source_id"],
+            "output_profile": row["output_profile"],
+            "target_platform": row["target_platform"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+            "payload": json.loads(row["payload_json"]),
+        }
+
+    def claim_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        operation_type: str,
+        request_hash: str,
+        created_at: str,
+    ) -> bool:
+        cursor = self.connection.execute(
+            """
+            INSERT OR IGNORE INTO video_editor_operations
+            (idempotency_key, operation_type, request_hash, state,
+             resource_id, response_json, error_message, created_at, updated_at)
+            VALUES (?, ?, ?, 'pending', NULL, NULL, NULL, ?, ?)
+            """,
+            (
+                idempotency_key,
+                operation_type,
+                request_hash,
+                created_at,
+                created_at,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def get_video_editor_operation(self, idempotency_key: str) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM video_editor_operations WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "idempotency_key": row["idempotency_key"],
+            "operation_type": row["operation_type"],
+            "request_hash": row["request_hash"],
+            "state": row["state"],
+            "resource_id": row["resource_id"],
+            "response": json.loads(row["response_json"]) if row["response_json"] else None,
+            "error_message": row["error_message"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def complete_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        state: str,
+        updated_at: str,
+        resource_id: str | None = None,
+        response: dict | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.connection.execute(
+            """
+            UPDATE video_editor_operations
+            SET state = ?, resource_id = ?, response_json = ?,
+                error_message = ?, updated_at = ?
+            WHERE idempotency_key = ?
+            """,
+            (
+                state,
+                resource_id,
+                json.dumps(response, ensure_ascii=False) if response is not None else None,
+                error_message,
+                updated_at,
+                idempotency_key,
+            ),
+        )
+        self.connection.commit()
+
+    def save_video_editor_cloud_job(
+        self,
+        *,
+        job_key: str,
+        batch_id: str,
+        item_id: str,
+        provider_stage: str,
+        provider_name: str,
+        provider_job_id: str | None,
+        status: str,
+        usage: dict,
+        payload: dict,
+        next_poll_at: str | None,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT OR REPLACE INTO video_editor_cloud_jobs
+            (job_key, batch_id, item_id, provider_stage, provider_name,
+             provider_job_id, status, usage_json, payload_json, next_poll_at,
+             created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_key,
+                batch_id,
+                item_id,
+                provider_stage,
+                provider_name,
+                provider_job_id,
+                status,
+                json.dumps(usage, ensure_ascii=False),
+                json.dumps(payload, ensure_ascii=False),
+                next_poll_at,
+                created_at,
+                updated_at,
+            ),
+        )
+        self.connection.commit()
+
+    def list_video_editor_cloud_jobs(self, batch_id: str) -> list[dict]:
+        rows = self.connection.execute(
+            """
+            SELECT * FROM video_editor_cloud_jobs
+            WHERE batch_id = ?
+            ORDER BY created_at ASC
+            """,
+            (batch_id,),
+        ).fetchall()
+        return [
+            {
+                "job_key": row["job_key"],
+                "batch_id": row["batch_id"],
+                "item_id": row["item_id"],
+                "provider_stage": row["provider_stage"],
+                "provider_name": row["provider_name"],
+                "provider_job_id": row["provider_job_id"],
+                "status": row["status"],
+                "usage": json.loads(row["usage_json"]),
+                "payload": json.loads(row["payload_json"]),
+                "next_poll_at": row["next_poll_at"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
 
     def delete_pipeline_run(self, run_id: str) -> bool:
         with self.connection:

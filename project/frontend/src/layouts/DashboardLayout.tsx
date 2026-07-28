@@ -4,7 +4,7 @@
  * 支持侧边栏折叠、响应式适配
  */
 import { useState, useCallback, useEffect } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import TopHeader from "../components/TopHeader";
 
@@ -13,6 +13,7 @@ import TopHeader from "../components/TopHeader";
  * 侧边栏 + 顶部栏 + 内容区的标准后台布局
  */
 export default function DashboardLayout() {
+  const location = useLocation();
   /** 侧边栏折叠状态 */
   const [collapsed, setCollapsed] = useState(false);
   /** 移动端侧边栏是否打开 */
@@ -34,6 +35,10 @@ export default function DashboardLayout() {
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   /** 侧边栏折叠回调 */
   const handleCollapse = useCallback(
@@ -140,14 +145,19 @@ export default function DashboardLayout() {
             position: fixed;
             left: 0;
             top: 0;
-            z-index: 100;
-            transform: translateX(-100%);
-            width: 260px !important;
-          }
+          z-index: 100;
+          transform: translateX(-100%);
+          transition: transform 0.2s ease;
+          width: 260px !important;
+        }
 
-          .vi-sidebar-wrapper.mobile-open {
-            transform: translateX(0);
-          }
+        .vi-sidebar-wrapper.mobile-open {
+          transform: translateX(0);
+        }
+
+        .vi-sidebar-wrapper.mobile-open .vi-sidebar {
+          transform: translateX(0);
+        }
 
           .vi-main-content {
             margin-left: 0 !important;

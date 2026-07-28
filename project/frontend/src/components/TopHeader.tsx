@@ -21,26 +21,9 @@ import {
   RightOutlined,
 } from "@ant-design/icons";
 import { getNotifications, getMessages, getUserProfile } from "../api/client";
+import { getPageTitle } from "../navigation";
 
 const { Text } = Typography;
-
-/** 路由到页面标题映射 */
-const PAGE_TITLE_MAP: Record<string, string> = {
-  "/dashboard": "数据仪表盘",
-  "/candidates": "候选检索",
-  "/pipeline": "批量生产流水线",
-  "/production": "批量生产队列",
-  "/transcription": "语音转写",
-  "/tasks": "任务中心",
-  "/admin": "系统管理",
-  "/analytics": "深度分析",
-  "/ai-copy": "AI文案生成",
-  "/publish": "多平台发布",
-  "/crawler": "关键词爬虫",
-  "/avatar": "数字人生成",
-  "/video-editor": "AI智能剪辑",
-  "/help": "帮助中心",
-};
 
 /** 组件 Props */
 interface TopHeaderProps {
@@ -128,7 +111,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   /** 根据路由自动计算页面标题 */
   const pageTitle = useMemo(() => {
     if (title) return title;
-    return PAGE_TITLE_MAP[location.pathname] || "页面";
+    return getPageTitle(location.pathname);
   }, [location.pathname, title]);
 
   /** 标记通知已读 */

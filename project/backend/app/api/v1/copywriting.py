@@ -42,6 +42,7 @@ class CopywritingResponse(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
+    attention_terms: list[str] = Field(default_factory=list)
     compliance_status: str = "not_checked"
     compliance_notes: list[str] = Field(default_factory=list)
     compliance_rewritten: bool = False
@@ -243,6 +244,7 @@ def _to_response(task) -> CopywritingResponse:
         token_usage=task.token_usage,
         result_text=task.result_text,
         result_variants=task.result_variants,
+        attention_terms=task.attention_terms,
         compliance_status=task.compliance_status,
         compliance_notes=task.compliance_notes,
         compliance_rewritten=task.compliance_rewritten,

@@ -176,6 +176,18 @@ export interface ProductionProfile {
   updated_at: string;
 }
 
+export interface ProductionWorkspaceConfiguration {
+  configured: boolean;
+  rights_holder?: string;
+  agreement_version?: string;
+  agreement_accepted_at?: string;
+  default_profile_id?: string | null;
+  default_publish_platforms?: string[];
+  bundled_compute?: boolean;
+  copywriting_estimated_cost_cny?: number | null;
+  avatar_estimated_cost_cny?: number | null;
+}
+
 export interface ProductionBatchItem {
   candidate_id: string;
   run_id: string;
@@ -185,6 +197,7 @@ export interface ProductionBatchItem {
   profile_overrides: Record<string, string>;
   status: string;
   current_stage: string | null;
+  review_stage?: "transcript" | "script" | string;
   blocked_reasons: string[];
   error_message: string | null;
   video_path: string | null;
@@ -222,6 +235,115 @@ export interface ProductionBatch {
   finished_at: string | null;
 }
 
+export type ProductionWorkspaceStage =
+  | "source"
+  | "transcript"
+  | "script"
+  | "avatar"
+  | "editing"
+  | "output"
+  | "publish"
+  | "completed"
+  | string;
+
+export type ProductionWorkspaceAction =
+  | "configure"
+  | "preflight"
+  | "start"
+  | "pause"
+  | "resume"
+  | "review_transcript"
+  | "review_script"
+  | "review_output"
+  | "publish"
+  | "retry"
+  | "wait"
+  | "view_result"
+  | "completed"
+  | string;
+
+export interface ProductionWorkspaceReview {
+  required: boolean;
+  reviewed: boolean;
+  draft_text?: string;
+  approved_text?: string;
+  low_confidence_count?: number;
+  uncertain_segment_count?: number;
+  low_confidence_segments?: Array<{
+    start: number | null;
+    end: number | null;
+    text: string;
+    confidence: number | null;
+    quality_note?: string | null;
+  }>;
+  attention_terms?: string[];
+  compliance_status?: string | null;
+  compliance_notes?: string[];
+}
+
+export interface ProductionWorkspaceCost {
+  estimated_cost_cny: number | null;
+  known: boolean;
+  currency: "CNY" | string;
+  blocked?: boolean;
+  issues?: string[];
+}
+
+export interface ProductionPublishTarget {
+  platform: string;
+  account_id?: string;
+  use_manual_fallback?: boolean;
+  account_name?: string;
+  mode?: "real" | "manual" | string;
+  display_name?: string;
+  provider_name?: string;
+}
+
+export interface ProductionPublishDraft {
+  title: string;
+  description: string;
+  tags: string[];
+}
+
+export interface ProductionWorkspacePublish {
+  confirmed: boolean;
+  status: string;
+  targets: ProductionPublishTarget[];
+  task_ids: string[];
+  message?: string | null;
+  draft?: ProductionPublishDraft;
+}
+
+export interface ProductionWorkspaceItem extends ProductionBatchItem {
+  stage?: ProductionWorkspaceStage;
+  reviews: {
+    transcript: ProductionWorkspaceReview;
+    script: ProductionWorkspaceReview;
+    output: ProductionWorkspaceReview;
+  };
+  next_action: ProductionWorkspaceAction;
+  allowed_actions: ProductionWorkspaceAction[];
+  retry_allowed: boolean;
+  cost: ProductionWorkspaceCost;
+  publish: ProductionWorkspacePublish;
+  result_media_url?: string | null;
+}
+
+export interface ProductionWorkspace {
+  batch: ProductionBatch;
+  profile: ProductionProfile | null;
+  status: string;
+  progress: Record<string, number>;
+  current_run_id: string | null;
+  current_stage: ProductionWorkspaceStage;
+  next_action: ProductionWorkspaceAction;
+  allowed_actions: ProductionWorkspaceAction[];
+  retry_allowed: boolean;
+  items: ProductionWorkspaceItem[];
+  cost: ProductionWorkspaceCost;
+  publish: ProductionWorkspacePublish;
+}
+
 export interface ProductionBatchPreflightItem {
   run_id: string;
   candidate_id: string;
@@ -229,6 +351,8 @@ export interface ProductionBatchPreflightItem {
   display_title?: string;
   ready: boolean;
   reasons: string[];
+  estimated_cost_cny?: number | null;
+  cost_known?: boolean;
 }
 
 export interface ProductionBatchPreflight {
@@ -236,10 +360,27 @@ export interface ProductionBatchPreflight {
   ready_count: number;
   blocked_count: number;
   items: ProductionBatchPreflightItem[];
-  estimated_cost_cny: number;
+  estimated_cost_cny: number | null;
   monthly_budget_used_cny: number;
   platforms: Array<{ platform: string; display_name: string; mode: string; enabled: boolean; manual_required: boolean }>;
   concurrency: number;
+  cost_known?: boolean;
+  cost_blocked?: boolean;
+  cost_issues?: string[];
+}
+
+export interface ProductionBatchPublishPreflightItem {
+  run_id: string;
+  blocked: boolean;
+  issues?: string[];
+  platforms?: Array<Record<string, unknown>>;
+  resolved_targets?: ProductionPublishTarget[];
+}
+
+export interface ProductionBatchPublishPreflight {
+  batch_id: string;
+  blocked: boolean;
+  items: ProductionBatchPublishPreflightItem[];
 }
 
 export interface KeywordRunPreflight {
@@ -571,6 +712,10 @@ export interface CrawlerCandidateResult {
   new_plays?: number | null;
   /** 热点宝的 like_cnt，语义由 hotspot_window_hours 决定。 */
   new_likes?: number | null;
+  /** 通过固定质量线后计算出的日均点赞。 */
+  likes_per_day?: number | null;
+  /** 日均点赞的计算口径。 */
+  quality_source?: string | null;
   duration_seconds?: number | null;
   hotspot_window_hours?: number | null;
   hotspot_list_labels?: string[];
@@ -765,7 +910,8 @@ export interface CopywritingResponse {
   token_usage: Record<string, number>;
   result_text: string | null;
   result_variants: string[];
-  compliance_status: "passed" | "review_required" | "not_checked" | string;
+  attention_terms: string[];
+  compliance_status: "passed" | "best_effort" | "review_required" | "not_checked" | string;
   compliance_notes: string[];
   compliance_rewritten: boolean;
   compliance_retry_used: boolean;
@@ -1071,8 +1217,8 @@ export interface AvatarJobCreateRequest {
   speech_rate: number;
   aspect_ratio: string;
   resolution: string;
-  publish_mode: "manual" | "auto";
-  target_platforms: string[];
+  publish_mode?: "manual" | "auto";
+  target_platforms?: string[];
   idempotency_key: string;
 }
 
@@ -1155,6 +1301,89 @@ export interface VideoEditorSourceListResponse {
   total: number;
 }
 
+export interface VideoEditorVisualAsset {
+  asset_id: string;
+  kind: "product" | "background";
+  name: string;
+  original_name: string;
+  media_type: string;
+  rights_holder: string;
+  rights_confirmed_at: string;
+  created_at: string;
+  size_bytes: number;
+  media_url: string;
+}
+
+export type VideoEditorOutputProfile = "720p" | "1080p";
+
+export interface VideoEditorCostLineItem {
+  component: "asr" | "planning" | "render" | string;
+  provider: string;
+  quantity: number | string;
+  unit: string;
+  unit_price_cny: number | string;
+  estimated_cost_cny: number | string;
+}
+
+export interface VideoEditorCostQuote {
+  quote_id: string;
+  issued_at: string;
+  expires_at: string;
+  ttl_seconds: number;
+  price_version: string;
+  currency: "CNY" | string;
+  output_profile: VideoEditorOutputProfile;
+  line_items: VideoEditorCostLineItem[];
+  estimated_total: number | string;
+  estimated_max: number | string;
+  exclusions: string[];
+  provider_mode?: "sandbox" | "aliyun" | string;
+  live_ready?: boolean;
+  missing_configuration?: string[];
+  is_mock?: boolean;
+  blocking_reasons?: string[];
+}
+
+export interface VideoEditorTimeRange {
+  start: number;
+  end: number;
+}
+
+export interface VideoEditorEditPlanStep {
+  step_id: string;
+  kind: "trim_silence" | "vertical_fit" | "subtitles" | "title" | "bgm" | "audio_mix" | string;
+  label: string;
+  reason: string;
+  enabled: boolean;
+  required?: boolean;
+  estimated_removed_seconds?: number;
+  params?: Record<string, unknown>;
+}
+
+export interface VideoEditorEditPlan {
+  plan_version: string;
+  duration_seconds: number;
+  spoken_ranges: VideoEditorTimeRange[];
+  remove_ranges: VideoEditorTimeRange[];
+  enabled_steps: string[];
+  trim_silence_enabled: boolean;
+  title_candidates: string[];
+  explanation: string;
+  warnings: string[];
+  provider_name: string;
+  is_mock: boolean;
+  usage: Record<string, number | string>;
+  steps?: VideoEditorEditPlanStep[];
+}
+
+export interface VideoEditorPreflightResponse extends VideoEditorCostQuote {
+  provider_mode: "sandbox" | "aliyun" | string;
+  live_ready: boolean;
+  missing_configuration: string[];
+  is_mock: boolean;
+  blocking_reasons: string[];
+}
+
 export interface VideoEditorRecommendationStep {
   kind: string;
   params: Record<string, unknown>;
@@ -1207,6 +1436,7 @@ export interface VideoEditorJob {
   source_id: string | null;
   analysis_id: string | null;
   publish_title: string | null;
+  workflow?: "edit" | "product_showcase" | string;
 }
 
 export interface VideoEditorJobListResponse {
@@ -1226,6 +1456,18 @@ export interface VideoEditorBatchItem {
   selected_title: string | null;
   selected_bgm_id: string | null;
   bgm_reason: string | null;
+  provider_stage?: string | null;
+  provider_job_ids?: Record<string, string>;
+  provider_payload?: Record<string, unknown>;
+  actual_usage?: Record<string, unknown>;
+  edit_plan?: VideoEditorEditPlan | null;
+  enabled_plan_step_ids?: string[];
+  subtitle_segments?: Array<Record<string, unknown>>;
+  review_snapshot?: Record<string, unknown>;
+  review_confirmed_at?: string | null;
+  result_media_url?: string | null;
+  is_mock?: boolean;
+  publish_allowed?: boolean;
   error_message: string | null;
   confirmed_at: string | null;
   analysis: VideoEditorAnalysis | null;
@@ -1241,6 +1483,18 @@ export interface VideoEditorBatch {
   bgm_enabled: boolean;
   bgm_id: string | null;
   bgm_volume: number;
+  provider_mode?: "legacy" | "sandbox" | "aliyun" | string;
+  output_profile?: VideoEditorOutputProfile | null;
+  output_resolution?: string;
+  output_fps?: number;
+  output_bitrate?: string;
+  quote_id?: string | null;
+  cost_quote?: VideoEditorCostQuote | null;
+  actual_usage?: Record<string, unknown>;
+  billing_confirmation?: Record<string, unknown>;
+  billing_confirmed_at?: string | null;
+  idempotency_key?: string | null;
+  is_mock?: boolean;
   bgm: VideoEditorBgmAsset | null;
   items: VideoEditorBatchItem[];
   created_at: string;
@@ -1303,6 +1557,13 @@ export interface VideoCapabilitiesResponse {
   supports_ai_volume_norm: boolean;
   supports_ai_enhance: boolean;
   supports_ai_silence_trim: boolean;
+  provider_mode?: "sandbox" | "aliyun" | string;
+  live_ready?: boolean;
+  missing_configuration?: string[];
+  is_mock?: boolean;
+  price_version?: string;
+  quote_ttl_seconds?: number;
+  supported_output_profiles?: VideoEditorOutputProfile[];
 }
 
 export interface StepKindParam {

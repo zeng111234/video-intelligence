@@ -79,6 +79,7 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
                 "workflow": "keyword_auto_candidate",
                 "profile": {"avatar_id": "avatar-a", "voice_id": "voice-a", "edit_template_id": "template-a"},
                 "rights_holder": "测试公司",
+                "stage_retry_counts": {"avatar_generation": 1},
             },
             "status": PipelineRunStatus.PENDING,
             "current_stage": PipelineStage.AVATAR_GENERATION,
@@ -86,16 +87,20 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
         }
     )
     repository.save_pipeline_run(run)
+    submitted_requests = []
     avatar_service = SimpleNamespace(
         list_assets=lambda: [
             SimpleNamespace(asset_id="avatar-a", name="形象"),
             SimpleNamespace(asset_id="voice-a", name="音色"),
         ],
-        submit=lambda *_, **__: SimpleNamespace(
-            status=TaskStatus.SUCCEEDED,
-            task_id="avatar-sync",
-            provider_name="synchronous-provider",
-            error_message=None,
+        submit=lambda request, **_: (
+            submitted_requests.append(request)
+            or SimpleNamespace(
+                status=TaskStatus.SUCCEEDED,
+                task_id="avatar-sync",
+                provider_name="synchronous-provider",
+                error_message=None,
+            )
         ),
     )
     worker = PipelineWorker(
@@ -111,3 +116,5 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
     assert len(continued) == 1
     assert continued[0].avatar_task_id == "avatar-sync"
     assert continued[0].current_stage == PipelineStage.AVATAR_GENERATION
+    assert submitted_requests[0].background == "solid"
+    assert submitted_requests[0].idempotency_key.endswith("-retry-1")

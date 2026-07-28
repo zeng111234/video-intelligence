@@ -205,6 +205,95 @@ class FFmpegVideoEditor:
         self._run(cmd, "添加水印失败。")
         return str(output)
 
+    def compose_product_showcase(
+        self,
+        video_path: str,
+        product_path: str,
+        *,
+        background_path: str | None = None,
+        layout: str = "avatar_left_product_right",
+        output_path: str | None = None,
+    ) -> str:
+        """将数字人成片与授权商品原图合成为竖屏讲解视频。"""
+        video = Path(video_path)
+        product = Path(product_path)
+        background = Path(background_path) if background_path else None
+        if not video.exists():
+            raise VideoEditorError("数字人成片不存在。")
+        if not product.exists():
+            raise VideoEditorError("商品主图不存在。")
+        if background is not None and not background.exists():
+            raise VideoEditorError("背景图不存在。")
+        if layout not in {"avatar_left_product_right", "product_canvas_avatar_pip"}:
+            raise VideoEditorError("不支持的产品讲解版式。")
+
+        output = (
+            Path(output_path)
+            if output_path
+            else video.parent / f"{video.stem}_product_showcase.mp4"
+        )
+        base = (
+            "[2:v]scale=1080:1920:force_original_aspect_ratio=increase,"
+            "crop=1080:1920[base]"
+            if background is not None
+            else "color=c=0xF7F5FF:s=1080x1920[base]"
+        )
+        if layout == "avatar_left_product_right":
+            composition = (
+                "[0:v]scale=620:1920:force_original_aspect_ratio=decrease,"
+                "pad=620:1920:(ow-iw)/2:(oh-ih)/2:0x111827[avatar];"
+                "[1:v]scale=340:720:force_original_aspect_ratio=decrease,"
+                "pad=340:720:(ow-iw)/2:(oh-ih)/2:white[product];"
+                "[base][avatar]overlay=40:0[left];"
+                "[left][product]overlay=700:600:format=auto[out]"
+            )
+        else:
+            composition = (
+                "[0:v]scale=420:700:force_original_aspect_ratio=decrease,"
+                "pad=420:700:(ow-iw)/2:(oh-ih)/2:0x111827[avatar];"
+                "[1:v]scale=960:800:force_original_aspect_ratio=decrease,"
+                "pad=960:800:(ow-iw)/2:(oh-ih)/2:white[product];"
+                "[base][product]overlay=60:160[product_canvas];"
+                "[product_canvas][avatar]overlay=600:1060:format=auto[out]"
+            )
+        cmd = [
+            self.ffmpeg,
+            "-nostdin",
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-loop",
+            "1",
+            "-i",
+            str(product),
+        ]
+        if background is not None:
+            cmd.extend(["-loop", "1", "-i", str(background)])
+        cmd.extend(
+            [
+                "-filter_complex",
+                f"{base};{composition}",
+                "-map",
+                "[out]",
+                "-map",
+                "0:a?",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                "-y",
+                str(output),
+            ]
+        )
+        self._run(cmd, "产品讲解视频合成失败。")
+        return str(output)
+
     # -- 私有方法 --
 
     def _apply_step(
@@ -237,6 +326,19 @@ class FFmpegVideoEditor:
                 wm_path,
                 position=position,
                 opacity=opacity,
+                output_path=str(output_path),
+            )
+        elif kind == VideoEditStepKind.PRODUCT_SHOWCASE:
+            product_path = str(params.get("product_path") or "")
+            background_path = str(params.get("background_path") or "") or None
+            layout = str(params.get("layout") or "avatar_left_product_right")
+            if not product_path:
+                raise VideoEditorError("产品讲解步骤缺少商品主图。")
+            self.compose_product_showcase(
+                str(input_path),
+                product_path,
+                background_path=background_path,
+                layout=layout,
                 output_path=str(output_path),
             )
         elif kind == VideoEditStepKind.SPEED:

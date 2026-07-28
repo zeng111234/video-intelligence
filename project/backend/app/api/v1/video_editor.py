@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -105,6 +105,21 @@ class EditJobCreateRequest(BaseModel):
     publish_title: str | None = Field(None, max_length=100)
 
 
+class ProductShowcaseCreateRequest(BaseModel):
+    source_id: str = Field(min_length=3)
+    product_asset_id: str = Field(min_length=3)
+    background_asset_id: str | None = None
+    layout: str = Field(
+        "avatar_left_product_right",
+        pattern="^(avatar_left_product_right|product_canvas_avatar_pip)$",
+    )
+
+
+class BillingConfirmationRequest(BaseModel):
+    confirmed: bool = False
+    max_cost_cny: float = Field(ge=0)
+
+
 class BatchCreateRequest(BaseModel):
     source_ids: list[str] = Field(min_length=1, max_length=10)
     target_platform: str = Field("douyin", pattern="^(douyin|kuaishou|wechat_channels|xiaohongshu)$")
@@ -118,6 +133,39 @@ class BatchCreateRequest(BaseModel):
     bgm_enabled: bool = False
     bgm_id: str | None = None
     bgm_volume: float = Field(0.24, ge=0, le=1)
+    output_profile: str | None = Field(
+        None,
+        pattern="^(720p|1080p)$",
+        description="新云工作台唯一权威输出档位；旧调用可不传。",
+    )
+    quote_id: str | None = None
+    billing_confirmation: BillingConfirmationRequest | None = None
+
+
+class CloudPreflightRequest(BaseModel):
+    source_id: str = Field(min_length=3)
+    output_profile: str = Field(pattern="^(720p|1080p)$")
+    target_platform: str = Field(
+        "douyin",
+        pattern="^(douyin|kuaishou|wechat_channels|xiaohongshu)$",
+    )
+
+
+class SubtitleSegmentReviewRequest(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    text: str = Field(default="", max_length=2000)
+
+
+class CloudBatchReviewRequest(BaseModel):
+    subtitle_segments: list[SubtitleSegmentReviewRequest] = Field(
+        default_factory=list,
+        max_length=5000,
+    )
+    enabled_plan_step_ids: list[str] = Field(default_factory=list, max_length=10)
+    selected_title: str = Field(min_length=1, max_length=100)
+    selected_bgm_id: str | None = None
+    confirmed: bool = False
 
 
 class BatchItemIdsRequest(BaseModel):
@@ -228,6 +276,58 @@ async def upload_sources(
     return {"items": items, "total": len(items)}
 
 
+@router.post("/visual-assets")
+async def upload_visual_asset(
+    kind: str = Form(...),
+    file: UploadFile = File(..., description="已授权的商品主图或背景图"),
+    rights_confirmed: bool = Form(False),
+    rights_holder: str = Form(""),
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        if not file.filename:
+            raise VideoEditorWorkflowError("上传文件名不能为空。")
+        asset = workflow.upload_visual_asset(
+            kind=kind,
+            file_name=file.filename,
+            media_type=file.content_type or "image/png",
+            media_bytes=await file.read(),
+            rights_confirmed=rights_confirmed,
+            rights_holder=rights_holder,
+        )
+        asset.pop("_path", None)
+        return asset
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/visual-assets")
+def list_visual_assets(
+    kind: str | None = None,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        items = workflow.list_visual_assets(kind)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    for item in items:
+        item.pop("_path", None)
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/visual-assets/{asset_id}/media")
+def get_visual_asset_media(
+    asset_id: str,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        asset = workflow.resolve_visual_asset(asset_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    path = Path(asset["_path"])
+    return FileResponse(path, media_type=asset["media_type"], filename=path.name)
+
+
 @router.get("/bgm")
 def list_bgm(workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
     items = workflow.list_bgm_assets()
@@ -295,12 +395,45 @@ def create_analysis(
         raise _workflow_error(exc) from exc
 
 
+@router.post("/preflight")
+def preflight_cloud_editor(
+    body: CloudPreflightRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """只读取本地媒体信息并报价；不会调用任何付费云接口。"""
+    try:
+        return workflow.create_cloud_preflight(**body.model_dump())
+    except (VideoEditorWorkflowError, ValueError) as exc:
+        raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
+
+
 @router.post("/batches")
 def create_batch(
     body: BatchCreateRequest,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     try:
+        if body.output_profile is not None or body.quote_id is not None:
+            if body.output_profile is None or not body.quote_id:
+                raise VideoEditorWorkflowError(
+                    "云端剪辑必须同时提供 output_profile 和 quote_id。"
+                )
+            return workflow.create_cloud_batch(
+                source_ids=body.source_ids,
+                target_platform=body.target_platform,
+                output_profile=body.output_profile,
+                quote_id=body.quote_id,
+                billing_confirmation=(
+                    body.billing_confirmation.model_dump()
+                    if body.billing_confirmation
+                    else {}
+                ),
+                idempotency_key=idempotency_key or "",
+                bgm_enabled=body.bgm_enabled,
+                bgm_id=body.bgm_id,
+                bgm_volume=body.bgm_volume,
+            )
         return workflow.create_batch(
             source_ids=body.source_ids,
             target_platform=body.target_platform,
@@ -340,6 +473,30 @@ def continue_batch_item(batch_id: str, item_id: str, workflow: VideoEditorWorkfl
         return workflow.continue_batch_item(batch_id, item_id)
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
+
+
+@router.post("/batches/{batch_id}/items/{item_id}/review")
+def review_cloud_batch_item(
+    batch_id: str,
+    item_id: str,
+    body: CloudBatchReviewRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """原子保存人工字幕/方案复核，然后最多提交一次正式渲染。"""
+    try:
+        return workflow.review_cloud_batch_item(
+            batch_id,
+            item_id,
+            subtitle_segments=[
+                segment.model_dump() for segment in body.subtitle_segments
+            ],
+            enabled_plan_step_ids=body.enabled_plan_step_ids,
+            selected_title=body.selected_title,
+            selected_bgm_id=body.selected_bgm_id,
+            confirmed=body.confirmed,
+        )
+    except (VideoEditorWorkflowError, ValueError) as exc:
+        raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
 
 
 @router.put("/batches/{batch_id}/items/{item_id}/title")
@@ -407,6 +564,18 @@ def create_edit_job(
             subtitle_enabled=body.subtitle_enabled,
             publish_title=body.publish_title,
         )
+        return workflow.get_job(task.task_id)
+    except (VideoEditorWorkflowError, ValueError) as exc:
+        raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
+
+
+@router.post("/product-showcase/jobs")
+def create_product_showcase_job(
+    body: ProductShowcaseCreateRequest,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    try:
+        task = workflow.create_product_showcase_job(**body.model_dump())
         return workflow.get_job(task.task_id)
     except (VideoEditorWorkflowError, ValueError) as exc:
         raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
@@ -493,9 +662,21 @@ def edit_video(
 @router.get("/capabilities")
 def capabilities(
     service=Depends(get_video_editing_service),
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
-    """获取视频编辑器能力（含 AI 步骤支持状态）。"""
-    return service.capabilities()
+    """获取新云工作台能力，并保留旧本地编辑器诊断信息。"""
+    local = service.capabilities()
+    cloud = workflow.cloud_capabilities()
+    return {
+        **local,
+        **cloud,
+        "display_name": (
+            "阿里云轻量智能剪辑"
+            if cloud["provider_mode"] == "aliyun"
+            else "云端轻量智能剪辑（沙箱）"
+        ),
+        "legacy_local_capabilities": local,
+    }
 
 
 @router.get("/models")

@@ -35,6 +35,7 @@ class SandboxPublisher:
             PublishPlatform.KUAISHOU: "快手",
             PublishPlatform.WECHAT_CHANNELS: "视频号",
             PublishPlatform.XIAOHONGSHU: "小红书",
+            PublishPlatform.BILIBILI: "Bilibili",
         }
         return {
             "provider_name": f"sandbox_{self._platform.value}",

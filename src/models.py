@@ -173,6 +173,7 @@ class VideoEditStepKind(StrEnum):
     RESIZE = "resize"
     FILTER = "filter"
     CONCAT = "concat"
+    PRODUCT_SHOWCASE = "product_showcase"
     # AI 智能剪辑步骤
     AI_SUBTITLE = "ai_subtitle"        # 基于 Whisper 的自动字幕生成
     AI_VOLUME_NORM = "ai_volume_norm"  # 音量标准化（EBU R128）
@@ -974,6 +975,8 @@ class CopywritingTask(TaskRecord):
     token_usage: dict[str, int] = Field(default_factory=dict)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
+    # 疑似属于其他企业、品牌、机构或人物的原文词，供前端在结果中高亮。
+    attention_terms: list[str] = Field(default_factory=list)
     # 文案风险表达优化的结果。旧任务缺省为未检测，保证历史记录可继续读取。
     compliance_status: str = "not_checked"
     compliance_notes: list[str] = Field(default_factory=list)
@@ -1064,6 +1067,18 @@ class VideoEditorBatchItem(BaseModel):
     selected_title: str | None = None
     selected_bgm_id: str | None = None
     bgm_reason: str | None = None
+    provider_stage: str | None = None
+    provider_job_ids: dict[str, str] = Field(default_factory=dict)
+    provider_payload: dict[str, Any] = Field(default_factory=dict)
+    actual_usage: dict[str, Any] = Field(default_factory=dict)
+    edit_plan: dict[str, Any] = Field(default_factory=dict)
+    enabled_plan_step_ids: list[str] = Field(default_factory=list)
+    subtitle_segments: list[dict[str, Any]] = Field(default_factory=list)
+    review_snapshot: dict[str, Any] = Field(default_factory=dict)
+    review_confirmed_at: datetime | None = None
+    result_media_url: str | None = None
+    is_mock: bool = False
+    publish_allowed: bool = True
     error_message: str | None = None
     confirmed_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
@@ -1086,6 +1101,15 @@ class VideoEditorBatch(BaseModel):
     output_resolution: str = "1080x1920"
     output_fps: int = Field(default=30, ge=15, le=60)
     output_bitrate: str = "4M"
+    provider_mode: str = "legacy"
+    output_profile: str | None = None
+    quote_id: str | None = None
+    cost_quote: dict[str, Any] = Field(default_factory=dict)
+    actual_usage: dict[str, Any] = Field(default_factory=dict)
+    billing_confirmation: dict[str, Any] = Field(default_factory=dict)
+    billing_confirmed_at: datetime | None = None
+    idempotency_key: str | None = None
+    is_mock: bool = False
     items: list[VideoEditorBatchItem] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
@@ -1259,6 +1283,21 @@ class ProductionProfile(BaseModel):
     tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class ProductionWorkspaceConfiguration(BaseModel):
+    """单客户工作台的一次性基础设置与授权声明。"""
+
+    rights_holder: str = Field(min_length=1, max_length=80)
+    agreement_version: str = Field(default="workspace-rights-v1", min_length=1)
+    agreement_accepted_at: datetime = Field(
+        default_factory=lambda: datetime.now().astimezone()
+    )
+    default_profile_id: str | None = None
+    default_publish_platforms: list[str] = Field(default_factory=lambda: ["douyin"])
+    bundled_compute: bool = True
+    copywriting_estimated_cost_cny: float | None = Field(default=None, ge=0)
+    avatar_estimated_cost_cny: float | None = Field(default=None, ge=0)
 
 
 class ProductionBatchItem(BaseModel):

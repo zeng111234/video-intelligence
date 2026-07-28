@@ -810,15 +810,25 @@ class LocalCommandAvatarProvider:
             if not file_path.is_file():
                 continue
             try:
+                asset_id = str(item["asset_id"])
+                preview_url = (
+                    str(item.get("preview_url"))
+                    if item.get("preview_url")
+                    else (
+                        f"/api/v1/avatar/assets/{asset_id}/media"
+                        if raw_kind == "voice"
+                        else None
+                    )
+                )
                 assets.append(
                     AvatarAsset(
-                        asset_id=str(item["asset_id"]),
+                        asset_id=asset_id,
                         kind=AvatarAssetKind(raw_kind),
                         name=str(item.get("name") or item["asset_id"]),
-                        preview_url=(
-                            str(item.get("preview_url"))
-                            if item.get("preview_url")
-                            else None
+                        preview_url=preview_url,
+                        preview_type=str(
+                            item.get("preview_type")
+                            or ("audio" if raw_kind == "voice" else "image")
                         ),
                         authorized=True,
                     )
@@ -1534,16 +1544,28 @@ class ShuyingLegacyAvatarProvider:
         )
         if not provider_id:
             raise AvatarProviderError("声音克隆未返回训练任务编号。")
+        asset_id = f"shuying-voice-{provider_id}"
+        preview_path = self._store_voice_sample_preview(
+            sample_path=sample_path,
+            filename=filename,
+            asset_id=asset_id,
+        )
         asset = AvatarAsset(
-            asset_id=f"shuying-voice-{provider_id}",
+            asset_id=asset_id,
             kind=AvatarAssetKind.VOICE,
             name=name,
+            preview_url=f"/api/v1/avatar/assets/{asset_id}/media",
+            preview_type="audio",
             authorized=True,
             status="training",
             status_message="公司云端正在训练声音。",
             source_type="custom_clone",
         )
-        self._upsert_custom_asset(asset, provider_asset_id=provider_id)
+        self._upsert_custom_asset(
+            asset,
+            provider_asset_id=provider_id,
+            extra={"sample_path": str(preview_path)},
+        )
         return asset
 
     def store_pending_voice_sample(
@@ -1555,18 +1577,18 @@ class ShuyingLegacyAvatarProvider:
         must never silently create a billable training task.
         """
         self._ensure_configured()
-        suffix = Path(filename).suffix.lower() or ".mp3"
         asset_id = f"shuying-voice-sample-{uuid.uuid4().hex[:12]}"
-        samples_root = (self.assets_manifest_path.parent / "voice_samples").resolve()
-        samples_root.mkdir(parents=True, exist_ok=True)
-        destination = (samples_root / f"{asset_id}{suffix}").resolve()
-        if samples_root not in destination.parents:
-            raise AvatarProviderError("声音样本存储路径越界。")
-        shutil.copyfile(sample_path, destination)
+        destination = self._store_voice_sample_preview(
+            sample_path=sample_path,
+            filename=filename,
+            asset_id=asset_id,
+        )
         asset = AvatarAsset(
             asset_id=asset_id,
             kind=AvatarAssetKind.VOICE,
             name=name,
+            preview_url=f"/api/v1/avatar/assets/{asset_id}/media",
+            preview_type="audio",
             authorized=True,
             status="pending_configuration",
             status_message="声音样本已保存，等待独立声音线路配置后再发起克隆。",
@@ -1578,6 +1600,18 @@ class ShuyingLegacyAvatarProvider:
             extra={"sample_path": str(destination)},
         )
         return asset
+
+    def _store_voice_sample_preview(
+        self, *, sample_path: Path, filename: str, asset_id: str
+    ) -> Path:
+        suffix = Path(filename).suffix.lower() or ".mp3"
+        samples_root = (self.assets_manifest_path.parent / "voice_samples").resolve()
+        samples_root.mkdir(parents=True, exist_ok=True)
+        destination = (samples_root / f"{asset_id}{suffix}").resolve()
+        if samples_root not in destination.parents:
+            raise AvatarProviderError("声音样本存储路径越界。")
+        shutil.copyfile(sample_path, destination)
+        return destination
 
     def _can_train_avatar(self) -> bool:
         return bool(
@@ -1656,6 +1690,24 @@ class ShuyingLegacyAvatarProvider:
                 asset = AvatarAsset.model_validate(record)
             except ValueError:
                 continue
+            raw_sample_path = str(record.get("sample_path") or "").strip()
+            if asset.kind == AvatarAssetKind.VOICE and raw_sample_path:
+                sample_path = Path(raw_sample_path)
+                if not sample_path.is_absolute():
+                    sample_path = self.assets_manifest_path.parent / sample_path
+                sample_path = sample_path.resolve()
+                samples_root = (
+                    self.assets_manifest_path.parent / "voice_samples"
+                ).resolve()
+                if samples_root in sample_path.parents and sample_path.is_file():
+                    asset = asset.model_copy(
+                        update={
+                            "preview_url": (
+                                f"/api/v1/avatar/assets/{asset.asset_id}/media"
+                            ),
+                            "preview_type": "audio",
+                        }
+                    )
             if asset.status == "training":
                 try:
                     refreshed = self._refresh_training_asset(asset, record)
@@ -1809,10 +1861,13 @@ class ShuyingLegacyAvatarProvider:
             if not audio_url:
                 raise AvatarProviderError("公司数影网关未返回合成音频地址。")
 
+        provider_video_name = (
+            request.video_name or f"avatar-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        )[:50]
         video = self._form_request(
             "/video",
             {
-                "videoName": request.video_name or f"avatar-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                "videoName": provider_video_name,
                 "modeid": request.avatar_id,
                 "audioUrl": audio_url,
                 "aspect_ratio": request.aspect_ratio,
@@ -2114,12 +2169,32 @@ class ShuyingLegacyAvatarProvider:
             raise AvatarProviderError("公司数影网关返回了无效 JSON。") from exc
         if not isinstance(envelope, dict):
             raise AvatarProviderError("公司数影网关响应格式不正确。")
+        response_data = envelope.get("data")
         try:
-            success = int(envelope.get("code", 0)) == 1
+            response_code = int(envelope.get("code", 0))
         except (TypeError, ValueError):
-            success = False
+            response_code = None
+        structural_success = bool(
+            isinstance(response_data, dict)
+            and (
+                (path == "/video" and str(response_data.get("videoId") or "").strip())
+                or (path == "/videoDetail" and "synthesisStatus" in response_data)
+            )
+        )
+        success = response_code == 1 or structural_success
         if not success:
-            message = str(envelope.get("msg") or "公司数影网关请求失败。")
+            message = next(
+                (
+                    str(envelope.get(key)).strip()
+                    for key in ("msg", "message", "error", "error_message")
+                    if isinstance(envelope.get(key), (str, int, float))
+                    and str(envelope.get(key)).strip()
+                ),
+                "",
+            )
+            if not message:
+                code_label = "未知" if response_code is None else str(response_code)
+                message = f"公司数影网关拒绝了制作请求，但没有说明原因（返回码 {code_label}）。"
             kind = (
                 ProviderErrorKind.AUTHORIZATION
                 if any(

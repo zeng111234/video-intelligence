@@ -50,8 +50,8 @@ function AppInner() {
           <Routes>
             {/* DashboardLayout 包裹所有需要侧边栏的页面 */}
             <Route element={<DashboardLayout />}>
-              {/* 默认重定向到候选检索 */}
-              <Route path="/" element={<Navigate to="/candidates" replace />} />
+              {/* 客户默认进入智能创作工作台 */}
+              <Route path="/" element={<Navigate to="/pipeline" replace />} />
 
               {/* 核心功能页面 - 保留现有页面 */}
               <Route path="/dashboard" element={<DashboardPage />} />

@@ -18,6 +18,7 @@ from src.adapters.llm import (
     OpenAICompatibleCopywritingEngine,
     SandboxCopywritingEngine,
 )
+from src.services.copywriting import CopywritingService
 
 
 class TestSandboxCopywritingEngineExtended:
@@ -41,8 +42,35 @@ class TestSandboxCopywritingEngineExtended:
         assert required_keys.issubset(cap.keys())
 
     def test_rewrite_with_style_prompt(self):
-        results = self.engine.rewrite("测试", style_prompt="口播风格")
+        results = self.engine.rewrite("测试", style_prompt="专业权威，数据支撑，理性分析")
         assert len(results) >= 1
+        assert "可由输入事实支撑的明确判断" in results[0]
+
+    def test_rewrite_style_and_variants_change_the_demo_copy(self):
+        results = self.engine.rewrite(
+            "企业做内容获客",
+            style_prompt="故事叙述，悬念铺垫，引人入胜",
+            variant_count=3,
+        )
+
+        assert len(results) == 3
+        assert "处境—转折—启发" in results[0]
+        assert "问题反差" in results[0]
+        assert "结果先行" in results[1]
+        assert "场景代入" in results[2]
+
+    def test_generate_style_and_variants_change_the_demo_copy(self):
+        results = self.engine.generate(
+            content_brief="企业做内容获客",
+            style_prompt="情感共鸣，触动人心，引发共情",
+            variant_count=3,
+        )
+
+        assert len(results) == 3
+        assert "真实场景或感受" in results[0]
+        assert "问题反差" in results[0]
+        assert "结果先行" in results[1]
+        assert "场景代入" in results[2]
 
     def test_rewrite_with_tone(self):
         results = self.engine.rewrite("测试", tone="casual")
@@ -253,6 +281,52 @@ class TestOpenAICompatibleCopywritingEngine:
         assert "轻松风格" in prompt
         assert "casual" in prompt
 
+    def test_build_system_prompt_assigns_a_different_structure_per_variant(self):
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+        prompt = engine._build_system_prompt(
+            "吸引眼球，制造悬念，引发好奇",
+            300,
+            "energetic",
+            variant_count=3,
+        )
+
+        assert "所选风格的执行规则" in prompt
+        assert "第 1 版必须采用：问题反差" in prompt
+        assert "第 2 版必须采用：结果先行" in prompt
+        assert "第 3 版必须采用：场景代入" in prompt
+
+    def test_single_copy_prompt_uses_fixed_dedup_and_auto_audience(self):
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+        prompt = engine._build_system_prompt("", 300, "natural", variant_count=1)
+
+        assert "每次都必须执行深度语义去重" in prompt
+        assert "自动判断最适合的受众" in prompt
+        assert "只输出一篇完成度高" in prompt
+        assert "其他企业、品牌、机构或人物" in prompt
+        assert '"attention_terms"' in prompt
+        assert "逐版差异化策略" not in prompt
+
+    def test_parse_attention_terms_deduplicates_and_bounds_values(self):
+        content = json.dumps(
+            {
+                "variants": ["竞品科技发布了这款工具。"],
+                "attention_terms": ["竞品科技", "竞品科技", "", "x", "未出现名称"],
+            },
+            ensure_ascii=False,
+        )
+
+        assert OpenAICompatibleCopywritingEngine._parse_attention_terms(content) == [
+            "竞品科技",
+            "未出现名称",
+        ]
+
+
+class TestCopywritingRiskRules:
+    def test_platform_sensitive_marketing_terms_are_flagged(self):
+        categories = CopywritingService._risk_categories(["扫码加微信，领取全网最低价优惠。"])
+
+        assert "平台敏感营销用语" in categories
+
     @patch("src.adapters.llm.urlopen")
     def test_rewrite_includes_voiceover_goal(self, mock_urlopen):
         mock_response = MagicMock()
@@ -314,6 +388,36 @@ class TestOpenAICompatibleCopywritingEngine:
         assert sent["thinking"] == {"type": "disabled"}
         assert results == ["结果"]
         assert engine.last_usage["total_tokens"] == 15
+
+    @patch("src.adapters.llm.urlopen")
+    def test_rewrite_exposes_attention_terms_from_model_json(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "variants": ["竞品科技发布了这款工具。"],
+                                    "attention_terms": ["竞品科技"],
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        results = engine.rewrite("原始文案", variant_count=1)
+
+        assert results == ["竞品科技发布了这款工具。"]
+        assert engine.last_attention_terms == ["竞品科技"]
 
     @patch("src.adapters.llm.urlopen")
     def test_chat_completion_http_error(self, mock_urlopen):

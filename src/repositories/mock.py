@@ -58,7 +58,11 @@ class MockRepository:
         self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
         self._production_batches: dict[str, ProductionBatch] = {}
+        self._production_operations: dict[tuple[str, str], dict] = {}
         self._video_editor_batches = {}
+        self._video_editor_quotes: dict[str, dict] = {}
+        self._video_editor_operations: dict[str, dict] = {}
+        self._video_editor_cloud_jobs: dict[str, dict] = {}
         self._hot_words: dict[tuple[str, datetime], HotWordRecord] = {}
 
     def list_candidates(self) -> list[VideoCandidate]:
@@ -562,6 +566,36 @@ class MockRepository:
             reverse=True,
         )[:limit]
 
+    def list_active_pipeline_runs(self) -> list[PipelineRun]:
+        active = {"pending", "running", "paused"}
+        return sorted(
+            (
+                run
+                for run in self._pipeline_runs.values()
+                if run.status.value in active
+            ),
+            key=lambda item: item.created_at,
+        )
+
+    def claim_pipeline_run_transition(
+        self,
+        *,
+        expected_run: PipelineRun,
+        claimed_run: PipelineRun,
+    ) -> bool:
+        current = self._pipeline_runs.get(expected_run.run_id)
+        if (
+            current is None
+            or current.updated_at != expected_run.updated_at
+            or current.status != expected_run.status
+            or current.current_stage != expected_run.current_stage
+            or current.config.get("review_stage")
+            != expected_run.config.get("review_stage")
+        ):
+            return False
+        self._pipeline_runs[claimed_run.run_id] = claimed_run
+        return True
+
     def delete_pipeline_run(self, run_id: str) -> bool:
         return self._pipeline_runs.pop(run_id, None) is not None
 
@@ -583,6 +617,100 @@ class MockRepository:
             reverse=True,
         )[:limit]
 
+    def claim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        resource_id: str,
+        created_at: str,
+    ) -> bool:
+        key = (operation_type, idempotency_key)
+        if key in self._production_operations:
+            return False
+        if any(
+            record["resource_id"] == resource_id
+            and record["state"] == "pending"
+            for record in self._production_operations.values()
+        ):
+            return False
+        self._production_operations[key] = {
+            "operation_type": operation_type,
+            "idempotency_key": idempotency_key,
+            "request_hash": request_hash,
+            "resource_id": resource_id,
+            "state": "pending",
+            "error_message": None,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        return True
+
+    def get_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+    ) -> dict | None:
+        record = self._production_operations.get(
+            (operation_type, idempotency_key)
+        )
+        return dict(record) if record is not None else None
+
+    def reclaim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        expected_updated_at: str,
+        updated_at: str,
+    ) -> bool:
+        record = self._production_operations.get(
+            (operation_type, idempotency_key)
+        )
+        if (
+            record is None
+            or record["state"] != "pending"
+            or record["updated_at"] != expected_updated_at
+        ):
+            return False
+        record["updated_at"] = updated_at
+        return True
+
+    def complete_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        state: str,
+        updated_at: str,
+        resource_id: str,
+        batch: ProductionBatch | None = None,
+        runs: list[PipelineRun] | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        key = (operation_type, idempotency_key)
+        operation = self._production_operations[key]
+        if (
+            operation["request_hash"] != request_hash
+            or operation["state"] != "pending"
+        ):
+            raise ValueError("生产操作幂等记录与请求哈希不一致。")
+        for run in runs or []:
+            self._pipeline_runs[run.run_id] = run
+        if batch is not None:
+            self._production_batches[batch.batch_id] = batch
+        operation.update(
+            {
+                "state": state,
+                "resource_id": resource_id,
+                "error_message": error_message,
+                "updated_at": updated_at,
+            }
+        )
+
     def save_video_editor_batch(self, batch) -> None:
         self._video_editor_batches[batch.batch_id] = batch
 
@@ -595,3 +723,84 @@ class MockRepository:
             key=lambda item: item.created_at,
             reverse=True,
         )[:limit]
+
+    def save_video_editor_quote(
+        self,
+        *,
+        quote_id: str,
+        source_id: str,
+        output_profile: str,
+        target_platform: str,
+        expires_at: str,
+        created_at: str,
+        payload: dict,
+    ) -> None:
+        self._video_editor_quotes[quote_id] = {
+            "quote_id": quote_id,
+            "source_id": source_id,
+            "output_profile": output_profile,
+            "target_platform": target_platform,
+            "expires_at": expires_at,
+            "created_at": created_at,
+            "payload": payload,
+        }
+
+    def get_video_editor_quote(self, quote_id: str):
+        return self._video_editor_quotes.get(quote_id)
+
+    def claim_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        operation_type: str,
+        request_hash: str,
+        created_at: str,
+    ) -> bool:
+        if idempotency_key in self._video_editor_operations:
+            return False
+        self._video_editor_operations[idempotency_key] = {
+            "idempotency_key": idempotency_key,
+            "operation_type": operation_type,
+            "request_hash": request_hash,
+            "state": "pending",
+            "resource_id": None,
+            "response": None,
+            "error_message": None,
+            "created_at": created_at,
+            "updated_at": created_at,
+        }
+        return True
+
+    def get_video_editor_operation(self, idempotency_key: str):
+        return self._video_editor_operations.get(idempotency_key)
+
+    def complete_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        state: str,
+        updated_at: str,
+        resource_id: str | None = None,
+        response: dict | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        operation = self._video_editor_operations[idempotency_key]
+        operation.update(
+            {
+                "state": state,
+                "resource_id": resource_id,
+                "response": response,
+                "error_message": error_message,
+                "updated_at": updated_at,
+            }
+        )
+
+    def save_video_editor_cloud_job(self, **job) -> None:
+        self._video_editor_cloud_jobs[job["job_key"]] = dict(job)
+
+    def list_video_editor_cloud_jobs(self, batch_id: str) -> list[dict]:
+        return [
+            item
+            for item in self._video_editor_cloud_jobs.values()
+            if item["batch_id"] == batch_id
+        ]

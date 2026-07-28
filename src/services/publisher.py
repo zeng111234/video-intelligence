@@ -67,6 +67,8 @@ class PublishService:
         issues: list[str] = []
         if not video_path.strip():
             issues.append("请先选择或上传成片文件。")
+        elif not path.is_file():
+            issues.append("成片文件不存在或已被移动，请重新生成或恢复文件。")
         elif suffix and suffix not in {".mp4", ".mov", ".m4v"}:
             issues.append("建议使用 mp4、mov 或 m4v 成片文件。")
 

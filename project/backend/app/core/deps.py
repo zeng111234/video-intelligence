@@ -70,6 +70,7 @@ from project.backend.app.core.config import (  # noqa: E402
     ONEAPI_API_KEY,
     COPYWRITING_API_KEY,
     COPYWRITING_BASE_URL,
+    COPYWRITING_ESTIMATED_REQUEST_COST_CNY,
     COPYWRITING_MODE,
     COPYWRITING_MODEL,
     CopywritingProviderMode,
@@ -318,6 +319,7 @@ def get_copywriting_engine():
             api_key=COPYWRITING_API_KEY,
             base_url=COPYWRITING_BASE_URL,
             model=COPYWRITING_MODEL,
+            estimated_cost_cny=COPYWRITING_ESTIMATED_REQUEST_COST_CNY,
         )
     return DisabledCopywritingEngine(
         base_url=COPYWRITING_BASE_URL,
@@ -419,6 +421,8 @@ def get_production_service() -> ProductionService:
         get_repository(),
         storage_directory=PROJECT_ROOT / "data" / "production",
         media_resolution_service=get_media_resolution_service(),
+        link_transcription_service=get_douyin_link_transcription_service(),
+        copywriting_service=get_copywriting_service(),
         avatar_service=get_avatar_service(),
         template_service=get_template_service(),
         publish_service=get_publish_service(),

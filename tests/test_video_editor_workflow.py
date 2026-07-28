@@ -15,6 +15,7 @@ from src.services.video_editor_workflow import (
     VideoEditorWorkflowError,
     VideoEditorWorkflowService,
 )
+import src.services.video_editor_workflow as workflow_module
 
 
 class _TranscriptionStub:
@@ -122,6 +123,72 @@ def test_upload_source_is_persisted_and_listed(tmp_path: Path):
     assert source["source_type"] == "upload"
     assert Path(source["_path"]).is_file()
     assert service.list_sources()[0]["source_id"] == source["source_id"]
+
+
+def test_product_showcase_uses_authorized_visual_assets_without_restarting_avatar(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    repo.save_task(_avatar_task("avatar-real", video))
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    product = service.upload_visual_asset(
+        kind="product",
+        file_name="product.png",
+        media_type="image/png",
+        media_bytes=b"\x89PNG\r\n\x1a\nproduct",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    background = service.upload_visual_asset(
+        kind="background",
+        file_name="background.webp",
+        media_type="image/webp",
+        media_bytes=b"RIFF\x00\x00\x00\x00WEBPbackground",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    monkeypatch.setattr(workflow_module._WORKFLOW_EXECUTOR, "submit", lambda *args, **kwargs: None)
+
+    task = service.create_product_showcase_job(
+        source_id="avatar:avatar-real",
+        product_asset_id=product["asset_id"],
+        background_asset_id=background["asset_id"],
+        layout="product_canvas_avatar_pip",
+    )
+
+    assert task.outputs["workflow"] == "product_showcase"
+    assert task.source_avatar_task_id == "avatar-real"
+    assert task.edit_config.steps[0].kind.value == "product_showcase"
+    assert task.edit_config.steps[0].params["product_path"] == product["_path"]
+    assert task.edit_config.steps[0].params["background_path"] == background["_path"]
+    assert service.get_edit_task(task.task_id).task_id == task.task_id
+
+
+def test_visual_asset_rejects_a_file_with_an_incorrect_image_signature(tmp_path: Path):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+
+    with pytest.raises(VideoEditorWorkflowError, match="图片内容与文件格式不匹配"):
+        service.upload_visual_asset(
+            kind="product",
+            file_name="not-an-image.png",
+            media_type="image/png",
+            media_bytes=b"not-an-image",
+            rights_confirmed=True,
+            rights_holder="测试公司",
+        )
 
 
 def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

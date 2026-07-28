@@ -70,6 +70,16 @@ def title_matches_keyword(*, title: str, keyword: str) -> bool:
     return bool(normalized_keyword) and normalized_keyword in normalized_keyword_text(title)
 
 
+def item_matches_keyword(*, title: str, keyword: str, evidence: str | None = None) -> bool:
+    """Accept an exact Hotspot topic match when a video title omits the topic.
+
+    Topic-detail cards belong to an exact topic selected from the visible topic
+    board.  Their titles can be intentionally short, so title-only filtering
+    would discard valid candidates such as a video inside “餐饮获客”.
+    """
+    return title_matches_keyword(title=title, keyword=keyword) or "严格话题=1" in (evidence or "")
+
+
 def keyword_match_reason(keyword: str) -> str:
     return f"标题/话题包含“{keyword.strip()}”"
 
@@ -821,7 +831,7 @@ class CommercialSearchService:
                     )
                 )
                 continue
-            if not title_matches_keyword(title=item.title, keyword=keyword):
+            if not item_matches_keyword(title=item.title, keyword=keyword, evidence=item.evidence):
                 counts["irrelevant_count"] += 1
                 continue
             seen.add(item.platform_item_id)

@@ -276,6 +276,15 @@ class TaskRepository(Protocol):
 
     def list_pipeline_runs(self, limit: int = 20) -> list[PipelineRun]: ...
 
+    def list_active_pipeline_runs(self) -> list[PipelineRun]: ...
+
+    def claim_pipeline_run_transition(
+        self,
+        *,
+        expected_run: PipelineRun,
+        claimed_run: PipelineRun,
+    ) -> bool: ...
+
     def delete_pipeline_run(self, run_id: str) -> bool: ...
 
     def delete_all_pipeline_runs(self) -> int: ...
@@ -288,11 +297,94 @@ class TaskRepository(Protocol):
 
     def list_production_batches(self, limit: int = 100) -> list[ProductionBatch]: ...
 
+    def claim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        resource_id: str,
+        created_at: str,
+    ) -> bool: ...
+
+    def get_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None: ...
+
+    def reclaim_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        expected_updated_at: str,
+        updated_at: str,
+    ) -> bool: ...
+
+    def complete_production_operation(
+        self,
+        *,
+        operation_type: str,
+        idempotency_key: str,
+        request_hash: str,
+        state: str,
+        updated_at: str,
+        resource_id: str,
+        batch: ProductionBatch | None = None,
+        runs: list[PipelineRun] | None = None,
+        error_message: str | None = None,
+    ) -> None: ...
+
     def save_video_editor_batch(self, batch: VideoEditorBatch) -> None: ...
 
     def get_video_editor_batch(self, batch_id: str) -> VideoEditorBatch | None: ...
 
     def list_video_editor_batches(self, limit: int = 100) -> list[VideoEditorBatch]: ...
+
+    def save_video_editor_quote(
+        self,
+        *,
+        quote_id: str,
+        source_id: str,
+        output_profile: str,
+        target_platform: str,
+        expires_at: str,
+        created_at: str,
+        payload: dict[str, Any],
+    ) -> None: ...
+
+    def get_video_editor_quote(self, quote_id: str) -> dict[str, Any] | None: ...
+
+    def claim_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        operation_type: str,
+        request_hash: str,
+        created_at: str,
+    ) -> bool: ...
+
+    def get_video_editor_operation(
+        self,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None: ...
+
+    def complete_video_editor_operation(
+        self,
+        *,
+        idempotency_key: str,
+        state: str,
+        updated_at: str,
+        resource_id: str | None = None,
+        response: dict[str, Any] | None = None,
+        error_message: str | None = None,
+    ) -> None: ...
+
+    def save_video_editor_cloud_job(self, **job: Any) -> None: ...
+
+    def list_video_editor_cloud_jobs(self, batch_id: str) -> list[dict[str, Any]]: ...
 
 
 # ---------------------------------------------------------------------------

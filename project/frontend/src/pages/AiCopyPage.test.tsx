@@ -73,6 +73,7 @@ describe("AiCopyPage publish metadata", () => {
       token_usage: {},
       result_text: "已生成的口播文案",
       result_variants: ["已生成的口播文案"],
+      attention_terms: [],
       compliance_status: "passed",
       compliance_notes: [],
       compliance_rewritten: false,
@@ -121,5 +122,70 @@ describe("AiCopyPage publish metadata", () => {
       description: "发布描述",
       tags: ["企业服务", "AI"],
     });
+  });
+
+  it("highlights suspected external names without blocking the generated copy", async () => {
+    vi.mocked(rewriteCopywriting).mockResolvedValueOnce({
+      task_id: "copy-attention-1",
+      status: "succeeded",
+      provider_name: "test_llm",
+      model_name: "test-model",
+      is_mock: false,
+      token_usage: {},
+      result_text: "竞品科技发布了这款工具。",
+      result_variants: ["竞品科技发布了这款工具。"],
+      attention_terms: ["竞品科技"],
+      compliance_status: "passed",
+      compliance_notes: ["疑似其他企业名称已在文案中高亮。"],
+      compliance_rewritten: false,
+      compliance_retry_used: false,
+      error_message: null,
+    });
+    const view = renderPage();
+
+    fireEvent.change(
+      within(view.container).getByPlaceholderText("粘贴已有文案、脚本或口播稿..."),
+      { target: { value: "原始文案" } },
+    );
+    const optimizeButton = within(view.container).getByRole("button", { name: /优化口播文案/ });
+    await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(optimizeButton);
+
+    await waitFor(() => {
+      const mark = view.container.querySelector("mark");
+      expect(mark?.textContent).toBe("竞品科技");
+    });
+    expect(within(view.container).getByText("已高亮可能属于其他主体的名称")).toBeTruthy();
+  });
+
+  it("shows the final best-effort version as a usable pipeline result", async () => {
+    vi.mocked(rewriteCopywriting).mockResolvedValueOnce({
+      task_id: "copy-best-effort-1",
+      status: "succeeded",
+      provider_name: "test_llm",
+      model_name: "test-model",
+      is_mock: false,
+      token_usage: { total_tokens: 45 },
+      result_text: "这是自动优化后的最后版本。",
+      result_variants: ["这是自动优化后的最后版本。"],
+      attention_terms: [],
+      compliance_status: "best_effort",
+      compliance_notes: ["已完成 3 次自动优化，为保持流水线连续，已使用最后一次生成结果。"],
+      compliance_rewritten: true,
+      compliance_retry_used: true,
+      error_message: null,
+    });
+    const view = renderPage();
+
+    fireEvent.change(
+      within(view.container).getByPlaceholderText("粘贴已有文案、脚本或口播稿..."),
+      { target: { value: "原始文案" } },
+    );
+    const optimizeButton = within(view.container).getByRole("button", { name: /优化口播文案/ });
+    await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(optimizeButton);
+
+    expect(await within(view.container).findByText("这是自动优化后的最后版本。")).toBeTruthy();
+    expect(within(view.container).getByText("已使用自动优化后的最终版本")).toBeTruthy();
   });
 });

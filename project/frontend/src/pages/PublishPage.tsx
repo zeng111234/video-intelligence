@@ -475,7 +475,7 @@ export default function PublishPage() {
 
   return <div>
     <div style={{ marginBottom: 20 }}>
-      <Title level={4} style={{ margin: 0 }}><RocketOutlined /> 多平台发布</Title>
+      <Title level={4} style={{ margin: 0 }}><RocketOutlined /> 发布中心</Title>
       <Text type="secondary">先核验账号，再选择成片。默认停在官方页面；仅对你明确授权的账号自动点击最终发布。</Text>
     </div>
 

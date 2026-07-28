@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import get_pipeline_service, get_production_service
+from src.services.production import IdempotencyConflictError
 
 router = APIRouter(prefix="/api/v1/production", tags=["production"])
 
@@ -48,26 +49,47 @@ class KeywordAutoRunRequest(BaseModel):
 
 
 class BatchExecutionRequest(BaseModel):
-    rights_holder: str = Field(..., min_length=1, max_length=80)
+    rights_holder: str = Field("", max_length=80)
     rights_confirmed: bool = False
     publish_platforms: list[str] = Field(default_factory=lambda: ["douyin"], min_length=1)
     concurrency: int = Field(1, ge=1, le=5)
+    max_total_cost_cny: float | None = Field(default=None, ge=0)
+    paid_actions_confirmed: bool = False
+
+
+class WorkspaceConfigurationRequest(BaseModel):
+    rights_holder: str = Field(..., min_length=1, max_length=80)
+    agreement_accepted: bool = False
+    default_profile_id: str | None = None
+    default_publish_platforms: list[str] = Field(
+        default_factory=lambda: ["douyin"], min_length=1, max_length=10
+    )
+    copywriting_estimated_cost_cny: float | None = Field(default=None, ge=0)
+    avatar_estimated_cost_cny: float | None = Field(default=None, ge=0)
+    bundled_compute: bool = True
+
+
+class PublishTargetRequest(BaseModel):
+    platform: str = Field(..., min_length=1, max_length=40)
+    account_id: str | None = Field(default=None, max_length=80)
+    use_manual_fallback: bool = True
 
 
 class BatchPublishRequest(BaseModel):
     run_ids: list[str] = Field(default_factory=list, max_length=50)
     publish_platforms: list[str] = Field(default_factory=lambda: ["douyin"], min_length=1)
+    targets: list[PublishTargetRequest] = Field(default_factory=list, max_length=20)
     confirmation_accepted: bool = False
 
 
 class BatchReviewItem(BaseModel):
     run_id: str = Field(..., min_length=1)
-    approved_text: str = Field("", max_length=2000)
+    approved_text: str = Field("", max_length=10000)
     note: str = Field("", max_length=500)
 
 
 class BatchReviewRequest(BaseModel):
-    stage: str = Field(..., pattern="^(script|output)$")
+    stage: str = Field(..., pattern="^(transcript|script|output)$")
     reviewer: str = Field(..., min_length=1, max_length=80)
     items: list[BatchReviewItem] = Field(..., min_length=1, max_length=50)
 
@@ -79,6 +101,11 @@ def _profile_response(profile) -> dict[str, Any]:
 def _batch_response(batch, service) -> dict[str, Any]:
     batch = service.sync_batch(batch.batch_id) or batch
     payload = batch.model_dump(mode="json")
+    payload["execution_config"] = {
+        key: value
+        for key, value in payload.get("execution_config", {}).items()
+        if not key.startswith("_")
+    }
     items = []
     for item in batch.items:
         run = service.repository.get_pipeline_run(item.run_id)
@@ -92,6 +119,7 @@ def _batch_response(batch, service) -> dict[str, Any]:
                 "profile_overrides": item.profile_overrides,
                 "status": "pending" if item.status.value == "planned" else item.status.value,
                 "current_stage": item.current_stage.value if item.current_stage else (run.current_stage.value if run and run.current_stage else None),
+                "review_stage": str(run.config.get("review_stage") or "") if run else "",
                 "blocked_reasons": item.blocked_reasons,
                 "error_message": item.error_message,
                 "video_path": item.video_path,
@@ -117,6 +145,26 @@ def create_profile(body: ProfileCreateRequest, service=Depends(get_production_se
     return _profile_response(profile)
 
 
+@router.get("/workspace/configuration")
+def get_workspace_configuration(service=Depends(get_production_service)):
+    configuration = service.get_workspace_configuration()
+    if configuration is None:
+        return {"configured": False}
+    return {"configured": True, **configuration.model_dump(mode="json")}
+
+
+@router.put("/workspace/configuration")
+def configure_workspace(
+    body: WorkspaceConfigurationRequest,
+    service=Depends(get_production_service),
+):
+    try:
+        configuration = service.configure_workspace(**body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"configured": True, **configuration.model_dump(mode="json")}
+
+
 @router.get("/batches")
 def list_batches(service=Depends(get_production_service)):
     return {"items": [_batch_response(item, service) for item in service.list_batches()]}
@@ -130,12 +178,22 @@ def get_batch(batch_id: str, service=Depends(get_production_service)):
     return _batch_response(batch, service)
 
 
+@router.get("/batches/{batch_id}/workspace")
+def get_batch_workspace(batch_id: str, service=Depends(get_production_service)):
+    try:
+        return service.workspace(batch_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.post("/batches", status_code=201)
 def create_batch(
     body: BatchCreateRequest,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8),
     service=Depends(get_production_service),
     pipeline_service=Depends(get_pipeline_service),
 ):
+    request_hash = service.request_hash(body.model_dump(mode="json"))
     try:
         batch = service.create_batch(
             name=body.name,
@@ -143,7 +201,11 @@ def create_batch(
             candidate_ids=body.candidate_ids,
             source_items=[item.model_dump() for item in body.items],
             pipeline_service=pipeline_service,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
         )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _batch_response(batch, service)
@@ -160,13 +222,44 @@ def review_batch_items(
     if batch is None:
         raise HTTPException(status_code=404, detail="生产批次不存在。")
     owned = {item.run_id for item in batch.items}
+    if body.stage in {"transcript", "script"} and any(
+        not item.approved_text.strip() for item in body.items
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{body.stage} 审核必须提交非空的最终文本。",
+        )
     results: list[dict[str, Any]] = []
     for item in body.items:
         if item.run_id not in owned:
             results.append({"run_id": item.run_id, "ok": False, "error": "该任务不属于当前批次。"})
             continue
         try:
-            if body.stage == "script":
+            if body.stage == "transcript":
+                reviewed = pipeline_service.review_transcript(
+                    run_id=item.run_id,
+                    reviewer=body.reviewer,
+                    note=item.note,
+                    approved_text=item.approved_text,
+                )
+                entered_script_review = (
+                    reviewed.status.value == "paused"
+                    and reviewed.current_stage is not None
+                    and reviewed.current_stage.value == "human_review"
+                    and reviewed.config.get("review_stage") == "script"
+                    and bool(reviewed.copywriting_task_id)
+                )
+                if not entered_script_review:
+                    results.append(
+                        {
+                            "run_id": item.run_id,
+                            "ok": False,
+                            "error": reviewed.error_message
+                            or "改写稿未成功进入文案确认阶段。",
+                        }
+                    )
+                    continue
+            elif body.stage == "script":
                 pipeline_service.review_candidate_script(
                     run_id=item.run_id,
                     approved=True,
@@ -190,7 +283,10 @@ def review_batch_items(
 @router.post("/batches/{batch_id}/preflight")
 def preflight_batch(batch_id: str, body: BatchExecutionRequest, service=Depends(get_production_service)):
     try:
-        return service.preflight_batch(batch_id, **body.model_dump())
+        return service.preflight_batch(
+            batch_id,
+            **service.resolve_workspace_execution_options(body.model_dump()),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -203,8 +299,17 @@ def start_batch(
     service=Depends(get_production_service),
     pipeline_service=Depends(get_pipeline_service),
 ):
+    payload = service.resolve_workspace_execution_options(body.model_dump(mode="json"))
     try:
-        batch = service.start_batch(batch_id, options=body.model_dump(), pipeline_service=pipeline_service)
+        batch = service.start_batch(
+            batch_id,
+            options=payload,
+            pipeline_service=pipeline_service,
+            idempotency_key=idempotency_key,
+            request_hash=service.request_hash(payload),
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     response = _batch_response(batch, service)
@@ -239,7 +344,13 @@ def retry_failed_batch(batch_id: str, service=Depends(get_production_service), p
 @router.post("/batches/{batch_id}/publish/preflight")
 def preflight_batch_publish(batch_id: str, body: BatchPublishRequest, service=Depends(get_production_service), pipeline_service=Depends(get_pipeline_service)):
     try:
-        return service.publish_preflight(batch_id, run_ids=body.run_ids, publish_platforms=body.publish_platforms, pipeline_service=pipeline_service)
+        return service.publish_preflight(
+            batch_id,
+            run_ids=body.run_ids,
+            targets=[item.model_dump() for item in body.targets],
+            publish_platforms=body.publish_platforms,
+            pipeline_service=pipeline_service,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -254,8 +365,19 @@ def confirm_batch_publish(
 ):
     if not body.confirmation_accepted:
         raise HTTPException(status_code=400, detail="请先完成发布预检并确认发布。")
+    payload = body.model_dump(mode="json")
     try:
-        batch = service.confirm_publish(batch_id, run_ids=body.run_ids, publish_platforms=body.publish_platforms, pipeline_service=pipeline_service)
+        batch = service.confirm_publish(
+            batch_id,
+            run_ids=body.run_ids,
+            targets=[item.model_dump() for item in body.targets],
+            publish_platforms=body.publish_platforms,
+            pipeline_service=pipeline_service,
+            idempotency_key=idempotency_key,
+            request_hash=service.request_hash(payload),
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     response = _batch_response(batch, service)

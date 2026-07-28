@@ -18,16 +18,21 @@ class PublishWorker:
         self.publish_service = publish_service
         self.interval_seconds = interval_seconds
         self._task: asyncio.Task | None = None
-        self._stopping = asyncio.Event()
+        # Cached workers can be restarted under a different event loop (for
+        # example by consecutive FastAPI TestClient lifespans).  Create the
+        # loop-bound event in start(), not in the cached constructor.
+        self._stopping: asyncio.Event | None = None
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
             return
-        self._stopping.clear()
+        self._stopping = asyncio.Event()
         self._task = asyncio.create_task(self._run(), name="publish-worker")
 
     async def stop(self) -> None:
-        self._stopping.set()
+        stopping = self._stopping
+        if stopping is not None:
+            stopping.set()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -35,15 +40,19 @@ class PublishWorker:
             except asyncio.CancelledError:
                 pass
         self._task = None
+        self._stopping = None
 
     async def _run(self) -> None:
-        while not self._stopping.is_set():
+        stopping = self._stopping
+        if stopping is None:
+            return
+        while not stopping.is_set():
             try:
                 await asyncio.to_thread(self.tick_once)
             except Exception:
                 logger.exception("本机发布队列扫描失败；将在下一轮继续")
             try:
-                await asyncio.wait_for(self._stopping.wait(), timeout=self.interval_seconds)
+                await asyncio.wait_for(stopping.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 pass
 

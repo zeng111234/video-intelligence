@@ -1,23 +1,27 @@
-/** 自动优先的 AI 智能剪辑工作台。 */
-import { useCallback, useEffect, useMemo, useState } from "react";
+/** 云端轻量智能剪辑工作台。 */
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
   Card,
   Checkbox,
-  Col,
+  Descriptions,
   Drawer,
   Empty,
   Input,
   List,
+  Modal,
   Progress,
-  Row,
+  Radio,
+  Segmented,
   Select,
   Slider,
   Space,
   Spin,
   Switch,
+  Tabs,
   Tag,
+  Tooltip,
   Typography,
   Upload,
   message,
@@ -25,184 +29,649 @@ import {
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
-  DownloadOutlined,
+  CloseOutlined,
+  CloudOutlined,
   EditOutlined,
+  EyeOutlined,
+  FileProtectOutlined,
+  HistoryOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  RobotOutlined,
-  SendOutlined,
+  SafetyCertificateOutlined,
+  SettingOutlined,
   SoundOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
-import {
-  confirmVideoEditorBatchResults,
-  continueVideoEditorBatchItem,
-  createVideoEditorBatch,
-  getTranscription,
-  getVideoCapabilities,
-  listVideoEditorBgm,
-  listTemplates,
-  listVideoEditorBatches,
-  listVideoEditorLocalModels,
-  listVideoEditorSources,
-  retryVideoEditorBatchItem,
-  saveTranscriptionRevision,
-  selectVideoEditorBatchItemTitle,
-  uploadVideoEditorBgm,
-  uploadVideoEditorSources,
-} from "../api/client";
+import * as videoEditorApi from "../api/client";
 import type {
-  EditTemplate,
   TranscriptSegment,
-  TranscriptionResponse,
   VideoCapabilitiesResponse,
   VideoEditorBatch,
   VideoEditorBatchItem,
   VideoEditorBgmAsset,
-  VideoEditorLocalModel,
   VideoEditorSource,
 } from "../api/types";
 
 const { Title, Text, Paragraph } = Typography;
 
+type OutputProfile = "720p" | "1080p";
+type CompactSection = "source" | "preview" | "plan";
+type PreviewMode = "original" | "plan" | "output";
+
+interface CloudCapabilities extends VideoCapabilitiesResponse {
+  provider_mode?: string;
+  live_ready?: boolean;
+  missing_configuration?: string[];
+  is_mock?: boolean;
+  pricing_version?: string;
+}
+
+interface CostLine {
+  code?: string;
+  key?: string;
+  component?: string;
+  name?: string;
+  label?: string;
+  provider?: string;
+  amount_cny?: number | string;
+  estimated_cost_cny?: number | string;
+  cost_cny?: number | string;
+}
+
+interface CostQuote {
+  quote_id: string;
+  expires_at: string;
+  currency?: string;
+  pricing_version?: string;
+  price_version?: string;
+  line_items?: CostLine[];
+  items?: CostLine[];
+  breakdown?: CostLine[] | Record<string, number>;
+  estimated_total_cny?: number;
+  estimated_upper_bound_cny?: number;
+  max_cost_cny?: number;
+  total_cny?: number;
+  estimated_total?: number | string;
+  estimated_max?: number | string;
+  provider_ready?: boolean;
+  live_ready?: boolean;
+  provider_mode?: string;
+  is_mock?: boolean;
+  missing_configuration?: string[];
+  blocked_reasons?: string[];
+  blocking_reasons?: string[];
+}
+
+interface EditPlanStep {
+  id: string;
+  kind: string;
+  label: string;
+  reason: string;
+  enabled: boolean;
+  estimated_removed_seconds: number;
+  params: Record<string, unknown>;
+}
+
+type CloudBatchItem = VideoEditorBatchItem;
+type CloudBatch = VideoEditorBatch;
+
 const PLATFORM_OPTIONS = [
-  { value: "douyin", label: "抖音 · 竖屏 9:16" },
-  { value: "kuaishou", label: "快手 · 竖屏 9:16" },
-  { value: "wechat_channels", label: "视频号 · 竖屏 9:16" },
-  { value: "xiaohongshu", label: "小红书 · 竖屏 9:16" },
+  { value: "douyin", label: "抖音 · 9:16" },
+  { value: "kuaishou", label: "快手 · 9:16" },
+  { value: "wechat_channels", label: "视频号 · 9:16" },
+  { value: "xiaohongshu", label: "小红书 · 9:16" },
 ];
 
-const STATUS_META: Record<string, { color: string; label: string }> = {
-  queued: { color: "default", label: "等待处理" },
-  analyzing: { color: "processing", label: "智能分析中" },
-  awaiting_subtitle_review: { color: "gold", label: "待字幕复核" },
-  ready_to_render: { color: "processing", label: "准备渲染" },
-  rendering: { color: "processing", label: "正在剪辑" },
-  awaiting_output_confirmation: { color: "blue", label: "待确认成片" },
-  ready_to_publish: { color: "success", label: "已确认" },
-  failed: { color: "error", label: "失败" },
-  interrupted: { color: "warning", label: "中断" },
+const PROFILE_META: Record<OutputProfile, {
+  label: string;
+  resolution: string;
+  fps: number;
+  bitrate: string;
+  exampleCost: number;
+}> = {
+  "720p": {
+    label: "720P 轻量",
+    resolution: "720x1280",
+    fps: 30,
+    bitrate: "2.5M",
+    exampleCost: 0.048,
+  },
+  "1080p": {
+    label: "1080P 清晰",
+    resolution: "1080x1920",
+    fps: 30,
+    bitrate: "5M",
+    exampleCost: 0.080,
+  },
 };
+
+const STATUS_META: Record<string, { color: string; label: string; progress: number }> = {
+  queued: { color: "default", label: "等待分析", progress: 5 },
+  analyzing: { color: "processing", label: "云端分析中", progress: 35 },
+  awaiting_subtitle_review: { color: "gold", label: "待人工复核", progress: 58 },
+  ready_to_render: { color: "processing", label: "准备渲染", progress: 66 },
+  rendering: { color: "processing", label: "正式成片生成中", progress: 82 },
+  awaiting_output_confirmation: { color: "blue", label: "待确认成片", progress: 100 },
+  ready_to_publish: { color: "success", label: "成片已确认", progress: 100 },
+  sandbox_completed: { color: "default", label: "体验方案已保存", progress: 100 },
+  configuration_required: { color: "warning", label: "云端出片待开通", progress: 0 },
+  outcome_unknown: { color: "warning", label: "供应商结果待查", progress: 72 },
+  failed: { color: "error", label: "处理失败", progress: 0 },
+  interrupted: { color: "warning", label: "任务中断", progress: 0 },
+};
+
+const PROVIDER_STAGE_LABELS: Record<string, string> = {
+  awaiting_confirmation: "等待费用确认",
+  uploading: "上传至私有 OSS",
+  upload_complete: "私有 OSS 上传完成",
+  submitting_transcription: "提交 Fun-ASR 转写",
+  transcribing: "Fun-ASR 转写",
+  sandbox_transcription_complete: "沙箱转写契约已完成",
+  planning: "生成安全剪辑方案",
+  awaiting_review: "等待人工复核",
+  awaiting_human_review: "等待字幕与方案复核",
+  submitting_render: "提交 MPS 渲染",
+  polling_render: "查询 MPS 任务",
+  sandbox_render_complete: "沙箱渲染契约已完成",
+  transcription_query_failed: "Fun-ASR 状态查询失败",
+  render_query_failed: "MPS 状态查询失败",
+  submission_outcome_unknown: "云任务提交结果待查",
+  planning_outcome_unknown: "规划任务结果待查",
+  render_submission_outcome_unknown: "MPS 提交结果待查",
+  completed: "供应商处理完成",
+};
+
+const STEP_KIND_ALIASES: Record<string, string> = {
+  silence_trim: "silence_trim",
+  trim_silence: "silence_trim",
+  resize: "resize",
+  vertical_fit: "resize",
+  subtitle: "subtitle",
+  subtitles: "subtitle",
+  title: "title",
+  background_music: "background_music",
+  bgm: "background_music",
+  volume_norm: "volume_norm",
+  audio_mix: "volume_norm",
+};
+
+const DEFAULT_PLAN: EditPlanStep[] = [
+  {
+    id: "silence-trim",
+    kind: "silence_trim",
+    label: "处理长停顿",
+    reason: "只建议不少于 1.5 秒的无语音区间，两端各保留 0.35 秒。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+  {
+    id: "resize-vertical",
+    kind: "resize",
+    label: "适配 9:16",
+    reason: "按所选 720P 或 1080P 档位统一映射帧率与码率。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+  {
+    id: "subtitle-approved",
+    kind: "subtitle",
+    label: "烧录人工确认字幕",
+    reason: "每条素材只识别一次，未完成复核不会提交正式渲染。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+  {
+    id: "title-overlay",
+    kind: "title",
+    label: "添加标题",
+    reason: "标题候选可修改，不删除或改写任何有人声内容。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+  {
+    id: "authorized-bgm",
+    kind: "background_music",
+    label: "添加授权配乐",
+    reason: "只有确认权利的音乐才会进入正式渲染；未选择时保持原声。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+  {
+    id: "volume-normalize",
+    kind: "volume_norm",
+    label: "统一音量",
+    reason: "只调整响度与已授权 BGM 音量，不改变人声内容。",
+    enabled: true,
+    estimated_removed_seconds: 0,
+    params: {},
+  },
+];
+
+const STEP_ICON: Record<string, React.ReactNode> = {
+  silence_trim: <ClockCircleOutlined />,
+  resize: <EyeOutlined />,
+  subtitle: <EditOutlined />,
+  title: <FileProtectOutlined />,
+  background_music: <SoundOutlined />,
+  volume_norm: <SoundOutlined />,
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 function formatBytes(value?: number | null) {
   if (!value) return "大小未知";
-  return value >= 1024 * 1024 ? `${(value / 1024 / 1024).toFixed(1)} MB` : `${(value / 1024).toFixed(1)} KB`;
+  return value >= 1024 * 1024
+    ? `${(value / 1024 / 1024).toFixed(1)} MB`
+    : `${(value / 1024).toFixed(1)} KB`;
+}
+
+function formatCost(value: number) {
+  return `¥${value.toFixed(value >= 1 ? 2 : 3)}`;
 }
 
 function statusTag(status: string) {
-  const meta = STATUS_META[status] || { color: "default", label: status };
+  const meta = STATUS_META[status] || { color: "default", label: status, progress: 0 };
   return <Tag color={meta.color}>{meta.label}</Tag>;
+}
+
+function quoteLines(quote: CostQuote | null): Array<{ key: string; label: string; amount: number }> {
+  if (!quote) return [];
+  const source = quote.line_items || quote.items;
+  if (Array.isArray(source)) {
+    return source.map((item, index) => ({
+      key: item.code || item.key || item.component || `${item.label || item.name || "cost"}-${index}`,
+      label: item.label || item.name || ({
+        asr: "Fun-ASR 转写",
+        speech_recognition: "Fun-ASR 转写",
+        planning: "qwen-flash 规划",
+        edit_planning: "qwen-flash 规划",
+        render: "MPS H.264 渲染",
+        cloud_render: "MPS H.264 渲染",
+      }[item.component || ""] || item.provider || "云服务"),
+      amount: asNumber(item.amount_cny ?? item.estimated_cost_cny ?? item.cost_cny),
+    }));
+  }
+  if (Array.isArray(quote.breakdown)) {
+    return quote.breakdown.map((item, index) => ({
+      key: item.code || item.key || `${item.label || item.name || "cost"}-${index}`,
+      label: item.label || item.name || item.provider || "云服务",
+      amount: asNumber(item.amount_cny ?? item.estimated_cost_cny ?? item.cost_cny),
+    }));
+  }
+  if (isRecord(quote.breakdown)) {
+    return Object.entries(quote.breakdown).map(([key, value]) => ({
+      key,
+      label: key,
+      amount: asNumber(value),
+    }));
+  }
+  return [];
+}
+
+function quoteUpperBound(quote: CostQuote | null, fallback: number) {
+  if (!quote) return fallback;
+  return asNumber(
+    quote.estimated_upper_bound_cny
+      ?? quote.estimated_total_cny
+      ?? quote.max_cost_cny
+      ?? quote.total_cny
+      ?? quote.estimated_max
+      ?? quote.estimated_total,
+    fallback,
+  );
+}
+
+function hasQuoteExpired(quote: CostQuote | null) {
+  return Boolean(quote?.expires_at && Date.parse(quote.expires_at) <= Date.now());
+}
+
+function normalizePlan(item?: CloudBatchItem | null): EditPlanStep[] {
+  if (!item) return DEFAULT_PLAN;
+  const plan = item.edit_plan;
+  const rawSteps = plan?.steps?.length
+    ? plan.steps
+    : plan?.enabled_steps?.length
+      ? plan.enabled_steps.map((kind) => ({
+          step_id: kind,
+          kind,
+          enabled: true,
+          params: kind === "trim_silence" ? { intervals: plan.remove_ranges } : {},
+          estimated_removed_seconds: kind === "trim_silence"
+            ? plan.remove_ranges.reduce((total, range) => total + Math.max(0, range.end - range.start), 0)
+            : 0,
+        }))
+      : item.analysis?.recommended_steps || [];
+  const normalized = (rawSteps as unknown[]).flatMap((raw, index) => {
+    if (!isRecord(raw)) return [];
+    const rawKind = String(raw.kind || "");
+    const kind = STEP_KIND_ALIASES[rawKind];
+    if (!kind || rawKind === "ai_subtitle") return [];
+    const params = isRecord(raw.params) ? raw.params : {};
+    const step: EditPlanStep = {
+      id: String(raw.id || raw.step_id || `${kind}-${index}`),
+      kind,
+      label: String(raw.label || DEFAULT_PLAN.find((item) => item.kind === kind)?.label || kind),
+      reason: String(raw.reason || raw.description || DEFAULT_PLAN.find((item) => item.kind === kind)?.reason || "安全剪辑建议"),
+      enabled: raw.enabled !== false,
+      estimated_removed_seconds: asNumber(
+        raw.estimated_removed_seconds ?? params.estimated_removed_seconds,
+      ),
+      params,
+    };
+    return [step];
+  });
+  return normalized.length ? normalized : DEFAULT_PLAN;
+}
+
+function normalizeSubtitleSegments(item?: CloudBatchItem | null): TranscriptSegment[] {
+  if (!item || !Array.isArray(item.subtitle_segments)) return [];
+  return item.subtitle_segments.flatMap((segment) => {
+    if (!isRecord(segment)) return [];
+    return [{
+      ...segment,
+      start: asNumber(segment.start),
+      end: asNumber(segment.end),
+      text: String(segment.text || ""),
+    } as TranscriptSegment];
+  });
+}
+
+function titleCandidates(item?: CloudBatchItem | null) {
+  if (!item) return [];
+  if (item.title_candidates?.length) return item.title_candidates;
+  return item.edit_plan?.title_candidates || [];
+}
+
+function silenceIntervals(steps: EditPlanStep[]) {
+  return steps.flatMap((step) => {
+    if (step.kind !== "silence_trim") return [];
+    const raw = step.params.intervals;
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((interval) => {
+      if (!isRecord(interval)) return [];
+      const start = asNumber(interval.start, -1);
+      const end = asNumber(interval.end, -1);
+      return start >= 0 && end > start ? [{ start, end }] : [];
+    });
+  });
+}
+
+function createIdempotencyKey() {
+  if (typeof window !== "undefined" && typeof window.crypto?.randomUUID === "function") {
+    return `video-editor-${window.crypto.randomUUID()}`;
+  }
+  return `video-editor-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isBrowserMediaUrl(value?: string | null): value is string {
+  return Boolean(
+    value
+    && (
+      value.startsWith("/")
+      || value.startsWith("https://")
+      || value.startsWith("http://")
+    ),
+  );
+}
+
+function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
+  const cloudBatch = batch as CloudBatch;
+  return (
+    cloudBatch.provider_mode === "sandbox"
+    || cloudBatch.provider_mode === "aliyun"
+    || Boolean(!cloudBatch.provider_mode && (cloudBatch.output_profile || cloudBatch.cost_quote))
+  );
 }
 
 export default function VideoEditorPage() {
   const navigate = useNavigate();
+  const previewRef = useRef<HTMLVideoElement | null>(null);
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
-  const [templates, setTemplates] = useState<EditTemplate[]>([]);
-  const [capabilities, setCapabilities] = useState<VideoCapabilitiesResponse | null>(null);
-  const [batch, setBatch] = useState<VideoEditorBatch | null>(null);
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
-  const [platform, setPlatform] = useState("douyin");
-  const [subtitleEnabled, setSubtitleEnabled] = useState(true);
-  const [subtitleModel, setSubtitleModel] = useState<"large-v3-turbo" | "base">("base");
-  const [performanceMode, setPerformanceMode] = useState<"light" | "quality">("light");
-  const [localModels, setLocalModels] = useState<VideoEditorLocalModel[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
-  const [bgmEnabled, setBgmEnabled] = useState(true);
-  const [bgmId, setBgmId] = useState<string>();
-  const [bgmVolume, setBgmVolume] = useState(0.24);
-  const [bgmUploading, setBgmUploading] = useState(false);
-  const [bgmRightsConfirmed, setBgmRightsConfirmed] = useState(false);
-  const [bgmRightsHolder, setBgmRightsHolder] = useState("");
-  const [bgmMood, setBgmMood] = useState("通用");
-  const [templateId, setTemplateId] = useState<string>();
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [capabilities, setCapabilities] = useState<CloudCapabilities | null>(null);
+  const [batches, setBatches] = useState<CloudBatch[]>([]);
+  const [batch, setBatch] = useState<CloudBatch | null>(null);
+  const [selectedSourceId, setSelectedSourceId] = useState<string>();
+  const [platform, setPlatform] = useState("douyin");
+  const [outputProfile, setOutputProfile] = useState<OutputProfile>("720p");
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
+  const [rightsHolder, setRightsHolder] = useState("本人/公司");
+  const [quote, setQuote] = useState<CostQuote | null>(null);
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [reviewItem, setReviewItem] = useState<VideoEditorBatchItem | null>(null);
-  const [reviewTask, setReviewTask] = useState<TranscriptionResponse | null>(null);
+  const [pollingStopped, setPollingStopped] = useState(false);
+  const [compactSection, setCompactSection] = useState<CompactSection>("preview");
+  const [previewMode, setPreviewMode] = useState<PreviewMode>("original");
+  const [previewTime, setPreviewTime] = useState(0);
+  const [dismissedStepIds, setDismissedStepIds] = useState<string[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [reviewItem, setReviewItem] = useState<CloudBatchItem | null>(null);
   const [reviewSegments, setReviewSegments] = useState<TranscriptSegment[]>([]);
+  const [reviewPlanStepIds, setReviewPlanStepIds] = useState<string[]>([]);
+  const [reviewTitle, setReviewTitle] = useState("");
+  const [reviewBgmId, setReviewBgmId] = useState<string | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
-  const [confirmedItemIds, setConfirmedItemIds] = useState<string[]>([]);
+  const [bgmEnabled, setBgmEnabled] = useState(false);
+  const [bgmId, setBgmId] = useState<string>();
+  const [bgmVolume, setBgmVolume] = useState(0.18);
+  const [bgmRightsConfirmed, setBgmRightsConfirmed] = useState(false);
+  const [bgmRightsHolder, setBgmRightsHolder] = useState("");
+  const [bgmMood, setBgmMood] = useState("通用");
+  const [bgmUploading, setBgmUploading] = useState(false);
 
-  const refresh = useCallback(async (keepBatch = true) => {
+  const refresh = useCallback(async (keepCurrent = true) => {
     setLoading(true);
     try {
-      const [sourceResp, templateResp, caps, batchResp, bgmResp, modelResp] = await Promise.all([
-        listVideoEditorSources(), listTemplates(), getVideoCapabilities(), listVideoEditorBatches(),
-        listVideoEditorBgm(), listVideoEditorLocalModels(),
+      const [sourceResponse, capabilityResponse, batchResponse, bgmResponse] = await Promise.all([
+        videoEditorApi.listVideoEditorSources(),
+        videoEditorApi.getVideoCapabilities(),
+        videoEditorApi.listVideoEditorBatches(),
+        videoEditorApi.listVideoEditorBgm(),
       ]);
-      setSources(sourceResp.items);
-      setTemplates(templateResp.items);
-      setCapabilities(caps);
-      setBgmAssets(bgmResp.items);
-      setLocalModels(modelResp.items);
-      setBatch((current) => {
-        if (!keepBatch) return batchResp.items[0] || null;
-        return batchResp.items.find((item) => item.batch_id === current?.batch_id) || current || batchResp.items[0] || null;
-      });
+      const cloudBatches = batchResponse.items.filter(isCloudBatch);
+      const nextBatch = keepCurrent
+        ? cloudBatches.find((item) => item.batch_id === batch?.batch_id) || batch || cloudBatches[0] || null
+        : cloudBatches[0] || null;
+      setSources(sourceResponse.items);
+      setCapabilities(capabilityResponse as CloudCapabilities);
+      setBatches(cloudBatches);
+      setBgmAssets(bgmResponse.items);
+      setBatch(nextBatch);
+      setQuote(nextBatch?.cost_quote || null);
+      if (nextBatch) {
+        setOutputProfile(nextBatch.output_profile || "720p");
+        setPlatform(nextBatch.target_platform);
+        setBgmEnabled(nextBatch.bgm_enabled);
+        setBgmId(nextBatch.bgm_id || undefined);
+        setBgmVolume(nextBatch.bgm_volume);
+      }
+      setSelectedSourceId((current) => (
+        current
+        || nextBatch?.items[0]?.source_id
+        || sourceResponse.items[0]?.source_id
+      ));
+      setPollingStopped(false);
     } catch (error) {
-      message.error((error as Error).message || "智能剪辑工作台加载失败");
+      message.error((error as Error).message || "云端剪辑工作台加载失败");
     } finally {
       setLoading(false);
     }
+  }, [batch]);
+
+  useEffect(() => {
+    void refresh(false);
+    // Initial load should not be coupled to a batch object created later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => { void refresh(false); }, [refresh]);
+  const currentItem = (batch?.items[0] || null) as CloudBatchItem | null;
+  const currentStatus = currentItem?.status || batch?.status || "idle";
+  const selectedSource = useMemo(
+    () => sources.find((source) => source.source_id === selectedSourceId) || null,
+    [selectedSourceId, sources],
+  );
+  const planSteps = useMemo(() => normalizePlan(currentItem), [currentItem]);
+  const visiblePlanSteps = planSteps.filter((step) => !dismissedStepIds.includes(step.id));
+  const enabledPlanSteps = planSteps.filter((step) => !dismissedStepIds.includes(step.id));
+  const estimatedRemovedSeconds = enabledPlanSteps.reduce(
+    (total, step) => total + step.estimated_removed_seconds,
+    0,
+  );
+
+  const providerMode = batch?.provider_mode || capabilities?.provider_mode || "configuration_required";
+  const isSandbox = Boolean(
+    batch?.is_mock
+    || currentItem?.is_mock
+    || capabilities?.is_mock
+    || providerMode === "sandbox",
+  );
+  const missingConfiguration = capabilities?.missing_configuration || [];
+  const displayStatus = isSandbox && currentStatus === "configuration_required"
+    ? "sandbox_completed"
+    : currentStatus;
+  const configurationBlocked = !isSandbox && (
+    providerMode === "configuration_required"
+    || capabilities?.live_ready === false
+    || capabilities?.enabled === false
+    || missingConfiguration.length > 0
+  );
+  const quoteBreakdown = quoteLines(quote);
+  const costUpperBound = quoteUpperBound(quote, PROFILE_META[outputProfile].exampleCost);
+  const quoteExpired = hasQuoteExpired(quote);
+  const quoteBlocked = Boolean(
+    !isSandbox
+    && (
+      quote?.provider_ready === false
+      || quote?.live_ready === false
+      || quote?.blocked_reasons?.length
+      || quote?.blocking_reasons?.length
+      || quote?.missing_configuration?.length
+    ),
+  );
+  const resultMediaUrl = currentItem?.result_media_url || currentItem?.job?.media_url || null;
+  const playableResultMediaUrl = isBrowserMediaUrl(resultMediaUrl) ? resultMediaUrl : null;
+  const canConfirmOutput = Boolean(
+    !isSandbox
+    && playableResultMediaUrl
+    && currentItem?.publish_allowed !== false,
+  );
+  const publishHandoffReady = Boolean(canConfirmOutput && currentItem?.edit_task_id);
 
   useEffect(() => {
-    if (!batch?.items.some((item) => ["analyzing", "ready_to_render", "rendering"].includes(item.status))) return undefined;
-    const timer = window.setInterval(() => {
-      void listVideoEditorBatches().then((result) => {
-        const next = result.items.find((item) => item.batch_id === batch.batch_id);
-        if (next) setBatch(next);
-      }).catch(() => undefined);
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [batch]);
+    if (
+      !batch
+      || pollingStopped
+      || !["queued", "analyzing", "ready_to_render", "rendering"].includes(currentStatus)
+    ) return undefined;
+    const timer = window.setTimeout(() => {
+      void videoEditorApi.getVideoEditorBatch(batch.batch_id).then((next) => {
+        const cloudBatch = next as CloudBatch;
+        setBatch(cloudBatch);
+        setBatches((items) => [
+          cloudBatch,
+          ...items.filter((item) => item.batch_id !== cloudBatch.batch_id),
+        ]);
+      }).catch(() => {
+        setPollingStopped(true);
+        message.warning("状态查询失败，已停止自动查询；可手动刷新后继续。");
+      });
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [batch, currentStatus, pollingStopped]);
 
   useEffect(() => {
-    setConfirmedItemIds((current) => current.filter((itemId) => batch?.items.some((item) => item.item_id === itemId && item.status === "awaiting_output_confirmation")));
-  }, [batch]);
+    setDismissedStepIds([]);
+    if (currentItem?.enabled_plan_step_ids?.length) {
+      const enabledIds = new Set(currentItem.enabled_plan_step_ids);
+      setDismissedStepIds(planSteps.filter((step) => !enabledIds.has(step.id)).map((step) => step.id));
+    }
+  }, [currentItem?.item_id, currentItem?.review_confirmed_at, planSteps]);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((item) => item.template_id === templateId),
-    [templateId, templates],
-  );
-  const selectedBgm = useMemo(
-    () => bgmAssets.find((item) => item.asset_id === bgmId),
-    [bgmAssets, bgmId],
-  );
-  const selectedModelStatus = localModels.find((item) => item.model_name === subtitleModel);
+  useEffect(() => {
+    setPreviewTime(0);
+    if (previewRef.current) previewRef.current.currentTime = 0;
+  }, [previewMode, selectedSourceId]);
 
-  const startBatch = async () => {
-    if (!selectedSourceIds.length) {
-      message.warning("请先选择至少一条系统成片或本地上传素材");
+  const loadQuote = async (profile: OutputProfile, openModal: boolean) => {
+    if (!selectedSourceId) {
+      message.warning("请先选择一条视频素材");
       return;
     }
-    setSubmitting(true);
+    setQuoteLoading(true);
     try {
-      const created = await createVideoEditorBatch({
-        sourceIds: selectedSourceIds,
+      const nextQuote = await videoEditorApi.preflightVideoEditor({
+        sourceId: selectedSourceId,
+        outputProfile: profile,
         targetPlatform: platform,
-        subtitleEnabled,
-        subtitleModel,
-        steps: (selectedTemplate?.steps || []).map((step) => ({ kind: step.kind, params: step.params || {}, enabled: true })),
-        outputFormat: "mp4",
-        outputResolution: performanceMode === "light" ? "720x1280" : "1080x1920",
-        outputFps: performanceMode === "light" ? 25 : 30,
-        outputBitrate: performanceMode === "light" ? "2M" : "4M",
-        bgmEnabled,
-        bgmId,
-        bgmVolume,
       });
-      setBatch(created);
-      message.success(`已启动 ${created.items.length} 条素材的自动剪辑`);
+      setQuote(nextQuote as CostQuote);
+      if (openModal) setQuoteOpen(true);
     } catch (error) {
-      message.error((error as Error).message || "无法启动自动剪辑");
+      message.error((error as Error).message || "无法获取剪辑费用");
     } finally {
-      setSubmitting(false);
+      setQuoteLoading(false);
+    }
+  };
+
+  const changeOutputProfile = (profile: OutputProfile) => {
+    const shouldRefreshQuote = Boolean(quote && selectedSourceId);
+    setOutputProfile(profile);
+    setQuote(null);
+    if (shouldRefreshQuote) void loadQuote(profile, false);
+  };
+
+  const changePlatform = (value: string) => {
+    setPlatform(value);
+    setQuote(null);
+  };
+
+  const selectSource = (sourceId: string) => {
+    setSelectedSourceId(sourceId);
+    setBatch(null);
+    setQuote(null);
+    setPreviewMode("original");
+    setReviewSegments([]);
+    setReviewTitle("");
+    setDismissedStepIds([]);
+  };
+
+  const uploadSource = async (file: File) => {
+    if (!rightsConfirmed || !rightsHolder.trim()) {
+      message.warning("请先填写权利主体并确认素材使用权");
+      return;
+    }
+    setUploading(true);
+    try {
+      const response = await videoEditorApi.uploadVideoEditorSources([file], rightsHolder.trim());
+      const uploaded = response.items[0];
+      setSources((items) => [
+        ...response.items,
+        ...items.filter((item) => !response.items.some((next) => next.source_id === item.source_id)),
+      ]);
+      if (uploaded) selectSource(uploaded.source_id);
+      message.success("素材已上传，客户端不会运行本地转码或识别模型");
+    } catch (error) {
+      message.error((error as Error).message || "视频素材上传失败");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -213,15 +682,15 @@ export default function VideoEditorPage() {
     }
     setBgmUploading(true);
     try {
-      const asset = await uploadVideoEditorBgm({
+      const asset = await videoEditorApi.uploadVideoEditorBgm({
         file,
         mood: bgmMood,
         rightsHolder: bgmRightsHolder.trim(),
       });
-      setBgmAssets((current) => [asset, ...current.filter((item) => item.asset_id !== asset.asset_id)]);
+      setBgmAssets((items) => [asset, ...items.filter((item) => item.asset_id !== asset.asset_id)]);
       setBgmId(asset.asset_id);
       setBgmEnabled(true);
-      message.success("背景音乐已保存到本机授权音乐库");
+      message.success("授权音乐已加入素材库");
     } catch (error) {
       message.error((error as Error).message || "背景音乐上传失败");
     } finally {
@@ -229,230 +698,1007 @@ export default function VideoEditorPage() {
     }
   };
 
-  const selectTitle = async (item: VideoEditorBatchItem, title: string) => {
-    if (!batch) return;
-    try {
-      setBatch(await selectVideoEditorBatchItemTitle(batch.batch_id, item.item_id, title));
-      message.success("发布标题已保存");
-    } catch (error) {
-      message.error((error as Error).message || "标题保存失败");
+  const startAnalysis = async () => {
+    if (!selectedSourceId || !quote) return;
+    if (hasQuoteExpired(quote)) {
+      message.info("报价已过期，正在刷新；请重新确认费用。");
+      await loadQuote(outputProfile, true);
+      return;
     }
-  };
-
-  const uploadFiles = async (files: File[]) => {
-    if (!files.length) return;
-    setUploading(true);
-    try {
-      const result = await uploadVideoEditorSources(files, "本人/公司已授权");
-      setSources((current) => [...result.items, ...current.filter((item) => !result.items.some((uploaded) => uploaded.source_id === item.source_id))]);
-      setSelectedSourceIds((current) => [...new Set([...current, ...result.items.map((item) => item.source_id)])]);
-      message.success(`已加入 ${result.items.length} 条本地素材`);
-    } catch (error) {
-      message.error((error as Error).message || "素材上传失败");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const openSubtitleReview = async (item: VideoEditorBatchItem) => {
-    if (!item.subtitle_task_id) return;
-    try {
-      const task = await getTranscription(item.subtitle_task_id);
-      setReviewItem(item);
-      setReviewTask(task);
-      setReviewSegments(task.segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false })));
-    } catch (error) {
-      message.error((error as Error).message || "字幕草稿加载失败");
-    }
-  };
-
-  const approveSubtitle = async () => {
-    if (!batch || !reviewItem || !reviewTask) return;
-    setReviewSaving(true);
-    try {
-      await saveTranscriptionRevision({
-        taskId: reviewTask.task_id,
-        segments: reviewSegments.map((segment) => ({
-          start: segment.start,
-          end: segment.end,
-          text: segment.text,
-          confidence: segment.confidence,
-          needs_review: segment.needs_review,
-          reviewed: Boolean(segment.reviewed),
-        })),
-        reviewer: "当前用户",
-        approve: true,
-      });
-      const next = await continueVideoEditorBatchItem(batch.batch_id, reviewItem.item_id);
-      setBatch(next);
-      setReviewItem(null);
-      setReviewTask(null);
-      message.success("字幕已确认，正在继续自动剪辑");
-    } catch (error) {
-      message.error((error as Error).message || "字幕确认失败");
-    } finally {
-      setReviewSaving(false);
-    }
-  };
-
-  const retryItem = async (item: VideoEditorBatchItem) => {
-    if (!batch) return;
-    try {
-      setBatch(await retryVideoEditorBatchItem(batch.batch_id, item.item_id));
-      message.success("已重新加入分析队列");
-    } catch (error) {
-      message.error((error as Error).message || "重试失败");
-    }
-  };
-
-  const confirmResults = async () => {
-    if (!batch || !confirmedItemIds.length) return;
     setSubmitting(true);
     try {
-      setBatch(await confirmVideoEditorBatchResults(batch.batch_id, confirmedItemIds));
-      setConfirmedItemIds([]);
-      message.success("已批量确认成片；可逐条进入发布配置");
+      const profile = PROFILE_META[outputProfile];
+      const request = {
+        sourceIds: [selectedSourceId],
+        targetPlatform: platform,
+        outputProfile,
+        quoteId: quote.quote_id,
+        billingConfirmation: {
+          confirmed: true,
+          maxCostCny: costUpperBound,
+        },
+        idempotencyKey: createIdempotencyKey(),
+        subtitleEnabled: true,
+        steps: [],
+        outputFormat: "mp4",
+        outputResolution: profile.resolution,
+        outputFps: profile.fps,
+        outputBitrate: profile.bitrate,
+        bgmEnabled,
+        bgmId,
+        bgmVolume,
+      } as unknown as Parameters<typeof videoEditorApi.createVideoEditorBatch>[0];
+      const created = await videoEditorApi.createVideoEditorBatch(request) as CloudBatch;
+      setBatch(created);
+      setBatches((items) => [created, ...items.filter((item) => item.batch_id !== created.batch_id)]);
+      setQuote(created.cost_quote || quote);
+      setQuoteOpen(false);
+      setCompactSection("plan");
+      setPreviewMode("plan");
+      message.success(
+        isSandbox
+          ? "免费体验已开始：不会调用真实识别、出片或发布"
+          : "已确认费用，开始云端分析",
+      );
     } catch (error) {
-      message.error((error as Error).message || "批量确认失败");
+      message.error((error as Error).message || "无法启动云端分析");
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading && !sources.length) return <div style={{ marginTop: 96, textAlign: "center" }}><Spin tip="正在加载智能剪辑工作台"><div style={{ minHeight: 48 }} /></Spin></div>;
+  const openReview = async (item: CloudBatchItem) => {
+    setReviewItem(item);
+    setReviewSegments(normalizeSubtitleSegments(item));
+    const itemPlan = normalizePlan(item);
+    const enabledIds = item.enabled_plan_step_ids?.length
+        ? item.enabled_plan_step_ids
+        : itemPlan.filter((step) => step.enabled).map((step) => step.id);
+    setReviewPlanStepIds(enabledIds.filter((stepId) => !dismissedStepIds.includes(stepId)));
+    setReviewTitle(item.selected_title || titleCandidates(item)[0] || item.title);
+    setReviewBgmId(item.selected_bgm_id || bgmId || null);
+    if (!item.subtitle_task_id) return;
+    setReviewLoading(true);
+    try {
+      const task = await videoEditorApi.getTranscription(item.subtitle_task_id);
+      setReviewSegments(task.segments.map((segment) => ({ ...segment })));
+    } catch (error) {
+      message.error((error as Error).message || "字幕草稿加载失败");
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
-  return <Space direction="vertical" size="large" style={{ width: "100%" }} className="video-editor-auto-page">
-    <div className="video-editor-title">
-      <div><Title level={3} style={{ margin: 0 }}><RobotOutlined /> AI 智能剪辑</Title><Text type="secondary">选择素材后自动分析、字幕复核和渲染；每条任务都有真实状态与可重试入口。</Text></div>
-      <Button icon={<ReloadOutlined />} onClick={() => void refresh()}>刷新工作台</Button>
-    </div>
+  const saveReview = async () => {
+    if (!batch || !reviewItem) return;
+    setReviewSaving(true);
+    try {
+      const next = await videoEditorApi.reviewVideoEditorBatchItem(
+        batch.batch_id,
+        reviewItem.item_id,
+        {
+          subtitleSegments: reviewSegments as unknown as Array<Record<string, unknown>>,
+          enabledPlanStepIds: reviewPlanStepIds,
+          selectedTitle: reviewTitle.trim() || reviewItem.title,
+          selectedBgmId: reviewBgmId,
+          confirmed: true,
+        },
+      ) as CloudBatch;
+      setBatch(next);
+      setBatches((items) => [next, ...items.filter((item) => item.batch_id !== next.batch_id)]);
+      setReviewItem(null);
+      const nextItem = next.items[0] as CloudBatchItem | undefined;
+      const nextMediaUrl = nextItem?.result_media_url || nextItem?.job?.media_url;
+      setPreviewMode(isBrowserMediaUrl(nextMediaUrl) ? "output" : "plan");
+      message.success(
+        next.is_mock
+          ? "体验方案已保存；云端出片开通后可处理真实素材"
+          : "字幕与方案已确认，正在生成一次正式成片",
+      );
+    } catch (error) {
+      message.error((error as Error).message || "人工复核保存失败");
+    } finally {
+      setReviewSaving(false);
+    }
+  };
 
-    {!capabilities?.enabled && <Alert type="warning" showIcon message="本地剪辑引擎不可用" description="检测到 FFmpeg 不可用，当前不能执行真实剪辑。" />}
+  const retryCurrentItem = async () => {
+    if (!batch || !currentItem) return;
+    setSubmitting(true);
+    try {
+      const next = await videoEditorApi.retryVideoEditorBatchItem(
+        batch.batch_id,
+        currentItem.item_id,
+      ) as CloudBatch;
+      setBatch(next);
+      setPollingStopped(false);
+      message.success("任务已重新进入处理队列");
+    } catch (error) {
+      message.error((error as Error).message || "重试失败");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-    <Card className="video-editor-launcher" title={<Space><PlayCircleOutlined /> 自动剪辑</Space>} extra={<Tag color="purple">默认同时 1 条</Tag>}>
-      <Row gutter={[20, 20]}>
-        <Col xs={24} lg={15}>
-          <Text strong>1. 选择素材</Text><Text type="secondary" style={{ marginLeft: 8 }}>系统成片与本地上传可混合多选，单次最多 10 条。</Text>
-          <Select
-            mode="multiple"
-            value={selectedSourceIds}
-            onChange={setSelectedSourceIds}
-            placeholder="选择系统成片"
-            style={{ width: "100%", marginTop: 10 }}
-            options={sources.map((source) => ({ value: source.source_id, label: `${source.source_type === "upload" ? "本地上传" : source.source_type === "avatar" ? "数字人" : "流水线"} · ${source.title} · ${formatBytes(source.size_bytes)}` }))}
-          />
-          <Space wrap style={{ marginTop: 12 }}>
-            <Upload accept="video/mp4,video/quicktime,video/x-m4v" multiple showUploadList={false} beforeUpload={(file) => { void uploadFiles([file as File]); return Upload.LIST_IGNORE; }}>
-              <Button icon={<UploadOutlined />} loading={uploading}>上传本地 MP4/MOV</Button>
-            </Upload>
-            <Text type="secondary">上传即确认“本人/公司已授权”；仅保存到本机。</Text>
+  const confirmAndPublish = async () => {
+    if (!batch || !currentItem) return;
+    if (!canConfirmOutput) {
+      message.warning(
+        isSandbox
+          ? "沙箱没有真实成片，不能交接发布"
+          : "真实成片尚未就绪，暂不能交接发布",
+      );
+      return;
+    }
+    if (currentStatus === "ready_to_publish") {
+      if (!publishHandoffReady) {
+        message.warning("成片已确认，但发布交接资产尚未就绪。");
+        return;
+      }
+      navigate(`/publish?from_edit_task=${encodeURIComponent(currentItem.edit_task_id || "")}`);
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const next = await videoEditorApi.confirmVideoEditorBatchResults(
+        batch.batch_id,
+        [currentItem.item_id],
+      ) as CloudBatch;
+      setBatch(next);
+      const confirmed = next.items[0] as CloudBatchItem | undefined;
+      const handoffTaskId = confirmed?.edit_task_id || currentItem.edit_task_id;
+      if (handoffTaskId) {
+        navigate(`/publish?from_edit_task=${encodeURIComponent(handoffTaskId)}`);
+      } else {
+        message.warning("成片已确认，但发布交接资产尚未就绪。");
+      }
+    } catch (error) {
+      message.error((error as Error).message || "成片确认失败");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handlePrimaryAction = () => {
+    if (!batch || currentStatus === "idle") {
+      void loadQuote(outputProfile, true);
+      return;
+    }
+    if (currentStatus === "awaiting_subtitle_review" && currentItem) {
+      void openReview(currentItem);
+      return;
+    }
+    if (["failed", "interrupted"].includes(currentStatus)) {
+      void retryCurrentItem();
+      return;
+    }
+    if (["awaiting_output_confirmation", "ready_to_publish"].includes(currentStatus)) {
+      void confirmAndPublish();
+    }
+  };
+
+  const primaryAction = (() => {
+    if (!batch || currentStatus === "idle") {
+      return {
+        label: isSandbox
+          ? "免费体验剪辑方案"
+          : configurationBlocked
+            ? "查看出片参考与开通说明"
+            : "查看费用并开始分析",
+        disabled: !selectedSourceId || !rightsConfirmed || !rightsHolder.trim(),
+        icon: <CloudOutlined />,
+      };
+    }
+    if (configurationBlocked) {
+      return { label: "补齐云配置后可继续", disabled: true, icon: <CloudOutlined /> };
+    }
+    if (currentStatus === "awaiting_subtitle_review") {
+      return {
+        label: isSandbox ? "查看字幕与剪辑方案" : "确认字幕与方案并生成",
+        disabled: false,
+        icon: <EditOutlined />,
+      };
+    }
+    if (["queued", "analyzing"].includes(currentStatus)) {
+      return { label: "正在分析素材与生成方案", disabled: true, icon: <Spin size="small" /> };
+    }
+    if (["ready_to_render", "rendering"].includes(currentStatus)) {
+      return { label: "正在生成一次正式成片", disabled: true, icon: <Spin size="small" /> };
+    }
+    if (currentStatus === "outcome_unknown") {
+      return { label: "供应商结果待查，不重复提交", disabled: true, icon: <ClockCircleOutlined /> };
+    }
+    if (currentStatus === "configuration_required") {
+      return {
+        label: isSandbox ? "体验已完成，云端出片待开通" : "补齐云配置后可继续",
+        disabled: true,
+        icon: <CloudOutlined />,
+      };
+    }
+    if (["failed", "interrupted"].includes(currentStatus)) {
+      return { label: "重试当前任务", disabled: false, icon: <ReloadOutlined /> };
+    }
+    if (["awaiting_output_confirmation", "ready_to_publish"].includes(currentStatus)) {
+      return {
+        label: "确认成片并去发布",
+        disabled: currentStatus === "ready_to_publish" ? !publishHandoffReady : !canConfirmOutput,
+        icon: <CheckCircleOutlined />,
+      };
+    }
+    return { label: STATUS_META[currentStatus]?.label || "等待任务状态", disabled: true, icon: <ClockCircleOutlined /> };
+  })();
+
+  const previewSegments = reviewSegments.length
+    ? reviewSegments
+    : normalizeSubtitleSegments(currentItem);
+  const currentSubtitle = previewSegments.find((segment) => (
+    asNumber(segment.start, -1) <= previewTime
+    && asNumber(segment.end, -1) >= previewTime
+  ));
+  const previewTitle = reviewTitle || currentItem?.selected_title || titleCandidates(currentItem)[0] || "";
+  const activeIntervals = silenceIntervals(enabledPlanSteps);
+
+  const handlePreviewTimeUpdate = () => {
+    const video = previewRef.current;
+    if (!video) return;
+    if (previewMode === "plan") {
+      const interval = activeIntervals.find(({ start, end }) => (
+        video.currentTime >= start && video.currentTime < end
+      ));
+      if (interval) video.currentTime = interval.end;
+    }
+    setPreviewTime(video.currentTime);
+  };
+
+  const chooseHistory = (selected: CloudBatch) => {
+    const selectedItem = selected.items[0] as CloudBatchItem | undefined;
+    setBatch(selected);
+    setSelectedSourceId(selectedItem?.source_id);
+    setOutputProfile(selected.output_profile || "720p");
+    setPlatform(selected.target_platform);
+    setQuote(selected.cost_quote || null);
+    setBgmEnabled(selected.bgm_enabled);
+    setBgmId(selected.bgm_id || undefined);
+    setBgmVolume(selected.bgm_volume);
+    setReviewSegments(normalizeSubtitleSegments(selectedItem));
+    setReviewTitle("");
+    setHistoryOpen(false);
+    setCompactSection("plan");
+  };
+
+  if (loading && !sources.length) {
+    return (
+      <div style={{ marginTop: 96, textAlign: "center" }}>
+        <Spin tip="正在加载云端轻量剪辑工作台"><div style={{ minHeight: 48 }} /></Spin>
+      </div>
+    );
+  }
+
+  return (
+    <div className="video-editor-cloud-page">
+      <header className="video-editor-cloud-header">
+        <div>
+          <Space size={10} align="center">
+            <Title level={3} style={{ margin: 0 }}>轻量智能剪辑</Title>
+            <Tag icon={<CloudOutlined />} color={isSandbox ? "default" : "blue"}>
+              {isSandbox ? "免费体验模式" : providerMode === "aliyun" ? "云端出片模式" : "云端出片待开通"}
+            </Tag>
           </Space>
-        </Col>
-        <Col xs={24} lg={9}>
-          <Text strong>2. 自动配置</Text>
-          <Select value={platform} onChange={setPlatform} options={PLATFORM_OPTIONS} style={{ width: "100%", marginTop: 10 }} />
-          <Space direction="vertical" style={{ marginTop: 12 }}>
-            <Select
-              value={performanceMode}
-              onChange={(value) => {
-                setPerformanceMode(value);
-                setSubtitleModel(value === "light" ? "base" : "large-v3-turbo");
-              }}
-              style={{ width: 260, maxWidth: "100%" }}
+          <Text type="secondary">
+            先免费查看剪辑方案；需要真实字幕和成片时，再开通云端出片。
+          </Text>
+        </div>
+        <Space wrap>
+          <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>任务历史</Button>
+          <Button icon={<SettingOutlined />} onClick={() => setAdvancedOpen(true)}>高级设置</Button>
+          <Tooltip title="刷新当前任务与云端状态">
+            <Button aria-label="刷新工作台" icon={<ReloadOutlined />} onClick={() => void refresh()} />
+          </Tooltip>
+        </Space>
+      </header>
+
+      <Segmented
+        className="video-editor-compact-nav"
+        block
+        value={compactSection}
+        onChange={(value) => setCompactSection(value as CompactSection)}
+        options={[
+          { value: "source", label: "素材与输出" },
+          { value: "preview", label: "预览" },
+          { value: "plan", label: "方案与费用" },
+        ]}
+      />
+
+      <div className="video-editor-cloud-workspace" data-section={compactSection}>
+        <Card
+          className="video-editor-workspace-card video-editor-source-card"
+          title={<Space><Tag>01</Tag><span>素材与输出</span></Space>}
+          styles={{ body: { padding: 16 } }}
+        >
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <section>
+              <Text strong>单条视频素材</Text>
+              <Select
+                aria-label="选择视频素材"
+                value={selectedSourceId}
+                onChange={selectSource}
+                placeholder="选择系统已有成片"
+                style={{ width: "100%", marginTop: 8 }}
+                options={sources.map((source) => ({
+                  value: source.source_id,
+                  label: `${source.title} · ${formatBytes(source.size_bytes)}`,
+                }))}
+              />
+              <Upload
+                accept="video/mp4,video/quicktime,video/x-m4v"
+                maxCount={1}
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void uploadSource(file as File);
+                  return Upload.LIST_IGNORE;
+                }}
+              >
+                <Button
+                  block
+                  icon={<UploadOutlined />}
+                  loading={uploading}
+                  disabled={!rightsConfirmed || !rightsHolder.trim()}
+                  style={{ marginTop: 8 }}
+                >
+                  上传 MP4 / MOV
+                </Button>
+              </Upload>
+              {selectedSource && (
+                <div className="video-editor-selected-source">
+                  <Text strong ellipsis>{selectedSource.title}</Text>
+                  <Text type="secondary">{formatBytes(selectedSource.size_bytes)} · 仅上传与播放</Text>
+                </div>
+              )}
+            </section>
+
+            <section>
+              <Text strong>发布平台</Text>
+              <Select
+                aria-label="目标发布平台"
+                value={platform}
+                onChange={changePlatform}
+                options={PLATFORM_OPTIONS}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            </section>
+
+            <section>
+              <Text strong>输出清晰度</Text>
+              <Radio.Group
+                aria-label="输出清晰度"
+                value={outputProfile}
+                onChange={(event) => changeOutputProfile(event.target.value as OutputProfile)}
+                optionType="button"
+                buttonStyle="solid"
+                className="video-editor-profile-options"
+              >
+                <Radio.Button value="720p">
+                  <span>720P</span>
+                  <small>60 秒约 ¥0.048</small>
+                </Radio.Button>
+                <Radio.Button value="1080p">
+                  <span>1080P</span>
+                  <small>60 秒约 ¥0.080</small>
+                </Radio.Button>
+              </Radio.Group>
+              <Text type="secondary" className="video-editor-helper">
+                档位是分辨率、帧率和码率的唯一权威值。
+              </Text>
+            </section>
+
+            <section className="video-editor-rights">
+              <Text strong><SafetyCertificateOutlined /> 权利确认</Text>
+              <Input
+                aria-label="视频权利主体"
+                value={rightsHolder}
+                onChange={(event) => setRightsHolder(event.target.value)}
+                placeholder="权利主体，例如：本人/公司"
+              />
+              <Checkbox
+                checked={rightsConfirmed}
+                onChange={(event) => setRightsConfirmed(event.target.checked)}
+              >
+                我确认拥有该视频及所用素材的使用权
+              </Checkbox>
+            </section>
+          </Space>
+          <Alert
+            className="video-editor-local-free"
+            type="info"
+            showIcon
+            message="本机零模型负担"
+            description="生产链路在云端完成；预览直接播放原片，不生成收费低清代理。"
+          />
+        </Card>
+
+        <Card
+          className="video-editor-workspace-card video-editor-preview-card"
+          title={<Space><Tag>02</Tag><span>原片与方案预览</span></Space>}
+          extra={statusTag(displayStatus)}
+          styles={{ body: { padding: 14 } }}
+        >
+          <div className="video-editor-preview-toolbar">
+            <Segmented
+              value={previewMode}
+              onChange={(value) => setPreviewMode(value as PreviewMode)}
               options={[
-                { value: "light", label: "轻量模式 · 720P · 适合 8GB" },
-                { value: "quality", label: "清晰模式 · 1080P" },
+                { value: "original", label: "原片" },
+                { value: "plan", label: "方案预览" },
+                { value: "output", label: "成片", disabled: !playableResultMediaUrl },
               ]}
             />
-            <Space><Switch checked={subtitleEnabled} onChange={setSubtitleEnabled} checkedChildren="字幕需复核" unCheckedChildren="不生成字幕" /><Text>生成并人工确认字幕</Text></Space>
+            {currentItem?.provider_stage && (
+              <Text type="secondary">
+                {PROVIDER_STAGE_LABELS[currentItem.provider_stage] || currentItem.provider_stage}
+              </Text>
+            )}
+          </div>
+
+          <div className="video-editor-preview-stage">
+            {!selectedSource ? (
+              <Empty description="在左侧选择一条视频后即可预览" />
+            ) : (
+              <div className="video-editor-phone-preview">
+                <video
+                  key={`${previewMode}-${playableResultMediaUrl || selectedSource.media_url}`}
+                  ref={previewRef}
+                  controls
+                  preload="metadata"
+                  src={previewMode === "output" && playableResultMediaUrl ? playableResultMediaUrl : selectedSource.media_url}
+                  className={previewMode === "plan" ? "video-editor-plan-video" : ""}
+                  onTimeUpdate={handlePreviewTimeUpdate}
+                />
+                {previewMode === "plan" && previewTitle && (
+                  <div className="video-editor-title-overlay">{previewTitle}</div>
+                )}
+                {previewMode === "plan" && currentSubtitle?.text && (
+                  <div className="video-editor-subtitle-overlay">{currentSubtitle.text}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="video-editor-preview-footer">
             <Space wrap>
-              <Select disabled={!subtitleEnabled} value={subtitleModel} onChange={setSubtitleModel} style={{ width: 260 }} options={[{ value: "base", label: "快速字幕 · base" }, { value: "large-v3-turbo", label: "准确字幕 · large-v3-turbo" }]} />
-              {subtitleEnabled && <Tag color={selectedModelStatus?.installed ? "success" : "warning"}>{selectedModelStatus?.installed ? "已部署到本机" : "首次使用自动下载"}</Tag>}
+              <Tag icon={<PlayCircleOutlined />}>
+                {previewMode === "plan" ? "浏览器模拟跳过建议区间" : previewMode === "output" ? "正式成片" : "原始素材"}
+              </Tag>
+              {estimatedRemovedSeconds > 0 && (
+                <Text>预计删减 {estimatedRemovedSeconds.toFixed(1)} 秒</Text>
+              )}
             </Space>
-          </Space>
-        </Col>
-      </Row>
-      <div className="video-editor-bgm">
-        <Space wrap>
-          <Text strong><SoundOutlined /> 3. 本地智能配乐</Text>
-          <Switch checked={bgmEnabled} onChange={setBgmEnabled} checkedChildren="自动配乐" unCheckedChildren="保持原声" />
-          <Select
-            allowClear
-            disabled={!bgmEnabled}
-            value={bgmId}
-            onChange={setBgmId}
-            placeholder={bgmAssets.length ? "不选择则按内容自动推荐" : "音乐库为空，将保持原声"}
-            style={{ width: 260, maxWidth: "100%" }}
-            options={bgmAssets.map((asset) => ({ value: asset.asset_id, label: `${asset.mood} · ${asset.title}` }))}
-          />
-        </Space>
-        {bgmEnabled && <>
-          <Space wrap style={{ marginTop: 10 }}>
-            <Input value={bgmRightsHolder} onChange={(event) => setBgmRightsHolder(event.target.value)} placeholder="音乐权利主体，例如：本人/公司" style={{ width: 240 }} />
-            <Input value={bgmMood} onChange={(event) => setBgmMood(event.target.value)} placeholder="情绪标签" style={{ width: 140 }} />
-            <Checkbox checked={bgmRightsConfirmed} onChange={(event) => setBgmRightsConfirmed(event.target.checked)}>我确认拥有使用权</Checkbox>
-            <Upload accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac" showUploadList={false} beforeUpload={(file) => { void uploadBgm(file as File); return Upload.LIST_IGNORE; }}>
-              <Button icon={<UploadOutlined />} loading={bgmUploading} disabled={!bgmRightsConfirmed || !bgmRightsHolder.trim()}>上传授权音乐</Button>
-            </Upload>
-          </Space>
-          <Space wrap style={{ marginTop: 10 }}>
-            <Text type="secondary">人声视频的音量上限</Text>
-            <Slider min={0.08} max={0.5} step={0.01} value={bgmVolume} onChange={setBgmVolume} style={{ width: 180 }} />
-            <Text>{Math.round(bgmVolume * 100)}%</Text>
-            <Text type="secondary">一键出片会自动选曲、统一响度、循环截断、淡入淡出，并在人声出现时压低 BGM。</Text>
-          </Space>
-          {selectedBgm && <audio controls preload="metadata" src={selectedBgm.media_url} style={{ width: "100%", maxWidth: 520, marginTop: 8 }} />}
-        </>}
-      </div>
-      <div className="video-editor-launch-actions">
-        <Button type="primary" size="large" icon={<RobotOutlined />} loading={submitting} disabled={!selectedSourceIds.length || !capabilities?.enabled} onClick={() => void startBatch()}>
-          一键智能剪辑 {selectedSourceIds.length ? `${selectedSourceIds.length} 条` : ""}
-        </Button>
-        <Button type="link" onClick={() => setAdvancedOpen((open) => !open)}>{advancedOpen ? "收起高级设置" : "展开高级设置"}</Button>
-      </div>
-      {advancedOpen && <div className="video-editor-advanced"><Text strong>剪辑模板</Text><Select allowClear value={templateId} onChange={setTemplateId} placeholder="不选则按素材分析建议执行" options={templates.map((template) => ({ value: template.template_id, label: template.name }))} style={{ width: 300, maxWidth: "100%", margin: "8px 0" }} /><Paragraph type="secondary" style={{ margin: 0 }}>模板只决定剪辑步骤；字幕开启时仍必须完成当前页人工复核。</Paragraph></div>}
-    </Card>
-
-    <Card title={<Space><ClockCircleOutlined /> 执行进度</Space>} extra={batch && <Space>{statusTag(batch.status)}<Text type="secondary">批次 {batch.batch_id.slice(-6)}</Text></Space>}>
-      {!batch ? <Empty description="启动自动剪辑后，这里会显示每条素材的真实执行状态" /> : <List
-        dataSource={batch.items}
-        locale={{ emptyText: "没有批次任务" }}
-        renderItem={(item) => <List.Item className="video-editor-run-item" actions={[
-          item.status === "awaiting_subtitle_review" ? <Button key="review" type="primary" size="small" icon={<EditOutlined />} onClick={() => void openSubtitleReview(item)}>复核字幕</Button> : null,
-          ["failed", "interrupted"].includes(item.status) ? <Button key="retry" size="small" icon={<ReloadOutlined />} onClick={() => void retryItem(item)}>重试</Button> : null,
-        ].filter(Boolean)}>
-          <Space direction="vertical" size={3} style={{ width: "100%" }}>
-            <Space wrap><Text strong>{item.title}</Text>{statusTag(item.status)}</Space>
-            {item.analysis && <Progress percent={item.status === "analyzing" ? item.analysis.progress : item.job?.progress || (item.status === "awaiting_output_confirmation" || item.status === "ready_to_publish" ? 100 : 60)} size="small" status={["failed", "interrupted"].includes(item.status) ? "exception" : item.status === "awaiting_output_confirmation" || item.status === "ready_to_publish" ? "success" : "active"} />}
-            <Text type={item.error_message ? "danger" : "secondary"}>{item.error_message || item.job?.stage || item.analysis?.stage || STATUS_META[item.status]?.label}</Text>
-            {item.bgm_reason && <Text type="secondary"><SoundOutlined /> {item.bgm_reason}</Text>}
-            {!!item.title_candidates.length && <Space wrap>
-              <Text type="secondary">发布标题</Text>
-              <Select
+            {currentItem && (
+              <Progress
+                percent={STATUS_META[displayStatus]?.progress || currentItem.analysis?.progress || 0}
                 size="small"
-                value={item.selected_title || item.title_candidates[0]}
-                onChange={(value) => void selectTitle(item, value)}
-                style={{ width: 300, maxWidth: "100%" }}
-                options={item.title_candidates.map((title) => ({ value: title, label: title }))}
+                status={["failed", "interrupted"].includes(currentStatus) ? "exception" : undefined}
+                showInfo={false}
               />
-              <Tag>本地生成 · 可在发布页继续改</Tag>
-            </Space>}
+            )}
+          </div>
+        </Card>
+
+        <Card
+          className="video-editor-workspace-card video-editor-plan-card"
+          title={<Space><Tag>03</Tag><span>剪辑方案与出片参考</span></Space>}
+          extra={<Text type="secondary">安全轻剪</Text>}
+          styles={{ body: { padding: 16 } }}
+        >
+          <div className="video-editor-plan-body">
+            {isSandbox && (
+              <Alert
+                data-testid="provider-alert"
+                type="info"
+                showIcon
+                message="免费体验：不调用真实云服务"
+                description="先查看操作流程和方案预览；不会调用真实识别、生成成片或发布。"
+              />
+            )}
+            {configurationBlocked && (
+              <Alert
+                data-testid="provider-alert"
+                type="warning"
+                showIcon
+                message="云端出片尚未开通"
+                description="可先使用免费体验查看流程；需要真实字幕和成片时，再一次性开通云端服务。"
+              />
+            )}
+            {pollingStopped && (
+              <Alert
+                type="warning"
+                showIcon
+                message="自动查询已停止"
+                description="网络查询失败后没有连续重试；请手动刷新确认供应商原任务状态。"
+              />
+            )}
+            {currentStatus === "outcome_unknown" && (
+              <Alert
+                type="warning"
+                showIcon
+                message="付费提交结果未知"
+                description="系统不会盲目重提。请等待查询原供应商任务或人工处理。"
+              />
+            )}
+
+            <div className="video-editor-plan-heading">
+              <div>
+                <Text strong>可解释建议</Text>
+                <Paragraph type="secondary">
+                  可逐项关闭；不会删除或改写有人声区间。
+                </Paragraph>
+              </div>
+              {!!dismissedStepIds.length && (
+                <Button type="link" size="small" onClick={() => setDismissedStepIds([])}>
+                  恢复全部
+                </Button>
+              )}
+            </div>
+
+            <div className="video-editor-plan-list">
+              {!visiblePlanSteps.length ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="所有建议已关闭" />
+              ) : visiblePlanSteps.map((step) => (
+                <div className="video-editor-plan-item" key={step.id}>
+                  <div className="video-editor-plan-icon">{STEP_ICON[step.kind] || <CheckCircleOutlined />}</div>
+                  <div className="video-editor-plan-copy">
+                    <Space size={6} wrap>
+                      <Text strong>{step.label}</Text>
+                      {step.estimated_removed_seconds > 0 && (
+                        <Tag>约 -{step.estimated_removed_seconds.toFixed(1)} 秒</Tag>
+                      )}
+                    </Space>
+                    <Text type="secondary">{step.reason}</Text>
+                  </div>
+                  <Tooltip title="关闭这条建议">
+                    <Button
+                      type="text"
+                      aria-label={`关闭建议：${step.label}`}
+                      icon={<CloseOutlined />}
+                      onClick={() => setDismissedStepIds((ids) => [...ids, step.id])}
+                    />
+                  </Tooltip>
+                </div>
+              ))}
+            </div>
+
+            <div className="video-editor-cost-card">
+              <div className="video-editor-cost-header">
+                <div>
+                  <Text strong>{isSandbox ? "云端出片参考费用" : "预计费用上限"}</Text>
+                  <Text type="secondary">{PROFILE_META[outputProfile].label}</Text>
+                </div>
+                <Text className="video-editor-cost-total" data-testid="cost-total">
+                  {formatCost(costUpperBound)}
+                </Text>
+              </div>
+              {quoteBreakdown.length ? (
+                <div className="video-editor-cost-lines">
+                  {quoteBreakdown.map((line) => (
+                    <div key={line.key}>
+                      <Text type="secondary">{line.label}</Text>
+                      <Text>{formatCost(line.amount)}</Text>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Text type="secondary">
+                  {isSandbox
+                    ? "开通云端出片后，会先给出 15 分钟有效的正式报价。"
+                    : "60 秒官方单价示例；点击主按钮获取 15 分钟有效的正式报价。"}
+                </Text>
+              )}
+              <Space size={6} wrap>
+                {quote?.quote_id && <Tag>{quoteExpired ? "报价已过期" : "报价有效 15 分钟"}</Tag>}
+                {quote?.pricing_version || quote?.price_version
+                  ? <Tag>价格版本 {quote.pricing_version || quote.price_version}</Tag>
+                  : null}
+                {isSandbox && <Tag>免费体验不收费</Tag>}
+              </Space>
+            </div>
+
+            <div className="video-editor-primary-zone">
+              <Button
+                data-testid="primary-action"
+                type={quoteOpen || Boolean(reviewItem) ? "default" : "primary"}
+                size="large"
+                block
+                icon={primaryAction.icon}
+                loading={submitting || quoteLoading}
+                disabled={primaryAction.disabled || quoteOpen || Boolean(reviewItem)}
+                onClick={handlePrimaryAction}
+              >
+                {primaryAction.label}
+              </Button>
+              <Text type="secondary">
+                {!batch
+                  ? isSandbox
+                    ? "免费体验不调用真实识别或出片；开通云端后才会显示实际费用。"
+                    : "免费预检不会调用付费 API；确认报价后才允许分析。"
+                  : STATUS_META[displayStatus]?.label || displayStatus}
+              </Text>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Modal
+        title={isSandbox ? "免费体验剪辑方案" : "确认预计费用"}
+        open={quoteOpen}
+        onCancel={() => setQuoteOpen(false)}
+        width={560}
+        footer={[
+          <Button key="cancel" onClick={() => setQuoteOpen(false)}>{isSandbox ? "暂不体验" : "暂不开始"}</Button>,
+          <Button
+            key="confirm"
+            type="primary"
+            loading={submitting || quoteLoading}
+            disabled={!quote || quoteExpired || quoteBlocked}
+            onClick={() => void startAnalysis()}
+          >
+            {isSandbox ? "开始免费体验" : "确认费用并开始分析"}
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            type={isSandbox ? "info" : quoteBlocked ? "warning" : "success"}
+            showIcon
+            message={isSandbox ? "本次免费，不会调用云端识别或出片" : quoteBlocked ? "供应商尚未准备完成" : "确认后才会调用云服务"}
+            description={
+              isSandbox
+                ? "体验方案仅用于熟悉流程和人工确认；不会生成真实字幕或成片。"
+                : "预计上限不含 OSS、出网和失败重试；报价过期或价格版本变化需再次确认。"
+            }
+          />
+          <Descriptions
+            size="small"
+            column={1}
+            items={[
+              { key: "profile", label: isSandbox ? "未来出片档位" : "输出档位", children: PROFILE_META[outputProfile].label },
+              { key: "source", label: "素材", children: selectedSource?.title || "未选择" },
+              {
+                key: "expires",
+                label: "报价有效期",
+                children: quote?.expires_at
+                  ? new Date(quote.expires_at).toLocaleString("zh-CN", { hour12: false })
+                  : "等待报价",
+              },
+            ]}
+          />
+          <List
+            size="small"
+            bordered
+            dataSource={quoteBreakdown}
+            locale={{ emptyText: "暂无费用分项" }}
+            renderItem={(line) => (
+              <List.Item extra={<Text strong>{formatCost(line.amount)}</Text>}>
+                {line.label}
+              </List.Item>
+            )}
+          />
+          <div className="video-editor-modal-total">
+            <Text strong>{isSandbox ? "未来云端出片参考上限" : "预计费用上限"}</Text>
+            <Title level={3} style={{ margin: 0 }}>{formatCost(costUpperBound)}</Title>
+          </div>
+          {!!(quote?.blocked_reasons?.length || quote?.blocking_reasons?.length) && (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前报价被阻塞"
+              description={(quote.blocked_reasons || quote.blocking_reasons || []).join("；")}
+            />
+          )}
+        </Space>
+      </Modal>
+
+      <Drawer
+        title={isSandbox ? "字幕与方案体验" : "字幕与方案复核"}
+        width={760}
+        open={Boolean(reviewItem)}
+        onClose={() => setReviewItem(null)}
+        extra={(
+          <Button type="primary" loading={reviewSaving} onClick={() => void saveReview()}>
+            {isSandbox ? "保存体验方案" : "确认复核并生成"}
+          </Button>
+        )}
+      >
+        {reviewLoading ? <Spin /> : (
+          <Space direction="vertical" size={16} style={{ width: "100%" }}>
+            <Alert
+              type={isSandbox ? "info" : "warning"}
+              showIcon
+              message={isSandbox ? "体验模式只保存你的选择" : "未明确确认，不会提交 MPS"}
+              description={isSandbox
+                ? "不会调用真实字幕识别或生成成片；开通云端后，可用相同流程处理真实素材。"
+                : "字幕修订、启用的方案步骤、标题和 BGM 将原子保存到当前单项任务。"}
+            />
+            <Tabs
+              items={[
+                {
+                  key: "subtitle",
+                  label: `字幕校对（${reviewSegments.length}）`,
+                  children: reviewSegments.length ? (
+                    <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                      {reviewSegments.map((segment, index) => (
+                        <Card
+                          size="small"
+                          key={`${segment.start}-${segment.end}-${index}`}
+                          title={`${asNumber(segment.start).toFixed(1)}s – ${asNumber(segment.end).toFixed(1)}s`}
+                          extra={segment.needs_review ? <Tag color="gold">待核对</Tag> : <Tag>已识别</Tag>}
+                          styles={{ body: { padding: 12 } }}
+                        >
+                          <Input.TextArea
+                            aria-label={`字幕片段 ${index + 1}`}
+                            value={segment.text}
+                            autoSize={{ minRows: 2, maxRows: 5 }}
+                            onChange={(event) => setReviewSegments((segments) => segments.map(
+                              (item, itemIndex) => itemIndex === index
+                                ? { ...item, text: event.target.value, reviewed: true }
+                                : item,
+                            ))}
+                          />
+                        </Card>
+                      ))}
+                    </Space>
+                  ) : (
+                    <Empty
+                      image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      description={isSandbox ? "免费体验不会调用真实字幕识别" : "没有可复核的字幕片段"}
+                    />
+                  ),
+                },
+                {
+                  key: "plan",
+                  label: "方案确认",
+                  children: (
+                    <Checkbox.Group
+                      value={reviewPlanStepIds}
+                      onChange={(values) => setReviewPlanStepIds(values as string[])}
+                      style={{ width: "100%" }}
+                    >
+                      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                        {planSteps.map((step) => (
+                          <Card
+                            key={step.id}
+                            size="small"
+                            styles={{ body: { padding: 12 } }}
+                          >
+                            <Checkbox value={step.id}>
+                              <Space direction="vertical" size={2}>
+                                <Text strong>{step.label}</Text>
+                                <Text type="secondary">{step.reason}</Text>
+                              </Space>
+                            </Checkbox>
+                          </Card>
+                        ))}
+                      </Space>
+                    </Checkbox.Group>
+                  ),
+                },
+                {
+                  key: "title",
+                  label: "标题与配乐",
+                  children: (
+                    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+                      <div>
+                        <Text strong>成片标题</Text>
+                        <Input
+                          aria-label="成片标题"
+                          value={reviewTitle}
+                          onChange={(event) => setReviewTitle(event.target.value)}
+                          maxLength={60}
+                          showCount
+                          style={{ marginTop: 8 }}
+                        />
+                      </div>
+                      <div>
+                        <Text strong>已授权 BGM</Text>
+                        <Select
+                          aria-label="复核背景音乐"
+                          allowClear
+                          value={reviewBgmId || undefined}
+                          onChange={(value) => setReviewBgmId(value || null)}
+                          placeholder="保持原声"
+                          options={bgmAssets.map((asset) => ({
+                            value: asset.asset_id,
+                            label: `${asset.mood} · ${asset.title}`,
+                          }))}
+                          style={{ width: "100%", marginTop: 8 }}
+                        />
+                      </div>
+                    </Space>
+                  ),
+                },
+              ]}
+            />
           </Space>
-        </List.Item>}
-      />}
-    </Card>
+        )}
+      </Drawer>
 
-    <Card title={<Space><CheckCircleOutlined /> 成片结果</Space>} extra={confirmedItemIds.length ? <Button type="primary" loading={submitting} onClick={() => void confirmResults()}>批量确认 {confirmedItemIds.length} 条</Button> : undefined}>
-      {!batch?.items.some((item) => item.job?.status === "succeeded") ? <Empty description="真实成片生成后会在这里预览、下载和确认" /> : <Row gutter={[16, 16]}>{batch.items.filter((item) => item.job?.status === "succeeded").map((item) => <Col xs={24} md={12} xl={8} key={item.item_id}><Card size="small" title={<Space><Checkbox checked={confirmedItemIds.includes(item.item_id)} disabled={item.status !== "awaiting_output_confirmation"} onChange={(event) => setConfirmedItemIds((current) => event.target.checked ? [...current, item.item_id] : current.filter((id) => id !== item.item_id))} /><Text ellipsis style={{ maxWidth: 160 }}>{item.title}</Text></Space>} extra={statusTag(item.status)}>
-        {item.job?.media_url && <video controls preload="metadata" src={item.job.media_url} style={{ width: "100%", borderRadius: 8, background: "#111" }} />}
-        <Space wrap style={{ marginTop: 10 }}><Button size="small" icon={<DownloadOutlined />} href={item.job?.download_url || undefined}>下载</Button><Button size="small" icon={<SendOutlined />} disabled={item.status !== "ready_to_publish"} onClick={() => navigate(`/publish?from_edit_task=${encodeURIComponent(item.edit_task_id || "")}`)}>去发布</Button></Space>
-      </Card></Col>)}</Row>}
-    </Card>
+      <Drawer
+        title="高级设置"
+        width={520}
+        open={advancedOpen}
+        onClose={() => setAdvancedOpen(false)}
+      >
+        <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="安全轻剪边界固定"
+            description="v1 不做语义删句、智能高光、主体追踪横转竖或自动发布，也不接受任意 MPS 参数。"
+          />
+          <section>
+            <Space>
+              <Switch checked={bgmEnabled} onChange={setBgmEnabled} />
+              <Text strong>使用已授权背景音乐</Text>
+            </Space>
+            <Select
+              allowClear
+              disabled={!bgmEnabled}
+              value={bgmId}
+              onChange={setBgmId}
+              placeholder="不选择则保持原声"
+              options={bgmAssets.map((asset) => ({
+                value: asset.asset_id,
+                label: `${asset.mood} · ${asset.title}`,
+              }))}
+              style={{ width: "100%", marginTop: 10 }}
+            />
+            <Space style={{ width: "100%", marginTop: 10 }}>
+              <Text type="secondary">BGM 音量</Text>
+              <Slider
+                disabled={!bgmEnabled}
+                min={0.08}
+                max={0.5}
+                step={0.01}
+                value={bgmVolume}
+                onChange={setBgmVolume}
+                style={{ width: 220 }}
+              />
+              <Text>{Math.round(bgmVolume * 100)}%</Text>
+            </Space>
+          </section>
+          <Card title="上传授权音乐" size="small" styles={{ body: { padding: 14 } }}>
+            <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              <Input
+                value={bgmRightsHolder}
+                onChange={(event) => setBgmRightsHolder(event.target.value)}
+                placeholder="音乐权利主体"
+              />
+              <Input
+                value={bgmMood}
+                onChange={(event) => setBgmMood(event.target.value)}
+                placeholder="情绪标签"
+              />
+              <Checkbox
+                checked={bgmRightsConfirmed}
+                onChange={(event) => setBgmRightsConfirmed(event.target.checked)}
+              >
+                我确认拥有该音乐使用权
+              </Checkbox>
+              <Upload
+                accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void uploadBgm(file as File);
+                  return Upload.LIST_IGNORE;
+                }}
+              >
+                <Button
+                  icon={<UploadOutlined />}
+                  loading={bgmUploading}
+                  disabled={!bgmRightsConfirmed || !bgmRightsHolder.trim()}
+                >
+                  上传到授权音乐库
+                </Button>
+              </Upload>
+            </Space>
+          </Card>
+        </Space>
+      </Drawer>
 
-    <Drawer title="字幕人工复核" width={720} open={Boolean(reviewItem)} onClose={() => { setReviewItem(null); setReviewTask(null); }} extra={<Button type="primary" loading={reviewSaving} onClick={() => void approveSubtitle()}>确认成稿并继续剪辑</Button>}>
-      {!reviewTask ? <Spin /> : <Space direction="vertical" size="middle" style={{ width: "100%" }}><Alert type="info" showIcon message="确认后才会把字幕烧录到成片" description="你可以直接修改每一段字幕；本次只影响当前剪辑任务。" />{reviewSegments.map((segment, index) => <Card key={`${segment.start}-${index}`} size="small" title={`${segment.start?.toFixed(1) ?? "-"}s – ${segment.end?.toFixed(1) ?? "-"}s`} extra={segment.needs_review && !segment.reviewed ? <Tag color="gold">待核对</Tag> : null}><Input.TextArea value={segment.text} autoSize={{ minRows: 2, maxRows: 5 }} onChange={(event) => setReviewSegments((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, text: event.target.value, reviewed: true } : item))} /></Card>)}</Space>}
-    </Drawer>
+      <Drawer
+        title="智能剪辑任务历史"
+        width={560}
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+      >
+        <List
+          dataSource={batches}
+          locale={{ emptyText: "还没有云端轻量剪辑任务" }}
+          renderItem={(item) => {
+            const firstItem = item.items[0] as CloudBatchItem | undefined;
+            return (
+              <List.Item
+                actions={[
+                  <Button key="open" onClick={() => chooseHistory(item)}>打开</Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={<Space wrap><Text strong>{firstItem?.title || "单条剪辑任务"}</Text>{statusTag(firstItem?.status || item.status)}</Space>}
+                  description={(
+                    <Space direction="vertical" size={2}>
+                      <Text type="secondary">
+                        {PROFILE_META[item.output_profile || "720p"].label} · {item.target_platform}
+                      </Text>
+                      <Text type="secondary">
+                        {new Date(item.updated_at).toLocaleString("zh-CN", { hour12: false })}
+                      </Text>
+                    </Space>
+                  )}
+                />
+              </List.Item>
+            );
+          }}
+        />
+      </Drawer>
 
-    <style>{`.video-editor-title,.video-editor-launch-actions{display:flex;align-items:center;justify-content:space-between;gap:16px}.video-editor-launch-actions{margin-top:18px}.video-editor-bgm{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-color,#eef0f3)}.video-editor-advanced{margin-top:12px;padding:12px;background:var(--primary-50);border-radius:10px}.video-editor-run-item .ant-list-item-action{margin-inline-start:18px}@media(max-width:768px){.video-editor-title,.video-editor-launch-actions{align-items:flex-start;flex-direction:column}.video-editor-run-item{align-items:flex-start}.video-editor-run-item .ant-list-item-action{margin-inline-start:0;margin-top:10px}}`}</style>
-  </Space>;
+      <style>{`
+        .video-editor-cloud-page{display:flex;flex-direction:column;gap:14px;width:100%;min-width:0}
+        .video-editor-cloud-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+        .video-editor-compact-nav{display:none}
+        .video-editor-cloud-workspace{display:grid;grid-template-columns:minmax(252px,.78fr) minmax(340px,1.22fr) minmax(310px,.9fr);gap:14px;height:clamp(630px,calc(100vh - 174px),760px);min-height:0}
+        .video-editor-workspace-card{height:100%;overflow:hidden;border-color:var(--border-default);box-shadow:var(--shadow-sm)}
+        .video-editor-workspace-card>.ant-card-head{min-height:50px;padding-inline:16px}
+        .video-editor-workspace-card>.ant-card-body{height:calc(100% - 51px);overflow:auto}
+        .video-editor-source-card>.ant-card-body{display:flex;flex-direction:column;justify-content:space-between;gap:14px}
+        .video-editor-selected-source{display:flex;flex-direction:column;gap:2px;margin-top:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--gray-50)}
+        .video-editor-profile-options{display:flex;width:100%;margin-top:8px}
+        .video-editor-profile-options .ant-radio-button-wrapper{display:flex;flex:1;height:auto;min-height:52px;align-items:flex-start;justify-content:center;padding:7px 8px;line-height:1.3}
+        .video-editor-profile-options .ant-radio-button-wrapper span:not(.ant-radio-button){display:flex;flex-direction:column;align-items:center;gap:3px}
+        .video-editor-profile-options small{font-size:11px;font-weight:400;white-space:nowrap}
+        .video-editor-helper{display:block;margin-top:6px;font-size:12px}
+        .video-editor-rights{display:flex;flex-direction:column;gap:9px}
+        .video-editor-local-free{margin-top:auto}
+        .video-editor-preview-card>.ant-card-body{display:flex;flex-direction:column;min-height:0}
+        .video-editor-preview-toolbar,.video-editor-preview-footer,.video-editor-cost-header,.video-editor-modal-total{display:flex;align-items:center;justify-content:space-between;gap:12px}
+        .video-editor-preview-toolbar{flex-wrap:wrap}
+        .video-editor-preview-stage{display:flex;flex:1;min-height:0;align-items:center;justify-content:center;margin:12px 0;padding:12px;border-radius:var(--radius-md);background:#111827}
+        .video-editor-preview-stage .ant-empty-description{color:#d1d5db}
+        .video-editor-phone-preview{position:relative;width:min(100%,310px);height:100%;max-height:570px;aspect-ratio:9/16;overflow:hidden;border-radius:12px;background:#030712;box-shadow:0 14px 34px rgba(0,0,0,.28)}
+        .video-editor-phone-preview video{width:100%;height:100%;object-fit:contain;background:#030712}
+        .video-editor-phone-preview video.video-editor-plan-video{object-fit:cover}
+        .video-editor-title-overlay{position:absolute;top:8%;left:7%;right:7%;padding:7px 10px;border-radius:7px;background:rgba(15,23,42,.8);color:#fff;font-weight:700;text-align:center;pointer-events:none}
+        .video-editor-subtitle-overlay{position:absolute;left:8%;right:8%;bottom:12%;padding:6px 9px;border-radius:6px;background:rgba(0,0,0,.72);color:#fff;font-weight:600;text-align:center;pointer-events:none}
+        .video-editor-preview-footer{flex-direction:column;align-items:stretch}
+        .video-editor-plan-card>.ant-card-body{overflow:hidden}
+        .video-editor-plan-body{display:flex;flex-direction:column;height:100%;min-height:0;gap:12px}
+        .video-editor-plan-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+        .video-editor-plan-heading .ant-typography{margin-bottom:0}
+        .video-editor-plan-list{display:flex;flex:1;min-height:140px;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
+        .video-editor-plan-item{display:grid;grid-template-columns:30px minmax(0,1fr) 28px;align-items:start;gap:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-card)}
+        .video-editor-plan-icon{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;background:var(--primary-50);color:var(--primary-600)}
+        .video-editor-plan-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
+        .video-editor-plan-copy>.ant-typography{font-size:12px;line-height:1.45}
+        .video-editor-cost-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--primary-200);border-radius:var(--radius-md);background:var(--primary-50)}
+        .video-editor-cost-header>div{display:flex;flex-direction:column}
+        .video-editor-cost-total{font-size:25px;font-weight:700;color:var(--primary-700)}
+        .video-editor-cost-lines{display:flex;flex-direction:column;gap:4px}
+        .video-editor-cost-lines>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .video-editor-primary-zone{display:flex;flex-direction:column;gap:6px;text-align:center}
+        .video-editor-primary-zone>.ant-typography{font-size:12px}
+        .video-editor-modal-total{padding:12px;border-radius:var(--radius-sm);background:var(--primary-50)}
+        @media(max-width:1180px){
+          .video-editor-compact-nav{display:flex}
+          .video-editor-cloud-workspace{display:block;height:auto;min-height:640px}
+          .video-editor-workspace-card{display:none;height:640px}
+          .video-editor-cloud-workspace[data-section="source"] .video-editor-source-card,
+          .video-editor-cloud-workspace[data-section="preview"] .video-editor-preview-card,
+          .video-editor-cloud-workspace[data-section="plan"] .video-editor-plan-card{display:block}
+        }
+        @media(max-width:720px){
+          .video-editor-cloud-header{flex-direction:column}
+          .video-editor-cloud-workspace,.video-editor-workspace-card{min-height:600px;height:auto}
+          .video-editor-preview-card{height:660px}
+          .video-editor-phone-preview{max-height:500px}
+        }
+      `}</style>
+    </div>
+  );
 }

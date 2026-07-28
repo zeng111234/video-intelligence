@@ -58,8 +58,8 @@ from src.services.commercial_search import (
     RANKING_MODE,
     RELEVANCE_RULE_VERSION,
     SMART_FALLBACK_CACHE_TTL_MINUTES,
+    item_matches_keyword,
     keyword_match_reason,
-    title_matches_keyword,
 )
 from src.services.transcription import TranscriptionError
 
@@ -317,6 +317,8 @@ class CrawlerCandidateResult(BaseModel):
     new_plays: int | None = None
     likes: int | None = None
     new_likes: int | None = None
+    likes_per_day: float | None = None
+    quality_source: str | None = None
     duration_seconds: int | None = None
     hotspot_window_hours: int | None = None
     hotspot_list_labels: list[str] = Field(default_factory=list)
@@ -2660,7 +2662,8 @@ def _candidate_to_response(
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
     hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(resolved_evidence)
-    is_hotspot = bool(resolved_evidence and resolved_evidence.startswith("hotspot:"))
+    is_incremental_hotspot = "来源=video_board" in (resolved_evidence or "")
+    likes_per_day, quality_source = _hotspot_quality_details(resolved_evidence)
     media_resolution = repo.find_latest_media_resolution_for_candidate(candidate.video_id)
     resolved_task = (
         repo.get_task(media_resolution.task_id)
@@ -2739,9 +2742,11 @@ def _candidate_to_response(
         provider_hot_rank=provider_hot_rank or platform_rank,
         system_rank=system_rank,
         plays=candidate.metrics.plays,
-        new_plays=candidate.metrics.plays if is_hotspot else None,
+        new_plays=candidate.metrics.plays if is_incremental_hotspot else None,
         likes=candidate.metrics.likes,
-        new_likes=candidate.metrics.likes if is_hotspot else None,
+        new_likes=candidate.metrics.likes if is_incremental_hotspot else None,
+        likes_per_day=likes_per_day,
+        quality_source=quality_source,
         duration_seconds=duration_seconds,
         hotspot_window_hours=hotspot_window_hours,
         hotspot_list_labels=hotspot_lists,
@@ -2775,6 +2780,8 @@ def _provider_item_to_crawler_response(item) -> CrawlerCandidateResult:
     hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
         item.evidence
     )
+    is_incremental_hotspot = "来源=video_board" in (item.evidence or "")
+    likes_per_day, quality_source = _hotspot_quality_details(item.evidence)
     return CrawlerCandidateResult(
         video_id=item.platform_item_id,
         title=item.title,
@@ -2786,9 +2793,11 @@ def _provider_item_to_crawler_response(item) -> CrawlerCandidateResult:
         confidence=item.metrics.confidence,
         provider_hot_rank=item.provider_rank,
         plays=item.metrics.plays,
-        new_plays=item.metrics.plays,
+        new_plays=item.metrics.plays if is_incremental_hotspot else None,
         likes=item.metrics.likes,
-        new_likes=item.metrics.likes,
+        new_likes=item.metrics.likes if is_incremental_hotspot else None,
+        likes_per_day=likes_per_day,
+        quality_source=quality_source,
         duration_seconds=duration_seconds,
         hotspot_window_hours=hotspot_window_hours,
         hotspot_list_labels=hotspot_lists,
@@ -2812,6 +2821,17 @@ def _hotspot_evidence_details(evidence: str | None) -> tuple[list[str], int | No
         labels,
         int(duration_match.group(1)) if duration_match else None,
         int(window_match.group(1)) if window_match else None,
+    )
+
+
+def _hotspot_quality_details(evidence: str | None) -> tuple[float | None, str | None]:
+    if not evidence or not evidence.startswith("hotspot:"):
+        return None, None
+    likes_per_day_match = re.search(r"日均点赞=([0-9]+(?:\.[0-9]+)?)", evidence)
+    quality_source_match = re.search(r"质量口径=([^;]+)", evidence)
+    return (
+        float(likes_per_day_match.group(1)) if likes_per_day_match else None,
+        quality_source_match.group(1) if quality_source_match else None,
     )
 
 
@@ -2909,7 +2929,11 @@ def _run_to_response(
             candidate = repo.get_candidate(match.video_id)
             if candidate is None:
                 continue
-            if not title_matches_keyword(title=candidate.title, keyword=batch.keyword):
+            if not item_matches_keyword(
+                title=candidate.title,
+                keyword=batch.keyword,
+                evidence=match.evidence or candidate.evidence,
+            ):
                 historical_irrelevant_count += 1
                 continue
             visible_matches.append((match, candidate))
@@ -2976,7 +3000,11 @@ def _run_to_response(
         low_incremental_candidates = [
             _provider_item_to_crawler_response(item)
             for item in run.low_incremental_items
-            if title_matches_keyword(title=item.title, keyword=batch.keyword)
+            if item_matches_keyword(
+                title=item.title,
+                keyword=batch.keyword,
+                evidence=item.evidence,
+            )
         ]
     return CrawlerPlatformRunResponse(
         run_id=run.run_id,

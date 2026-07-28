@@ -77,6 +77,81 @@ class _ComplianceRetryEngine:
         return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
 
 
+class _SimilarityRetryEngine:
+    def __init__(self, *, remains_similar: bool = False) -> None:
+        self.remains_similar = remains_similar
+        self.rewrite_calls: list[dict] = []
+        self.last_usage: dict[str, int] = {}
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "similarity-test",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls.append(kwargs)
+        self.last_usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        if len(self.rewrite_calls) == 1 or self.remains_similar:
+            return [source_text]
+        return [
+            "预算在两百元左右，又想兼顾赛车和射击游戏，可以先看摇杆阻尼是否可调。"
+            "这款产品提供四套预设和三模连接，GT13 霍尔摇杆可在 30 到 80GF 之间调节，"
+            "不同游戏可以直接切换更合适的手感。"
+        ]
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
+
+
+class _AttentionEngine:
+    last_attention_terms = ["竞品科技", "未出现在结果里的名称"]
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "attention-test",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        return ["竞品科技发布了这款工具，主要面向内容团队。"]
+
+    def generate(self, **kwargs) -> list[str]:
+        return ["竞品科技发布了这款工具，主要面向内容团队。"]
+
+
+class _RetryThenFailEngine:
+    def __init__(self) -> None:
+        self.rewrite_calls = 0
+        self.last_attention_terms: list[str] = []
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "retry-then-fail",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls += 1
+        if self.rewrite_calls == 1:
+            self.last_attention_terms = ["竞品科技"]
+            return ["竞品科技保证有效，月入5万。"]
+        self.last_attention_terms = []
+        raise RuntimeError("后续模型调用失败")
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""))
+
+
 class TestCopywritingServiceEdgeCases:
     """补充 CopywritingService 边界和异常路径。"""
 
@@ -102,23 +177,39 @@ class TestCopywritingServiceEdgeCases:
         with pytest.raises(ValueError, match="最大长度限制"):
             self.svc.rewrite(source_text=long_text)
 
-    def test_rewrite_engine_exception_produces_failed_task(self):
-        """引擎异常应产生 FAILED 状态的任务，而非抛出异常。"""
+    def test_rewrite_engine_exception_falls_back_to_source(self):
+        """引擎异常时使用原文，保证流水线节点成功。"""
         svc = CopywritingService(self.repo, _FailingEngine())
         task = svc.rewrite(source_text="触发引擎异常")
-        assert task.status == TaskStatus.FAILED
-        assert "引擎模拟故障" in task.error_message
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.result_text == "触发引擎异常"
+        assert task.compliance_status == "best_effort"
+        assert task.error_message is None
+        assert any("使用输入内容" in note for note in task.compliance_notes)
 
-    def test_rewrite_engine_empty_result(self):
-        """引擎返回空列表时，应产生失败任务。"""
+    def test_rewrite_engine_empty_result_falls_back_to_source(self):
+        """引擎返回空列表时使用原文，保证流水线节点成功。"""
         svc = CopywritingService(self.repo, _SlowEngine())
         task = svc.rewrite(source_text="空结果测试")
-        assert task.status == TaskStatus.FAILED
-        assert task.result_text is None
-        assert task.result_variants == []
-        assert "未返回有效内容" in task.error_message
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.result_text == "空结果测试"
+        assert task.result_variants == ["空结果测试"]
+        assert task.compliance_status == "best_effort"
+        assert task.error_message is None
 
-    def test_rewrite_retries_once_when_risk_expression_remains(self):
+    def test_generate_engine_exception_falls_back_to_combined_input(self):
+        task = CopywritingService(self.repo, _FailingEngine()).generate(
+            content_brief="介绍这款工具",
+            selling_points="降低内容成本",
+            call_to_action="欢迎了解",
+        )
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.result_text == "介绍这款工具\n降低内容成本\n欢迎了解"
+        assert task.compliance_status == "best_effort"
+        assert task.error_message is None
+
+    def test_rewrite_automatically_retries_when_risk_expression_remains(self):
         engine = _ComplianceRetryEngine()
         task = CopywritingService(self.repo, engine).rewrite(source_text="分享经验")
         assert task.status == TaskStatus.SUCCEEDED
@@ -126,15 +217,71 @@ class TestCopywritingServiceEdgeCases:
         assert task.compliance_rewritten is True
         assert task.compliance_retry_used is True
         assert len(engine.rewrite_calls) == 2
-        assert any("自动进行一次复核改写" in note for note in task.compliance_notes)
+        assert any("已自动重写" in note for note in task.compliance_notes)
 
-    def test_rewrite_marks_manual_review_after_single_retry(self):
+    def test_rewrite_uses_final_version_after_three_risk_attempts(self):
         engine = _ComplianceRetryEngine(remains_risky=True)
         task = CopywritingService(self.repo, engine).rewrite(source_text="分享经验")
         assert task.status == TaskStatus.SUCCEEDED
-        assert task.compliance_status == "review_required"
+        assert task.result_text == "月入5万，保证有效。"
+        assert task.compliance_status == "best_effort"
+        assert len(engine.rewrite_calls) == 3
+        assert any("使用最后一次生成结果" in note for note in task.compliance_notes)
+        assert task.error_message is None
+
+    def test_rewrite_retries_once_when_output_is_too_similar(self):
+        source = (
+            "这款手柄采用经典模具，按键位置保持不变，支持四套预设和三模连接。"
+            "GT13霍尔摇杆支持30到80GF阻尼调节，售价约200元，适合多种游戏。"
+        )
+        engine = _SimilarityRetryEngine()
+
+        task = CopywritingService(self.repo, engine).rewrite(source_text=source)
+
+        assert task.compliance_status == "passed"
         assert task.compliance_retry_used is True
         assert len(engine.rewrite_calls) == 2
+        assert "去重验收未通过" in engine.rewrite_calls[1]["rewrite_goal"]
+        assert any("与原文过于相似" in note for note in task.compliance_notes)
+        assert task.token_usage == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
+
+    def test_rewrite_uses_final_version_when_three_results_are_still_too_similar(self):
+        source = (
+            "这款手柄采用经典模具，按键位置保持不变，支持四套预设和三模连接。"
+            "GT13霍尔摇杆支持30到80GF阻尼调节，售价约200元，适合多种游戏。"
+        )
+        engine = _SimilarityRetryEngine(remains_similar=True)
+
+        task = CopywritingService(self.repo, engine).rewrite(source_text=source)
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.result_text == source
+        assert task.compliance_status == "best_effort"
+        assert len(engine.rewrite_calls) == 3
+        assert any("使用最后一次生成结果" in note for note in task.compliance_notes)
+        assert task.token_usage == {"prompt_tokens": 30, "completion_tokens": 15, "total_tokens": 45}
+
+    def test_rewrite_uses_last_version_when_a_later_retry_errors(self):
+        engine = _RetryThenFailEngine()
+
+        task = CopywritingService(self.repo, engine).rewrite(source_text="介绍产品")
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.result_text == "竞品科技保证有效，月入5万。"
+        assert task.compliance_status == "best_effort"
+        assert task.attention_terms == ["竞品科技"]
+        assert engine.rewrite_calls == 2
+        assert any("最后一次生成结果" in note for note in task.compliance_notes)
+
+    def test_rewrite_keeps_only_attention_terms_present_in_final_copy(self):
+        task = CopywritingService(self.repo, _AttentionEngine()).rewrite(
+            source_text="介绍一下这个工具"
+        )
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert task.compliance_status == "passed"
+        assert task.attention_terms == ["竞品科技"]
+        assert any("已在文案中高亮" in note for note in task.compliance_notes)
 
     def test_rewrite_with_source_ids(self):
         """source_task_id 和 source_revision_id 应正确存储。"""
@@ -260,12 +407,14 @@ class TestCopywritingServiceEdgeCases:
         tasks = self.svc.batch_rewrite(source_texts=[])
         assert tasks == []
 
-    def test_batch_rewrite_mixed_results(self):
-        """批量改写中部分失败不影响其他任务。"""
+    def test_batch_rewrite_model_errors_keep_every_pipeline_item(self):
+        """批量改写遇到模型异常时，每项都回退输入并继续。"""
         svc = CopywritingService(self.repo, _FailingEngine())
         tasks = svc.batch_rewrite(source_texts=["失败一", "失败二"])
         assert len(tasks) == 2
-        assert all(t.status == TaskStatus.FAILED for t in tasks)
+        assert all(t.status == TaskStatus.SUCCEEDED for t in tasks)
+        assert [task.result_text for task in tasks] == ["失败一", "失败二"]
+        assert all(task.compliance_status == "best_effort" for task in tasks)
 
     def test_is_mock_flag_from_sandbox(self):
         """沙箱引擎应设置 is_mock=True。"""

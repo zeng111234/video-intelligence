@@ -152,6 +152,67 @@ def test_submit_can_render_upload_audio_before_video():
     assert b"https://audio.example.com/speech.mp3" in calls[1][3]
 
 
+def test_video_accepts_a_structurally_successful_zero_code_response():
+    responses = [
+        {"code": 1, "data": {"ossurl": "https://media.example.com/voice.mp3"}},
+        {"code": 0, "data": {"videoId": "video-job-zero-code"}},
+    ]
+    calls = 0
+
+    def transport(method, url, headers, body, timeout):
+        nonlocal calls
+        response = responses[calls]
+        calls += 1
+        return json.dumps(response).encode(), "application/json"
+
+    snapshot = _provider(transport=transport).submit(_request())
+
+    assert snapshot.job_id == "video-job-zero-code"
+
+
+def test_gateway_error_uses_the_supplier_message_field():
+    responses = [
+        {"code": 1, "data": {"ossurl": "https://media.example.com/voice.mp3"}},
+        {"code": 0, "message": "当前形象不可用"},
+    ]
+    calls = 0
+
+    def transport(method, url, headers, body, timeout):
+        nonlocal calls
+        response = responses[calls]
+        calls += 1
+        return json.dumps(response).encode(), "application/json"
+
+    with pytest.raises(AvatarProviderError, match="当前形象不可用"):
+        _provider(transport=transport).submit(_request())
+
+
+def test_video_name_is_trimmed_to_the_legacy_gateway_limit():
+    video_bodies = []
+
+    def transport(method, url, headers, body, timeout):
+        if url.endswith("/voice"):
+            return (
+                json.dumps(
+                    {"code": 1, "data": {"ossurl": "https://media.example.com/voice.mp3"}}
+                ).encode(),
+                "application/json",
+            )
+        video_bodies.append(body)
+        return (
+            json.dumps({"code": 1, "data": {"videoId": "video-job-short-name"}}).encode(),
+            "application/json",
+        )
+
+    long_name = "餐" * 50 + "不能发送"
+    request = _request().model_copy(update={"video_name": long_name})
+
+    _provider(transport=transport).submit(request)
+
+    assert ("餐" * 50).encode() in video_bodies[0]
+    assert "不能发送".encode() not in video_bodies[0]
+
+
 def test_edge_audio_mode_requires_safe_upload_configuration():
     provider = _provider(
         audio_mode="edge_tts_upload",
@@ -288,5 +349,7 @@ def test_pending_voice_sample_is_saved_without_submitting_a_clone(tmp_path):
 
     assert asset.status == "pending_configuration"
     assert asset.source_type == "pending_clone"
+    assert asset.preview_type == "audio"
+    assert asset.preview_url == f"/api/v1/avatar/assets/{asset.asset_id}/media"
     assert provider.list_assets()[-1].status == "pending_configuration"
     assert (tmp_path / "voice_samples" / f"{asset.asset_id}.mp3").read_bytes() == b"authorised-sample"

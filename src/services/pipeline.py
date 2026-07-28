@@ -81,6 +81,17 @@ class PipelineService:
         config: dict[str, Any] | None = None,
     ) -> PipelineRun:
         """创建新的流水线执行记录。"""
+        run = self.build_run(keyword=keyword, config=config)
+        self.repository.save_pipeline_run(run)
+        return run
+
+    def build_run(
+        self,
+        *,
+        keyword: str,
+        config: dict[str, Any] | None = None,
+    ) -> PipelineRun:
+        """Build a run without persistence for an enclosing atomic transaction."""
         now = datetime.now().astimezone()
         run = PipelineRun(
             keyword=keyword,
@@ -94,7 +105,6 @@ class PipelineService:
             action="created",
             message="已创建生产流水线，等待开始执行。",
         )
-        self.repository.save_pipeline_run(run)
         return run
 
     def update_stage(
@@ -223,6 +233,12 @@ class PipelineService:
             raise ValueError("流水线不存在。")
         if run.status != PipelineRunStatus.PAUSED or run.current_stage != PipelineStage.HUMAN_REVIEW:
             raise ValueError("当前流水线不处于等待人工审核状态。")
+        if (
+            approved
+            and str(run.config.get("workflow") or "").startswith("production_batch_")
+            and not approved_text.strip()
+        ):
+            raise ValueError("文案确认必须提交非空的最终口播文本。")
 
         now = datetime.now().astimezone()
         existing = next((item for item in run.stages if item.stage == PipelineStage.HUMAN_REVIEW), None)
@@ -254,6 +270,8 @@ class PipelineService:
                     **run.config,
                     "approved_script_text": approved_text.strip()
                     or str(run.config.get("approved_script_text") or ""),
+                    "script_reviewed": bool(approved),
+                    "review_stage": "script",
                 },
                 "error_message": None if approved else (note.strip() or "人工审核要求返工。"),
             }
@@ -534,6 +552,15 @@ class PipelineService:
                     "review_state": "unapproved_asr",
                 },
             )
+            run = run.model_copy(
+                update={
+                    "config": {
+                        **run.config,
+                        "transcription_task_id": transcription.task_id,
+                    }
+                }
+            )
+            self.repository.save_pipeline_run(run)
         except TranscriptionError as exc:
             run = self.update_stage(
                 run,
@@ -543,6 +570,11 @@ class PipelineService:
             )
             return self.complete_run(run, success=False, error_message=exc.user_message)
 
+        if str(run.config.get("workflow") or "") == "production_batch_candidate":
+            return self.pause_for_transcript_review(
+                run=run,
+                transcription=transcription,
+            )
         return self.create_copywriting_review(
             run=run,
             transcription=transcription,
@@ -565,9 +597,10 @@ class PipelineService:
         target_length: int = 300,
         tone: str = "casual",
         variant_count: int = 2,
+        source_text_override: str = "",
     ) -> PipelineRun:
         """将一条真实转写改写为待客户确认的口播稿。"""
-        source_text = self._transcription_text(transcription)
+        source_text = source_text_override.strip() or self._transcription_text(transcription)
         try:
             run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
             rewrite_goal = (
@@ -617,6 +650,11 @@ class PipelineService:
                     "copywriting_task_id": copy_task.task_id,
                     "current_stage": PipelineStage.HUMAN_REVIEW,
                     "updated_at": datetime.now().astimezone(),
+                    "config": {
+                        **run.config,
+                        "review_stage": "script",
+                        "transcript_review_in_progress": False,
+                    },
                 }
             )
             self.repository.save_pipeline_run(paused)
@@ -630,6 +668,161 @@ class PipelineService:
                 error_message=error_msg,
             )
             return self.complete_run(run, success=False, error_message=error_msg)
+
+    def pause_for_transcript_review(
+        self,
+        *,
+        run: PipelineRun,
+        transcription: TranscriptionTask,
+    ) -> PipelineRun:
+        """候选和链接必须先确认真实转写，再允许调用文案改写。"""
+        now = datetime.now().astimezone()
+        run = self.update_stage(
+            run,
+            PipelineStage.HUMAN_REVIEW,
+            TaskStatus.RUNNING,
+            task_id=transcription.task_id,
+            outputs={
+                "transcription_task_id": transcription.task_id,
+                "review_stage": "transcript",
+                "instruction": "请先核对原转写，再生成改写文案。",
+            },
+        )
+        paused = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.HUMAN_REVIEW,
+                "updated_at": now,
+                "config": {
+                    **run.config,
+                    "review_stage": "transcript",
+                    "transcription_task_id": transcription.task_id,
+                    "transcript_reviewed": False,
+                },
+            }
+        )
+        paused = self._event(
+            paused,
+            action="transcript_review_required",
+            stage=PipelineStage.HUMAN_REVIEW,
+            message="原转写等待人工确认；尚未调用文案改写服务。",
+        )
+        self.repository.save_pipeline_run(paused)
+        return paused
+
+    def review_transcript(
+        self,
+        *,
+        run_id: str,
+        reviewer: str,
+        approved_text: str,
+        note: str = "",
+    ) -> PipelineRun:
+        """记录转写确认并生成待审核改写稿。"""
+        text = approved_text.strip()
+        if not text:
+            raise ValueError("转写确认必须提交非空的最终文本。")
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("流水线不存在。")
+        previously_approved = str(
+            run.config.get("approved_transcript_text") or ""
+        ).strip()
+        if bool(run.config.get("transcript_reviewed")):
+            if previously_approved != text:
+                raise ValueError("转写已使用另一版文本确认，不能重复提交不同内容。")
+            if (
+                run.status == PipelineRunStatus.PAUSED
+                and run.current_stage == PipelineStage.HUMAN_REVIEW
+                and run.config.get("review_stage") == "script"
+                and run.copywriting_task_id
+            ):
+                return run
+            if bool(run.config.get("transcript_review_in_progress")):
+                raise ValueError("转写已确认，改写稿正在生成，请勿重复提交。")
+        if (
+            run.status != PipelineRunStatus.PAUSED
+            or run.current_stage != PipelineStage.HUMAN_REVIEW
+            or run.config.get("review_stage") != "transcript"
+        ):
+            raise ValueError("当前流水线不处于转写确认阶段。")
+        task = self.repository.get_task(
+            str(run.config.get("transcription_task_id") or "")
+        )
+        if not isinstance(task, TranscriptionTask):
+            raise ValueError("找不到待确认的转写任务。")
+        claimed_at = datetime.now().astimezone()
+        reviewed = run.model_copy(
+            update={
+                "status": PipelineRunStatus.RUNNING,
+                "current_stage": PipelineStage.COPYWRITING,
+                "updated_at": claimed_at,
+                "config": {
+                    **run.config,
+                    "transcript_reviewed": True,
+                    "transcript_review_in_progress": True,
+                    "transcript_review_claimed_at": claimed_at.isoformat(),
+                    "approved_transcript_text": text,
+                    "transcript_reviewer": reviewer.strip(),
+                    "transcript_review_note": note.strip(),
+                },
+            }
+        )
+        reviewed = self._event(
+            reviewed,
+            action="transcript_review_approved",
+            stage=PipelineStage.HUMAN_REVIEW,
+            message="转写确认已通过，开始生成待审核口播稿。",
+            details={"reviewer": reviewer.strip(), "note": note.strip()},
+        )
+        if not self.repository.claim_pipeline_run_transition(
+            expected_run=run,
+            claimed_run=reviewed,
+        ):
+            current = self.get_run(run_id)
+            if current is not None:
+                current_text = str(
+                    current.config.get("approved_transcript_text") or ""
+                ).strip()
+                if (
+                    current_text == text
+                    and current.status == PipelineRunStatus.PAUSED
+                    and current.current_stage == PipelineStage.HUMAN_REVIEW
+                    and current.config.get("review_stage") == "script"
+                    and current.copywriting_task_id
+                ):
+                    return current
+                if (
+                    current_text == text
+                    and bool(
+                        current.config.get("transcript_review_in_progress")
+                    )
+                ):
+                    raise ValueError(
+                        "转写已确认，改写稿正在生成，请勿重复提交。"
+                    )
+            raise ValueError("转写审核状态已变化，请刷新后重试。")
+        profile = dict(reviewed.config.get("profile") or {})
+        request = dict(reviewed.config.get("candidate_request") or {})
+        return self.create_copywriting_review(
+            run=reviewed,
+            transcription=task,
+            platform=Platform.DOUYIN,
+            target_audience=str(
+                request.get("target_audience")
+                or profile.get("target_audience")
+                or ""
+            ),
+            style_prompt=str(
+                request.get("style_prompt")
+                or profile.get("script_style")
+                or ""
+            ),
+            target_length=int(request.get("target_length") or 300),
+            tone=str(request.get("tone") or "casual"),
+            variant_count=int(request.get("variant_count") or 2),
+            source_text_override=text,
+        )
 
     def pause_for_copy_review(
         self,
@@ -663,6 +856,11 @@ class PipelineService:
                 "status": PipelineRunStatus.PAUSED,
                 "current_stage": PipelineStage.HUMAN_REVIEW,
                 "updated_at": now,
+                "config": {
+                    **run.config,
+                    "review_stage": "script",
+                    "script_reviewed": False,
+                },
             }
         )
         paused = self._event(
@@ -1001,8 +1199,20 @@ class PipelineService:
         description: str = "",
         tags: list[str] | None = None,
         platforms: list[PublishPlatform] | None = None,
+        target_specs: list[dict[str, Any]] | None = None,
     ) -> list[PublishTarget]:
         """为多个平台构建发布目标。"""
+        if target_specs is not None:
+            return [
+                PublishTarget(
+                    platform=PublishPlatform(str(spec["platform"])),
+                    account_id=str(spec.get("account_id") or "") or None,
+                    title=title,
+                    description=description,
+                    tags=tags or [],
+                )
+                for spec in target_specs
+            ]
         if platforms is None:
             platforms = [
                 PublishPlatform.DOUYIN,

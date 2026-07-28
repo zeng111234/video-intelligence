@@ -95,6 +95,68 @@ def _secret(key: str, default: str = "") -> str:
     return _env(key) or _legacy_streamlit_secret(key) or default
 
 
+# ---------------------------------------------------------------------------
+# 云端智能剪辑配置
+# ---------------------------------------------------------------------------
+
+
+class VideoEditorProviderMode(StrEnum):
+    """新剪辑工作台的供应商模式。
+
+    该模式与全局 ASR_MODE 完全分离，防止云端剪辑在缺少配置时静默回退
+    到本地 Whisper，或把旧剪辑器的本地能力误报为云端已就绪。
+    """
+
+    SANDBOX = "sandbox"
+    ALIYUN = "aliyun"
+
+
+def _secret_int(key: str, default: int) -> int:
+    try:
+        return int(_secret(key, str(default)) or default)
+    except ValueError:
+        return default
+
+
+VIDEO_EDITOR_PROVIDER_MODE: VideoEditorProviderMode = VideoEditorProviderMode(
+    _secret("VIDEO_EDITOR_PROVIDER_MODE", "sandbox") or "sandbox"
+)
+VIDEO_EDITOR_PRICE_VERSION: str = _secret(
+    "VIDEO_EDITOR_PRICE_VERSION",
+    "aliyun-cn-mainland-2026-07-28",
+)
+VIDEO_EDITOR_QUOTE_TTL_SECONDS: int = max(
+    60,
+    _secret_int("VIDEO_EDITOR_QUOTE_TTL_SECONDS", 900),
+)
+
+# 百炼 Fun-ASR / qwen-flash
+DASHSCOPE_API_KEY: str = _secret("DASHSCOPE_API_KEY")
+ALIYUN_MODEL_STUDIO_WORKSPACE_ID: str = _secret(
+    "ALIYUN_MODEL_STUDIO_WORKSPACE_ID"
+)
+
+# OSS 与 MPS 必须在同一地域。凭证沿用阿里云 SDK 的标准环境变量名。
+ALIYUN_VIDEO_EDITOR_REGION: str = _secret(
+    "ALIYUN_VIDEO_EDITOR_REGION",
+    "cn-beijing",
+)
+ALIYUN_OSS_BUCKET: str = _secret("ALIYUN_OSS_BUCKET")
+ALIYUN_MPS_PIPELINE_ID: str = _secret("ALIYUN_MPS_PIPELINE_ID")
+ALIYUN_MPS_TEMPLATE_ID_720P: str = _secret(
+    "ALIYUN_MPS_TEMPLATE_ID_720P"
+)
+ALIYUN_MPS_TEMPLATE_ID_1080P: str = _secret(
+    "ALIYUN_MPS_TEMPLATE_ID_1080P"
+)
+ALIBABA_CLOUD_ACCESS_KEY_ID: str = _secret(
+    "ALIBABA_CLOUD_ACCESS_KEY_ID"
+)
+ALIBABA_CLOUD_ACCESS_KEY_SECRET: str = _secret(
+    "ALIBABA_CLOUD_ACCESS_KEY_SECRET"
+)
+
+
 # ASR 模式：sandbox / local / cloud（默认 sandbox）
 ASR_MODE: ASRMode = ASRMode(_env("ASR_MODE", "sandbox") or "sandbox")
 
@@ -249,3 +311,14 @@ COPYWRITING_MODEL: str = (
     or _secret("COPYWRITING_LLM_MODEL")
     or "deepseek-v4-flash"
 )
+_copywriting_estimated_cost_raw = _secret(
+    "COPYWRITING_ESTIMATED_REQUEST_COST_CNY"
+)
+try:
+    COPYWRITING_ESTIMATED_REQUEST_COST_CNY: float | None = (
+        max(0.0, float(_copywriting_estimated_cost_raw))
+        if _copywriting_estimated_cost_raw
+        else None
+    )
+except ValueError:
+    COPYWRITING_ESTIMATED_REQUEST_COST_CNY = None

@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -369,3 +370,39 @@ def test_publish_worker_claims_only_one_queued_task(tmp_path):
     assert first.status == TaskStatus.PAUSED
     remaining = [task for task in batch["tasks"] if service.get_task(task.task_id).status == TaskStatus.QUEUED]
     assert len(remaining) == 1
+
+
+def test_publish_worker_can_restart_on_a_new_event_loop():
+    worker = PublishWorker(
+        PublishService(
+            MockRepository(),
+            {"douyin": SandboxPublisher(PublishPlatform.DOUYIN)},
+        ),
+        interval_seconds=60,
+    )
+
+    async def cycle() -> None:
+        await worker.start()
+        await worker.stop()
+
+    asyncio.run(cycle())
+    asyncio.run(cycle())
+
+
+def test_publish_preflight_blocks_missing_video_file():
+    service = PublishService(
+        MockRepository(),
+        {"douyin": SandboxPublisher(PublishPlatform.DOUYIN)},
+    )
+    result = service.preflight(
+        video_path="/missing/final-video.mp4",
+        targets=[
+            PublishTarget(
+                platform=PublishPlatform.DOUYIN,
+                title="缺失成片",
+            )
+        ],
+    )
+
+    assert result["blocked"] is True
+    assert "文件不存在" in "；".join(result["issues"])

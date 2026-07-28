@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from project.backend.app.core import deps as backend_deps
 from project.backend.app.main import app
-from src.models import AvatarAsset, AvatarAssetKind, DataSource, HeatLevel, HeatResult, Platform, VideoCandidate, VideoMetricSnapshot
+from src.models import (
+    AvatarAsset,
+    AvatarAssetKind,
+    AvatarTask,
+    CopywritingTask,
+    DataSource,
+    HeatLevel,
+    HeatResult,
+    PipelineRunStatus,
+    PipelineStage,
+    Platform,
+    ProductionBatchStatus,
+    TaskStatus,
+    TranscriptSegment,
+    TranscriptionTask,
+    VideoCandidate,
+    VideoMetricSnapshot,
+)
 from src.repositories.mock import MockRepository
+from src.repositories.sqlite import SQLiteRepository
 from src.services.pipeline import PipelineService
+from src.services.pipeline_worker import PipelineWorker
 from src.services.production import ProductionService
 
 
@@ -97,6 +117,7 @@ def test_production_api_creates_profile_and_pending_batch(tmp_path):
 
             batch_response = client.post(
                 "/api/v1/production/batches",
+                headers={"Idempotency-Key": "create-pending-batch"},
                 json={
                     "name": "API 批次",
                     "profile_id": profile["profile_id"],
@@ -154,14 +175,18 @@ def test_production_api_accepts_mixed_source_items(tmp_path):
     try:
         with TestClient(app) as client:
             profile = client.post("/api/v1/production/profiles", json={"name": "混合 API 配方"}).json()
-            response = client.post("/api/v1/production/batches", json={
-                "name": "API 混合批次",
-                "profile_id": profile["profile_id"],
-                "items": [
-                    {"source_type": "brief", "source_value": "讲解 AI 获客"},
-                    {"source_type": "script", "source_value": "已写好的口播稿"},
-                ],
-            })
+            response = client.post(
+                "/api/v1/production/batches",
+                headers={"Idempotency-Key": "create-mixed-batch"},
+                json={
+                    "name": "API 混合批次",
+                    "profile_id": profile["profile_id"],
+                    "items": [
+                        {"source_type": "brief", "source_value": "讲解 AI 获客"},
+                        {"source_type": "script", "source_value": "已写好的口播稿"},
+                    ],
+                },
+            )
     finally:
         app.dependency_overrides.pop(backend_deps.get_production_service, None)
         app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
@@ -222,6 +247,28 @@ class _MediaPreview:
         )
 
 
+class _UnknownMediaPreview(_MediaPreview):
+    def preview(self, candidate):
+        preview = super().preview(candidate)
+        return SimpleNamespace(
+            **{
+                **preview.__dict__,
+                "estimated_cost_cny": None,
+            }
+        )
+
+
+class _PaidLinkPreview:
+    def preview(self, share_text):
+        assert share_text.startswith("https://")
+        return SimpleNamespace(
+            parser_enabled=False,
+            parser_message="本机解析未启用",
+            oneapi_fallback_available=True,
+            oneapi_estimated_cost_cny=0.3,
+        )
+
+
 class _Assets:
     def list_assets(self):
         return [
@@ -240,6 +287,139 @@ class _Publish:
         return [{"platform": "douyin", "display_name": "抖音", "enabled": False, "manual_fallback": True, "mode": "manual"}]
 
 
+class _LocalBrowserPublish:
+    def available_platforms(self):
+        return [
+            {
+                "platform": "douyin",
+                "display_name": "抖音本机发布",
+                "enabled": True,
+                "manual_fallback": True,
+                "mode": "local_browser",
+                "requires_account": True,
+                "provider_name": "douyin_local_browser",
+            }
+        ]
+
+
+class _Copywriting:
+    def __init__(self):
+        self.rewrite_calls = 0
+
+    def capabilities(self):
+        return {
+            "provider_name": "sandbox_copywriting",
+            "mode": "sandbox",
+            "enabled": True,
+            "estimated_cost_cny": 0.0,
+            "missing_configuration": [],
+        }
+
+    def generate(self, **kwargs):
+        source_text = kwargs["content_brief"]
+        return self.rewrite(source_text=source_text)
+
+    def rewrite(self, **kwargs):
+        self.rewrite_calls += 1
+        now = datetime.now().astimezone()
+        source_text = kwargs["source_text"]
+        result = f"改写稿：{source_text}"
+        return CopywritingTask(
+            task_id="copy-transcript-review",
+            title="转写改写",
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            source_text=source_text,
+            result_text=result,
+            result_variants=[result],
+            source_task_id=kwargs.get("source_task_id"),
+            is_mock=True,
+        )
+
+
+class _UnknownCostCopywriting(_Copywriting):
+    def capabilities(self):
+        return {
+            "provider_name": "paid_llm",
+            "mode": "production",
+            "enabled": True,
+            "estimated_cost_cny": None,
+            "missing_configuration": [],
+        }
+
+
+class _FailingCopywriting(_Copywriting):
+    def rewrite(self, **kwargs):
+        self.rewrite_calls += 1
+        now = datetime.now().astimezone()
+        return CopywritingTask(
+            task_id="copy-review-failed",
+            title="改写失败",
+            status=TaskStatus.FAILED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            source_text=kwargs["source_text"],
+            error_message="供应商改写失败",
+            is_mock=True,
+        )
+
+
+def test_share_link_preflight_prices_and_records_paid_fallback(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        link_transcription_service=_PaidLinkPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="链接生产配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="链接单条任务",
+        profile_id=profile.profile_id,
+        source_items=[
+            {
+                "source_type": "share_link",
+                "source_value": "https://v.douyin.com/example/",
+            }
+        ],
+        pipeline_service=pipeline_service,
+    )
+    options = {
+        "rights_holder": "测试公司",
+        "rights_confirmed": True,
+        "publish_platforms": ["douyin"],
+        "concurrency": 1,
+        "max_total_cost_cny": 1,
+        "paid_actions_confirmed": True,
+    }
+
+    preflight = service.preflight_batch(batch.batch_id, **options)
+    started = service.start_batch(
+        batch.batch_id,
+        options=options,
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(started.items[0].run_id)
+
+    assert preflight["cost_known"] is True
+    assert preflight["estimated_cost_cny"] == 0.3
+    assert preflight["items"][0]["use_paid_fallback"] is True
+    assert run is not None
+    assert run.config["use_paid_fallback"] is True
+
+
 def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_path):
     repository = MockRepository()
     ready = _candidate("candidate-ready")
@@ -251,6 +431,7 @@ def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_p
         repository,
         tmp_path / "production",
         media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
         avatar_service=_Assets(),
         template_service=_Templates(),
         publish_service=_Publish(),
@@ -269,7 +450,14 @@ def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_p
     )
     started = service.start_batch(
         batch.batch_id,
-        options={"rights_holder": "测试公司", "rights_confirmed": True, "publish_platforms": ["douyin"], "concurrency": 1},
+        options={
+            "rights_holder": "测试公司",
+            "rights_confirmed": True,
+            "publish_platforms": ["douyin"],
+            "concurrency": 1,
+            "max_total_cost_cny": 1,
+            "paid_actions_confirmed": True,
+        },
         pipeline_service=pipeline_service,
     )
 
@@ -289,6 +477,7 @@ def test_batch_preflight_isolates_an_invalid_single_item_profile_override(tmp_pa
         repository,
         tmp_path / "production",
         media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
         avatar_service=_Assets(),
         template_service=_Templates(),
         publish_service=_Publish(),
@@ -330,6 +519,7 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
         repository,
         tmp_path / "production",
         media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
         avatar_service=_Assets(),
         template_service=_Templates(),
         publish_service=_Publish(),
@@ -341,10 +531,23 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
             profile = client.post("/api/v1/production/profiles", json={
                 "name": "API 启动配方", "avatar_id": "avatar-owner", "voice_id": "voice-owner", "edit_template_id": "template-professional",
             }).json()
-            batch = client.post("/api/v1/production/batches", json={
-                "name": "API 一键批次", "profile_id": profile["profile_id"], "candidate_ids": [candidate.video_id],
-            }).json()
-            body = {"rights_holder": "测试公司", "rights_confirmed": True, "publish_platforms": ["douyin"], "concurrency": 1}
+            batch = client.post(
+                "/api/v1/production/batches",
+                headers={"Idempotency-Key": "create-api-ready"},
+                json={
+                    "name": "API 一键批次",
+                    "profile_id": profile["profile_id"],
+                    "candidate_ids": [candidate.video_id],
+                },
+            ).json()
+            body = {
+                "rights_holder": "测试公司",
+                "rights_confirmed": True,
+                "publish_platforms": ["douyin"],
+                "concurrency": 1,
+                "max_total_cost_cny": 1,
+                "paid_actions_confirmed": True,
+            }
             preflight = client.post(f"/api/v1/production/batches/{batch['batch_id']}/preflight", json=body)
             started = client.post(
                 f"/api/v1/production/batches/{batch['batch_id']}/start",
@@ -360,3 +563,1129 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
     assert started.status_code == 200, started.text
     assert started.json()["status"] == "running"
     assert started.json()["items"][0]["status"] == "queued"
+
+
+def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-transcript-gate")
+    repository.save_candidate(candidate)
+    copywriting = _Copywriting()
+    pipeline_service = PipelineService(
+        repository,
+        None,
+        copywriting,
+        None,
+        None,
+    )
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="转写闸门配方")
+    batch = service.create_batch(
+        name="转写闸门批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    transcription = TranscriptionTask(
+        task_id="transcription-workspace",
+        title="候选转写",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="candidate.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        segments=[
+            TranscriptSegment(text="原始转写第一句", confidence=0.55, needs_review=True),
+            TranscriptSegment(text="原始转写第二句", confidence=0.95),
+        ],
+        uncertain_segment_count=1,
+        is_mock=True,
+    )
+    repository.save_task(transcription)
+    run = pipeline_service.update_stage(
+        run,
+        PipelineStage.TRANSCRIPTION,
+        TaskStatus.SUCCEEDED,
+        task_id=transcription.task_id,
+    )
+    run = run.model_copy(
+        update={
+            "config": {
+                **run.config,
+                "transcription_task_id": transcription.task_id,
+            }
+        }
+    )
+    repository.save_pipeline_run(run)
+    pipeline_service.pause_for_transcript_review(
+        run=run,
+        transcription=transcription,
+    )
+
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    try:
+        with TestClient(app) as client:
+            workspace = client.get(
+                f"/api/v1/production/batches/{batch.batch_id}/workspace"
+            )
+            empty_review = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "transcript",
+                    "reviewer": "审核员",
+                    "items": [{"run_id": run.run_id, "approved_text": "  "}],
+                },
+            )
+            transcript_review = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "transcript",
+                    "reviewer": "审核员",
+                    "items": [
+                        {
+                            "run_id": run.run_id,
+                            "approved_text": "确认后的真实转写",
+                        }
+                    ],
+                },
+            )
+            repeated_transcript_review = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "transcript",
+                    "reviewer": "审核员",
+                    "items": [
+                        {
+                            "run_id": run.run_id,
+                            "approved_text": "确认后的真实转写",
+                        }
+                    ],
+                },
+            )
+            script_review = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "script",
+                    "reviewer": "审核员",
+                    "items": [
+                        {
+                            "run_id": run.run_id,
+                            "approved_text": "确认后的最终口播稿",
+                        }
+                    ],
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(backend_deps.get_production_service, None)
+        app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
+
+    assert workspace.status_code == 200, workspace.text
+    item = workspace.json()["items"][0]
+    assert workspace.json()["next_action"] == "review_transcript"
+    assert item["reviews"]["transcript"]["draft_text"].startswith("原始转写")
+    assert item["reviews"]["transcript"]["low_confidence_count"] == 1
+    assert empty_review.status_code == 400
+    assert transcript_review.status_code == 200, transcript_review.text
+    assert transcript_review.json()["results"][0]["ok"] is True
+    assert repeated_transcript_review.json()["results"][0]["ok"] is True
+    assert copywriting.rewrite_calls == 1
+    assert script_review.status_code == 200, script_review.text
+    stored = repository.get_pipeline_run(run.run_id)
+    assert stored is not None
+    assert stored.config["transcript_reviewed"] is True
+    assert stored.config["script_reviewed"] is True
+    assert stored.config["approved_script_text"] == "确认后的最终口播稿"
+    assert stored.current_stage == PipelineStage.AVATAR_GENERATION
+
+
+def test_cost_preflight_blocks_unknown_unconfirmed_and_over_limit(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-cost-boundary")
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="费用边界配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="费用边界批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    base = {
+        "rights_holder": "测试公司",
+        "rights_confirmed": True,
+        "publish_platforms": ["douyin"],
+        "concurrency": 1,
+    }
+
+    unconfirmed = service.preflight_batch(batch.batch_id, **base)
+    over_limit = service.preflight_batch(
+        batch.batch_id,
+        **base,
+        max_total_cost_cny=0.1,
+        paid_actions_confirmed=True,
+    )
+    accepted = service.preflight_batch(
+        batch.batch_id,
+        **base,
+        max_total_cost_cny=1,
+        paid_actions_confirmed=True,
+    )
+    unknown_service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_UnknownMediaPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    unknown = unknown_service.preflight_batch(
+        batch.batch_id,
+        **base,
+        max_total_cost_cny=1,
+        paid_actions_confirmed=True,
+    )
+    with pytest.raises(ValueError, match="必须确认预计费用"):
+        service.start_batch(
+            batch.batch_id,
+            options=base,
+            pipeline_service=pipeline_service,
+        )
+
+    assert unconfirmed["cost_blocked"] is True
+    assert "必须确认预计费用" in "；".join(unconfirmed["cost_issues"])
+    assert over_limit["ready_count"] == 0
+    assert "超过本次上限" in "；".join(over_limit["cost_issues"])
+    assert accepted["cost_known"] is True
+    assert accepted["estimated_cost_cny"] == 0.2
+    assert accepted["ready_count"] == 1
+    assert unknown["cost_known"] is False
+    assert unknown["estimated_cost_cny"] is None
+    assert unknown["ready_count"] == 0
+
+
+def test_batch_create_and_start_idempotency_reuse_and_conflict(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-idempotency")
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    try:
+        with TestClient(app) as client:
+            profile = client.post(
+                "/api/v1/production/profiles",
+                json={
+                    "name": "幂等配方",
+                    "avatar_id": "avatar-owner",
+                    "voice_id": "voice-owner",
+                    "edit_template_id": "template-professional",
+                },
+            ).json()
+            create_body = {
+                "name": "幂等批次",
+                "profile_id": profile["profile_id"],
+                "candidate_ids": [candidate.video_id],
+            }
+            headers = {"Idempotency-Key": "production-create-idem"}
+            first_create = client.post(
+                "/api/v1/production/batches",
+                json=create_body,
+                headers=headers,
+            )
+            second_create = client.post(
+                "/api/v1/production/batches",
+                json=create_body,
+                headers=headers,
+            )
+            conflict_create = client.post(
+                "/api/v1/production/batches",
+                json={**create_body, "name": "不同批次"},
+                headers=headers,
+            )
+            batch_id = first_create.json()["batch_id"]
+            start_body = {
+                "rights_holder": "测试公司",
+                "rights_confirmed": True,
+                "publish_platforms": ["douyin"],
+                "concurrency": 1,
+                "max_total_cost_cny": 1,
+                "paid_actions_confirmed": True,
+            }
+            start_headers = {"Idempotency-Key": "production-start-idem"}
+            first_start = client.post(
+                f"/api/v1/production/batches/{batch_id}/start",
+                json=start_body,
+                headers=start_headers,
+            )
+            second_start = client.post(
+                f"/api/v1/production/batches/{batch_id}/start",
+                json=start_body,
+                headers=start_headers,
+            )
+            conflict_start = client.post(
+                f"/api/v1/production/batches/{batch_id}/start",
+                json={**start_body, "concurrency": 2},
+                headers=start_headers,
+            )
+    finally:
+        app.dependency_overrides.pop(backend_deps.get_production_service, None)
+        app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
+
+    assert first_create.status_code == 201, first_create.text
+    assert second_create.status_code == 201, second_create.text
+    assert first_create.json()["batch_id"] == second_create.json()["batch_id"]
+    assert conflict_create.status_code == 409
+    assert first_start.status_code == 200, first_start.text
+    assert second_start.status_code == 200, second_start.text
+    assert first_start.json()["batch_id"] == second_start.json()["batch_id"]
+    assert conflict_start.status_code == 409
+
+
+def test_publish_requires_output_review_and_persists_manual_targets_idempotently(
+    tmp_path,
+):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(name="发布配方")
+    batch = service.create_batch(
+        name="发布批次",
+        profile_id=profile.profile_id,
+        source_items=[
+            {
+                "source_type": "script",
+                "source_value": "最终口播文案",
+            }
+        ],
+        pipeline_service=pipeline_service,
+    )
+    video_path = tmp_path / "result.mp4"
+    video_path.write_bytes(b"video")
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    run = pipeline_service.update_stage(
+        run,
+        PipelineStage.VIDEO_EDITING,
+        TaskStatus.SUCCEEDED,
+        outputs={"video_path": str(video_path)},
+    )
+    run = run.model_copy(
+        update={
+            "status": PipelineRunStatus.PAUSED,
+            "current_stage": PipelineStage.PUBLISHING,
+            "config": {
+                **run.config,
+                "approved_script_text": "最终口播文案",
+                "video_path": str(video_path),
+                "output_reviewed": False,
+            },
+        }
+    )
+    repository.save_pipeline_run(run)
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    publish_body = {
+        "run_ids": [run.run_id],
+        "targets": [
+            {
+                "platform": "douyin",
+                "use_manual_fallback": True,
+            }
+        ],
+        "confirmation_accepted": True,
+    }
+    try:
+        with TestClient(app) as client:
+            blocked = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish/preflight",
+                json=publish_body,
+            )
+            reviewed = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "output",
+                    "reviewer": "成片审核员",
+                    "items": [{"run_id": run.run_id}],
+                },
+            )
+            ready = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish/preflight",
+                json=publish_body,
+            )
+            workspace_ready = client.get(
+                f"/api/v1/production/batches/{batch.batch_id}/workspace"
+            )
+            headers = {"Idempotency-Key": "production-publish-idem"}
+            confirmed = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish",
+                json=publish_body,
+                headers=headers,
+            )
+            repeated = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish",
+                json=publish_body,
+                headers=headers,
+            )
+            conflict = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish",
+                json={
+                    **publish_body,
+                    "targets": [
+                        {
+                            "platform": "kuaishou",
+                            "use_manual_fallback": True,
+                        }
+                    ],
+                },
+                headers=headers,
+            )
+            workspace = client.get(
+                f"/api/v1/production/batches/{batch.batch_id}/workspace"
+            )
+    finally:
+        app.dependency_overrides.pop(backend_deps.get_production_service, None)
+        app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
+
+    assert blocked.status_code == 200
+    assert blocked.json()["blocked"] is True
+    assert "成片复核" in blocked.json()["items"][0]["issues"][0]
+    assert reviewed.status_code == 200, reviewed.text
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["blocked"] is False
+    assert ready.json()["items"][0]["resolved_targets"][0]["mode"] == "manual"
+    assert workspace_ready.status_code == 200, workspace_ready.text
+    assert workspace_ready.json()["current_stage"] == "publish"
+    assert workspace_ready.json()["next_action"] == "publish"
+    assert "publish" in workspace_ready.json()["allowed_actions"]
+    assert confirmed.status_code == 200, confirmed.text
+    assert repeated.status_code == 200, repeated.text
+    assert confirmed.json()["batch_id"] == repeated.json()["batch_id"]
+    assert conflict.status_code == 409
+    assert workspace.status_code == 200, workspace.text
+    assert workspace.json()["items"][0]["publish"]["confirmed"] is True
+    assert workspace.json()["next_action"] == "wait"
+
+
+def test_retry_failed_uses_safe_stage_and_blocks_unknown_or_confirmed_publish(
+    tmp_path,
+):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="安全重试配方")
+    batch = service.create_batch(
+        name="安全重试批次",
+        profile_id=profile.profile_id,
+        source_items=[
+            {"source_type": "script", "source_value": "第一条口播稿"},
+            {"source_type": "script", "source_value": "第二条口播稿"},
+            {"source_type": "script", "source_value": "第三条口播稿"},
+        ],
+        pipeline_service=pipeline_service,
+    )
+    now = datetime.now().astimezone()
+    succeeded_avatar = CopywritingTask(
+        task_id="avatar-result-known",
+        title="已完成数字人替身记录",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        result_text="ok",
+    )
+    unknown_avatar = succeeded_avatar.model_copy(
+        update={
+            "task_id": "avatar-result-unknown",
+            "status": TaskStatus.OUTCOME_UNKNOWN,
+        }
+    )
+    repository.save_task(succeeded_avatar)
+    repository.save_task(unknown_avatar)
+    safe_run = repository.get_pipeline_run(batch.items[0].run_id)
+    unknown_run = repository.get_pipeline_run(batch.items[1].run_id)
+    publish_run = repository.get_pipeline_run(batch.items[2].run_id)
+    assert safe_run and unknown_run and publish_run
+    repository.save_pipeline_run(
+        safe_run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.VIDEO_EDITING,
+                "avatar_task_id": succeeded_avatar.task_id,
+                "error_message": "剪辑失败",
+            }
+        )
+    )
+    repository.save_pipeline_run(
+        unknown_run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "avatar_task_id": unknown_avatar.task_id,
+                "error_message": "供应商结果未知",
+            }
+        )
+    )
+    repository.save_pipeline_run(
+        publish_run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.PUBLISHING,
+                "config": {**publish_run.config, "publish_confirmed": True},
+                "error_message": "发布结果待核对",
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    retried = service.retry_failed(
+        batch.batch_id,
+        pipeline_service=pipeline_service,
+    )
+
+    assert retried.items[0].status.value == "queued"
+    resumed = repository.get_pipeline_run(safe_run.run_id)
+    assert resumed is not None
+    assert resumed.status == PipelineRunStatus.RUNNING
+    assert resumed.current_stage == PipelineStage.AVATAR_GENERATION
+    assert retried.items[1].status.value == "blocked"
+    assert "结果未知" in retried.items[1].blocked_reasons[0]
+    assert retried.items[2].status.value == "blocked"
+    assert "已经确认发布" in retried.items[2].blocked_reasons[0]
+
+
+def test_retry_repairs_a_legacy_avatar_attempt_that_never_reached_provider(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="旧重试修复配方")
+    batch = service.create_batch(
+        name="旧重试修复批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "确认后的口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    initial_avatar = AvatarTask(
+        task_id="avatar-initial-failed",
+        title="首次失败数字人",
+        status=TaskStatus.FAILED,
+        progress=0,
+        created_at=now,
+        updated_at=now,
+        script_text="确认后的口播稿",
+        avatar_id="avatar-a",
+        avatar_name="形象",
+        voice_id="voice-a",
+        voice_name="音色",
+        rights_holder="测试公司",
+        rights_confirmed_at=now,
+        idempotency_key=f"worker-avatar-{run.run_id}",
+        provider_name="shuying_legacy_cloud",
+        error_message="供应商拒绝请求",
+    )
+    repository.save_task(initial_avatar)
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "avatar_task_id": initial_avatar.task_id,
+                "error_message": initial_avatar.error_message,
+                "config": {
+                    **run.config,
+                    "stage_retry_counts": {"avatar_generation": 1},
+                },
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    repaired = service.retry_failed(batch.batch_id, pipeline_service=pipeline_service)
+
+    assert repaired.items[0].status.value == "queued"
+    resumed = repository.get_pipeline_run(run.run_id)
+    assert resumed is not None
+    assert resumed.status == PipelineRunStatus.PENDING
+    assert resumed.avatar_task_id is None
+    assert resumed.config["stage_retry_counts"]["avatar_generation"] == 1
+
+    rejected_retry = initial_avatar.model_copy(
+        update={
+            "task_id": "avatar-retry-rejected",
+            "idempotency_key": f"worker-avatar-{run.run_id}-retry-1",
+            "error_message": "任务名称不能超过50个字符",
+        }
+    )
+    repository.save_task(rejected_retry)
+    repository.save_pipeline_run(
+        resumed.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "avatar_task_id": rejected_retry.task_id,
+                "error_message": rejected_retry.error_message,
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    corrected = service.retry_failed(batch.batch_id, pipeline_service=pipeline_service)
+
+    assert corrected.items[0].status.value == "queued"
+    corrected_run = repository.get_pipeline_run(run.run_id)
+    assert corrected_run is not None
+    assert corrected_run.config["stage_retry_counts"]["avatar_generation"] == 2
+
+
+def test_manual_publish_fallback_creates_persistent_manual_ready_task(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    video_path = tmp_path / "result.mp4"
+    video_path.write_bytes(b"video")
+    run = pipeline_service.create_run(
+        keyword="人工发布包",
+        config={
+            "workflow": "production_batch_script",
+            "output_reviewed": True,
+            "publish_confirmed": True,
+            "video_path": str(video_path),
+            "approved_script_text": "最终口播文案",
+            "publish_targets": [
+                {
+                    "platform": "douyin",
+                    "account_id": None,
+                    "mode": "manual",
+                    "display_name": "抖音人工发布助手",
+                    "use_manual_fallback": True,
+                },
+                {
+                    "platform": "bilibili",
+                    "account_id": None,
+                    "mode": "manual",
+                    "display_name": "Bilibili 人工发布助手",
+                    "use_manual_fallback": True,
+                },
+            ],
+        },
+    )
+    run = run.model_copy(
+        update={
+            "status": PipelineRunStatus.PENDING,
+            "current_stage": PipelineStage.PUBLISHING,
+        }
+    )
+    repository.save_pipeline_run(run)
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=_Publish(),
+        template_service=None,
+        production_service=None,
+    )
+
+    worker._submit_publish(run)
+
+    stored = repository.get_pipeline_run(run.run_id)
+    assert stored is not None
+    assert stored.status == PipelineRunStatus.PAUSED
+    assert len(stored.publish_task_ids) == 2
+    publish_tasks = [
+        repository.get_task(task_id) for task_id in stored.publish_task_ids
+    ]
+    assert all(task is not None for task in publish_tasks)
+    assert {task.target.platform.value for task in publish_tasks} == {
+        "douyin",
+        "bilibili",
+    }
+    assert all(task.publish_status.value == "manual_ready" for task in publish_tasks)
+    assert all(task.source_pipeline_run_id == run.run_id for task in publish_tasks)
+
+
+def test_real_publish_requires_ready_and_auto_publish_authorized_account(
+    tmp_path,
+    monkeypatch,
+):
+    from src.services import publish_accounts
+
+    account = SimpleNamespace(
+        account_id="pubacc-test",
+        platform="douyin",
+        name="公司主号",
+        status="ready",
+        auto_publish_authorized=False,
+    )
+    manager = SimpleNamespace(
+        get=lambda account_id, platform: account,
+        status=lambda account_id: account,
+    )
+    monkeypatch.setattr(
+        publish_accounts,
+        "publish_account_manager",
+        manager,
+    )
+    service = ProductionService(
+        MockRepository(),
+        tmp_path / "production",
+        publish_service=_LocalBrowserPublish(),
+    )
+    request = [
+        {
+            "platform": "douyin",
+            "account_id": account.account_id,
+            "use_manual_fallback": True,
+        }
+    ]
+
+    fallback, issues = service._resolve_publish_targets(request)
+    blocked, blocked_issues = service._resolve_publish_targets(
+        [{**request[0], "use_manual_fallback": False}]
+    )
+    account.auto_publish_authorized = True
+    real, real_issues = service._resolve_publish_targets(request)
+
+    assert not issues
+    assert fallback[0]["mode"] == "manual"
+    assert blocked == []
+    assert "明确授权自动发布" in blocked_issues[0]
+    assert not real_issues
+    assert real[0]["mode"] == "real"
+    assert real[0]["account_id"] == account.account_id
+
+
+def test_paid_llm_unknown_cost_blocks_brief_preflight(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        copywriting_service=_UnknownCostCopywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="未知文案费用",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="未知文案费用批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "brief", "source_value": "讲解企业获客"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        max_total_cost_cny=10,
+        paid_actions_confirmed=True,
+    )
+
+    assert preflight["cost_known"] is False
+    assert preflight["ready_count"] == 0
+    assert "文案生成" in "；".join(preflight["cost_issues"])
+
+
+def test_workspace_cost_quote_unblocks_unknown_copywriting_cost(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        copywriting_service=_UnknownCostCopywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="已报价文案",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    service.configure_workspace(
+        rights_holder="测试公司",
+        agreement_accepted=True,
+        default_profile_id=profile.profile_id,
+        copywriting_estimated_cost_cny=0.05,
+        avatar_estimated_cost_cny=0,
+        bundled_compute=False,
+    )
+    batch = service.create_batch(
+        name="已报价文案批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "brief", "source_value": "讲解企业获客"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        paid_actions_confirmed=True,
+    )
+
+    assert preflight["cost_known"] is True
+    assert preflight["ready_count"] == 1
+    assert preflight["estimated_cost_cny"] == 0.05
+
+
+def test_bundled_compute_treats_unknown_provider_prices_as_included(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        copywriting_service=_UnknownCostCopywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="包算力配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    service.configure_workspace(
+        rights_holder="测试公司",
+        agreement_accepted=True,
+        default_profile_id=profile.profile_id,
+        bundled_compute=True,
+    )
+    batch = service.create_batch(
+        name="包算力批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "brief", "source_value": "讲解企业获客"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        paid_actions_confirmed=True,
+    )
+
+    assert preflight["cost_known"] is True
+    assert preflight["estimated_cost_cny"] == 0
+    assert preflight["ready_count"] == 1
+
+
+def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-review-failure")
+    repository.save_candidate(candidate)
+    copywriting = _FailingCopywriting()
+    pipeline_service = PipelineService(
+        repository, None, copywriting, None, None
+    )
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="审核失败配方")
+    batch = service.create_batch(
+        name="审核失败批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    transcription = TranscriptionTask(
+        task_id="transcription-review-failure",
+        title="转写",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="candidate.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        segments=[TranscriptSegment(text="真实转写", confidence=0.9)],
+        is_mock=True,
+    )
+    repository.save_task(transcription)
+    run = run.model_copy(
+        update={
+            "config": {
+                **run.config,
+                "transcription_task_id": transcription.task_id,
+            }
+        }
+    )
+    repository.save_pipeline_run(run)
+    pipeline_service.pause_for_transcript_review(
+        run=run,
+        transcription=transcription,
+    )
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = (
+        lambda: pipeline_service
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "transcript",
+                    "reviewer": "审核员",
+                    "items": [
+                        {
+                            "run_id": run.run_id,
+                            "approved_text": "确认后的真实转写",
+                        }
+                    ],
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(
+            backend_deps.get_production_service, None
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_pipeline_service, None
+        )
+
+    assert response.status_code == 200
+    assert response.json()["results"][0]["ok"] is False
+    assert "供应商改写失败" in response.json()["results"][0]["error"]
+    assert copywriting.rewrite_calls == 1
+
+
+def test_outcome_unknown_is_blocked_and_never_claimed(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="未知结果配方")
+    batch = service.create_batch(
+        name="未知结果批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "已确认口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    run = run.model_copy(
+        update={
+            "status": PipelineRunStatus.PAUSED,
+            "current_stage": PipelineStage.AVATAR_GENERATION,
+            "error_message": "数字人结果待核对",
+            "config": {
+                **run.config,
+                "outcome_unknown": True,
+                "recovery_blocked": True,
+            },
+        }
+    )
+    repository.save_pipeline_run(run)
+
+    synced = service.sync_batch(batch.batch_id)
+    assert synced is not None
+    repository.save_production_batch(
+        synced.model_copy(
+            update={
+                "is_paused": True,
+                "status": ProductionBatchStatus.PAUSED,
+            }
+        )
+    )
+    workspace = service.workspace(batch.batch_id)
+
+    assert synced.items[0].status.value == "blocked"
+    assert service.can_run(run.run_id) is False
+    assert workspace["status"] == "outcome_unknown"
+    assert workspace["next_action"] == "manual_review"
+    assert workspace["allowed_actions"] == []
+    assert workspace["retry_allowed"] is False
+
+
+def test_restart_blocks_uncertain_paid_stage_and_resumes_local_edit(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+    )
+    stale = pipeline_service.create_run(
+        keyword="重启未知阶段",
+        config={"workflow": "production_batch_candidate"},
+    ).model_copy(
+        update={
+            "status": PipelineRunStatus.RUNNING,
+            "current_stage": PipelineStage.COPYWRITING,
+            "updated_at": datetime.now().astimezone() - timedelta(minutes=3),
+            "config": {
+                "workflow": "production_batch_candidate",
+                "transcript_review_in_progress": True,
+            },
+        }
+    )
+    repository.save_pipeline_run(stale)
+    editing = pipeline_service.create_run(
+        keyword="本地剪辑恢复",
+        config={"workflow": "production_batch_script"},
+    ).model_copy(
+        update={
+            "status": PipelineRunStatus.RUNNING,
+            "current_stage": PipelineStage.VIDEO_EDITING,
+            "avatar_task_id": "avatar-existing",
+        }
+    )
+    repository.save_pipeline_run(editing)
+
+    blocked = worker._recover_interrupted_run(stale)
+    resumed = worker._recover_interrupted_run(editing)
+
+    assert blocked.status == PipelineRunStatus.PAUSED
+    assert blocked.config["outcome_unknown"] is True
+    assert blocked.config["recovery_blocked"] is True
+    assert resumed.status == PipelineRunStatus.RUNNING
+    assert resumed.current_stage == PipelineStage.AVATAR_GENERATION
+    assert resumed.avatar_task_id == "avatar-existing"
+
+
+def test_sqlite_production_operation_claim_is_persistent_and_resource_locked(
+    tmp_path,
+):
+    database = tmp_path / "production-idempotency.sqlite3"
+    first = SQLiteRepository(database)
+    second = SQLiteRepository(database)
+    created_at = datetime.now().astimezone().isoformat()
+
+    assert first.claim_production_operation(
+        operation_type="start",
+        idempotency_key="start-key-one",
+        request_hash="hash-one",
+        resource_id="batch-one",
+        created_at=created_at,
+    )
+    assert not second.claim_production_operation(
+        operation_type="start",
+        idempotency_key="start-key-one",
+        request_hash="hash-one",
+        resource_id="batch-one",
+        created_at=created_at,
+    )
+    assert not second.claim_production_operation(
+        operation_type="publish",
+        idempotency_key="publish-key-two",
+        request_hash="hash-two",
+        resource_id="batch-one",
+        created_at=created_at,
+    )
+    stored = second.get_production_operation(
+        operation_type="start",
+        idempotency_key="start-key-one",
+    )
+    assert stored is not None
+    assert stored["state"] == "pending"
+    assert stored["request_hash"] == "hash-one"
+
+
+def test_non_douyin_candidate_is_rejected_during_preflight(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-xhs").model_copy(
+        update={"platform": Platform.XIAOHONGSHU}
+    )
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="平台限制配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="平台限制批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        max_total_cost_cny=10,
+        paid_actions_confirmed=True,
+    )
+
+    assert preflight["ready_count"] == 0
+    assert "只支持抖音候选" in "；".join(
+        preflight["items"][0]["reasons"]
+    )
+
+
+def test_active_pipeline_scan_does_not_drop_items_after_five_hundred():
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    run_ids = [
+        pipeline_service.create_run(
+            keyword=f"待恢复任务 {index}",
+            config={"workflow": "unrelated_pending"},
+        ).run_id
+        for index in range(501)
+    ]
+
+    active = repository.list_active_pipeline_runs()
+
+    assert len(active) == 501
+    assert run_ids[0] in {run.run_id for run in active}

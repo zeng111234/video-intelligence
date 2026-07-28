@@ -7,27 +7,23 @@ import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { SearchOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { getModKey } from "../hooks/useKeyboardShortcuts";
+import { NAVIGATION_ITEMS } from "../navigation";
 
 interface SearchItem {
   key: string;
   label: string;
   path: string;
   group: string;
+  keywords: string[];
 }
 
-const ALL_ITEMS: SearchItem[] = [
-  { key: "dashboard", label: "数据仪表盘", path: "/dashboard", group: "核心功能" },
-  { key: "candidates", label: "候选检索", path: "/candidates", group: "核心功能" },
-  { key: "pipeline", label: "生产批次", path: "/pipeline", group: "核心功能" },
-  { key: "transcription", label: "语音转写", path: "/transcription", group: "核心功能" },
-  { key: "tasks", label: "任务中心", path: "/tasks", group: "核心功能" },
-  { key: "analytics", label: "深度分析", path: "/analytics", group: "高级功能" },
-  { key: "ai-copy", label: "AI文案生成", path: "/ai-copy", group: "高级功能" },
-  { key: "avatar", label: "数字人生成", path: "/avatar", group: "高级功能" },
-  { key: "publish", label: "多平台发布", path: "/publish", group: "高级功能" },
-  { key: "crawler", label: "关键词爬虫", path: "/crawler", group: "高级功能" },
-  { key: "admin", label: "系统设置", path: "/admin", group: "系统" },
-];
+const ALL_ITEMS: SearchItem[] = NAVIGATION_ITEMS.filter((item) => !item.disabled).map((item) => ({
+  key: item.id,
+  label: item.label,
+  path: item.path,
+  group: item.section,
+  keywords: item.keywords || [],
+}));
 
 interface Props {
   open: boolean;
@@ -45,7 +41,10 @@ export default function GlobalSearchModal({ open, onClose }: Props) {
     if (!query.trim()) return ALL_ITEMS;
     const q = query.toLowerCase();
     return ALL_ITEMS.filter(
-      (item) => item.label.toLowerCase().includes(q) || item.path.includes(q)
+      (item) =>
+        item.label.toLowerCase().includes(q) ||
+        item.path.includes(q) ||
+        item.keywords.some((keyword) => keyword.toLowerCase().includes(q))
     );
   }, [query]);
 

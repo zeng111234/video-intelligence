@@ -14,8 +14,8 @@ import {
   Modal,
   Popconfirm,
   Progress,
+  Radio,
   Row,
-  Select,
   Slider,
   Space,
   Tag,
@@ -27,7 +27,6 @@ import {
   CameraOutlined,
   CheckCircleOutlined,
   DeleteOutlined,
-  CloudSyncOutlined,
   DownloadOutlined,
   ExclamationCircleOutlined,
   PlayCircleOutlined,
@@ -39,29 +38,32 @@ import {
 } from "@ant-design/icons";
 import {
   createAvatarJob,
+  createProductShowcaseJob,
   deleteTask,
   downloadAvatarJobMedia,
   getAvatarCapabilities,
   getAvatarJob,
+  getVideoEditorJob,
   listAvatarAssets,
   listAvatarJobs,
   trainCloudAvatar,
   trainCloudVoice,
   uploadAvatarAsset,
+  uploadVideoEditorVisualAsset,
 } from "../api/client";
-import type { AvatarAsset, AvatarCapability, AvatarJob, AvatarProfile } from "../api/types";
+import type {
+  AvatarAsset,
+  AvatarCapability,
+  AvatarJob,
+  AvatarProfile,
+  VideoEditorJob,
+  VideoEditorVisualAsset,
+} from "../api/types";
 import { useToast } from "../components/Toast";
 import { useSearchParams } from "react-router-dom";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
-
-const TARGET_PLATFORMS = [
-  { label: "抖音", value: "douyin" },
-  { label: "快手", value: "kuaishou" },
-  { label: "视频号", value: "wechat_channels" },
-  { label: "小红书", value: "xiaohongshu" },
-];
 
 const TERMINAL_STATUSES = new Set([
   "succeeded",
@@ -112,6 +114,8 @@ export default function AvatarPage() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [recording, setRecording] = useState(false);
+  const [avatarLibraryOpen, setAvatarLibraryOpen] = useState(false);
+  const [voiceLibraryOpen, setVoiceLibraryOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState("");
@@ -119,6 +123,14 @@ export default function AvatarPage() {
   const [playbackJob, setPlaybackJob] = useState<AvatarJob | null>(null);
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
+  const [productShowcaseOpen, setProductShowcaseOpen] = useState(false);
+  const [productShowcaseSource, setProductShowcaseSource] = useState<AvatarJob | null>(null);
+  const [productAsset, setProductAsset] = useState<VideoEditorVisualAsset | null>(null);
+  const [backgroundAsset, setBackgroundAsset] = useState<VideoEditorVisualAsset | null>(null);
+  const [productLayout, setProductLayout] = useState<"avatar_left_product_right" | "product_canvas_avatar_pip">("avatar_left_product_right");
+  const [visualUploading, setVisualUploading] = useState<"product" | "background" | null>(null);
+  const [productShowcaseSubmitting, setProductShowcaseSubmitting] = useState(false);
+  const [productShowcaseJob, setProductShowcaseJob] = useState<VideoEditorJob | null>(null);
   const currentTaskRef = useRef<HTMLDivElement>(null);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -131,7 +143,6 @@ export default function AvatarPage() {
   const [voiceId, setVoiceId] = useState<string>();
   const [profileId, setProfileId] = useState("default");
   const [speechRate, setSpeechRate] = useState(1);
-  const [targetPlatforms, setTargetPlatforms] = useState<string[]>(["douyin"]);
 
   const avatars = useMemo(
     () => assets.filter((item) => item.kind === "avatar"),
@@ -175,8 +186,6 @@ export default function AvatarPage() {
     [profileId, profiles],
   );
 
-  const estimatedCost = selectedProfile?.estimated_cost_cny ?? null;
-
   const serviceUnavailable = Boolean(capability && !capability.enabled);
   const selectedProfileUnavailable = Boolean(selectedProfile && !selectedProfile.enabled);
   const supportsLocalUpload = capability?.provider_name === "local_avatar";
@@ -190,17 +199,6 @@ export default function AvatarPage() {
   const isReadyAsset = (asset: AvatarAsset) => asset.authorized && asset.status === "ready";
   const selectedAvatarReady = Boolean(selectedAvatar && isReadyAsset(selectedAvatar));
   const selectedVoiceReady = Boolean(selectedVoice && isReadyAsset(selectedVoice));
-
-  const estimatedCostText = useMemo(() => {
-    if (!capability) return "读取中";
-    if (capability.mode === "sandbox") return "演示任务，不计费";
-    if (capability.provider_name === "shuying_legacy_cloud" && estimatedCost === null) {
-      return "供应商未返回预估";
-    }
-    if (estimatedCost === null) return "待方案就绪后返回";
-    if (estimatedCost === 0) return "本地算力（不含硬件摊销）";
-    return `¥${estimatedCost.toFixed(2)}`;
-  }, [capability, estimatedCost]);
 
   const capabilityDescription = useMemo(() => {
     if (!capability) return "";
@@ -226,25 +224,13 @@ export default function AvatarPage() {
     if (capability.mode === "sandbox") {
       return "演示模式只用于验证任务提交、状态轮询和页面流程，不会产生真实成片或真实费用。";
     }
-    if (capability.provider_name === "local_avatar") {
-      return "当前支持上传本人照片和完整口播录音。录音驱动不是声音克隆：最终口播以录音内容为准。";
-    }
-    if (capability.provider_name === "shuying_legacy_cloud") {
-      return "公司数影云数字人已连接。文字转语音、音频上传和视频合成都在云端完成，不占用客户本地显卡；费用以公司接口实际结算为准。";
-    }
-    return "当前支持从已授权的公共形象和公共音色库中选择。自定义克隆入口将在后端能力接通后开放。";
+    return "";
   }, [capability, serviceUnavailable]);
-
-  const profileStatusText = selectedProfileUnavailable
-    ? capability?.provider_name === "shuying_legacy_cloud"
-      ? "公司云网关或授权素材尚未补齐。"
-      : "该方案尚未部署完成：请管理员先完成本地语音、视频模型与授权素材配置。"
-    : "";
 
   const submitButtonText = serviceUnavailable
     ? "数字人服务尚未配置"
     : selectedProfileUnavailable
-      ? "所选方案尚未就绪"
+      ? "生成服务尚未就绪"
       : capability?.mode === "sandbox"
         ? "创建演示任务（不生成真实成片）"
         : "提交数字人口播任务";
@@ -351,7 +337,7 @@ export default function AvatarPage() {
       return;
     }
     if (selectedProfile && !selectedProfile.enabled) {
-      toast.warning("所选生成方案尚未部署完成。");
+      toast.warning("当前生成服务尚未就绪。");
       return;
     }
     if (!scriptText.trim()) {
@@ -372,8 +358,6 @@ export default function AvatarPage() {
         speech_rate: speechRate,
         aspect_ratio: "9:16",
         resolution: "1080x1920",
-        publish_mode: "manual",
-        target_platforms: targetPlatforms,
         idempotency_key: buildIdempotencyKey(),
       });
       setJobs((items) => [job, ...items.filter((item) => item.task_id !== job.task_id)]);
@@ -391,7 +375,6 @@ export default function AvatarPage() {
     speechRate,
     sourceRevisionId,
     sourceTaskId,
-    targetPlatforms,
     toast,
     videoName,
     voiceId,
@@ -439,6 +422,73 @@ export default function AvatarPage() {
     setPlaybackJob(null);
     setPlaybackUrl(null);
   }, []);
+
+  const openProductShowcase = useCallback((job: AvatarJob) => {
+    if (job.status !== "succeeded" || job.is_mock || !job.result_url) {
+      toast.warning("只有已完成的真实数字人成片可以制作产品讲解视频。");
+      return;
+    }
+    setProductShowcaseSource(job);
+    setProductAsset(null);
+    setBackgroundAsset(null);
+    setProductLayout("avatar_left_product_right");
+    setProductShowcaseJob(null);
+    setProductShowcaseOpen(true);
+  }, [toast]);
+
+  const handleVisualAssetUpload = useCallback(async (
+    kind: "product" | "background",
+    file: File,
+  ) => {
+    setVisualUploading(kind);
+    try {
+      const asset = await uploadVideoEditorVisualAsset({
+        kind,
+        file,
+        rightsHolder: "本人/公司已授权",
+      });
+      if (kind === "product") setProductAsset(asset);
+      else setBackgroundAsset(asset);
+      toast.success(kind === "product" ? "商品主图已就绪" : "背景图已就绪");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "图片上传失败");
+    } finally {
+      setVisualUploading(null);
+    }
+    return false;
+  }, [toast]);
+
+  const handleCreateProductShowcase = useCallback(async () => {
+    if (!productShowcaseSource || !productAsset) {
+      toast.warning("请先上传商品主图。");
+      return;
+    }
+    setProductShowcaseSubmitting(true);
+    try {
+      const job = await createProductShowcaseJob({
+        sourceId: `avatar:${productShowcaseSource.task_id}`,
+        productAssetId: productAsset.asset_id,
+        backgroundAssetId: backgroundAsset?.asset_id,
+        layout: productLayout,
+      });
+      setProductShowcaseJob(job);
+      toast.success("产品讲解合成已开始，不会重新提交数字人任务。");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "创建产品讲解任务失败");
+    } finally {
+      setProductShowcaseSubmitting(false);
+    }
+  }, [backgroundAsset, productAsset, productLayout, productShowcaseSource, toast]);
+
+  useEffect(() => {
+    if (!productShowcaseJob || !["queued", "running"].includes(productShowcaseJob.status)) return undefined;
+    const timer = window.setTimeout(() => {
+      void getVideoEditorJob(productShowcaseJob.task_id)
+        .then(setProductShowcaseJob)
+        .catch((error) => toast.error(error instanceof Error ? error.message : "刷新产品讲解任务失败"));
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [productShowcaseJob, toast]);
 
   const handleAssetUpload = useCallback(async (kind: "avatar" | "voice", file: File) => {
     if (!supportsLocalUpload) {
@@ -608,6 +658,11 @@ export default function AvatarPage() {
     }
   }, [handleAssetUpload, recording, supportsLocalUpload, toast]);
 
+  const handleCloseVoiceLibrary = useCallback(() => {
+    if (recording) void handleRecordVoice();
+    setVoiceLibraryOpen(false);
+  }, [handleRecordVoice, recording]);
+
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
@@ -615,188 +670,102 @@ export default function AvatarPage() {
           <UserOutlined /> 数字人口播生成
         </Title>
         <Text type="secondary">
-          公共数字人 + 文本驱动 + 真实任务状态；成片后再生成四平台发布包。
+          选择形象和声音，输入口播文案后生成数字人成片。
         </Text>
       </div>
 
-      {capability && (
+      {capability && (serviceUnavailable || capability.mode === "sandbox") && (
         <Alert
           style={{ marginBottom: 16 }}
-          type={serviceUnavailable ? "warning" : capability.mode === "sandbox" ? "info" : "success"}
+          type={serviceUnavailable ? "warning" : "info"}
           showIcon
           message={
             serviceUnavailable
               ? "数字人供应商未配置，暂不能提交真实任务"
-              : capability.mode === "sandbox"
-                ? "当前为演示模式：可验证任务闭环，但不会生成真实成片"
-                : `${capability.display_name} 已可用`
+              : "当前为演示模式：可验证任务闭环，但不会生成真实成片"
           }
           description={capabilityDescription}
         />
       )}
 
-      {/* 公共素材选择 */}
+      {/* 生成配置与任务 */}
       <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
-        <Col xs={24} lg={6}>
-          <Card title={<Space><UserOutlined /> 形象素材</Space>} loading={loading}>
-            <Space direction="vertical" style={{ width: "100%" }} size={14}>
-              <div
-                role={supportsLocalUpload ? "button" : undefined}
-                tabIndex={supportsLocalUpload ? 0 : -1}
-                aria-label={supportsLocalUpload ? "点击打开摄像头拍照" : "当前选择的形象预览"}
-                onClick={supportsLocalUpload ? () => void handleOpenCamera() : undefined}
-                onKeyDown={(event) => {
-                  if (supportsLocalUpload && (event.key === "Enter" || event.key === " ")) void handleOpenCamera();
-                }}
-                style={{
-                  width: "100%",
-                  aspectRatio: "3/4",
-                  borderRadius: 12,
-                  background: "#f8fafc",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "2px dashed var(--border-default)",
-                  overflow: "hidden",
-                  cursor: canAddAvatarMaterial ? "pointer" : "not-allowed",
-                  opacity: canAddAvatarMaterial ? 1 : 0.6,
-                }}
-              >
-                {selectedAvatar?.preview_url ? (
-                  selectedAvatar.preview_type === "video" ? (
-                    <video
-                      src={selectedAvatar.preview_url}
-                      aria-label={`${selectedAvatar.name} 视频预览`}
-                      controls
-                      muted
-                      playsInline
-                      preload="metadata"
-                      style={{ width: "100%", height: "100%", objectFit: "cover", background: "#0f172a" }}
-                    />
-                  ) : (
-                    <img
-                      src={selectedAvatar.preview_url}
-                      alt={selectedAvatar.name}
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                  )
-                ) : (
-                  <>
-                    <UserOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />
-                    <Text strong>{selectedAvatar?.asset_id.startsWith("local-") ? "点击重新拍照" : "点击拍照"}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>使用摄像头录入本人形象</Text>
-                  </>
-                )}
-              </div>
-              <Select
-                value={avatarId}
-                onChange={setAvatarId}
-                options={avatars.map((item) => ({
-                  label: isReadyAsset(item) ? item.name : `${item.name}（${item.status === "training" ? "训练中" : item.status === "failed" ? "训练失败" : "未授权"}）`,
-                  value: item.asset_id,
-                  disabled: !isReadyAsset(item),
-                }))}
-                placeholder="选择公共形象"
-                style={{ width: "100%" }}
-              />
-              <Upload
-                accept={supportsLocalUpload ? "image/png,image/jpeg,image/webp" : "video/mp4,video/quicktime,.mp4,.mov"}
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void (supportsLocalUpload ? handleAssetUpload("avatar", file) : handleCloudAvatarTraining(file));
-                  return false;
-                }}
-              >
-                <Button
-                  block
-                  icon={<UploadOutlined />}
-                  loading={uploadingAvatar}
-                  disabled={supportsLocalUpload ? false : !supportsCloudAvatarTraining}
-                >
-                  {supportsLocalUpload ? "从设备上传照片" : "新增云形象（训练视频）"}
-                </Button>
-              </Upload>
-              {supportsLocalUpload && (
-                <Alert
-                  type="info"
-                  showIcon
-                  message="本人形象可直接使用"
-                  description="建议上传正脸清晰照片，需确认拥有肖像授权。"
-                />
-              )}
-            </Space>
-          </Card>
-        </Col>
-        <Col xs={24} lg={6}>
-          <Card title={<Space><AudioOutlined /> 声音素材</Space>} loading={loading}>
-            <Space direction="vertical" style={{ width: "100%" }} size={14}>
-              <div
-                role={supportsLocalUpload ? "button" : undefined}
-                tabIndex={supportsLocalUpload ? 0 : -1}
-                aria-label={supportsLocalUpload ? (recording ? "点击结束录音" : "点击开始录音") : "声音克隆样本说明"}
-                onClick={supportsLocalUpload ? () => void handleRecordVoice() : undefined}
-                onKeyDown={(event) => {
-                  if (supportsLocalUpload && (event.key === "Enter" || event.key === " ")) void handleRecordVoice();
-                }}
-                style={{
-                  width: "100%",
-                  height: 160,
-                  borderRadius: 12,
-                  background: "#f8fafc",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "2px dashed var(--border-default)",
-                  cursor: canAddVoiceMaterial ? "pointer" : "not-allowed",
-                  opacity: canAddVoiceMaterial ? 1 : 0.6,
-                }}
-              >
-                {recording ? <StopOutlined style={{ fontSize: 48, color: "#ef4444", marginBottom: 12 }} /> : <AudioOutlined style={{ fontSize: 48, color: "#64748b", marginBottom: 12 }} />}
-                <Text strong>{supportsLocalUpload ? (recording ? "正在录音，点击结束" : selectedVoice?.asset_id.startsWith("local-") ? "点击重新录音" : "点击开始录音") : "上传声音样本训练克隆音色"}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{supportsLocalUpload ? "浏览器会请求麦克风权限，结束后自动上传" : "声音克隆不会占用客户本地显卡"}</Text>
-              </div>
-              <Select
-                value={voiceId}
-                onChange={setVoiceId}
-                options={voices.map((item) => ({
-                  label: isReadyAsset(item) ? item.name : `${item.name}（${item.status === "training" ? "训练中" : item.status === "pending_configuration" ? "待训练" : item.status === "failed" ? "训练失败" : "未授权"}）`,
-                  value: item.asset_id,
-                  disabled: !isReadyAsset(item),
-                }))}
-                placeholder="选择公共音色"
-                style={{ width: "100%" }}
-              />
-              <Upload
-                accept={supportsLocalUpload ? "audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/webm,.wav,.mp3,.m4a,.webm" : "audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"}
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void (supportsLocalUpload ? handleAssetUpload("voice", file) : handleCloudVoiceTraining(file));
-                  return false;
-                }}
-              >
-                <Button
-                  block
-                  icon={<UploadOutlined />}
-                  loading={uploadingVoice}
-                  disabled={supportsLocalUpload ? false : !supportsVoiceSampleUpload}
-                >
-                  {supportsLocalUpload ? "从设备上传录音" : supportsVoiceCloning ? "克隆声音（上传样本）" : "上传声音样本"}
-                </Button>
-              </Upload>
-              <Alert
-                type="info"
-                showIcon
-                message={supportsLocalUpload ? "当前是录音驱动，不是声音克隆" : supportsVoiceCloning ? "训练个人克隆声音" : "可先上传声音样本"}
-                description={supportsLocalUpload ? "请上传已经念完整段文案的音频；选择本人录音驱动版后，视频会按这段录音生成。" : supportsVoiceCloning ? "支持 mp3、m4a、wav，30 秒以内、最大 20MB；请确认拥有声音授权。" : "样本会安全保存，不会自动产生克隆费用；补齐 /apiai/ai 声音凭证后再由你主动发起训练。"}
-              />
-            </Space>
-          </Card>
-        </Col>
         <Col xs={24} lg={12}>
           <Card title={<Space><RocketOutlined /> 生成配置</Space>} loading={loading}>
             <Space direction="vertical" size={16} style={{ width: "100%" }}>
+              <div>
+                <Text strong>素材</Text>
+                <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
+                  <Col xs={24} sm={12}>
+                    <Button
+                      block
+                      onClick={() => setAvatarLibraryOpen(true)}
+                      disabled={!avatars.length && !canAddAvatarMaterial}
+                      data-testid="avatar-library-trigger"
+                      style={{ height: 40, paddingInline: 10 }}
+                    >
+                      <span style={{ width: "100%", display: "flex", alignItems: "center", gap: 7 }}>
+                        <UserOutlined />
+                        <Text type="secondary">形象</Text>
+                        <Text strong ellipsis style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                          {selectedAvatar?.name || "未选择"}
+                        </Text>
+                        {selectedAvatar && (
+                          <Tag
+                            color={isReadyAsset(selectedAvatar) ? "success" : selectedAvatar.status === "training" ? "processing" : "error"}
+                            style={{ marginInlineEnd: 0 }}
+                          >
+                            {isReadyAsset(selectedAvatar) ? "可用" : selectedAvatar.status === "training" ? "训练中" : selectedAvatar.status === "failed" ? "失败" : "未就绪"}
+                          </Tag>
+                        )}
+                        <Text type="secondary">更换</Text>
+                      </span>
+                    </Button>
+                  </Col>
+                  <Col xs={24} sm={12}>
+                    <Button
+                      block
+                      onClick={() => setVoiceLibraryOpen(true)}
+                      disabled={!voices.length && !canAddVoiceMaterial}
+                      data-testid="voice-library-trigger"
+                      style={{ height: 40, paddingInline: 10 }}
+                    >
+                      <span style={{ width: "100%", display: "flex", alignItems: "center", gap: 7 }}>
+                        <AudioOutlined />
+                        <Text type="secondary">声音</Text>
+                        <Text strong ellipsis style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                          {selectedVoice?.name || "未选择"}
+                        </Text>
+                        {selectedVoice && (
+                          <Tag
+                            color={
+                              isReadyAsset(selectedVoice)
+                                ? "success"
+                                : selectedVoice.status === "training"
+                                  ? "processing"
+                                  : selectedVoice.status === "failed"
+                                    ? "error"
+                                    : "warning"
+                            }
+                            style={{ marginInlineEnd: 0 }}
+                          >
+                            {isReadyAsset(selectedVoice)
+                              ? "可用"
+                              : selectedVoice.status === "training"
+                                ? "训练中"
+                                : selectedVoice.status === "pending_configuration"
+                                  ? "待训练"
+                                  : selectedVoice.status === "failed"
+                                    ? "失败"
+                                    : "未就绪"}
+                          </Tag>
+                        )}
+                        <Text type="secondary">更换</Text>
+                      </span>
+                    </Button>
+                  </Col>
+                </Row>
+              </div>
               <div>
                 <Text strong>视频名称（选填）</Text>
                 <Input
@@ -827,33 +796,13 @@ export default function AvatarPage() {
                     已带入人工确认后的 LLM 口播稿，来源任务：{sourceTaskId}
                   </Text>
                 )}
-              </div>
-
-              <div>
-                <Text strong>生成方案</Text>
-                <Select
-                  value={selectedProfile?.profile_id}
-                  onChange={setProfileId}
-                  style={{ width: "100%", marginTop: 8 }}
-                  options={profiles.map((item) => ({
-                    value: item.profile_id,
-                    disabled: !item.enabled,
-                    label: `${item.display_name}${item.required_vram_gb ? ` · ${item.required_vram_gb}GB 显存` : ""}`,
-                  }))}
-                />
-                {selectedProfile && (
-                  <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
-                    {selectedProfile.description}
-                    {profileStatusText ? ` ${profileStatusText}` : ""}
-                  </Text>
-                )}
                 {selectedRecordedProfile && (
                   <Alert
                     style={{ marginTop: 8 }}
                     type="info"
                     showIcon
                     message="录音驱动模式"
-                    description="文案只用于任务记录和后续发布包，最终口播内容以你上传的完整录音为准。"
+                    description="文案只用于任务记录，最终口播内容以你上传的完整录音为准。"
                   />
                 )}
               </div>
@@ -873,28 +822,6 @@ export default function AvatarPage() {
                   step={0.1}
                 />
               </div>
-
-              <div>
-                <Text strong>目标平台</Text>
-                <Select
-                  mode="multiple"
-                  value={targetPlatforms}
-                  onChange={setTargetPlatforms}
-                  options={TARGET_PLATFORMS}
-                  style={{ width: "100%", marginTop: 8 }}
-                />
-              </div>
-
-              <Card size="small" style={{ background: "#f8fafc" }}>
-                <Space direction="vertical" size={4}>
-                  <Text>供应商：{capability?.display_name || "读取中"}</Text>
-                  <Text>
-                    预计费用：
-                    {estimatedCostText}
-                  </Text>
-                  <Text type="secondary">自动发布默认关闭，成片后先生成发布包和人工检查清单。</Text>
-                </Space>
-              </Card>
 
               <Button
                 type="primary"
@@ -919,24 +846,52 @@ export default function AvatarPage() {
         <Col xs={24} lg={12}>
           <div ref={currentTaskRef}>
             <Card
+              size="small"
               title={<Space><PlayCircleOutlined /> 当前任务</Space>}
-              extra={<Button size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
-              style={{ marginBottom: 24 }}
+              extra={<Button type="text" size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
+              style={{ marginBottom: 16 }}
             >
             {activeJob ? (
-              <Space direction="vertical" size={16} style={{ width: "100%" }}>
-                <Space wrap>
-                  <Tag color={statusColor(activeJob.status)}>
-                    {statusLabel(activeJob.status)}
-                  </Tag>
-                  {activeJob.is_mock && <Tag color="blue">演示</Tag>}
-                  <Text type="secondary">{activeJob.provider_name}</Text>
-                </Space>
-                <Progress
-                  percent={activeJob.progress}
-                  status={activeJob.status === "failed" ? "exception" : "active"}
-                />
-                <Paragraph style={{ marginBottom: 0 }}>{activeJob.stage}</Paragraph>
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                  <Space size={8} wrap style={{ flex: "1 1 180px", minWidth: 0 }}>
+                    <Tag color={statusColor(activeJob.status)}>
+                      {statusLabel(activeJob.status)}
+                    </Tag>
+                    {activeJob.is_mock && <Tag color="blue">演示</Tag>}
+                    <Text strong ellipsis style={{ maxWidth: 180 }}>{activeJob.title}</Text>
+                  </Space>
+                  {activeJob.result_url && (
+                    <Space size={0} wrap>
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<PlayCircleOutlined />}
+                        onClick={() => void handlePlayJob(activeJob)}
+                      >
+                        播放
+                      </Button>
+                      <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(activeJob)}>
+                        下载
+                      </Button>
+                      {!activeJob.is_mock && activeJob.status === "succeeded" && (
+                        <Button type="link" size="small" onClick={() => openProductShowcase(activeJob)}>
+                          产品讲解
+                        </Button>
+                      )}
+                    </Space>
+                  )}
+                </div>
+                {!TERMINAL_STATUSES.has(activeJob.status) && (
+                  <>
+                    <Progress
+                      percent={activeJob.progress}
+                      size="small"
+                      status={activeJob.status === "failed" ? "exception" : "active"}
+                    />
+                    <Text type="secondary">{activeJob.stage}</Text>
+                  </>
+                )}
                 {activeJob.error_message && (
                   <Alert
                     type="error"
@@ -945,28 +900,8 @@ export default function AvatarPage() {
                     message={activeJob.error_message}
                   />
                 )}
-                {activeJob.result_url ? (
-                  <Space wrap>
-                    <Button
-                      type="primary"
-                      icon={<PlayCircleOutlined />}
-                      onClick={() => void handlePlayJob(activeJob)}
-                    >
-                      在线播放成片
-                    </Button>
-                    <Button icon={<DownloadOutlined />} onClick={() => handleDownload(activeJob)}>
-                      下载真实成片
-                    </Button>
-                  </Space>
-                ) : activeJob.status === "succeeded" ? (
-                  <Alert type="warning" showIcon message="任务已成功，但媒体尚未转存或不可下载。" />
-                ) : (
-                  <Alert
-                    type="info"
-                    showIcon
-                    icon={<CloudSyncOutlined />}
-                    message="等待供应商完成后，这里会出现真实成片下载。"
-                  />
+                {activeJob.status === "succeeded" && !activeJob.result_url && (
+                  <Text type="secondary">任务已完成，成片暂不可下载。</Text>
                 )}
               </Space>
             ) : (
@@ -1037,6 +972,17 @@ export default function AvatarPage() {
                             下载
                           </Button>
                         )}
+                        {!item.is_mock && item.status === "succeeded" && item.result_url && (
+                          <Button
+                            type="link"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openProductShowcase(item);
+                            }}
+                          >
+                            产品讲解
+                          </Button>
+                        )}
                         <span onClick={(event) => event.stopPropagation()}>
                           <Popconfirm
                             title="删除这条数字人任务？"
@@ -1060,6 +1006,393 @@ export default function AvatarPage() {
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title="选择 / 添加形象"
+        open={avatarLibraryOpen}
+        onCancel={() => setAvatarLibraryOpen(false)}
+        width={860}
+        destroyOnClose
+        footer={
+          <Button type="primary" onClick={() => setAvatarLibraryOpen(false)}>
+            完成
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <div>
+            <Text strong style={{ display: "block", fontSize: 16 }}>形象库</Text>
+            <Text type="secondary">选择一个已就绪形象；主页只保留名称，不直接展示真人画面。</Text>
+          </div>
+
+          {avatars.length ? (
+            <Row gutter={[16, 16]} data-testid="avatar-library-grid">
+              {avatars.map((item) => {
+                const ready = isReadyAsset(item);
+                const selected = item.asset_id === avatarId;
+                const itemStatus = ready
+                  ? "可使用"
+                  : item.status === "training"
+                    ? "训练中"
+                    : item.status === "failed"
+                      ? "训练失败"
+                      : "未就绪";
+                return (
+                  <Col xs={12} sm={8} md={6} key={item.asset_id}>
+                    <button
+                      type="button"
+                      disabled={!ready}
+                      aria-pressed={selected}
+                      aria-label={`${item.name}，${itemStatus}`}
+                      onClick={() => {
+                        setAvatarId(item.asset_id);
+                        setAvatarLibraryOpen(false);
+                      }}
+                      style={{
+                        width: "100%",
+                        padding: 0,
+                        overflow: "hidden",
+                        textAlign: "left",
+                        borderRadius: 12,
+                        border: selected ? "2px solid #7c3aed" : "1px solid var(--border-default)",
+                        background: selected ? "#f5f0ff" : "#ffffff",
+                        cursor: ready ? "pointer" : "not-allowed",
+                        opacity: ready ? 1 : 0.65,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: "100%",
+                          aspectRatio: "3/4",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          overflow: "hidden",
+                          background: "#f8fafc",
+                        }}
+                      >
+                        {item.preview_url ? (
+                          item.preview_type === "video" ? (
+                            <video
+                              src={item.preview_url}
+                              aria-label={`${item.name} 形象预览`}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+                            />
+                          ) : (
+                            <img
+                              src={item.preview_url}
+                              alt={item.name}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+                            />
+                          )
+                        ) : (
+                          <UserOutlined style={{ fontSize: 42, color: "#94a3b8" }} />
+                        )}
+                      </div>
+                      <div style={{ padding: 12 }}>
+                        <Text strong ellipsis style={{ display: "block" }}>{item.name}</Text>
+                        <Tag
+                          color={ready ? "success" : item.status === "training" ? "processing" : "error"}
+                          style={{ marginTop: 8, marginInlineEnd: 0 }}
+                        >
+                          {itemStatus}
+                        </Tag>
+                      </div>
+                    </button>
+                  </Col>
+                );
+              })}
+            </Row>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可展示形象" />
+          )}
+
+          <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+            <Text strong style={{ display: "block", marginBottom: 10 }}>添加新形象</Text>
+            {canAddAvatarMaterial ? (
+              <Space wrap>
+                {supportsLocalUpload && (
+                  <Button icon={<CameraOutlined />} onClick={() => void handleOpenCamera()}>
+                    拍摄本人形象
+                  </Button>
+                )}
+                <Upload
+                  accept={supportsLocalUpload ? "image/png,image/jpeg,image/webp" : "video/mp4,video/quicktime,.mp4,.mov"}
+                  showUploadList={false}
+                  beforeUpload={(file) => {
+                    void (supportsLocalUpload ? handleAssetUpload("avatar", file) : handleCloudAvatarTraining(file));
+                    return false;
+                  }}
+                >
+                  <Button
+                    icon={<UploadOutlined />}
+                    loading={uploadingAvatar}
+                    disabled={supportsLocalUpload ? false : !supportsCloudAvatarTraining}
+                  >
+                    {supportsLocalUpload ? "从设备上传照片" : "上传训练视频新增云形象"}
+                  </Button>
+                </Upload>
+              </Space>
+            ) : (
+              <Text type="secondary">当前账号暂未开放新增形象权限。</Text>
+            )}
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="选择 / 添加声音"
+        open={voiceLibraryOpen}
+        onCancel={handleCloseVoiceLibrary}
+        width={760}
+        destroyOnClose
+        footer={
+          <Button type="primary" onClick={handleCloseVoiceLibrary}>
+            完成
+          </Button>
+        }
+      >
+        <Space direction="vertical" size={20} style={{ width: "100%" }}>
+          <div>
+            <Text strong style={{ display: "block", fontSize: 16 }}>声音库</Text>
+            <Text type="secondary">选择一个已就绪声音；有声音样本时可直接在这里试听。</Text>
+          </div>
+
+          {voices.length ? (
+            <Row gutter={[16, 16]} data-testid="voice-library-grid">
+              {voices.map((item) => {
+                const ready = isReadyAsset(item);
+                const selected = item.asset_id === voiceId;
+                const previewable = item.preview_type === "audio" && Boolean(item.preview_url);
+                const itemStatus = ready
+                  ? "可使用"
+                  : item.status === "training"
+                    ? "训练中"
+                    : item.status === "pending_configuration"
+                      ? "待训练"
+                      : item.status === "failed"
+                        ? "训练失败"
+                        : "未就绪";
+                return (
+                  <Col xs={24} sm={12} md={8} key={item.asset_id}>
+                    <div
+                      style={{
+                        height: "100%",
+                        overflow: "hidden",
+                        borderRadius: 12,
+                        border: selected ? "2px solid #7c3aed" : "1px solid var(--border-default)",
+                        background: selected ? "#f5f0ff" : "#ffffff",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        disabled={!ready}
+                        aria-pressed={selected}
+                        aria-label={`${item.name}，${itemStatus}`}
+                        onClick={() => {
+                          setVoiceId(item.asset_id);
+                          handleCloseVoiceLibrary();
+                        }}
+                        style={{
+                          width: "100%",
+                          minHeight: 132,
+                          padding: 16,
+                          border: 0,
+                          background: "transparent",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          cursor: ready ? "pointer" : "not-allowed",
+                          opacity: ready ? 1 : 0.65,
+                        }}
+                      >
+                        <AudioOutlined style={{ fontSize: 36, color: "#64748b", marginBottom: 10 }} />
+                        <Text strong ellipsis style={{ display: "block", maxWidth: "100%" }}>{item.name}</Text>
+                        <Tag
+                          color={
+                            ready
+                              ? "success"
+                              : item.status === "training"
+                                ? "processing"
+                                : item.status === "failed"
+                                  ? "error"
+                                  : "warning"
+                          }
+                          style={{ marginTop: 8, marginInlineEnd: 0 }}
+                        >
+                          {itemStatus}
+                        </Tag>
+                      </button>
+                      {previewable && (
+                        <div style={{ padding: "0 12px 12px" }}>
+                          <audio
+                            controls
+                            preload="metadata"
+                            src={item.preview_url || undefined}
+                            aria-label={`试听声音样本：${item.name}`}
+                            style={{ width: "100%", display: "block" }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </Col>
+                );
+              })}
+            </Row>
+          ) : (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可展示声音" />
+          )}
+
+          <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+            <Text strong style={{ display: "block", marginBottom: 10 }}>添加新声音</Text>
+            {canAddVoiceMaterial ? (
+              <>
+                <Space wrap>
+                  {supportsLocalUpload && (
+                    <Button
+                      danger={recording}
+                      icon={recording ? <StopOutlined /> : <AudioOutlined />}
+                      onClick={() => void handleRecordVoice()}
+                    >
+                      {recording ? "结束录音" : "直接录音"}
+                    </Button>
+                  )}
+                  <Upload
+                    accept={supportsLocalUpload ? "audio/wav,audio/mpeg,audio/mp3,audio/mp4,audio/webm,.wav,.mp3,.m4a,.webm" : "audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"}
+                    showUploadList={false}
+                    beforeUpload={(file) => {
+                      void (supportsLocalUpload ? handleAssetUpload("voice", file) : handleCloudVoiceTraining(file));
+                      return false;
+                    }}
+                  >
+                    <Button
+                      icon={<UploadOutlined />}
+                      loading={uploadingVoice}
+                      disabled={supportsLocalUpload ? false : !supportsVoiceSampleUpload}
+                    >
+                      {supportsLocalUpload ? "从设备上传录音" : supportsVoiceCloning ? "克隆声音（上传样本）" : "上传声音样本"}
+                    </Button>
+                  </Upload>
+                </Space>
+                <Text type="secondary" style={{ display: "block", marginTop: 10 }}>
+                  上传或录制后会出现在上方；只有标记为“可使用”的声音可生成视频。
+                </Text>
+              </>
+            ) : (
+              <Text type="secondary">当前账号暂未开放新增声音权限。</Text>
+            )}
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="制作产品讲解"
+        open={productShowcaseOpen}
+        onCancel={() => setProductShowcaseOpen(false)}
+        width={620}
+        destroyOnClose
+        footer={
+          productShowcaseJob?.status === "succeeded"
+            ? <Button type="primary" onClick={() => setProductShowcaseOpen(false)}>完成</Button>
+            : [
+                <Button key="cancel" onClick={() => setProductShowcaseOpen(false)}>取消</Button>,
+                <Button
+                  key="submit"
+                  type="primary"
+                  loading={productShowcaseSubmitting}
+                  disabled={!productAsset || Boolean(visualUploading) || productShowcaseJob?.status === "running"}
+                  onClick={() => void handleCreateProductShowcase()}
+                >
+                  开始合成
+                </Button>,
+              ]
+        }
+      >
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="商品使用你上传的原图合成，不会让 AI 重新绘制。"
+            description="可增加品牌背景画布；当前不会替换人物身后的真实场景，也不支持让数字人手持商品。"
+          />
+          <Text type="secondary">来源：{productShowcaseSource?.title || "已完成数字人成片"}</Text>
+
+          <div>
+            <Text strong>商品主图</Text>
+            <Upload
+              accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+              showUploadList={false}
+              beforeUpload={(file) => handleVisualAssetUpload("product", file as File)}
+            >
+              <Button icon={<UploadOutlined />} loading={visualUploading === "product"} style={{ marginTop: 8 }}>
+                上传 PNG / JPG / WebP
+              </Button>
+            </Upload>
+            {productAsset && (
+              <Space size={8} style={{ marginTop: 10 }}>
+                <img src={productAsset.media_url} alt={productAsset.name} style={{ width: 56, height: 56, objectFit: "contain", border: "1px solid var(--border-default)", borderRadius: 8 }} />
+                <Text>{productAsset.name}</Text>
+              </Space>
+            )}
+          </div>
+
+          <div>
+            <Text strong>背景画布（可选）</Text>
+            <div><Text type="secondary">不上传时使用简洁品牌模板。</Text></div>
+            <Upload
+              accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+              showUploadList={false}
+              beforeUpload={(file) => handleVisualAssetUpload("background", file as File)}
+            >
+              <Button icon={<UploadOutlined />} loading={visualUploading === "background"} style={{ marginTop: 8 }}>
+                上传背景图
+              </Button>
+            </Upload>
+            {backgroundAsset && <Text type="secondary" style={{ display: "block", marginTop: 8 }}>已使用：{backgroundAsset.name}</Text>}
+          </div>
+
+          <div>
+            <Text strong>展示版式</Text>
+            <Radio.Group
+              value={productLayout}
+              onChange={(event) => setProductLayout(event.target.value)}
+              style={{ display: "block", marginTop: 8 }}
+            >
+              <Space direction="vertical">
+                <Radio value="avatar_left_product_right">数字人左侧，商品原图右侧</Radio>
+                <Radio value="product_canvas_avatar_pip">商品主视觉，数字人成片小窗</Radio>
+              </Space>
+            </Radio.Group>
+          </div>
+
+          <div style={{ borderRadius: 12, padding: 12, background: "#f7f5ff", minHeight: 156, display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ flex: productLayout === "avatar_left_product_right" ? 1.35 : 0.7, alignSelf: "stretch", borderRadius: 8, background: "#1f2937", color: "#fff", display: "grid", placeItems: "center" }}>数字人成片</div>
+            <div style={{ flex: 1, alignSelf: "stretch", borderRadius: 8, background: "#fff", display: "grid", placeItems: "center", overflow: "hidden" }}>
+              {productAsset ? <img src={productAsset.media_url} alt="商品预览" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : <Text type="secondary">商品原图预览</Text>}
+            </div>
+          </div>
+
+          {productShowcaseJob && (
+            <Card size="small">
+              <Space direction="vertical" size={8} style={{ width: "100%" }}>
+                <Text strong>{productShowcaseJob.status === "succeeded" ? "产品讲解成片已生成" : productShowcaseJob.stage}</Text>
+                {productShowcaseJob.status !== "succeeded" && <Progress percent={productShowcaseJob.progress} size="small" status={productShowcaseJob.status === "failed" ? "exception" : "active"} />}
+                {productShowcaseJob.error_message && <Alert type="error" showIcon message={productShowcaseJob.error_message} />}
+                {productShowcaseJob.status === "succeeded" && productShowcaseJob.media_url && (
+                  <>
+                    <video controls src={productShowcaseJob.media_url} style={{ width: "100%", borderRadius: 8 }} />
+                    <Button href={productShowcaseJob.download_url || undefined} icon={<DownloadOutlined />}>下载产品讲解成片</Button>
+                  </>
+                )}
+              </Space>
+            </Card>
+          )}
+        </Space>
+      </Modal>
 
       <Modal
         title="拍摄本人形象"

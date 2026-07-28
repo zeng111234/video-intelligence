@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 from src.models import (
@@ -16,12 +17,14 @@ from src.models import (
     PipelineStage,
     Platform,
     PublishPlatform,
+    PublishTask,
     TaskStatus,
     VideoEditConfig,
     VideoEditStep,
     VideoEditStepKind,
 )
 from src.adapters.douyin_parser import DouyinParserError
+from src.adapters.publishers.sandbox import SandboxPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +91,11 @@ class PipelineWorker:
                 pass
 
     def tick_once(self) -> None:
-        for run in self.pipeline_service.list_runs(limit=500):
+        for run in self.repository.list_active_pipeline_runs():
             workflow = str(run.config.get("workflow") or "")
             try:
+                if workflow.startswith("production_batch_"):
+                    run = self._recover_interrupted_run(run)
                 if workflow == "keyword_auto_master" and run.status == PipelineRunStatus.PENDING:
                     self._run_keyword_master(run)
                 elif workflow == "keyword_auto_candidate":
@@ -107,6 +112,142 @@ class PipelineWorker:
             finally:
                 if workflow.startswith("production_batch_") and self.production_service is not None:
                     self.production_service.sync_batch(str(run.config.get("batch_id") or ""))
+
+    def _recover_interrupted_run(self, run: PipelineRun) -> PipelineRun:
+        """Recover only stages whose replay is provably free of duplicate charges."""
+        if run.status != PipelineRunStatus.RUNNING:
+            return run
+        stage = run.current_stage
+        if (
+            stage == PipelineStage.COPYWRITING
+            and bool(run.config.get("transcript_review_in_progress"))
+            and datetime.now().astimezone() - run.updated_at
+            < timedelta(minutes=2)
+        ):
+            # A review API request may legitimately be inside its bounded LLM
+            # call while the worker scans. Only stale claims imply a restart.
+            return run
+        if stage == PipelineStage.AVATAR_GENERATION:
+            # The provider task id is persisted and refresh_task only polls it.
+            return run
+        if stage == PipelineStage.VIDEO_EDITING and run.avatar_task_id:
+            resumed = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.RUNNING,
+                    "current_stage": PipelineStage.AVATAR_GENERATION,
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": None,
+                    "config": {
+                        **run.config,
+                        "restart_recovery": "resume_local_edit_from_existing_avatar",
+                    },
+                }
+            )
+            resumed = self.pipeline_service._event(
+                resumed,
+                action="restart_edit_resume",
+                stage=PipelineStage.VIDEO_EDITING,
+                message="服务重启后复用已存在的数字人结果，重新执行本地剪辑。",
+            )
+            self.repository.save_pipeline_run(resumed)
+            return resumed
+        if stage == PipelineStage.PUBLISHING:
+            persisted_tasks = [
+                task
+                for task in self.repository.list_tasks()
+                if isinstance(task, PublishTask)
+                and task.source_pipeline_run_id == run.run_id
+            ]
+            if persisted_tasks:
+                task_ids = list(
+                    dict.fromkeys(
+                        [
+                            *run.publish_task_ids,
+                            *(task.task_id for task in persisted_tasks),
+                        ]
+                    )
+                )
+                paused = run.model_copy(
+                    update={
+                        "status": PipelineRunStatus.PAUSED,
+                        "current_stage": PipelineStage.PUBLISHING,
+                        "publish_task_ids": task_ids,
+                        "updated_at": datetime.now().astimezone(),
+                        "error_message": "服务重启后已找回发布任务，等待人工或发布中心核对结果。",
+                        "config": {
+                            **run.config,
+                            "recovery_blocked": True,
+                            "recovery_reason": "publishing_interrupted",
+                        },
+                    }
+                )
+                self.repository.save_pipeline_run(paused)
+                return paused
+            return self._pause_for_manual_recovery(
+                run,
+                "发布提交在服务重启时中断，结果无法证明；已停止自动重提，请人工核对平台后台。",
+                outcome_unknown=True,
+            )
+        if stage is None:
+            resumed = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PENDING,
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": None,
+                }
+            )
+            self.repository.save_pipeline_run(resumed)
+            return resumed
+        if stage == PipelineStage.HUMAN_REVIEW:
+            paused = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_pipeline_run(paused)
+            return paused
+        return self._pause_for_manual_recovery(
+            run,
+            "服务重启时该阶段可能已调用付费供应商，无法证明未扣费；已停止自动重提，请人工核对供应商记录。",
+            outcome_unknown=stage
+            in {
+                PipelineStage.MEDIA_RESOLUTION,
+                PipelineStage.TRANSCRIPTION,
+                PipelineStage.COPYWRITING,
+            },
+        )
+
+    def _pause_for_manual_recovery(
+        self,
+        run: PipelineRun,
+        message: str,
+        *,
+        outcome_unknown: bool,
+    ) -> PipelineRun:
+        paused = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "updated_at": datetime.now().astimezone(),
+                "error_message": message,
+                "config": {
+                    **run.config,
+                    "recovery_blocked": True,
+                    "recovery_reason": "outcome_unknown"
+                    if outcome_unknown
+                    else "manual_recovery_required",
+                    "outcome_unknown": bool(outcome_unknown),
+                },
+            }
+        )
+        paused = self.pipeline_service._event(
+            paused,
+            action="restart_manual_recovery_required",
+            stage=run.current_stage,
+            message=message,
+        )
+        self.repository.save_pipeline_run(paused)
+        return paused
 
     def _run_keyword_master(self, run: PipelineRun) -> None:
         run = self.pipeline_service.update_stage(run, PipelineStage.KEYWORD_SEARCH, TaskStatus.RUNNING)
@@ -247,6 +388,21 @@ class PipelineWorker:
                     "source": transcription.source_kind,
                 },
             )
+            run = run.model_copy(
+                update={
+                    "config": {
+                        **run.config,
+                        "transcription_task_id": transcription.task_id,
+                    }
+                }
+            )
+            self.repository.save_pipeline_run(run)
+            if str(run.config.get("workflow") or "") == "production_batch_share_link":
+                self.pipeline_service.pause_for_transcript_review(
+                    run=run,
+                    transcription=transcription,
+                )
+                return
             profile = dict(run.config.get("profile") or {})
             self.pipeline_service.create_copywriting_review(
                 run=run,
@@ -351,17 +507,30 @@ class PipelineWorker:
             self._fail(run, PipelineStage.AVATAR_GENERATION, "IP 配方绑定的数字人形象或音色不可用。")
             return
         run = self.pipeline_service.update_stage(run, PipelineStage.AVATAR_GENERATION, TaskStatus.RUNNING)
+        avatar_retry_number = int(
+            (run.config.get("stage_retry_counts") or {}).get(
+                PipelineStage.AVATAR_GENERATION.value
+            )
+            or 0
+        )
+        avatar_idempotency_key = f"worker-avatar-{run.run_id}"
+        if avatar_retry_number > 0:
+            avatar_idempotency_key += f"-retry-{avatar_retry_number}"
         request = AvatarSubmitRequest(
             script_text=script,
             keyword=run.keyword,
             source_task_id=copy_task.task_id,
             avatar_id=avatar.asset_id,
             voice_id=voice.asset_id,
+            # The legacy company gateway accepts the same safe default used by
+            # the standalone avatar entry.  Its transparent-background option
+            # is not supported by every configured avatar model.
+            background="solid",
             rights_holder=str(run.config.get("rights_holder") or "current_tenant"),
             script_rights_confirmed=True,
             avatar_rights_confirmed=True,
             voice_rights_confirmed=True,
-            idempotency_key=f"worker-avatar-{run.run_id}",
+            idempotency_key=avatar_idempotency_key,
         )
         task = self.avatar_service.submit(request, avatar_name=avatar.name, voice_name=voice.name)
         updated_run = self.pipeline_service.update_stage(
@@ -388,6 +557,12 @@ class PipelineWorker:
                     "status": PipelineRunStatus.PAUSED,
                     "updated_at": datetime.now().astimezone(),
                     "error_message": task.error_message or "数字人提交结果待人工核对。",
+                    "config": {
+                        **updated_run.config,
+                        "outcome_unknown": True,
+                        "recovery_blocked": True,
+                        "recovery_reason": "avatar_outcome_unknown",
+                    },
                 }
             )
             paused = self.pipeline_service._event(
@@ -501,6 +676,26 @@ class PipelineWorker:
 
     def _submit_publish(self, run: PipelineRun) -> None:
         """仅在批次页明确确认后，才创建真实或人工发布任务。"""
+        if not bool(run.config.get("output_reviewed")):
+            paused = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": "请先完成人工成片复核。",
+                }
+            )
+            self.repository.save_pipeline_run(paused)
+            return
+        if run.publish_task_ids:
+            paused = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": "发布任务已经创建，不能重复提交。",
+                }
+            )
+            self.repository.save_pipeline_run(paused)
+            return
         video_path = str(run.config.get("video_path") or "")
         if not video_path:
             edit_task = self.repository.get_task(run.edit_task_id or "")
@@ -508,21 +703,68 @@ class PipelineWorker:
         if not video_path:
             self._fail(run, PipelineStage.PUBLISHING, "找不到已生成的成片，不能提交发布。")
             return
+        if not Path(video_path).is_file():
+            self._fail(
+                run,
+                PipelineStage.PUBLISHING,
+                "成片文件不存在或已被移动，不能创建发布任务。",
+            )
+            return
         try:
-            platforms = [PublishPlatform(item) for item in run.config.get("publish_platforms", ["douyin"])]
+            target_specs = list(run.config.get("publish_targets") or [])
+            if not target_specs:
+                target_specs = [
+                    {
+                        "platform": item,
+                        "account_id": None,
+                        "mode": "manual",
+                    }
+                    for item in run.config.get("publish_platforms", ["douyin"])
+                ]
             copy_task = self.repository.get_task(run.copywriting_task_id or "")
             script = str(run.config.get("approved_script_text") or getattr(copy_task, "result_text", "") or "")
             targets = self.pipeline_service.build_publish_targets(
-                title=run.keyword[:100], description=script[:200], tags=[run.keyword], platforms=platforms
+                title=run.keyword[:100],
+                description=script[:200],
+                tags=[run.keyword],
+                target_specs=target_specs,
             )
-            preflight = self.publish_service.preflight(video_path=video_path, targets=targets)
-            if preflight["blocked"]:
-                paused = run.model_copy(update={"status": PipelineRunStatus.PAUSED, "updated_at": datetime.now().astimezone(), "error_message": "；".join(preflight["issues"])})
-                self.repository.save_pipeline_run(paused)
-                return
+            real_targets = [
+                target
+                for target, spec in zip(targets, target_specs)
+                if spec.get("mode") != "manual"
+            ]
+            if real_targets:
+                preflight = self.publish_service.preflight(
+                    video_path=video_path,
+                    targets=real_targets,
+                )
+                if preflight["blocked"]:
+                    paused = run.model_copy(update={"status": PipelineRunStatus.PAUSED, "updated_at": datetime.now().astimezone(), "error_message": "；".join(preflight["issues"])})
+                    self.repository.save_pipeline_run(paused)
+                    return
             run = self.pipeline_service.update_stage(run, PipelineStage.PUBLISHING, TaskStatus.RUNNING)
-            summary = self.publish_service.create_batch(video_path=video_path, targets=targets, source_pipeline_run_id=run.run_id)
-            for publish_task in summary["tasks"]:
+            publish_tasks = []
+            if real_targets:
+                summary = self.publish_service.create_batch(
+                    video_path=video_path,
+                    targets=real_targets,
+                    source_pipeline_run_id=run.run_id,
+                )
+                publish_tasks.extend(summary["tasks"])
+            for target, spec in zip(targets, target_specs):
+                if spec.get("mode") != "manual":
+                    continue
+                manual_task = SandboxPublisher(target.platform).publish(
+                    video_path,
+                    target,
+                )
+                manual_task = manual_task.model_copy(
+                    update={"source_pipeline_run_id": run.run_id}
+                )
+                self.repository.save_task(manual_task)
+                publish_tasks.append(manual_task)
+            for publish_task in publish_tasks:
                 run = self.pipeline_service.update_stage(
                     run,
                     PipelineStage.PUBLISHING,
@@ -530,7 +772,9 @@ class PipelineWorker:
                     task_id=publish_task.task_id,
                     outputs={"platform": publish_task.target.platform.value, "publish_status": publish_task.publish_status.value},
                 )
-            if all(task.status == TaskStatus.SUCCEEDED for task in summary["tasks"]):
+            if publish_tasks and all(
+                task.status == TaskStatus.SUCCEEDED for task in publish_tasks
+            ):
                 self.pipeline_service.complete_run(run, success=True)
                 return
             paused = run.model_copy(update={"status": PipelineRunStatus.PAUSED, "current_stage": PipelineStage.PUBLISHING, "updated_at": datetime.now().astimezone()})

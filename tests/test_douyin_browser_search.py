@@ -17,7 +17,7 @@ def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
                 "aria": "",
                 "duration": 15,
                 "plays": 1201,
-                "likes": 88,
+                "likes": 120,
                 "list_type": 1001,
                 "list_label": "视频总榜",
                 "window_hours": 168,
@@ -37,13 +37,14 @@ def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
 
     assert errors == []
     assert low_incremental_items == []
-    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0}
+    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
     assert len(items) == 1
     assert items[0].platform == Platform.DOUYIN
     assert items[0].platform_item_id == "7538955201693994298"
     assert str(items[0].source_url) == "https://www.douyin.com/video/7538955201693994298"
     assert items[0].metrics.plays == 1201
     assert "新增播放量=1201" in items[0].evidence
+    assert "日均点赞=" in items[0].evidence
 
 
 def test_browser_provider_reports_login_requirement_without_running_session(tmp_path):
@@ -208,9 +209,9 @@ def test_hotspot_filters_image_posts_low_incremental_plays_and_irrelevant_rows()
     items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(rows, "租房", observed_at, 100)
 
     assert errors == []
-    assert [item.platform_item_id for item in low_incremental_items] == ["7538955201693994300"]
+    assert low_incremental_items == []
     assert [item.platform_item_id for item in items] == ["7538955201693994298"]
-    assert filtered == {"duration": 1, "incremental_plays": 1, "relevance": 1}
+    assert filtered == {"duration": 1, "incremental_plays": 0, "relevance": 1, "quality": 1}
     assert "视频总榜|高点赞率" in items[0].evidence
 
 
@@ -245,9 +246,189 @@ def test_hotspot_keeps_related_low_incremental_rows_when_main_list_is_empty():
 
     assert items == []
     assert errors == []
-    assert filtered["incremental_plays"] == 2
-    assert [item.metrics.plays for item in low_incremental_items] == [1000, 800]
-    assert all(":1h:" in item.evidence for item in low_incremental_items)
+    assert filtered["incremental_plays"] == 0
+    assert filtered["quality"] == 2
+    assert low_incremental_items == []
+
+
+def test_exact_topic_keeps_videos_even_when_the_title_omits_the_keyword():
+    observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
+
+    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
+        [{
+            "item_id": "7538955201693994310",
+            "href": "https://www.douyin.com/video/7538955201693994310",
+            "title": "老板别再靠打折拉新了",
+            "duration": 28,
+            "likes": 500,
+            "published_text": "2026-07-20T12:00:00+08:00",
+            "topic_exact": True,
+            "topic_name": "餐饮获客",
+            "source_kind": "topic_board",
+            "list_type": 2001,
+            "list_label": "话题榜",
+            "window_hours": 168,
+        }],
+        "餐饮获客",
+        observed_at,
+        3,
+    )
+
+    assert errors == []
+    assert low_incremental_items == []
+    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert [item.platform_item_id for item in items] == ["7538955201693994310"]
+    assert "严格话题=1" in items[0].evidence
+    assert "来源=topic_board" in items[0].evidence
+
+
+def test_douyin_search_keeps_exact_video_without_hotspot_incremental_plays():
+    observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
+
+    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
+        [{
+            "item_id": "7538955201693994311",
+            "href": "https://www.douyin.com/video/7538955201693994311",
+            "title": "餐饮获客的三个低成本方法",
+            "duration": 36,
+            "likes": 500,
+            "published_text": "2026-07-20T12:00:00+08:00",
+            "source_kind": "douyin_search",
+            "list_type": 3001,
+            "list_label": "抖音搜索",
+            "window_hours": 168,
+        }],
+        "餐饮获客",
+        observed_at,
+        3,
+    )
+
+    assert errors == []
+    assert low_incremental_items == []
+    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert items[0].metrics.plays is None
+    assert "抖音搜索" in items[0].evidence
+
+
+def test_douyin_search_collects_multiple_rendered_viewports(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    rounds = [
+        [{"item_id": "one", "title": "第一条"}],
+        [{"item_id": "one", "title": "第一条"}, {"item_id": "two", "title": "第二条"}],
+        [{"item_id": "two", "title": "第二条"}, {"item_id": "three", "title": "第三条"}],
+        [{"item_id": "three", "title": "第三条"}],
+        [{"item_id": "three", "title": "第三条"}],
+    ]
+    calls = []
+
+    class FakePage:
+        def evaluate(self, script):
+            calls.append(("scroll", script))
+
+        def wait_for_timeout(self, delay):
+            calls.append(("wait", delay))
+
+    monkeypatch.setattr(
+        provider,
+        "_extract_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows = provider._collect_douyin_search_rows(FakePage())
+
+    assert [row["item_id"] for row in rows] == ["one", "two", "three"]
+    assert len([call for call in calls if call[0] == "scroll"]) == 4
+
+
+def test_quality_gate_requires_both_total_likes_and_daily_velocity():
+    observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
+    rows = [
+        {
+            "item_id": "7538955201693994312",
+            "href": "https://www.douyin.com/video/7538955201693994312",
+            "title": "餐饮获客低赞新视频",
+            "duration": 30,
+            "likes": 99,
+            "published_text": "2026-07-27T12:00:00+08:00",
+            "source_kind": "topic_board",
+            "list_type": 2001,
+        },
+        {
+            "item_id": "7538955201693994313",
+            "href": "https://www.douyin.com/video/7538955201693994313",
+            "title": "餐饮获客旧视频",
+            "duration": 30,
+            "likes": 100,
+            "published_text": "2025-01-01T12:00:00+08:00",
+            "source_kind": "topic_board",
+            "list_type": 2001,
+        },
+        {
+            "item_id": "7538955201693994314",
+            "href": "https://www.douyin.com/video/7538955201693994314",
+            "title": "餐饮获客优质视频",
+            "duration": 30,
+            "likes": 500,
+            "published_text": "2026-07-20T12:00:00+08:00",
+            "source_kind": "topic_board",
+            "list_type": 2001,
+        },
+    ]
+
+    items, _, _, filtered = LocalDouyinBrowserSearchProvider._to_items(
+        rows, "餐饮获客", observed_at, 3
+    )
+
+    assert [item.platform_item_id for item in items] == ["7538955201693994314"]
+    assert filtered["quality"] == 2
+    assert "质量口径=作品累计点赞/发布天数" in items[0].evidence
+
+
+def test_source_order_keeps_video_total_before_topic_and_search():
+    observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
+    rows = [
+        {
+            "item_id": "7538955201693994315",
+            "href": "https://www.douyin.com/video/7538955201693994315",
+            "title": "餐饮获客视频总榜",
+            "duration": 30,
+            "likes": 100,
+            "plays": 5000,
+            "window_hours": 168,
+            "source_kind": "video_board",
+            "list_type": 1001,
+        },
+        {
+            "item_id": "7538955201693994316",
+            "href": "https://www.douyin.com/video/7538955201693994316",
+            "title": "话题视频",
+            "duration": 30,
+            "likes": 10000,
+            "published_text": "2026-07-20T12:00:00+08:00",
+            "topic_exact": True,
+            "source_kind": "topic_board",
+            "list_type": 2001,
+        },
+        {
+            "item_id": "7538955201693994317",
+            "href": "https://www.douyin.com/video/7538955201693994317",
+            "title": "餐饮获客搜索视频",
+            "duration": 30,
+            "likes": 100000,
+            "published_text": "2026-07-20T12:00:00+08:00",
+            "source_kind": "douyin_search",
+            "list_type": 3001,
+        },
+    ]
+
+    items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(rows, "餐饮获客", observed_at, 3)
+
+    assert [item.platform_item_id for item in items] == [
+        "7538955201693994315",
+        "7538955201693994316",
+        "7538955201693994317",
+    ]
 
 
 def test_hotspot_uses_visible_publication_time_when_available():
@@ -259,6 +440,7 @@ def test_hotspot_uses_visible_publication_time_when_available():
             "title": "租房避坑：签合同前先看这三点",
             "duration": 33,
             "plays": 5000,
+            "likes": 500,
             "published_text": "2026-07-23T09:30:00+08:00",
         }],
         "租房",
@@ -270,7 +452,7 @@ def test_hotspot_uses_visible_publication_time_when_available():
     assert items[0].data_quality_warnings == []
 
 
-def test_hotspot_marks_sample_time_when_publication_time_is_missing():
+def test_search_candidate_without_publication_time_is_rejected_from_customer_results():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(
         [{
@@ -278,15 +460,14 @@ def test_hotspot_marks_sample_time_when_publication_time_is_missing():
             "href": "https://www.douyin.com/video/7538955201693994298",
             "title": "租房避坑：签合同前先看这三点",
             "duration": 33,
-            "plays": 5000,
+                "likes": 500,
         }],
         "租房",
         observed_at,
         10,
     )
 
-    assert items[0].published_at == observed_at
-    assert items[0].data_quality_warnings == ["未取得有效发布时间，页面展示为采样时间。"]
+    assert items == []
 
 
 @pytest.mark.parametrize("window_hours", [1, 24, 72, 168])
@@ -311,7 +492,7 @@ def test_hotspot_search_passes_the_selected_statistical_window(
         lambda: type("Status", (), {"running": True, "message": "ready"})(),
     )
 
-    def collect(keyword: str, *, window_hours: int):
+    def collect(keyword: str, *, window_hours: int, observed_at, target_limit: int):
         captured["window_hours"] = window_hours
         return [
             {
@@ -319,7 +500,8 @@ def test_hotspot_search_passes_the_selected_statistical_window(
                 "href": "https://www.douyin.com/video/7538955201693994298",
                 "title": "数字人近况",
                 "duration": 15,
-                "plays": 1201,
+                    "plays": 1201,
+                    "likes": 120,
                 "list_type": 1001,
                 "list_label": "视频总榜",
                 "window_hours": window_hours,
@@ -374,13 +556,14 @@ def test_hotspot_search_exposes_low_incremental_items_only_when_main_list_is_emp
     monkeypatch.setattr(
         provider,
         "_collect_hotspot_rows",
-        lambda keyword, *, window_hours: ([
+        lambda keyword, *, window_hours, observed_at, target_limit: ([
             {
                 "item_id": "7538955201693994300",
                 "href": "https://www.douyin.com/video/7538955201693994300",
                 "title": "租房预算怎么做",
                 "duration": 20,
-                "plays": 800,
+                    "plays": 800,
+                    "likes": 120,
                 "list_type": 1001,
                 "list_label": "视频总榜",
                 "window_hours": window_hours,

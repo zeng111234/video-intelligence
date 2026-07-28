@@ -183,9 +183,9 @@ def upload_asset(
         "authorized": True,
         "rights_holder": rights_holder.strip() or "本人/公司已授权",
         "uploaded_at": datetime.now().astimezone().isoformat(),
+        "preview_url": f"/api/v1/avatar/assets/{asset_id}/media",
+        "preview_type": "image" if kind == AvatarAssetKind.AVATAR else "audio",
     }
-    if kind == AvatarAssetKind.AVATAR:
-        record["preview_url"] = f"/api/v1/avatar/assets/{asset_id}/media"
     manifest["assets"] = [
         item for item in manifest["assets"] if item.get("asset_id") != asset_id
     ] + [record]
@@ -196,6 +196,7 @@ def upload_asset(
         kind=kind,
         name=display_name,
         preview_url=record.get("preview_url"),
+        preview_type=record["preview_type"],
         authorized=True,
     )
 
@@ -285,15 +286,41 @@ def train_cloud_voice(
 
 
 @router.get("/assets/{asset_id}/media")
-def get_asset_media(asset_id: str):
-    manifest_path = _local_assets_manifest_path()
-    record = _find_asset_record(manifest_path, asset_id)
-    if record is None:
+def get_asset_media(
+    asset_id: str,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    provider = service.provider
+    if isinstance(provider, ShuyingLegacyAvatarProvider):
+        manifest_path = provider.assets_manifest_path
+        record = _find_asset_record(manifest_path, asset_id)
+        if record is None or record.get("kind") != AvatarAssetKind.VOICE.value:
+            raise HTTPException(status_code=404, detail="声音样本不存在。")
+        path = _asset_record_path(
+            manifest_path,
+            record,
+            path_field="sample_path",
+        )
+        samples_root = (manifest_path.parent / "voice_samples").resolve()
+        if samples_root not in path.parents:
+            raise HTTPException(status_code=404, detail="声音样本不存在。")
+    elif service.capabilities().provider_name == "local_avatar":
+        manifest_path = _local_assets_manifest_path()
+        record = _find_asset_record(manifest_path, asset_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="素材不存在。")
+        path = _asset_record_path(manifest_path, record)
+    else:
         raise HTTPException(status_code=404, detail="素材不存在。")
-    path = _asset_record_path(manifest_path, record)
+
     if not path.is_file():
         raise HTTPException(status_code=404, detail="素材文件不存在。")
     media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if (
+        record.get("kind") == AvatarAssetKind.VOICE.value
+        and path.suffix.lower() == ".webm"
+    ):
+        media_type = "audio/webm"
     return FileResponse(path, media_type=media_type, filename=path.name)
 
 
@@ -632,8 +659,13 @@ def _find_asset_record(path: Path, asset_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _asset_record_path(manifest_path: Path, record: dict[str, Any]) -> Path:
-    raw_path = str(record.get("path", ""))
+def _asset_record_path(
+    manifest_path: Path,
+    record: dict[str, Any],
+    *,
+    path_field: str = "path",
+) -> Path:
+    raw_path = str(record.get(path_field, ""))
     path = Path(raw_path)
     if not path.is_absolute():
         path = manifest_path.parent / path

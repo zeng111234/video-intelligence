@@ -7,11 +7,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from subprocess import CompletedProcess
 import tempfile
 
 import pytest
 
-from src.adapters.video_editor import SandboxVideoEditor
+from src.adapters.video_editor import FFmpegVideoEditor, SandboxVideoEditor
 from src.models import (
     TaskKind,
     TaskStatus,
@@ -163,6 +164,38 @@ class TestVideoEditingServiceSandbox:
         task = self.svc.edit_video(source_video_path=str(self._temp_video))
         assert task.result_size_bytes is not None
         assert task.result_size_bytes > 0
+
+
+def test_product_showcase_ffmpeg_command_uses_original_product_and_optional_background(
+    tmp_path: Path,
+):
+    source = tmp_path / "avatar.mp4"
+    product = tmp_path / "product.png"
+    background = tmp_path / "background.png"
+    output = tmp_path / "showcase.mp4"
+    source.write_bytes(b"video")
+    product.write_bytes(b"product")
+    background.write_bytes(b"background")
+    commands: list[list[str]] = []
+
+    def runner(command, **_kwargs):
+        commands.append(command)
+        return CompletedProcess(command, 0, "", "")
+
+    editor = FFmpegVideoEditor(command_runner=runner)
+    editor.compose_product_showcase(
+        str(source),
+        str(product),
+        background_path=str(background),
+        layout="product_canvas_avatar_pip",
+        output_path=str(output),
+    )
+
+    command = commands[0]
+    assert str(product) in command
+    assert str(background) in command
+    assert command.count("-loop") == 2
+    assert "product_canvas" in command[command.index("-filter_complex") + 1]
 
 
 class TestTextToSrt:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from difflib import SequenceMatcher
 import json
 import re
 from typing import Any, Callable
@@ -56,7 +57,14 @@ COMPLIANCE_RISK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
         re.compile(r"官方(?:认证|推荐|背书)|平台(?:认证|背书)"),
         "已删除无法核实的官方或平台背书表达。",
     ),
+    (
+        "平台敏感营销用语",
+        re.compile(r"加(?:微信|微|V)|扫码加|二维码加|点击(?:下方)?链接|全网(?:最低|第一)|史上最|最强|顶级"),
+        "已清理常见的导流、夸大或排名式营销用语。",
+    ),
 )
+
+MAX_AUTOMATIC_COPY_ATTEMPTS = 3
 
 
 @dataclass(frozen=True)
@@ -98,38 +106,191 @@ class CopywritingService:
         )
 
     @staticmethod
-    def _compliance_notes(categories: list[str], *, retry_used: bool, residual: list[str]) -> list[str]:
+    def _similarity_metrics(source_text: str, result_text: str) -> tuple[float, float]:
+        """Return sequence similarity and output n-gram overlap for long-form copy."""
+        source = re.sub(r"[\W_]+", "", source_text.lower())
+        result = re.sub(r"[\W_]+", "", result_text.lower())
+        if not source or not result:
+            return 0.0, 0.0
+        sequence_similarity = SequenceMatcher(None, source, result, autojunk=False).ratio()
+        ngram_size = 8
+        if min(len(source), len(result)) < ngram_size:
+            return sequence_similarity, 0.0
+        source_ngrams = {source[index : index + ngram_size] for index in range(len(source) - ngram_size + 1)}
+        result_ngrams = {result[index : index + ngram_size] for index in range(len(result) - ngram_size + 1)}
+        overlap = len(source_ngrams & result_ngrams) / max(1, len(result_ngrams))
+        return sequence_similarity, overlap
+
+    @classmethod
+    def _too_similar(cls, source_text: str, results: list[str]) -> bool:
+        normalized_source = re.sub(r"[\W_]+", "", source_text)
+        if len(normalized_source) < 40:
+            return False
+        return any(
+            sequence_similarity >= 0.82 or ngram_overlap >= 0.35
+            for sequence_similarity, ngram_overlap in (
+                cls._similarity_metrics(source_text, result) for result in results
+            )
+        )
+
+    @staticmethod
+    def _dedup_retry_hint() -> str:
+        return (
+            "去重验收未通过：上一版与原文的句序和连续表达过于相似。"
+            "本次必须先打散原文顺序，再按受众痛点、关键差异、使用场景和结论重新组织；"
+            "除型号、参数、金额、专有名词和必要事实外，不得沿用原句或只替换同义词。"
+        )
+
+    @staticmethod
+    def _compliance_notes(
+        categories: list[str],
+        *,
+        risk_retry_used: bool,
+        dedup_retry_used: bool,
+    ) -> list[str]:
         notes = ["已按自然口播节奏优化表达。"]
         for category, _, note in COMPLIANCE_RISK_RULES:
             if category in categories:
                 notes.append(note)
-        if retry_used:
-            notes.append("检测到风险表达后已自动进行一次复核改写。")
-        if residual:
-            notes.append("仍检测到部分风险表达，建议人工复核后再发布。")
+        if risk_retry_used:
+            notes.append("检测到风险表达后已自动重写，最终结果已通过检查。")
+        if dedup_retry_used:
+            notes.append("检测到输出与原文过于相似，已自动打散并重新组织表达。")
         return list(dict.fromkeys(notes))
+
+    def _attention_terms(
+        self,
+        results: list[str],
+        raw_terms: list[str] | None = None,
+    ) -> list[str]:
+        combined = "\n".join(results)
+        if raw_terms is None:
+            raw_terms = getattr(self.engine, "last_attention_terms", [])
+        if not isinstance(raw_terms, list):
+            return []
+        terms: list[str] = []
+        for item in raw_terms:
+            term = str(item).strip()
+            if 2 <= len(term) <= 40 and term in combined and term not in terms:
+                terms.append(term)
+        return terms
 
     def _run_with_compliance(
         self,
         *,
         source_texts: list[str],
         run: Callable[[str], list[str]],
+        dedup_source: str = "",
+        fallback_results: list[str] | None = None,
     ) -> tuple[list[str], str, list[str], bool, bool]:
         source_categories = self._risk_categories(source_texts)
-        results = run(self._compliance_hint(source_categories))
-        output_categories = self._risk_categories(results)
-        retry_used = bool(output_categories)
-        if retry_used:
-            results = run(self._compliance_hint(list(dict.fromkeys(source_categories + output_categories))))
-        residual = self._risk_categories(results)
-        categories = list(dict.fromkeys(source_categories + output_categories + residual))
-        return (
-            results,
-            "review_required" if residual else "passed",
-            self._compliance_notes(categories, retry_used=retry_used, residual=residual),
-            bool(categories),
-            retry_used,
-        )
+        categories = list(source_categories)
+        risk_retry_used = False
+        dedup_retry_used = False
+        retry_hint = self._compliance_hint(source_categories)
+        last_results: list[str] = []
+
+        def best_effort(
+            results: list[str],
+            message: str,
+            *,
+            retry_used: bool,
+            generated_version: bool,
+        ) -> tuple[list[str], str, list[str], bool, bool]:
+            notes = ["流水线节点已完成自动处理。"]
+            if risk_retry_used:
+                notes.append("已自动尝试处理风险表达。")
+            if dedup_retry_used:
+                notes.append("已自动尝试降低与原文的表达重复。")
+            notes.append(message)
+            return (
+                results,
+                "best_effort",
+                notes,
+                generated_version and (risk_retry_used or dedup_retry_used),
+                retry_used,
+            )
+
+        for attempt_index in range(MAX_AUTOMATIC_COPY_ATTEMPTS):
+            try:
+                results = run(retry_hint)
+            except Exception:
+                if last_results:
+                    return best_effort(
+                        last_results,
+                        "后续自动优化未返回新版本，已使用最后一次生成结果。",
+                        retry_used=attempt_index > 0,
+                        generated_version=True,
+                    )
+                if fallback_results:
+                    return best_effort(
+                        fallback_results,
+                        "模型本次未返回可用版本，已使用输入内容作为最终版本。",
+                        retry_used=False,
+                        generated_version=False,
+                    )
+                raise
+            if not results:
+                if last_results:
+                    return best_effort(
+                        last_results,
+                        "后续自动优化未返回新版本，已使用最后一次生成结果。",
+                        retry_used=attempt_index > 0,
+                        generated_version=True,
+                    )
+                if fallback_results:
+                    return best_effort(
+                        fallback_results,
+                        "模型本次未返回可用版本，已使用输入内容作为最终版本。",
+                        retry_used=False,
+                        generated_version=False,
+                    )
+                raise RuntimeError("LLM 未返回有效内容。")
+            last_results = results
+
+            output_categories = self._risk_categories(results)
+            dedup_failed = bool(
+                dedup_source and self._too_similar(dedup_source, results)
+            )
+            categories = list(dict.fromkeys(categories + output_categories))
+            if not output_categories and not dedup_failed:
+                return (
+                    results,
+                    "passed",
+                    self._compliance_notes(
+                        categories,
+                        risk_retry_used=risk_retry_used,
+                        dedup_retry_used=dedup_retry_used,
+                    ),
+                    bool(categories) or dedup_retry_used,
+                    attempt_index > 0,
+                )
+
+            risk_retry_used = risk_retry_used or bool(output_categories)
+            dedup_retry_used = dedup_retry_used or dedup_failed
+            if attempt_index == MAX_AUTOMATIC_COPY_ATTEMPTS - 1:
+                return best_effort(
+                    results,
+                    f"已完成 {MAX_AUTOMATIC_COPY_ATTEMPTS} 次自动优化，"
+                    "为保持流水线连续，已使用最后一次生成结果。",
+                    retry_used=True,
+                    generated_version=True,
+                )
+
+            retry_parts = [
+                self._compliance_hint(categories),
+                self._dedup_retry_hint() if dedup_failed else "",
+            ]
+            retry_hint = "；".join(part for part in retry_parts if part)
+
+        if fallback_results:
+            return best_effort(
+                fallback_results,
+                "自动优化未返回新版本，已使用输入内容作为最终版本。",
+                retry_used=False,
+                generated_version=False,
+            )
+        raise RuntimeError("自动处理未完成。")
 
     # ------------------------------------------------------------------
     # 三档文案来源
@@ -456,9 +617,12 @@ class CopywritingService:
         )
         self._save(task, on_progress)
         try:
+            accumulated_usage: dict[str, int] = {}
+            latest_attention_terms: list[str] = []
+
             def run(retry_hint: str) -> list[str]:
                 goal = "；".join(item for item in [rewrite_goal.strip(), retry_hint] if item)
-                return self.engine.rewrite(
+                results = self.engine.rewrite(
                     source_text,
                     platform=platform_enum.value,
                     target_audience=target_audience,
@@ -468,21 +632,35 @@ class CopywritingService:
                     rewrite_goal=goal,
                     variant_count=variant_count,
                 )
+                self._accumulate_last_usage(accumulated_usage)
+                raw_attention_terms = getattr(self.engine, "last_attention_terms", [])
+                latest_attention_terms.clear()
+                if isinstance(raw_attention_terms, list):
+                    latest_attention_terms.extend(str(item) for item in raw_attention_terms)
+                return results
 
             results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
-                source_texts=[source_text], run=run
+                source_texts=[source_text],
+                run=run,
+                dedup_source=source_text,
+                fallback_results=[source_text],
             )
-            if not results:
-                raise RuntimeError("LLM 未返回有效内容。")
+            attention_terms = self._attention_terms(results, latest_attention_terms)
+            if attention_terms:
+                compliance_notes = [
+                    *compliance_notes,
+                    "疑似其他企业、品牌、机构或人物名称已在文案中高亮。",
+                ]
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "改写完成",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": self._last_usage(),
+                    "token_usage": accumulated_usage or self._last_usage(),
                     "result_text": results[0] if results else None,
                     "result_variants": results,
+                    "attention_terms": attention_terms,
                     "compliance_status": compliance_status,
                     "compliance_notes": compliance_notes,
                     "compliance_rewritten": compliance_rewritten,
@@ -497,6 +675,7 @@ class CopywritingService:
                     "status": TaskStatus.FAILED,
                     "stage": "改写失败",
                     "updated_at": datetime.now().astimezone(),
+                    "token_usage": accumulated_usage or self._last_usage(),
                     "error_message": str(exc),
                 }
             )
@@ -553,9 +732,21 @@ class CopywritingService:
         )
         self._save(task, on_progress)
         try:
+            accumulated_usage: dict[str, int] = {}
+            latest_attention_terms: list[str] = []
+            fallback_text = "\n".join(
+                item
+                for item in [
+                    content_brief.strip(),
+                    selling_points.strip(),
+                    call_to_action.strip(),
+                ]
+                if item
+            )
+
             def run(retry_hint: str) -> list[str]:
                 prompt = "\n".join(item for item in [style_prompt.strip(), retry_hint] if item)
-                return self.engine.generate(
+                results = self.engine.generate(
                     content_brief=content_brief,
                     platform=platform_enum.value,
                     target_audience=target_audience,
@@ -566,21 +757,34 @@ class CopywritingService:
                     tone=tone,
                     variant_count=variant_count,
                 )
+                self._accumulate_last_usage(accumulated_usage)
+                raw_attention_terms = getattr(self.engine, "last_attention_terms", [])
+                latest_attention_terms.clear()
+                if isinstance(raw_attention_terms, list):
+                    latest_attention_terms.extend(str(item) for item in raw_attention_terms)
+                return results
 
             results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
-                source_texts=[content_brief, selling_points, call_to_action], run=run
+                source_texts=[content_brief, selling_points, call_to_action],
+                run=run,
+                fallback_results=[fallback_text],
             )
-            if not results:
-                raise RuntimeError("LLM 未返回有效内容。")
+            attention_terms = self._attention_terms(results, latest_attention_terms)
+            if attention_terms:
+                compliance_notes = [
+                    *compliance_notes,
+                    "疑似其他企业、品牌、机构或人物名称已在文案中高亮。",
+                ]
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "生成完成",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": self._last_usage(),
+                    "token_usage": accumulated_usage or self._last_usage(),
                     "result_text": results[0],
                     "result_variants": results,
+                    "attention_terms": attention_terms,
                     "compliance_status": compliance_status,
                     "compliance_notes": compliance_notes,
                     "compliance_rewritten": compliance_rewritten,
@@ -595,6 +799,7 @@ class CopywritingService:
                     "status": TaskStatus.FAILED,
                     "stage": "生成失败",
                     "updated_at": datetime.now().astimezone(),
+                    "token_usage": accumulated_usage or self._last_usage(),
                     "error_message": str(exc),
                 }
             )
@@ -657,3 +862,8 @@ class CopywritingService:
     def _last_usage(self) -> dict[str, int]:
         usage = getattr(self.engine, "last_usage", {})
         return dict(usage) if isinstance(usage, dict) else {}
+
+    def _accumulate_last_usage(self, total: dict[str, int]) -> None:
+        for key, value in self._last_usage().items():
+            if isinstance(value, int):
+                total[key] = total.get(key, 0) + value

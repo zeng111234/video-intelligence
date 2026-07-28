@@ -901,6 +901,7 @@ class TestCopywriting:
         assert data["model_name"] == "sandbox-template"
         assert data["is_mock"] is True
         assert len(data["result_variants"]) == 1
+        assert data["attention_terms"] == []
         assert data["compliance_status"] == "passed"
         assert data["compliance_notes"]
 
@@ -1043,8 +1044,10 @@ class TestCopywritingProductionConfig:
         )
         assert create_resp.status_code == 200
         task = create_resp.json()
-        assert task["status"] == "failed"
-        assert "COPYWRITING_API_KEY" in task["error_message"]
+        assert task["status"] == "succeeded"
+        assert task["result_text"] == "未配置 Key 测试"
+        assert task["compliance_status"] == "best_effort"
+        assert task["error_message"] is None
         assert task["is_mock"] is False
 
         backend_deps.get_copywriting_engine.cache_clear()
@@ -1143,11 +1146,13 @@ class TestPublish:
         )
         assert resp.status_code == 400
 
-    def test_preflight_batch_and_manual_result(self, client: TestClient):
+    def test_preflight_batch_and_manual_result(self, client: TestClient, tmp_path):
         """发布批次可预检、创建并人工回填结果。"""
         self.install_publish_service_override()
+        video_path = tmp_path / "video.mp4"
+        video_path.write_bytes(b"video")
         payload = {
-            "video_path": "/some/video.mp4",
+            "video_path": str(video_path),
             "platforms": ["douyin", "kuaishou"],
             "title": "测试发布任务",
             "description": "测试描述",

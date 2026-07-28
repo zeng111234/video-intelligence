@@ -5,7 +5,11 @@ import pytest
 
 from project.backend.app.core.deps import get_avatar_service
 from project.backend.app.main import app
-from src.adapters.avatar import LocalCommandAvatarProvider, SandboxAvatarProvider
+from src.adapters.avatar import (
+    LocalCommandAvatarProvider,
+    SandboxAvatarProvider,
+    ShuyingLegacyAvatarProvider,
+)
 from src.repositories.mock import MockRepository
 from src.services.avatar import AvatarService
 
@@ -228,9 +232,47 @@ def test_local_asset_upload_accepts_browser_recording_webm(monkeypatch, tmp_path
                 },
                 files={"file": ("recording.webm", b"webm-bytes", "audio/webm")},
             )
+            media_resp = client.get(resp.json()["preview_url"])
     finally:
         app.dependency_overrides.clear()
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["kind"] == "voice"
     assert resp.json()["name"] == "浏览器录音"
+    assert resp.json()["preview_type"] == "audio"
+    assert media_resp.status_code == 200
+    assert media_resp.headers["content-type"] == "audio/webm"
+    assert media_resp.content == b"webm-bytes"
+
+
+def test_pending_cloud_voice_sample_can_be_previewed(tmp_path):
+    sample = tmp_path / "sample.mp3"
+    sample.write_bytes(b"authorised-sample")
+    provider = ShuyingLegacyAvatarProvider(
+        base_url="https://avatar-gateway.example.com",
+        api_code="test-api-code",
+        avatars_json='[{"asset_id":"avatar-1","name":"测试形象"}]',
+        voices_json='[{"asset_id":"voice-1","name":"通用女声"}]',
+        result_allowed_hosts="media.example.com",
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        enabled=True,
+    )
+    asset = provider.store_pending_voice_sample(
+        name="本人声音",
+        sample_path=sample,
+        filename="sample.mp3",
+    )
+    app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
+        MockRepository(), provider
+    )
+
+    try:
+        with TestClient(app) as client:
+            resp = client.get(asset.preview_url)
+    finally:
+        app.dependency_overrides.clear()
+
+    assert asset.preview_type == "audio"
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "audio/mpeg"
+    assert resp.content == b"authorised-sample"

@@ -10,6 +10,71 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+STYLE_DIRECTIVES: tuple[tuple[str, str], ...] = (
+    (
+        "吸引眼球",
+        "先用与受众直接相关的反差、问题或未揭晓信息建立悬念；第二句再说明为什么值得继续听，不能用夸张承诺充当钩子。",
+    ),
+    (
+        "专业权威",
+        "先给可由输入事实支撑的明确判断，再拆解原因或方法；表达克制、逻辑清楚，不虚构数据、资质或案例。",
+    ),
+    (
+        "情感共鸣",
+        "先写目标受众可能经历的真实场景或感受，再给理解和可执行的建议；避免煽情和替用户下结论。",
+    ),
+    (
+        "幽默风趣",
+        "用轻松的日常类比或自嘲式观察开场，再自然落到核心信息；笑点服务于信息，不使用贬低或冒犯表达。",
+    ),
+    (
+        "故事叙述",
+        "从具体场景或人物动作开始，按“处境—转折—启发”推进；不得把输入外的案例包装成真实经历。",
+    ),
+)
+
+VARIANT_STRATEGIES: tuple[str, ...] = (
+    "问题反差：第一句指出目标受众常见的反差或困扰，再解释关键原因，最后给出下一步。",
+    "结果先行：第一句先给出可由输入支持的核心结论，再倒推原因和做法。",
+    "场景代入：从一个与受众相关的具体使用或工作场景开始，再带出痛点和解决思路。",
+    "误区澄清：先指出一个容易踩的误区，再说明正确判断标准和行动建议。",
+    "清单拆解：用清晰的步骤或要点组织信息，开头直接说明这份清单解决什么问题。",
+)
+
+DEDUPLICATION_DIRECTIVES: tuple[tuple[str, str], ...] = (
+    (
+        "去重程度：轻微",
+        "保留原始事实、核心观点和主要表达顺序，只替换重复、模板化或机械的措辞。",
+    ),
+    (
+        "去重程度：适中",
+        "保留原始事实和核心观点，重组句式、信息顺序与口播节奏，避免与原文形成连续重复表达。",
+    ),
+    (
+        "去重程度：较强",
+        "仅保留原始事实和核心观点，以新的口播结构重新表达；不得新增未提供的卖点、价格、案例或效果。",
+    ),
+)
+
+
+def _style_directives(style_prompt: str) -> list[str]:
+    """Translate the UI style preset into testable writing instructions."""
+    return [directive for label, directive in STYLE_DIRECTIVES if label in style_prompt]
+
+
+def _deduplication_directives(style_prompt: str) -> list[str]:
+    """Extract the single-copy rewrite depth chosen by the AI-copy page."""
+    return [directive for label, directive in DEDUPLICATION_DIRECTIVES if label in style_prompt]
+
+
+def _variant_strategy_instructions(variant_count: int) -> list[str]:
+    count = max(1, min(variant_count, len(VARIANT_STRATEGIES)))
+    return [
+        f"第 {index + 1} 版必须采用：{strategy}"
+        for index, strategy in enumerate(VARIANT_STRATEGIES[:count])
+    ]
+
+
 class LLMAdapterError(RuntimeError):
     """LLM 调用失败。"""
 
@@ -30,6 +95,7 @@ class DisabledCopywritingEngine:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.last_usage: dict[str, int] = {}
+        self.last_attention_terms: list[str] = []
 
     def capabilities(self) -> dict[str, Any]:
         return {
@@ -42,6 +108,7 @@ class DisabledCopywritingEngine:
             "supports_variants": True,
             "max_variants": 5,
             "model": self.model,
+            "estimated_cost_cny": None,
             "missing_configuration": ["COPYWRITING_API_KEY"],
         }
 
@@ -70,6 +137,7 @@ class SandboxCopywritingEngine:
     """离线沙箱文案引擎，不发起真实 LLM 调用。"""
 
     last_usage: dict[str, int] = {}
+    last_attention_terms: list[str] = []
 
     def capabilities(self) -> dict[str, Any]:
         return {
@@ -82,6 +150,7 @@ class SandboxCopywritingEngine:
             "supports_variants": True,
             "max_variants": 3,
             "model": "sandbox-template",
+            "estimated_cost_cny": 0.0,
             "missing_configuration": [],
         }
 
@@ -114,10 +183,12 @@ class SandboxCopywritingEngine:
                 "最后再留一个动作。\n"
                 "想看具体做法，评论区告诉我。"
             ]
+        style = _style_directives(style_prompt) or _deduplication_directives(style_prompt)
+        style_lead = style[0] if style else "用自然、清晰的口播表达。"
         templates = [
-            f"【演示】开场钩子：如果你正在关注「{snippet}」，这条内容值得看完。\n主体：围绕核心卖点，用更清晰的结构讲明价值。\nCTA：{call_to_action or '欢迎私信了解更多。'}",
-            f"【演示】开场钩子：同样是做{platform}内容，差距往往在表达顺序。\n主体：「{snippet}」可以先讲痛点，再给方案。\nCTA：{call_to_action or '觉得有用可以收藏。'}",
-            f"【演示】开场钩子：别急着堆信息，先让目标用户听懂重点。\n主体：面向{target_audience or '目标客户'}，突出{selling_points or '核心价值'}。\nCTA：{call_to_action or '想要方案可以联系我们。'}",
+            f"【演示·问题反差】你明明在讲「{snippet}」，为什么目标客户还是划走？\n别急着加信息，先抓住{target_audience or '他们'}真正关心的问题。{style_lead}\n{selling_points or '把核心价值讲清楚。'}\n{call_to_action or '欢迎私信了解更多。'}",
+            f"【演示·结果先行】关于「{snippet}」，先说结论：表达顺序会直接影响用户能不能听懂重点。\n先讲{selling_points or '核心价值'}，再解释原因，不要让人猜。{style_lead}\n{call_to_action or '觉得有用可以收藏。'}",
+            f"【演示·场景代入】客户打开{platform}，只给你几秒钟决定要不要继续看。\n这时别急着堆概念，从「{snippet}」这个场景讲起，再说明{selling_points or '你能提供什么价值'}。{style_lead}\n{call_to_action or '想要方案可以联系我们。'}",
         ]
         count = max(1, min(variant_count, len(templates)))
         return templates[:count]
@@ -135,10 +206,12 @@ class SandboxCopywritingEngine:
         variant_count: int = 1,
     ) -> list[str]:
         snippet = source_text[:80].replace("\n", " ")
+        style = _style_directives(style_prompt) or _deduplication_directives(style_prompt)
+        style_lead = style[0] if style else "保持自然、清晰的口播节奏。"
         templates = [
-            f"【演示】专业口播文案：围绕「{snippet}」展开，以数据驱动的视角为您解读行业趋势。了解更多请联系我们。",
-            f"【演示】轻松风格：嘿！今天聊聊「{snippet}」——三个关键点帮你快速上手，记得点赞收藏哦！",
-            f"【演示】故事型文案：从一个真实案例说起——「{snippet}」背后的逻辑，让每一步都有据可循。",
+            f"【演示·问题反差】明明内容不少，为什么「{snippet}」还是让人听不进去？\n问题往往不在信息少，而在重点出现得太晚。{style_lead}\n先讲用户最在意的一点，再补充说明。",
+            f"【演示·结果先行】先说结论：「{snippet}」要讲清楚，关键不是换更多词，而是先给判断、再讲理由。\n{style_lead}\n这样用户更容易跟上你的表达。",
+            f"【演示·场景代入】想象一下，用户刚刷到这段「{snippet}」，手指已经准备划走。\n如果第一句还在铺垫，他就不会等到重点。{style_lead}\n把关键价值提前，后面再补充细节。",
         ]
         count = max(1, min(variant_count, len(templates)))
         return templates[:count]
@@ -178,12 +251,19 @@ class OpenAICompatibleCopywritingEngine:
         model: str = "gpt-4o-mini",
         *,
         timeout_seconds: float = 60,
+        estimated_cost_cny: float | None = None,
     ) -> None:
         self.api_key = api_key.strip()
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = max(5.0, timeout_seconds)
+        self.estimated_cost_cny = (
+            max(0.0, float(estimated_cost_cny))
+            if estimated_cost_cny is not None
+            else None
+        )
         self.last_usage: dict[str, int] = {}
+        self.last_attention_terms: list[str] = []
 
     @classmethod
     def from_env(cls) -> OpenAICompatibleCopywritingEngine:
@@ -199,6 +279,9 @@ class OpenAICompatibleCopywritingEngine:
                 or os.getenv("COPYWRITING_LLM_MODEL")
                 or "deepseek-v4-flash"
             ),
+            estimated_cost_cny=_optional_nonnegative_float(
+                os.getenv("COPYWRITING_ESTIMATED_REQUEST_COST_CNY")
+            ),
         )
 
     def capabilities(self) -> dict[str, Any]:
@@ -213,6 +296,9 @@ class OpenAICompatibleCopywritingEngine:
             "supports_variants": True,
             "max_variants": 5,
             "model": self.model,
+            "estimated_cost_cny": (
+                self.estimated_cost_cny if configured else None
+            ),
             "missing_configuration": [] if configured else ["COPYWRITING_API_KEY"],
         }
 
@@ -272,7 +358,7 @@ class OpenAICompatibleCopywritingEngine:
         )
         user_prompt = (
             "任务：优化已有短视频口播文案。\n"
-            f"目标受众：{target_audience or '未指定'}\n"
+            f"目标受众：{target_audience or '请根据原文自动判断，不要输出分析'}\n"
             "要求：保持原文事实和核心信息不变，重组表达为自然、短句、便于停顿的口播稿。"
             "涉及收入、效果或经历时不得改写成可复制的保证。\n"
             f"本次优化目标：{rewrite_goal or '自然口播与风险表达优化'}\n"
@@ -386,18 +472,37 @@ class OpenAICompatibleCopywritingEngine:
             "你是一位专业的短视频口播文案撰写专家。",
             "只能使用用户提供的事实，不得虚构价格、资质、客户案例、数据、效果承诺或平台背书。",
             "输出应口语化、短句、自然停顿，开头直接进入重点；不要输出开场钩子、主体、CTA 等栏目标题。",
+            "每次都必须执行深度语义去重：先在内部提取原文的事实要点，再用新的信息顺序和句式重新组织；除专有名词、型号、参数、金额和必要事实外，不得连续复用原文超过 8 个汉字。",
+            "去重的目标是降低与原文的表达重复，不是删除或篡改可核实事实；不得输出提取过程或去重说明。",
             "面对收益、效果、医疗金融或官方背书等风险表达，改为个人经历、条件性或可核实的表述；不得承诺审核通过。",
+            "避免导流、夸大、绝对化、虚假背书等常见平台敏感营销用语；这只能降低表达风险，不能保证任何平台审核结果。",
+            "识别最终文案中疑似属于其他企业、品牌、机构或人物的名称；只列出正文中实际出现的原词，不要列产品类别、型号、参数或通用名词。",
             "按信息完整度决定篇幅，删除重复句，不为凑字数扩写。",
-            "每个变体都要有实质差异，不能只是替换同义词。",
             "返回严格 JSON，不要 Markdown，不要解释。",
-            'JSON 格式：{"variants":["文案1","文案2"],"notes":[]}',
+            'JSON 格式：{"variants":["文案1"],"attention_terms":["疑似外部主体名称"],"notes":[]}',
         ]
         if style_prompt:
             parts.append(f"风格要求：{style_prompt}")
+        style_instructions = _style_directives(style_prompt)
+        if style_instructions:
+            parts.append("所选风格的执行规则：" + "；".join(style_instructions))
+        deduplication_instructions = _deduplication_directives(style_prompt)
+        if deduplication_instructions:
+            parts.append("去重执行规则：" + "；".join(deduplication_instructions))
         if target_audience:
             parts.append(f"目标受众：{target_audience}")
+        else:
+            parts.append("请根据输入的产品、场景、痛点和表达方式自动判断最适合的受众，并据此调整措辞；不要输出受众分析。")
         parts.append(f"语气：{tone}")
-        parts.append(f"变体数量：{max(1, min(variant_count, 5))}")
+        count = max(1, min(variant_count, 5))
+        parts.append(f"变体数量：{count}")
+        if count == 1:
+            parts.append("只输出一篇完成度高、可直接使用的文案，不提供备选版本。")
+        else:
+            parts.append("每个变体都要有实质差异：开头角度、信息顺序和推进结构必须不同，不能只是替换同义词。")
+            parts.append("同一批中不得复用相同的首句、相同的论证顺序或相同的行动引导句。")
+            parts.append("逐版差异化策略（按数组顺序输出，不要把策略标题写进文案）：")
+            parts.extend(_variant_strategy_instructions(count))
         return "\n".join(parts)
 
     def _build_generate_prompt(
@@ -413,7 +518,7 @@ class OpenAICompatibleCopywritingEngine:
             [
                 "任务：从需求生成短视频文案。",
                 f"内容概要：{content_brief}",
-                f"目标受众：{target_audience or '未指定'}",
+                f"目标受众：{target_audience or '请根据内容自动判断，不要输出分析'}",
                 f"核心卖点：{selling_points or '未指定'}",
                 f"行动号召：{call_to_action or '未指定'}",
                 "要求：信息不足时保持克制，用可验证表述，不编造缺失事实。",
@@ -426,8 +531,10 @@ class OpenAICompatibleCopywritingEngine:
         user_prompt: str,
         variant_count: int,
     ) -> list[str]:
+        self.last_attention_terms = []
         content = self._chat_completion(system_prompt, user_prompt)
         variants = self._parse_variants(content)
+        self.last_attention_terms = self._parse_attention_terms(content)
         count = max(1, min(variant_count, 5))
         variants = [item.strip() for item in variants if item.strip()]
         if not variants:
@@ -526,6 +633,28 @@ class OpenAICompatibleCopywritingEngine:
             return [str(item) for item in payload]
         return []
 
+    @staticmethod
+    def _parse_attention_terms(content: str) -> list[str]:
+        if not content.strip():
+            return []
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, dict):
+            return []
+        raw_terms = payload.get("attention_terms")
+        if not isinstance(raw_terms, list):
+            return []
+        terms: list[str] = []
+        strip_chars = " \t\r\n，。！？；：、,.!?;:'\"“”‘’《》【】()（）[]{}"
+        for item in raw_terms:
+            term = str(item).strip(strip_chars)
+            if 2 <= len(term) <= 40 and term not in terms:
+                terms.append(term)
+        return terms
+
 
 def build_copywriting_engine(secrets: dict[str, Any] | None = None):
     """工厂：根据配置返回文案引擎。
@@ -554,6 +683,12 @@ def build_copywriting_engine(secrets: dict[str, Any] | None = None):
             api_key=api_key,
             base_url=base_url,
             model=model,
+            estimated_cost_cny=_optional_nonnegative_float(
+                _setting(
+                    "COPYWRITING_ESTIMATED_REQUEST_COST_CNY",
+                    secrets,
+                )
+            ),
         )
     return DisabledCopywritingEngine(base_url=base_url, model=model)
 
@@ -563,3 +698,13 @@ def _setting(key: str, secrets: dict[str, Any] | None = None, default: str = "")
     if not value and secrets:
         value = str(secrets.get(key, ""))
     return (value or default).strip()
+
+
+def _optional_nonnegative_float(value: str | None) -> float | None:
+    if value is None or not str(value).strip():
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None

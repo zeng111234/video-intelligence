@@ -1,0 +1,172 @@
+"""云端轻量剪辑 FastAPI 契约测试（不调用付费接口）。"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from project.backend.app.api.v1 import video_editor as video_editor_api
+from project.backend.app.main import app
+from src.adapters.video_editor_cloud import build_cloud_providers
+from src.repositories.mock import MockRepository
+from src.services.video_editor_cloud import (
+    CloudEditorConfiguration,
+    CloudProviderMode,
+)
+from src.services.video_editor_workflow import VideoEditorWorkflowService
+
+
+class _VideoEditingStub:
+    def __init__(self, output_directory: Path):
+        self.output_directory = output_directory
+
+
+class _TranscriptionStub:
+    def get_approved_revision(self, _task_id: str):
+        return None
+
+
+def _workflow(
+    tmp_path: Path,
+    *,
+    configuration: CloudEditorConfiguration | None = None,
+) -> tuple[VideoEditorWorkflowService, str]:
+    config = configuration or CloudEditorConfiguration(
+        provider_mode=CloudProviderMode.SANDBOX,
+    )
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+        cloud_configuration=config,
+        cloud_providers=build_cloud_providers(config),
+    )
+    service._probe_media = lambda _path: {  # type: ignore[method-assign]
+        "duration_seconds": 60.0,
+        "width": 1080,
+        "height": 1920,
+        "fps": 30,
+        "orientation": "vertical",
+        "has_audio": True,
+        "size_bytes": 1024,
+    }
+    source = service.upload_source(
+        file_name="authorized.mp4",
+        media_type="video/mp4",
+        media_bytes=b"test-video",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    return service, source["source_id"]
+
+
+def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
+    workflow, source_id = _workflow(tmp_path)
+    app.dependency_overrides[video_editor_api.get_workflow_service] = (
+        lambda: workflow
+    )
+    try:
+        with TestClient(app) as client:
+            preflight_response = client.post(
+                "/api/v1/video-editor/preflight",
+                json={
+                    "source_id": source_id,
+                    "output_profile": "720p",
+                    "target_platform": "douyin",
+                },
+            )
+            assert preflight_response.status_code == 200
+            quote = preflight_response.json()
+            assert quote["provider_mode"] == "sandbox"
+
+            body = {
+                "source_ids": [source_id],
+                "target_platform": "douyin",
+                "output_profile": "720p",
+                "quote_id": quote["quote_id"],
+                "billing_confirmation": {
+                    "confirmed": True,
+                    "max_cost_cny": float(quote["estimated_max"]),
+                },
+            }
+            missing_key = client.post(
+                "/api/v1/video-editor/batches",
+                json=body,
+            )
+            assert missing_key.status_code == 400
+            assert "Idempotency-Key" in json.dumps(
+                missing_key.json(),
+                ensure_ascii=False,
+            )
+
+            created_response = client.post(
+                "/api/v1/video-editor/batches",
+                headers={"Idempotency-Key": "api-cloud-create"},
+                json=body,
+            )
+            assert created_response.status_code == 200
+            created = created_response.json()
+            item = created["items"][0]
+            assert item["status"] == "awaiting_subtitle_review"
+
+            reviewed_response = client.post(
+                (
+                    f"/api/v1/video-editor/batches/{created['batch_id']}"
+                    f"/items/{item['item_id']}/review"
+                ),
+                json={
+                    "subtitle_segments": [
+                        {"start": 0, "end": 2, "text": "人工确认字幕"}
+                    ],
+                    "enabled_plan_step_ids": item["edit_plan"]["enabled_steps"],
+                    "selected_title": item["selected_title"],
+                    "selected_bgm_id": None,
+                    "confirmed": True,
+                },
+            )
+            assert reviewed_response.status_code == 200
+            reviewed = reviewed_response.json()
+            assert reviewed["status"] == "configuration_required"
+            assert reviewed["items"][0]["result_media_url"] is None
+
+            confirm_response = client.post(
+                f"/api/v1/video-editor/batches/{created['batch_id']}/confirm-results",
+                json={"item_ids": [item["item_id"]]},
+            )
+            assert confirm_response.status_code == 400
+            assert "不能交接发布" in json.dumps(
+                confirm_response.json(),
+                ensure_ascii=False,
+            )
+    finally:
+        app.dependency_overrides.pop(
+            video_editor_api.get_workflow_service,
+            None,
+        )
+
+
+def test_capabilities_expose_missing_production_configuration(tmp_path: Path):
+    configuration = CloudEditorConfiguration(
+        provider_mode=CloudProviderMode.ALIYUN,
+    )
+    workflow, _ = _workflow(tmp_path, configuration=configuration)
+    app.dependency_overrides[video_editor_api.get_workflow_service] = (
+        lambda: workflow
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v1/video-editor/capabilities")
+            assert response.status_code == 200
+            capabilities = response.json()
+            assert capabilities["provider_mode"] == "aliyun"
+            assert capabilities["live_ready"] is False
+            assert capabilities["is_mock"] is False
+            assert "DASHSCOPE_API_KEY" in capabilities["missing_configuration"]
+    finally:
+        app.dependency_overrides.pop(
+            video_editor_api.get_workflow_service,
+            None,
+        )

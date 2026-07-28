@@ -42,10 +42,14 @@ import type {
   PipelineReviewDraft,
   PipelineResponse,
   ProductionBatch,
+  ProductionBatchPublishPreflight,
   ProductionBatchPreflight,
   ProductionBatchReviewResult,
   ProductionBatchSourceItem,
+  ProductionPublishTarget,
   ProductionProfile,
+  ProductionWorkspace,
+  ProductionWorkspaceConfiguration,
   PublishFeedback,
   PublishMetadataResponse,
   FeedbackRecommendations,
@@ -79,7 +83,10 @@ import type {
   VideoEditorJobListResponse,
   VideoEditorLocalModel,
   VideoEditorLocalModelListResponse,
+  VideoEditorOutputProfile,
+  VideoEditorPreflightResponse,
   VideoEditorSourceListResponse,
+  VideoEditorVisualAsset,
   VideoEditRequest,
   VideoEditResponse,
   VoiceoverDraftResponse,
@@ -373,6 +380,33 @@ export function createProductionProfile(params: Omit<ProductionProfile, "profile
   return request("/production/profiles", { method: "POST", body: JSON.stringify(params) });
 }
 
+export function getProductionWorkspaceConfiguration(): Promise<ProductionWorkspaceConfiguration> {
+  return request("/production/workspace/configuration");
+}
+
+export function saveProductionWorkspaceConfiguration(params: {
+  rightsHolder: string;
+  agreementAccepted: boolean;
+  defaultProfileId?: string | null;
+  defaultPublishPlatforms?: string[];
+  copywritingEstimatedCostCny?: number | null;
+  avatarEstimatedCostCny?: number | null;
+  bundledCompute?: boolean;
+}): Promise<ProductionWorkspaceConfiguration> {
+  return request("/production/workspace/configuration", {
+    method: "PUT",
+    body: JSON.stringify({
+      rights_holder: params.rightsHolder,
+      agreement_accepted: params.agreementAccepted,
+      default_profile_id: params.defaultProfileId || null,
+      default_publish_platforms: params.defaultPublishPlatforms || ["douyin"],
+      copywriting_estimated_cost_cny: params.copywritingEstimatedCostCny ?? null,
+      avatar_estimated_cost_cny: params.avatarEstimatedCostCny ?? null,
+      bundled_compute: params.bundledCompute ?? true,
+    }),
+  });
+}
+
 export function listProductionBatches(): Promise<{ items: ProductionBatch[] }> {
   return request("/production/batches");
 }
@@ -382,13 +416,30 @@ export function createProductionBatch(params: {
   profile_id: string;
   candidate_ids?: string[];
   items?: ProductionBatchSourceItem[];
+  idempotencyKey: string;
 }): Promise<ProductionBatch> {
-  return request("/production/batches", { method: "POST", body: JSON.stringify(params) });
+  const { idempotencyKey, ...body } = params;
+  return request("/production/batches", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": idempotencyKey,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getProductionBatch(batchId: string): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}`);
+}
+
+export function getProductionBatchWorkspace(batchId: string): Promise<ProductionWorkspace> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/workspace`);
 }
 
 export function reviewProductionBatchItems(
   batchId: string,
-  params: { stage: "script" | "output"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string }> },
+  params: { stage: "transcript" | "script" | "output"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string }> },
 ): Promise<{ batch: ProductionBatch; results: ProductionBatchReviewResult[] }> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/reviews`, {
     method: "POST",
@@ -396,12 +447,51 @@ export function reviewProductionBatchItems(
   });
 }
 
-export function preflightProductionBatch(batchId: string, params: { rightsHolder: string; rightsConfirmed: boolean; publishPlatforms: string[]; concurrency: number }): Promise<ProductionBatchPreflight> {
-  return request(`/production/batches/${encodeURIComponent(batchId)}/preflight`, { method: "POST", body: JSON.stringify({ rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, publish_platforms: params.publishPlatforms, concurrency: params.concurrency }) });
+export function preflightProductionBatch(batchId: string, params: {
+  rightsHolder: string;
+  rightsConfirmed: boolean;
+  publishPlatforms: string[];
+  concurrency: number;
+  maxTotalCostCny?: number | null;
+  paidActionsConfirmed?: boolean;
+}): Promise<ProductionBatchPreflight> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/preflight`, {
+    method: "POST",
+    body: JSON.stringify({
+      rights_holder: params.rightsHolder,
+      rights_confirmed: params.rightsConfirmed,
+      publish_platforms: params.publishPlatforms,
+      concurrency: params.concurrency,
+      max_total_cost_cny: params.maxTotalCostCny ?? null,
+      paid_actions_confirmed: params.paidActionsConfirmed ?? false,
+    }),
+  });
 }
 
-export function startProductionBatch(batchId: string, params: { rightsHolder: string; rightsConfirmed: boolean; publishPlatforms: string[]; concurrency: number }): Promise<ProductionBatch> {
-  return request(`/production/batches/${encodeURIComponent(batchId)}/start`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `production-start-${batchId}-${Date.now()}` }, body: JSON.stringify({ rights_holder: params.rightsHolder, rights_confirmed: params.rightsConfirmed, publish_platforms: params.publishPlatforms, concurrency: params.concurrency }) });
+export function startProductionBatch(batchId: string, params: {
+  rightsHolder: string;
+  rightsConfirmed: boolean;
+  publishPlatforms: string[];
+  concurrency: number;
+  maxTotalCostCny?: number | null;
+  paidActionsConfirmed?: boolean;
+  idempotencyKey: string;
+}): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": params.idempotencyKey,
+    },
+    body: JSON.stringify({
+      rights_holder: params.rightsHolder,
+      rights_confirmed: params.rightsConfirmed,
+      publish_platforms: params.publishPlatforms,
+      concurrency: params.concurrency,
+      max_total_cost_cny: params.maxTotalCostCny ?? null,
+      paid_actions_confirmed: params.paidActionsConfirmed ?? false,
+    }),
+  });
 }
 
 export function pauseProductionBatch(batchId: string): Promise<ProductionBatch> {
@@ -416,12 +506,40 @@ export function retryProductionBatchFailed(batchId: string): Promise<ProductionB
   return request(`/production/batches/${encodeURIComponent(batchId)}/retry-failed`, { method: "POST" });
 }
 
-export function preflightProductionBatchPublish(batchId: string, params: { runIds: string[]; publishPlatforms: string[] }): Promise<{ batch_id: string; blocked: boolean; items: Array<{ run_id: string; blocked: boolean; issues?: string[] }> }> {
-  return request(`/production/batches/${encodeURIComponent(batchId)}/publish/preflight`, { method: "POST", body: JSON.stringify({ run_ids: params.runIds, publish_platforms: params.publishPlatforms }) });
+export function preflightProductionBatchPublish(batchId: string, params: {
+  runIds: string[];
+  targets?: ProductionPublishTarget[];
+  publishPlatforms?: string[];
+}): Promise<ProductionBatchPublishPreflight> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/publish/preflight`, {
+    method: "POST",
+    body: JSON.stringify({
+      run_ids: params.runIds,
+      targets: params.targets || [],
+      publish_platforms: params.publishPlatforms || params.targets?.map((item) => item.platform) || [],
+    }),
+  });
 }
 
-export function confirmProductionBatchPublish(batchId: string, params: { runIds: string[]; publishPlatforms: string[] }): Promise<ProductionBatch> {
-  return request(`/production/batches/${encodeURIComponent(batchId)}/publish`, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": `production-publish-${batchId}-${Date.now()}` }, body: JSON.stringify({ run_ids: params.runIds, publish_platforms: params.publishPlatforms, confirmation_accepted: true }) });
+export function confirmProductionBatchPublish(batchId: string, params: {
+  runIds: string[];
+  targets?: ProductionPublishTarget[];
+  publishPlatforms?: string[];
+  idempotencyKey: string;
+}): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/publish`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": params.idempotencyKey,
+    },
+    body: JSON.stringify({
+      run_ids: params.runIds,
+      targets: params.targets || [],
+      publish_platforms: params.publishPlatforms || params.targets?.map((item) => item.platform) || [],
+      confirmation_accepted: true,
+    }),
+  });
 }
 
 export function preflightKeywordAutoRun(params: {
@@ -1166,6 +1284,21 @@ export function listVideoEditorSources(): Promise<VideoEditorSourceListResponse>
   return request("/video-editor/sources");
 }
 
+export function preflightVideoEditor(params: {
+  sourceId: string;
+  outputProfile: VideoEditorOutputProfile;
+  targetPlatform: string;
+}): Promise<VideoEditorPreflightResponse> {
+  return request("/video-editor/preflight", {
+    method: "POST",
+    body: JSON.stringify({
+      source_id: params.sourceId,
+      output_profile: params.outputProfile,
+      target_platform: params.targetPlatform,
+    }),
+  });
+}
+
 export function createVideoEditorAnalysis(params: {
   sourceId: string;
   targetPlatform: string;
@@ -1246,6 +1379,41 @@ export async function uploadVideoEditorSources(
   return resp.json();
 }
 
+export async function uploadVideoEditorVisualAsset(params: {
+  kind: "product" | "background";
+  file: File;
+  rightsHolder: string;
+}): Promise<VideoEditorVisualAsset> {
+  const formData = new FormData();
+  formData.append("kind", params.kind);
+  formData.append("file", params.file);
+  formData.append("rights_confirmed", "true");
+  formData.append("rights_holder", params.rightsHolder);
+  const resp = await fetch(`${BASE}/video-editor/visual-assets`, { method: "POST", body: formData });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || body.message || "图片上传失败");
+  }
+  return resp.json();
+}
+
+export function createProductShowcaseJob(params: {
+  sourceId: string;
+  productAssetId: string;
+  backgroundAssetId?: string;
+  layout: "avatar_left_product_right" | "product_canvas_avatar_pip";
+}): Promise<VideoEditorJob> {
+  return request("/video-editor/product-showcase/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      source_id: params.sourceId,
+      product_asset_id: params.productAssetId,
+      background_asset_id: params.backgroundAssetId || null,
+      layout: params.layout,
+    }),
+  });
+}
+
 export function listVideoEditorBgm(): Promise<VideoEditorBgmListResponse> {
   return request("/video-editor/bgm");
 }
@@ -1281,32 +1449,51 @@ export function prepareVideoEditorLocalModel(
 export function createVideoEditorBatch(params: {
   sourceIds: string[];
   targetPlatform: string;
-  subtitleEnabled: boolean;
-  subtitleModel: "large-v3-turbo" | "base";
-  steps: { kind: string; params: Record<string, unknown>; enabled: boolean }[];
-  outputFormat: string;
-  outputResolution: string;
-  outputFps: number;
-  outputBitrate: string;
-  bgmEnabled: boolean;
+  subtitleEnabled?: boolean;
+  subtitleModel?: "large-v3-turbo" | "base";
+  steps?: { kind: string; params: Record<string, unknown>; enabled: boolean }[];
+  outputFormat?: string;
+  outputResolution?: string;
+  outputFps?: number;
+  outputBitrate?: string;
+  bgmEnabled?: boolean;
   bgmId?: string;
-  bgmVolume: number;
+  bgmVolume?: number;
+  outputProfile?: VideoEditorOutputProfile;
+  quoteId?: string;
+  billingConfirmation?: {
+    confirmed: boolean;
+    maxCostCny: number;
+  };
+  idempotencyKey?: string;
 }): Promise<VideoEditorBatch> {
   return request("/video-editor/batches", {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(params.idempotencyKey ? { "Idempotency-Key": params.idempotencyKey } : {}),
+    },
     body: JSON.stringify({
       source_ids: params.sourceIds,
       target_platform: params.targetPlatform,
-      subtitle_enabled: params.subtitleEnabled,
-      subtitle_model: params.subtitleModel,
-      steps: params.steps,
-      output_format: params.outputFormat,
-      output_resolution: params.outputResolution,
-      output_fps: params.outputFps,
-      output_bitrate: params.outputBitrate,
-      bgm_enabled: params.bgmEnabled,
+      subtitle_enabled: params.subtitleEnabled ?? true,
+      subtitle_model: params.subtitleModel || "large-v3-turbo",
+      steps: params.steps || [],
+      output_format: params.outputFormat || "mp4",
+      output_resolution: params.outputResolution || (params.outputProfile === "720p" ? "720x1280" : "1080x1920"),
+      output_fps: params.outputFps ?? 30,
+      output_bitrate: params.outputBitrate || (params.outputProfile === "720p" ? "2.5M" : "5M"),
+      bgm_enabled: params.bgmEnabled ?? false,
       bgm_id: params.bgmId || null,
-      bgm_volume: params.bgmVolume,
+      bgm_volume: params.bgmVolume ?? 0.2,
+      output_profile: params.outputProfile || null,
+      quote_id: params.quoteId || null,
+      billing_confirmation: params.billingConfirmation
+        ? {
+            confirmed: params.billingConfirmation.confirmed,
+            max_cost_cny: params.billingConfirmation.maxCostCny,
+          }
+        : null,
     }),
   });
 }
@@ -1321,6 +1508,29 @@ export function getVideoEditorBatch(batchId: string): Promise<VideoEditorBatch> 
 
 export function continueVideoEditorBatchItem(batchId: string, itemId: string): Promise<VideoEditorBatch> {
   return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/continue`, { method: "POST" });
+}
+
+export function reviewVideoEditorBatchItem(
+  batchId: string,
+  itemId: string,
+  params: {
+    subtitleSegments: Array<Record<string, unknown>>;
+    enabledPlanStepIds: string[];
+    selectedTitle: string;
+    selectedBgmId?: string | null;
+    confirmed: boolean;
+  },
+): Promise<VideoEditorBatch> {
+  return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/review`, {
+    method: "POST",
+    body: JSON.stringify({
+      subtitle_segments: params.subtitleSegments,
+      enabled_plan_step_ids: params.enabledPlanStepIds,
+      selected_title: params.selectedTitle,
+      selected_bgm_id: params.selectedBgmId || null,
+      confirmed: params.confirmed,
+    }),
+  });
 }
 
 export function selectVideoEditorBatchItemTitle(

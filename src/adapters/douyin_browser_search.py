@@ -16,10 +16,11 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
 from pydantic import HttpUrl
@@ -44,9 +45,14 @@ _LOGIN_MARKERS = ("安全验证", "扫码登录", "请完成验证")
 _HOTSPOT_SUPPORTED_WINDOW_HOURS = {1, 24, 72, 168}
 _HOTSPOT_DEFAULT_WINDOW_HOURS = 168
 _HOTSPOT_LIST_TYPES = (1001, 1002, 1003, 1004, 1005)
+_HOTSPOT_TOPIC_LIST_TYPES = (2001, 2002)
+_HOTSPOT_SEARCH_LIST_TYPES = (3001, 3002)
 _HOTSPOT_MAX_ROWS_PER_LIST = 50
 _HOTSPOT_MAX_SCROLL_ROUNDS = 8
 _HOTSPOT_MAX_RESULT_LIMIT = 100
+_HOTSPOT_CUSTOMER_RESULT_LIMIT = 3
+_MIN_QUALIFYING_LIKES = 100
+_MIN_QUALIFYING_LIKES_PER_DAY = 1.0
 _HOTSPOT_PAGE_SETTLE_RANGE_MS = (3_500, 5_500)
 _HOTSPOT_SEARCH_SETTLE_RANGE_MS = (3_000, 5_000)
 _HOTSPOT_SCROLL_REFRESH_RANGE_MS = (450, 850)
@@ -60,12 +66,16 @@ _HOTSPOT_LIST_LABELS = {
     1003: "高完播率",
     1004: "高涨粉率",
     1005: "高点赞率",
+    2001: "话题榜",
+    2002: "话题飙升榜",
+    3001: "搜索榜",
+    3002: "搜索飙升榜",
 }
 _HOTSPOT_ENTRY_URL = (
     "https://douhot.douyin.com/square/hotspot?"
     "active_tab=hotspot_video&date_window=168&sub_type=1001"
 )
-_HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v4_safe_pacing"
+_HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v5_three_boards"
 
 
 @dataclass(frozen=True)
@@ -267,14 +277,20 @@ class LocalDouyinBrowserSearchProvider:
         window_hours = self._resolve_hotspot_window_hours(hotspot_window_hours)
         observed_at = self.clock()
         raw_rows, collection_errors = self._collect_hotspot_rows(
-            keyword, window_hours=window_hours
+            keyword,
+            window_hours=window_hours,
+            observed_at=observed_at,
+            target_limit=limit,
         )
         items, low_incremental_items, warnings, filter_counts = self._to_items(
             raw_rows, keyword, observed_at, limit
         )
         diagnostic = None
         if raw_rows and not items:
-            diagnostic = "热点宝页面出现榜单内容，但未能读取可用视频标题；页面结构可能已变化。"
+            diagnostic = (
+                "已读取到相关素材，但没有同时达到点赞不少于 100、"
+                "日均点赞不少于 1 的固定质量线。"
+            )
         if not raw_rows:
             diagnostic = "热点宝未返回可识别视频；可能没有结果、未登录或需要人工验证。"
         return ProviderSearchPage(
@@ -331,14 +347,15 @@ class LocalDouyinBrowserSearchProvider:
         keyword: str,
         *,
         window_hours: int = _HOTSPOT_DEFAULT_WINDOW_HOURS,
+        observed_at: datetime,
+        target_limit: int,
     ) -> tuple[list[dict[str, Any]], list[ProviderSearchError]]:
-        """Read all five visible Hotspot leaderboards for one selected period.
+        """Collect visible candidates from video, topic and search surfaces.
 
-        The operator owns the login step. This routine never reads browser
-        cookies, calls private APIs, or attempts to defeat a verification page.
-        Each leaderboard is visited even when earlier lists already contain
-        enough eligible videos, so list-specific discovery is not biased by
-        the video total leaderboard.
+        The customer-facing crawler uses the requested fallback order: video
+        total leaderboard, topic total leaderboard, then search total
+        leaderboard.  A later source is only opened when earlier qualifying
+        candidates do not fill the requested result limit.
         """
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -355,37 +372,35 @@ class LocalDouyinBrowserSearchProvider:
                         page.set_default_timeout(int(self.timeout_seconds * 1000))
                         rows: list[dict[str, Any]] = []
                         errors: list[ProviderSearchError] = []
-                        for list_type in _HOTSPOT_LIST_TYPES:
+                        def ensure_visible_page(url: str) -> None:
+                            response = page.goto(url, wait_until="domcontentloaded")
+                            if response is not None and response.status in {403, 429}:
+                                raise LicensedProviderError(
+                                    f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
+                                    kind=ProviderErrorKind.RATE_LIMIT,
+                                )
+                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS))
+                            body_text = page.locator("body").inner_text(timeout=3_000)
+                            if any(marker in body_text for marker in _LOGIN_MARKERS):
+                                raise LicensedProviderError(
+                                    "热点宝要求登录或安全验证，已暂停采集，请在专用浏览器中人工处理。",
+                                    kind=ProviderErrorKind.AUTHORIZATION,
+                                )
+                            if any(marker in body_text for marker in ("访问频繁", "操作频繁", "请求过于频繁")):
+                                raise LicensedProviderError(
+                                    "热点宝提示访问频繁，已停止采集并进入安全暂停。",
+                                    kind=ProviderErrorKind.RATE_LIMIT,
+                                )
+
+                        def append_video_board(list_type: int) -> None:
                             url = (
                                 "https://douhot.douyin.com/square/hotspot?"
-                                f"active_tab=hotspot_video&date_window={window_hours}"
-                                f"&sub_type={list_type}"
+                                f"active_tab=hotspot_video&date_window={window_hours}&sub_type={list_type}"
                             )
                             try:
-                                response = page.goto(url, wait_until="domcontentloaded")
-                                if response is not None and response.status in {403, 429}:
-                                    raise LicensedProviderError(
-                                        f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
-                                        kind=ProviderErrorKind.RATE_LIMIT,
-                                    )
-                                page.wait_for_timeout(
-                                    self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS)
-                                )
-                                body_text = page.locator("body").inner_text(timeout=3_000)
-                                if any(marker in body_text for marker in _LOGIN_MARKERS):
-                                    raise LicensedProviderError(
-                                        "热点宝要求登录或安全验证，已暂停采集，请在专用浏览器中人工处理。",
-                                        kind=ProviderErrorKind.AUTHORIZATION,
-                                    )
-                                if any(marker in body_text for marker in ("访问频繁", "操作频繁", "请求过于频繁")):
-                                    raise LicensedProviderError(
-                                        "热点宝提示访问频繁，已停止采集并进入安全暂停。",
-                                        kind=ProviderErrorKind.RATE_LIMIT,
-                                    )
+                                ensure_visible_page(url)
                                 self._fill_hotspot_keyword(page, keyword)
-                                page.wait_for_timeout(
-                                    self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
-                                )
+                                page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
                                 list_rows: dict[str, dict[str, Any]] = {}
                                 stagnant_rounds = 0
                                 previous_count = -1
@@ -413,15 +428,10 @@ class LocalDouyinBrowserSearchProvider:
                                             "window_hours": window_hours,
                                             "list_type": list_type,
                                             "list_label": _HOTSPOT_LIST_LABELS[list_type],
+                                            "source_kind": "video_board",
                                         }
                                     )
                                     rows.append(row)
-                                if list_type != _HOTSPOT_LIST_TYPES[-1]:
-                                    page.wait_for_timeout(
-                                        self._random_delay_ms(
-                                            *_HOTSPOT_LIST_COOLDOWN_RANGE_MS
-                                        )
-                                    )
                             except LicensedProviderError:
                                 raise
                             except PlaywrightError as exc:
@@ -432,7 +442,114 @@ class LocalDouyinBrowserSearchProvider:
                                         retryable=False,
                                     )
                                 )
-                        return self._merge_hotspot_rows(rows), errors
+
+                        def has_enough_qualifying_rows() -> bool:
+                            qualifying, _, _, _ = self._to_items(
+                                rows,
+                                keyword,
+                                observed_at,
+                                target_limit,
+                            )
+                            return len(qualifying) >= target_limit
+
+                        # 1) Video total leaderboard is always first.
+                        append_video_board(1001)
+                        if has_enough_qualifying_rows():
+                            return rows, errors
+
+                        # 2) Topic leaderboard is essential for business terms such as
+                        # "餐饮获客": the topic itself may match even when individual
+                        # video titles do not repeat the full phrase.
+                        topic_url = (
+                            "https://douhot.douyin.com/square/hotspot?"
+                            f"active_tab=hotspot_topic&date_window={window_hours}&sub_type=2001"
+                        )
+                        try:
+                            ensure_visible_page(topic_url)
+                            self._fill_hotspot_keyword(page, keyword)
+                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                            topics = [
+                                item for item in self._extract_hotspot_topic_rows(page)
+                                if title_matches_keyword(title=str(item.get("topic_name") or ""), keyword=keyword)
+                            ][:2]
+                            for topic in topics:
+                                topic_id = str(topic.get("topic_id") or "")
+                                if not topic_id:
+                                    continue
+                                ensure_visible_page(
+                                    "https://douhot.douyin.com/topic/detail?active_tab=topic_detail&topic_id="
+                                    + quote(topic_id, safe="")
+                                )
+                                for row in self._extract_topic_detail_rows(page):
+                                    row.update({
+                                        "window_hours": window_hours,
+                                        "list_type": 2001,
+                                        "list_label": _HOTSPOT_LIST_LABELS[2001],
+                                        "source_kind": "topic_board",
+                                        "topic_exact": True,
+                                        "topic_name": str(topic.get("topic_name") or keyword),
+                                        "topic_id": topic_id,
+                                    })
+                                    rows.append(row)
+                        except LicensedProviderError:
+                            raise
+                        except PlaywrightError as exc:
+                            errors.append(ProviderSearchError(
+                                kind=ProviderErrorKind.CONNECTION,
+                                message=f"热点宝话题榜读取失败，已跳过：{exc}",
+                                retryable=False,
+                            ))
+
+                        if has_enough_qualifying_rows():
+                            return rows, errors
+
+                        # 3) Search leaderboard is consulted for visibility, while the
+                        # rendered public Douyin search result supplies the actual
+                        # exact-keyword video cards (Hotspot search can be fuzzy).
+                        try:
+                            ensure_visible_page(
+                                "https://douhot.douyin.com/square/hotspot?"
+                                f"active_tab=hotspot_search&date_window={window_hours}&sub_type=3001"
+                            )
+                            self._fill_hotspot_keyword(page, keyword)
+                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                            for row in self._collect_scrolled_rows(
+                                page,
+                                self._extract_hotspot_rows,
+                            ):
+                                row.update({
+                                    "window_hours": window_hours,
+                                    "list_type": 3001,
+                                    "list_label": _HOTSPOT_LIST_LABELS[3001],
+                                    "source_kind": "search_board",
+                                })
+                                rows.append(row)
+                            ensure_visible_page(
+                                "https://www.douyin.com/search/"
+                                + quote(keyword, safe="") + "?type=video"
+                            )
+                            # Douyin virtualises its result list.  Reading the DOM once
+                            # only sees the first rendered card, which made the search
+                            # source look like it had a single result.  Collect every
+                            # rendered viewport before applying the quality gate.
+                            for row in self._collect_douyin_search_rows(page):
+                                row.update({
+                                    "window_hours": window_hours,
+                                    "list_type": 3001,
+                                    "list_label": "抖音搜索",
+                                    "source_kind": "douyin_search",
+                                })
+                                rows.append(row)
+                        except LicensedProviderError:
+                            raise
+                        except PlaywrightError as exc:
+                            errors.append(ProviderSearchError(
+                                kind=ProviderErrorKind.CONNECTION,
+                                message=f"抖音搜索读取失败，已跳过：{exc}",
+                                retryable=False,
+                            ))
+
+                        return rows, errors
                     finally:
                         page.close()
             except LicensedProviderError:
@@ -563,8 +680,168 @@ class LocalDouyinBrowserSearchProvider:
         )
 
     @staticmethod
+    def _extract_hotspot_topic_rows(page) -> list[dict[str, Any]]:
+        """Read rendered topic leaderboard records; no network payload is used."""
+        return page.locator("body").evaluate(
+            """() => {
+              const number = value => {
+                const text = String(value ?? '').replace(/[,，\\s]/g, '');
+                const unit = text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1;
+                const matched = text.match(/([0-9]+(?:\\.[0-9]+)?)/);
+                return matched ? Math.round(Number(matched[1]) * unit) : null;
+              };
+              const results = [], seen = new Set();
+              for (const node of document.querySelectorAll('tr, [role=row], [class*=row], [class*=Row]')) {
+                const key = Object.keys(node).find(k => k.startsWith('__reactFiber'));
+                let fiber = key ? node[key] : null;
+                for (let depth = 0; fiber && depth < 35; depth += 1, fiber = fiber.return) {
+                  const record = fiber.memoizedProps?.record || fiber.pendingProps?.record;
+                  if (!record) continue;
+                  const topicId = String(record.challenge_id || record.topic_id || record.id || '');
+                  const topicName = String(record.challenge_name || record.topic_name || record.name || '');
+                  if (topicId && topicName && !seen.has(topicId)) {
+                    seen.add(topicId);
+                    results.push({
+                      topic_id: topicId, topic_name: topicName,
+                      score: number(record.score || record.hot_value),
+                    });
+                  }
+                  break;
+                }
+              }
+              return results;
+            }"""
+        )
+
+    @staticmethod
+    def _extract_topic_detail_rows(page) -> list[dict[str, Any]]:
+        """Read videoData attached to already rendered topic-detail cards."""
+        return page.locator("body").evaluate(
+            """() => {
+              const number = value => {
+                const text = String(value ?? '').replace(/[,，\\s]/g, '');
+                const unit = text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1;
+                const matched = text.match(/([0-9]+(?:\\.[0-9]+)?)/);
+                return matched ? Math.round(Number(matched[1]) * unit) : null;
+              };
+              const results = [], seen = new Set();
+              for (const node of document.querySelectorAll('div, li, article')) {
+                const key = Object.keys(node).find(k => k.startsWith('__reactFiber'));
+                let fiber = key ? node[key] : null;
+                for (let depth = 0; fiber && depth < 35; depth += 1, fiber = fiber.return) {
+                  const video = fiber.memoizedProps?.videoData || fiber.pendingProps?.videoData;
+                  if (!video) continue;
+                  const itemId = String(video.item_id || video.aweme_id || video.id || '');
+                  const title = String(video.item_title || video.title || '');
+                  if (itemId && title && !seen.has(itemId)) {
+                    seen.add(itemId);
+                    const rawDuration = number(video.item_duration || video.duration);
+                    results.push({
+                      item_id: itemId,
+                      href: `https://www.douyin.com/video/${itemId}`,
+                      title,
+                      author_name: String(video.nick_name || video.author_name || ''),
+                      duration: rawDuration && rawDuration > 1000 ? Math.round(rawDuration / 1000) : rawDuration,
+                      likes: number(video.like_cnt || video.like_count),
+                      comments: number(video.comment_cnt || video.comment_count),
+                      shares: number(video.share_cnt || video.share_count),
+                      published_text: String(video.create_time || video.publish_time || ''),
+                    });
+                  }
+                  break;
+                }
+              }
+              return results;
+            }"""
+        )
+
+    @staticmethod
+    def _extract_douyin_search_rows(page) -> list[dict[str, Any]]:
+        """Extract rendered ordinary Douyin search cards for the exact term."""
+        return page.locator("body").evaluate(
+            """() => {
+              const toSeconds = value => {
+                const match = String(value || '').match(/^(\\d{1,2}):(\\d{2})$/);
+                return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+              };
+              const number = value => {
+                const text = String(value ?? '').replace(/[,，\\s]/g, '');
+                const unit = text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1;
+                const matched = text.match(/^([0-9]+(?:\\.[0-9]+)?)[万亿]?$/);
+                return matched ? Math.round(Number(matched[1]) * unit) : null;
+              };
+              const renderedVideo = node => {
+                const key = Object.keys(node).find(k => k.startsWith('__reactFiber'));
+                let fiber = key ? node[key] : null;
+                for (let depth = 0; fiber && depth < 35; depth += 1, fiber = fiber.return) {
+                  const props = fiber.memoizedProps || fiber.pendingProps || {};
+                  const value = props.awemeInfo || props.itemData || props.aweme || props.record;
+                  if (value && (value.aweme_id || value.awemeId || value.id)) return value;
+                }
+                return null;
+              };
+              const results = [], seen = new Set();
+              for (const link of document.querySelectorAll("a[href*='/video/']")) {
+                const href = link.href || '';
+                const matched = href.match(/\\/video\\/(\\d{10,})/);
+                if (!matched || seen.has(matched[1])) continue;
+                const card = link.closest('[class*=feed], [class*=Feed], [class*=card], [class*=Card], li, article') || link;
+                const video = renderedVideo(card) || renderedVideo(link);
+                const lines = String(card.innerText || link.innerText || '').split('\\n').map(x => x.trim()).filter(Boolean);
+                const durationText = lines.find(x => /^\\d{1,2}:\\d{2}$/.test(x));
+                const publishedText = lines.find(x => /^(刚刚|昨天|\\d+分钟前|\\d+小时前|\\d+天前|\\d{4}-\\d{1,2}-\\d{1,2})$/.test(x)) || '';
+                const likesText = lines.find(x => x !== durationText && x !== publishedText && /^\\d+(?:\\.\\d+)?[万亿]?$/.test(x));
+                const title = lines
+                  .filter(x => x !== durationText && !x.startsWith('@') && !/^\\d+(?:\\.\\d+)?[万亿]?$/.test(x) && !/^(今天|昨天|\\d+天前)$/.test(x))
+                  .sort((a, b) => b.length - a.length)[0] || '';
+                const rawDuration = number(video?.duration || video?.video?.duration);
+                const resolvedTitle = String(video?.desc || video?.title || title || '');
+                if (!resolvedTitle) continue;
+                seen.add(matched[1]);
+                results.push({
+                  item_id: String(video?.aweme_id || video?.awemeId || video?.id || matched[1]), href,
+                  title: resolvedTitle,
+                  author_name: String(video?.author?.nickname || video?.author_name || (lines.find(x => x.startsWith('@')) || '').replace(/^@/, '')),
+                  duration: rawDuration && rawDuration > 1000 ? Math.round(rawDuration / 1000) : rawDuration || toSeconds(durationText),
+                  likes: number(video?.statistics?.digg_count || video?.digg_count || video?.like_count) ?? number(likesText),
+                  published_text: String(video?.create_time || video?.createTime || publishedText || ''),
+                });
+              }
+              return results;
+            }"""
+        )
+
+    def _collect_douyin_search_rows(self, page) -> list[dict[str, Any]]:
+        """Collect the dynamically rendered viewports of a Douyin search result page."""
+        return self._collect_scrolled_rows(page, self._extract_douyin_search_rows)
+
+    def _collect_scrolled_rows(self, page, extractor) -> list[dict[str, Any]]:
+        """Accumulate virtualised cards while only reading the rendered page."""
+        rows_by_id: dict[str, dict[str, Any]] = {}
+        stagnant_rounds = 0
+        previous_count = -1
+        for _ in range(_HOTSPOT_MAX_SCROLL_ROUNDS):
+            for row in extractor(page):
+                item_id = str(row.get("item_id") or "")
+                if item_id:
+                    rows_by_id[item_id] = row
+
+            current_count = len(rows_by_id)
+            if current_count >= _HOTSPOT_MAX_ROWS_PER_LIST:
+                break
+            stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
+            if stagnant_rounds >= 2:
+                break
+            previous_count = current_count
+            page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
+            page.wait_for_timeout(
+                self._random_delay_ms(*_HOTSPOT_SCROLL_REFRESH_RANGE_MS)
+            )
+        return list(rows_by_id.values())
+
+    @staticmethod
     def _merge_hotspot_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Keep one row per video while retaining every leaderboard it matched."""
+        """Keep one row per video while retaining every visible discovery route."""
         merged: dict[str, dict[str, Any]] = {}
         for row in rows:
             item_id = str(row.get("item_id") or "")
@@ -572,11 +849,15 @@ class LocalDouyinBrowserSearchProvider:
                 continue
             current = merged.get(item_id)
             if current is None:
-                current = {**row, "list_types": set(), "list_labels": set()}
+                current = {**row, "list_types": set(), "list_labels": set(), "source_kinds": set()}
                 merged[item_id] = current
-            current["list_types"].add(int(row.get("list_type") or 0))
+            list_type = LocalDouyinBrowserSearchProvider._as_int(row.get("list_type"))
+            if list_type:
+                current["list_types"].add(list_type)
             current["list_labels"].add(str(row.get("list_label") or ""))
-            for field in ("score", "plays", "likes", "fans", "duration"):
+            current["source_kinds"].add(str(row.get("source_kind") or ""))
+            current["topic_exact"] = bool(current.get("topic_exact")) or bool(row.get("topic_exact"))
+            for field in ("score", "plays", "likes", "fans", "duration", "comments", "shares"):
                 value = row.get(field)
                 if value is not None and (current.get(field) is None or value > current[field]):
                     current[field] = value
@@ -586,8 +867,47 @@ class LocalDouyinBrowserSearchProvider:
         for row in merged.values():
             row["list_types"] = sorted(value for value in row["list_types"] if value)
             row["list_labels"] = sorted(value for value in row["list_labels"] if value)
+            row["source_kinds"] = sorted(value for value in row["source_kinds"] if value)
             normalized.append(row)
         return normalized
+
+    @staticmethod
+    def _source_priority(row: dict[str, Any]) -> int:
+        source_kinds = set(row.get("source_kinds") or [row.get("source_kind")])
+        list_type = LocalDouyinBrowserSearchProvider._as_int(row.get("list_type"))
+        if "video_board" in source_kinds or list_type in _HOTSPOT_LIST_TYPES:
+            return 0
+        if "topic_board" in source_kinds or list_type in _HOTSPOT_TOPIC_LIST_TYPES:
+            return 1
+        return 2
+
+    @staticmethod
+    def _quality_details(
+        row: dict[str, Any],
+        observed_at: datetime,
+    ) -> tuple[float, str] | None:
+        """Return a comparable daily-like velocity for customer candidates."""
+        likes = LocalDouyinBrowserSearchProvider._as_int(row.get("likes"))
+        if likes is None or likes < _MIN_QUALIFYING_LIKES:
+            return None
+        if LocalDouyinBrowserSearchProvider._source_priority(row) == 0:
+            window_hours = LocalDouyinBrowserSearchProvider._as_int(row.get("window_hours"))
+            if window_hours is None or window_hours <= 0:
+                return None
+            daily_likes = likes / max(window_hours / 24, 1 / 24)
+            basis = "榜单周期新增点赞/天"
+        else:
+            published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
+                row.get("published_text"), observed_at
+            )
+            if published_at is None or published_at > observed_at:
+                return None
+            age_days = max((observed_at - published_at).total_seconds() / 86_400, 1)
+            daily_likes = likes / age_days
+            basis = "作品累计点赞/发布天数"
+        if daily_likes < _MIN_QUALIFYING_LIKES_PER_DAY:
+            return None
+        return round(daily_likes, 4), basis
 
     @staticmethod
     def _to_items(
@@ -604,12 +924,19 @@ class LocalDouyinBrowserSearchProvider:
         items: list[ProviderSearchItem] = []
         low_incremental_items: list[ProviderSearchItem] = []
         errors: list[ProviderSearchError] = []
-        filter_counts = {"duration": 0, "incremental_plays": 0, "relevance": 0}
+        filter_counts = {
+            "duration": 0,
+            "incremental_plays": 0,
+            "relevance": 0,
+            "quality": 0,
+        }
         seen: set[str] = set()
         sorted_rows = sorted(
             rows,
             key=lambda row: (
-                -(LocalDouyinBrowserSearchProvider._as_int(row.get("plays")) or 0),
+                LocalDouyinBrowserSearchProvider._source_priority(row),
+                -((LocalDouyinBrowserSearchProvider._quality_details(row, observed_at) or (0.0, ""))[0]),
+                -(LocalDouyinBrowserSearchProvider._as_int(row.get("likes")) or 0),
                 -(LocalDouyinBrowserSearchProvider._as_int(row.get("score")) or 0),
                 str(row.get("item_id") or ""),
             ),
@@ -645,12 +972,23 @@ class LocalDouyinBrowserSearchProvider:
             if duration_seconds is None or duration_seconds <= 0:
                 filter_counts["duration"] += 1
                 continue
-            if not title_matches_keyword(title=title, keyword=keyword):
+            topic_exact = bool(row.get("topic_exact"))
+            if not topic_exact and not title_matches_keyword(title=title, keyword=keyword):
                 filter_counts["relevance"] += 1
+                continue
+            quality = LocalDouyinBrowserSearchProvider._quality_details(row, observed_at)
+            if quality is None:
+                filter_counts["quality"] += 1
                 continue
             seen.add(item_id)
             incremental_plays = LocalDouyinBrowserSearchProvider._as_int(row.get("plays"))
-            if incremental_plays is None or incremental_plays <= 1000:
+            source_kinds = row.get("source_kinds") or [row.get("source_kind")]
+            list_type = LocalDouyinBrowserSearchProvider._as_int(row.get("list_type"))
+            is_non_video_source = (
+                bool({"topic_board", "search_board", "douyin_search"}.intersection(source_kinds))
+                or list_type in (*_HOTSPOT_TOPIC_LIST_TYPES, *_HOTSPOT_SEARCH_LIST_TYPES)
+            )
+            if not is_non_video_source and (incremental_plays is None or incremental_plays <= 1000):
                 filter_counts["incremental_plays"] += 1
                 if incremental_plays is not None and len(low_incremental_items) < limit:
                     low_incremental_items.append(
@@ -663,6 +1001,8 @@ class LocalDouyinBrowserSearchProvider:
                             observed_at=observed_at,
                             keyword=keyword,
                             provider_rank=len(low_incremental_items) + 1,
+                            likes_per_day=quality[0],
+                            quality_basis=quality[1],
                         )
                     )
                 continue
@@ -676,6 +1016,8 @@ class LocalDouyinBrowserSearchProvider:
                     observed_at=observed_at,
                     keyword=keyword,
                     provider_rank=len(items) + 1,
+                    likes_per_day=quality[0],
+                    quality_basis=quality[1],
                 )
             )
             if len(items) >= limit:
@@ -689,12 +1031,16 @@ class LocalDouyinBrowserSearchProvider:
         item_id: str,
         title: str,
         duration_seconds: int,
-        incremental_plays: int,
+        incremental_plays: int | None,
         observed_at: datetime,
         keyword: str,
         provider_rank: int,
+        likes_per_day: float,
+        quality_basis: str,
     ) -> ProviderSearchItem:
         list_labels = list(row.get("list_labels") or [row.get("list_label", "")])
+        source_kinds = list(row.get("source_kinds") or [row.get("source_kind", "")])
+        is_video_board = LocalDouyinBrowserSearchProvider._source_priority(row) == 0
         published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
             row.get("published_text"), observed_at
         )
@@ -716,19 +1062,24 @@ class LocalDouyinBrowserSearchProvider:
                 sampled_at=observed_at,
                 plays=incremental_plays,
                 likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
-                confidence=(0.8 if row.get("list_type") is not None else 0.4),
+                comments=LocalDouyinBrowserSearchProvider._as_int(row.get("comments")),
+                shares=LocalDouyinBrowserSearchProvider._as_int(row.get("shares")),
+                confidence=(0.8 if row.get("topic_exact") or "video_board" in source_kinds else 0.6),
             ),
             evidence=(
                 f"hotspot:{'|'.join(list_labels) or '爆款榜'}:"
                 f"{row.get('window_hours', '?')}h:关键词={keyword};"
+                f"来源={'|'.join(source_kinds) or 'browser_visible'};"
+                f"日均点赞={likes_per_day};"
+                f"质量口径={quality_basis};"
+                f"严格话题={1 if row.get('topic_exact') else 0};"
+                f"话题={row.get('topic_name') or '未返回'};"
                 f"热度={row.get('score') if row.get('score') is not None else '未返回'};"
-                f"新增播放量={incremental_plays};"
-                f"新增点赞量={row.get('likes') if row.get('likes') is not None else '未返回'};"
+                f"{'新增播放量' if is_video_board else '播放量'}={incremental_plays if incremental_plays is not None else '未返回'};"
+                f"{'新增点赞量' if is_video_board else '点赞数'}={row.get('likes') if row.get('likes') is not None else '未返回'};"
                 f"点赞率={row.get('like_rate') if row.get('like_rate') is not None else '未返回'};"
                 f"粉丝={row.get('fans') if row.get('fans') is not None else '未返回'};"
                 f"时长秒={duration_seconds}"
-                if row.get("list_type") is not None
-                else f"browser_visible_search:{keyword}"
             ),
             data_quality_warnings=warnings,
         )
@@ -742,7 +1093,7 @@ class LocalDouyinBrowserSearchProvider:
 
     @staticmethod
     def _parse_published_at(value: Any, observed_at: datetime) -> datetime | None:
-        """Parse a visible Hotspot publication time without guessing relative dates."""
+        """Parse a visible publication time for quality age calculations."""
         if value in (None, ""):
             return None
         text = str(value).strip()
@@ -756,6 +1107,19 @@ class LocalDouyinBrowserSearchProvider:
                 return datetime.fromtimestamp(timestamp, tz=observed_at.tzinfo)
             except (OSError, OverflowError, ValueError):
                 return None
+        relative = re.fullmatch(r"(\d+)\s*分钟前", text)
+        if relative:
+            return observed_at - timedelta(minutes=int(relative.group(1)))
+        relative = re.fullmatch(r"(\d+)\s*小时前", text)
+        if relative:
+            return observed_at - timedelta(hours=int(relative.group(1)))
+        relative = re.fullmatch(r"(\d+)\s*天前", text)
+        if relative:
+            return observed_at - timedelta(days=int(relative.group(1)))
+        if text == "刚刚":
+            return observed_at
+        if text == "昨天":
+            return observed_at - timedelta(days=1)
         try:
             parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:

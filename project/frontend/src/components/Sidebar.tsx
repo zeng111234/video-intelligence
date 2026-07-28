@@ -3,16 +3,12 @@
  * 还原原型的导航结构和分组
  * 支持折叠/展开、深色模式、响应式
  */
-import { useCallback, useMemo, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Badge } from "antd";
 import {
-  DashboardOutlined,
   SearchOutlined,
   ThunderboltOutlined,
   AudioOutlined,
-  UnorderedListOutlined,
-  LineChartOutlined,
   EditOutlined,
   RocketOutlined,
   SettingOutlined,
@@ -24,23 +20,35 @@ import {
   AppstoreOutlined,
   RobotOutlined,
   SubnodeOutlined,
+  DownOutlined,
 } from "@ant-design/icons";
+import {
+  ADVANCED_NAVIGATION_ITEMS,
+  CORE_NAVIGATION_ITEMS,
+  SUPPORT_NAVIGATION_ITEMS,
+  type NavigationItem,
+} from "../navigation";
 
-/** 导航项类型 */
-interface NavItem {
-  key: string;
-  label: string;
-  icon: ReactNode;
-  badge?: number;
-  /** 规划中入口：保留位置提示，但不允许进入尚未开放的页面。 */
-  disabled?: boolean;
-}
+const NAV_ICONS: Record<string, ReactNode> = {
+  pipeline: <ThunderboltOutlined />,
+  production: <AppstoreOutlined />,
+  publish: <RocketOutlined />,
+  crawler: <BugOutlined />,
+  candidates: <SearchOutlined />,
+  transcription: <AudioOutlined />,
+  "ai-copy": <EditOutlined />,
+  avatar: <VideoCameraOutlined />,
+  "video-editor": <RobotOutlined />,
+  subtitle: <SubnodeOutlined />,
+  help: <QuestionCircleOutlined />,
+  admin: <SettingOutlined />,
+};
 
 /** 导航分组类型 */
 interface NavGroup {
   title: string;
-  items: NavItem[];
-  disabled?: boolean;
+  items: NavigationItem[];
+  collapsible?: boolean;
 }
 
 /** 组件 Props */
@@ -57,78 +65,47 @@ interface SidebarProps {
 export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const [advancedOpen, setAdvancedOpen] = useState(() =>
+    ADVANCED_NAVIGATION_ITEMS.some((item) => item.path === location.pathname)
+  );
 
   /** 导航分组配置 */
   const navGroups: NavGroup[] = useMemo(
     () => [
       {
-        title: "概览",
-        items: [
-          { key: "/dashboard", label: "数据仪表盘", icon: <DashboardOutlined /> },
-        ],
+        title: "工作台",
+        items: CORE_NAVIGATION_ITEMS,
       },
       {
-        title: "内容发现",
-        items: [
-          { key: "/crawler", label: "关键词爬虫", icon: <BugOutlined /> },
-          { key: "/candidates", label: "候选检索", icon: <SearchOutlined /> },
-        ],
+        title: "高级工具",
+        items: ADVANCED_NAVIGATION_ITEMS,
+        collapsible: true,
       },
       {
-        title: "内容生产",
-        items: [
-          { key: "/transcription", label: "语音转写", icon: <AudioOutlined /> },
-          { key: "/ai-copy", label: "AI文案生成", icon: <EditOutlined /> },
-          { key: "/avatar", label: "数字人生成", icon: <VideoCameraOutlined /> },
-          { key: "/video-editor", label: "AI智能剪辑", icon: <RobotOutlined /> },
-          { key: "/subtitle", label: "字幕生成", icon: <SubnodeOutlined /> },
-        ],
-      },
-      {
-        title: "批量管理",
-        items: [
-          { key: "/production", label: "批量生产", icon: <AppstoreOutlined /> },
-          { key: "/pipeline", label: "单条生产", icon: <ThunderboltOutlined /> },
-          { key: "/publish", label: "多平台发布", icon: <RocketOutlined /> },
-        ],
-      },
-      {
-        title: "数据分析",
-        disabled: true,
-        items: [
-          { key: "/analytics", label: "深度分析", icon: <LineChartOutlined /> },
-          { key: "/tasks", label: "任务中心", icon: <UnorderedListOutlined /> },
-        ],
-      },
-      {
-        title: "系统",
-        disabled: true,
-        items: [
-          { key: "/admin", label: "系统设置", icon: <SettingOutlined /> },
-          { key: "/help", label: "帮助中心", icon: <QuestionCircleOutlined /> },
-        ],
-      },
-      {
-        title: "规划中",
-        items: [
-          { key: "/feedback", label: "反馈与复盘", icon: <LineChartOutlined />, disabled: true },
-        ],
+        title: "支持",
+        items: SUPPORT_NAVIGATION_ITEMS,
       },
     ],
     []
   );
 
+  useEffect(() => {
+    if (ADVANCED_NAVIGATION_ITEMS.some((item) => item.path === location.pathname)) {
+      setAdvancedOpen(true);
+    }
+  }, [location.pathname]);
+
   /** 导航点击处理 */
   const handleNavClick = useCallback(
-    (key: string) => {
-      navigate(key);
+    (path: string) => {
+      navigate(path);
     },
     [navigate]
   );
 
   /** 判断当前激活项 */
   const isActive = useCallback(
-    (key: string) => location.pathname === key,
+    (item: NavigationItem) => !item.disabled && location.pathname === item.path,
     [location.pathname]
   );
 
@@ -161,32 +138,36 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         <nav className="vi-nav-menu">
           {navGroups.map((group) => (
             <div key={group.title} className="vi-nav-section">
-              {!collapsed && (
-                <div className="vi-nav-section-title">{group.title}</div>
-              )}
-              {group.items.map((item) => (
-                <div
-                  key={item.key}
-                  className={`vi-nav-item${isActive(item.key) && !group.disabled && !item.disabled ? " active" : ""}${group.disabled || item.disabled ? " disabled" : ""}`}
-                  onClick={() => !group.disabled && !item.disabled && handleNavClick(item.key)}
-                  title={collapsed ? item.label : undefined}
-                  aria-disabled={group.disabled || item.disabled || undefined}
-                  style={group.disabled || item.disabled ? { opacity: 0.4, cursor: "not-allowed", pointerEvents: "none" } : undefined}
+              {!collapsed && group.collapsible ? (
+                <button
+                  type="button"
+                  className="vi-nav-section-title vi-nav-section-title-button"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
                 >
-                  <span className="vi-nav-item-icon">{item.icon}</span>
+                  <span>{group.title}</span>
+                  <DownOutlined className={advancedOpen ? "expanded" : ""} />
+                </button>
+              ) : !collapsed ? (
+                <div className="vi-nav-section-title">{group.title}</div>
+              ) : null}
+              {(!group.collapsible || advancedOpen) && group.items.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={`vi-nav-item${isActive(item) ? " active" : ""}${item.disabled ? " disabled" : ""}`}
+                  onClick={() => handleNavClick(item.path)}
+                  disabled={item.disabled}
+                  title={item.disabled ? `${item.label}（暂未开放）` : collapsed ? item.label : undefined}
+                >
+                  <span className="vi-nav-item-icon">{NAV_ICONS[item.id]}</span>
                   {!collapsed && (
-                    <>
-                      <span className="vi-nav-item-text">{item.label}</span>
-                      {item.badge && (
-                        <Badge
-                          count={item.badge}
-                          size="small"
-                          style={{ marginLeft: "auto" }}
-                        />
-                      )}
-                    </>
+                    <span className="vi-nav-item-text">
+                      {item.label}
+                      {item.disabled && <span className="vi-nav-item-status">暂未开放</span>}
+                    </span>
                   )}
-                </div>
+                </button>
               ))}
             </div>
           ))}
@@ -298,7 +279,35 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           white-space: nowrap;
         }
 
+        .vi-nav-section-title-button {
+          width: 100%;
+          border: 0;
+          background: transparent;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          cursor: pointer;
+          text-align: left;
+        }
+
+        .vi-nav-section-title-button:hover {
+          color: var(--text-on-sidebar);
+        }
+
+        .vi-nav-section-title-button .anticon {
+          transition: transform 0.2s ease;
+        }
+
+        .vi-nav-section-title-button .anticon.expanded {
+          transform: rotate(180deg);
+        }
+
         .vi-nav-item {
+          width: 100%;
+          border: 0;
+          background: transparent;
+          text-align: left;
+          font: inherit;
           display: flex;
           align-items: center;
           gap: 12px;
@@ -327,6 +336,17 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           color: white;
         }
 
+        .vi-nav-item.disabled {
+          color: var(--gray-500);
+          cursor: not-allowed;
+          opacity: 0.55;
+        }
+
+        .vi-nav-item.disabled:hover {
+          background: transparent;
+          color: var(--gray-500);
+        }
+
         [data-theme="dark"] .vi-nav-item.active {
           background: var(--primary-500);
           color: white;
@@ -348,6 +368,13 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           flex: 1;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        .vi-nav-item-status {
+          margin-left: 8px;
+          font-size: 11px;
+          font-weight: 400;
+          color: var(--gray-500);
         }
 
         .vi-sidebar-footer {

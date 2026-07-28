@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Alert,
   Button,
   Card,
   Col,
-  Collapse,
   Drawer,
   Empty,
   Input,
@@ -20,19 +19,14 @@ import {
   Typography,
 } from "antd";
 import {
-  BankOutlined,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
   FileAddOutlined,
   FileTextOutlined,
-  HeartOutlined,
   HistoryOutlined,
   ReloadOutlined,
   SendOutlined,
-  SmileOutlined,
-  StarOutlined,
-  ThunderboltOutlined,
 } from "@ant-design/icons";
 import {
   clearCopywritingHistory,
@@ -57,38 +51,25 @@ import { usePersistentState } from "../hooks/usePersistentState";
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 
-const STYLE_PRESETS = [
-  { key: "engaging", label: "吸引眼球", icon: <ThunderboltOutlined />, color: "orange", desc: "制造悬念、引发好奇" },
-  { key: "professional", label: "专业权威", icon: <BankOutlined />, color: "blue", desc: "数据支撑、理性分析" },
-  { key: "emotional", label: "情感共鸣", icon: <HeartOutlined />, color: "red", desc: "触动人心、引发共情" },
-  { key: "humorous", label: "幽默风趣", icon: <SmileOutlined />, color: "green", desc: "轻松诙谐、趣味表达" },
-  { key: "storytelling", label: "故事叙述", icon: <StarOutlined />, color: "purple", desc: "悬念铺垫、引人入胜" },
-];
-
-const STYLE_PROMPTS: Record<string, string> = {
-  engaging: "吸引眼球，制造悬念，引发好奇",
-  professional: "专业权威，数据支撑，理性分析",
-  emotional: "情感共鸣，触动人心，引发共情",
-  humorous: "幽默风趣，轻松诙谐，趣味表达",
-  storytelling: "故事叙述，悬念铺垫，引人入胜",
-};
-
-const TONE_OPTIONS = [
-  { value: "formal", label: "正式" },
-  { value: "casual", label: "轻松" },
-  { value: "energetic", label: "活力" },
-  { value: "calm", label: "沉稳" },
-  { value: "urgent", label: "紧迫" },
-];
-
 type CopyMode = "generate" | "rewrite";
 
 function formatTime(value: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN") : "-";
 }
 
-function stylePresetFromPrompt(prompt: string) {
-  return Object.entries(STYLE_PROMPTS).find(([, value]) => value === prompt)?.[0] || "engaging";
+function highlightedCopy(text: string, terms: string[]) {
+  const uniqueTerms = [...new Set(terms.map((term) => term.trim()).filter((term) => term.length > 1 && text.includes(term)))];
+  if (!uniqueTerms.length) return text;
+  const escaped = uniqueTerms
+    .sort((left, right) => right.length - left.length)
+    .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const matcher = new RegExp(`(${escaped.join("|")})`, "g");
+  const attentionSet = new Set(uniqueTerms);
+  return text.split(matcher).map((part, index) => attentionSet.has(part) ? (
+    <mark key={`${part}-${index}`} style={{ background: "#fff1b8", color: "#ad4e00", padding: "0 2px", borderRadius: 2 }}>
+      {part}
+    </mark>
+  ) : part);
 }
 
 export default function AiCopyPage() {
@@ -97,13 +78,8 @@ export default function AiCopyPage() {
   const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
   const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
   const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
-  const [targetAudience, setTargetAudience, clearTargetAudience] = usePersistentState("ai_copy_target_audience", "");
   const [sellingPoints, setSellingPoints, clearSellingPoints] = usePersistentState("ai_copy_selling_points", "");
   const [callToAction, setCallToAction, clearCallToAction] = usePersistentState("ai_copy_call_to_action", "");
-  const [stylePreset, setStylePreset] = usePersistentState("ai_copy_style_preset", "engaging");
-  const [tone, setTone] = usePersistentState("ai_copy_tone", "casual");
-  const [variantCount, setVariantCount] = usePersistentState("ai_copy_variant_count", 3);
-  const [activeVariant, setActiveVariant] = usePersistentState("ai_copy_active_variant", 0);
 
   const [capability, setCapability] = useState<CopywritingCapabilitiesResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
@@ -119,15 +95,10 @@ export default function AiCopyPage() {
   const [publishMetadata, setPublishMetadata] = useState<PublishMetadataResponse | null>(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
 
-  const selectedStyle = useMemo(
-    () => STYLE_PRESETS.find((item) => item.key === stylePreset) ?? STYLE_PRESETS[0],
-    [stylePreset],
-  );
   const inputReady = mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
   const hasLocalDraft = Boolean(
     contentBrief.trim() ||
     sourceText.trim() ||
-    targetAudience.trim() ||
     sellingPoints.trim() ||
     callToAction.trim(),
   );
@@ -177,7 +148,6 @@ export default function AiCopyPage() {
       setLastResponse(null);
       setVariants([]);
       setPublishMetadata(null);
-      setActiveVariant(0);
       toast.success(`已删除 ${result.deleted_count} 条文案历史`);
     } catch (err) {
       toast.error((err as Error).message || "清空文案历史失败");
@@ -212,10 +182,9 @@ export default function AiCopyPage() {
       : resp.result_text
         ? [resp.result_text]
         : [];
-    setVariants(resultVariants);
-    setActiveVariant(0);
+    setVariants(resultVariants.slice(0, 1));
     setPublishMetadata(null);
-  }, [setActiveVariant]);
+  }, []);
 
   const handleSubmit = useCallback(async () => {
     if (!inputReady) {
@@ -232,10 +201,9 @@ export default function AiCopyPage() {
     setPublishMetadata(null);
     try {
       const common = {
-        target_audience: targetAudience,
-        style_prompt: STYLE_PROMPTS[stylePreset] || STYLE_PROMPTS.engaging,
-        tone,
-        variant_count: variantCount,
+        style_prompt: "",
+        tone: "natural",
+        variant_count: 1,
       };
       const resp = mode === "generate"
         ? await generateCopywriting({
@@ -255,7 +223,11 @@ export default function AiCopyPage() {
         toast.warning("后端未返回有效文案");
         return;
       }
-      toast.success(`已生成 ${Math.max(resp.result_variants.length, resp.result_text ? 1 : 0)} 个文案变体`);
+      toast.success(
+        resp.compliance_status === "best_effort"
+          ? "已采用自动优化后的最终版本"
+          : "已生成 1 篇去重口播文案",
+      );
     } catch (err) {
       toast.error((err as Error).message || "文案生成失败");
     } finally {
@@ -271,11 +243,7 @@ export default function AiCopyPage() {
     refreshHistory,
     sellingPoints,
     sourceText,
-    stylePreset,
-    targetAudience,
-    tone,
     toast,
-    variantCount,
   ]);
 
   const handleLoadHistory = async (item: CopywritingSummaryResponse) => {
@@ -286,11 +254,8 @@ export default function AiCopyPage() {
       setMode(nextMode);
       setContentBrief(detail.content_brief);
       setSourceText(detail.source_text);
-      setTargetAudience(detail.target_audience);
       setSellingPoints(detail.selling_points);
       setCallToAction(detail.call_to_action);
-      setTone(detail.tone);
-      setStylePreset(stylePresetFromPrompt(detail.style_prompt));
       applyResult(detail);
       setHistoryOpen(false);
     } catch (err) {
@@ -305,11 +270,9 @@ export default function AiCopyPage() {
     setSourceText("");
     setSellingPoints("");
     setCallToAction("");
-    setTargetAudience("");
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
-    setActiveVariant(0);
     setPublishMetadata(null);
   };
 
@@ -317,13 +280,11 @@ export default function AiCopyPage() {
     clearMode();
     clearContentBrief();
     clearSourceText();
-    clearTargetAudience();
     clearSellingPoints();
     clearCallToAction();
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
-    setActiveVariant(0);
     setPublishMetadata(null);
     toast.success("本机草稿已清空");
   };
@@ -333,12 +294,20 @@ export default function AiCopyPage() {
   }, [toast]);
 
   const tokenUsage = lastResponse?.token_usage ?? {};
-  const settingsSummary = `${TONE_OPTIONS.find((item) => item.value === tone)?.label || tone} / ${selectedStyle.label} / ${variantCount} 版`;
-  const activeText = variants[activeVariant] || "";
+  const activeText = variants[0] || "";
+  const attentionTerms = lastResponse?.attention_terms ?? [];
+  const isBestEffort = lastResponse?.compliance_status === "best_effort";
+  const resultNoticeMessage = isBestEffort
+    ? attentionTerms.length > 0
+      ? "已使用最终优化版，并高亮其他主体名称"
+      : "已使用自动优化后的最终版本"
+    : attentionTerms.length > 0
+      ? "已高亮可能属于其他主体的名称"
+      : "自动去重和风险处理已通过";
 
   const handleGeneratePublishMetadata = useCallback(async () => {
     if (!activeText.trim()) {
-      toast.warning("请先生成并选择一个文案变体");
+      toast.warning("请先生成文案");
       return;
     }
     setMetadataLoading(true);
@@ -447,50 +416,7 @@ export default function AiCopyPage() {
                 />
               )}
 
-              <Input
-                placeholder="目标受众，例如：B2B 企业主、品牌市场负责人"
-                value={targetAudience}
-                onChange={(e) => setTargetAudience(e.target.value)}
-                maxLength={120}
-              />
-
-              <Collapse
-                size="small"
-                items={[
-                  {
-                    key: "settings",
-                    label: `生成设置：${settingsSummary}`,
-                    children: (
-                      <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                        <Row gutter={12}>
-                          <Col span={24}>
-                            <Select value={tone} onChange={setTone} options={TONE_OPTIONS} style={{ width: "100%" }} />
-                          </Col>
-                        </Row>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                          {STYLE_PRESETS.map((preset) => (
-                            <Tag
-                              key={preset.key}
-                              color={stylePreset === preset.key ? preset.color : undefined}
-                              style={{ cursor: "pointer", padding: "6px 12px", borderRadius: 6 }}
-                              onClick={() => setStylePreset(preset.key)}
-                            >
-                              {preset.icon} {preset.label}
-                            </Tag>
-                          ))}
-                        </div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>{selectedStyle.desc}</Text>
-                        <Select
-                          value={variantCount}
-                          onChange={setVariantCount}
-                          options={[1, 2, 3, 5].map((value) => ({ value, label: `${value} 个变体` }))}
-                          style={{ width: "100%" }}
-                        />
-                      </Space>
-                    ),
-                  },
-                ]}
-              />
+              <Text type="secondary" style={{ fontSize: 12 }}>系统会根据内容自动判断适合的受众，并保留原文可核实的事实。</Text>
 
               <Button
                 type="primary"
@@ -528,23 +454,13 @@ export default function AiCopyPage() {
               )}
               {activeText ? (
                 <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                  {variants.length > 1 && (
-                    <Space wrap>
-                      {variants.map((_, idx) => (
-                        <Button key={idx} size="small" type={activeVariant === idx ? "primary" : "default"} onClick={() => { setActiveVariant(idx); setPublishMetadata(null); }}>
-                          变体 {idx + 1}
-                        </Button>
-                      ))}
-                    </Space>
-                  )}
                   <div style={{ background: "var(--gray-50)", borderRadius: 8, padding: 20, border: "1px solid var(--border-default)" }}>
                     <Paragraph style={{ fontSize: 15, lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" }}>
-                      {activeText}
+                      {highlightedCopy(activeText, attentionTerms)}
                     </Paragraph>
                   </div>
                   <Space wrap>
-                    <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制当前变体</Button>
-                    <Button onClick={() => handleCopy(variants.join("\n\n---\n\n"))}>复制全部变体</Button>
+                    <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制文案</Button>
                   </Space>
                   <Card
                     size="small"
@@ -566,23 +482,27 @@ export default function AiCopyPage() {
                         </Space>
                       </Space>
                     ) : (
-                      <Text type="secondary">基于当前选中的文案变体生成，生成后可修改并带入多平台发布。</Text>
+                      <Text type="secondary">基于当前文案生成，生成后可修改并带入多平台发布。</Text>
                     )}
                   </Card>
                   <Alert
-                    type={lastResponse?.compliance_status === "review_required" ? "warning" : "info"}
+                    type={attentionTerms.length > 0 || isBestEffort ? "warning" : "info"}
                     showIcon
-                    message={lastResponse?.compliance_status === "review_required" ? "仍有风险表达，建议人工复核" : "表达风险优化已完成"}
+                    message={resultNoticeMessage}
                     description={
                       <Space direction="vertical" size={2}>
                         {(lastResponse?.compliance_notes || ["已按自然口播节奏优化表达。"])
                           .map((note) => <Text key={note}>{note}</Text>)}
-                        <Text type="secondary">风险优化不代表平台审核保证，请结合实际内容复核。</Text>
+                        {attentionTerms.length > 0 && (
+                          <Space wrap size={[4, 4]}>
+                            {attentionTerms.map((term) => <Tag color="orange" key={term}>{term}</Tag>)}
+                          </Space>
+                        )}
+                        <Text type="secondary">自动处理可以降低表达风险，但不代表平台审核保证。</Text>
                       </Space>
                     }
                   />
                   <Space wrap size={[16, 8]}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>变体数：{variants.length}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>供应商：{lastResponse?.provider_name || "-"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>Token：{tokenUsage.total_tokens ?? "-"}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>演示：{lastResponse?.is_mock ? "是" : "否"}</Text>

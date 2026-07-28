@@ -13,9 +13,14 @@ import {
   RocketOutlined,
   SettingOutlined,
 } from "@ant-design/icons";
+import { getNavigationItem } from "../navigation";
 
 const { Title, Text, Paragraph } = Typography;
 const { Panel } = Collapse;
+const intelligentCreation = getNavigationItem("/pipeline")!;
+const taskQueue = getNavigationItem("/production")!;
+const publishCenter = getNavigationItem("/publish")!;
+const crawler = getNavigationItem("/crawler")!;
 
 /** 常见问题数据 */
 const FAQ_DATA = [
@@ -25,11 +30,15 @@ const FAQ_DATA = [
     items: [
       {
         q: "如何开始使用系统？",
-        a: "从「候选检索」或「关键词爬虫」找到素材后，重新确认权利，再进入「语音转写」上传文件或填写授权 MP4/MOV 直链。",
+        a: `进入「${intelligentCreation.label}」，从关键词、视频链接、选题或已有文案开始。系统会自动推进到下一次人工确认，不会越过转写、文案和发布闸门。`,
       },
       {
-        q: "生产批次和真正生成视频是什么关系？",
-        a: "「生产批次」只创建和记录生产流程，不宣称已经生成视频。只有授权媒体、确认成稿、数字人或剪辑任务真实完成后，才会出现可用产物。",
+        q: `「${intelligentCreation.label}」和「${taskQueue.label}」有什么区别？`,
+        a: `「${intelligentCreation.label}」默认处理一条内容并显示当前步骤；「${taskQueue.label}」用于查看批量任务、暂停、审核和安全重试。两者都只展示真实任务与产物。`,
+      },
+      {
+        q: `什么时候使用「${crawler.label}」？`,
+        a: `需要查看完整榜单、筛选更多候选或诊断搜索结果时使用「${crawler.label}」。选中候选后直接点击「送入智能创作」，无需复制内部 ID。`,
       },
       {
         q: "如何使用语音转写功能？",
@@ -93,21 +102,21 @@ const FAQ_DATA = [
 const QUICK_START = [
   {
     step: 1,
-    title: "提取视频文案",
-    desc: "使用「语音转写」功能，将视频内容转为文字",
-    path: "/transcription",
+    title: intelligentCreation.label,
+    desc: intelligentCreation.description,
+    path: intelligentCreation.path,
   },
   {
     step: 2,
-    title: "创建生产批次",
-    desc: "只创建批次记录，不宣称已生成视频",
-    path: "/pipeline",
+    title: taskQueue.label,
+    desc: taskQueue.description,
+    path: taskQueue.path,
   },
   {
     step: 3,
-    title: "生成数字人视频",
-    desc: "使用「数字人生成」功能，创建口播视频",
-    path: "/avatar",
+    title: publishCenter.label,
+    desc: publishCenter.description,
+    path: publishCenter.path,
   },
 ];
 
@@ -152,7 +161,7 @@ export default function HelpPage() {
       <Card title={<Space><RocketOutlined /> 快速入门</Space>} style={{ marginBottom: 24 }}>
         <Row gutter={[16, 16]}>
           {QUICK_START.map((item) => (
-            <Col xs={24} sm={12} lg={6} key={item.step}>
+            <Col xs={24} sm={12} lg={8} key={item.step}>
               <Card
                 size="small"
                 hoverable
