@@ -894,7 +894,16 @@ class AliyunEditPlanProvider(EditPlanProvider):
                     steps.append(step)
         raw_titles = suggestion.get("title_candidates", [])
         titles = raw_titles if isinstance(raw_titles, list) else []
-        usage = payload.get("usage")
+        raw_usage = payload.get("usage")
+        usage = (
+            {
+                str(key): value
+                for key, value in raw_usage.items()
+                if isinstance(value, (int, float, str))
+            }
+            if isinstance(raw_usage, Mapping)
+            else {}
+        )
         return build_safe_edit_plan(
             spoken_ranges,
             duration_seconds,
@@ -903,7 +912,7 @@ class AliyunEditPlanProvider(EditPlanProvider):
             enabled_steps=steps,
             provider_name="aliyun_qwen_flash",
             is_mock=False,
-            usage=dict(usage) if isinstance(usage, Mapping) else {},
+            usage=usage,
         )
 
 

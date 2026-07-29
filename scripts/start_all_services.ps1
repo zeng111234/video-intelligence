@@ -13,6 +13,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$serviceLogDirectory = Join-Path $projectRoot "data\logs\services"
 
 # Service configuration
 $services = @(
@@ -21,7 +22,7 @@ $services = @(
         Port = 2001
         HealthUrl = "http://localhost:2001/health"
         StartCommand = "python"
-        StartArgs = @("-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "2001")
+        StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "2001")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
         EnvVars = @{ PYTHONPATH = $projectRoot }
@@ -71,25 +72,81 @@ function Test-ServiceHealth {
     }
 }
 
+function New-ServiceLogPaths {
+    param([string]$Name)
+
+    if (-not (Test-Path -LiteralPath $serviceLogDirectory)) {
+        New-Item -ItemType Directory -Path $serviceLogDirectory -Force | Out-Null
+    }
+
+    $safeName = (($Name.ToLowerInvariant() -replace "[^a-z0-9]+", "-").Trim("-"))
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    return @{
+        Output = Join-Path $serviceLogDirectory "$safeName-$timestamp.stdout.log"
+        Error = Join-Path $serviceLogDirectory "$safeName-$timestamp.stderr.log"
+    }
+}
+
+function Remove-OldServiceLogs {
+    param([string]$Name)
+
+    $safeName = (($Name.ToLowerInvariant() -replace "[^a-z0-9]+", "-").Trim("-"))
+    $oldLogs = @(Get-ChildItem -LiteralPath $serviceLogDirectory -File -Filter "$safeName-*.log" |
+        Sort-Object LastWriteTime -Descending)
+    $oldLogs | Select-Object -Skip 20 | Remove-Item -Force
+}
+
+function Get-RedactedLogTail {
+    param([string]$Path, [int]$Lines = 12)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @()
+    }
+
+    return @(Get-Content -LiteralPath $Path -Tail $Lines | ForEach-Object {
+        $_ -replace "(?i)(DASHSCOPE_API_KEY|ALIBABA_CLOUD_ACCESS_KEY_SECRET)\\s*=\\s*\\S+", '$1=[已隐藏]' `
+           -replace "\\bsk-[A-Za-z0-9._-]+\\b", "[已隐藏]"
+    })
+}
+
+function Show-ServiceStartupFailure {
+    param(
+        [string]$Name,
+        [System.Diagnostics.Process]$Process,
+        [string]$ErrorLogPath
+    )
+
+    $details = Get-RedactedLogTail -Path $ErrorLogPath
+    if (($details -join "`n") -match "VIDEO_EDITOR_PROVIDER_MODE") {
+        Write-Log "剪辑服务配置无效：VIDEO_EDITOR_PROVIDER_MODE 只能填 sandbox 或 aliyun。" "ERROR"
+    }
+
+    Write-Log "$Name 已退出（退出码 $($Process.ExitCode)）。错误日志：$ErrorLogPath" "ERROR"
+    if ($details.Count -gt 0) {
+        Write-Host "[DETAIL] 最近错误（已隐藏密钥）：" -ForegroundColor DarkYellow
+        $details | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkYellow }
+    }
+}
+
 function Stop-ServiceByPort {
     param([int]$Port)
     try {
         $connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue
         if ($connections) {
-            $pids = $connections | Select-Object -ExpandProperty OwningProcess -Unique
-            foreach ($pid in $pids) {
-                if ($pid -and $pid -ne 0) {
-                    $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+            foreach ($processId in $processIds) {
+                if ($processId -and $processId -ne 0) {
+                    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
                     if ($process) {
-                        Write-Log "Stopping process: $($process.ProcessName) (PID: $pid, Port: $Port)" "WARN"
-                        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                        Write-Log "Stopping process: $($process.ProcessName) (PID: $processId, Port: $Port)" "WARN"
+                        Stop-Process -Id $processId -Force -ErrorAction Stop
                         Start-Sleep -Milliseconds 500
                     }
                 }
             }
         }
     } catch {
-        # Ignore errors
+        Write-Log "无法停止端口 $Port 上的旧服务：$($_.Exception.Message)" "ERROR"
     }
 }
 
@@ -214,16 +271,30 @@ function Start-Services {
             Write-Log "Port $port is occupied, stopping existing processes..." "WARN"
             Stop-ExistingServices
             Start-Sleep -Seconds 1
+            if (-not (Test-PortAvailable -Port $port)) {
+                Write-Log "端口 $port 仍被占用，已停止启动以避免端口冲突。" "ERROR"
+                return $false
+            }
         }
         
-        # Start service
-        Start-Process -FilePath $service.StartCommand `
-                     -ArgumentList $service.StartArgs `
-                     -WorkingDirectory $service.WorkingDirectory `
-                     -WindowStyle $service.WindowStyle
+        # Start service and preserve its output for diagnosis if it exits early.
+        $logPaths = New-ServiceLogPaths -Name $name
+        try {
+            $serviceProcess = Start-Process -FilePath $service.StartCommand `
+                                             -ArgumentList $service.StartArgs `
+                                             -WorkingDirectory $service.WorkingDirectory `
+                                             -WindowStyle $service.WindowStyle `
+                                             -RedirectStandardOutput $logPaths.Output `
+                                             -RedirectStandardError $logPaths.Error `
+                                             -PassThru
+        } catch {
+            Write-Log "$name 无法启动：$($_.Exception.Message)" "ERROR"
+            return $false
+        }
         
         # Wait for service to start
         Start-Sleep -Seconds 2
+        Remove-OldServiceLogs -Name $name
         
         # Check if service started successfully
         if (-not $SkipHealthCheck) {
@@ -232,6 +303,11 @@ function Start-Services {
             $serviceStarted = $false
             
             while ($attempt -lt $maxAttempts -and -not $serviceStarted) {
+                if ($serviceProcess.HasExited) {
+                    Show-ServiceStartupFailure -Name $name -Process $serviceProcess -ErrorLogPath $logPaths.Error
+                    return $false
+                }
+
                 $attempt++
                 Write-Log "Waiting for $name to start... ($attempt/$maxAttempts)" "INFO"
                 
@@ -244,7 +320,7 @@ function Start-Services {
             }
             
             if (-not $serviceStarted) {
-                Write-Log "$name startup timeout, check logs" "ERROR"
+                Write-Log "$name startup timeout. 输出日志：$($logPaths.Output)，错误日志：$($logPaths.Error)" "ERROR"
                 return $false
             }
         } else {

@@ -486,7 +486,11 @@ def test_qwen_suggestions_cannot_inject_spoken_range_deletions():
                     },
                 },
             ],
-            "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "prompt_tokens_details": {"cached_tokens": 0},
+            },
         }
 
     provider = AliyunEditPlanProvider(_aliyun_config(), transport=transport)
@@ -499,6 +503,7 @@ def test_qwen_suggestions_cannot_inject_spoken_range_deletions():
     assert plan.title_candidates == ["安全标题"]
     assert plan.remove_ranges == [TimeRange(start=2.35, end=3.65)]
     assert all(step.value != "delete_spoken_content" for step in plan.enabled_steps)
+    assert plan.usage == {"prompt_tokens": 100, "completion_tokens": 20}
 
 
 def test_mps_request_uses_selected_profile_and_requires_human_review():

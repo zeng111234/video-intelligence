@@ -111,6 +111,18 @@ class VideoEditorProviderMode(StrEnum):
     ALIYUN = "aliyun"
 
 
+def _video_editor_provider_mode() -> VideoEditorProviderMode:
+    raw_mode = (
+        _secret("VIDEO_EDITOR_PROVIDER_MODE", "sandbox") or "sandbox"
+    ).casefold()
+    try:
+        return VideoEditorProviderMode(raw_mode)
+    except ValueError as exc:
+        raise ValueError(
+            "VIDEO_EDITOR_PROVIDER_MODE 仅支持 sandbox 或 aliyun。",
+        ) from exc
+
+
 def _secret_int(key: str, default: int) -> int:
     try:
         return int(_secret(key, str(default)) or default)
@@ -118,9 +130,7 @@ def _secret_int(key: str, default: int) -> int:
         return default
 
 
-VIDEO_EDITOR_PROVIDER_MODE: VideoEditorProviderMode = VideoEditorProviderMode(
-    _secret("VIDEO_EDITOR_PROVIDER_MODE", "sandbox") or "sandbox"
-)
+VIDEO_EDITOR_PROVIDER_MODE: VideoEditorProviderMode = _video_editor_provider_mode()
 VIDEO_EDITOR_PRICE_VERSION: str = _secret(
     "VIDEO_EDITOR_PRICE_VERSION",
     "aliyun-cn-mainland-2026-07-28",
