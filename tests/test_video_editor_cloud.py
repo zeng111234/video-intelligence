@@ -615,7 +615,7 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
     subtitle = outputs[0]["SubtitleConfig"]["ExtSubtitleList"][0]
     assert subtitle["Input"]["Object"] == "review%2Fapproved.ass"
     assert subtitle["CharEnc"] == "UTF-8"
-    assert subtitle["FontName"] == "YaHei"
+    assert "FontName" not in subtitle
     watermark = outputs[0]["WaterMarks"][0]
     assert watermark["Type"] == "Image"
     assert watermark["InputFile"]["Object"] == "review%2Fapproved-title.png"

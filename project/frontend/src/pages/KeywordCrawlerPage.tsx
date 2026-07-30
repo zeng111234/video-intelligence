@@ -3,13 +3,11 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Descriptions,
   Drawer,
   Input,
   List,
   Modal,
-  Segmented,
   Select,
   Space,
   Table,
@@ -23,20 +21,11 @@ import {
   DeleteOutlined,
   EyeOutlined,
   FileTextOutlined,
+  LinkOutlined,
   SearchOutlined,
 } from "@ant-design/icons";
 import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import {
   createCrawlerBatch,
-  cancelCrawlerBatchTracking,
   createPipelineFromCandidate,
   deleteCrawlerBatch,
   generateOriginalScript,
@@ -46,7 +35,6 @@ import {
   listCrawlerBatches,
   previewCrawlerCandidateMedia,
   startCrawlerBrowserDiscovery,
-  startCrawlerBatchTracking,
 } from "../api/client";
 import type {
   CrawlerBatchResponse,
@@ -77,8 +65,8 @@ const STATUS_COLOR: Record<string, string> = {
   outcome_unknown: "error",
 };
 
-type RankingMode = "total" | "trend";
 type HotspotWindowHours = 1 | 24 | 72 | 168;
+type BrowserPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 
 const HOTSPOT_WINDOW_OPTIONS: Array<{ label: string; value: HotspotWindowHours }> = [
   { label: "近1小时", value: 1 },
@@ -89,12 +77,6 @@ const HOTSPOT_WINDOW_OPTIONS: Array<{ label: string; value: HotspotWindowHours }
 
 function hotspotWindowLabel(hours: number | null | undefined) {
   return HOTSPOT_WINDOW_OPTIONS.find((item) => item.value === hours)?.label || "近7天";
-}
-
-function displayBrowserText(value: string | null | undefined) {
-  return (value || "")
-    .replace(/热点宝专用浏览器/g, "数据浏览器")
-    .replace(/热点宝/g, "浏览器");
 }
 
 function statusLabel(status: string) {
@@ -113,34 +95,8 @@ function statusLabel(status: string) {
   return labels[status] || status;
 }
 
-function displayTierLabel(tier: string) {
-  const labels: Record<string, string> = {
-    exploding: "爆发",
-    hot: "热门",
-    potential: "潜力",
-    observing: "观察中",
-    ordinary: "普通",
-  };
-  return labels[tier] || tier;
-}
-
-function displayTierColor(tier: string) {
-  const colors: Record<string, string> = {
-    exploding: "volcano",
-    hot: "red",
-    potential: "gold",
-    observing: "blue",
-    ordinary: "default",
-  };
-  return colors[tier] || "default";
-}
-
 function formatNumber(value: number | null | undefined) {
   return value === null || value === undefined ? "未返回" : value.toLocaleString("zh-CN");
-}
-
-function formatScore(value: number | null | undefined) {
-  return value === null || value === undefined ? "暂无" : value.toFixed(1);
 }
 
 function formatLikesPerDay(value: number | null | undefined) {
@@ -155,18 +111,6 @@ function formatCurrency(value: number | null | undefined, currency = "CNY") {
 }
 
 const OFFICIAL_HOT_NO_MATCH_MESSAGE = "官方热门池中没有匹配，不代表抖音搜索无视频。";
-
-/** 增长阶段徽标：低饱和度配色 */
-const GROWTH_STAGE_COLORS: Record<string, string> = {
-  观察样本: "#8c8c8c",
-  增长确认中: "#7d9dbf",
-  热门候选: "#c0a062",
-  爆发候选: "#b5654d",
-};
-
-function growthStageColor(stage: string) {
-  return GROWTH_STAGE_COLORS[stage] || "#8c8c8c";
-}
 
 function resultStateMessage(run: CrawlerPlatformRun) {
   if (run.result_state === "official_hot_no_match" || run.result_state.includes("官方热榜无匹配")) {
@@ -210,80 +154,10 @@ function hotspotEvidenceSummary(evidence: string) {
     .join("；");
 }
 
-function TrendSamplingStatus({ item }: { item: CrawlerCandidateResult }) {
-  const points = [...(item.trend_points || [])]
-    .filter((point) => Number.isFinite(new Date(point.sampled_at).getTime()))
-    .sort((left, right) => new Date(left.sampled_at).getTime() - new Date(right.sampled_at).getTime());
-  if (points.length === 0) {
-    return <Text type="secondary">尚未采集快照</Text>;
-  }
-  if (points.length === 1) {
-    return <Tag color="processing">已采集 1 次，等待下一次采样</Tag>;
-  }
-  const first = points[0];
-  const last = points[points.length - 1];
-  const elapsedHours = (new Date(last.sampled_at).getTime() - new Date(first.sampled_at).getTime()) / 3_600_000;
-  const growth = last.effective_interactions - first.effective_interactions;
-
-  if (!Number.isFinite(elapsedHours) || elapsedHours <= 0) {
-    return <Tag color="processing">已采集 {points.length} 次，等待有效时间间隔</Tag>;
-  }
-
-  const growthPerHour = growth / elapsedHours;
-  const confirmed = points.length >= 3;
-  return (
-    <Tooltip title={`从首次到最新快照：${formatNumber(growth)} 次有效互动变化，历时 ${elapsedHours.toFixed(1)} 小时。`}>
-      <Space size={4}>
-        <Tag color={confirmed ? "success" : "processing"}>{confirmed ? "趋势已确认" : "增长确认中"}</Tag>
-        <Text type="secondary">新增互动 {growth >= 0 ? "+" : ""}{formatNumber(growth)} · {growthPerHour.toFixed(1)}/小时</Text>
-      </Space>
-    </Tooltip>
-  );
-}
-
-function CandidateTrendChart({ item }: { item: CrawlerCandidateResult }) {
-  const points = [...(item.trend_points || [])]
-    .filter((point) => Number.isFinite(new Date(point.sampled_at).getTime()))
-    .sort((left, right) => new Date(left.sampled_at).getTime() - new Date(right.sampled_at).getTime())
-    .map((point) => ({
-      sampledAt: point.sampled_at,
-      time: new Date(point.sampled_at).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }),
-      interactions: point.effective_interactions,
-      growthPerHour: point.growth_per_hour,
-    }));
-
-  if (points.length < 2) return null;
-
-  return (
-    <div style={{ height: 156, width: "100%", maxWidth: 560, marginTop: 4 }}>
-      <ResponsiveContainer>
-        <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-          <defs>
-            <linearGradient id={`trend-${item.video_id}`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="#722ed1" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="#722ed1" stopOpacity={0.03} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="time" tick={{ fontSize: 11 }} minTickGap={20} />
-          <YAxis tick={{ fontSize: 11 }} width={42} />
-          <RechartsTooltip
-            formatter={(value, name) => [formatNumber(Number(value ?? 0)), name === "interactions" ? "互动热度" : "每小时增长"]}
-            labelFormatter={(_, payload) => payload?.[0]?.payload?.time || ""}
-          />
-          <Area type="monotone" dataKey="interactions" name="interactions" stroke="#722ed1" fill={`url(#trend-${item.video_id})`} strokeWidth={2} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
 export default function KeywordCrawlerPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
-  const [hotspotBrowser, setHotspotBrowser] = useState<CrawlerBrowserDiscoveryCapabilities | null>(null);
-  const [hotspotStarting, setHotspotStarting] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [hotspotWindowHours] = useState<HotspotWindowHours>(168);
   const [batches, setBatches] = useState<CrawlerBatchResponse[]>([]);
@@ -296,25 +170,26 @@ export default function KeywordCrawlerPage() {
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(false);
   const [mediaSubmitting, setMediaSubmitting] = useState(false);
   const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
-  const [mediaRightsConfirmed, setMediaRightsConfirmed] = useState(false);
   const [hotWords, setHotWords] = useState<CrawlerHotWordItem[]>([]);
   const [originalScript, setOriginalScript] = useState<{
     candidate: CrawlerCandidateResult;
     data: CrawlerOriginalScriptResponse;
   } | null>(null);
   const [originalScriptLoadingId, setOriginalScriptLoadingId] = useState<string | null>(null);
+  const [connectionDrawerOpen, setConnectionDrawerOpen] = useState(false);
+  const [connectingPlatform, setConnectingPlatform] = useState<BrowserPlatform | null>(null);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
-    published_window_days: 7,
+    published_window_days: 0,
     hotspot_window_hours: hotspotWindowHours,
-    count_per_platform: 3,
+    count_per_platform: 30,
     force_refresh: false,
     mode: "smart",
     track_trend: false,
-    target_main_count: 3,
+    target_main_count: 30,
     allow_paid_fallback: false,
-    hotspot_result_limit: 20,
+    hotspot_result_limit: 30,
   }), [keyword, hotspotWindowHours]);
   const keywordLength = requestPayload.keyword.length;
   const canSearch = keywordLength >= 2 && keywordLength <= 50;
@@ -323,19 +198,18 @@ export default function KeywordCrawlerPage() {
       ? "输入一个词，马上开始找素材。"
         : !canSearch
         ? "关键词需为 2–50 个字符。"
-          : "会自动查询视频榜、话题榜和抖音搜索，先给你 3 条。";
+          : "每个平台最多保留30条：抖音爆款榜、小红书、快手和B站都可作为免费候选来源。";
   const isSandboxMode = capabilities?.mode === "sandbox";
-  const hotspotReady = Boolean(hotspotBrowser?.ready_to_crawl);
-  const hotspotMissing = hotspotBrowser?.missing_configuration || [];
-  const hotspotNeedsPlaywright = hotspotMissing.includes("Playwright Python 依赖");
-  const hotspotNeedsBrowser = hotspotMissing.includes("Google Chrome") || hotspotMissing.includes("Microsoft Edge");
-  const crawlerDescription = hotspotReady
-    ? "输入一个关键词，直接从视频榜、话题榜和抖音搜索里找可做口播的素材。"
-    : capabilities
-      ? isSandboxMode
-        ? "当前为 Sandbox 演示模式，不代表真实平台生产数据。"
-        : "先打开浏览器并完成本机授权，即可读取当前可见榜单。"
-      : "加载发现能力中。";
+  const crawlerDescription = capabilities
+    ? isSandboxMode
+      ? "当前为 Sandbox 演示模式，不代表真实平台生产数据。"
+      : "输入一个关键词，系统会自动打开热点宝、小红书、快手和B站的公开页面并开始找素材。"
+    : "加载发现能力中。";
+  const browserConnections = useMemo(() => [
+    capabilities?.hotspot_browser,
+    ...(capabilities?.platform_browsers ?? []),
+  ].filter((item): item is CrawlerBrowserDiscoveryCapabilities => Boolean(item)), [capabilities]);
+  const readyBrowserCount = browserConnections.filter((item) => item.ready_to_crawl).length;
 
   const upsertBatch = useCallback((batch: CrawlerBatchResponse) => {
     setBatches((current) => [batch, ...current.filter((item) => item.batch_id !== batch.batch_id)]
@@ -359,7 +233,6 @@ export default function KeywordCrawlerPage() {
     try {
       const caps = await getCrawlerCapabilities();
       setCapabilities(caps);
-      setHotspotBrowser(caps.hotspot_browser ?? null);
     } catch (err) {
       // The history table remains usable when the local browser status is
       // temporarily unavailable.
@@ -373,6 +246,11 @@ export default function KeywordCrawlerPage() {
   }, [toast]);
 
   const handleCreateCandidateLinkTranscription = async (candidate: CrawlerCandidateResult) => {
+    const supportedPlatforms = new Set(["douyin", "xiaohongshu", "kuaishou", "bilibili"]);
+    if (!supportedPlatforms.has(candidate.platform)) {
+      toast.info("视频号暂不能自动解析；请上传有权处理的视频文件。");
+      return;
+    }
     if (!candidate.source_url) {
       toast.warning("该候选没有可用的原视频链接");
       return;
@@ -389,32 +267,6 @@ export default function KeywordCrawlerPage() {
       candidate_id: candidate.video_id,
     });
     navigate(`/pipeline?${query.toString()}`);
-  };
-
-  const handleStartTracking = (batch: CrawlerBatchResponse) => {
-    Modal.confirm({
-      title: "追踪这批走势？",
-      content: "将最多新增 2 次 OneAPI 搜索：约 2 小时后首次采样，最后一次按真实增长安排。确认后可随时取消未执行的采样。",
-      okText: "确认追踪",
-      cancelText: "取消",
-      onOk: async () => {
-        const result = await startCrawlerBatchTracking(batch.batch_id);
-        setSelectedBatch(result.batch);
-        upsertBatch(result.batch);
-        toast.success(result.message);
-      },
-    });
-  };
-
-  const handleCancelTracking = async (batch: CrawlerBatchResponse) => {
-    try {
-      const result = await cancelCrawlerBatchTracking(batch.batch_id);
-      setSelectedBatch(result.batch);
-      upsertBatch(result.batch);
-      toast.success(result.message);
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
   };
 
   useEffect(() => {
@@ -435,7 +287,7 @@ export default function KeywordCrawlerPage() {
       setSelectedBatch(batch);
       setKeyword("");
       upsertBatch(batch);
-      toast.success("素材已找到，选一条送入智能创作即可");
+      toast.success("已找到近期候选；选一条即可进入原创文案或后续创作");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -443,16 +295,34 @@ export default function KeywordCrawlerPage() {
     }
   };
 
-  const handleStartHotspot = async () => {
-    setHotspotStarting(true);
+  const handleStartBrowserConnection = async (connection: CrawlerBrowserDiscoveryCapabilities) => {
+    const platform = connection.platform as BrowserPlatform | undefined;
+    if (!platform || !connection.enabled) {
+      toast.warning(`${connection.platform_label || "该平台"}暂时无法连接`);
+      return;
+    }
+    setConnectingPlatform(platform);
     try {
-      const status = await startCrawlerBrowserDiscovery();
-      setHotspotBrowser(status);
-      toast.info(status.message);
+      const started = await startCrawlerBrowserDiscovery(platform);
+      setCapabilities((current) => {
+        if (!current) return current;
+        if (platform === "douyin") {
+          return { ...current, hotspot_browser: started };
+        }
+        return {
+          ...current,
+          platform_browsers: (current.platform_browsers ?? []).map((item) => (
+            item.platform === platform ? started : item
+          )),
+        };
+      });
+      toast.success(started.ready_to_crawl
+        ? `${started.platform_label}已连接`
+        : `${started.platform_label}浏览器已在后台打开，请从任务栏完成登录`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
-      setHotspotStarting(false);
+      setConnectingPlatform(null);
     }
   };
 
@@ -501,7 +371,6 @@ export default function KeywordCrawlerPage() {
     }
     setMediaSubmitting(true);
     setMediaCandidate(candidate);
-    setMediaRightsConfirmed(false);
     try {
       const resp = await previewCrawlerCandidateMedia(candidate.video_id);
       setMediaPreview(resp);
@@ -515,16 +384,16 @@ export default function KeywordCrawlerPage() {
 
   const handleCreateCandidateTranscription = async () => {
     if (!mediaCandidate || !mediaPreview) return;
-    if (!mediaRightsConfirmed) {
-      toast.warning("请先确认拥有媒体处理权");
+    if (!rightsHolder.trim()) {
+      toast.warning("请填写权利主体");
       return;
     }
     setMediaSubmitting(true);
     try {
       const run = await createPipelineFromCandidate({
         candidate_id: mediaCandidate.video_id,
-        rights_holder: rightsHolder,
-        rights_confirmed: mediaRightsConfirmed,
+        rights_holder: rightsHolder.trim(),
+        rights_confirmed: true,
         idempotencyKey: [
           "pipeline",
           mediaCandidate.video_id,
@@ -617,7 +486,14 @@ export default function KeywordCrawlerPage() {
         <Text type="secondary">{crawlerDescription}</Text>
       </div>
 
-      <Card title="你想做什么内容？">
+      <Card
+        title="你想做什么内容？"
+        extra={(
+          <Button icon={<LinkOutlined />} onClick={() => setConnectionDrawerOpen(true)}>
+            {capabilities ? `账号连接（${readyBrowserCount}/4）` : "账号连接"}
+          </Button>
+        )}
+      >
         <Space wrap align="end">
           <div>
             <Text type="secondary" style={{ display: "block", marginBottom: 4 }}>关键词</Text>
@@ -663,48 +539,58 @@ export default function KeywordCrawlerPage() {
             </Button>
           </Tooltip>
         </Space>
-        <Alert
-          style={{ marginTop: 12 }}
-          type={hotspotBrowser?.ready_to_crawl ? "success" : hotspotMissing.length ? "warning" : "info"}
-          showIcon
-          message={
-            hotspotBrowser?.ready_to_crawl
-              ? "浏览器已授权：可检索真实榜单"
-              : hotspotNeedsPlaywright
-                ? "浏览器依赖未安装"
-                : hotspotNeedsBrowser
-                  ? "未找到可用浏览器"
-                  : "先连接并授权浏览器，获得更高质量的爆款视频"
-          }
-          description={
-            <Space direction="vertical" size={6}>
-              <Text>{displayBrowserText(hotspotBrowser?.message) || "会打开独立 Chrome 窗口；请在其中扫码登录。"}</Text>
-              {hotspotNeedsPlaywright ? (
-                <Text type="secondary">请在项目根目录运行 <Text code>python -m pip install -r project/backend/requirements.txt</Text>，然后重启后端。</Text>
-              ) : null}
-              {hotspotNeedsBrowser ? (
-                <Text type="secondary">请安装 {hotspotBrowser?.browser_channel === "msedge" ? "Microsoft Edge" : "Google Chrome"}，或在根目录 .env 中将 <Text code>DOUYIN_BROWSER_CHANNEL</Text> 改为已安装的浏览器后重启后端。</Text>
-              ) : null}
-              <Space wrap>
-                <Button size="small" type="primary" loading={hotspotStarting} onClick={handleStartHotspot} disabled={hotspotBrowser?.enabled === false}>
-                  {hotspotBrowser?.running ? "检查浏览器授权" : "打开浏览器并扫码"}
-                </Button>
-              </Space>
-            </Space>
-          }
-        />
         <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-          默认查看近 7 天；需要更细的范围或诊断时，再进入下方的历史详情。
+          点“找素材”后浏览器会自动打开并开始搜索；热点宝不限制作品发布时间，小红书选择“最多点赞、视频、半年内”，快手保留近10个月，B站选择“最多播放、最近一周”。每个平台最多保留30条。
         </Text>
       </Card>
+
+      <Drawer
+        title="账号连接"
+        open={connectionDrawerOpen}
+        onClose={() => setConnectionDrawerOpen(false)}
+        width={420}
+      >
+        <Paragraph type="secondary">
+          平时直接点“找素材”即可。只有平台提示未登录时，才需要在这里连接一次；登录状态会保留在本机。
+        </Paragraph>
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          {browserConnections.map((connection) => {
+            const ready = Boolean(connection.ready_to_crawl);
+            const waitingLogin = Boolean(connection.running && connection.login_required);
+            const status = ready ? "已连接" : waitingLogin ? "等待登录" : "未连接";
+            const color = ready ? "success" : waitingLogin ? "warning" : "default";
+            const platform = connection.platform as BrowserPlatform | undefined;
+            return (
+              <Card
+                key={connection.platform || connection.provider_name}
+                size="small"
+                title={connection.platform_label || connection.provider_name}
+                extra={<Tag color={color}>{status}</Tag>}
+              >
+                <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                  {ready ? "已可找素材。" : connection.message}
+                </Paragraph>
+                <Button
+                  type={ready ? "default" : "primary"}
+                  loading={platform !== undefined && connectingPlatform === platform}
+                  disabled={!connection.enabled || !platform}
+                  onClick={() => void handleStartBrowserConnection(connection)}
+                >
+                  {ready ? "打开浏览器" : `连接${connection.platform_label || "平台"}`}
+                </Button>
+              </Card>
+            );
+          })}
+          {!browserConnections.length && (
+            <Alert type="info" showIcon message="正在读取账号连接状态" />
+          )}
+        </Space>
+      </Drawer>
 
       {selectedBatch && (
         <BatchDetail
           batch={selectedBatch}
-          onStartTracking={handleStartTracking}
-          onCancelTracking={handleCancelTracking}
           onResolveMedia={handleOpenCandidateMedia}
-          mediaSubmitting={mediaSubmitting}
           onCreateCandidateLinkTranscription={handleCreateCandidateLinkTranscription}
           onSendToWorkspace={handleSendCandidateToWorkspace}
           onGenerateOriginalScript={handleGenerateOriginalScript}
@@ -762,11 +648,11 @@ export default function KeywordCrawlerPage() {
         open={mediaPreviewOpen}
         onCancel={() => setMediaPreviewOpen(false)}
         onOk={handleCreateCandidateTranscription}
-        okText="确认并提取文案"
+        okText="确认有权并提取文案"
         cancelText="取消"
         confirmLoading={mediaSubmitting}
         okButtonProps={{
-          disabled: !mediaPreview?.resolvable || !mediaRightsConfirmed,
+          disabled: !mediaPreview?.resolvable || !rightsHolder.trim(),
         }}
       >
         {mediaCandidate && mediaPreview && (
@@ -794,14 +680,8 @@ export default function KeywordCrawlerPage() {
               addonBefore="权利主体"
               placeholder="填写授权主体或公司名称"
             />
-            <Checkbox
-              checked={mediaRightsConfirmed}
-              onChange={(event) => setMediaRightsConfirmed(event.target.checked)}
-            >
-              我确认拥有该视频用于本次私有转写和文案分析的处理权
-            </Checkbox>
             <Text type="secondary">
-              供应商返回的临时媒体地址只会在后端读取并立即用于转写，不会展示、保存或批量下载。
+              点击“确认有权并提取文案”即确认拥有本次处理权。临时媒体地址只会在后端读取并立即用于转写，不会展示、保存或批量下载。
             </Text>
             <Alert
               type="info"
@@ -818,63 +698,161 @@ export default function KeywordCrawlerPage() {
 
 function BatchDetail({
   batch,
-  onStartTracking,
-  onCancelTracking,
   onResolveMedia,
-  mediaSubmitting,
   onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
   batch: CrawlerBatchResponse;
-  onStartTracking: (batch: CrawlerBatchResponse) => void;
-  onCancelTracking: (batch: CrawlerBatchResponse) => void;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  mediaSubmitting: boolean;
   onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
 }) {
-  const [rankingMode, setRankingMode] = useState<RankingMode>("total");
   const isHotspotBatch = batch.provider === "douyin_local_browser" || batch.monitoring_policy === "hotspot_single_snapshot_v1";
+  const isFreeMultiPlatformBatch = batch.monitoring_policy === "free_single_snapshot_v1";
+  const isSingleSnapshotBatch = isHotspotBatch || isFreeMultiPlatformBatch;
 
   return (
     <Card title={`本次素材：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
       <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
-        {!isHotspotBatch && <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>}
-        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : "近 7 天（历史）"}</Descriptions.Item>
-        <Descriptions.Item label={isHotspotBatch ? "优先给你" : "每平台"}>{batch.count_per_platform} 条</Descriptions.Item>
-        {!isHotspotBatch && <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>}
-        {!isHotspotBatch && <Descriptions.Item label="走势追踪">{batch.tracking_status === "scheduled" ? `已安排，下一次 ${batch.next_tracking_at ? new Date(batch.next_tracking_at).toLocaleString("zh-CN") : "待定"}` : batch.tracking_status === "complete" ? "已完成" : batch.tracking_status === "cancelled" ? "已取消" : "未开启"}</Descriptions.Item>}
-        {batch.mode === "smart" && <Descriptions.Item label="免费池候选">{batch.free_candidate_count || 0} 条</Descriptions.Item>}
-        {batch.mode === "smart" && <Descriptions.Item label="付费兜底">{batch.paid_fallback_used ? "已使用" : batch.paid_fallback_blocked_reason ? "不可用，已保留免费结果" : "未使用"}</Descriptions.Item>}
+        {!isSingleSnapshotBatch && <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>}
+        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : isFreeMultiPlatformBatch ? "平台规则" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : isFreeMultiPlatformBatch ? "热点宝不限 · 小红书近半年 · B站近一周 · 快手近10个月" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : batch.published_window_days === 3 ? "近 3 天（历史）" : batch.published_window_days === 180 ? "近半年（历史）" : batch.published_window_days === 300 ? "近 10 个月（历史）" : "近 7 天（历史）"}</Descriptions.Item>
+        <Descriptions.Item label={isSingleSnapshotBatch ? "本次候选目标" : "每平台"}>{batch.count_per_platform} 条</Descriptions.Item>
+        {!isSingleSnapshotBatch && <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>}
+        {batch.mode === "smart" && <Descriptions.Item label="免费来源候选">{batch.free_candidate_count || 0} 条</Descriptions.Item>}
+        {batch.mode === "smart" && <Descriptions.Item label="付费接口">{batch.paid_fallback_used ? "已使用" : "未调用 OneAPI"}</Descriptions.Item>}
       </Descriptions>
       <Space style={{ marginBottom: 12 }} wrap>
-        {!isHotspotBatch && batch.tracking_status === "scheduled" ? (
-          <Button danger onClick={() => onCancelTracking(batch)}>取消走势追踪</Button>
-        ) : !isHotspotBatch && batch.tracking_status !== "complete" ? (
-          <Button type="primary" onClick={() => onStartTracking(batch)} disabled={batch.total_candidates === 0}>追踪这批走势</Button>
-        ) : null}
-        {isHotspotBatch ? <Text type="secondary">选一条送入智能创作；不想参考原视频，也可以在下一步改成原创口播。</Text> : <><Text type="secondary">榜单</Text><Segmented value={rankingMode} onChange={(value) => setRankingMode(value as RankingMode)} options={[{ label: "总榜", value: "total" }, { label: "爆发趋势", value: "trend" }]} /></>}
+        <Text type="secondary">选一条生成原创文案或送入后续创作；每次搜索只抓取一次。</Text>
       </Space>
-      <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-        {batch.platform_runs.map((run) => (
-          <PlatformRunDetail
-            key={run.run_id}
-            run={run}
-            batchId={batch.batch_id}
-            rankingMode={rankingMode}
-            onResolveMedia={onResolveMedia}
-            mediaSubmitting={mediaSubmitting}
-            onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
-            onSendToWorkspace={onSendToWorkspace}
-            onGenerateOriginalScript={onGenerateOriginalScript}
-            originalScriptLoadingId={originalScriptLoadingId}
-          />
-        ))}
+      {isFreeMultiPlatformBatch ? (
+        <UnifiedPlatformResults
+          runs={batch.platform_runs}
+          batchId={batch.batch_id}
+          onResolveMedia={onResolveMedia}
+          onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
+          onSendToWorkspace={onSendToWorkspace}
+          onGenerateOriginalScript={onGenerateOriginalScript}
+          originalScriptLoadingId={originalScriptLoadingId}
+        />
+      ) : (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          {batch.platform_runs.map((run) => (
+            <PlatformRunDetail
+              key={run.run_id}
+              run={run}
+              batchId={batch.batch_id}
+              onResolveMedia={onResolveMedia}
+              onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
+              onSendToWorkspace={onSendToWorkspace}
+              onGenerateOriginalScript={onGenerateOriginalScript}
+              originalScriptLoadingId={originalScriptLoadingId}
+            />
+          ))}
+        </Space>
+      )}
+    </Card>
+  );
+}
+
+function emptyRunSummary(run: CrawlerPlatformRun) {
+  if (run.raw_item_count > 0 && run.parsed_item_count === 0) {
+    return `${run.platform_label}发现 ${run.raw_item_count} 条页面结果，但当时没有解析出可校验的标题和发布时间，未进入候选榜。`;
+  }
+  if (run.parsed_item_count > 0) {
+    const filtered = [
+      run.out_of_window_count ? `时间不符 ${run.out_of_window_count}` : "",
+      run.irrelevant_count ? `关键词不符 ${run.irrelevant_count}` : "",
+      run.below_heat_floor_count ? `热度不足 ${run.below_heat_floor_count}` : "",
+      run.invalid_count ? `字段无效 ${run.invalid_count}` : "",
+      run.duplicate_count ? `重复 ${run.duplicate_count}` : "",
+    ].filter(Boolean);
+    return `${run.platform_label}解析 ${run.parsed_item_count} 条，${filtered.length ? `其中${filtered.join("、")}` : "没有符合本次条件的内容"}，未进入候选榜。`;
+  }
+  return `${run.platform_label}没有返回搜索结果，可能需要登录或完成平台验证。`;
+}
+
+function UnifiedPlatformResults({
+  runs,
+  batchId,
+  onResolveMedia,
+  onCreateCandidateLinkTranscription,
+  onSendToWorkspace,
+  onGenerateOriginalScript,
+  originalScriptLoadingId,
+}: {
+  runs: CrawlerPlatformRun[];
+  batchId: string;
+  onResolveMedia: (candidate: CrawlerCandidateResult) => void;
+  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
+  onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
+  onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
+  originalScriptLoadingId: string | null;
+}) {
+  const candidates = runs.flatMap((run) => run.candidates);
+  const emptyRuns = runs.filter((run) => run.candidates.length === 0);
+
+  return (
+    <Card
+      size="small"
+      title={`多平台候选榜（${candidates.length}）`}
+      extra={<Text type="secondary">最多选择 30 条</Text>}
+    >
+      <Space wrap size={[6, 6]} style={{ marginBottom: emptyRuns.length ? 10 : 4 }}>
+        {runs.map((run) => {
+          const visibleCount = run.candidates.length;
+          const label = visibleCount > 0
+            ? `${run.platform_label} ${visibleCount} 条`
+            : run.raw_item_count > 0
+              ? `${run.platform_label} 发现 ${run.raw_item_count} 条 · 0 条符合`
+              : `${run.platform_label} 暂无结果`;
+          return (
+            <Tooltip
+              key={run.run_id}
+              title={visibleCount > 0 ? `已加入统一候选榜 ${visibleCount} 条。` : emptyRunSummary(run)}
+            >
+              <Tag color={visibleCount > 0 ? "success" : run.raw_item_count > 0 ? "warning" : "default"}>
+                {label}
+              </Tag>
+            </Tooltip>
+          );
+        })}
       </Space>
+      {emptyRuns.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: candidates.length ? 8 : 0 }}
+          message="部分平台结果没有混入候选榜"
+          description={emptyRuns.map(emptyRunSummary).join(" ")}
+        />
+      )}
+      {candidates.length > 0 ? (
+        <List
+          dataSource={candidates}
+          renderItem={(item) => (
+            <CandidateListItem
+              item={item}
+              batchId={batchId}
+              onResolveMedia={onResolveMedia}
+              onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
+              onSendToWorkspace={onSendToWorkspace}
+              onGenerateOriginalScript={onGenerateOriginalScript}
+              originalScriptLoading={originalScriptLoadingId === item.video_id}
+            />
+          )}
+        />
+      ) : (
+        <Alert
+          type="warning"
+          showIcon
+          message="本次没有符合条件的素材"
+          description="换一个更常见的关键词，或完成上方提示的平台登录后再找。"
+        />
+      )}
     </Card>
   );
 }
@@ -882,9 +860,7 @@ function BatchDetail({
 function PlatformRunDetail({
   run,
   batchId,
-  rankingMode,
   onResolveMedia,
-  mediaSubmitting,
   onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
@@ -892,9 +868,7 @@ function PlatformRunDetail({
 }: {
   run: CrawlerPlatformRun;
   batchId: string;
-  rankingMode: RankingMode;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  mediaSubmitting: boolean;
   onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
@@ -905,11 +879,7 @@ function PlatformRunDetail({
     .sort((a, b) => isHotspotRun
       ? (b.new_plays ?? b.plays ?? 0) - (a.new_plays ?? a.plays ?? 0)
       : (b.effective_interactions ?? 0) - (a.effective_interactions ?? 0));
-  const candidates = isHotspotRun || rankingMode === "total"
-    ? totalRanked
-    : totalRanked
-      .filter((item) => (item.valid_snapshot_count ?? 0) >= 3)
-      .sort((a, b) => (b.trend_score ?? -1) - (a.trend_score ?? -1));
+  const candidates = totalRanked;
   const lowIncrementalCandidates = run.low_incremental_candidates || [];
 
   return (
@@ -968,16 +938,6 @@ function PlatformRunDetail({
           message="本次没有可展示候选"
           description={run.error || resultStateMessage(run)}
         />
-      ) : candidates.length === 0 ? (
-        <Alert
-          style={{ marginTop: 16 }}
-          type="info"
-          showIcon
-          message={rankingMode === "total" ? "本次没有可展示候选" : "爆发趋势等待三点真实曲线"}
-          description={rankingMode === "total"
-            ? "严格相关候选会按有效互动量排序展示。"
-            : "当前尚未完成三个真实快照与有效时间跨度；系统不会用单点数据模拟趋势。"}
-        />
       ) : isHotspotRun ? (
         <HotspotCandidateTable
           candidates={candidates}
@@ -1007,7 +967,6 @@ function PlatformRunDetail({
                       item={item}
                       batchId={batchId}
                       onResolveMedia={onResolveMedia}
-                      mediaSubmitting={mediaSubmitting}
                       onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
                       onSendToWorkspace={onSendToWorkspace}
                       onGenerateOriginalScript={onGenerateOriginalScript}
@@ -1233,7 +1192,6 @@ function CandidateListItem({
   item,
   batchId,
   onResolveMedia,
-  mediaSubmitting,
   onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
@@ -1242,7 +1200,6 @@ function CandidateListItem({
   item: CrawlerCandidateResult;
   batchId: string;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  mediaSubmitting: boolean;
   onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
@@ -1251,10 +1208,10 @@ function CandidateListItem({
   const isHotspotLeaderboard = item.evidence?.startsWith("hotspot:") ?? false;
   const hotspotLabel = hotspotWindowLabel(item.hotspot_window_hours);
   const metrics = metricEntries(item, isHotspotLeaderboard);
-  const displayedReasons = isHotspotLeaderboard
-    ? item.reasons.filter((reason) => !/(按发布时间折算|有效快照|暂无可用增长速度|未满 \d+ 次复搜)/.test(reason))
-    : item.reasons;
-  const automationPaused = item.platform !== "douyin" && !item.media_transcription_task_id;
+  const displayedReasons = item.reasons.filter(
+    (reason) => !/(按发布时间折算|快照|复爬|复搜|采样|增长|趋势|小时|分位 P\d+)/.test(reason),
+  );
+  const linkTranscriptionAvailable = ["douyin", "xiaohongshu", "kuaishou", "bilibili"].includes(item.platform);
   // 已有原版转写（或正在/已有转写任务）的候选不提供元数据文案，避免与原版转写混淆。
   const hasOriginalTranscript =
     item.is_original_transcript === true ||
@@ -1276,15 +1233,15 @@ function CandidateListItem({
         item.media_transcription_task_id ? (
           <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看原文案</Button>
         ) : (
-          <Tooltip title={!item.source_url ? "该候选没有可用原视频链接。" : "在转写页确认授权、识别链接并选择本机解析或明确确认的付费回退。"}>
+          <Tooltip title={!item.source_url ? "该候选没有可用原视频链接。" : !linkTranscriptionAvailable ? "视频号暂不能自动解析，请上传有权处理的视频文件。" : item.platform === "douyin" ? "在转写页确认授权、识别链接并选择本机解析；只有抖音可明确确认付费回退。" : "在转写页确认授权，并使用已连接的平台专用浏览器解析。"}>
             <span>
               <Button
                 type="link"
                 size="small"
-                disabled={!item.source_url}
+                disabled={!item.source_url || !linkTranscriptionAvailable}
                 onClick={() => onCreateCandidateLinkTranscription(item)}
               >
-                去转写页提取文案
+                {linkTranscriptionAvailable ? "去转写页提取文案" : "请上传文件"}
               </Button>
             </span>
           </Tooltip>
@@ -1302,25 +1259,6 @@ function CandidateListItem({
             </Button>
           </Tooltip>
         ) : null,
-        item.media_transcription_task_id ? null : <Tooltip
-          title={automationPaused ? "本阶段只跑通抖音自动化，不会对该平台发起付费媒体解析。" : undefined}
-        >
-          <span>
-            <Button
-              type="link"
-              size="small"
-              loading={mediaSubmitting}
-              disabled={automationPaused}
-              onClick={() => onResolveMedia(item)}
-            >
-              {item.media_transcription_task_id
-                ? "付费解析"
-                : automationPaused
-                  ? "本阶段暂停"
-                  : "付费自动解析"}
-            </Button>
-          </span>
-        </Tooltip>,
       ]}
     >
       <List.Item.Meta
@@ -1328,27 +1266,21 @@ function CandidateListItem({
         title={
             <Space wrap>
               <Text strong>{item.title}</Text>
+              <Tag color="blue">{item.platform_label}</Tag>
               {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
               {isHotspotLeaderboard && <Tag color="magenta">浏览器爆款榜</Tag>}
               {isHotspotLeaderboard && item.hotspot_list_labels && item.hotspot_list_labels.length > 0 && <Tag color="purple">{item.hotspot_list_labels.join(" / ")}</Tag>}
-              {!isHotspotLeaderboard && <Tag color={displayTierColor(item.display_tier)}>{displayTierLabel(item.display_tier)}</Tag>}
               {item.relevance_basis && (
                 <Tag color="green">{item.relevance_reason || "标题/话题命中"}</Tag>
               )}
-              {!isHotspotLeaderboard && item.growth_stage && (
-                <Tag color={growthStageColor(item.growth_stage)}>{item.growth_stage}</Tag>
-              )}
               {item.media_resolution_status && <Tag>{statusLabel(item.media_resolution_status)}</Tag>}
-              {!isHotspotLeaderboard && item.trend_level && <Tag color={item.trend_level === "观察中" ? "default" : "red"}>{item.trend_level}</Tag>}
-            {item.anomaly_status && item.anomaly_status !== "normal" && <Tag color="warning">异常：{item.anomaly_status}</Tag>}
           </Space>
         }
         description={
           <Space direction="vertical" size={2}>
             <Text type="secondary">
-              作者：{item.author_name}；{isHotspotLeaderboard ? `${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : `趋势分：${formatScore(item.trend_score)}`}
+              作者：{item.author_name}{isHotspotLeaderboard ? `；${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : ""}
             </Text>
-            {!isHotspotLeaderboard && <><Space align="center" size="small"><Text type="secondary">增长采样</Text><TrendSamplingStatus item={item} /></Space><CandidateTrendChart item={item} /></>}
             {metrics.length > 0 && (
               <Text type="secondary">
                 {metrics.map(([label, value]) => `${label}：${formatNumber(value)}`).join("；")}
@@ -1359,7 +1291,6 @@ function CandidateListItem({
                 榜单指标：{hotspotEvidenceSummary(item.evidence)}
               </Text>
             )}
-            {!isHotspotLeaderboard && <Text type="secondary">走势：{item.snapshot_count && item.snapshot_count >= 3 ? "已确认" : "等待后续采样"}{item.next_recrawl_at ? `；下次采样 ${new Date(item.next_recrawl_at).toLocaleString("zh-CN")}` : ""}</Text>}
             {(item.share_count !== undefined || item.collect_count !== undefined) && (
               <Text type="secondary">
                 分享：{formatNumber(item.share_count)}；收藏：{formatNumber(item.collect_count)}

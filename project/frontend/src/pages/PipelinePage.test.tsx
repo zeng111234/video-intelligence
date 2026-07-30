@@ -409,10 +409,9 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.queryByText("开工前准备")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
     expect(await screen.findByText("开工前准备")).toBeTruthy();
-    expect(screen.queryByText("我确认拥有本次媒体、文案、肖像与声音处理权")).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     fireEvent.change(screen.getByPlaceholderText("公司名称或本人姓名"), { target: { value: "测试商家" } });
-    fireEvent.click(screen.getByText("我确认拥有本次创作所需的媒体、文案、肖像与声音处理权"));
-    fireEvent.click(screen.getByRole("button", { name: "完成设置，进入工作台" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认授权并进入工作台" }));
 
     await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalledWith(
       expect.objectContaining({ rightsHolder: "测试商家", agreementAccepted: true }),
@@ -450,7 +449,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
     expect(await screen.findByText("先连接素材来源")).toBeTruthy();
     expect(screen.getByRole("button", { name: "打开素材浏览器并登录" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "完成设置，进入工作台" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "确认授权并进入工作台" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "我已登录，检查连接" }));
     await waitFor(() => expect(screen.getByText("素材来源已准备好")).toBeTruthy());
   });
@@ -461,7 +460,16 @@ describe("PipelinePage customer workspace", () => {
     renderPage();
 
     expect(await screen.findByText("智能创作工作台")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "开始创作" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /开始创作|找素材/ })).toBeTruthy();
+  });
+
+  it("places the current IP image below its profile details", async () => {
+    renderPage();
+
+    const details = await screen.findByLabelText("当前 IP 信息");
+    const preview = screen.getByLabelText("当前 IP 出镜人预览");
+
+    expect(details.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows the workspace frame instead of a blank spinner while core settings load", () => {
@@ -532,6 +540,22 @@ describe("PipelinePage customer workspace", () => {
 
   it("uploads an authorized voice sample and selects it when ready", async () => {
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+    vi.mocked(getAvatarCapabilities).mockResolvedValue({
+      provider_name: "shuying_legacy_cloud",
+      display_name: "公司数影云数字人",
+      mode: "production",
+      enabled: true,
+      permission_status: "authorized",
+      max_script_chars: 2000,
+      supported_aspect_ratios: ["9:16"],
+      estimated_cost_cny: null,
+      estimated_seconds: null,
+      missing_configuration: [],
+      profiles: [],
+      supports_cloud_avatar_training: true,
+      supports_voice_cloning: true,
+      supports_voice_sample_upload: true,
+    });
     vi.mocked(trainCloudVoice).mockResolvedValue({
       asset_id: "voice-uploaded",
       kind: "voice",
@@ -563,6 +587,37 @@ describe("PipelinePage customer workspace", () => {
 
     await waitFor(() => expect(trainCloudVoice).toHaveBeenCalledWith({ file, name: "老板本人声音" }));
     expect(await screen.findByText("声音已上传并自动选中。")).toBeTruthy();
+  });
+
+  it("closes the upload panel and explains when a saved voice is waiting for service setup", async () => {
+    vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+    vi.mocked(trainCloudVoice).mockResolvedValue({
+      asset_id: "voice-pending",
+      kind: "voice",
+      name: "大树1",
+      preview_url: "/api/v1/avatar/assets/voice-pending/media",
+      authorized: true,
+      preview_type: "audio",
+      status: "pending_configuration",
+      status_message: "声音样本已保存，等待独立声音线路配置后再发起克隆。",
+      source_type: "cloud",
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "新增出镜人" }));
+    fireEvent.click(await screen.findByRole("button", { name: "添加新声音" }));
+    const saveButton = (await screen.findByText("保存声音样本")).closest("button") as HTMLButtonElement;
+    const fileInput = saveButton.closest(".ant-upload-wrapper")?.querySelector<HTMLInputElement>('input[type="file"]');
+    const file = new File(["voice"], "大树1.m4a", { type: "audio/mp4" });
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    expect(await screen.findByText("声音样本已保存，等待独立声音线路配置后再发起克隆。")).toBeTruthy();
+    expect(screen.getByText("已保存声音样本：大树1。当前声音服务尚未开通，暂不能选择。")).toBeTruthy();
+    expect(screen.queryByText("当前只能先保存样本，声音服务开通后才能选择。")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "选择声音" }).closest(".ant-select")?.textContent)
+      .toContain("企业主音色");
   });
 
   it("finds materials in one click without exposing supplier diagnostics", async () => {

@@ -1,4 +1,4 @@
-"""Single-link, locally hosted experimental Douyin transcription entrypoint."""
+"""Single-link local transcription for authorized public platform shares."""
 
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ class LinkFallbackRequest(LinkCreateRequest):
 
 
 class LinkPreviewResponse(BaseModel):
+    platform: str
+    platform_label: str
     share_url: str
     work_id: str | None
     parser_enabled: bool
@@ -63,6 +65,8 @@ def capabilities(service=Depends(get_douyin_link_transcription_service)):
     enabled, message = service.parser.capabilities()
     return {
         "experimental": True,
+        "supported_platforms": ["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+        "supported_platform_labels": ["抖音", "小红书", "快手", "B站"],
         "parser_enabled": enabled,
         "parser_message": message,
         "oneapi_estimated_cost_cny": service._fallback_price(),
@@ -85,12 +89,14 @@ def create(body: LinkCreateRequest, service=Depends(get_douyin_link_transcriptio
     try:
         task = service.transcribe_experimental(**body.model_dump())
     except DouyinParserError as exc:
-        if exc.work_id:
+        platform = getattr(exc, "platform", Platform.DOUYIN)
+        fallback_price = service._fallback_price(platform)
+        if exc.work_id and fallback_price is not None:
             return LinkCreateResponse(
                 status="fallback_required",
                 message=exc.user_message,
                 work_id=exc.work_id,
-                oneapi_estimated_cost_cny=service._fallback_price(),
+                oneapi_estimated_cost_cny=fallback_price,
             )
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     return LinkCreateResponse(
@@ -113,8 +119,17 @@ def create_from_candidate(
     candidate = repo.get_candidate(candidate_id)
     if candidate is None:
         raise HTTPException(status_code=404, detail="候选不存在。")
-    if candidate.platform != Platform.DOUYIN:
-        raise HTTPException(status_code=400, detail="免费原文案提取当前仅支持抖音候选。")
+    supported_platforms = {
+        Platform.DOUYIN,
+        Platform.XIAOHONGSHU,
+        Platform.KUAISHOU,
+        Platform.BILIBILI,
+    }
+    if candidate.platform not in supported_platforms:
+        raise HTTPException(
+            status_code=400,
+            detail="当前仅支持抖音、小红书、快手和B站候选；视频号请上传有权处理的视频文件。",
+        )
     if not candidate.source_url:
         raise HTTPException(status_code=400, detail="该候选没有可用的原视频链接。")
     try:
@@ -126,12 +141,14 @@ def create_from_candidate(
             candidate_id=candidate.video_id,
         )
     except DouyinParserError as exc:
-        if exc.work_id:
+        platform = getattr(exc, "platform", candidate.platform)
+        fallback_price = service._fallback_price(platform)
+        if exc.work_id and fallback_price is not None:
             return LinkCreateResponse(
                 status="fallback_required",
                 message=exc.user_message,
                 work_id=exc.work_id,
-                oneapi_estimated_cost_cny=service._fallback_price(),
+                oneapi_estimated_cost_cny=fallback_price,
             )
         raise HTTPException(status_code=400, detail=exc.user_message) from exc
     return LinkCreateResponse(

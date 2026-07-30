@@ -49,5 +49,6 @@ describe("SubtitlePage", () => {
     expect(screen.getByText(/准确优先/)).toBeTruthy();
     expect(screen.getByText(/低置信片段复核后可导出 SRT 或 ASS/)).toBeTruthy();
     expect(screen.getByText("点击或拖拽 MP4/MOV 文件上传")).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 });

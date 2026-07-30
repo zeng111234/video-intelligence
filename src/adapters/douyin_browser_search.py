@@ -229,6 +229,9 @@ class LocalDouyinBrowserSearchProvider:
                 f"--user-data-dir={self.profile_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
+                "--start-minimized",
+                "--window-position=-32000,-32000",
+                "--window-size=900,700",
                 _HOTSPOT_ENTRY_URL,
             ],
             stdout=subprocess.DEVNULL,
@@ -248,7 +251,7 @@ class LocalDouyinBrowserSearchProvider:
             True,
             False,
             "starting",
-            "专用 Chrome 正在启动；请等待几秒后点击“检查连接状态”，再在该窗口登录抖音。",
+            "专用 Chrome 正在后台启动；如需登录或人工验证，请从任务栏打开该窗口。",
         )
 
     def search(
@@ -528,6 +531,17 @@ class LocalDouyinBrowserSearchProvider:
                                 "https://www.douyin.com/search/"
                                 + quote(keyword, safe="") + "?type=video"
                             )
+                            if not self._apply_public_search_week_filter(page):
+                                errors.append(
+                                    ProviderSearchError(
+                                        kind=ProviderErrorKind.VALIDATION,
+                                        message=(
+                                            "抖音公开搜索页没有显示“一周内”筛选；"
+                                            "最终候选仍会按可核验发布时间严格限制为一周。"
+                                        ),
+                                        retryable=False,
+                                    )
+                                )
                             # Douyin virtualises its result list.  Reading the DOM once
                             # only sees the first rendered card, which made the search
                             # source look like it had a single result.  Collect every
@@ -563,6 +577,25 @@ class LocalDouyinBrowserSearchProvider:
             kind=ProviderErrorKind.CONNECTION,
             retryable=False,
         ) from last_error
+
+    @staticmethod
+    def _apply_public_search_week_filter(page) -> bool:
+        """Select the visible Douyin one-week filter when the account exposes it."""
+        try:
+            filter_button = page.get_by_text("筛选", exact=True)
+            if not filter_button.count():
+                return False
+            filter_button.last.click(force=True)
+            page.wait_for_timeout(250)
+            for label in ("一周内", "最近一周"):
+                option = page.get_by_text(label, exact=True)
+                if option.count():
+                    option.last.click(force=True)
+                    page.wait_for_timeout(600)
+                    return True
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def _resolve_hotspot_window_hours(value: int | None) -> int:

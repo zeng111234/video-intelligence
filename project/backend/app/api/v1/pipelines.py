@@ -152,7 +152,7 @@ def _guided_preflight(
                     missing.append(preview.block_reason or "该候选当前不能解析媒体")
     else:
         if not body.share_text.strip():
-            missing.append("请输入抖音分享链接")
+            missing.append("请输入平台分享链接")
         else:
             try:
                 preview = link_transcription_service.preview(body.share_text)
@@ -163,7 +163,10 @@ def _guided_preflight(
                     "parser_enabled": preview.parser_enabled,
                     "parser_message": preview.parser_message,
                     "estimated_cost_cny": preview.oneapi_estimated_cost_cny if not preview.parser_enabled else 0,
-                    "uses_paid_fallback": not preview.parser_enabled,
+                    "uses_paid_fallback": (
+                        not preview.parser_enabled
+                        and preview.oneapi_fallback_available
+                    ),
                 }
                 if not preview.parser_enabled:
                     if preview.oneapi_fallback_available:
@@ -171,7 +174,7 @@ def _guided_preflight(
                             missing.append("本机解析不可用；请明确确认 OneAPI 付费回退")
                             source["requires_paid_fallback_confirmation"] = True
                     else:
-                        missing.append(preview.parser_message or "当前无法解析该抖音分享链接")
+                        missing.append(preview.parser_message or "当前无法解析该平台分享链接")
             except DouyinParserError as exc:
                 missing.append(exc.user_message)
 

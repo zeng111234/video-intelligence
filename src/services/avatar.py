@@ -8,7 +8,7 @@ import subprocess
 import threading
 from uuid import uuid4
 
-from src.adapters.avatar import AvatarProviderError
+from src.adapters.avatar import AvatarProviderError, SHUYING_VOICE_TTS_JOB_PREFIX
 from src.contracts import AvatarProvider, TaskRepository
 from src.models import (
     AvatarAsset,
@@ -25,6 +25,7 @@ from src.models import (
 MAX_RESULT_BYTES = 100 * 1024 * 1024
 MAX_VIDEO_NAME_LENGTH = 100
 AVATAR_NAME_LOCK = threading.Lock()
+AVATAR_REFRESH_LOCK = threading.Lock()
 
 
 class AvatarService:
@@ -200,7 +201,24 @@ class AvatarService:
         return f"{base_name[: MAX_VIDEO_NAME_LENGTH - len(suffix)]}{suffix}"
 
     def refresh_task(self, task_id: str) -> AvatarTask:
+        with AVATAR_REFRESH_LOCK:
+            return self._refresh_task_locked(task_id)
+
+    def _refresh_task_locked(self, task_id: str) -> AvatarTask:
         task = self._get_avatar_task(task_id)
+        if task.provider_status in {
+            AvatarProviderStatus.FAILED,
+            AvatarProviderStatus.CANCELLED,
+        }:
+            return task
+        if (
+            task.provider_status == AvatarProviderStatus.OUTCOME_UNKNOWN
+            and task.backend_job_id
+            and task.backend_job_id.startswith(SHUYING_VOICE_TTS_JOB_PREFIX)
+        ):
+            # The legacy /video endpoint has no idempotency key or lookup API.
+            # Re-posting after a timeout could duplicate work or charges.
+            return task
         try:
             if (
                 task.provider_status == AvatarProviderStatus.OUTCOME_UNKNOWN
@@ -212,6 +230,15 @@ class AvatarService:
                         "供应商仍未找到该幂等任务，请人工核对后再决定是否重新提交。",
                         kind=ProviderErrorKind.OUTCOME_UNKNOWN,
                     )
+            elif (
+                task.backend_job_id
+                and task.backend_job_id.startswith(SHUYING_VOICE_TTS_JOB_PREFIX)
+                and callable(getattr(self.provider, "resume_submit", None))
+            ):
+                snapshot = self.provider.resume_submit(  # type: ignore[attr-defined]
+                    self._request_from_task(task),
+                    task.backend_job_id,
+                )
             else:
                 snapshot = self.provider.get_job(task.backend_job_id or task.task_id)
         except AvatarProviderError as exc:
@@ -228,6 +255,98 @@ class AvatarService:
         updated = self._apply_snapshot(task, snapshot)
         self.repository.save_task(updated)
         return updated
+
+    @staticmethod
+    def _request_from_task(task: AvatarTask) -> AvatarSubmitRequest:
+        return AvatarSubmitRequest(
+            script_text=task.script_text,
+            video_name=task.title,
+            source_task_id=task.source_task_id,
+            source_revision_id=task.source_revision_id,
+            avatar_id=task.avatar_id,
+            voice_id=task.voice_id,
+            profile_id=task.profile_id,
+            speech_rate=task.speech_rate,
+            aspect_ratio=task.aspect_ratio,
+            resolution=task.resolution,
+            background=task.background,
+            rights_holder=task.rights_holder,
+            script_rights_confirmed=True,
+            avatar_rights_confirmed=True,
+            voice_rights_confirmed=True,
+            idempotency_key=task.idempotency_key,
+        )
+
+    @staticmethod
+    def can_retry_video_submit(task: AvatarTask) -> bool:
+        return bool(
+            task.status == TaskStatus.FAILED
+            and task.provider_status == AvatarProviderStatus.FAILED
+            and task.backend_job_id
+            and task.backend_job_id.startswith(SHUYING_VOICE_TTS_JOB_PREFIX)
+            and task.provider_job_id is None
+            and task.retry_count < 1
+            and task.stage == "视频提交失败"
+            and task.error_kind == ProviderErrorKind.SERVICE
+            and "系统繁忙" in (task.error_message or "")
+        )
+
+    def retry_failed_video(self, task_id: str) -> AvatarTask:
+        with AVATAR_REFRESH_LOCK:
+            task = self._get_avatar_task(task_id)
+            if not self.can_retry_video_submit(task):
+                raise ValueError("该任务当前不能安全重试视频提交。")
+            resume_submit = getattr(self.provider, "resume_submit", None)
+            if not callable(resume_submit):
+                raise ValueError("当前数字人供应商不支持恢复视频提交。")
+
+            retrying = task.model_copy(
+                update={
+                    "status": TaskStatus.RUNNING,
+                    "provider_status": AvatarProviderStatus.RUNNING,
+                    "progress": 15,
+                    "stage": "正在重试视频提交",
+                    "retry_count": 1,
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": None,
+                    "error_kind": None,
+                }
+            )
+            self.repository.save_task(retrying)
+            try:
+                snapshot = resume_submit(
+                    self._request_from_task(retrying),
+                    retrying.backend_job_id,
+                )
+            except AvatarProviderError as exc:
+                status = (
+                    AvatarProviderStatus.OUTCOME_UNKNOWN
+                    if exc.outcome_unknown
+                    else AvatarProviderStatus.FAILED
+                )
+                snapshot = AvatarJobSnapshot(
+                    job_id=retrying.backend_job_id or retrying.task_id,
+                    idempotency_key=retrying.idempotency_key,
+                    status=status,
+                    progress=0 if exc.outcome_unknown else 100,
+                    stage=(
+                        "视频提交结果待核对"
+                        if exc.outcome_unknown
+                        else "视频提交重试失败"
+                    ),
+                    estimated_cost_cny=retrying.estimated_cost_cny,
+                    estimated_seconds=retrying.estimated_seconds,
+                    error_kind=(
+                        ProviderErrorKind.OUTCOME_UNKNOWN
+                        if exc.outcome_unknown
+                        else exc.kind
+                    ),
+                    error_message=str(exc),
+                )
+
+            updated = self._apply_snapshot(retrying, snapshot)
+            self.repository.save_task(updated)
+            return updated
 
     def download_result(self, task_id: str) -> AvatarTask:
         task = self._get_avatar_task(task_id)

@@ -18,6 +18,7 @@ ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov"}
 ALLOWED_CONTENT_TYPES = {
     "",
     "application/octet-stream",
+    "audio/mp4",
     "video/mp4",
     "video/quicktime",
 }
@@ -137,7 +138,7 @@ def fetch_authorized_video(
 
     def fetch_once() -> DirectVideo:
         headers = {
-            "Accept": "video/mp4,video/quicktime,application/octet-stream",
+            "Accept": "video/mp4,audio/mp4,video/quicktime,application/octet-stream",
             "User-Agent": "video-transcription-mvp/1.0",
         }
         if request_headers:

@@ -9,7 +9,13 @@ from src.adapters.avatar import (
     ShuyingLegacyAvatarProvider,
     build_avatar_provider,
 )
-from src.models import AvatarProviderStatus, AvatarSubmitRequest, ProviderMode
+from src.models import (
+    AvatarAsset,
+    AvatarAssetKind,
+    AvatarProviderStatus,
+    AvatarSubmitRequest,
+    ProviderMode,
+)
 
 
 def _request() -> AvatarSubmitRequest:
@@ -110,6 +116,44 @@ def test_submit_uses_single_key_legacy_form_protocol_without_retry():
     assert b"test-api-code" in calls[0][3]
     assert b'name="audioUrl"' in calls[1][3]
     assert b"\xe6\x8e\xa5\xe5\x8f\xa3\xe9\xaa\x8c\xe8\xaf\x811" in calls[1][3]
+
+
+def test_submit_maps_custom_avatar_to_its_provider_model_id(tmp_path):
+    calls: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+    responses = [
+        {"code": 1, "data": {"ossurl": "https://media.example.com/voice.mp3"}},
+        {"code": 1, "data": {"videoId": "video-job-custom-avatar"}},
+    ]
+
+    def transport(method, url, headers, body, timeout):
+        calls.append((method, url, headers, body, timeout))
+        return json.dumps(responses[len(calls) - 1]).encode(), "application/json"
+
+    provider = _provider(
+        assets_manifest_path=str(tmp_path / "assets.json"), transport=transport
+    )
+    provider._upsert_custom_asset(
+        AvatarAsset(
+            asset_id="shuying-avatar-21920",
+            kind=AvatarAssetKind.AVATAR,
+            name="大树1",
+            authorized=True,
+            status="ready",
+            source_type="custom",
+        ),
+        provider_asset_id="21920",
+    )
+
+    snapshot = provider.submit(
+        _request().model_copy(
+            update={"avatar_id": "shuying-avatar-21920", "video_name": "自定义形象"}
+        )
+    )
+
+    assert snapshot.job_id == "video-job-custom-avatar"
+    assert b'name="modeid"' in calls[1][3]
+    assert b"\r\n21920\r\n" in calls[1][3]
+    assert b"shuying-avatar-21920" not in calls[1][3]
 
 
 def test_submit_can_render_upload_audio_before_video():
@@ -227,7 +271,6 @@ def test_edge_audio_mode_requires_safe_upload_configuration():
         "SHUYING_AVATAR_AUDIO_UPLOAD_URL(必须为HTTPS)"
         in capability.missing_configuration
     )
-    assert "SHUYING_AVATAR_AUDIO_ALLOWED_HOSTS" in capability.missing_configuration
 
 
 def test_submit_connection_failure_is_outcome_unknown_and_not_retried():
@@ -376,13 +419,95 @@ def test_cloud_avatar_training_is_hidden_for_an_explicit_unapproved_upload_host(
     assert provider.capabilities().supports_cloud_avatar_training is False
 
 
-def test_voice_cloning_is_hidden_until_a_dedicated_primary_route_is_configured():
+def test_voice_cloning_reuses_the_configured_gateway_route_and_key(tmp_path):
+    calls: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
+    sample = tmp_path / "sample.mp3"
+    sample.write_bytes(b"authorised-sample")
+
+    def transport(method, url, headers, body, timeout):
+        calls.append((method, url, headers, body, timeout))
+        assert url == "https://avatar-gateway.example.com/apiai/ai/voice_clone"
+        return json.dumps({"code": 0, "data": {"task_id": "voice-task-101"}}).encode(), "application/json"
+
     provider = _provider(
+        base_url="https://avatar-gateway.example.com/apiai/aif",
         audio_upload_url="https://upload.example.com/system/basic/test",
         audio_allowed_hosts="media.example.com",
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        transport=transport,
+        file_upload_transport=lambda url, filename, mime_type, path, timeout: (
+            json.dumps({"code": 1, "path": "https://media.example.com/sample.mp3"}).encode(),
+            "application/json",
+        ),
+    )
+    assert provider.voice_base_url == "https://avatar-gateway.example.com/apiai/ai"
+
+    asset = provider.create_voice_clone(
+        name="新声音", sample_path=sample, filename="sample.mp3", mime_type="audio/mpeg"
     )
 
-    assert provider.capabilities().supports_voice_cloning is False
+    assert provider.capabilities().supports_voice_cloning is True
+    assert asset.asset_id == "shuying-voice-voice-task-101"
+    assert asset.status == "training"
+    assert b'name="api_code"' in calls[0][3]
+    assert b"test-api-code" in calls[0][3]
+
+
+def test_cloned_voice_waits_as_a_resumable_job_before_submitting_video(tmp_path):
+    calls: list[str] = []
+    voice_status_calls = 0
+
+    def transport(method, url, headers, body, timeout):
+        nonlocal voice_status_calls
+        calls.append(url)
+        if url.endswith("/voice_2"):
+            return json.dumps({"code": 1, "data": "tts-task-101"}).encode(), "application/json"
+        if url.endswith("/voice_tts_info"):
+            voice_status_calls += 1
+            data = (
+                {"status": 1}
+                if voice_status_calls == 1
+                else {"ossurl": "https://media.example.com/cloned-voice.mp3"}
+            )
+            return json.dumps({"code": 1, "data": data}).encode(), "application/json"
+        if url.endswith("/video"):
+            return json.dumps({"code": 1, "data": {"videoId": "video-job-voice"}}).encode(), "application/json"
+        raise AssertionError(f"unexpected URL: {url}")
+
+    provider = _provider(
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        audio_upload_url="https://upload.example.com/system/basic/test",
+        audio_allowed_hosts="media.example.com",
+        transport=transport,
+    )
+    provider._upsert_custom_asset(
+        AvatarAsset(
+            asset_id="shuying-voice-7869",
+            kind=AvatarAssetKind.VOICE,
+            name="大树1",
+            authorized=True,
+            status="ready",
+            source_type="custom_clone",
+        ),
+        provider_asset_id="7869",
+    )
+    request = _request().model_copy(
+        update={
+            "voice_id": "shuying-voice-7869",
+            "video_name": "异步声音测试",
+        }
+    )
+
+    pending = provider.submit(request)
+    resumed = provider.resume_submit(request, pending.job_id)
+
+    assert pending.status == AvatarProviderStatus.RUNNING
+    assert pending.job_id == "voice-tts:tts-task-101"
+    assert pending.stage == "克隆声音合成中"
+    assert resumed.status == AvatarProviderStatus.QUEUED
+    assert resumed.job_id == "video-job-voice"
+    assert sum(url.endswith("/voice_2") for url in calls) == 1
+    assert sum(url.endswith("/video") for url in calls) == 1
 
 
 def test_pending_voice_sample_is_saved_without_submitting_a_clone(tmp_path):
@@ -400,3 +525,34 @@ def test_pending_voice_sample_is_saved_without_submitting_a_clone(tmp_path):
     assert asset.preview_url == f"/api/v1/avatar/assets/{asset.asset_id}/media"
     assert provider.list_assets()[-1].status == "pending_configuration"
     assert (tmp_path / "voice_samples" / f"{asset.asset_id}.mp3").read_bytes() == b"authorised-sample"
+
+
+def test_pending_voice_sample_can_be_submitted_after_the_clone_route_is_restored(tmp_path):
+    sample = tmp_path / "sample.mp3"
+    sample.write_bytes(b"authorised-sample")
+
+    def transport(method, url, headers, body, timeout):
+        if url.endswith("/voice_clone_status_2"):
+            return json.dumps({"code": 1, "data": {"status": 1}}).encode(), "application/json"
+        assert url == "https://avatar-gateway.example.com/voice_clone"
+        return json.dumps({"code": 0, "data": {"task_id": "voice-task-resumed"}}).encode(), "application/json"
+
+    provider = _provider(
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        audio_upload_url="https://upload.example.com/system/basic/test",
+        audio_allowed_hosts="media.example.com",
+        transport=transport,
+        file_upload_transport=lambda url, filename, mime_type, path, timeout: (
+            json.dumps({"code": 1, "path": "https://media.example.com/sample.mp3"}).encode(),
+            "application/json",
+        ),
+    )
+    pending = provider.store_pending_voice_sample(
+        name="待训练声音", sample_path=sample, filename="sample.mp3"
+    )
+
+    resumed = provider.resume_pending_voice_clone(pending.asset_id)
+
+    assert resumed.asset_id == "shuying-voice-voice-task-resumed"
+    assert resumed.status == "training"
+    assert all(item.asset_id != pending.asset_id for item in provider.list_assets())

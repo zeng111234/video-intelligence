@@ -13,6 +13,7 @@ import {
   getCrawlerCapabilities,
   getCrawlerHotWords,
   listCrawlerBatches,
+  startCrawlerBrowserDiscovery,
 } from "../api/client";
 import type {
   CrawlerBatchResponse,
@@ -29,6 +30,7 @@ vi.mock("../api/client", async () => {
     getCrawlerCapabilities: vi.fn(),
     getCrawlerHotWords: vi.fn(),
     listCrawlerBatches: vi.fn(),
+    startCrawlerBrowserDiscovery: vi.fn(),
   };
 });
 
@@ -56,7 +58,45 @@ const batch = {
 const capabilities = {
   mode: "local_browser",
   hotspot_browser: null,
-} as CrawlerCapabilitiesResponse;
+  platform_browsers: [
+    {
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      enabled: true,
+      running: false,
+      login_required: true,
+      ready_to_crawl: false,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      provider_name: "xiaohongshu_local_browser",
+      message: "请先连接小红书。",
+    },
+    {
+      platform: "kuaishou",
+      platform_label: "快手",
+      enabled: true,
+      running: false,
+      login_required: true,
+      ready_to_crawl: false,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      provider_name: "kuaishou_local_browser",
+      message: "请先连接快手。",
+    },
+    {
+      platform: "bilibili",
+      platform_label: "B站",
+      enabled: true,
+      running: false,
+      login_required: true,
+      ready_to_crawl: false,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      provider_name: "bilibili_local_browser",
+      message: "请先连接B站。",
+    },
+  ],
+} as unknown as CrawlerCapabilitiesResponse;
 
 const candidate: CrawlerCandidateResult = {
   video_id: "candidate-001",
@@ -133,6 +173,38 @@ const batchWithCandidate: CrawlerBatchResponse = {
   ],
 };
 
+const freeMultiPlatformBatch: CrawlerBatchResponse = {
+  ...batchWithCandidate,
+  provider: "free_multi_platform",
+  monitoring_policy: "free_single_snapshot_v1",
+  platform_runs: [
+    {
+      ...batchWithCandidate.platform_runs[0],
+      run_id: "crawler-run-douyin",
+      provider: "douyin_local_browser",
+      mode: "local_browser",
+      api_call_count: 0,
+    },
+    {
+      ...batchWithCandidate.platform_runs[0],
+      run_id: "crawler-run-bilibili",
+      platform: "bilibili",
+      platform_label: "B站",
+      provider: "bilibili_local_browser",
+      mode: "local_browser",
+      status: "partial",
+      requested_count: 30,
+      returned_count: 0,
+      relevant_count: 0,
+      strict_relevant_count: 0,
+      raw_item_count: 39,
+      parsed_item_count: 0,
+      result_state: "all_invalid",
+      candidates: [],
+    },
+  ],
+};
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
@@ -167,6 +239,11 @@ describe("KeywordCrawlerPage performance behavior", () => {
     vi.mocked(getCrawlerCapabilities).mockResolvedValue(capabilities);
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(deleteCrawlerBatch).mockResolvedValue({ batch_id: batch.batch_id, deleted: true });
+    vi.mocked(startCrawlerBrowserDiscovery).mockResolvedValue({
+      ...capabilities.platform_browsers![0],
+      running: true,
+      started: true,
+    });
   });
 
   afterEach(() => {
@@ -182,6 +259,25 @@ describe("KeywordCrawlerPage performance behavior", () => {
 
     expect(await screen.findByText("企业获客")).toBeTruthy();
     expect(getCrawlerHotWords).not.toHaveBeenCalled();
+  });
+
+  it("keeps searching simple and puts account connection behind a compact entry", async () => {
+    renderPage();
+
+    expect(await screen.findByText(/点“找素材”后浏览器会自动打开并开始搜索/)).toBeTruthy();
+    expect(screen.getByText(/热点宝不限制作品发布时间/)).toBeTruthy();
+    expect(screen.getByText(/小红书选择“最多点赞、视频、半年内”/)).toBeTruthy();
+    expect(screen.getByText(/快手保留近10个月/)).toBeTruthy();
+    expect(screen.getByText(/B站选择“最多播放、最近一周”/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /账号连接/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "连接小红书" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /账号连接/ }));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("账号连接")).toBeTruthy();
+    fireEvent.click(within(drawer).getByRole("button", { name: "连接小红书" }));
+    await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("xiaohongshu"));
   });
 
   it("removes a batch immediately without triggering a full page reload", async () => {
@@ -202,11 +298,15 @@ describe("KeywordCrawlerPage performance behavior", () => {
   });
 
   it("sends a displayed candidate to intelligent creation with its source batch", async () => {
-    renderPage();
+    const view = renderPage();
 
     await screen.findByText("企业获客");
     fireEvent.click(screen.getByRole("button", { name: /详情/ }));
     expect(await screen.findByText(candidate.title)).toBeTruthy();
+    expect(screen.queryByText("增长采样")).toBeNull();
+    expect(screen.queryByText(/等待后续采样/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "追踪这批走势" })).toBeNull();
+    expect(view.container.querySelector(".recharts-responsive-container")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "送入智能创作" }));
 
@@ -215,5 +315,20 @@ describe("KeywordCrawlerPage performance behavior", () => {
         "/pipeline?crawler_batch_id=batch-fast-history&candidate_id=candidate-001",
       );
     });
+  });
+
+  it("merges platform candidates and explains discovered rows that were not usable", async () => {
+    vi.mocked(getCrawlerBatch).mockResolvedValue(freeMultiPlatformBatch);
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    expect(await screen.findByText("多平台候选榜（1）")).toBeTruthy();
+    expect(screen.getByText("抖音 1 条")).toBeTruthy();
+    expect(screen.getByText("B站 发现 39 条 · 0 条符合")).toBeTruthy();
+    expect(screen.getByText(/B站发现 39 条页面结果/)).toBeTruthy();
+    expect(screen.queryByText("主榜候选")).toBeNull();
+    expect(screen.queryByRole("button", { name: "付费自动解析" })).toBeNull();
   });
 });

@@ -49,7 +49,8 @@ def test_candidate_endpoint_uses_the_saved_link_and_associates_task():
             repo.save_task(task)
             return task
 
-        def _fallback_price(self):
+        def _fallback_price(self, platform=Platform.DOUYIN):
+            del platform
             return 0.04
 
     app.dependency_overrides[backend_deps.get_repository] = lambda: repo

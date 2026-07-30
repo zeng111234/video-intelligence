@@ -31,7 +31,11 @@ from src.services.doubao_browser import (  # noqa: E402
 from src.services.media_resolution import MediaResolutionService  # noqa: E402
 from src.services.douyin_link_transcription import DouyinLinkTranscriptionService  # noqa: E402
 from src.adapters.douyin_parser import LocalDouyinBrowserParserClient  # noqa: E402
+from src.adapters.platform_link_parser import LocalPlatformLinkParserClient  # noqa: E402
 from src.adapters.douyin_browser_search import LocalDouyinBrowserSearchProvider  # noqa: E402
+from src.adapters.platform_browser_search import (  # noqa: E402
+    LocalPlatformBrowserSearchProvider,
+)
 from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.production import ProductionService  # noqa: E402
 from src.services.feedback import FeedbackService  # noqa: E402
@@ -84,6 +88,15 @@ from project.backend.app.core.config import (  # noqa: E402
     DOUYIN_BROWSER_DISCOVERY_ENABLED,
     DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
     DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
+    XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED,
+    XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
+    XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
+    KUAISHOU_BROWSER_DISCOVERY_ENABLED,
+    KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR,
+    KUAISHOU_BROWSER_DISCOVERY_DEBUG_PORT,
+    BILIBILI_BROWSER_DISCOVERY_ENABLED,
+    BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
+    BILIBILI_BROWSER_DISCOVERY_DEBUG_PORT,
 )
 
 
@@ -149,6 +162,75 @@ def get_hotspot_search_service() -> CommercialSearchService:
         trend_service=get_keyword_trend_service(),
         provider=get_hotspot_browser_provider(),
         active_platforms=(Platform.DOUYIN,),
+    )
+
+
+@lru_cache
+def get_xiaohongshu_browser_provider() -> LocalPlatformBrowserSearchProvider:
+    return LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_xiaohongshu_browser_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_xiaohongshu_browser_provider(),
+        active_platforms=(Platform.XIAOHONGSHU,),
+    )
+
+
+@lru_cache
+def get_kuaishou_browser_provider() -> LocalPlatformBrowserSearchProvider:
+    return LocalPlatformBrowserSearchProvider(
+        platform=Platform.KUAISHOU,
+        enabled=KUAISHOU_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=KUAISHOU_BROWSER_DISCOVERY_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_kuaishou_browser_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_kuaishou_browser_provider(),
+        active_platforms=(Platform.KUAISHOU,),
+    )
+
+
+@lru_cache
+def get_bilibili_browser_provider() -> LocalPlatformBrowserSearchProvider:
+    return LocalPlatformBrowserSearchProvider(
+        platform=Platform.BILIBILI,
+        enabled=BILIBILI_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=BILIBILI_BROWSER_DISCOVERY_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_bilibili_browser_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_bilibili_browser_provider(),
+        active_platforms=(Platform.BILIBILI,),
     )
 
 
@@ -293,9 +375,22 @@ def get_experimental_douyin_parser() -> LocalDouyinBrowserParserClient:
 
 
 @lru_cache
+def get_experimental_platform_link_parser() -> LocalPlatformLinkParserClient:
+    return LocalPlatformLinkParserClient(
+        douyin_parser=get_experimental_douyin_parser(),
+        platform_providers={
+            Platform.XIAOHONGSHU: get_xiaohongshu_browser_provider(),
+            Platform.KUAISHOU: get_kuaishou_browser_provider(),
+            Platform.BILIBILI: get_bilibili_browser_provider(),
+        },
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
 def get_douyin_link_transcription_service() -> DouyinLinkTranscriptionService:
     return DouyinLinkTranscriptionService(
-        get_experimental_douyin_parser(),
+        get_experimental_platform_link_parser(),
         get_licensed_search_provider(),
         get_transcription_service(),
     )

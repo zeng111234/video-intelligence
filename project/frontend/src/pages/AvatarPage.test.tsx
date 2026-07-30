@@ -25,6 +25,7 @@ vi.mock("../api/client", () => ({
   getVideoEditorJob: vi.fn(),
   listAvatarAssets: vi.fn(),
   listAvatarJobs: vi.fn(),
+  retryAvatarVideoSubmission: vi.fn(),
   trainCloudAvatar: vi.fn(),
   trainCloudVoice: vi.fn(),
   uploadAvatarAsset: vi.fn(),
@@ -74,7 +75,7 @@ describe("AvatarPage avatar library", () => {
       missing_configuration: [],
       profiles: [],
       supports_cloud_avatar_training: true,
-      supports_voice_cloning: false,
+      supports_voice_cloning: true,
       supports_voice_sample_upload: true,
     });
     vi.mocked(listAvatarAssets).mockResolvedValue([
@@ -234,7 +235,7 @@ describe("AvatarPage avatar library", () => {
     );
   });
 
-  it("saves a selected cloud voice sample without claiming it is cloned", async () => {
+  it("submits a selected cloud voice sample for immediate cloning", async () => {
     vi.mocked(trainCloudVoice).mockResolvedValue({
       asset_id: "voice-sample-new",
       kind: "voice",
@@ -242,9 +243,9 @@ describe("AvatarPage avatar library", () => {
       preview_url: "/voice-sample-new.mp3",
       authorized: true,
       preview_type: "audio",
-      status: "pending_configuration",
-      status_message: "待训练",
-      source_type: "pending_clone",
+      status: "training",
+      status_message: "公司云端正在训练声音。",
+      source_type: "custom_clone",
     });
     const view = renderPage();
 
@@ -253,10 +254,10 @@ describe("AvatarPage avatar library", () => {
 
     expect(
       await screen.findByText(
-        "声音样本会先保存为“待训练”；当前不会自动克隆，也不能直接用于视频。",
+        "上传后会立即开始训练；只有标记为“可使用”的声音可生成视频。",
       ),
     ).toBeTruthy();
-    const uploadButton = screen.getByText("上传声音样本").closest("button");
+    const uploadButton = screen.getByText("克隆声音（上传样本）").closest("button");
     expect(uploadButton).toBeTruthy();
     const fileInput = uploadButton!
       .closest(".ant-upload-wrapper")
@@ -329,6 +330,65 @@ describe("AvatarPage avatar library", () => {
     expect(request.profile_id).toBe("default");
     expect("target_platforms" in request).toBe(false);
     expect("publish_mode" in request).toBe(false);
+  });
+
+  it("reports a provider rejection as failed instead of submitted", async () => {
+    vi.mocked(createAvatarJob).mockResolvedValueOnce({
+      task_id: "avatar-job-failed",
+      status: "failed",
+      progress: 0,
+      stage: "提交失败",
+      title: "数字人视频1",
+      video_name: "数字人视频1",
+      script_text: "测试数字人口播文案",
+      avatar_id: "avatar-1",
+      avatar_name: "形象一",
+      voice_id: "voice-1",
+      voice_name: "通用女声",
+      profile_id: "default",
+      speech_rate: 1,
+      aspect_ratio: "9:16",
+      resolution: "1080x1920",
+      provider_name: "shuying_legacy_cloud",
+      provider_job_id: null,
+      estimated_cost_cny: null,
+      estimated_seconds: null,
+      actual_seconds: null,
+      result_url: null,
+      error_kind: "service",
+      error_message: "系统繁忙，请联系平台运营商！",
+      retry_count: 0,
+      can_retry_video_submit: true,
+      is_mock: false,
+      created_at: "2026-07-30T16:35:16+08:00",
+      updated_at: "2026-07-30T16:36:04+08:00",
+    });
+    const view = renderPage();
+
+    await within(view.container).findByText("形象一");
+    fireEvent.change(
+      within(view.container).getByPlaceholderText(
+        "输入数字人要说的内容，数字人会按文案自然播完。",
+      ),
+      { target: { value: "测试数字人口播文案" } },
+    );
+    fireEvent.click(
+      within(view.container).getByRole("button", { name: /提交数字人口播任务/ }),
+    );
+
+    expect(
+      await screen.findAllByText("系统繁忙，请联系平台运营商！"),
+    ).not.toHaveLength(0);
+    expect(screen.queryByText("数字人任务已提交")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "仅重试视频" }));
+    expect(
+      await screen.findAllByText("确认只重试视频提交？"),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getByText("供应商费用暂无法确定，本次视频重试可能产生第三方费用。"),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认重试一次" })).toBeTruthy();
   });
 
   it("condenses a completed current task to status, title, and actions", async () => {

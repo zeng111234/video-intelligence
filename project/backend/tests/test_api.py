@@ -16,6 +16,7 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 from project.backend.app.main import app  # noqa: E402
+from project.backend.app.api.v1 import crawler as crawler_api  # noqa: E402
 from project.backend.app.api.v1 import publish as publish_api  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
@@ -33,11 +34,16 @@ from src.models import (  # noqa: E402
     PipelineStage,
     PipelineStepResult,
     Platform,
+    ProviderCapability,
+    ProviderMode,
+    ProviderSearchItem,
+    ProviderSearchPage,
     PublishPlatform,
     PublishStatus,
     PublishTarget,
     SourceCapability,
     TaskStatus,
+    VideoMetricSnapshot,
 )
 from src.repositories import MockRepository  # noqa: E402
 from src.mock_data import build_mock_candidates  # noqa: E402
@@ -477,6 +483,23 @@ class TestTasks:
 # ---------------------------------------------------------------------------
 
 
+def test_xiaohongshu_platform_hot_sort_does_not_require_duplicate_heat_floor():
+    candidate = SimpleNamespace(
+        platform=Platform.XIAOHONGSHU,
+        evidence="xiaohongshu:browser_search_response;time=platform_filter",
+        official_hot=False,
+        metrics=SimpleNamespace(
+            likes=None,
+            comments=None,
+            shares=None,
+            favorites=None,
+            plays=None,
+        ),
+    )
+
+    assert crawler_api._passes_main_board_heat_floor(candidate) is True
+
+
 class TestCrawlerBatches:
     @pytest.fixture(autouse=True)
     def crawler_sandbox(self):
@@ -497,6 +520,183 @@ class TestCrawlerBatches:
                     ],
                 )
 
+        class FakeBilibiliProvider:
+            platform = Platform.BILIBILI
+            provider_name = "bilibili_local_browser"
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            def capabilities(self):
+                return ProviderCapability(
+                    provider_name=self.provider_name,
+                    display_name="B站浏览器（测试）",
+                    mode=ProviderMode.LOCAL_BROWSER,
+                    supported_platforms=[Platform.BILIBILI],
+                    max_page_size=30,
+                    enabled=True,
+                    permission_status="local_browser_session",
+                )
+
+            def session_status(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    running=True,
+                    login_required=False,
+                    ready_to_crawl=True,
+                    phase="ready",
+                    message="B站浏览器已连接。",
+                )
+
+            def search(
+                self,
+                platform,
+                keyword,
+                published_after,
+                limit,
+                idempotency_key,
+                hotspot_window_hours=None,
+            ):
+                del published_after, idempotency_key, hotspot_window_hours
+                now = __import__("datetime").datetime.now().astimezone()
+                items = [
+                    ProviderSearchItem(
+                        platform=Platform.BILIBILI,
+                        platform_item_id=f"BV1TEST{index:04d}",
+                        source_url=f"https://www.bilibili.com/video/BV1TEST{index:04d}",
+                        title=f"{keyword} B站新内容 {index + 1}",
+                        author_id="test-author",
+                        author_name="测试作者",
+                        published_at=now,
+                        metrics=VideoMetricSnapshot(
+                            item_id=f"BV1TEST{index:04d}",
+                            sampled_at=now,
+                            plays=1000 + index,
+                            comments=10,
+                            favorites=20,
+                            confidence=0.75,
+                        ),
+                        provider_rank=index + 1,
+                    )
+                    for index in range(limit)
+                ]
+                return ProviderSearchPage(
+                    platform=platform,
+                    provider=self.provider_name,
+                    items=items,
+                    observed_at=now,
+                    request_id="fake-bilibili",
+                    api_call_count=1,
+                    billable_units=0,
+                )
+
+        class FakeBrowserProvider:
+            def __init__(self, platform: Platform) -> None:
+                self.platform = platform
+                self.provider_name = f"{platform.value}_local_browser"
+                self.browser_channel = "chrome"
+                self.adapter_version = "test"
+                self.running = False
+                self.start_calls = 0
+
+            def capabilities(self):
+                return ProviderCapability(
+                    provider_name=self.provider_name,
+                    display_name=f"{self.platform.value}浏览器（测试）",
+                    mode=ProviderMode.LOCAL_BROWSER,
+                    supported_platforms=[self.platform],
+                    max_page_size=30,
+                    enabled=True,
+                    permission_status="local_browser_login_required",
+                )
+
+            def session_status(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    running=self.running,
+                    login_required=False,
+                    ready_to_crawl=self.running,
+                    phase="ready" if self.running else "browser_closed",
+                    message=(
+                        f"{self.platform.value}公开页面已就绪。"
+                        if self.running
+                        else f"{self.platform.value}浏览器尚未打开。"
+                    ),
+                )
+
+            def start_login_browser(self):
+                self.start_calls += 1
+                self.running = True
+                return self.session_status()
+
+            def search(
+                self,
+                platform,
+                keyword,
+                published_after,
+                limit,
+                idempotency_key,
+                hotspot_window_hours=None,
+            ):
+                del published_after, idempotency_key, hotspot_window_hours
+                now = __import__("datetime").datetime.now().astimezone()
+                items = [
+                    ProviderSearchItem(
+                        platform=self.platform,
+                        platform_item_id=f"{self.platform.value}-test-{index}",
+                        source_url=(
+                            f"https://example.com/{self.platform.value}/test-{index}"
+                        ),
+                        title=f"{keyword} {self.platform.value}公开内容 {index + 1}",
+                        author_id="test-author",
+                        author_name="测试作者",
+                        published_at=now,
+                        metrics=VideoMetricSnapshot(
+                            item_id=f"{self.platform.value}-test-{index}",
+                            sampled_at=now,
+                            likes=100 + index,
+                            comments=10,
+                            confidence=0.7,
+                        ),
+                        provider_rank=index + 1,
+                    )
+                    for index in range(limit)
+                ]
+                return ProviderSearchPage(
+                    platform=platform,
+                    provider=self.provider_name,
+                    items=items,
+                    observed_at=now,
+                    request_id=f"fake-{self.platform.value}",
+                    api_call_count=0,
+                    billable_units=0,
+                )
+
+        class FakeHotspotProvider:
+            provider_name = "douyin_local_browser"
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            def capabilities(self):
+                return ProviderCapability(
+                    provider_name=self.provider_name,
+                    display_name="热点宝浏览器（测试关闭）",
+                    mode=ProviderMode.LOCAL_BROWSER,
+                    supported_platforms=[],
+                    max_page_size=100,
+                    enabled=False,
+                    permission_status="disabled",
+                )
+
+            def session_status(self):
+                return SimpleNamespace(
+                    enabled=False,
+                    running=False,
+                    login_required=False,
+                    ready_to_crawl=False,
+                    phase="disabled",
+                    message="热点宝测试来源已关闭。",
+                )
+
         repository = MockRepository(candidates=[], tasks=[])
         provider = SandboxLicensedSearchProvider()
         service = CommercialSearchService(
@@ -506,12 +706,68 @@ class TestCrawlerBatches:
             provider,
             active_platforms=(Platform.DOUYIN,),
         )
+        bilibili_provider = FakeBilibiliProvider()
+        bilibili_service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            bilibili_provider,
+            active_platforms=(Platform.BILIBILI,),
+        )
+        xiaohongshu_provider = FakeBrowserProvider(Platform.XIAOHONGSHU)
+        xiaohongshu_service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            xiaohongshu_provider,
+            active_platforms=(Platform.XIAOHONGSHU,),
+        )
+        kuaishou_provider = FakeBrowserProvider(Platform.KUAISHOU)
+        kuaishou_service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            kuaishou_provider,
+            active_platforms=(Platform.KUAISHOU,),
+        )
+        hotspot_provider = FakeHotspotProvider()
+        hotspot_service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            hotspot_provider,
+            active_platforms=(Platform.DOUYIN,),
+        )
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
         app.dependency_overrides[backend_deps.get_licensed_search_provider] = lambda: (
             provider
         )
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
+        )
+        app.dependency_overrides[backend_deps.get_bilibili_browser_provider] = (
+            lambda: bilibili_provider
+        )
+        app.dependency_overrides[backend_deps.get_bilibili_browser_search_service] = (
+            lambda: bilibili_service
+        )
+        app.dependency_overrides[backend_deps.get_xiaohongshu_browser_provider] = (
+            lambda: xiaohongshu_provider
+        )
+        app.dependency_overrides[
+            backend_deps.get_xiaohongshu_browser_search_service
+        ] = lambda: xiaohongshu_service
+        app.dependency_overrides[backend_deps.get_kuaishou_browser_provider] = (
+            lambda: kuaishou_provider
+        )
+        app.dependency_overrides[
+            backend_deps.get_kuaishou_browser_search_service
+        ] = lambda: kuaishou_service
+        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
+            lambda: hotspot_provider
+        )
+        app.dependency_overrides[backend_deps.get_hotspot_search_service] = (
+            lambda: hotspot_service
         )
         app.dependency_overrides[backend_deps.get_official_hot_billboard_adapter] = (
             lambda: FakeOfficialAdapter("douyin_hot_billboard")
@@ -527,6 +783,38 @@ class TestCrawlerBatches:
         )
         app.dependency_overrides.pop(
             backend_deps.get_commercial_search_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_bilibili_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_bilibili_browser_search_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_xiaohongshu_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_xiaohongshu_browser_search_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_kuaishou_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_kuaishou_browser_search_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_hotspot_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_hotspot_search_service,
             None,
         )
         app.dependency_overrides.pop(
@@ -549,6 +837,11 @@ class TestCrawlerBatches:
         assert data["paused_platforms"] == ["xiaohongshu", "wechat_channels"]
         assert data["official_hot_billboard"]["enabled"] is False
         assert data["official_hot_words"]["provider_name"] == "douyin_hot_words"
+        assert [item["platform"] for item in data["platform_browsers"]] == [
+            "xiaohongshu",
+            "kuaishou",
+            "bilibili",
+        ]
 
     def test_browser_discovery_capabilities_include_prerequisites(
         self, client: TestClient
@@ -560,7 +853,37 @@ class TestCrawlerBatches:
         assert isinstance(data["missing_configuration"], list)
         assert data["browser_channel"] in {"chrome", "msedge"}
 
-    def test_preview_only_douyin(self, client: TestClient):
+        xiaohongshu_resp = client.get(
+            "/api/v1/crawler/browser-discovery/xiaohongshu/capabilities"
+        )
+        assert xiaohongshu_resp.status_code == 200
+        assert xiaohongshu_resp.json()["platform"] == "xiaohongshu"
+
+        bilibili_resp = client.get(
+            "/api/v1/crawler/browser-discovery/bilibili/capabilities"
+        )
+        assert bilibili_resp.status_code == 200
+        assert bilibili_resp.json()["platform"] == "bilibili"
+
+    def test_recrawl_is_disabled(self, client: TestClient):
+        rejected = client.post(
+            "/api/v1/crawler/preview",
+            json={
+                "keyword": "二手车",
+                "count_per_platform": 2,
+                "force_refresh": False,
+                "track_trend": True,
+            },
+        )
+        assert rejected.status_code == 422
+
+        disabled = client.post("/api/v1/crawler/batches/legacy-batch/tracking")
+        assert disabled.status_code == 410
+
+        due = client.post("/api/v1/crawler/recrawls/due")
+        assert due.status_code == 410
+
+    def test_preview_free_multi_platform(self, client: TestClient):
         resp = client.post(
             "/api/v1/crawler/preview",
             json={
@@ -571,11 +894,22 @@ class TestCrawlerBatches:
         )
         assert resp.status_code == 200
         data = resp.json()
-        assert [item["platform"] for item in data["platforms"]] == ["douyin"]
-        assert data["ranking_mode"] == "keyword_hot"
+        assert [item["platform"] for item in data["platforms"]] == [
+            "douyin_hotspot",
+            "xiaohongshu",
+            "kuaishou",
+            "bilibili",
+        ]
+        assert data["ranking_mode"] == "platform_specific_hot_sort"
         assert data["published_window_days"] == 0
+        assert [item["platform_label"] for item in data["platforms"]] == [
+            "抖音热点宝五类爆款榜（本机授权，可选）",
+            "小红书浏览器搜索（最多点赞、视频、半年内）",
+            "快手浏览器搜索（近10个月）",
+            "B站浏览器搜索（最多播放、最近一周）",
+        ]
         assert data["sampling_offsets_hours"] == [0]
-        assert data["max_api_calls_per_platform"] == 1
+        assert data["max_api_calls_per_platform"] == 0
         assert data["trend_tracking_enabled"] is False
         assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
@@ -595,7 +929,11 @@ class TestCrawlerBatches:
         assert create_resp.status_code == 200
         created = create_resp.json()
         assert created["status"] in {"succeeded", "partial", "failed"}
-        assert [run["platform"] for run in created["platform_runs"]] == ["douyin"]
+        assert {run["platform"] for run in created["platform_runs"]} == {
+            "xiaohongshu",
+            "kuaishou",
+            "bilibili",
+        }
 
         batch_id = created["batch_id"]
         detail_resp = client.get(f"/api/v1/crawler/batches/{batch_id}")

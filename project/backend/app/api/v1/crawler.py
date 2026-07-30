@@ -18,10 +18,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
+    get_bilibili_browser_provider,
+    get_bilibili_browser_search_service,
     get_commercial_search_service,
     get_discovery_search_provider,
     get_hotspot_browser_provider,
     get_hotspot_search_service,
+    get_kuaishou_browser_provider,
+    get_kuaishou_browser_search_service,
     get_doubao_browser_service,
     get_doubao_mobile_service,
     get_media_resolution_service,
@@ -31,6 +35,8 @@ from project.backend.app.core.deps import (
     get_copywriting_service,
     get_repository,
     get_transcription_service,
+    get_xiaohongshu_browser_provider,
+    get_xiaohongshu_browser_search_service,
 )
 from project.backend.app.core import config as backend_config
 from project.backend.app.core.config import ASRMode
@@ -39,8 +45,10 @@ from src.models import (
     CopySource,
     Platform,
     PlatformRunStatus,
+    ProviderMode,
     SamplingStatus,
     SearchBatch,
+    SearchBatchStatus,
     TaskStatus,
     TranscriptionTask,
 )
@@ -67,12 +75,18 @@ router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
 
 PLATFORM_LABELS: dict[str, str] = {
     "douyin": "抖音",
+    "bilibili": "B站",
     "xiaohongshu": "小红书",
+    "kuaishou": "快手",
     "wechat_channels": "视频号",
 }
 SMART_FREE_CANDIDATE_THRESHOLD = 3
 # 主榜只展示有足够互动基础的严格相关内容；官方热榜候选不受此门槛限制。
 INTERACTION_HEAT_FLOOR = 100.0
+FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS = 0
+XIAOHONGSHU_PUBLISHED_WINDOW_DAYS = 180
+KUAISHOU_PUBLISHED_WINDOW_DAYS = 300
+BILIBILI_PUBLISHED_WINDOW_DAYS = 7
 HOTSPOT_CACHE_TTL_MINUTES = 10
 HOTSPOT_COOLDOWN_MIN_SECONDS = 8 * 60
 HOTSPOT_COOLDOWN_MAX_SECONDS = 12 * 60
@@ -105,13 +119,16 @@ def _next_hotspot_cooldown_seconds() -> int:
 
 class CrawlerSearchRequest(BaseModel):
     keyword: str = Field(..., min_length=2, max_length=50, description="搜索关键词")
-    # OneAPI/官方热榜兼容字段；热点宝不使用它限制视频发布时间。
-    published_window_days: int = Field(0, description="0=不限；1/7 兼容其他发现模式")
+    # 热点宝不使用发布时间筛选；其余平台浏览器默认优先保留近 3 天内容。
+    published_window_days: int = Field(
+        7,
+        description="0=不限；1/3/7 表示天数；300 表示快手近 10 个月",
+    )
     hotspot_window_hours: Literal[1, 24, 72, 168] = Field(
         168,
         description="热点宝榜单统计周期：1/24/72/168 小时；不限制视频发布时间。",
     )
-    count_per_platform: int = Field(10, ge=1, le=10, description="当前启用平台返回数量")
+    count_per_platform: int = Field(30, ge=1, le=30, description="免费来源最多保留数量")
     hotspot_result_limit: int = Field(
         100,
         ge=1,
@@ -121,22 +138,22 @@ class CrawlerSearchRequest(BaseModel):
     force_refresh: bool = Field(False, description="是否绕过缓存强制刷新")
     mode: str | None = Field(
         default=None,
-        description="批次模式；smart=先免费池后低价兜底；official_hot=仅官方热榜池",
+        description="批次模式；smart=免费多平台候选；official_hot=仅官方热榜池",
     )
     related_terms: list[str] = Field(default_factory=list, max_length=5)
     allow_related_fallback: bool = Field(
         False,
         description="严格相关候选不足时，允许对一个用户明确给出的关联词额外搜索一次",
     )
-    track_trend: bool = Field(
+    track_trend: Literal[False] = Field(
         False,
-        description="确认后安排两次自适应复搜以形成真实趋势曲线",
+        description="复采已关闭，只执行本次搜索",
     )
-    target_main_count: int = Field(10, ge=1, le=10, description="爆款主榜目标数量")
-    max_paid_calls: int = Field(3, ge=1, le=3, description="热点宝不足时的 OneAPI 费用上限")
+    target_main_count: int = Field(30, ge=1, le=30, description="候选目标数量")
+    max_paid_calls: int = Field(0, ge=0, le=0, description="免费模式不允许付费调用")
     allow_paid_fallback: bool = Field(
         False,
-        description="仅在用户二次确认后，才允许 OneAPI 作为付费补充。",
+        description="免费模式固定关闭，不允许付费补充。",
     )
 
 
@@ -236,9 +253,14 @@ class CrawlerCapabilitiesResponse(BaseModel):
     official_hot_billboard: CrawlerOfficialHotCapability | None = None
     official_hot_words: CrawlerOfficialHotCapability | None = None
     hotspot_browser: CrawlerBrowserDiscoveryCapabilities | None = None
+    platform_browsers: list[CrawlerBrowserDiscoveryCapabilities] = Field(
+        default_factory=list
+    )
 
 
 class CrawlerBrowserDiscoveryCapabilities(BaseModel):
+    platform: str = "douyin"
+    platform_label: str = "抖音"
     enabled: bool
     running: bool
     login_required: bool
@@ -561,6 +583,33 @@ def _official_capability_fallback(
     )
 
 
+def _browser_capability_payload(
+    provider,
+    *,
+    platform: Platform,
+) -> CrawlerBrowserDiscoveryCapabilities:
+    capability = provider.capabilities()
+    status = getattr(provider, "session_status", lambda: None)()
+    return CrawlerBrowserDiscoveryCapabilities(
+        platform=platform.value,
+        platform_label=_platform_label(platform.value),
+        enabled=capability.enabled,
+        running=bool(status and status.running),
+        login_required=bool(status and status.login_required),
+        missing_configuration=getattr(capability, "missing_configuration", []),
+        browser_channel=getattr(provider, "browser_channel", "chrome"),
+        ready_to_crawl=bool(status and status.ready_to_crawl),
+        phase=(status.phase if status is not None else "unavailable"),
+        adapter_version=getattr(provider, "adapter_version", "unknown"),
+        provider_name=capability.provider_name,
+        message=(
+            status.message
+            if status is not None
+            else f"{_platform_label(platform.value)}本机浏览器不可用。"
+        ),
+    )
+
+
 def _capability_payload(
     service,
     provider,
@@ -568,6 +617,9 @@ def _capability_payload(
     billboard_adapter=None,
     hot_words_adapter=None,
     hotspot_provider=None,
+    xiaohongshu_provider=None,
+    kuaishou_provider=None,
+    bilibili_provider=None,
 ) -> CrawlerCapabilitiesResponse:
     capability = provider.capabilities()
     active_platforms = list(service.active_platforms)
@@ -580,8 +632,9 @@ def _capability_payload(
     # longer exposes paid fallback controls, and a usage probe can otherwise
     # delay every page open while also creating unnecessary external traffic.
     usage = None
-    hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
-    hotspot_capability = hotspot_provider.capabilities() if hotspot_provider is not None else None
+    hotspot_capability = (
+        hotspot_provider.capabilities() if hotspot_provider is not None else None
+    )
     return CrawlerCapabilitiesResponse(
         provider_name=capability.provider_name,
         display_name=capability.display_name,
@@ -620,21 +673,33 @@ def _capability_payload(
             )
         ),
         hotspot_browser=(
-            CrawlerBrowserDiscoveryCapabilities(
-                enabled=hotspot_capability.enabled,
-                running=bool(hotspot_status and hotspot_status.running),
-                login_required=bool(hotspot_status and hotspot_status.login_required),
-                missing_configuration=getattr(hotspot_capability, "missing_configuration", []),
-                browser_channel=getattr(hotspot_provider, "browser_channel", "chrome"),
-                ready_to_crawl=bool(hotspot_status and hotspot_status.ready_to_crawl),
-                phase=(hotspot_status.phase if hotspot_status is not None else "unavailable"),
-                adapter_version=getattr(hotspot_provider, "adapter_version", "hotspot_fiber_v2"),
-                provider_name=hotspot_capability.provider_name,
-                message=hotspot_status.message if hotspot_status is not None else "热点宝本机浏览器不可用。",
+            _browser_capability_payload(
+                hotspot_provider,
+                platform=Platform.DOUYIN,
             )
             if hotspot_capability is not None
             else None
         ),
+        platform_browsers=[
+            _browser_capability_payload(
+                xiaohongshu_provider,
+                platform=Platform.XIAOHONGSHU,
+            ),
+            _browser_capability_payload(
+                kuaishou_provider,
+                platform=Platform.KUAISHOU,
+            ),
+            _browser_capability_payload(
+                bilibili_provider,
+                platform=Platform.BILIBILI,
+            ),
+        ]
+        if (
+            xiaohongshu_provider is not None
+            and kuaishou_provider is not None
+            and bilibili_provider is not None
+        )
+        else [],
     )
 
 
@@ -645,6 +710,9 @@ def get_capabilities(
     billboard_adapter=Depends(get_official_hot_billboard_adapter),
     hot_words_adapter=Depends(get_official_hot_words_adapter),
     hotspot_provider=Depends(get_hotspot_browser_provider),
+    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
     """返回供应商模式、支持平台、缺失配置、缓存和额度状态。"""
     return _capability_payload(
@@ -653,6 +721,9 @@ def get_capabilities(
         billboard_adapter=billboard_adapter,
         hot_words_adapter=hot_words_adapter,
         hotspot_provider=hotspot_provider,
+        xiaohongshu_provider=xiaohongshu_provider,
+        kuaishou_provider=kuaishou_provider,
+        bilibili_provider=bilibili_provider,
     )
 
 
@@ -667,6 +738,8 @@ def get_browser_discovery_capabilities(
     capability = provider.capabilities()
     status = getattr(provider, "session_status", lambda: None)()
     return CrawlerBrowserDiscoveryCapabilities(
+        platform=Platform.DOUYIN.value,
+        platform_label=_platform_label(Platform.DOUYIN.value),
         enabled=capability.enabled,
         running=bool(status and status.running),
         login_required=bool(status and status.login_required),
@@ -701,6 +774,8 @@ def start_browser_discovery_login(
     except LicensedProviderError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return CrawlerBrowserDiscoveryStartResponse(
+        platform=Platform.DOUYIN.value,
+        platform_label=_platform_label(Platform.DOUYIN.value),
         enabled=status.enabled,
         running=status.running,
         login_required=status.login_required,
@@ -710,6 +785,82 @@ def start_browser_discovery_login(
         phase=status.phase,
         adapter_version=getattr(provider, "adapter_version", "hotspot_fiber_v2"),
         provider_name=provider.capabilities().provider_name,
+        message=status.message,
+        started=not bool(previous_status and previous_status.running),
+    )
+
+
+def _select_platform_browser_provider(
+    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
+    xiaohongshu_provider,
+    kuaishou_provider,
+    bilibili_provider,
+):
+    return {
+        Platform.XIAOHONGSHU.value: xiaohongshu_provider,
+        Platform.KUAISHOU.value: kuaishou_provider,
+        Platform.BILIBILI.value: bilibili_provider,
+    }[platform]
+
+
+@router.get(
+    "/browser-discovery/{platform}/capabilities",
+    response_model=CrawlerBrowserDiscoveryCapabilities,
+)
+def get_platform_browser_discovery_capabilities(
+    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
+    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+):
+    """返回平台独立 Chrome 的登录状态。"""
+    provider = _select_platform_browser_provider(
+        platform,
+        xiaohongshu_provider,
+        kuaishou_provider,
+        bilibili_provider,
+    )
+    return _browser_capability_payload(
+        provider,
+        platform=Platform(platform),
+    )
+
+
+@router.post(
+    "/browser-discovery/{platform}/start",
+    response_model=CrawlerBrowserDiscoveryStartResponse,
+)
+def start_platform_browser_discovery_login(
+    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
+    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+):
+    """打开平台独立 Chrome，扫码登录由操作者在可见窗口完成。"""
+    provider = _select_platform_browser_provider(
+        platform,
+        xiaohongshu_provider,
+        kuaishou_provider,
+        bilibili_provider,
+    )
+    previous_status = getattr(provider, "session_status", lambda: None)()
+    try:
+        status = provider.start_login_browser()
+    except LicensedProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    capability = provider.capabilities()
+    return CrawlerBrowserDiscoveryStartResponse(
+        platform=platform,
+        platform_label=_platform_label(platform),
+        enabled=capability.enabled,
+        running=status.running,
+        login_required=status.login_required,
+        missing_configuration=capability.missing_configuration,
+        browser_channel=getattr(provider, "browser_channel", "chrome"),
+        ready_to_crawl=status.ready_to_crawl,
+        phase=status.phase,
+        adapter_version=getattr(provider, "adapter_version", "unknown"),
+        provider_name=capability.provider_name,
         message=status.message,
         started=not bool(previous_status and previous_status.running),
     )
@@ -753,11 +904,11 @@ def monitor_official_hot_pool(
     service=Depends(get_official_hot_pool_service),
     repo=Depends(get_repository),
 ):
-    """执行官方热榜监测：先跑到期复爬，再同步热榜并按关键词匹配。"""
+    """执行一次官方热榜同步并按关键词匹配，不安排复采。"""
     keyword = (body.keyword if body else None) or ""
     keyword = keyword.strip()
     try:
-        executed_recrawls = service.execute_due_recrawls()
+        executed_recrawls = []
         if not keyword:
             # 无关键词：全量热榜同步 + 热点词同步
             service.sync_billboard(limit=50)
@@ -784,10 +935,10 @@ def monitor_official_hot_pool(
                     for index, candidate in enumerate(pool, start=1)
                 ],
             )
-        result = service.monitor(
+        service.sync_billboard(limit=50)
+        result = service.search_hot_pool(
             keyword=keyword,
             limit=10,
-            publish_time=1,
             related_terms=(body.related_terms if body else None),
         )
     except (ValueError, OfficialAdapterDisabledError, OfficialApiError) as exc:
@@ -801,11 +952,11 @@ def monitor_official_hot_pool(
             result.user_notice
             or (
                 f"官方热榜匹配 {len(result.matched)} 条候选；"
-                "已保存快照并安排后续复爬。"
+                "本次为单次搜索，不安排后续复采。"
             )
         ),
         executed_recrawls=len(executed_recrawls),
-        next_recrawl_at=result.next_recrawl_at,
+        next_recrawl_at=None,
         candidates=[
             _candidate_to_response(
                 candidate,
@@ -868,11 +1019,26 @@ def preview_crawler_batch(
     hot_pool=Depends(get_official_hot_pool_service),
     hotspot_service=Depends(get_hotspot_search_service),
     hotspot_provider=Depends(get_hotspot_browser_provider),
+    bilibili_service=Depends(get_bilibili_browser_search_service),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+    xiaohongshu_service=Depends(get_xiaohongshu_browser_search_service),
+    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    kuaishou_service=Depends(get_kuaishou_browser_search_service),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
 ):
     """提交前预览当前启用平台的执行计划。"""
-    if body.mode == "smart":
-        return _preview_smart_batch(
-            body, service, hot_pool, hotspot_provider, hotspot_service, repo
+    if body.mode in (None, "", "smart"):
+        return _preview_free_multi_platform_batch(
+            body,
+            bilibili_service,
+            bilibili_provider,
+            hotspot_provider,
+            hotspot_service,
+            xiaohongshu_service,
+            xiaohongshu_provider,
+            kuaishou_service,
+            kuaishou_provider,
+            repo,
         )
     if body.mode not in (None, "", "official_hot"):
         raise HTTPException(status_code=400, detail=f"不支持的批次模式：{body.mode}")
@@ -936,12 +1102,29 @@ def create_crawler_batch(
     hot_pool=Depends(get_official_hot_pool_service),
     hotspot_service=Depends(get_hotspot_search_service),
     hotspot_provider=Depends(get_hotspot_browser_provider),
+    bilibili_service=Depends(get_bilibili_browser_search_service),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+    xiaohongshu_service=Depends(get_xiaohongshu_browser_search_service),
+    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    kuaishou_service=Depends(get_kuaishou_browser_search_service),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
 ):
     """执行当前启用平台的关键词榜单批次并持久化；official_hot 模式走官方热榜池。"""
     if body.mode == "official_hot":
         return _execute_official_hot_batch(body, hot_pool, repo)
-    if body.mode == "smart":
-        return _execute_smart_batch(body, service, hotspot_service, hotspot_provider, hot_pool, repo)
+    if body.mode in (None, "", "smart"):
+        return _execute_free_multi_platform_batch(
+            body,
+            bilibili_service,
+            bilibili_provider,
+            hotspot_service,
+            hotspot_provider,
+            xiaohongshu_service,
+            xiaohongshu_provider,
+            kuaishou_service,
+            kuaishou_provider,
+            repo,
+        )
     if body.mode not in (None, ""):
         raise HTTPException(status_code=400, detail=f"不支持的批次模式：{body.mode}")
     try:
@@ -960,25 +1143,11 @@ def create_crawler_batch(
 @router.post("/batches/{batch_id}/tracking", response_model=CrawlerTrackingResponse)
 def start_crawler_batch_tracking(
     batch_id: str,
-    service=Depends(get_commercial_search_service),
-    repo=Depends(get_repository),
 ):
-    """用户明确确认后，才为本批次安排两次真实后续采样。"""
-    try:
-        batch, scheduled, due_at = service.start_batch_tracking(batch_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    price = service._endpoint_prices().get(Platform.DOUYIN)
-    return CrawlerTrackingResponse(
-        batch=_batch_to_response(batch, repo),
-        scheduled_candidates=scheduled,
-        additional_api_calls=2,
-        estimated_additional_cost_cny=(round(price * 2, 4) if price is not None else None),
-        next_tracking_at=due_at,
-        message=(
-            f"已为 {scheduled} 条候选安排真实走势追踪；首次将在约 2 小时后采样，"
-            "再根据真实变化安排最后一次采样。"
-        ),
+    """复采功能已关闭；保留路由用于向旧客户端返回明确结果。"""
+    raise HTTPException(
+        status_code=410,
+        detail=f"批次 {batch_id} 不再支持复采；请直接使用本次搜索结果。",
     )
 
 
@@ -1119,6 +1288,406 @@ def _hotspot_safety_exception(status: CrawlerSafetyStatus) -> HTTPException:
             "next_available_at": status.next_available_at.isoformat() if status.next_available_at else None,
         },
         headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _preview_free_multi_platform_batch(
+    body: CrawlerSearchRequest,
+    bilibili_service,
+    bilibili_provider,
+    hotspot_provider,
+    hotspot_service,
+    xiaohongshu_service,
+    xiaohongshu_provider,
+    kuaishou_service,
+    kuaishou_provider,
+    repo,
+) -> CrawlerPreviewResponse:
+    """Describe the free, no-OneAPI path before it runs."""
+    hotspot_capability = hotspot_provider.capabilities()
+    hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
+    hotspot_ready = bool(
+        hotspot_capability.enabled
+        and hotspot_status
+        and hotspot_status.ready_to_crawl
+    )
+    crawl_safety = (
+        _hotspot_safety_status(body, hotspot_service, repo)
+        if hotspot_ready
+        else None
+    )
+    hotspot_blocked = bool(
+        crawl_safety
+        and crawl_safety.state
+        in {"safety_pause", "cooldown", "running", "daily_limit"}
+    )
+    def browser_preview(
+        service,
+        provider,
+        platform: Platform,
+        published_window_days: int,
+    ):
+        status = getattr(provider, "session_status", lambda: None)()
+        ready = bool(
+            provider.capabilities().enabled
+            and status
+            and status.ready_to_crawl
+        )
+        preview = service.preview(
+            keyword=body.keyword,
+            published_window_days=published_window_days,
+            count=body.target_main_count,
+            force_refresh=body.force_refresh,
+            platforms=(platform,),
+            cache_ttl_minutes=30,
+            include_monitoring=False,
+        )[0]
+        return preview, status, ready
+
+    xiaohongshu_preview, xiaohongshu_status, xiaohongshu_ready = browser_preview(
+        xiaohongshu_service,
+        xiaohongshu_provider,
+        Platform.XIAOHONGSHU,
+        XIAOHONGSHU_PUBLISHED_WINDOW_DAYS,
+    )
+    kuaishou_preview, kuaishou_status, kuaishou_ready = browser_preview(
+        kuaishou_service,
+        kuaishou_provider,
+        Platform.KUAISHOU,
+        KUAISHOU_PUBLISHED_WINDOW_DAYS,
+    )
+    bilibili_preview, bilibili_status, bilibili_ready = browser_preview(
+        bilibili_service,
+        bilibili_provider,
+        Platform.BILIBILI,
+        BILIBILI_PUBLISHED_WINDOW_DAYS,
+    )
+    platform_items = [
+        CrawlerPlatformPreview(
+            platform="douyin_hotspot",
+            platform_label="抖音热点宝五类爆款榜（本机授权，可选）",
+            cache_hit=bool(crawl_safety and crawl_safety.state == "cached"),
+            estimated_api_calls=0,
+            platform_unit_price_cny=0.0,
+            estimated_cost_cny=0.0,
+            blocked_reason=(
+                crawl_safety.message
+                if hotspot_blocked and crawl_safety
+                else None
+                if hotspot_ready
+                else (hotspot_status.message if hotspot_status else "抖音浏览器未连接。")
+            ),
+        ),
+        CrawlerPlatformPreview(
+            platform=Platform.XIAOHONGSHU.value,
+            platform_label="小红书浏览器搜索（最多点赞、视频、半年内）",
+            cache_hit=xiaohongshu_preview.cache_hit,
+            estimated_api_calls=0,
+            platform_unit_price_cny=0.0,
+            estimated_cost_cny=0.0,
+            blocked_reason=(
+                xiaohongshu_preview.blocked_reason
+                or (
+                    xiaohongshu_status.message
+                    if xiaohongshu_status is not None and not xiaohongshu_ready
+                    else None
+                )
+            ),
+        ),
+        CrawlerPlatformPreview(
+            platform=Platform.KUAISHOU.value,
+            platform_label="快手浏览器搜索（近10个月）",
+            cache_hit=kuaishou_preview.cache_hit,
+            estimated_api_calls=0,
+            platform_unit_price_cny=0.0,
+            estimated_cost_cny=0.0,
+            blocked_reason=(
+                kuaishou_preview.blocked_reason
+                or (
+                    kuaishou_status.message
+                    if kuaishou_status is not None and not kuaishou_ready
+                    else None
+                )
+            ),
+        ),
+        CrawlerPlatformPreview(
+            platform="bilibili",
+            platform_label="B站浏览器搜索（最多播放、最近一周）",
+            cache_hit=bilibili_preview.cache_hit,
+            estimated_api_calls=0,
+            platform_unit_price_cny=0.0,
+            estimated_cost_cny=0.0,
+            blocked_reason=(
+                bilibili_preview.blocked_reason
+                or (
+                    bilibili_status.message
+                    if bilibili_status is not None and not bilibili_ready
+                    else None
+                )
+            ),
+        ),
+    ]
+    return CrawlerPreviewResponse(
+        keyword=body.keyword.strip(),
+        published_window_days=FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
+        hotspot_window_hours=body.hotspot_window_hours,
+        count_per_platform=body.target_main_count,
+        force_refresh=body.force_refresh,
+        mode="smart",
+        provider_mode=ProviderMode.PUBLIC_WEB.value,
+        provider_name="抖音热点宝 + 小红书/快手/B站浏览器",
+        ranking_mode="platform_specific_hot_sort",
+        monthly_query_count=0,
+        monthly_estimated_cost_cny=0.0,
+        monthly_warning_queries=0,
+        monthly_hard_limit_queries=0,
+        monthly_hard_limit_cost_cny=0.0,
+        cache_ttl_minutes=30,
+        platforms=platform_items,
+        estimated_total_cost_cny=0.0,
+        monitoring_policy="free_single_snapshot_v1",
+        sampling_offsets_hours=[0],
+        max_api_calls_per_platform=0,
+        blocked=all(item.blocked_reason for item in platform_items),
+        free_pool_status="ready",
+        free_pool_message="只取近期候选；不调用 OneAPI，也不安排后续付费复采。",
+        paid_fallback_required=False,
+        paid_fallback_blocked_reason="本次固定使用免费来源，不会调用 OneAPI。",
+        trend_tracking_enabled=False,
+        hotspot_ready=hotspot_ready,
+        hotspot_message=(
+            f"抖音热点宝已连接：会先读取{_hotspot_window_label(body.hotspot_window_hours)}五类榜。"
+            if hotspot_ready
+            else (hotspot_status.message if hotspot_status else "抖音热点宝未连接。")
+        ),
+        hotspot_time_strategy="hotspot_plus_three_recent_platforms",
+        target_main_count=body.target_main_count,
+        paid_call_cap=0,
+        hotspot_result_limit=body.hotspot_result_limit,
+        hotspot_list_types=["视频总榜", "低粉爆款", "高完播率", "高涨粉率", "高点赞率"],
+        crawl_safety=crawl_safety,
+    )
+
+
+def _start_browser_for_search(provider):
+    """Start the visible browser on demand and return its latest status."""
+    capability = provider.capabilities()
+    status = getattr(provider, "session_status", lambda: None)()
+    if not capability.enabled or (status is not None and status.running):
+        return status
+    start = getattr(provider, "start_login_browser", None)
+    if start is None:
+        return status
+    return start()
+
+
+def _execute_free_multi_platform_batch(
+    body: CrawlerSearchRequest,
+    bilibili_service,
+    bilibili_provider,
+    hotspot_service,
+    hotspot_provider,
+    xiaohongshu_service,
+    xiaohongshu_provider,
+    kuaishou_service,
+    kuaishou_provider,
+    repo,
+) -> CrawlerBatchResponse:
+    """Keep up to 30 recent candidates per connected platform without paid APIs."""
+    batches: list[SearchBatch] = []
+    errors: list[str] = []
+    hotspot_response: CrawlerBatchResponse | None = None
+    browser_statuses = {}
+    for platform, provider in (
+        (Platform.DOUYIN, hotspot_provider),
+        (Platform.XIAOHONGSHU, xiaohongshu_provider),
+        (Platform.KUAISHOU, kuaishou_provider),
+        (Platform.BILIBILI, bilibili_provider),
+    ):
+        try:
+            browser_statuses[platform] = _start_browser_for_search(provider)
+        except LicensedProviderError as exc:
+            browser_statuses[platform] = None
+            errors.append(f"{_platform_label(platform.value)}：{exc}")
+
+    hotspot_status = browser_statuses[Platform.DOUYIN]
+    hotspot_ready = bool(
+        hotspot_provider.capabilities().enabled
+        and hotspot_status
+        and hotspot_status.ready_to_crawl
+    )
+    if hotspot_ready:
+        try:
+            hotspot_response = _execute_hotspot_single_snapshot_batch(
+                body,
+                hotspot_service,
+                repo,
+                published_window_days=0,
+            )
+        except HTTPException as exc:
+            detail = exc.detail
+            errors.append(
+                detail.get("message", "热点宝暂不可用。")
+                if isinstance(detail, dict)
+                else str(detail)
+            )
+        else:
+            hotspot_batch = repo.get_search_batch(hotspot_response.batch_id)
+            if hotspot_batch is not None:
+                batches.append(hotspot_batch)
+            elif hotspot_response.error:
+                errors.append(hotspot_response.error)
+
+    def execute_browser_source(
+        service,
+        provider,
+        platform: Platform,
+        published_window_days: int,
+    ) -> None:
+        status = browser_statuses[platform]
+        ready = bool(
+            provider.capabilities().enabled
+            and status
+            and status.ready_to_crawl
+        )
+        if not ready:
+            errors.append(
+                status.message
+                if status is not None
+                else f"{_platform_label(platform.value)}浏览器未连接。"
+            )
+            return
+        try:
+            batch = service.execute(
+                keyword=body.keyword,
+                published_window_days=published_window_days,
+                count=body.target_main_count,
+                force_refresh=body.force_refresh,
+                platforms=(platform,),
+                cache_ttl_minutes=30,
+                schedule_recrawls=False,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            return
+        batches.append(batch)
+        if batch.error:
+            errors.append(batch.error)
+
+    execute_browser_source(
+        xiaohongshu_service,
+        xiaohongshu_provider,
+        Platform.XIAOHONGSHU,
+        XIAOHONGSHU_PUBLISHED_WINDOW_DAYS,
+    )
+    execute_browser_source(
+        kuaishou_service,
+        kuaishou_provider,
+        Platform.KUAISHOU,
+        KUAISHOU_PUBLISHED_WINDOW_DAYS,
+    )
+    execute_browser_source(
+        bilibili_service,
+        bilibili_provider,
+        Platform.BILIBILI,
+        BILIBILI_PUBLISHED_WINDOW_DAYS,
+    )
+
+    persisted = [batch for batch in batches if repo.get_search_batch(batch.batch_id)]
+    if not persisted:
+        failed = SearchBatch(
+            keyword=body.keyword.strip(),
+            published_window_days=FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
+            hotspot_window_hours=body.hotspot_window_hours,
+            requested_count_per_platform=body.target_main_count,
+            provider="free_multi_platform",
+            mode=ProviderMode.PUBLIC_WEB,
+            platforms=[
+                Platform.DOUYIN,
+                Platform.XIAOHONGSHU,
+                Platform.KUAISHOU,
+                Platform.BILIBILI,
+            ],
+            status=SearchBatchStatus.FAILED,
+            error="；".join(errors) or "免费来源暂时没有返回候选。",
+            monitoring_policy="free_single_snapshot_v1",
+            sampling_offsets_hours=[0],
+        )
+        repo.save_search_batch(failed)
+        return _batch_to_response(failed, repo).model_copy(
+            update={
+                "free_candidate_count": 0,
+                "paid_fallback_blocked_reason": "本次固定不调用 OneAPI。",
+            }
+        )
+
+    primary = persisted[0]
+    all_runs = repo.list_platform_search_runs(primary.batch_id)
+    for supplemental in persisted[1:]:
+        supplemental_runs = repo.list_platform_search_runs(supplemental.batch_id)
+        for run in supplemental_runs:
+            moved = run.model_copy(update={"batch_id": primary.batch_id})
+            repo.save_platform_search_run(moved)
+            all_runs.append(moved)
+        repo.delete_search_batch(supplemental.batch_id)
+
+    total_candidates = sum(
+        run.returned_count
+        for run in all_runs
+        if run.status
+        in {
+            PlatformRunStatus.SUCCEEDED,
+            PlatformRunStatus.PARTIAL,
+            PlatformRunStatus.CACHED,
+        }
+    )
+    successful_sources = sum(
+        run.returned_count > 0
+        and run.status
+        in {
+            PlatformRunStatus.SUCCEEDED,
+            PlatformRunStatus.PARTIAL,
+            PlatformRunStatus.CACHED,
+        }
+        for run in all_runs
+    )
+    status = (
+        SearchBatchStatus.SUCCEEDED
+        if successful_sources == 4
+        else SearchBatchStatus.PARTIAL
+        if successful_sources
+        else SearchBatchStatus.FAILED
+    )
+    combined = primary.model_copy(
+        update={
+            "published_window_days": FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
+            "hotspot_window_hours": body.hotspot_window_hours,
+            "requested_count_per_platform": body.target_main_count,
+            "provider": "free_multi_platform",
+            "mode": ProviderMode.PUBLIC_WEB,
+            "status": status,
+            "platforms": [
+                Platform.DOUYIN,
+                Platform.XIAOHONGSHU,
+                Platform.KUAISHOU,
+                Platform.BILIBILI,
+            ],
+            "platform_run_ids": [run.run_id for run in all_runs],
+            "finished_at": datetime.now().astimezone(),
+            "error": "；".join(dict.fromkeys(errors)) or None,
+            "monitoring_policy": "free_single_snapshot_v1",
+            "sampling_offsets_hours": [0],
+            "tracking_authorized": False,
+        }
+    )
+    repo.save_search_batch(combined)
+    return _batch_to_response(combined, repo).model_copy(
+        update={
+            "free_candidate_count": total_candidates,
+            "paid_fallback_used": False,
+            "paid_fallback_blocked_reason": "本次固定只使用四个平台的免费浏览器来源，不调用 OneAPI。",
+            "trend_tracking_enabled": False,
+        }
     )
 
 
@@ -1442,6 +2011,8 @@ def _execute_hotspot_single_snapshot_batch(
     body: CrawlerSearchRequest,
     hotspot_service,
     repo,
+    *,
+    published_window_days: int = 0,
 ) -> CrawlerBatchResponse:
     """Run one selected-period, five-list Hotspot flow without trend checkpoints."""
     now = datetime.now().astimezone()
@@ -1470,7 +2041,7 @@ def _execute_hotspot_single_snapshot_batch(
     try:
         batch = hotspot_service.execute(
             keyword=body.keyword,
-            published_window_days=0,
+            published_window_days=published_window_days,
             hotspot_window_hours=body.hotspot_window_hours,
             count=body.hotspot_result_limit,
             force_refresh=body.force_refresh,
@@ -1482,7 +2053,7 @@ def _execute_hotspot_single_snapshot_batch(
         response = CrawlerBatchResponse(
             batch_id=f"hotspot-{int(now.timestamp())}",
             keyword=body.keyword.strip(),
-            published_window_days=0,
+            published_window_days=published_window_days,
             hotspot_window_hours=body.hotspot_window_hours,
             count_per_platform=body.hotspot_result_limit,
             provider="douyin_local_browser",
@@ -1939,21 +2510,11 @@ def delete_crawler_batch(
 
 @router.post("/recrawls/due", response_model=CrawlerDueRecrawlResponse)
 def execute_due_recrawls(
-    limit: int = 5,
-    service=Depends(get_commercial_search_service),
-    repo=Depends(get_repository),
 ):
-    """执行不限发布时间关键词的到期采样，仍走预算、缓存和重复请求保护。"""
-    try:
-        batches = service.execute_due_recrawls(
-            max_groups=max(1, min(limit, 10)),
-            published_window_days=0,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return CrawlerDueRecrawlResponse(
-        executed_batches=[_batch_to_response(batch, repo) for batch in batches],
-        total=len(batches),
+    """复采执行入口已关闭。"""
+    raise HTTPException(
+        status_code=410,
+        detail="复采功能已关闭；系统只执行用户当次发起的搜索。",
     )
 
 
@@ -2907,6 +3468,18 @@ def _is_official_hot_candidate(candidate) -> bool:
     ).casefold()
 
 
+def _passes_main_board_heat_floor(candidate) -> bool:
+    return (
+        candidate.platform == Platform.XIAOHONGSHU
+        or _interaction_heat(candidate) >= INTERACTION_HEAT_FLOOR
+        or _is_official_hot_candidate(candidate)
+        or (
+            candidate.platform == Platform.BILIBILI
+            and candidate.metrics.plays is not None
+        )
+    )
+
+
 def _run_to_response(
     batch: SearchBatch,
     run,
@@ -2942,8 +3515,7 @@ def _run_to_response(
     qualified_matches = [
         (match, candidate)
         for match, candidate in visible_matches
-        if _interaction_heat(candidate) >= INTERACTION_HEAT_FLOOR
-        or _is_official_hot_candidate(candidate)
+        if _passes_main_board_heat_floor(candidate)
     ]
     below_heat_floor_count = strict_relevant_count - len(qualified_matches)
     relevant_count = len(qualified_matches)

@@ -65,6 +65,26 @@ def test_direct_video_url_is_downloaded_with_safe_metadata() -> None:
     assert video.content == content
 
 
+def test_bilibili_audio_mp4_stream_is_accepted_as_transcription_media() -> None:
+    content = b"\x00\x00\x00\x18ftypisom-authorized-audio"
+
+    video = fetch_authorized_video(
+        "https://cdn.example.com/audio.m4s",
+        resolver=public_resolver,
+        open_url=lambda *args, **kwargs: FakeResponse(
+            content,
+            final_url="https://cdn.example.com/audio.m4s",
+            content_type="audio/mp4",
+        ),
+        require_extension=False,
+        fallback_name="bilibili-BV1TEST.mp4",
+    )
+
+    assert video.name == "bilibili-BV1TEST.mp4"
+    assert video.media_type == "audio/mp4"
+    assert video.content == content
+
+
 def test_platform_share_page_is_rejected_before_network_access() -> None:
     with pytest.raises(VideoSourceError, match="平台分享页暂不支持"):
         fetch_authorized_video(

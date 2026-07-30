@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   Collapse,
   Drawer,
   Empty,
@@ -125,7 +124,6 @@ export default function ProductionPage() {
   const [profileId, setProfileId] = useState<string>();
   const [createdBatch, setCreatedBatch] = useState<ProductionBatch | null>(null);
   const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
-  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [concurrency, setConcurrency] = useState(1);
   const [maxTotalCost, setMaxTotalCost] = useState<number | null>(null);
   const [paidActionsConfirmed, setPaidActionsConfirmed] = useState(false);
@@ -181,7 +179,7 @@ export default function ProductionPage() {
   }, { total: 0, running: 0, review: 0, failed: 0, ready: 0 }), [batches]);
 
   const closeDrawer = () => {
-    setDrawerOpen(false); setDrawerStep(0); setDraftItems([]); setSourceText(""); setBatchName(""); setCreatedBatch(null); setPreflight(null); setRightsConfirmed(false); setMaxTotalCost(null); setPaidActionsConfirmed(false);
+    setDrawerOpen(false); setDrawerStep(0); setDraftItems([]); setSourceText(""); setBatchName(""); setCreatedBatch(null); setPreflight(null); setMaxTotalCost(null); setPaidActionsConfirmed(false);
   };
 
   const openNewBatch = () => {
@@ -235,18 +233,19 @@ export default function ProductionPage() {
     } catch (error) { toast.error((error as Error).message || "创建批次失败"); } finally { setSubmitting(false); }
   };
 
-  const runPreflight = async () => {
+  const runPreflight = async (confirmPaidActions = paidActionsConfirmed) => {
     if (!createdBatch) return;
-    if (!rightsHolder.trim() || !rightsConfirmed) { toast.warning("请填写授权主体并确认处理授权"); return; }
+    if (!rightsHolder.trim()) { toast.warning("请填写授权主体"); return; }
+    if (confirmPaidActions) setPaidActionsConfirmed(true);
     setSubmitting(true);
     try {
       setPreflight(await preflightProductionBatch(createdBatch.batch_id, {
         rightsHolder: rightsHolder.trim(),
-        rightsConfirmed,
+        rightsConfirmed: true,
         publishPlatforms: ["douyin"],
         concurrency,
         maxTotalCostCny: maxTotalCost,
-        paidActionsConfirmed,
+        paidActionsConfirmed: confirmPaidActions,
       }));
     } catch (error) { toast.error((error as Error).message || "批次预检失败"); } finally { setSubmitting(false); }
   };
@@ -257,7 +256,7 @@ export default function ProductionPage() {
     try {
       const payload = {
         rightsHolder: rightsHolder.trim(),
-        rightsConfirmed,
+        rightsConfirmed: true,
         publishPlatforms: ["douyin"],
         concurrency,
         maxTotalCostCny: maxTotalCost,
@@ -394,7 +393,39 @@ export default function ProductionPage() {
       <Steps current={drawerStep} items={[{ title: "导入内容" }, { title: "选择配方" }, { title: "预检启动" }]} style={{ marginBottom: 28 }} />
       {drawerStep === 0 && <Space direction="vertical" size="large" style={{ width: "100%" }}><Input value={batchName} onChange={(event) => setBatchName(event.target.value)} placeholder="批次名称，例如：本周企业获客口播" maxLength={100} /><Tabs activeKey={sourceMode} onChange={(value) => { setSourceMode(value as SourceMode); setSourceText(""); }} items={sourceTabs} /><Card size="small" title={`已加入 ${draftItems.length} 条`}><Table size="small" pagination={false} rowKey={(item) => `${item.source_type}-${item.source_value}`} dataSource={draftItems} columns={[{ title: "来源", dataIndex: "source_type", render: (value) => <Tag>{SOURCE_LABEL[value]}</Tag> }, { title: "内容", dataIndex: "source_value", ellipsis: true }, { title: "操作", render: (_, __, index) => <Button type="link" danger onClick={() => setDraftItems((items) => items.filter((_, itemIndex) => itemIndex !== index))}>移除</Button> }]} /></Card><Button type="primary" disabled={!batchName.trim() || !draftItems.length} onClick={() => setDrawerStep(1)}>下一步</Button></Space>}
       {drawerStep === 1 && <Space direction="vertical" size="large" style={{ width: "100%" }}><Alert type="info" showIcon message="同一批次默认复用一套 IP 配方" description="需要差异时，可仅覆盖某一条的形象、音色或剪辑模板；批量运行前会逐条检查这些资源是否可用。" /><Select value={profileId} onChange={setProfileId} placeholder="选择 IP 配方" style={{ width: "100%" }} options={profiles.map((profile) => ({ value: profile.profile_id, label: profile.name }))} />{!profiles.length && <Alert type="warning" message="还没有 IP 配方" action={<Button size="small" onClick={() => setProfileModalOpen(true)}>新建 IP 配方</Button>} />}{draftItems.length > 0 && <Card size="small" title="单条覆盖（可选）"><div className="production-table-wrap"><Table size="small" pagination={false} rowKey={(item) => `${item.source_type}-${item.source_value}`} dataSource={draftItems} columns={[{ title: "内容", key: "source", width: 200, render: (_, item) => <Text ellipsis style={{ maxWidth: 180 }}>{item.source_value}</Text> }, { title: "数字人形象", key: "avatar", render: (_, item, index) => <Select allowClear placeholder="使用批次默认" value={item.profile_overrides?.avatar_id} onChange={(value) => updateDraftOverride(index, "avatar_id", value)} style={{ minWidth: 155 }} options={assets.filter((asset) => asset.kind === "avatar").map((asset) => ({ value: asset.asset_id, label: asset.name }))} /> }, { title: "音色", key: "voice", render: (_, item, index) => <Select allowClear placeholder="使用批次默认" value={item.profile_overrides?.voice_id} onChange={(value) => updateDraftOverride(index, "voice_id", value)} style={{ minWidth: 155 }} options={assets.filter((asset) => asset.kind === "voice").map((asset) => ({ value: asset.asset_id, label: asset.name }))} /> }, { title: "剪辑模板", key: "template", render: (_, item, index) => <Select allowClear placeholder="使用批次默认" value={item.profile_overrides?.edit_template_id} onChange={(value) => updateDraftOverride(index, "edit_template_id", value)} style={{ minWidth: 155 }} options={templates.map((template) => ({ value: template.template_id, label: template.name }))} /> }]} /></div></Card>}<Space><Button onClick={() => setDrawerStep(0)}>上一步</Button><Button type="primary" disabled={!profileId} loading={submitting} onClick={() => void createBatch()}>创建并进入预检</Button></Space></Space>}
-      {drawerStep === 2 && <Space direction="vertical" size="large" style={{ width: "100%" }}><Alert type="info" showIcon message="预检不会调用生成或发布供应商" description="通过后才会进入后台队列；预检受阻项会被单独隔离。" /><Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} placeholder="授权主体" maxLength={80} /><Select value={concurrency} onChange={setConcurrency} options={[1, 2, 3, 4, 5].map((value) => ({ value, label: `同时 ${value} 条` }))} style={{ width: 180 }} /><InputNumber min={0} precision={2} value={maxTotalCost} onChange={setMaxTotalCost} placeholder="本批次费用上限（元）" style={{ width: 240 }} /><Checkbox checked={rightsConfirmed} onChange={(event) => setRightsConfirmed(event.target.checked)}>我确认拥有媒体、文案、肖像和声音处理授权</Checkbox>{preflight && Number(preflight.estimated_cost_cny || 0) > 0 && <Checkbox checked={paidActionsConfirmed} onChange={(event) => setPaidActionsConfirmed(event.target.checked)}>我确认本批次预计费用 ¥{Number(preflight.estimated_cost_cny || 0).toFixed(2)}；勾选后请重新预检</Checkbox>}<Space><Button loading={submitting} onClick={() => void runPreflight()}>运行预检</Button><Button type="primary" disabled={!preflight?.ready_count || Boolean(preflight?.cost_blocked)} loading={submitting} icon={<RocketOutlined />} onClick={() => void startBatch()}>启动 {preflight?.ready_count || 0} 条通过项</Button></Space>{preflight && <Card size="small" title={`预检结果：通过 ${preflight.ready_count} 条，受阻 ${preflight.blocked_count} 条`}><Paragraph type="secondary">预计总费用 {preflight.cost_known === false ? "未知（已阻断）" : `¥${Number(preflight.estimated_cost_cny || 0).toFixed(2)}`}；本月已用 ¥{preflight.monthly_budget_used_cny.toFixed(2)}。</Paragraph>{preflight.cost_issues?.map((issue) => <Alert key={issue} showIcon type="warning" message={issue} style={{ marginBottom: 8 }} />)}{preflight.items.map((item) => <Alert key={item.run_id} showIcon type={item.ready ? "success" : "warning"} message={item.display_title || item.candidate_id || item.run_id} description={item.ready ? "可进入后台队列" : item.reasons.join("；")} style={{ marginBottom: 8 }} />)}</Card>}</Space>}
+      {drawerStep === 2 && (
+        <Space direction="vertical" size="large" style={{ width: "100%" }}>
+          <Alert
+            type="info"
+            showIcon
+            message="预检不会调用生成或发布供应商"
+            description="点击“运行预检”即确认拥有本批次所需处理权。通过后才会进入后台队列；受阻项会被单独隔离。"
+          />
+          <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} placeholder="授权主体" maxLength={80} />
+          <Select value={concurrency} onChange={setConcurrency} options={[1, 2, 3, 4, 5].map((value) => ({ value, label: `同时 ${value} 条` }))} style={{ width: 180 }} />
+          <InputNumber min={0} precision={2} value={maxTotalCost} onChange={setMaxTotalCost} placeholder="本批次费用上限（元）" style={{ width: 240 }} />
+          {preflight && Number(preflight.estimated_cost_cny || 0) > 0 && !paidActionsConfirmed && (
+            <Button danger loading={submitting} onClick={() => void runPreflight(true)}>
+              确认费用 ¥{Number(preflight.estimated_cost_cny || 0).toFixed(2)} 并重新预检
+            </Button>
+          )}
+          <Space>
+            <Button loading={submitting} onClick={() => void runPreflight()}>运行预检</Button>
+            <Button type="primary" disabled={!preflight?.ready_count || Boolean(preflight?.cost_blocked)} loading={submitting} icon={<RocketOutlined />} onClick={() => void startBatch()}>
+              启动 {preflight?.ready_count || 0} 条通过项
+            </Button>
+          </Space>
+          {preflight && (
+            <Card size="small" title={`预检结果：通过 ${preflight.ready_count} 条，受阻 ${preflight.blocked_count} 条`}>
+              <Paragraph type="secondary">
+                预计总费用 {preflight.cost_known === false ? "未知（已阻断）" : `¥${Number(preflight.estimated_cost_cny || 0).toFixed(2)}`}；本月已用 ¥{preflight.monthly_budget_used_cny.toFixed(2)}。
+              </Paragraph>
+              {preflight.cost_issues?.map((issue) => <Alert key={issue} showIcon type="warning" message={issue} style={{ marginBottom: 8 }} />)}
+              {preflight.items.map((item) => <Alert key={item.run_id} showIcon type={item.ready ? "success" : "warning"} message={item.display_title || item.candidate_id || item.run_id} description={item.ready ? "可进入后台队列" : item.reasons.join("；")} style={{ marginBottom: 8 }} />)}
+            </Card>
+          )}
+        </Space>
+      )}
     </Drawer>
 
     <Modal open={Boolean(reviewItem)} title={reviewStage === "transcript" ? "确认原转写" : "审核口播文案"} confirmLoading={reviewLoading} okText={reviewStage === "transcript" ? "确认并生成改写稿" : "通过并继续生产"} onOk={() => void approveReview()} onCancel={() => setReviewItem(null)} width={720}><Paragraph type="secondary">{reviewStage === "transcript" ? "必须先核对原转写，确认后才会生成 AI 改写稿。" : "通过后才会进入数字人和剪辑；可直接修改最终口播稿。"}</Paragraph><Input.TextArea value={reviewText} onChange={(event) => setReviewText(event.target.value)} autoSize={{ minRows: 12, maxRows: 20 }} /></Modal>

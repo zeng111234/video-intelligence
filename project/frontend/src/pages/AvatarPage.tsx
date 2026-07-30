@@ -46,6 +46,7 @@ import {
   getVideoEditorJob,
   listAvatarAssets,
   listAvatarJobs,
+  retryAvatarVideoSubmission,
   trainCloudAvatar,
   trainCloudVoice,
   uploadAvatarAsset,
@@ -362,7 +363,11 @@ export default function AvatarPage() {
       });
       setJobs((items) => [job, ...items.filter((item) => item.task_id !== job.task_id)]);
       setActiveJobId(job.task_id);
-      toast.success(job.is_mock ? "演示任务已创建" : "数字人任务已提交");
+      if (job.status === "failed") {
+        toast.error(job.error_message || "数字人任务提交失败，文案已保留。");
+      } else {
+        toast.success(job.is_mock ? "演示任务已创建" : "数字人任务已提交");
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "提交数字人任务失败");
     } finally {
@@ -385,6 +390,38 @@ export default function AvatarPage() {
     selectedVoice,
     selectedVoiceReady,
   ]);
+
+  const handleRetryVideo = useCallback((job: AvatarJob) => {
+    Modal.confirm({
+      title: "确认只重试视频提交？",
+      content: (
+        <Space direction="vertical" size={6}>
+          <Text>系统会复用已经生成的克隆声音，不会重新克隆声音。</Text>
+          <Text type="warning">
+            供应商费用暂无法确定，本次视频重试可能产生第三方费用。
+          </Text>
+        </Space>
+      ),
+      okText: "确认重试一次",
+      cancelText: "暂不重试",
+      onOk: async () => {
+        try {
+          const latest = await retryAvatarVideoSubmission(job.task_id);
+          setJobs((items) =>
+            items.map((item) => (item.task_id === latest.task_id ? latest : item)),
+          );
+          setActiveJobId(latest.task_id);
+          if (latest.status === "failed" || latest.status === "outcome_unknown") {
+            toast.error(latest.error_message || "视频提交重试未成功。");
+          } else {
+            toast.success("已复用克隆声音，视频提交正在继续。");
+          }
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "视频提交重试失败");
+        }
+      },
+    });
+  }, [toast]);
 
   const handleDownload = useCallback(async (job: AvatarJob) => {
     try {
@@ -538,8 +575,8 @@ export default function AvatarPage() {
   }, [refresh, supportsCloudAvatarTraining, toast]);
 
   const handleCloudVoiceTraining = useCallback(async (file: File) => {
-    if (!supportsVoiceSampleUpload) {
-      toast.warning("公司云数字人服务尚未配置，暂不能保存声音样本。");
+    if (!supportsVoiceCloning) {
+      toast.warning("公司云声音训练线路尚未就绪，暂不能提交训练。");
       return false;
     }
     setUploadingVoice(true);
@@ -550,14 +587,14 @@ export default function AvatarPage() {
       });
       await refresh();
       setVoiceId(asset.asset_id);
-      toast.success(asset.status === "pending_configuration" ? "声音样本已保存，待配置声音线路后再克隆。" : "声音克隆训练已提交，可在素材列表查看状态。");
+      toast.success("声音克隆训练已提交，可在素材列表查看状态。");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "提交声音克隆失败");
     } finally {
       setUploadingVoice(false);
     }
     return false;
-  }, [refresh, supportsVoiceSampleUpload, toast]);
+  }, [refresh, supportsVoiceCloning, toast]);
 
   const closeCamera = useCallback(() => {
     setCameraOpen(false);
@@ -898,6 +935,16 @@ export default function AvatarPage() {
                     showIcon
                     icon={<ExclamationCircleOutlined />}
                     message={activeJob.error_message}
+                    action={
+                      activeJob.can_retry_video_submit ? (
+                        <Button
+                          size="small"
+                          onClick={() => handleRetryVideo(activeJob)}
+                        >
+                          仅重试视频
+                        </Button>
+                      ) : undefined
+                    }
                   />
                 )}
                 {activeJob.status === "succeeded" && !activeJob.result_url && (
@@ -1276,16 +1323,16 @@ export default function AvatarPage() {
                     <Button
                       icon={<UploadOutlined />}
                       loading={uploadingVoice}
-                      disabled={supportsLocalUpload ? false : !supportsVoiceSampleUpload}
+                      disabled={supportsLocalUpload ? false : !supportsVoiceCloning}
                     >
-                      {supportsLocalUpload ? "从设备上传录音" : supportsVoiceCloning ? "克隆声音（上传样本）" : "上传声音样本"}
+                      {supportsLocalUpload ? "从设备上传录音" : "克隆声音（上传样本）"}
                     </Button>
                   </Upload>
                 </Space>
                 <Text type="secondary" style={{ display: "block", marginTop: 10 }}>
                   {!supportsLocalUpload && !supportsVoiceCloning
-                    ? "声音样本会先保存为“待训练”；当前不会自动克隆，也不能直接用于视频。"
-                    : "上传或录制后会出现在上方；只有标记为“可使用”的声音可生成视频。"}
+                    ? "声音训练线路尚未就绪，暂不能提交样本。"
+                    : "上传后会立即开始训练；只有标记为“可使用”的声音可生成视频。"}
                 </Text>
               </>
             ) : (

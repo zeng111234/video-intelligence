@@ -883,7 +883,6 @@ export default function VideoEditorPage() {
   const [bgmEnabled, setBgmEnabled] = useState(true);
   const [bgmId, setBgmId] = useState<string>();
   const [bgmVolume, setBgmVolume] = useState(0.18);
-  const [bgmRightsConfirmed, setBgmRightsConfirmed] = useState(false);
   const [bgmRightsHolder, setBgmRightsHolder] = useState("");
   const [bgmMood, setBgmMood] = useState("知识·讲解·平稳");
   const [bgmVoiceoverCategory, setBgmVoiceoverCategory] = useState("理性干货");
@@ -1035,6 +1034,9 @@ export default function VideoEditorPage() {
   );
   const resultMediaUrl = currentItem?.result_media_url || currentItem?.job?.media_url || null;
   const playableResultMediaUrl = isBrowserMediaUrl(resultMediaUrl) ? resultMediaUrl : null;
+  const playableSourceMediaUrl = isBrowserMediaUrl(selectedSource?.media_url)
+    ? selectedSource.media_url
+    : null;
   const canConfirmOutput = Boolean(
     !isSandbox
     && playableResultMediaUrl
@@ -1138,8 +1140,8 @@ export default function VideoEditorPage() {
   };
 
   const uploadBgm = async (file: File) => {
-    if (!bgmRightsConfirmed || !bgmRightsHolder.trim()) {
-      message.warning("请先填写音乐权利主体并确认拥有使用权");
+    if (!bgmRightsHolder.trim()) {
+      message.warning("请先填写音乐权利主体");
       return;
     }
     setBgmUploading(true);
@@ -1350,23 +1352,38 @@ export default function VideoEditorPage() {
     }
   };
 
-  const downloadFinishedVideo = () => {
-    if (!playableResultMediaUrl || isSandbox) {
-      message.warning("真实成片生成后才可以下载");
-      return;
-    }
-    const title = (currentItem?.selected_title || currentItem?.title || selectedSource?.title || "剪辑成片")
+  const downloadVideo = (mediaUrl: string, fallbackTitle: string) => {
+    const title = fallbackTitle
       .replace(/[\\/:*?"<>|]/g, "")
       .trim()
-      .slice(0, 48) || "剪辑成片";
+      .slice(0, 48) || "视频";
     const link = document.createElement("a");
-    link.href = playableResultMediaUrl;
+    link.href = mediaUrl;
     link.download = `${title}.mp4`;
     link.rel = "noopener";
     link.style.display = "none";
     document.body.appendChild(link);
     link.click();
     link.remove();
+  };
+
+  const downloadFinishedVideo = () => {
+    if (!playableResultMediaUrl || isSandbox) {
+      message.warning("真实成片生成后才可以下载");
+      return;
+    }
+    downloadVideo(
+      playableResultMediaUrl,
+      currentItem?.selected_title || currentItem?.title || selectedSource?.title || "剪辑成片",
+    );
+  };
+
+  const downloadSourceVideo = () => {
+    if (!playableSourceMediaUrl) {
+      message.warning("当前原片暂时不可下载");
+      return;
+    }
+    downloadVideo(playableSourceMediaUrl, `${selectedSource?.title || "视频"}-原片`);
   };
 
   const handlePrimaryAction = () => {
@@ -1376,6 +1393,10 @@ export default function VideoEditorPage() {
     }
     if (currentStatus === "awaiting_subtitle_review" && currentItem) {
       void openReview(currentItem);
+      return;
+    }
+    if (currentStatus === "outcome_unknown") {
+      void loadQuote(outputProfile, true);
       return;
     }
     if (["failed", "interrupted"].includes(currentStatus)) {
@@ -1416,7 +1437,11 @@ export default function VideoEditorPage() {
       return { label: "正在生成一次正式成片", disabled: true, icon: <Spin size="small" /> };
     }
     if (currentStatus === "outcome_unknown") {
-      return { label: "供应商结果待查，不重复提交", disabled: true, icon: <ClockCircleOutlined /> };
+      return {
+        label: "重新报价并生成带字幕成片",
+        disabled: !selectedSourceId,
+        icon: <CloudOutlined />,
+      };
     }
     if (currentStatus === "configuration_required") {
       return {
@@ -1798,18 +1823,38 @@ export default function VideoEditorPage() {
               <Tag icon={<PlayCircleOutlined />}>
                 {previewMode === "plan" ? "按正式粗剪方案预览" : previewMode === "output" ? "正式成片" : "原始素材"}
               </Tag>
-              <Tooltip title={playableResultMediaUrl && !isSandbox ? "下载已生成的正式成片" : "真实成片生成后可下载"}>
-                <span>
-                  <Button
-                    size="small"
-                    icon={<DownloadOutlined />}
-                    disabled={!playableResultMediaUrl || isSandbox}
-                    onClick={downloadFinishedVideo}
-                  >
-                    下载成片
+              {!playableResultMediaUrl && playableSourceMediaUrl && (
+                <Tooltip title="原片可直接下载；不含字幕、剪辑或配乐">
+                  <Button size="small" icon={<DownloadOutlined />} onClick={downloadSourceVideo}>
+                    下载原片
                   </Button>
-                </span>
-              </Tooltip>
+                </Tooltip>
+              )}
+              {currentStatus === "awaiting_subtitle_review" ? (
+                <Button
+                  size="small"
+                  icon={<EditOutlined />}
+                  disabled={!currentItem}
+                  onClick={() => {
+                    if (currentItem) void openReview(currentItem);
+                  }}
+                >
+                  去审核并生成成片
+                </Button>
+              ) : (
+                <Tooltip title={playableResultMediaUrl && !isSandbox ? "下载已生成的正式成片" : "真实成片生成后可下载"}>
+                  <span>
+                    <Button
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      disabled={!playableResultMediaUrl || isSandbox}
+                      onClick={downloadFinishedVideo}
+                    >
+                      下载成片
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
               {estimatedRemovedSeconds > 0 && (
                 <Text>预计删减 {estimatedRemovedSeconds.toFixed(1)} 秒</Text>
               )}
@@ -1866,7 +1911,7 @@ export default function VideoEditorPage() {
                 type="warning"
                 showIcon
                 message="付费提交结果未知"
-                description="系统不会盲目重提。请等待查询原供应商任务或人工处理。"
+                description="旧任务不会自动重提。可重新获取报价，确认后按已校对的字幕生成一条新成片。"
               />
             )}
 
@@ -2403,12 +2448,6 @@ export default function VideoEditorPage() {
                 message="短视频也要按实际发布用途确认音乐许可"
                 description="个人非推广内容按素材页允许范围使用；企业号、获客、品牌宣传或带货通常属于商业使用。光厂、波点和 Pixabay 都应保存对应作品的来源或授权记录。"
               />
-              <Checkbox
-                checked={bgmRightsConfirmed}
-                onChange={(event) => setBgmRightsConfirmed(event.target.checked)}
-              >
-                我确认拥有该音乐使用权
-              </Checkbox>
               <Upload
                 accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac"
                 showUploadList={false}
@@ -2421,12 +2460,11 @@ export default function VideoEditorPage() {
                   icon={<UploadOutlined />}
                   loading={bgmUploading}
                   disabled={
-                    !bgmRightsConfirmed
-                    || !bgmRightsHolder.trim()
+                    !bgmRightsHolder.trim()
                     || (bgmSourceProvider !== "manual" && !bgmSourceUrl.trim())
                   }
                 >
-                  上传到授权音乐库
+                  确认有权并上传到音乐库
                 </Button>
               </Upload>
             </Space>

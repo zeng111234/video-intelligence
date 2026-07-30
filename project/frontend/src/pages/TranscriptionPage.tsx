@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Col,
   Drawer,
   Empty,
@@ -123,7 +122,6 @@ export default function TranscriptionPage() {
   const [shareText, setShareText] = useState("");
   const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
   const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
-  const [linkRightsConfirmed, setLinkRightsConfirmed] = useState(false);
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
   const [asrModel, setAsrModel] = usePersistentState("transcription_asr_model", "large-v3-turbo");
@@ -228,7 +226,7 @@ export default function TranscriptionPage() {
   }, []);
 
   const handlePreviewShareLink = async () => {
-    if (!shareText.trim()) return toast.warning("请粘贴抖音分享链接");
+    if (!shareText.trim()) return toast.warning("请粘贴一条平台分享链接");
     setSubmitting(true);
     try {
       setLinkPreview(await previewCrawlerLinkTranscription(shareText));
@@ -240,7 +238,7 @@ export default function TranscriptionPage() {
   };
 
   const handleShareLinkTranscribe = async (fallback = false) => {
-    if (!linkPreview || !linkRightsConfirmed) return toast.warning("请先确认拥有内容处理权");
+    if (!linkPreview) return;
     setSubmitting(true);
     try {
       const result = fallback
@@ -511,7 +509,7 @@ export default function TranscriptionPage() {
             type="warning"
             showIcon
             message="权利确认边界"
-            description="不会自动下载平台分享页或自动操作第三方工具。可上传有权处理的文件，或填写授权直链。"
+            description="确认有权后，可用本机浏览器解析单条平台分享链接；不会批量下载、绕过验证或自动调用付费回退。也可以上传文件或填写授权直链。"
           />
           <Space wrap>
             <Select
@@ -539,28 +537,27 @@ export default function TranscriptionPage() {
               },
               {
                 key: "douyin-share",
-                label: <span><LinkOutlined /> 抖音分享链接</span>,
+                label: <span><LinkOutlined /> 平台分享链接</span>,
                 children: (
                   <Space direction="vertical" style={{ width: "100%" }}>
                     <Alert
                       type={linkCapabilities?.parser_enabled ? "info" : "warning"}
                       showIcon
                       message={linkCapabilities?.parser_enabled ? "本机解析已安装，待实际链接验证" : "本机解析器未就绪"}
-                      description="仅处理单条、已获授权的抖音分享链接。解析失败会保留具体错误；只有你明确确认后才可使用 OneAPI 付费回退。"
+                      description="支持单条、已获授权的抖音、小红书、快手或B站分享链接。后三个平台需先连接对应专用浏览器；只有抖音解析失败且你明确确认时才可使用 OneAPI 付费回退。"
                     />
-                    <TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} placeholder="粘贴抖音分享文案或 v.douyin.com 分享链接" rows={3} />
-                    <Checkbox checked={linkRightsConfirmed} onChange={(event) => setLinkRightsConfirmed(event.target.checked)}>我确认有权处理此内容</Checkbox>
+                    <TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} placeholder="粘贴抖音、小红书、快手或B站分享链接" rows={3} />
                     <Button loading={submitting} onClick={handlePreviewShareLink}>识别链接</Button>
                     {linkPreview && (
                       <Alert
                         type={linkPreview.parser_enabled ? "info" : "warning"}
                         showIcon
-                        message={linkPreview.parser_enabled ? `已识别作品 ID：${linkPreview.work_id || "未返回"}` : "本机解析不可用"}
+                        message={linkPreview.parser_enabled ? `已识别${linkPreview.platform_label}作品：${linkPreview.work_id || "等待页面返回作品 ID"}` : `${linkPreview.platform_label}本机解析不可用`}
                         description={
                           <Space wrap>
                             <Text>{linkPreview.parser_message || "可开始本机解析并转写。"}</Text>
-                            <Button type="primary" loading={submitting} disabled={!linkPreview.parser_enabled || !linkRightsConfirmed} onClick={() => handleShareLinkTranscribe(false)}>本机解析并转写</Button>
-                            {linkPreview.oneapi_fallback_available && <Button danger loading={submitting} disabled={!linkRightsConfirmed} onClick={() => Modal.confirm({ title: "确认 OneAPI 付费回退", content: `预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleShareLinkTranscribe(true) })}>确认后付费回退</Button>}
+                            <Button type="primary" loading={submitting} disabled={!linkPreview.parser_enabled} onClick={() => handleShareLinkTranscribe(false)}>确认有权并转写</Button>
+                            {linkPreview.oneapi_fallback_available && <Button danger loading={submitting} onClick={() => Modal.confirm({ title: "确认 OneAPI 付费回退", content: `预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleShareLinkTranscribe(true) })}>确认后付费回退</Button>}
                           </Space>
                         }
                       />

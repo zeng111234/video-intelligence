@@ -494,9 +494,12 @@ export interface CrawlerCapabilitiesResponse {
   /** 官方实时热点词能力状态 */
   official_hot_words?: CrawlerOfficialHotCapability | null;
   hotspot_browser?: CrawlerBrowserDiscoveryCapabilities | null;
+  platform_browsers?: CrawlerBrowserDiscoveryCapabilities[];
 }
 
 export interface CrawlerBrowserDiscoveryCapabilities {
+  platform?: string;
+  platform_label?: string;
   enabled: boolean;
   running: boolean;
   login_required: boolean;
@@ -593,12 +596,16 @@ export interface VoiceoverDraftResponse {
 
 export interface CrawlerLinkTranscriptionCapabilities {
   experimental: boolean;
+  supported_platforms?: string[];
+  supported_platform_labels?: string[];
   parser_enabled: boolean;
   parser_message: string | null;
   oneapi_estimated_cost_cny: number | null;
 }
 
 export interface CrawlerLinkTranscriptionPreview {
+  platform: string;
+  platform_label: string;
   share_url: string;
   work_id: string | null;
   parser_enabled: boolean;
@@ -626,19 +633,19 @@ export interface CrawlerProviderUsage {
 
 export interface CrawlerSearchRequest {
   keyword: string;
-  published_window_days: 0 | 1 | 7;
+  published_window_days: 0 | 1 | 3 | 7;
   /** 热点宝榜单统计周期；不等同于视频发布时间。 */
   hotspot_window_hours?: 1 | 24 | 72 | 168;
   count_per_platform: number;
   force_refresh: boolean;
-  /** smart 先走热点宝；OneAPI 只在明确二次确认后使用。 */
+  /** smart 使用热点宝、平台浏览器和 B站公开搜索，不接 OneAPI。 */
   mode?: "official_hot" | "smart";
   /** 用户明确给出的相关赛道词；不会由系统自动扩词。 */
   related_terms?: string[];
   /** 候选不足时，是否允许仅用首个相关词做一次额外检索。 */
   allow_related_fallback?: boolean;
-  /** 是否启用会产生后续调用的真实趋势跟踪。 */
-  track_trend?: boolean;
+  /** 复采已关闭；只允许单次搜索。 */
+  track_trend?: false;
   target_main_count?: number;
   max_paid_calls?: number;
   allow_paid_fallback?: boolean;
@@ -907,22 +914,8 @@ export interface CrawlerBatchResponse {
   crawl_safety?: CrawlerSafetyStatus | null;
 }
 
-export interface CrawlerTrackingResponse {
-  batch: CrawlerBatchResponse;
-  scheduled_candidates: number;
-  additional_api_calls: number;
-  estimated_additional_cost_cny: number | null;
-  next_tracking_at: string | null;
-  message: string;
-}
-
 export interface CrawlerBatchListResponse {
   items: CrawlerBatchResponse[];
-  total: number;
-}
-
-export interface CrawlerDueRecrawlResponse {
-  executed_batches: CrawlerBatchResponse[];
   total: number;
 }
 
@@ -1229,6 +1222,8 @@ export interface AvatarJob {
   result_url: string | null;
   error_kind: string | null;
   error_message: string | null;
+  retry_count?: number;
+  can_retry_video_submit?: boolean;
   is_mock: boolean;
   created_at: string;
   updated_at: string;

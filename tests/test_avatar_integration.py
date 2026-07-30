@@ -42,8 +42,15 @@ def _request(key: str = "avatar-test-123") -> AvatarSubmitRequest:
 
 
 class FakeAvatarProvider:
-    def __init__(self, *, outcome_unknown: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        outcome_unknown: bool = False,
+        service_error: bool = False,
+    ) -> None:
         self.outcome_unknown = outcome_unknown
+        self.service_error = service_error
+        self.get_job_calls = 0
         self.submitted_requests: list[AvatarSubmitRequest] = []
         self.snapshot = AvatarJobSnapshot(
             job_id="provider-job-1",
@@ -92,11 +99,17 @@ class FakeAvatarProvider:
                 kind=ProviderErrorKind.CONNECTION,
                 outcome_unknown=True,
             )
+        if self.service_error:
+            raise AvatarProviderError(
+                "系统繁忙，请联系平台运营商！",
+                kind=ProviderErrorKind.SERVICE,
+            )
         return self.snapshot.model_copy(
             update={"idempotency_key": request.idempotency_key}
         )
 
     def get_job(self, job_id: str) -> AvatarJobSnapshot:
+        self.get_job_calls += 1
         return self.snapshot.model_copy(
             update={
                 "job_id": job_id,
@@ -112,6 +125,96 @@ class FakeAvatarProvider:
 
     def download_result(self, job_id: str) -> tuple[bytes, str]:
         return b"\x00\x00\x00\x18ftypmp42test-video", "video/mp4"
+
+
+class RecoverableVoiceProvider(FakeAvatarProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resume_calls = 0
+
+    def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot:
+        self.submitted_requests.append(request)
+        return AvatarJobSnapshot(
+            job_id="voice-tts:tts-task-101",
+            idempotency_key=request.idempotency_key,
+            status=AvatarProviderStatus.RUNNING,
+            progress=10,
+            stage="克隆声音合成中",
+        )
+
+    def resume_submit(
+        self,
+        request: AvatarSubmitRequest,
+        pending_job_id: str,
+    ) -> AvatarJobSnapshot:
+        self.resume_calls += 1
+        assert request.video_name == "数字人视频1"
+        assert pending_job_id == "voice-tts:tts-task-101"
+        return AvatarJobSnapshot(
+            job_id="provider-video-101",
+            idempotency_key=request.idempotency_key,
+            status=AvatarProviderStatus.QUEUED,
+            progress=5,
+            stage="公司云端排队中",
+            provider_job_id="provider-video-101",
+        )
+
+
+class BusyThenQueuedVideoProvider(RecoverableVoiceProvider):
+    def resume_submit(
+        self,
+        request: AvatarSubmitRequest,
+        pending_job_id: str,
+    ) -> AvatarJobSnapshot:
+        self.resume_calls += 1
+        if self.resume_calls == 1:
+            return AvatarJobSnapshot(
+                job_id=pending_job_id,
+                idempotency_key=request.idempotency_key,
+                status=AvatarProviderStatus.FAILED,
+                progress=100,
+                stage="视频提交失败",
+                error_kind=ProviderErrorKind.SERVICE,
+                error_message="系统繁忙，请联系平台运营商！",
+            )
+        return AvatarJobSnapshot(
+            job_id="provider-video-retry-101",
+            idempotency_key=request.idempotency_key,
+            status=AvatarProviderStatus.QUEUED,
+            progress=5,
+            stage="公司云端排队中",
+            provider_job_id="provider-video-retry-101",
+        )
+
+
+class BusyThenUnknownVideoProvider(RecoverableVoiceProvider):
+    def resume_submit(
+        self,
+        request: AvatarSubmitRequest,
+        pending_job_id: str,
+    ) -> AvatarJobSnapshot:
+        self.resume_calls += 1
+        if self.resume_calls == 1:
+            return AvatarJobSnapshot(
+                job_id=pending_job_id,
+                idempotency_key=request.idempotency_key,
+                status=AvatarProviderStatus.FAILED,
+                progress=100,
+                stage="视频提交失败",
+                error_kind=ProviderErrorKind.SERVICE,
+                error_message="系统繁忙，请联系平台运营商！",
+            )
+        if self.resume_calls == 2:
+            return AvatarJobSnapshot(
+                job_id=pending_job_id,
+                idempotency_key=request.idempotency_key,
+                status=AvatarProviderStatus.OUTCOME_UNKNOWN,
+                progress=0,
+                stage="视频提交结果待核对",
+                error_kind=ProviderErrorKind.OUTCOME_UNKNOWN,
+                error_message="视频提交连接中断，供应商是否接单暂不确定。",
+            )
+        raise AssertionError("结果不确定后不得再次提交视频")
 
 
 def test_internal_provider_retries_get_once_but_never_repeats_submit() -> None:
@@ -253,6 +356,87 @@ def test_unknown_submit_is_saved_and_reconciled_by_idempotency_key() -> None:
     reconciled = service.refresh_task(task.task_id)
     assert reconciled.status == TaskStatus.QUEUED
     assert reconciled.provider_job_id == "provider-job-1"
+
+
+def test_rejected_submit_keeps_original_error_without_querying_a_missing_job() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FakeAvatarProvider(service_error=True)
+    service = AvatarService(repository, provider)
+
+    failed = service.submit(
+        _request(), avatar_name="授权形象", voice_name="授权音色"
+    )
+    refreshed = service.refresh_task(failed.task_id)
+
+    assert refreshed.status == TaskStatus.FAILED
+    assert refreshed.provider_status == AvatarProviderStatus.FAILED
+    assert refreshed.error_message == "系统繁忙，请联系平台运营商！"
+    assert refreshed.backend_job_id is None
+    assert provider.get_job_calls == 0
+
+
+def test_pending_cloned_voice_resumes_without_repeating_voice_submission() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = RecoverableVoiceProvider()
+    service = AvatarService(repository, provider)
+
+    pending = service.submit(
+        _request(), avatar_name="授权形象", voice_name="授权音色"
+    )
+    resumed = service.refresh_task(pending.task_id)
+
+    assert pending.status == TaskStatus.RUNNING
+    assert pending.backend_job_id == "voice-tts:tts-task-101"
+    assert resumed.status == TaskStatus.QUEUED
+    assert resumed.backend_job_id == "provider-video-101"
+    assert resumed.provider_job_id == "provider-video-101"
+    assert provider.resume_calls == 1
+    assert provider.get_job_calls == 0
+    assert len(provider.submitted_requests) == 1
+
+
+def test_busy_video_submission_can_be_retried_once_without_recreating_voice() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = BusyThenQueuedVideoProvider()
+    service = AvatarService(repository, provider)
+
+    pending = service.submit(
+        _request(), avatar_name="授权形象", voice_name="授权音色"
+    )
+    failed = service.refresh_task(pending.task_id)
+    retried = service.retry_failed_video(failed.task_id)
+
+    assert service.can_retry_video_submit(failed) is True
+    assert retried.status == TaskStatus.QUEUED
+    assert retried.backend_job_id == "provider-video-retry-101"
+    assert retried.provider_job_id == "provider-video-retry-101"
+    assert retried.retry_count == 1
+    assert service.can_retry_video_submit(retried) is False
+    assert provider.resume_calls == 2
+    assert len(provider.submitted_requests) == 1
+
+    with pytest.raises(ValueError, match="不能安全重试"):
+        service.retry_failed_video(retried.task_id)
+
+
+def test_unknown_video_retry_is_never_reposted_during_refresh() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = BusyThenUnknownVideoProvider()
+    service = AvatarService(repository, provider)
+
+    pending = service.submit(
+        _request(), avatar_name="授权形象", voice_name="授权音色"
+    )
+    failed = service.refresh_task(pending.task_id)
+    unknown = service.retry_failed_video(failed.task_id)
+    refreshed = service.refresh_task(unknown.task_id)
+
+    assert unknown.status == TaskStatus.OUTCOME_UNKNOWN
+    assert refreshed.status == TaskStatus.OUTCOME_UNKNOWN
+    assert refreshed.error_message == "视频提交连接中断，供应商是否接单暂不确定。"
+    assert refreshed.retry_count == 1
+    assert provider.resume_calls == 2
+    assert len(provider.submitted_requests) == 1
 
 
 def test_result_is_saved_only_after_mp4_and_ffprobe_validation(

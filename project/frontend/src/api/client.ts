@@ -25,7 +25,6 @@ import type {
   CrawlerDoubaoJobListResponse,
   CrawlerDoubaoMobileCapabilitiesResponse,
   CrawlerDoubaoWorkerStartResponse,
-  CrawlerDueRecrawlResponse,
   CrawlerHotWordsResponse,
   CrawlerLinkTranscriptionCapabilities,
   CrawlerLinkTranscriptionPreview,
@@ -34,7 +33,6 @@ import type {
   CrawlerOriginalScriptResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
-  CrawlerTrackingResponse,
   EditTemplate,
   PipelineFromCandidateRequest,
   GuidedPipelinePreflight,
@@ -684,6 +682,7 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
     official_hot_billboard: caps.official_hot_billboard ?? null,
     official_hot_words: caps.official_hot_words ?? null,
     hotspot_browser: caps.hotspot_browser ?? null,
+    platform_browsers: caps.platform_browsers ?? [],
   };
 }
 
@@ -691,8 +690,13 @@ export function getCrawlerBrowserDiscoveryCapabilities(): Promise<CrawlerBrowser
   return request("/crawler/browser-discovery/capabilities");
 }
 
-export function startCrawlerBrowserDiscovery(): Promise<CrawlerBrowserDiscoveryStartResponse> {
-  return request("/crawler/browser-discovery/start", { method: "POST" });
+export function startCrawlerBrowserDiscovery(
+  platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili" = "douyin",
+): Promise<CrawlerBrowserDiscoveryStartResponse> {
+  const path = platform === "douyin"
+    ? "/crawler/browser-discovery/start"
+    : `/crawler/browser-discovery/${platform}/start`;
+  return request(path, { method: "POST" });
 }
 
 /** 官方实时热点词（用于搜索框建议）；后端未上线时由调用方 catch 降级 */
@@ -744,20 +748,6 @@ export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> 
 
 export function deleteCrawlerBatch(batchId: string): Promise<{ batch_id: string; deleted: boolean }> {
   return request(`/crawler/batches/${batchId}`, { method: "DELETE" });
-}
-
-export function startCrawlerBatchTracking(batchId: string): Promise<CrawlerTrackingResponse> {
-  return request(`/crawler/batches/${encodeURIComponent(batchId)}/tracking`, { method: "POST" });
-}
-
-export function cancelCrawlerBatchTracking(batchId: string): Promise<CrawlerTrackingResponse> {
-  return request(`/crawler/batches/${encodeURIComponent(batchId)}/tracking`, { method: "DELETE" });
-}
-
-export function executeDueCrawlerRecrawls(limit = 5): Promise<CrawlerDueRecrawlResponse> {
-  return request(`/crawler/recrawls/due?limit=${limit}`, {
-    method: "POST",
-  });
 }
 
 export function previewCrawlerCandidateMedia(
@@ -1203,6 +1193,12 @@ export function listAvatarJobs(params: { includeSandbox?: boolean } = {}): Promi
 
 export function getAvatarJob(taskId: string): Promise<AvatarJob> {
   return request(`/avatar/jobs/${taskId}`);
+}
+
+export function retryAvatarVideoSubmission(taskId: string): Promise<AvatarJob> {
+  return request(`/avatar/jobs/${taskId}/retry-video`, {
+    method: "POST",
+  });
 }
 
 export async function downloadAvatarJobMedia(taskId: string): Promise<Blob> {

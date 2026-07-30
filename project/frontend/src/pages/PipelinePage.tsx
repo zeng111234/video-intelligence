@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Descriptions,
   Empty,
   Input,
@@ -344,7 +343,6 @@ export default function PipelinePage() {
   const [browserDiscovery, setBrowserDiscovery] = useState<CrawlerBrowserDiscoveryCapabilities | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupRightsHolder, setSetupRightsHolder] = useState("");
-  const [setupAgreementAccepted, setSetupAgreementAccepted] = useState(false);
   const [profilePickerOpen, setProfilePickerOpen] = useState(false);
   const [profileCreateOpen, setProfileCreateOpen] = useState(false);
   const [voiceUploadOpen, setVoiceUploadOpen] = useState(false);
@@ -392,6 +390,10 @@ export default function PipelinePage() {
   );
   const usableVoiceAssets = useMemo(
     () => assets.filter((asset) => asset.kind === "voice" && asset.authorized && asset.status === "ready"),
+    [assets],
+  );
+  const pendingVoiceAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "voice" && asset.authorized && asset.status !== "ready"),
     [assets],
   );
   const selectedCreatorVoice = useMemo(
@@ -780,7 +782,11 @@ export default function PipelinePage() {
         setVoiceUploadOpen(false);
         setActionMessage("声音已上传并自动选中。");
       } else {
-        setActionMessage(asset.status_message || "声音样本已上传，供应商处理完成后才能用于视频。");
+        setVoiceUploadOpen(false);
+        setActionMessage(
+          asset.status_message
+          || "声音样本已保存，但当前声音服务尚未开通；暂时继续使用原来的声音。",
+        );
       }
     } catch (error) {
       setActionError((error as Error).message || "声音上传失败，请保留当前内容后重试。");
@@ -810,8 +816,8 @@ export default function PipelinePage() {
   };
 
   const saveWorkspaceSetup = async () => {
-    if (!setupRightsHolder.trim() || !setupAgreementAccepted) {
-      setActionError("请填写主体并勾选确认后继续。");
+    if (!setupRightsHolder.trim()) {
+      setActionError("请填写公司名称或本人姓名。");
       return;
     }
     if (!sourceConnectionReady) {
@@ -830,7 +836,6 @@ export default function PipelinePage() {
       setWorkspaceConfiguration(configuration);
       setPublishPlatforms(configuration.default_publish_platforms || ["douyin"]);
       setSetupOpen(false);
-      setSetupAgreementAccepted(false);
       setActionMessage("开工前设置已完成。现在只要输入关键词，其他交给我。 ");
     } catch (error) {
       setActionError((error as Error).message || "基础设置保存失败");
@@ -1850,18 +1855,30 @@ export default function PipelinePage() {
           <Card title={<Space><SafetyCertificateOutlined /> 当前 IP 配方</Space>}>
             {activeProfile ? (
               <div className="profile-summary">
-                <div className="profile-avatar-preview">
+                <div className="profile-summary-details" aria-label="当前 IP 信息">
+                  <Descriptions size="small" column={{ xs: 1, sm: 3 }}>
+                    <Descriptions.Item label="出镜人">{profileAvatar?.name || activeProfile.name}</Descriptions.Item>
+                    <Descriptions.Item label="音色">{profileVoice?.name || activeProfile.voice_id}</Descriptions.Item>
+                    <Descriptions.Item label="发布到">{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</Descriptions.Item>
+                  </Descriptions>
+                </div>
+                <div className="profile-avatar-preview" aria-label="当前 IP 出镜人预览">
                   {profileAvatar?.preview_url ? (
                     profileAvatar.preview_type === "video" ? (
-                      <video src={profileAvatar.preview_url} muted playsInline preload="metadata" />
+                      <video
+                        src={profileAvatar.preview_url}
+                        muted
+                        playsInline
+                        preload="auto"
+                        onLoadedMetadata={(event) => {
+                          if (event.currentTarget.currentTime === 0) {
+                            event.currentTarget.currentTime = 0.01;
+                          }
+                        }}
+                      />
                     ) : <img src={profileAvatar.preview_url} alt={`${profileAvatar.name} 形象预览`} />
                   ) : <SafetyCertificateOutlined />}
                 </div>
-                <Descriptions size="small" column={1}>
-                  <Descriptions.Item label="出镜人">{profileAvatar?.name || activeProfile.name}</Descriptions.Item>
-                  <Descriptions.Item label="音色">{profileVoice?.name || activeProfile.voice_id}</Descriptions.Item>
-                  <Descriptions.Item label="发布到">{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</Descriptions.Item>
-                </Descriptions>
               </div>
             ) : (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无完整 IP 配方" />
@@ -2045,11 +2062,8 @@ export default function PipelinePage() {
               </Space>
             </div>
           )}
-          <Checkbox checked={setupAgreementAccepted} onChange={(event) => setSetupAgreementAccepted(event.target.checked)}>
-            我确认拥有本次创作所需的媒体、文案、肖像与声音处理权
-          </Checkbox>
           <Button type="primary" size="large" block loading={busy} disabled={!sourceConnectionReady} onClick={() => void saveWorkspaceSetup()}>
-            完成设置，进入工作台
+            确认授权并进入工作台
           </Button>
         </Space>
       </Modal>
@@ -2152,7 +2166,14 @@ export default function PipelinePage() {
               value={voiceId || undefined}
               onChange={setVoiceId}
               placeholder="选择已授权音色"
-              options={usableVoiceAssets.map((asset) => ({ label: asset.name, value: asset.asset_id }))}
+              options={[
+                ...usableVoiceAssets.map((asset) => ({ label: asset.name, value: asset.asset_id })),
+                ...pendingVoiceAssets.map((asset) => ({
+                  label: `${asset.name}（等待声音服务开通）`,
+                  value: asset.asset_id,
+                  disabled: true,
+                })),
+              ]}
             />
             <Button
               icon={playingVoiceId === voiceId ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
@@ -2182,6 +2203,11 @@ export default function PipelinePage() {
             }}
           />
           {voicePreviewError && <Text type="danger">{voicePreviewError}</Text>}
+          {pendingVoiceAssets.length > 0 && (
+            <Text type="secondary">
+              已保存声音样本：{pendingVoiceAssets.map((asset) => asset.name).join("、")}。当前声音服务尚未开通，暂不能选择。
+            </Text>
+          )}
           {voiceUploadOpen && (
             <div className="voice-upload-panel">
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -2198,7 +2224,11 @@ export default function PipelinePage() {
                     暂不添加
                   </Button>
                 </div>
-                <Text type="secondary">支持 MP3、WAV、M4A，建议 30 秒以内。处理完成后会自动选中。</Text>
+                <Text type="secondary">
+                  {avatarCapability?.supports_voice_cloning
+                    ? "支持 MP3、WAV、M4A，需在 30 秒以内。处理完成后会自动选中。"
+                    : "支持 MP3、WAV、M4A，需在 30 秒以内。当前只能先保存样本，声音服务开通后才能选择。"}
+                </Text>
                 <Upload
                   accept="audio/wav,audio/mpeg,audio/mp3,audio/mp4,.wav,.mp3,.m4a"
                   showUploadList={false}
@@ -2213,7 +2243,7 @@ export default function PipelinePage() {
                     loading={uploadingVoice}
                     disabled={!voiceSampleUploadAvailable}
                   >
-                    确认上传并处理
+                    {avatarCapability?.supports_voice_cloning ? "确认上传并处理" : "保存声音样本"}
                   </Button>
                 </Upload>
                 {!voiceSampleUploadAvailable && (
@@ -2374,10 +2404,24 @@ export default function PipelinePage() {
           padding: 6px 0;
         }
         .profile-summary {
-          display: grid;
-          grid-template-columns: 104px minmax(0, 1fr);
+          display: flex;
+          flex-direction: column;
           gap: 14px;
-          align-items: center;
+        }
+        .profile-summary-details {
+          padding: 12px 14px;
+          border-radius: 12px;
+          background: #f8f6ff;
+        }
+        .profile-summary-details .ant-descriptions-item {
+          padding-bottom: 0;
+        }
+        .profile-summary-details .ant-descriptions-item-label {
+          color: #777e8d;
+        }
+        .profile-summary-details .ant-descriptions-item-content {
+          color: #252938;
+          font-weight: 600;
         }
         .profile-avatar-preview,
         .profile-picker-media {
@@ -2388,12 +2432,24 @@ export default function PipelinePage() {
           color: #7252dc;
         }
         .profile-avatar-preview {
-          width: 104px;
-          height: 104px;
+          position: relative;
+          align-self: center;
+          width: min(42%, 168px);
+          aspect-ratio: 9 / 16;
           border-radius: 14px;
         }
         .profile-avatar-preview img,
-        .profile-avatar-preview video,
+        .profile-avatar-preview video {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+          min-width: 0;
+          min-height: 0;
+          object-fit: contain;
+          object-position: center;
+        }
         .profile-picker-media img,
         .profile-picker-media video { width: 100%; height: 100%; object-fit: cover; }
         .setup-profile-line {

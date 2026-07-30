@@ -124,7 +124,7 @@ def _service(repository, provider, now: datetime) -> CommercialSearchService:
     return CommercialSearchService(
         repository,
         source,
-        KeywordTrendService(repository),
+        KeywordTrendService(repository, clock=lambda: now),
         provider,
         clock=lambda: now,
     )
@@ -139,7 +139,7 @@ def _douyin_only_service(
     return CommercialSearchService(
         repository,
         source,
-        KeywordTrendService(repository),
+        KeywordTrendService(repository, clock=lambda: now),
         provider,
         active_platforms=(Platform.DOUYIN,),
         clock=lambda: now,
@@ -300,6 +300,45 @@ def test_unknown_outcome_blocks_later_retry_until_admin_resolution() -> None:
         for run in repository.list_platform_search_runs(second.batch_id)
     )
     assert len(provider.search_calls) == 3
+
+
+def test_free_local_browser_recovers_from_unknown_outcome_without_billing_lock() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.capabilities = lambda: ProviderCapability(
+        provider_name="free_local_browser",
+        display_name="免费本机浏览器",
+        mode=ProviderMode.LOCAL_BROWSER,
+        enabled=True,
+        supported_platforms=[
+            Platform.DOUYIN,
+            Platform.XIAOHONGSHU,
+            Platform.WECHAT_CHANNELS,
+        ],
+        permission_status="local_browser",
+    )
+    provider.error = LicensedProviderError(
+        "浏览器解析异常",
+        kind=ProviderErrorKind.OUTCOME_UNKNOWN,
+        outcome_unknown=True,
+    )
+    service = _service(repository, provider, now)
+    first = service.execute(keyword="二手车", force_refresh=True)
+    assert all(
+        run.status == PlatformRunStatus.OUTCOME_UNKNOWN
+        for run in repository.list_platform_search_runs(first.batch_id)
+    )
+
+    provider.error = None
+    second = _service(
+        repository, provider, now + timedelta(minutes=5)
+    ).execute(keyword="二手车", force_refresh=True)
+    assert all(
+        run.status not in {PlatformRunStatus.BLOCKED, PlatformRunStatus.OUTCOME_UNKNOWN}
+        for run in repository.list_platform_search_runs(second.batch_id)
+    )
+    assert len(provider.search_calls) == 6
 
 
 def test_sqlite_persists_batches_cache_and_platform_trend_key(tmp_path) -> None:
@@ -525,7 +564,19 @@ def test_all_strictly_irrelevant_results_are_reported_without_importing() -> Non
 
 def test_strict_keyword_relevance_normalizes_spacing_and_punctuation() -> None:
     assert title_matches_keyword(title="AI-获客案例 #AI获客", keyword="ＡＩ 获客")
+    assert title_matches_keyword(
+        title="餐饮店在抖音怎么做才能获客",
+        keyword="餐饮获客",
+    )
+    assert not title_matches_keyword(title="实体门店获客方法", keyword="餐饮获客")
     assert not title_matches_keyword(title="日常 vlog", keyword="获客")
+
+
+def test_kuaishou_public_video_url_matches_platform() -> None:
+    assert CommercialSearchService._url_matches_platform(
+        "https://www.kuaishou.com/short-video/ks-video-1",
+        Platform.KUAISHOU,
+    )
 
 
 def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> None:
@@ -578,6 +629,49 @@ def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> N
     assert run.returned_count == 0
     assert len(repository.list_candidates()) == 0
     assert provider.search_calls == [Platform.DOUYIN]
+
+
+def test_items_without_reliable_publish_time_are_not_presented_as_one_week_videos() -> None:
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id="unknown-publish-time",
+                title="餐饮获客近期方法",
+                author_id="author-unknown",
+                author_name="待核验作者",
+                published_at=now,
+                source_url="https://www.douyin.com/video/unknown-publish-time",
+                provider_rank=1,
+                metrics={
+                    "item_id": "unknown-publish-time",
+                    "sampled_at": now,
+                    "likes": 200,
+                    "confidence": 0.6,
+                },
+                data_quality_warnings=["未取得有效发布时间，页面展示为采样时间。"],
+            )
+        ],
+        observed_at=now,
+        request_id="provider-unknown-time",
+        raw_item_count=1,
+        parsed_item_count=1,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(
+        keyword="餐饮获客",
+        published_window_days=7,
+    )
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.result_state == "all_out_of_window"
+    assert run.out_of_window_count == 1
+    assert run.returned_count == 0
 
 
 def test_unlimited_monitoring_keeps_older_related_videos_and_schedules_three_points() -> None:
@@ -843,6 +937,22 @@ def test_preview_reports_price_and_uses_six_hour_cache() -> None:
 
 
 def test_search_batch_model_rejects_unsupported_window() -> None:
+    half_year = SearchBatch(
+        keyword="二手车",
+        published_window_days=180,
+        provider="fixture",
+        mode=ProviderMode.SANDBOX,
+    )
+    assert half_year.published_window_days == 180
+
+    supported = SearchBatch(
+        keyword="二手车",
+        published_window_days=300,
+        provider="fixture",
+        mode=ProviderMode.SANDBOX,
+    )
+    assert supported.published_window_days == 300
+
     try:
         SearchBatch(
             keyword="二手车",
@@ -851,6 +961,6 @@ def test_search_batch_model_rejects_unsupported_window() -> None:
             mode=ProviderMode.SANDBOX,
         )
     except ValueError as exc:
-        assert "不限、近 1 天或近 7 天" in str(exc)
+        assert "不限、近 1 天、近 3 天、近 7 天、近半年或近 10 个月" in str(exc)
     else:
         raise AssertionError("unsupported window must be rejected")

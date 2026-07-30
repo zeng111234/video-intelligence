@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -12,7 +11,7 @@ _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from contextlib import asynccontextmanager, suppress  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
@@ -68,7 +67,6 @@ async def lifespan(application: FastAPI):
         logger.warning("数据库迁移检查失败（不影响启动）: %s", exc)
     worker = None
     publish_worker = None
-    crawler_monitor_task = None
     try:
         from project.backend.app.core.deps import get_pipeline_worker, get_publish_worker
 
@@ -79,37 +77,9 @@ async def lifespan(application: FastAPI):
         logger.info("流水线 worker 已启动")
     except Exception as exc:
         logger.warning("流水线 worker 启动失败（不影响 API）: %s", exc)
-    async def crawler_monitor_loop() -> None:
-        """仅执行不限发布时间三点监测的到期采样，避免触发历史 1/7 天任务。"""
-        while True:
-            try:
-                from project.backend.app.core.config import CRAWLER_ONEAPI_AUTO_ENABLED
-                from project.backend.app.core.deps import get_commercial_search_service
-
-                service = get_commercial_search_service()
-                # 全局自动复爬关闭时，仍只执行用户在批次详情里明确授权的追踪；
-                # 旧检查点不会因版本升级而产生新的付费调用。
-                await asyncio.to_thread(
-                    service.execute_due_recrawls,
-                    max_groups=5,
-                    published_window_days=0,
-                    authorized_only=(
-                        service.provider.capabilities().provider_name == "oneapi"
-                        and not CRAWLER_ONEAPI_AUTO_ENABLED
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("关键词趋势定时采样失败（将在下轮重试）: %s", exc)
-            await asyncio.sleep(300)
-
-    crawler_monitor_task = asyncio.create_task(crawler_monitor_loop())
     try:
         yield
     finally:
-        if crawler_monitor_task is not None:
-            crawler_monitor_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await crawler_monitor_task
         if worker is not None:
             await worker.stop()
         if publish_worker is not None:

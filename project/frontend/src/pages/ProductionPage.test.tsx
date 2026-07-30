@@ -230,7 +230,7 @@ describe("ProductionPage review and cost gates", () => {
     expect(preflightButton).not.toBeNull();
     fireEvent.click(preflightButton as HTMLButtonElement);
     const drawer = await screen.findByRole("dialog");
-    fireEvent.click(within(drawer).getByRole("checkbox", { name: /我确认拥有媒体/ }));
+    expect(within(drawer).queryByRole("checkbox", { name: /我确认拥有媒体/ })).toBeNull();
     fireEvent.click(within(drawer).getByRole("button", { name: "运行预检" }));
 
     expect(await within(drawer).findByText(/未知（已阻断）/)).toBeTruthy();
@@ -269,7 +269,6 @@ describe("ProductionPage review and cost gates", () => {
     fireEvent.click(plannedHeader as HTMLElement);
     fireEvent.click((await screen.findByText("预检并启动")).closest("button") as HTMLButtonElement);
     const drawer = await screen.findByRole("dialog");
-    fireEvent.click(within(drawer).getByRole("checkbox", { name: /我确认拥有媒体/ }));
     fireEvent.click(within(drawer).getByRole("button", { name: "运行预检" }));
     const startButton = await within(drawer).findByRole("button", { name: /启动 1 条通过项/ });
     fireEvent.click(startButton);

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 from pathlib import Path
 import shlex
@@ -42,6 +43,7 @@ FileUploadTransport = Callable[[str, str, str, Path, float], tuple[bytes, str]]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MAX_AVATAR_DOWNLOAD_BYTES = 100 * 1024 * 1024
+SHUYING_VOICE_TTS_JOB_PREFIX = "voice-tts:"
 
 
 def _default_file_upload_transport(
@@ -1280,8 +1282,6 @@ class ShuyingLegacyAvatarProvider:
         assets_manifest_path: str = "",
         model_upload_url: str = "",
         model_upload_allowed_hosts: str = "",
-        voice_base_url: str = "",
-        voice_api_code: str = "",
         edge_tts_voice: str = "zh-CN-XiaoxiaoNeural",
         enabled: bool = False,
         timeout_seconds: float = 120,
@@ -1316,6 +1316,10 @@ class ShuyingLegacyAvatarProvider:
             for item in audio_allowed_hosts.replace(";", ",").split(",")
             if item.strip()
         }
+        configured_audio_upload_host = urlsplit(self.audio_upload_url).hostname
+        if configured_audio_upload_host:
+            self.audio_allowed_hosts.add(configured_audio_upload_host.casefold())
+        self.voice_base_url = self._voice_gateway_base_url(self.base_url)
         raw_manifest_path = assets_manifest_path.strip() or str(
             Path("data") / "avatar_assets" / "shuying_cloud.json"
         )
@@ -1338,8 +1342,6 @@ class ShuyingLegacyAvatarProvider:
             inherited_upload_host = urlsplit(self.model_upload_url).hostname
             if inherited_upload_host:
                 self.model_upload_allowed_hosts.add(inherited_upload_host.casefold())
-        self.voice_base_url = voice_base_url.strip().rstrip("/")
-        self.voice_api_code = voice_api_code.strip()
         self.result_allowed_hosts = {
             item.strip().casefold()
             for item in result_allowed_hosts.replace(";", ",").split(",")
@@ -1368,8 +1370,6 @@ class ShuyingLegacyAvatarProvider:
             model_upload_allowed_hosts=os.getenv(
                 "SHUYING_AVATAR_MODEL_UPLOAD_ALLOWED_HOSTS", ""
             ),
-            voice_base_url=os.getenv("SHUYING_VOICE_BASE_URL", ""),
-            voice_api_code=os.getenv("SHUYING_VOICE_API_CODE", ""),
             edge_tts_voice=os.getenv(
                 "SHUYING_AVATAR_EDGE_TTS_VOICE", "zh-CN-XiaoxiaoNeural"
             ),
@@ -1564,7 +1564,7 @@ class ShuyingLegacyAvatarProvider:
         self._ensure_configured()
         if not self._can_clone_voice():
             raise AvatarProviderError(
-                "声音克隆线路未配置独立凭证。",
+                "声音克隆所需的上传配置未就绪。",
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
         sample_url = self._upload_training_file(
@@ -1619,10 +1619,10 @@ class ShuyingLegacyAvatarProvider:
     def store_pending_voice_sample(
         self, *, name: str, sample_path: Path, filename: str
     ) -> AvatarAsset:
-        """Accept authorised samples before the separate clone credential is ready.
+        """Keep an authorised sample only when the clone request could not be sent.
 
-        Saving the sample is deliberately not a clone submission: enabling a key later
-        must never silently create a billable training task.
+        The normal upload path submits a clone immediately. This is retained solely to
+        preserve an existing sample when a request could not be submitted.
         """
         self._ensure_configured()
         asset_id = f"shuying-voice-sample-{uuid.uuid4().hex[:12]}"
@@ -1639,7 +1639,7 @@ class ShuyingLegacyAvatarProvider:
             preview_type="audio",
             authorized=True,
             status="pending_configuration",
-            status_message="声音样本已保存，等待独立声音线路配置后再发起克隆。",
+            status_message="声音样本已保存，尚未提交训练。",
             source_type="pending_clone",
         )
         self._upsert_custom_asset(
@@ -1648,6 +1648,43 @@ class ShuyingLegacyAvatarProvider:
             extra={"sample_path": str(destination)},
         )
         return asset
+
+    def resume_pending_voice_clone(self, asset_id: str) -> AvatarAsset:
+        """Submit one previously saved sample after an interrupted configuration flow."""
+        self._ensure_configured()
+        if not self._can_clone_voice():
+            raise AvatarProviderError("声音克隆所需的上传配置未就绪。")
+        records = self._load_custom_assets()
+        record = next(
+            (item for item in records if item.get("asset_id") == asset_id), None
+        )
+        if not record:
+            raise AvatarProviderError("未找到待训练的声音样本。")
+        try:
+            asset = AvatarAsset.model_validate(record)
+        except ValueError as exc:
+            raise AvatarProviderError("待训练声音样本记录无效。") from exc
+        if asset.kind != AvatarAssetKind.VOICE or asset.status != "pending_configuration":
+            raise AvatarProviderError("该声音不处于可提交训练状态。")
+        raw_sample_path = str(record.get("sample_path") or "").strip()
+        sample_path = Path(raw_sample_path)
+        if not sample_path.is_absolute():
+            sample_path = self.assets_manifest_path.parent / sample_path
+        sample_path = sample_path.resolve()
+        samples_root = (self.assets_manifest_path.parent / "voice_samples").resolve()
+        if samples_root not in sample_path.parents or not sample_path.is_file():
+            raise AvatarProviderError("待训练声音样本文件不存在或路径无效。")
+        cloned = self.create_voice_clone(
+            name=asset.name,
+            sample_path=sample_path,
+            filename=sample_path.name,
+            mime_type=mimetypes.guess_type(sample_path.name)[0] or "audio/mpeg",
+        )
+        latest_records = self._load_custom_assets()
+        self._save_custom_assets(
+            [item for item in latest_records if item.get("asset_id") != asset_id]
+        )
+        return cloned
 
     def _store_voice_sample_preview(
         self, *, sample_path: Path, filename: str, asset_id: str
@@ -1674,11 +1711,20 @@ class ShuyingLegacyAvatarProvider:
     def _can_clone_voice(self) -> bool:
         return bool(
             self.voice_base_url
-            and self.voice_api_code
+            and self.api_code
             and self.audio_upload_url
             and self.audio_allowed_hosts
             and self._is_safe_https_url(self.voice_base_url)
         )
+
+    @staticmethod
+    def _voice_gateway_base_url(base_url: str) -> str:
+        """The legacy vendor exposes video at /aif and voice cloning at /ai."""
+        parsed = urlsplit(base_url)
+        path = parsed.path.rstrip("/")
+        if path.endswith("/aif"):
+            path = f"{path[:-1]}"
+        return parsed._replace(path=path, query="", fragment="").geturl().rstrip("/")
 
     def _model_upload_endpoint(self) -> str:
         separator = "&" if "?" in self.model_upload_url else "?"
@@ -1697,6 +1743,21 @@ class ShuyingLegacyAvatarProvider:
             return []
         items = payload.get("assets", []) if isinstance(payload, dict) else []
         return [item for item in items if isinstance(item, dict)]
+
+    def _provider_avatar_id(self, asset_id: str) -> str:
+        """Translate a persisted custom-avatar UI ID to the vendor's model ID."""
+        for record in self._load_custom_assets():
+            if str(record.get("asset_id") or "").strip() != asset_id:
+                continue
+            try:
+                asset = AvatarAsset.model_validate(record)
+            except ValueError:
+                return asset_id
+            if asset.kind != AvatarAssetKind.AVATAR:
+                return asset_id
+            provider_asset_id = str(record.get("provider_asset_id") or "").strip()
+            return provider_asset_id or asset_id
+        return asset_id
 
     def _save_custom_assets(self, items: list[dict[str, Any]]) -> None:
         self.assets_manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1885,7 +1946,9 @@ class ShuyingLegacyAvatarProvider:
             None,
         )
         if selected_voice is not None and selected_voice.source_type == "custom_clone":
-            audio_url = self._synthesize_cloned_voice(request)
+            tts_task_id, audio_url = self._start_cloned_voice(request)
+            if not audio_url:
+                return self._voice_pending_snapshot(request, tts_task_id)
         elif self.audio_mode == "edge_tts_upload":
             audio_url = self._synthesize_and_upload_audio(request)
         else:
@@ -1912,6 +1975,61 @@ class ShuyingLegacyAvatarProvider:
             if not audio_url:
                 raise AvatarProviderError("公司数影网关未返回合成音频地址。")
 
+        return self._submit_video(request, audio_url)
+
+    def resume_submit(
+        self,
+        request: AvatarSubmitRequest,
+        pending_job_id: str,
+    ) -> AvatarJobSnapshot:
+        if not pending_job_id.startswith(SHUYING_VOICE_TTS_JOB_PREFIX):
+            raise AvatarProviderError(
+                "待恢复的声音任务编号无效。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        tts_task_id = pending_job_id.removeprefix(SHUYING_VOICE_TTS_JOB_PREFIX)
+        if not tts_task_id:
+            raise AvatarProviderError(
+                "待恢复的声音任务编号为空。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        audio_url = self._query_cloned_voice_audio(tts_task_id)
+        if not audio_url:
+            return self._voice_pending_snapshot(request, tts_task_id)
+        try:
+            return self._submit_video(request, audio_url)
+        except AvatarProviderError as exc:
+            status = (
+                AvatarProviderStatus.OUTCOME_UNKNOWN
+                if exc.outcome_unknown
+                else AvatarProviderStatus.FAILED
+            )
+            return AvatarJobSnapshot(
+                job_id=pending_job_id,
+                idempotency_key=request.idempotency_key,
+                status=status,
+                progress=100 if status == AvatarProviderStatus.FAILED else 0,
+                stage=(
+                    "视频提交结果待核对"
+                    if status == AvatarProviderStatus.OUTCOME_UNKNOWN
+                    else "视频提交失败"
+                ),
+                provider_job_id=None,
+                estimated_cost_cny=self.estimated_cost_cny,
+                estimated_seconds=self.estimated_seconds,
+                error_kind=(
+                    ProviderErrorKind.OUTCOME_UNKNOWN
+                    if exc.outcome_unknown
+                    else exc.kind
+                ),
+                error_message=str(exc),
+            )
+
+    def _submit_video(
+        self,
+        request: AvatarSubmitRequest,
+        audio_url: str,
+    ) -> AvatarJobSnapshot:
         provider_video_name = (
             request.video_name or f"avatar-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         )[:50]
@@ -1919,7 +2037,7 @@ class ShuyingLegacyAvatarProvider:
             "/video",
             {
                 "videoName": provider_video_name,
-                "modeid": request.avatar_id,
+                "modeid": self._provider_avatar_id(request.avatar_id),
                 "audioUrl": audio_url,
                 "aspect_ratio": request.aspect_ratio,
                 "resolution": request.resolution,
@@ -1950,9 +2068,12 @@ class ShuyingLegacyAvatarProvider:
         self.job_idempotency[provider_job_id] = request.idempotency_key
         return snapshot
 
-    def _synthesize_cloned_voice(self, request: AvatarSubmitRequest) -> str:
+    def _start_cloned_voice(
+        self,
+        request: AvatarSubmitRequest,
+    ) -> tuple[str, str | None]:
         if not self._can_clone_voice():
-            raise AvatarProviderError("声音克隆线路未配置独立凭证。")
+            raise AvatarProviderError("声音克隆所需的上传配置未就绪。")
         provider_id = request.voice_id.removeprefix("shuying-voice-")
         response = self._voice_form_request(
             "/voice_2",
@@ -1968,23 +2089,41 @@ class ShuyingLegacyAvatarProvider:
         tts_task_id = str(data or "").strip()
         if not tts_task_id:
             raise AvatarProviderError("克隆声音合成未返回任务编号。")
-        for _ in range(10):
-            detail = self._voice_form_request(
-                "/voice_tts_info",
-                {"tts_task_id": tts_task_id},
-                submit_operation=False,
-                allow_pending=True,
-            )
-            result = detail.get("data")
-            if isinstance(result, dict):
-                audio_url = str(
-                    result.get("ossurl") or result.get("url") or ""
-                ).strip()
-                if audio_url:
-                    return audio_url
-            # Voice TTS is an asynchronous query. Bound it rather than recursing.
-            threading.Event().wait(2)
-        raise AvatarProviderError("克隆声音合成等待超时，请稍后重试查询。")
+        return tts_task_id, self._query_cloned_voice_audio(tts_task_id)
+
+    def _query_cloned_voice_audio(self, tts_task_id: str) -> str | None:
+        detail = self._voice_form_request(
+            "/voice_tts_info",
+            {"tts_task_id": tts_task_id},
+            submit_operation=False,
+            allow_pending=True,
+        )
+        result = detail.get("data")
+        if isinstance(result, dict):
+            audio_url = str(result.get("ossurl") or result.get("url") or "").strip()
+            return audio_url or None
+        if isinstance(result, str):
+            audio_url = result.strip()
+            return audio_url if self._is_safe_https_url(audio_url, allow_path=True) else None
+        return None
+
+    def _voice_pending_snapshot(
+        self,
+        request: AvatarSubmitRequest,
+        tts_task_id: str,
+    ) -> AvatarJobSnapshot:
+        snapshot = AvatarJobSnapshot(
+            job_id=f"{SHUYING_VOICE_TTS_JOB_PREFIX}{tts_task_id}",
+            idempotency_key=request.idempotency_key,
+            status=AvatarProviderStatus.RUNNING,
+            progress=10,
+            stage="克隆声音合成中",
+            provider_job_id=None,
+            estimated_cost_cny=self.estimated_cost_cny,
+            estimated_seconds=self.estimated_seconds,
+        )
+        self.idempotency_index[request.idempotency_key] = snapshot
+        return snapshot
 
     def _synthesize_and_upload_audio(self, request: AvatarSubmitRequest) -> str:
         audio = self.audio_renderer(
@@ -2269,7 +2408,7 @@ class ShuyingLegacyAvatarProvider:
         """Primary voice route has a legacy success code that differs for cloning."""
         boundary = f"----CodexAvatarVoice{uuid.uuid4().hex}"
         body = self._multipart_form_body(
-            {**fields, "api_code": self.voice_api_code}, boundary=boundary
+            {**fields, "api_code": self.api_code}, boundary=boundary
         )
         try:
             raw, _ = self.transport(

@@ -4,7 +4,7 @@
  * 识别、人工复核与导出统一复用转写工作流，确保字幕不会绕过低置信片段复核。
  */
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Checkbox, Col, Empty, Input, Row, Select, Space, Tag, Typography, Upload, message } from "antd";
+import { Alert, Button, Card, Col, Empty, Input, Row, Select, Space, Tag, Typography, Upload, message } from "antd";
 import { AudioOutlined, CheckCircleOutlined, GlobalOutlined, RocketOutlined, UploadOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { getSubtitleStatus, uploadAndTranscribe } from "../api/client";
@@ -19,7 +19,6 @@ export default function SubtitlePage() {
   const [submitting, setSubmitting] = useState(false);
   const [modelName, setModelName] = useState("large-v3-turbo");
   const [language, setLanguage] = useState("zh");
-  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
 
   const loadStatus = useCallback(async () => {
@@ -38,10 +37,6 @@ export default function SubtitlePage() {
   }, [loadStatus]);
 
   const upload = useCallback(async (file: File) => {
-    if (!rightsConfirmed) {
-      message.warning("请先确认拥有该媒体的处理权");
-      return;
-    }
     if (!rightsHolder.trim()) {
       message.warning("请填写权利主体");
       return;
@@ -61,7 +56,7 @@ export default function SubtitlePage() {
     } finally {
       setSubmitting(false);
     }
-  }, [language, modelName, navigate, rightsConfirmed, rightsHolder]);
+  }, [language, modelName, navigate, rightsHolder]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -114,7 +109,7 @@ export default function SubtitlePage() {
                 </Col>
               </Row>
               <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" maxLength={100} />
-              <Checkbox checked={rightsConfirmed} onChange={(event) => setRightsConfirmed(event.target.checked)}>我确认拥有该文件的处理权，允许本地识别。</Checkbox>
+              <Text type="secondary">选择文件即确认拥有该文件的处理权，并允许本地识别。</Text>
               <Upload.Dragger
                 accept=".mp4,.mov"
                 beforeUpload={(file) => { void upload(file); return false; }}
@@ -135,7 +130,7 @@ export default function SubtitlePage() {
               <Text>1. 本地 faster-whisper 识别并生成时间轴片段。</Text>
               <Text>2. 在“语音转写”工作区编辑文本并复核低置信片段。</Text>
               <Text>3. 确认成稿后下载 SRT 或 ASS 字幕。</Text>
-              <Button type="primary" icon={<RocketOutlined />} disabled={!status?.whisper_available} onClick={() => message.info("请先确认权利信息，再选择文件上传。")}>开始生成字幕</Button>
+              <Button type="primary" icon={<RocketOutlined />} disabled={!status?.whisper_available} onClick={() => message.info("请填写权利主体，再选择文件上传。")}>开始生成字幕</Button>
             </Space>
           </Card>
         </Col>

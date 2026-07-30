@@ -257,8 +257,9 @@ def _display_tier(
 class KeywordTrendService:
     """Compute a low-call, keyword-specific rolling trend leaderboard."""
 
-    def __init__(self, repository: CandidateRepository) -> None:
+    def __init__(self, repository: CandidateRepository, *, clock=None) -> None:
         self.repository = repository
+        self.clock = clock or (lambda: datetime.now().astimezone())
 
     def recompute(
         self,
@@ -271,7 +272,7 @@ class KeywordTrendService:
         keyword_key = keyword.strip().casefold()
         if not keyword_key:
             raise ValueError("请输入要计算的关键词。")
-        computed_at = now or datetime.now().astimezone()
+        computed_at = now or self.clock()
         since = computed_at - timedelta(days=WINDOW_DAYS)
         matches = self.repository.list_keyword_matches(
             keyword_key, since, platform, provider_name

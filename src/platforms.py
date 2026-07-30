@@ -10,6 +10,7 @@ SUPPORTED_PLATFORMS = (
 
 PLATFORM_LABELS = {
     Platform.DOUYIN: "抖音",
+    Platform.BILIBILI: "B站",
     Platform.XIAOHONGSHU: "小红书",
     Platform.WECHAT_CHANNELS: "微信视频号",
     Platform.KUAISHOU: "快手",

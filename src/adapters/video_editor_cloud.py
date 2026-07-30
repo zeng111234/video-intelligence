@@ -1105,7 +1105,6 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                             "Object": quote(request.subtitle_object_key, safe=""),
                         },
                         "CharEnc": "UTF-8",
-                        "FontName": "YaHei",
                     },
                 ],
             }

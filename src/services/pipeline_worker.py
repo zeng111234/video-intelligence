@@ -343,7 +343,7 @@ class PipelineWorker:
             self._reconcile_publish(run)
 
     def _run_guided_share_link(self, run: PipelineRun) -> None:
-        """从客户明确提供的抖音分享链接开始，不经过关键词发现。"""
+        """从客户明确提供的平台分享链接开始，不经过关键词发现。"""
         if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
             if self.douyin_link_transcription_service is None:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "分享链接转写服务未配置。")
@@ -351,7 +351,7 @@ class PipelineWorker:
             request = dict(run.config.get("candidate_request") or {})
             share_text = str(run.config.get("share_text") or "")
             if not share_text:
-                self._fail(run, PipelineStage.TRANSCRIPTION, "缺少抖音分享链接。")
+                self._fail(run, PipelineStage.TRANSCRIPTION, "缺少平台分享链接。")
                 return
             run = self.pipeline_service.update_stage(run, PipelineStage.TRANSCRIPTION, TaskStatus.RUNNING)
             try:

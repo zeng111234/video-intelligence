@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 class Platform(StrEnum):
     DOUYIN = "douyin"
+    BILIBILI = "bilibili"
     KUAISHOU = "kuaishou"
     XIAOHONGSHU = "xiaohongshu"
     WECHAT_CHANNELS = "wechat_channels"
@@ -123,6 +124,7 @@ class SamplingStatus(StrEnum):
 class ProviderMode(StrEnum):
     SANDBOX = "sandbox"
     LOCAL_BROWSER = "local_browser"
+    PUBLIC_WEB = "public_web"
     PRODUCTION = "production"
 
 
@@ -682,7 +684,7 @@ class DiscoveryResult(BaseModel):
 class SearchBatch(BaseModel):
     batch_id: str = Field(default_factory=lambda: f"batch-{uuid4().hex[:12]}")
     keyword: str = Field(min_length=2, max_length=50)
-    # 0 表示不限发布时间；保留 1/7 以兼容历史批次。
+    # 0 表示不限发布时间；180 天供小红书半年召回，300 天供快手近 10 个月召回。
     published_window_days: int = Field(default=0)
     # 热点宝的榜单统计周期，和发布时间筛选分开保存。
     hotspot_window_hours: int | None = None
@@ -710,8 +712,10 @@ class SearchBatch(BaseModel):
 
     @model_validator(mode="after")
     def validate_window(self):
-        if self.published_window_days not in {0, 1, 7}:
-            raise ValueError("发布时间范围只支持不限、近 1 天或近 7 天。")
+        if self.published_window_days not in {0, 1, 3, 7, 180, 300}:
+            raise ValueError(
+                "发布时间范围只支持不限、近 1 天、近 3 天、近 7 天、近半年或近 10 个月。"
+            )
         if self.hotspot_window_hours not in {None, 1, 24, 72, 168}:
             raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
         return self

@@ -40,7 +40,16 @@ MONTHLY_HARD_LIMIT_COST_CNY = 10.0
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
-RELEVANCE_RULE_VERSION = "title_or_hashtag_strict_v1"
+RELEVANCE_RULE_VERSION = "title_or_hashtag_intent_v2"
+_BUSINESS_INTENT_SUFFIXES = (
+    "获客",
+    "引流",
+    "招生",
+    "招聘",
+    "带货",
+    "营销",
+    "运营",
+)
 # 新批次采用自适应三点采样：首次 2 小时后复搜；第二个间隔按真实互动
 # 变化缩短为 4 小时或延长为 12 小时。保留窗口映射仅供历史入口兼容。
 ADAPTIVE_FIRST_RECRAWL_HOURS = 2
@@ -49,7 +58,10 @@ ADAPTIVE_SLOW_RECRAWL_HOURS = 12
 RECRAWL_OFFSETS_BY_WINDOW = {
     0: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     1: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    3: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     7: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    180: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    300: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
 }
 RECRAWL_MISS_GRACE_MINUTES = 30
 
@@ -67,7 +79,17 @@ def normalized_keyword_text(value: str) -> str:
 def title_matches_keyword(*, title: str, keyword: str) -> bool:
     """Match only the provider title/description text (including inline hashtags)."""
     normalized_keyword = normalized_keyword_text(keyword)
-    return bool(normalized_keyword) and normalized_keyword in normalized_keyword_text(title)
+    normalized_title = normalized_keyword_text(title)
+    if not normalized_keyword:
+        return False
+    if normalized_keyword in normalized_title:
+        return True
+    for suffix in _BUSINESS_INTENT_SUFFIXES:
+        if not normalized_keyword.endswith(suffix):
+            continue
+        subject = normalized_keyword[: -len(suffix)]
+        return len(subject) >= 2 and subject in normalized_title and suffix in normalized_title
+    return False
 
 
 def item_matches_keyword(*, title: str, keyword: str, evidence: str | None = None) -> bool:
@@ -115,7 +137,15 @@ class CommercialSearchService:
         self.active_platforms = tuple(dict.fromkeys(selected_platforms))
         if not self.active_platforms:
             raise ValueError("至少需要启用一个关键词搜索平台。")
-        unsupported = set(self.active_platforms) - set(SUPPORTED_PLATFORMS)
+        # The legacy commercial default remains the three established
+        # platforms.  A dedicated adapter can opt into an additional platform
+        # without silently adding it to every legacy/sandbox batch.
+        adapter_platforms = set(provider.capabilities().supported_platforms)
+        unsupported = (
+            set(self.active_platforms)
+            - set(SUPPORTED_PLATFORMS)
+            - adapter_platforms
+        )
         if unsupported:
             names = "、".join(sorted(item.value for item in unsupported))
             raise ValueError(f"不支持的关键词搜索平台：{names}。")
@@ -543,11 +573,15 @@ class CommercialSearchService:
                 error="已达到本地本月 ¥10 爬虫预算上限，未发起请求。",
             )
         if self.repository.has_unresolved_platform_search_request(fingerprint):
-            return self._finish_run(
-                run,
-                status=PlatformRunStatus.BLOCKED,
-                error="上次请求费用状态待核对，请联系管理员确认后再试。",
-            )
+            if capability.mode == ProviderMode.PRODUCTION:
+                return self._finish_run(
+                    run,
+                    status=PlatformRunStatus.BLOCKED,
+                    error="上次请求费用状态待核对，请联系管理员确认后再试。",
+                )
+            # 免费的本机浏览器不会产生供应商费用。上次程序异常不应留下
+            # 永久付费锁，否则修复代码后同一关键词也无法重新验证。
+            self.repository.resolve_platform_search_request(fingerprint)
         if not self.repository.claim_platform_search_request(
             fingerprint,
             run.run_id,
@@ -585,6 +619,11 @@ class CommercialSearchService:
                 platform=platform,
                 keyword=keyword,
                 provider=capability.provider_name,
+                source_type=getattr(
+                    self.provider,
+                    "source_type",
+                    DataSource.LICENSED_PROVIDER,
+                ),
                 published_after=published_after,
                 limit=count,
             )
@@ -786,6 +825,7 @@ class CommercialSearchService:
         platform: Platform,
         keyword: str,
         provider: str,
+        source_type: DataSource,
         published_after: datetime | None,
         limit: int,
     ) -> tuple[list[NormalizedCandidate], list[ProviderSearchError], dict[str, int]]:
@@ -813,6 +853,16 @@ class CommercialSearchService:
             elif item.platform_item_id in seen:
                 reason = "供应商返回了重复作品ID。"
                 counts["duplicate_count"] += 1
+            elif published_after is not None and (
+                "time=search_order_fallback" in (item.evidence or "")
+                or any(
+                    "发布时间" in warning
+                    and ("未取得有效" in warning or "未返回可靠" in warning)
+                    for warning in item.data_quality_warnings
+                )
+            ):
+                reason = "作品没有可靠发布时间，不能确认属于本次时间范围。"
+                counts["out_of_window_count"] += 1
             elif published_after is not None and item.published_at < published_after:
                 reason = "作品发布时间超出本次查询范围。"
                 counts["out_of_window_count"] += 1
@@ -845,7 +895,7 @@ class CommercialSearchService:
                     category=f"关键词/{keyword}",
                     published_at=item.published_at,
                     source_url=item.source_url,
-                    source_type=DataSource.LICENSED_PROVIDER,
+                    source_type=source_type,
                     metrics=item.metrics,
                     matched_by=[keyword],
                     cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
@@ -1114,7 +1164,9 @@ class CommercialSearchService:
         if not 2 <= len(normalized) <= 50:
             raise ValueError("关键词长度必须为 2 到 50 个字符。")
         if published_window_days not in RECRAWL_OFFSETS_BY_WINDOW:
-            raise ValueError("召回时间范围只支持不限、近 24 小时或近 7 天。")
+            raise ValueError(
+                "召回时间范围只支持不限、近 24 小时、近 3 天、近 7 天、近半年或近 10 个月。"
+            )
         if hotspot_window_hours not in {None, 1, 24, 72, 168}:
             raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
         if not 1 <= count <= 100:
@@ -1148,7 +1200,9 @@ class CommercialSearchService:
     def _url_matches_platform(url: str, platform: Platform) -> bool:
         host_markers = {
             Platform.DOUYIN: ("douyin.com",),
+            Platform.BILIBILI: ("bilibili.com", "b23.tv"),
             Platform.XIAOHONGSHU: ("xiaohongshu.com", "xhslink.com"),
+            Platform.KUAISHOU: ("kuaishou.com", "gifshow.com"),
             Platform.WECHAT_CHANNELS: (
                 "channels.weixin.qq.com",
                 "weixin.qq.com",

@@ -106,6 +106,8 @@ class AvatarJobResponse(BaseModel):
     result_url: str | None = None
     error_kind: str | None = None
     error_message: str | None = None
+    retry_count: int
+    can_retry_video_submit: bool
     is_mock: bool
     created_at: datetime
     updated_at: datetime
@@ -285,6 +287,22 @@ def train_cloud_voice(
         path.unlink(missing_ok=True)
 
 
+@router.post("/assets/{asset_id}/resume-voice-clone", response_model=AvatarAsset)
+def resume_voice_clone(
+    asset_id: str,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    """Submit a legacy saved voice sample exactly once after the clone route is fixed."""
+    provider = service.provider
+    if not isinstance(provider, ShuyingLegacyAvatarProvider):
+        raise HTTPException(status_code=503, detail="当前数字人供应商不支持声音克隆。")
+    try:
+        return provider.resume_pending_voice_clone(asset_id)
+    except AvatarProviderError as exc:
+        status_code = 503 if exc.kind.value == "authorization" else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+
 @router.get("/assets/{asset_id}/media")
 def get_asset_media(
     asset_id: str,
@@ -398,6 +416,18 @@ def get_job(task_id: str, service: AvatarService = Depends(get_avatar_service)):
         task = service.refresh_task(task_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _job_response(task)
+
+
+@router.post("/jobs/{task_id}/retry-video", response_model=AvatarJobResponse)
+def retry_avatar_video(
+    task_id: str,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    try:
+        task = service.retry_failed_video(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _job_response(task)
 
 
@@ -722,6 +752,8 @@ def _job_response(task: AvatarTask) -> AvatarJobResponse:
         result_url=result_url,
         error_kind=task.error_kind.value if task.error_kind else None,
         error_message=task.error_message,
+        retry_count=task.retry_count,
+        can_retry_video_submit=AvatarService.can_retry_video_submit(task),
         is_mock=task.is_mock,
         created_at=task.created_at,
         updated_at=task.updated_at,

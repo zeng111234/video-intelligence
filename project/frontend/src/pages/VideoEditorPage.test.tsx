@@ -388,6 +388,10 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const primary = await screen.findByTestId("primary-action");
     expect(primary.textContent).toContain("审核字幕、粗剪和配乐");
+    expect(screen.getByRole("button", { name: /去审核并生成成片$/ })).toBeTruthy();
+    const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: /下载原片$/ }));
+    expect(downloadClick).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText("方案预览"));
     const timeline = await screen.findByRole("slider", { name: "方案预览进度" });
     expect(timeline.getAttribute("aria-valuemin")).toBe("0");
@@ -427,6 +431,35 @@ describe("VideoEditorPage cloud-light workflow", () => {
         }),
       );
     });
+  });
+
+  it("offers a fresh quote instead of silently resubmitting an unknown render", async () => {
+    const batch = sandboxBatch("outcome_unknown");
+    batch.is_mock = false;
+    batch.provider_mode = "aliyun";
+    batch.items[0].is_mock = false;
+    batch.items[0].provider_stage = "render_submission_outcome_unknown";
+    vi.mocked(getVideoCapabilities).mockResolvedValue({
+      ...sandboxCapabilities,
+      provider_mode: "aliyun",
+      is_mock: false,
+      live_ready: true,
+    });
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    renderPage();
+
+    const primary = await screen.findByTestId("primary-action");
+    expect(primary.textContent).toContain("重新报价并生成带字幕成片");
+    expect((primary as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(primary);
+
+    expect(await screen.findByRole("dialog", { name: "确认预计费用" })).toBeTruthy();
+    expect(preflightVideoEditor).toHaveBeenCalledWith(expect.objectContaining({
+      sourceId: "source-1",
+      outputProfile: "720p",
+      targetPlatform: "douyin",
+    }));
+    expect(createVideoEditorBatch).not.toHaveBeenCalled();
   });
 
   it("lets the owner listen to the AI-selected BGM before confirming", async () => {

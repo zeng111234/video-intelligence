@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import TranscriptionPage from "./TranscriptionPage";
 import { ToastProvider } from "../components/Toast";
@@ -113,6 +113,10 @@ describe("TranscriptionPage", () => {
     vi.mocked(listComplianceDrafts).mockResolvedValue([]);
   });
 
+  afterEach(() => {
+    cleanup();
+  });
+
   it("shows an AI-reviewed readonly transcript without customer proofread controls", async () => {
     render(
       <MemoryRouter initialEntries={["/transcription?task=transcript-ai"]}>
@@ -132,6 +136,21 @@ describe("TranscriptionPage", () => {
     expect(screen.getByText("下一步：AI 文案改写")).toBeTruthy();
     expect(screen.getByRole("button", { name: "确认并带到 AI 文案" })).toBeTruthy();
     expect(screen.queryByText("去重口播稿")).toBeNull();
+  });
+
+  it("offers one multi-platform share-link entry instead of a Douyin-only tab", async () => {
+    render(
+      <MemoryRouter initialEntries={["/transcription"]}>
+        <ToastProvider><TranscriptionPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /新建转写/ }));
+    const platformLinkTab = await screen.findByRole("tab", { name: /平台分享链接/ });
+    fireEvent.click(platformLinkTab);
+    expect(await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: /抖音分享链接/ })).toBeNull();
+    expect(screen.queryByRole("checkbox")).toBeNull();
   });
 
   it("shows a mock low-confidence LLM rewrite without claiming a real model call", async () => {
