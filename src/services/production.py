@@ -10,7 +10,13 @@ from typing import Any
 
 from src.adapters.douyin_parser import DouyinParserError
 from src.contracts import TaskRepository
+from src.services.publish_metadata import (
+    publish_draft_fingerprint,
+    suggested_publish_draft,
+    validated_publish_draft,
+)
 from src.models import (
+    AvatarTask,
     PipelineRunStatus,
     PipelineStage,
     CopywritingTask,
@@ -22,9 +28,12 @@ from src.models import (
     ProductionWorkspaceConfiguration,
     PublishTask,
     PublishPlatform,
+    PublishStatus,
     TaskStatus,
     TranscriptionTask,
 )
+
+DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
 
 
 class IdempotencyConflictError(ValueError):
@@ -33,6 +42,10 @@ class IdempotencyConflictError(ValueError):
 
 class ProductionService:
     """保存 IP 配方、预检批次并为 worker 提供可恢复的调度状态。"""
+
+    # 数字人服务通常应在三分钟内返回。超过这个时间只提示偏慢并继续
+    # 查询原任务，绝不能为了“看起来卡住”而重复提交一次可能收费的生成。
+    AVATAR_DELAY_WARNING_SECONDS = 180
 
     def __init__(
         self,
@@ -201,7 +214,7 @@ class ProductionService:
             script_style=script_style.strip(),
             avatar_id=avatar_id or None,
             voice_id=voice_id or None,
-            edit_template_id=edit_template_id or None,
+            edit_template_id=edit_template_id or DEFAULT_PRODUCTION_TEMPLATE_ID,
             tags=[tag.strip() for tag in (tags or []) if tag.strip()],
         )
         self._save(self._profiles_path, [profile, *profiles])
@@ -556,8 +569,8 @@ class ProductionService:
         if profile is None:
             shared.append("IP 配方不存在。")
         else:
-            if not all([profile.avatar_id, profile.voice_id, profile.edit_template_id]):
-                shared.append("IP 配方必须绑定数字人形象、音色和剪辑模板。")
+            if not all([profile.avatar_id, profile.voice_id]):
+                shared.append("IP 配方必须绑定数字人形象和音色。")
             if self.avatar_service is None:
                 shared.append("数字人服务未配置。")
             elif profile.avatar_id and profile.voice_id:
@@ -589,9 +602,11 @@ class ProductionService:
                     else:
                         avatar_cost = float(estimated or 0)
             if self.template_service is None:
-                shared.append("剪辑模板服务未配置。")
-            elif profile.edit_template_id and self.template_service.get_template(profile.edit_template_id) is None:
-                shared.append("IP 配方绑定的剪辑模板不存在。")
+                shared.append("系统通用智能优化暂不可用。")
+            else:
+                template_id = profile.edit_template_id or DEFAULT_PRODUCTION_TEMPLATE_ID
+                if self.template_service.get_template(template_id) is None:
+                    shared.append("系统通用智能优化配置异常。")
         for value in publish_platforms:
             try:
                 platforms.append(PublishPlatform(value))
@@ -1222,6 +1237,11 @@ class ProductionService:
             if not bool(run.config.get("output_reviewed")):
                 results.append({"run_id": item.run_id, "blocked": True, "issues": ["请先完成人工成片复核。"]})
                 continue
+            try:
+                draft = self._approved_publish_draft(run)
+            except ValueError as exc:
+                results.append({"run_id": item.run_id, "blocked": True, "issues": [str(exc)]})
+                continue
             if bool(run.config.get("publish_confirmed")) or run.publish_task_ids:
                 results.append({"run_id": item.run_id, "blocked": True, "issues": ["该任务已经确认或创建发布任务，不能重复提交。"]})
                 continue
@@ -1229,9 +1249,9 @@ class ProductionService:
             try:
                 resolved, resolution_issues = self._resolve_publish_targets(requested_targets)
                 publish_targets = pipeline_service.build_publish_targets(
-                    title=run.keyword[:100],
-                    description=str(run.config.get("approved_script_text") or "")[:200],
-                    tags=[run.keyword],
+                    title=draft["title"],
+                    description=draft["description"],
+                    tags=draft["tags"],
                     target_specs=resolved,
                 )
                 platform_results: list[dict[str, Any]] = []
@@ -1418,6 +1438,9 @@ class ProductionService:
                     "platform": platform.value,
                     "account_id": account_id or None,
                     "use_manual_fallback": bool(item.get("use_manual_fallback", True)),
+                    "auto_publish_authorized": bool(
+                        item.get("auto_publish_authorized", False)
+                    ),
                 }
             )
         return normalized
@@ -1450,10 +1473,12 @@ class ProductionService:
 
                     account = publish_account_manager.get(account_id, platform=platform)
                     account = publish_account_manager.status(account.account_id)
-                    account_ready = (
-                        account.status == "ready"
-                        and account.auto_publish_authorized
-                    )
+                    # A ready local-browser account is sufficient to prepare
+                    # the official creator page.  Final platform submission is
+                    # still guarded by the publisher when auto authorization
+                    # is absent, so do not downgrade this safe prepare-only
+                    # path to a manual package.
+                    account_ready = account.status == "ready"
                     account_name = account.name
                 except ValueError as exc:
                     if not allow_manual:
@@ -1466,7 +1491,7 @@ class ProductionService:
                 resolved_mode = "manual"
             elif requires_account:
                 issues.append(
-                    f"{capability['display_name']} 需要选择状态为 ready 且已明确授权自动发布的账号。"
+                    f"{capability['display_name']} 需要选择状态为 ready 的账号。"
                 )
                 continue
             elif bool(capability.get("enabled")):
@@ -1485,6 +1510,11 @@ class ProductionService:
                     "display_name": capability.get("display_name", platform),
                     "provider_name": capability.get("provider_name", platform),
                     "use_manual_fallback": allow_manual,
+                    "auto_publish_authorized": bool(
+                        item.get("auto_publish_authorized", False)
+                    )
+                    if resolved_mode == "real"
+                    else False,
                 }
             )
         return resolved, issues
@@ -1506,11 +1536,13 @@ class ProductionService:
         batch = self.sync_batch(batch_id)
         if batch is None:
             raise ValueError("生产批次不存在。")
+        now = datetime.now().astimezone()
         profile = self.get_profile(batch.profile_id)
         item_costs = dict(batch.execution_config.get("item_costs") or {})
         workspace_items: list[dict[str, Any]] = []
         for item in batch.items:
             run = self.repository.get_pipeline_run(item.run_id)
+            video_path = self._video_path(run) if run is not None else ""
             transcript_task = self._transcription_task(run)
             copy_task = (
                 self.repository.get_task(run.copywriting_task_id or "")
@@ -1563,6 +1595,14 @@ class ProductionService:
                     "next_action": next_action,
                     "allowed_actions": allowed_actions,
                     "retry_allowed": retry_allowed,
+                    # 浏览器不能直接播放服务端所在电脑的 Windows 路径；统一
+                    # 返回受控的媒体接口，接口会验证文件存在后再提供 MP4。
+                    "result_media_url": (
+                        f"/api/v1/pipelines/{run.run_id}/media"
+                        if run is not None and video_path and Path(video_path).is_file()
+                        else None
+                    ),
+                    "processing": self._workspace_processing(run, now=now),
                     "reviews": {
                         "transcript": {
                             "required": transcript_required,
@@ -1625,6 +1665,15 @@ class ProductionService:
                                 if isinstance(copy_task, CopywritingTask)
                                 else []
                             ),
+                            "creative_plan": (
+                                dict(plan)
+                                if isinstance(
+                                    plan := (run.config.get("creative_plan") if run is not None else None),
+                                    dict,
+                                )
+                                and plan
+                                else None
+                            ),
                         },
                         "output": {
                             "required": True,
@@ -1639,19 +1688,36 @@ class ProductionService:
                     "publish": {
                         "confirmed": bool(run and run.config.get("publish_confirmed")),
                         "status": self._publish_status(publish_tasks),
+                        "stage": "；".join(
+                            task.stage
+                            for task in publish_tasks
+                            if task.stage
+                        ),
+                        "action_required": next(
+                            (
+                                task.action_required
+                                for task in publish_tasks
+                                if task.action_required
+                            ),
+                            None,
+                        ),
+                        "prepared_task_ids": [
+                            task.task_id
+                            for task in publish_tasks
+                            if task.provider_name == "douyin_local_browser"
+                            and task.publish_status == PublishStatus.MANUAL_READY
+                            and task.stage.startswith("已在账号")
+                        ],
                         "targets": list(run.config.get("publish_targets") or [])
                         if run is not None
                         else [],
                         "task_ids": [task.task_id for task in publish_tasks],
-                        "draft": {
-                            "title": (
-                                run.keyword[:100]
-                                if run is not None
-                                else (item.display_title or item.source_value)[:100]
-                            ),
-                            "description": approved_script_text[:200],
-                            "tags": [run.keyword] if run is not None and run.keyword else [],
-                        },
+                        "draft": self._workspace_publish_draft(
+                            run=run,
+                            publish_tasks=publish_tasks,
+                            profile_tags=list(profile.tags) if profile is not None else [],
+                            approved_script_text=approved_script_text,
+                        ),
                     },
                 }
             )
@@ -1761,7 +1827,15 @@ class ProductionService:
                     for target in item["publish"]["targets"]
                 ],
                 "message": {
-                    "manual_ready": "手动发布包已生成",
+                    "manual_ready": (
+                        "抖音官方发布页已准备，等待你最终确认"
+                        if any(
+                            task.provider_name == "douyin_local_browser"
+                            and task.stage.startswith("已在账号")
+                            for task in all_publish_tasks
+                        )
+                        else "手动发布包已生成"
+                    ),
                     "outcome_unknown": "发布结果待人工核对",
                     "succeeded": "发布已由真实任务确认成功",
                     "failed": "发布任务失败",
@@ -1803,6 +1877,39 @@ class ProductionService:
         task = self.repository.get_task(task_id) if task_id else None
         return task if isinstance(task, TranscriptionTask) else None
 
+    def _workspace_processing(self, run, *, now: datetime) -> dict[str, Any] | None:
+        """返回客户可理解的长耗时状态，且不触发任何供应商调用。"""
+        if run is None or run.current_stage != PipelineStage.AVATAR_GENERATION:
+            return None
+        task = self.repository.get_task(run.avatar_task_id or "")
+        if not isinstance(task, AvatarTask) or task.status not in {
+            TaskStatus.QUEUED,
+            TaskStatus.SUBMITTED,
+            TaskStatus.RUNNING,
+        }:
+            return None
+
+        stage_started_at = next(
+            (
+                stage.started_at
+                for stage in reversed(run.stages)
+                if stage.stage == PipelineStage.AVATAR_GENERATION
+                and stage.started_at is not None
+            ),
+            None,
+        )
+        started_at = stage_started_at or task.created_at
+        elapsed_seconds = max(0, int((now - started_at).total_seconds()))
+        return {
+            "stage": "avatar",
+            "started_at": started_at.isoformat(),
+            "elapsed_seconds": elapsed_seconds,
+            "expected_seconds": self.AVATAR_DELAY_WARNING_SECONDS,
+            "delayed": elapsed_seconds >= self.AVATAR_DELAY_WARNING_SECONDS,
+            # 仅用于界面避免出现“暂停后会取消云端任务”的误导；不暴露供应商细节。
+            "provider_job_received": bool(task.backend_job_id or task.provider_job_id),
+        }
+
     def _workspace_actions(
         self,
         item: ProductionBatchItem,
@@ -1819,6 +1926,8 @@ class ProductionService:
             return "resume", ["resume"]
         if run is None:
             return "preflight", ["preflight"]
+        if self._publish_tasks_succeeded(run):
+            return "view_result", ["view_result"]
         if item.status == ProductionBatchItemStatus.PLANNED:
             return "preflight", ["preflight", "start"]
         if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.HUMAN_REVIEW:
@@ -1828,6 +1937,8 @@ class ProductionService:
         if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
             if not bool(run.config.get("output_reviewed")):
                 return "review_output", ["review_output", "pause"]
+            if not bool(run.config.get("publish_draft_approved")) and not run.publish_task_ids:
+                return "review_publish_draft", ["review_publish_draft", "pause"]
             if not bool(run.config.get("publish_confirmed")) and not run.publish_task_ids:
                 return "publish", ["publish", "pause"]
             return "wait", ["wait"]
@@ -1840,10 +1951,11 @@ class ProductionService:
             return "preflight", ["preflight"]
         return "wait", ["wait", "pause"]
 
-    @staticmethod
-    def _workspace_stage(item: ProductionBatchItem, run) -> str:
+    def _workspace_stage(self, item: ProductionBatchItem, run) -> str:
         if run is None or item.status == ProductionBatchItemStatus.PLANNED:
             return "source"
+        if self._publish_tasks_succeeded(run):
+            return "completed"
         if run.current_stage == PipelineStage.HUMAN_REVIEW:
             return "transcript" if run.config.get("review_stage") == "transcript" else "script"
         if run.current_stage == PipelineStage.TRANSCRIPTION:
@@ -1859,6 +1971,15 @@ class ProductionService:
         if run.status == PipelineRunStatus.SUCCEEDED:
             return "completed"
         return "source"
+
+    def _publish_tasks_succeeded(self, run) -> bool:
+        task_ids = list(run.publish_task_ids) if run is not None else []
+        if not task_ids:
+            return False
+        return all(
+            isinstance(task, PublishTask) and task.status == TaskStatus.SUCCEEDED
+            for task in (self.repository.get_task(task_id) for task_id in task_ids)
+        )
 
     @staticmethod
     def _publish_status(tasks: list[PublishTask]) -> str:
@@ -1905,12 +2026,29 @@ class ProductionService:
         self.repository.save_production_batch(updated)
         return updated
 
-    @staticmethod
-    def _item_from_run(item: ProductionBatchItem, run, now: datetime) -> ProductionBatchItem:
+    def _item_from_run(self, item: ProductionBatchItem, run, now: datetime) -> ProductionBatchItem:
         if run is None:
             return item.model_copy(update={"status": ProductionBatchItemStatus.BLOCKED, "blocked_reasons": ["流水线记录不存在。"], "updated_at": now})
         stage = run.current_stage
-        if run.status in {PipelineRunStatus.FAILED, PipelineRunStatus.PARTIAL}:
+        publish_tasks = [
+            self.repository.get_task(task_id)
+            for task_id in run.publish_task_ids
+        ]
+        publish_completed = self._publish_tasks_succeeded(run)
+        waiting_for_manual_publish = any(
+            isinstance(task, PublishTask)
+            and task.publish_status.value == "manual_ready"
+            for task in publish_tasks
+        )
+        if publish_completed:
+            status = ProductionBatchItemStatus.SUCCEEDED
+        elif waiting_for_manual_publish:
+            # Preparing a local browser page intentionally pauses the task so
+            # the operator, not the system, performs the irreversible final
+            # click.  Do not let the pipeline's partial terminal state make
+            # this look like a failed production batch.
+            status = ProductionBatchItemStatus.AWAITING_PUBLISH
+        elif run.status in {PipelineRunStatus.FAILED, PipelineRunStatus.PARTIAL}:
             status = ProductionBatchItemStatus.FAILED
         elif run.status == PipelineRunStatus.SUCCEEDED:
             status = ProductionBatchItemStatus.SUCCEEDED
@@ -1954,6 +2092,70 @@ class ProductionService:
             if stage.stage == PipelineStage.VIDEO_EDITING:
                 return str(stage.outputs.get("video_path") or stage.outputs.get("result_path") or "")
         return ""
+
+    @staticmethod
+    def _approved_publish_draft(run) -> dict[str, Any]:
+        raw = run.config.get("publish_draft")
+        if not bool(run.config.get("publish_draft_approved")) or not isinstance(raw, dict):
+            raise ValueError("请先确认标题、描述和标签，再准备发布。")
+        draft = validated_publish_draft(
+            title=str(raw.get("title") or ""),
+            description=str(raw.get("description") or ""),
+            tags=list(raw.get("tags") or []),
+        )
+        if publish_draft_fingerprint(draft) != str(run.config.get("publish_draft_fingerprint") or ""):
+            raise ValueError("发布信息已变化，请重新确认标题、描述和标签。")
+        return draft
+
+    @staticmethod
+    def _workspace_publish_draft(
+        *,
+        run,
+        publish_tasks: list[PublishTask],
+        profile_tags: list[str],
+        approved_script_text: str,
+    ) -> dict[str, Any] | None:
+        if run is None:
+            return None
+        raw = run.config.get("publish_draft")
+        if isinstance(raw, dict):
+            return {
+                **raw,
+                "approved": bool(run.config.get("publish_draft_approved")),
+                "warnings": [],
+            }
+        if publish_tasks:
+            target = publish_tasks[0].target
+            return suggested_publish_draft(
+                approved_script=(
+                    approved_script_text.strip()
+                    or target.description.strip()
+                    or target.title.strip()
+                ),
+                creative_plan=(
+                    dict(plan)
+                    if isinstance(plan := run.config.get("creative_plan"), dict)
+                    else None
+                ),
+                profile_tags=profile_tags,
+            )
+        if not approved_script_text.strip():
+            return {
+                "title": "",
+                "description": "",
+                "tags": [],
+                "approved": False,
+                "warnings": [],
+            }
+        return suggested_publish_draft(
+            approved_script=approved_script_text,
+            creative_plan=(
+                dict(plan)
+                if isinstance(plan := run.config.get("creative_plan"), dict)
+                else None
+            ),
+            profile_tags=profile_tags,
+        )
 
     @staticmethod
     def _aggregate_status(items: list[ProductionBatchItem], *, paused: bool) -> ProductionBatchStatus:

@@ -59,8 +59,8 @@ export const ADVANCED_NAVIGATION_ITEMS: NavigationItem[] = [
     label: "转写复核",
     path: "/transcription",
     section: "高级工具",
-    description: "提取、校对并确认原始转写",
-    keywords: ["语音转写", "字幕识别"],
+    description: "质检转写后带入 AI 文案改写",
+    keywords: ["语音转写", "文案改写"],
   },
   {
     id: "ai-copy",
@@ -86,37 +86,11 @@ export const ADVANCED_NAVIGATION_ITEMS: NavigationItem[] = [
     description: "独立完成视频剪辑与导出",
     keywords: ["AI智能剪辑", "视频剪辑"],
   },
-  {
-    id: "subtitle",
-    label: "字幕工具",
-    path: "/subtitle",
-    section: "高级工具",
-    description: "独立生成和调整字幕",
-    keywords: ["字幕生成"],
-  },
-];
-
-export const SUPPORT_NAVIGATION_ITEMS: NavigationItem[] = [
-  {
-    id: "help",
-    label: "帮助中心",
-    path: "/help",
-    section: "支持",
-    description: "查看客户工作流与常见问题",
-  },
-  {
-    id: "admin",
-    label: "系统设置",
-    path: "/admin",
-    section: "支持",
-    description: "查看服务、账号和供应商配置",
-  },
 ];
 
 export const NAVIGATION_ITEMS = [
   ...CORE_NAVIGATION_ITEMS,
   ...ADVANCED_NAVIGATION_ITEMS,
-  ...SUPPORT_NAVIGATION_ITEMS,
 ];
 
 const LEGACY_PAGE_TITLES: Record<string, string> = {
@@ -126,6 +100,8 @@ const LEGACY_PAGE_TITLES: Record<string, string> = {
   "/feedback": "反馈与复盘",
   "/tasks": "任务记录",
   "/analytics": "深度分析",
+  "/help": "帮助中心",
+  "/admin": "系统设置",
 };
 
 export function getNavigationItem(path: string) {

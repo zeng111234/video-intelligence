@@ -386,6 +386,20 @@ def create_voiceover_draft(
             detail="真实 LLM 文案服务未配置，暂不能生成口播稿。",
         )
 
+    existing_draft = next(
+        (
+            task
+            for task in copywriting_service.list_tasks()
+            if task.source_task_id == task_id
+            and task.source_revision_id == revision.revision_id
+            and task.status == TaskStatus.SUCCEEDED
+            and task.outputs.get("draft_stage", "deduplicate") == "deduplicate"
+        ),
+        None,
+    )
+    if existing_draft is not None:
+        return _voiceover_to_response(existing_draft)
+
     source_text = _deduplicate_adjacent_segments(revision.corrected_segments)
     target_characters = max(
         50,

@@ -13,6 +13,7 @@
 - `delivery-report.md` - 交付报告（2026-07-19 快照）
 - `delivery-summary.md` - 交付摘要（2026-07-19 快照）
 - `deployment-checklist.md` - 部署检查清单
+- `ims-video-editor-upgrade-plan.md` - IMS 专业口播剪辑升级计划（当前暂缓）
 - `final-checklist.md` - 最终检查清单（2026-07-19 快照）
 - `final-delivery-verification.md` - 最终交付验证（2026-07-19 快照）
 - `project-status-final.md` - 项目最终状态（2026-07-19 快照）

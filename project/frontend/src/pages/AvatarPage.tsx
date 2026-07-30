@@ -1137,7 +1137,11 @@ export default function AvatarPage() {
                 </Upload>
               </Space>
             ) : (
-              <Text type="secondary">当前账号暂未开放新增形象权限。</Text>
+              <Text type="secondary">
+                {capability?.provider_name === "shuying_legacy_cloud"
+                  ? "云形象训练线路配置未完成，请联系管理员检查上传地址和允许域名。"
+                  : "当前账号暂未开放新增形象权限。"}
+              </Text>
             )}
           </div>
         </Space>
@@ -1279,7 +1283,9 @@ export default function AvatarPage() {
                   </Upload>
                 </Space>
                 <Text type="secondary" style={{ display: "block", marginTop: 10 }}>
-                  上传或录制后会出现在上方；只有标记为“可使用”的声音可生成视频。
+                  {!supportsLocalUpload && !supportsVoiceCloning
+                    ? "声音样本会先保存为“待训练”；当前不会自动克隆，也不能直接用于视频。"
+                    : "上传或录制后会出现在上方；只有标记为“可使用”的声音可生成视频。"}
                 </Text>
               </>
             ) : (

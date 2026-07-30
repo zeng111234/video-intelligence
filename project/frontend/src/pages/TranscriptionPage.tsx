@@ -8,7 +8,6 @@ import {
   Drawer,
   Empty,
   Input,
-  InputNumber,
   List,
   Modal,
   Popconfirm,
@@ -25,14 +24,12 @@ import {
 import type { ColumnsType } from "antd/es/table";
 import {
   AudioOutlined,
-  CopyOutlined,
   DeleteOutlined,
   DownloadOutlined,
   FileAddOutlined,
   HistoryOutlined,
   LinkOutlined,
   ReloadOutlined,
-  SaveOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -44,15 +41,10 @@ import {
   getCrawlerLinkTranscriptionCapabilities,
   previewCrawlerLinkTranscription,
   clearTranscriptionHistory,
-  createComplianceDraft,
-  createVoiceoverDraft,
   deleteTask,
   exportTranscription,
   getTranscription,
   listTranscriptions,
-  listComplianceDrafts,
-  listVoiceoverDrafts,
-  updateVoiceoverDraft,
   uploadAndTranscribe,
 } from "../api/client";
 import type {
@@ -60,7 +52,6 @@ import type {
   TranscriptionResponse,
   CrawlerLinkTranscriptionCapabilities,
   CrawlerLinkTranscriptionPreview,
-  VoiceoverDraftResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
@@ -70,7 +61,6 @@ const { TextArea } = Input;
 
 const DEMO_LOW_CONFIDENCE_ORIGINAL = "先判断你是通勤、户外，还是长时间带妆。";
 const DEMO_LOW_CONFIDENCE_REWRITE = "先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。";
-
 function isDemoLlmRewrite(segment: TranscriptSegment, isMock: boolean | undefined) {
   return Boolean(isMock && (
     segment.quality_status === "llm_rewritten"
@@ -138,21 +128,12 @@ export default function TranscriptionPage() {
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
   const [asrModel, setAsrModel] = usePersistentState("transcription_asr_model", "large-v3-turbo");
   const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
-  const [targetSeconds, setTargetSeconds] = usePersistentState("transcription_target_seconds", 45);
-  const [activeDraftIndex, setActiveDraftIndex] = usePersistentState("transcription_active_draft_index", 0);
-  const [activePanel, setActivePanel] = usePersistentState<"review" | "voiceover" | "compliance">("transcription_active_panel", "review");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
-  const [draftLoading, setDraftLoading] = useState(false);
-  const [voiceoverDrafts, setVoiceoverDrafts] = useState<VoiceoverDraftResponse[]>([]);
-  const [activeVoiceover, setActiveVoiceover] = useState<VoiceoverDraftResponse | null>(null);
-  const [complianceDrafts, setComplianceDrafts] = useState<VoiceoverDraftResponse[]>([]);
-  const [activeCompliance, setActiveCompliance] = useState<VoiceoverDraftResponse | null>(null);
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
@@ -173,40 +154,13 @@ export default function TranscriptionPage() {
     });
   }, [filterStatus, searchText, tasks]);
 
-  const loadVoiceoverDrafts = useCallback(async (taskId: string) => {
-    try {
-      const drafts = await listVoiceoverDrafts(taskId);
-      setVoiceoverDrafts(drafts);
-      setActiveVoiceover(drafts[0] || null);
-      setActiveDraftIndex(0);
-    } catch (err) {
-      setVoiceoverDrafts([]);
-      setActiveVoiceover(null);
-      toast.error((err as Error).message || "读取口播稿历史失败");
-    }
-  }, [setActiveDraftIndex, toast]);
-
-  const loadComplianceDrafts = useCallback(async (taskId: string) => {
-    try {
-      const drafts = await listComplianceDrafts(taskId);
-      setComplianceDrafts(drafts);
-      setActiveCompliance(drafts[0] || null);
-    } catch (err) {
-      setComplianceDrafts([]);
-      setActiveCompliance(null);
-      toast.error((err as Error).message || "读取合规优化历史失败");
-    }
-  }, [toast]);
-
   const applyTask = useCallback((task: TranscriptionResponse, closeHistory = true) => {
     const serverSegments = normalizeSegments(task.segments);
     setSelected(task);
     setSelectedTaskId(task.task_id);
     setSegments(serverSegments);
-    loadVoiceoverDrafts(task.task_id);
-    loadComplianceDrafts(task.task_id);
     if (closeHistory) setHistoryOpen(false);
-  }, [loadComplianceDrafts, loadVoiceoverDrafts, setSelectedTaskId]);
+  }, [setSelectedTaskId]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -234,10 +188,6 @@ export default function TranscriptionPage() {
         setSelected(null);
         setSelectedTaskId(null);
         setSegments([]);
-        setVoiceoverDrafts([]);
-        setActiveVoiceover(null);
-        setComplianceDrafts([]);
-        setActiveCompliance(null);
       }
       toast.success("转写历史已删除");
     } catch (error) {
@@ -255,38 +205,9 @@ export default function TranscriptionPage() {
       setSelected(null);
       setSelectedTaskId(null);
       setSegments([]);
-      setVoiceoverDrafts([]);
-      setActiveVoiceover(null);
-      setComplianceDrafts([]);
-      setActiveCompliance(null);
       toast.success(`已删除 ${result.deleted_count} 条转写历史`);
     } catch (error) {
       toast.error((error as Error).message || "清空转写历史失败");
-    } finally {
-      setDeletingTaskId(null);
-    }
-  };
-
-  const handleDeleteDraft = async (draft: VoiceoverDraftResponse, kind: "voiceover" | "compliance") => {
-    setDeletingTaskId(draft.copywriting_task_id);
-    try {
-      await deleteTask(draft.copywriting_task_id);
-      if (kind === "voiceover") {
-        const remaining = voiceoverDrafts.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id);
-        setVoiceoverDrafts(remaining);
-        if (activeVoiceover?.copywriting_task_id === draft.copywriting_task_id) {
-          setActiveVoiceover(remaining[0] || null);
-        }
-      } else {
-        const remaining = complianceDrafts.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id);
-        setComplianceDrafts(remaining);
-        if (activeCompliance?.copywriting_task_id === draft.copywriting_task_id) {
-          setActiveCompliance(remaining[0] || null);
-        }
-      }
-      toast.success(kind === "voiceover" ? "口播稿历史已删除" : "合规优化历史已删除");
-    } catch (error) {
-      toast.error((error as Error).message || "删除历史失败");
     } finally {
       setDeletingTaskId(null);
     }
@@ -348,10 +269,6 @@ export default function TranscriptionPage() {
     setSelected(null);
     setSelectedTaskId(null);
     setSegments([]);
-    setVoiceoverDrafts([]);
-    setActiveVoiceover(null);
-    setComplianceDrafts([]);
-    setActiveCompliance(null);
     setCreateOpen(true);
   };
 
@@ -402,129 +319,18 @@ export default function TranscriptionPage() {
     }
   };
 
-  const handleCreateVoiceoverDraft = async () => {
-    if (!selected) return;
-    if (!selected.approved_revision_id) {
-      toast.warning("转写尚未完成 AI 自动成稿");
+  const handleSendToAiCopy = () => {
+    const sourceText = segments.map((segment) => displaySegmentText(segment, selected?.is_mock)).join("\n").trim();
+    if (!sourceText) {
+      toast.warning("当前没有可带入的转写文本");
       return;
     }
-    setDraftLoading(true);
-    try {
-      const draft = await createVoiceoverDraft({
-        taskId: selected.task_id,
-        targetSeconds,
-        variantCount: 2,
-      });
-      if (draft.status !== "succeeded") {
-        toast.error(draft.error_message || "口播稿生成失败");
-        return;
-      }
-      setActiveVoiceover(draft);
-      setVoiceoverDrafts((prev) => [draft, ...prev.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id)]);
-      setActiveDraftIndex(0);
-      toast.success("已生成去重压缩口播稿，原始转写未改动");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setDraftLoading(false);
-    }
-  };
-
-  const activeDraftVariants = activeVoiceover?.result_variants.length
-    ? activeVoiceover.result_variants
-    : activeVoiceover?.result_text
-      ? [activeVoiceover.result_text]
-      : [];
-  const activeDraftText = activeDraftVariants[activeDraftIndex] || "";
-
-  const updateActiveVoiceoverText = (text: string) => {
-    if (!activeVoiceover) return;
-    const nextVariants = [...activeDraftVariants];
-    nextVariants[activeDraftIndex] = text;
-    const updated = {
-      ...activeVoiceover,
-      result_text: activeDraftIndex === 0 ? text : activeVoiceover.result_text,
-      result_variants: nextVariants,
-    };
-    setActiveVoiceover(updated);
-    setVoiceoverDrafts((prev) => prev.map((item) => item.copywriting_task_id === updated.copywriting_task_id ? updated : item));
-  };
-
-  const saveVoiceoverDraft = async () => {
-    if (!selected || !activeVoiceover || !activeDraftText.trim()) return false;
-    setSaving(true);
-    try {
-      const saved = await updateVoiceoverDraft({
-        taskId: selected.task_id,
-        draftId: activeVoiceover.copywriting_task_id,
-        resultText: activeDraftText,
-        resultVariants: activeDraftVariants,
-      });
-      setActiveVoiceover(saved);
-      setVoiceoverDrafts((prev) => prev.map((item) => item.copywriting_task_id === saved.copywriting_task_id ? saved : item));
-      toast.success("口播稿编辑已保存");
-      return true;
-    } catch (err) {
-      toast.error((err as Error).message || "保存口播稿失败");
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleUseForAvatar = async () => {
-    if (!activeVoiceover || !activeDraftText || activeVoiceover.is_mock) return;
-    const saved = await saveVoiceoverDraft();
-    if (!saved) return;
-    const params = new URLSearchParams({
-      script: activeDraftText,
-      sourceTask: activeVoiceover.copywriting_task_id,
-      sourceRevision: activeVoiceover.source_revision_id,
+    navigate("/ai-copy", {
+      state: {
+        sourceText,
+        sourceLabel: selected?.media_name || "已质检转写稿",
+      },
     });
-    navigate(`/avatar?${params.toString()}`);
-  };
-
-  const handleCreateComplianceDraft = async () => {
-    if (!selected || !activeVoiceover) {
-      toast.warning("请先生成并选择一份去重口播稿");
-      return;
-    }
-    const saved = await saveVoiceoverDraft();
-    if (!saved) return;
-    setDraftLoading(true);
-    try {
-      const draft = await createComplianceDraft({ taskId: selected.task_id, parentDraftId: activeVoiceover.copywriting_task_id });
-      setComplianceDrafts((prev) => [draft, ...prev.filter((item) => item.copywriting_task_id !== draft.copywriting_task_id)]);
-      setActiveCompliance(draft);
-      setActivePanel("compliance");
-      toast.success("已生成待人工复核的合规优化稿");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setDraftLoading(false);
-    }
-  };
-
-  const complianceText = activeCompliance?.result_text || activeCompliance?.result_variants[0] || "";
-  const updateComplianceText = (text: string) => {
-    if (!activeCompliance) return;
-    const updated = { ...activeCompliance, result_text: text, result_variants: [text, ...activeCompliance.result_variants.slice(1)] };
-    setActiveCompliance(updated);
-    setComplianceDrafts((prev) => prev.map((item) => item.copywriting_task_id === updated.copywriting_task_id ? updated : item));
-  };
-  const saveComplianceDraft = async () => {
-    if (!selected || !activeCompliance || !complianceText.trim()) return;
-    setSaving(true);
-    try {
-      const saved = await updateVoiceoverDraft({ taskId: selected.task_id, draftId: activeCompliance.copywriting_task_id, resultText: complianceText, resultVariants: [complianceText] });
-      setActiveCompliance(saved);
-      setComplianceDrafts((prev) => prev.map((item) => item.copywriting_task_id === saved.copywriting_task_id ? saved : item));
-      toast.success("合规优化稿编辑已保存，仍需人工终审");
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setSaving(false);
-    }
   };
 
   const segmentColumns: ColumnsType<TranscriptSegment> = [
@@ -650,14 +456,10 @@ export default function TranscriptionPage() {
             </Space>
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
             {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
-            <Tabs
-              activeKey={activePanel}
-              onChange={(key) => setActivePanel(key as "review" | "voiceover" | "compliance")}
-              items={[
-                {
-                  key: "review",
-                  label: selected.is_mock ? "演示结果" : "AI质检结果",
-                  children: segments.length > 0 ? (
+            <Space direction="vertical" style={{ width: "100%" }} size={16}>
+              {segments.length > 0 ? (
+                <>
+                  <Card size="small" title={selected.is_mock ? "演示结果" : "AI质检结果"}>
                     <Space direction="vertical" style={{ width: "100%" }} size={16}>
                       <Alert
                         type={selected.is_mock ? "info" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
@@ -666,121 +468,31 @@ export default function TranscriptionPage() {
                           ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
                           : selected.llm_review_count > 0
                             ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
-                          : selected.uncertain_segment_count > 0
-                            ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
-                            : "AI 已完成自动质检并生成成稿。"}
+                            : selected.uncertain_segment_count > 0
+                              ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
+                              : "AI 已完成自动质检并生成成稿。"}
                       />
                       {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
                       <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
                       <Card size="small" title="AI修订口播稿预览"><Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph></Card>
                     </Space>
-                  ) : <Empty description="该任务暂无可校对片段" />,
-                },
-                {
-                  key: "voiceover",
-                  label: "数字人口播稿",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Alert
-                        type={selected.approved_revision_id ? "info" : "warning"}
-                        showIcon
-                        message={selected.approved_revision_id ? "基于 AI 自动成稿生成，不覆盖原始转写" : "等待 AI 自动成稿完成"}
-                      />
-                      <Space wrap>
-                        <Text>目标时长</Text>
-                        <InputNumber min={15} max={60} value={targetSeconds} onChange={(value) => setTargetSeconds(Number(value || 45))} addonAfter="秒" />
-                        <Button type="primary" loading={draftLoading} disabled={!selected.approved_revision_id} onClick={handleCreateVoiceoverDraft}>
-                          生成去重压缩稿
-                        </Button>
-                      </Space>
-                      {voiceoverDrafts.length > 0 && (
-                        <Space wrap>
-                          {voiceoverDrafts.map((draft, index) => (
-                            <Space key={draft.copywriting_task_id} size={0}>
-                              <Button
-                                size="small"
-                                type={activeVoiceover?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"}
-                                onClick={() => {
-                                  setActiveVoiceover(draft);
-                                  setActiveDraftIndex(0);
-                                }}
-                              >
-                                历史 {index + 1}
-                              </Button>
-                              <Popconfirm
-                                title="删除这份口播稿历史？"
-                                description="只删除该历史版本，不会影响原始转写。"
-                                okText="删除"
-                                okButtonProps={{ danger: true }}
-                                cancelText="取消"
-                                onConfirm={() => handleDeleteDraft(draft, "voiceover")}
-                              >
-                                <Button type="text" danger size="small" icon={<DeleteOutlined />} loading={deletingTaskId === draft.copywriting_task_id} />
-                              </Popconfirm>
-                            </Space>
-                          ))}
-                        </Space>
-                      )}
-                      {activeDraftVariants.length > 0 ? (
-                        <Space direction="vertical" style={{ width: "100%" }}>
-                          <Space wrap>
-                            {activeDraftVariants.map((_, index) => (
-                              <Button key={index} size="small" type={activeDraftIndex === index ? "primary" : "default"} onClick={() => setActiveDraftIndex(index)}>
-                                版本 {index + 1}
-                              </Button>
-                            ))}
-                            <Tag>{activeDraftText.length} 字</Tag>
-                            <Tag>目标 {activeVoiceover?.target_seconds ? `${activeVoiceover.target_seconds} 秒` : "未知"}</Tag>
-                            <Tag>{activeVoiceover?.model_name || "未知模型"}</Tag>
-                            {activeVoiceover?.is_mock && <Tag color="warning">Sandbox 演示文案</Tag>}
-                          </Space>
-                          <TextArea value={activeDraftText} autoSize={{ minRows: 6 }} onChange={(event) => updateActiveVoiceoverText(event.target.value)} />
-                          <Space wrap>
-                            <Button icon={<SaveOutlined />} loading={saving} onClick={saveVoiceoverDraft}>保存编辑</Button>
-                            <Button loading={draftLoading} disabled={!activeVoiceover || activeVoiceover.is_mock} onClick={handleCreateComplianceDraft}>生成合规优化稿</Button>
-                            <Button icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(activeDraftText).then(() => toast.success("已复制"))}>复制口播稿</Button>
-                            <Button type="primary" loading={saving} disabled={activeVoiceover?.is_mock} onClick={handleUseForAvatar}>保存并带到数字人</Button>
-                          </Space>
-                        </Space>
-                      ) : (
-                        <Empty description="当前任务暂无口播稿历史" />
-                      )}
-                    </Space>
-                  ),
-                },
-                {
-                  key: "compliance",
-                  label: "合规优化",
-                  children: (
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Alert type="warning" showIcon message="AI 仅做表达风险提示与优化，不能替代法务、平台规则或人工终审。" description="不会补写事实、资质、数据或效果承诺；请在发布前逐项确认版权、广告、医疗金融等行业要求。" />
-                      {complianceDrafts.length > 0 && (
-                        <Space wrap>
-                          {complianceDrafts.map((draft, index) => (
-                            <Space key={draft.copywriting_task_id} size={0}>
-                              <Button size="small" type={activeCompliance?.copywriting_task_id === draft.copywriting_task_id ? "primary" : "default"} onClick={() => setActiveCompliance(draft)}>
-                                历史 {index + 1}
-                              </Button>
-                              <Popconfirm
-                                title="删除这份合规优化历史？"
-                                description="只删除该历史版本，不会影响原始转写。"
-                                okText="删除"
-                                okButtonProps={{ danger: true }}
-                                cancelText="取消"
-                                onConfirm={() => handleDeleteDraft(draft, "compliance")}
-                              >
-                                <Button type="text" danger size="small" icon={<DeleteOutlined />} loading={deletingTaskId === draft.copywriting_task_id} />
-                              </Popconfirm>
-                            </Space>
-                          ))}
-                        </Space>
-                      )}
-                      {activeCompliance ? <Space direction="vertical" style={{ width: "100%" }}><Tag color="warning">待人工复核</Tag><TextArea value={complianceText} autoSize={{ minRows: 7 }} onChange={(event) => updateComplianceText(event.target.value)} /><Space><Button icon={<SaveOutlined />} loading={saving} onClick={saveComplianceDraft}>保存编辑</Button><Button icon={<CopyOutlined />} onClick={() => navigator.clipboard.writeText(complianceText).then(() => toast.success("已复制"))}>复制合规稿</Button></Space></Space> : <Empty description="先在“数字人口播稿”生成并保存去重稿，再生成合规优化稿" />}
-                    </Space>
-                  ),
-                },
-              ]}
-            />
+                  </Card>
+                </>
+              ) : <Empty description="该任务暂无可校对片段" />}
+
+              <Card size="small" title="下一步：AI 文案改写">
+                <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="确认后会带入 AI 文案改写；系统不会自动改写、不会自动制作数字人视频。"
+                  />
+                  <Button type="primary" onClick={handleSendToAiCopy} disabled={segments.length === 0}>
+                    确认并带到 AI 文案
+                  </Button>
+                </Space>
+              </Card>
+            </Space>
           </Space>
         ) : (
           <Empty description="新建或从历史选择一个转写任务" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: "40px 0" }} />

@@ -1093,7 +1093,7 @@ class VideoEditorBatch(BaseModel):
     target_platform: str = "douyin"
     subtitle_enabled: bool = True
     subtitle_model: str = "large-v3-turbo"
-    bgm_enabled: bool = False
+    bgm_enabled: bool = True
     bgm_id: str | None = None
     bgm_volume: float = Field(default=0.24, ge=0, le=1)
     steps: list[dict[str, Any]] = Field(default_factory=list)
@@ -1133,6 +1133,14 @@ class PublishTarget(BaseModel):
     cover_image_path: str | None = None
     scheduled_at: datetime | None = None
     visibility: str = "public"
+    auto_publish_authorized: bool = False
+    use_prepared_page: bool = False
+    native_music_mode: str = Field(
+        default="off",
+        pattern="^(off|auto_recommended)$",
+    )
+    native_music_hint: str = Field(default="", max_length=80)
+    selected_music_title: str | None = Field(default=None, max_length=100)
 
 
 class PublishTask(TaskRecord):

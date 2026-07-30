@@ -126,6 +126,12 @@ describe("TranscriptionPage", () => {
     expect(screen.getByText("AI标记存疑")).toBeTruthy();
     expect(screen.queryByText("校对人")).toBeNull();
     expect(screen.queryByText("确认成稿")).toBeNull();
+    expect(screen.queryByRole("tab", { name: "合规优化" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "生成合规优化稿" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "数字人口播稿" })).toBeNull();
+    expect(screen.getByText("下一步：AI 文案改写")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认并带到 AI 文案" })).toBeTruthy();
+    expect(screen.queryByText("去重口播稿")).toBeNull();
   });
 
   it("shows a mock low-confidence LLM rewrite without claiming a real model call", async () => {
@@ -137,8 +143,7 @@ describe("TranscriptionPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByRole("tab", { name: "演示结果" })).toBeTruthy();
-    expect(screen.getByText("演示通过")).toBeTruthy();
+    expect(await screen.findByText("演示通过")).toBeTruthy();
     expect(screen.getByText("演示：LLM拟修订")).toBeTruthy();
     expect(screen.getByText("先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。")).toBeTruthy();
     expect(screen.getByText("原识别：先判断你是通勤、户外，还是长时间带妆。")).toBeTruthy();

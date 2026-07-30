@@ -75,6 +75,12 @@ class PublishRequest(BaseModel):
     title: str = Field(..., min_length=1, description="标题")
     description: str = Field("", description="描述")
     tags: list[str] = Field(default_factory=list, description="标签")
+    native_music_mode: str = Field(
+        "auto_recommended",
+        pattern="^(off|auto_recommended)$",
+        description="平台原生配乐方式",
+    )
+    native_music_hint: str = Field("", max_length=80, description="配乐情绪提示")
 
 
 class PublishPreflightRequest(BaseModel):
@@ -86,6 +92,12 @@ class PublishPreflightRequest(BaseModel):
     account_ids: dict[str, str] = Field(
         default_factory=dict, description="平台对应的本机发布账号"
     )
+    native_music_mode: str = Field(
+        "auto_recommended",
+        pattern="^(off|auto_recommended)$",
+        description="平台原生配乐方式",
+    )
+    native_music_hint: str = Field("", max_length=80, description="配乐情绪提示")
 
 
 class PublishBatchRequest(PublishPreflightRequest):
@@ -164,6 +176,10 @@ class PublishAccountUpdateRequest(BaseModel):
     auto_publish_authorized: bool | None = None
 
 
+class ConfirmAutoPublishRequest(BaseModel):
+    confirmation_accepted: bool = False
+
+
 class PublishAccountResponse(BaseModel):
     account_id: str
     platform: str
@@ -183,6 +199,9 @@ class PublishResponse(BaseModel):
     publish_status: str
     platform: str
     title: str
+    native_music_mode: str = "off"
+    native_music_hint: str = ""
+    selected_music_title: str | None = None
     stage: str
     provider_name: str
     platform_video_id: str | None = None
@@ -225,6 +244,21 @@ def _build_targets(body: PublishPreflightRequest):
                 description=body.description,
                 tags=body.tags,
                 account_id=body.account_ids.get(platform_key),
+                native_music_mode=(
+                    body.native_music_mode
+                    if platform == PublishPlatform.DOUYIN
+                    else "off"
+                ),
+                native_music_hint=(
+                    body.native_music_hint
+                    if platform == PublishPlatform.DOUYIN
+                    else ""
+                ),
+                auto_publish_authorized=bool(
+                    isinstance(body, PublishBatchRequest)
+                    and body.confirmation_accepted
+                    and platform == PublishPlatform.DOUYIN
+                ),
             )
         )
     return targets
@@ -291,6 +325,9 @@ def _task_response(task) -> PublishResponse:
         publish_status=task.publish_status.value,
         platform=task.target.platform.value,
         title=task.target.title,
+        native_music_mode=task.target.native_music_mode,
+        native_music_hint=task.target.native_music_hint,
+        selected_music_title=task.target.selected_music_title,
         stage=task.stage,
         provider_name=task.provider_name,
         platform_video_id=task.platform_video_id,
@@ -844,6 +881,27 @@ def import_edited_asset(
     target = PUBLISH_ASSET_DIR / f"ai-edit-{task.task_id}{source.suffix.lower()}"
     if not target.exists():
         copy2(source, target)
+    music_hint = ""
+    batch_id = str(task.outputs.get("batch_id") or "").strip()
+    item_id = str(task.outputs.get("item_id") or "").strip()
+    if batch_id and item_id:
+        batch = repository.get_video_editor_batch(batch_id)
+        if batch is not None:
+            item = next(
+                (entry for entry in batch.items if entry.item_id == item_id),
+                None,
+            )
+            if item is not None and item.edit_plan:
+                plan = dict(item.edit_plan)
+                hint_parts = [
+                    str(plan.get("bgm_category") or "").strip(),
+                    str(plan.get("bgm_energy") or "").strip(),
+                    *[
+                        str(keyword).strip()
+                        for keyword in list(plan.get("bgm_keywords") or [])[:3]
+                    ],
+                ]
+                music_hint = " ".join(part for part in hint_parts if part)[:80]
     stat = target.stat()
     return {
         "name": target.name,
@@ -851,6 +909,7 @@ def import_edited_asset(
         "size_bytes": stat.st_size,
         "updated_at": stat.st_mtime,
         "recommended_title": task.outputs.get("publish_title") or None,
+        "recommended_music_hint": music_hint or None,
     }
 
 
@@ -940,6 +999,33 @@ def retry_publish_task(
     return _task_response(task)
 
 
+@router.post("/tasks/{task_id}/prepare-official-page", response_model=PublishResponse)
+def prepare_publish_official_page(
+    task_id: str,
+    service=Depends(get_publish_service),
+):
+    try:
+        task = service.prepare_official_page(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _task_response(task)
+
+
+@router.post("/tasks/{task_id}/confirm-auto-publish", response_model=PublishResponse)
+def confirm_auto_publish_task(
+    task_id: str,
+    body: ConfirmAutoPublishRequest,
+    service=Depends(get_publish_service),
+):
+    if not body.confirmation_accepted:
+        raise HTTPException(status_code=400, detail="请先确认本次自动发布。")
+    try:
+        task = service.confirm_auto_publish(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _task_response(task)
+
+
 @router.post("/tasks/{task_id}/resume", response_model=PublishResponse)
 def resume_publish_task(
     task_id: str,
@@ -994,6 +1080,16 @@ def publish_video(
         title=body.title,
         description=body.description,
         tags=body.tags,
+        native_music_mode=(
+            body.native_music_mode
+            if platform == PublishPlatform.DOUYIN
+            else "off"
+        ),
+        native_music_hint=(
+            body.native_music_hint
+            if platform == PublishPlatform.DOUYIN
+            else ""
+        ),
     )
     try:
         task = service.publish(video_path=body.video_path, target=target)

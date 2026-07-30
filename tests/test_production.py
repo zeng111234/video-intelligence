@@ -21,18 +21,25 @@ from src.models import (
     PipelineRunStatus,
     PipelineStage,
     Platform,
+    PublishStatus,
+    ProductionBatchItemStatus,
     ProductionBatchStatus,
     TaskStatus,
     TranscriptSegment,
     TranscriptionTask,
     VideoCandidate,
+    VideoEditTask,
     VideoMetricSnapshot,
 )
 from src.repositories.mock import MockRepository
 from src.repositories.sqlite import SQLiteRepository
 from src.services.pipeline import PipelineService
 from src.services.pipeline_worker import PipelineWorker
-from src.services.production import ProductionService
+from src.services.publish_metadata import publish_draft_fingerprint
+from src.services.production import (
+    DEFAULT_PRODUCTION_TEMPLATE_ID,
+    ProductionService,
+)
 
 
 def _candidate(candidate_id: str = "candidate-production-1") -> VideoCandidate:
@@ -50,6 +57,19 @@ def _candidate(candidate_id: str = "candidate-production-1") -> VideoCandidate:
         metrics=VideoMetricSnapshot(item_id=candidate_id, sampled_at=now, likes=10, confidence=0.8),
         heat=HeatResult(score=50, level=HeatLevel.INSUFFICIENT, confidence=0.5),
     )
+
+
+def test_profile_uses_universal_template_when_customer_does_not_choose(tmp_path):
+    service = ProductionService(MockRepository(), tmp_path / "production")
+
+    profile = service.create_profile(
+        name="自动优化出镜人",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+    )
+
+    assert profile.edit_template_id == DEFAULT_PRODUCTION_TEMPLATE_ID
+    assert service.list_profiles()[0].edit_template_id == DEFAULT_PRODUCTION_TEMPLATE_ID
 
 
 def test_profile_and_batch_plan_persist_without_executing_generation(tmp_path):
@@ -676,6 +696,12 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
                         {
                             "run_id": run.run_id,
                             "approved_text": "确认后的最终口播稿",
+                            "creative_plan": {
+                                "hook": "先说客户最关心的问题",
+                                "key_points": ["说明一个可执行的做法"],
+                                "call_to_action": "留言获取清单",
+                                "visual_sections": ["开场口播", "讲解做法", "收尾引导"],
+                            },
                         }
                     ],
                 },
@@ -700,7 +726,95 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     assert stored.config["transcript_reviewed"] is True
     assert stored.config["script_reviewed"] is True
     assert stored.config["approved_script_text"] == "确认后的最终口播稿"
+    assert stored.config["creative_plan"] == {
+        "status": "approved",
+        "hook": "先说客户最关心的问题",
+        "key_points": ["说明一个可执行的做法"],
+        "call_to_action": "留言获取清单",
+        "visual_sections": ["开场口播", "讲解做法", "收尾引导"],
+    }
     assert stored.current_stage == PipelineStage.AVATAR_GENERATION
+
+
+def test_workspace_uses_public_media_url_and_reports_delayed_avatar_once(tmp_path):
+    """客户工作台绝不把服务器文件路径给浏览器，并如实提示慢任务。"""
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="媒体地址配方")
+    batch = service.create_batch(
+        name="媒体地址批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "确认后的口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    result_path = tmp_path / "result.mp4"
+    result_path.write_bytes(b"test media")
+    edit_task = VideoEditTask(
+        task_id="workspace-edit-result",
+        title="工作台成片",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        source_video_path="source.mp4",
+        result_path=str(result_path),
+    )
+    repository.save_task(edit_task)
+    run = pipeline_service.update_stage(
+        run,
+        PipelineStage.VIDEO_EDITING,
+        TaskStatus.SUCCEEDED,
+        task_id=edit_task.task_id,
+        outputs={"video_path": str(result_path)},
+    )
+    repository.save_pipeline_run(run)
+
+    media_workspace = service.workspace(batch.batch_id)
+    assert media_workspace["items"][0]["result_media_url"] == (
+        f"/api/v1/pipelines/{run.run_id}/media"
+    )
+    assert media_workspace["items"][0]["video_path"] == str(result_path)
+
+    delayed_avatar = AvatarTask(
+        task_id="workspace-delayed-avatar",
+        title="正在生成数字人",
+        status=TaskStatus.RUNNING,
+        progress=60,
+        created_at=now - timedelta(seconds=181),
+        updated_at=now,
+        script_text="确认后的口播稿",
+        avatar_id="avatar-a",
+        avatar_name="形象",
+        voice_id="voice-a",
+        voice_name="音色",
+        rights_holder="测试公司",
+        rights_confirmed_at=now,
+        idempotency_key="workspace-delayed-avatar-key",
+        provider_name="cloud",
+        provider_job_id="remote-job-1",
+    )
+    repository.save_task(delayed_avatar)
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.RUNNING,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "avatar_task_id": delayed_avatar.task_id,
+            }
+        )
+    )
+
+    delayed_workspace = service.workspace(batch.batch_id)
+    processing = delayed_workspace["items"][0]["processing"]
+    assert processing is not None
+    assert processing["stage"] == "avatar"
+    assert processing["delayed"] is True
+    assert processing["elapsed_seconds"] >= 181
+    assert processing["provider_job_received"] is True
 
 
 def test_cost_preflight_blocks_unknown_unconfirmed_and_over_limit(tmp_path):
@@ -941,6 +1055,25 @@ def test_publish_requires_output_review_and_persists_manual_targets_idempotently
                     "items": [{"run_id": run.run_id}],
                 },
             )
+            missing_draft = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/publish/preflight",
+                json=publish_body,
+            )
+            publish_review = client.post(
+                f"/api/v1/production/batches/{batch.batch_id}/reviews",
+                json={
+                    "stage": "publish",
+                    "reviewer": "成片审核员",
+                    "items": [{
+                        "run_id": run.run_id,
+                        "publish_draft": {
+                            "title": "客户可见标题",
+                            "description": "客户可见发布描述",
+                            "tags": ["本地获客", "真实案例"],
+                        },
+                    }],
+                },
+            )
             ready = client.post(
                 f"/api/v1/production/batches/{batch.batch_id}/publish/preflight",
                 json=publish_body,
@@ -983,6 +1116,9 @@ def test_publish_requires_output_review_and_persists_manual_targets_idempotently
     assert blocked.json()["blocked"] is True
     assert "成片复核" in blocked.json()["items"][0]["issues"][0]
     assert reviewed.status_code == 200, reviewed.text
+    assert missing_draft.json()["blocked"] is True
+    assert "确认标题" in missing_draft.json()["items"][0]["issues"][0]
+    assert publish_review.status_code == 200, publish_review.text
     assert ready.status_code == 200, ready.text
     assert ready.json()["blocked"] is False
     assert ready.json()["items"][0]["resolved_targets"][0]["mode"] == "manual"
@@ -1185,6 +1321,17 @@ def test_manual_publish_fallback_creates_persistent_manual_ready_task(tmp_path):
             "publish_confirmed": True,
             "video_path": str(video_path),
             "approved_script_text": "最终口播文案",
+            "publish_draft": {
+                "title": "人工发布包",
+                "description": "最终口播文案",
+                "tags": [],
+            },
+            "publish_draft_approved": True,
+            "publish_draft_fingerprint": publish_draft_fingerprint({
+                "title": "人工发布包",
+                "description": "最终口播文案",
+                "tags": [],
+            }),
             "publish_targets": [
                 {
                     "platform": "douyin",
@@ -1238,8 +1385,57 @@ def test_manual_publish_fallback_creates_persistent_manual_ready_task(tmp_path):
     assert all(task.publish_status.value == "manual_ready" for task in publish_tasks)
     assert all(task.source_pipeline_run_id == run.run_id for task in publish_tasks)
 
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(
+        name="人工发布状态",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    production_batch = service.create_batch(
+        name="人工发布状态批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "人工发布包"}],
+        pipeline_service=pipeline_service,
+    )
+    production_batch = production_batch.model_copy(
+        update={
+            "items": [
+                production_batch.items[0].model_copy(update={"run_id": stored.run_id})
+            ]
+        }
+    )
+    repository.save_production_batch(production_batch)
 
-def test_real_publish_requires_ready_and_auto_publish_authorized_account(
+    synced = service.sync_batch(production_batch.batch_id)
+
+    assert synced is not None
+    assert synced.status == ProductionBatchStatus.AWAITING_PUBLISH
+    assert synced.items[0].status == ProductionBatchItemStatus.AWAITING_PUBLISH
+
+    for task in publish_tasks:
+        assert task is not None
+        repository.save_task(
+            task.model_copy(
+                update={
+                    "status": TaskStatus.SUCCEEDED,
+                    "publish_status": PublishStatus.SUCCEEDED,
+                    "progress": 100,
+                    "stage": "人工确认已发布",
+                }
+            )
+        )
+
+    completed = service.workspace(production_batch.batch_id)
+
+    assert completed["status"] == "succeeded"
+    assert completed["current_stage"] == "completed"
+    assert completed["next_action"] == "view_result"
+    assert completed["items"][0]["status"] == "succeeded"
+    assert completed["items"][0]["publish"]["status"] == "succeeded"
+
+
+def test_ready_local_browser_account_creates_prepare_only_real_task(
     tmp_path,
     monkeypatch,
 ):
@@ -1274,20 +1470,16 @@ def test_real_publish_requires_ready_and_auto_publish_authorized_account(
         }
     ]
 
-    fallback, issues = service._resolve_publish_targets(request)
-    blocked, blocked_issues = service._resolve_publish_targets(
+    real, issues = service._resolve_publish_targets(request)
+    strict, strict_issues = service._resolve_publish_targets(
         [{**request[0], "use_manual_fallback": False}]
     )
-    account.auto_publish_authorized = True
-    real, real_issues = service._resolve_publish_targets(request)
 
     assert not issues
-    assert fallback[0]["mode"] == "manual"
-    assert blocked == []
-    assert "明确授权自动发布" in blocked_issues[0]
-    assert not real_issues
     assert real[0]["mode"] == "real"
     assert real[0]["account_id"] == account.account_id
+    assert not strict_issues
+    assert strict[0]["mode"] == "real"
 
 
 def test_paid_llm_unknown_cost_blocks_brief_preflight(tmp_path):

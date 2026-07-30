@@ -21,12 +21,15 @@ from src.models import (
     PipelineStepResult,
     Platform,
     PublishPlatform,
+    PublishStatus,
+    PublishTask,
     PublishTarget,
     TaskStatus,
     TranscriptionTask,
     VideoEditConfig,
 )
 from src.services.media_resolution import MediaResolutionError
+from src.services.publish_metadata import publish_draft_fingerprint, validated_publish_draft
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES, TranscriptionError
 
 logger = logging.getLogger(__name__)
@@ -222,6 +225,7 @@ class PipelineService:
         reviewer: str,
         note: str = "",
         approved_text: str = "",
+        creative_plan: dict[str, Any] | None = None,
     ) -> PipelineRun:
         """记录人工审核决策，并推进已批准的任务。
 
@@ -272,6 +276,11 @@ class PipelineService:
                     or str(run.config.get("approved_script_text") or ""),
                     "script_reviewed": bool(approved),
                     "review_stage": "script",
+                    "creative_plan": (
+                        {"status": "approved", **creative_plan}
+                        if approved and creative_plan is not None
+                        else run.config.get("creative_plan")
+                    ),
                 },
                 "error_message": None if approved else (note.strip() or "人工审核要求返工。"),
             }
@@ -604,7 +613,7 @@ class PipelineService:
         try:
             run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
             rewrite_goal = (
-                "基于真实 ASR 转写提炼爆款视频口播结构并改写。"
+                "仅在 AI 质检和人工确认转写后，基于真实转写整理数字人口播稿。"
                 "保留可确认事实和表达逻辑，删除口头禅、重复句和噪声；"
                 "不得补写未在转写中出现的事实、数据、案例或效果承诺。"
                 "输出可人工审核的口播文案，不要 Markdown。"
@@ -896,6 +905,103 @@ class PipelineService:
             action="output_review_approved",
             stage=PipelineStage.PUBLISHING,
             message="成片复核已通过，已标记为待发布；未创建发布任务。",
+            details={"reviewer": reviewer.strip(), "note": note.strip()},
+        )
+        self.repository.save_pipeline_run(updated)
+        return updated
+
+    def confirm_publish_draft(
+        self,
+        *,
+        run_id: str,
+        reviewer: str,
+        title: str,
+        description: str,
+        tags: list[str],
+        note: str = "",
+    ) -> PipelineRun:
+        """保存人工确认过的发布文案；该操作不创建发布任务。"""
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError("流水线不存在。")
+        if (
+            run.status not in {PipelineRunStatus.PAUSED, PipelineRunStatus.PARTIAL}
+            or run.current_stage != PipelineStage.PUBLISHING
+        ):
+            raise ValueError("当前流水线尚未生成可确认发布的成片。")
+        if not bool(run.config.get("output_reviewed")):
+            raise ValueError("请先完成人工成片复核。")
+        draft = validated_publish_draft(
+            title=title,
+            description=description,
+            tags=tags,
+        )
+        now = datetime.now().astimezone()
+        existing_tasks: list[PublishTask] = []
+        if run.publish_task_ids:
+            for task_id in run.publish_task_ids:
+                task = self.repository.get_task(task_id)
+                if not isinstance(task, PublishTask):
+                    raise ValueError("发布任务记录不完整，请先刷新发布中心。")
+                if (
+                    task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.SUCCEEDED, TaskStatus.OUTCOME_UNKNOWN}
+                    or task.final_publish_started_at
+                    or task.outputs.get("final_publish_clicked") == "true"
+                ):
+                    raise ValueError("发布已经开始或结果待核对，不能再修改发布信息。")
+                existing_tasks.append(task)
+        elif bool(run.config.get("publish_confirmed")):
+            raise ValueError("发布正在准备中，请稍后刷新再修改。")
+
+        for task in existing_tasks:
+            target = task.target.model_copy(
+                update={
+                    "title": draft["title"],
+                    "description": draft["description"],
+                    "tags": draft["tags"],
+                }
+            )
+            update: dict[str, Any] = {
+                "title": f"发布 · {draft['title'][:20]}",
+                "target": target,
+                "updated_at": now,
+                "error_message": None,
+            }
+            if not task.is_mock:
+                update.update(
+                    {
+                        "status": TaskStatus.PAUSED,
+                        "publish_status": PublishStatus.MANUAL_READY,
+                        "progress": 60,
+                        "stage": "发布信息已保存，等待人工核对",
+                        "action_required": "发布信息已更新；需要发布时再重新准备官方发布页，最终发布仍由你确认。",
+                    }
+                )
+            self.repository.save_task(task.model_copy(update=update))
+
+        updated = run.model_copy(
+            update={
+                "updated_at": now,
+                "config": {
+                    **run.config,
+                    "publish_draft": draft,
+                    "publish_draft_approved": True,
+                    "publish_draft_fingerprint": publish_draft_fingerprint(draft),
+                    "publish_draft_reviewer": reviewer.strip(),
+                    "publish_draft_note": note.strip(),
+                    "publish_draft_approved_at": now.isoformat(),
+                },
+            }
+        )
+        updated = self._event(
+            updated,
+            action="publish_draft_approved",
+            stage=PipelineStage.PUBLISHING,
+            message=(
+                "发布信息已保存；尚未重新准备官方发布页，也未执行最终发布。"
+                if existing_tasks
+                else "发布标题、描述和标签已确认；尚未创建发布任务。"
+            ),
             details={"reviewer": reviewer.strip(), "note": note.strip()},
         )
         self.repository.save_pipeline_run(updated)
@@ -1210,6 +1316,10 @@ class PipelineService:
                     title=title,
                     description=description,
                     tags=tags or [],
+                    auto_publish_authorized=bool(
+                        spec.get("auto_publish_authorized", False)
+                    ),
+                    use_prepared_page=bool(spec.get("use_prepared_page", False)),
                 )
                 for spec in target_specs
             ]

@@ -22,6 +22,8 @@ from urllib.parse import quote, urlencode, urlsplit
 import httpx
 
 from src.services.video_editor_cloud import (
+    BGM_ENERGY_LEVELS,
+    BGM_VOICEOVER_CATEGORIES,
     CloudASRProvider,
     CloudAsset,
     CloudEditorConfiguration,
@@ -39,6 +41,8 @@ from src.services.video_editor_cloud import (
     TimeRange,
     TranscriptSegment,
     build_safe_edit_plan,
+    kept_ranges_for_plan,
+    visual_style_spec,
 )
 
 
@@ -810,9 +814,14 @@ class AliyunEditPlanProvider(EditPlanProvider):
         ]
         system = (
             "你是安全轻剪规划器。只返回 JSON，字段仅允许 "
-            "title_candidates、explanation、enabled_steps。"
+            "title_candidates、explanation、enabled_steps、bgm_category、"
+            "bgm_energy、bgm_keywords。"
             "enabled_steps 只能取 trim_silence、vertical_fit、subtitles、"
             "title、bgm、audio_mix。不得建议删除、改写或重排有人声内容。"
+            f"bgm_category 只能取 {'、'.join(BGM_VOICEOVER_CATEGORIES)}；"
+            f"bgm_energy 只能取 {'、'.join(BGM_ENERGY_LEVELS)}；"
+            "bgm_keywords 最多 6 个短标签。根据整段文案的主题、情绪和语速选择，"
+            "口播配乐应克制、无人声、不抢对白。"
         )
         user = json.dumps(
             {
@@ -894,6 +903,22 @@ class AliyunEditPlanProvider(EditPlanProvider):
                     steps.append(step)
         raw_titles = suggestion.get("title_candidates", [])
         titles = raw_titles if isinstance(raw_titles, list) else []
+        raw_bgm_category = str(suggestion.get("bgm_category") or "").strip()
+        bgm_category = (
+            raw_bgm_category
+            if raw_bgm_category in BGM_VOICEOVER_CATEGORIES
+            else "通用口播"
+        )
+        raw_bgm_energy = str(suggestion.get("bgm_energy") or "").strip()
+        bgm_energy = (
+            raw_bgm_energy if raw_bgm_energy in BGM_ENERGY_LEVELS else "克制"
+        )
+        raw_bgm_keywords = suggestion.get("bgm_keywords", [])
+        bgm_keywords = (
+            [str(item) for item in raw_bgm_keywords]
+            if isinstance(raw_bgm_keywords, list)
+            else []
+        )
         raw_usage = payload.get("usage")
         usage = (
             {
@@ -908,6 +933,9 @@ class AliyunEditPlanProvider(EditPlanProvider):
             spoken_ranges,
             duration_seconds,
             title_candidates=[str(item) for item in titles],
+            bgm_category=bgm_category,
+            bgm_energy=bgm_energy,
+            bgm_keywords=bgm_keywords,
             explanation=str(suggestion.get("explanation") or ""),
             enabled_steps=steps,
             provider_name="aliyun_qwen_flash",
@@ -1027,6 +1055,101 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                 "UserData": request.idempotency_key,
             },
         ]
+        if request.edit_plan.trim_silence_enabled:
+            kept_ranges = (
+                request.edit_plan.kept_ranges
+                or kept_ranges_for_plan(
+                    request.edit_plan.duration_seconds,
+                    request.edit_plan.remove_ranges,
+                )
+            )
+            if not kept_ranges:
+                raise CloudProviderError("粗剪方案没有可保留的视频片段。", kind="validation")
+            first = kept_ranges[0]
+            output_payload[0]["Clip"] = {
+                "TimeSpan": {
+                    "Seek": f"{first.start:.3f}",
+                    "Duration": f"{first.end - first.start:.3f}",
+                },
+                "ConfigToClipFirstPart": True,
+            }
+            remaining = kept_ranges[1:]
+            if remaining:
+                source_url = request.input_asset.provider_locator or request.input_asset.uri
+                merge_items = [
+                    {
+                        "MergeURL": source_url,
+                        "Start": f"{item.start:.3f}",
+                        "Duration": f"{item.end - item.start:.3f}",
+                    }
+                    for item in remaining
+                ]
+                if len(remaining) <= 4:
+                    output_payload[0]["MergeList"] = merge_items
+                elif request.merge_config_asset and request.merge_config_asset.provider_locator:
+                    output_payload[0]["MergeConfigUrl"] = (
+                        request.merge_config_asset.provider_locator
+                    )
+                else:
+                    raise CloudProviderError(
+                        "粗剪片段较多，但拼接配置文件尚未准备完成。",
+                        kind="validation",
+                    )
+        if request.subtitle_object_key:
+            output_payload[0]["SubtitleConfig"] = {
+                "ExtSubtitleList": [
+                    {
+                        "Input": {
+                            "Bucket": self.config.oss_bucket,
+                            "Location": self.config.oss_location,
+                            "Object": quote(request.subtitle_object_key, safe=""),
+                        },
+                        "CharEnc": "UTF-8",
+                        "FontName": "YaHei",
+                    },
+                ],
+            }
+        if request.title_watermark_object_key:
+            title_style = visual_style_spec(request.output_profile)["title"]
+            output_payload[0]["WaterMarks"] = [
+                {
+                    "Type": "Image",
+                    "InputFile": {
+                        "Bucket": self.config.oss_bucket,
+                        "Location": self.config.oss_location,
+                        "Object": quote(
+                            request.title_watermark_object_key,
+                            safe="",
+                        ),
+                    },
+                    "ReferPos": "TopLeft",
+                    "Width": str(title_style["asset_width"]),
+                    "Dx": str(title_style["safe_left"]),
+                    "Dy": str(title_style["safe_top"]),
+                    "Timeline": {
+                        "Start": "0",
+                        "Duration": str(title_style["visible_seconds"]),
+                    },
+                }
+            ]
+        if request.bgm_asset:
+            bgm_url = request.bgm_asset.provider_locator or request.bgm_asset.uri
+            if not bgm_url:
+                raise CloudProviderError(
+                    "背景音乐未获得可供 MPS 读取的 OSS 地址。",
+                    kind="validation",
+                )
+            # MPS defaults to the longest stream.  That can make a short
+            # talking-head clip unexpectedly as long as its BGM, so keep the
+            # result bounded by the edited source video.
+            output_payload[0]["Amix"] = [
+                {
+                    "AmixURL": bgm_url,
+                    "Map": "0:a:0",
+                    "MixDurMode": "first",
+                    "Start": "0",
+                }
+            ]
         return self._build_rpc_request(
             "SubmitJobs",
             {

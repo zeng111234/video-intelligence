@@ -129,7 +129,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:1001", "http://127.0.0.1:1001", "*"],
+    # Windows 本机版只服务本机前端，不能因为携带凭据而对任意来源开放。
+    allow_origins=["http://localhost:1001", "http://127.0.0.1:1001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

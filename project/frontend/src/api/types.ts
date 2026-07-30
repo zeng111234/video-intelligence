@@ -41,6 +41,7 @@ export interface TranscriptSegment {
   quality_source?: "primary_asr" | "secondary_asr" | "llm_context" | string;
   quality_note?: string | null;
   alternatives?: string[];
+  emphasis_terms?: string[];
 }
 
 export interface TranscriptionResponse {
@@ -255,6 +256,7 @@ export type ProductionWorkspaceAction =
   | "review_transcript"
   | "review_script"
   | "review_output"
+  | "review_publish_draft"
   | "publish"
   | "retry"
   | "wait"
@@ -279,6 +281,15 @@ export interface ProductionWorkspaceReview {
   attention_terms?: string[];
   compliance_status?: string | null;
   compliance_notes?: string[];
+  creative_plan?: ProductionCreativePlan | null;
+}
+
+export interface ProductionCreativePlan {
+  status?: "approved" | string;
+  hook: string;
+  key_points: string[];
+  call_to_action: string;
+  visual_sections: string[];
 }
 
 export interface ProductionWorkspaceCost {
@@ -293,6 +304,7 @@ export interface ProductionPublishTarget {
   platform: string;
   account_id?: string;
   use_manual_fallback?: boolean;
+  auto_publish_authorized?: boolean;
   account_name?: string;
   mode?: "real" | "manual" | string;
   display_name?: string;
@@ -303,15 +315,29 @@ export interface ProductionPublishDraft {
   title: string;
   description: string;
   tags: string[];
+  approved?: boolean;
+  warnings?: string[];
 }
 
 export interface ProductionWorkspacePublish {
   confirmed: boolean;
   status: string;
+  stage?: string | null;
+  action_required?: string | null;
+  prepared_task_ids?: string[];
   targets: ProductionPublishTarget[];
   task_ids: string[];
   message?: string | null;
   draft?: ProductionPublishDraft;
+}
+
+export interface ProductionWorkspaceProcessing {
+  stage: "avatar" | string;
+  started_at: string;
+  elapsed_seconds: number;
+  expected_seconds: number;
+  delayed: boolean;
+  provider_job_received: boolean;
 }
 
 export interface ProductionWorkspaceItem extends ProductionBatchItem {
@@ -327,6 +353,7 @@ export interface ProductionWorkspaceItem extends ProductionBatchItem {
   cost: ProductionWorkspaceCost;
   publish: ProductionWorkspacePublish;
   result_media_url?: string | null;
+  processing?: ProductionWorkspaceProcessing | null;
 }
 
 export interface ProductionWorkspace {
@@ -978,6 +1005,9 @@ export interface PublishResponse {
   publish_status: string;
   platform: string;
   title: string;
+  native_music_mode: "off" | "auto_recommended" | string;
+  native_music_hint: string;
+  selected_music_title: string | null;
   stage: string;
   provider_name: string;
   platform_video_id: string | null;
@@ -1080,6 +1110,7 @@ export interface PublishAsset {
   size_bytes: number;
   updated_at?: number;
   recommended_title?: string | null;
+  recommended_music_hint?: string | null;
 }
 
 export interface PublishAssetListResponse {
@@ -1365,6 +1396,8 @@ export interface VideoEditorEditPlan {
   duration_seconds: number;
   spoken_ranges: VideoEditorTimeRange[];
   remove_ranges: VideoEditorTimeRange[];
+  kept_ranges?: VideoEditorTimeRange[];
+  estimated_output_seconds?: number;
   enabled_steps: string[];
   trim_silence_enabled: boolean;
   title_candidates: string[];
@@ -1459,10 +1492,18 @@ export interface VideoEditorBatchItem {
   provider_stage?: string | null;
   provider_job_ids?: Record<string, string>;
   provider_payload?: Record<string, unknown>;
+  render_manifest?: {
+    visual_style_id?: string;
+    subtitle_format?: string;
+    title_burned_in?: boolean;
+    subtitles_burned_in?: boolean;
+    expected_resolution?: string;
+  } | null;
   actual_usage?: Record<string, unknown>;
   edit_plan?: VideoEditorEditPlan | null;
   enabled_plan_step_ids?: string[];
   subtitle_segments?: Array<Record<string, unknown>>;
+  overlay_preview?: VideoEditorOverlayPreview | null;
   review_snapshot?: Record<string, unknown>;
   review_confirmed_at?: string | null;
   result_media_url?: string | null;
@@ -1488,6 +1529,7 @@ export interface VideoEditorBatch {
   output_resolution?: string;
   output_fps?: number;
   output_bitrate?: string;
+  visual_spec?: VideoEditorVisualSpec | null;
   quote_id?: string | null;
   cost_quote?: VideoEditorCostQuote | null;
   actual_usage?: Record<string, unknown>;
@@ -1512,12 +1554,19 @@ export interface VideoEditorBgmAsset {
   original_name: string;
   media_type: string;
   mood: string;
+  voiceover_category: string;
+  energy: string;
+  tags: string[];
   rights_holder: string;
   rights_confirmed_at: string;
   created_at: string;
   duration_seconds: number;
   size_bytes: number;
   media_url: string;
+  source_provider: string;
+  source_url: string;
+  license_url: string;
+  content_id_risk: "none" | "registered" | "unknown" | string;
 }
 
 export interface VideoEditorBgmListResponse {
@@ -1564,6 +1613,67 @@ export interface VideoCapabilitiesResponse {
   price_version?: string;
   quote_ttl_seconds?: number;
   supported_output_profiles?: VideoEditorOutputProfile[];
+}
+
+export interface VideoEditorVisualSpec {
+  style_id: string;
+  canvas: {
+    width: number;
+    height: number;
+    pixel_aspect_ratio: string;
+  };
+  title: {
+    visible_seconds: number;
+    fade_in_ms: number;
+    fade_out_ms: number;
+    max_lines: number;
+    max_chars_per_line: number;
+    font_family: string;
+    render_mode: string;
+    font_size: number;
+    line_height: number;
+    safe_top: number;
+    safe_left: number;
+    asset_width: number;
+    asset_height: number;
+    outline_width: number;
+    shadow: number;
+    color: string;
+  };
+  accent: {
+    color: string;
+    width: number;
+    height: number;
+    gap: number;
+  };
+  subtitle: {
+    max_lines: number;
+    max_chars_per_line: number;
+    font_size: number;
+    safe_bottom: number;
+    outline_width: number;
+    shadow: number;
+    color: string;
+    emphasis_color: string;
+  };
+}
+
+export interface VideoEditorOverlayPreview {
+  title: {
+    lines: string[];
+    start: number;
+    end: number;
+  };
+  cues: Array<{
+    start: number;
+    end: number;
+    lines: string[];
+    emphasis_range?: {
+      line_index: number;
+      start: number;
+      end: number;
+    } | null;
+  }>;
 }
 
 export interface StepKindParam {

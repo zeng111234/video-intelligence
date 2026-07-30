@@ -654,10 +654,18 @@ class TestPipelineService:
     def test_build_publish_targets_custom_platforms(self):
         targets = PipelineService.build_publish_targets(
             title="自定义",
-            platforms=[PublishPlatform.DOUYIN],
+            target_specs=[
+                {
+                    "platform": "douyin",
+                    "account_id": "pubacc-test",
+                    "auto_publish_authorized": True,
+                }
+            ],
         )
         assert len(targets) == 1
         assert targets[0].platform == PublishPlatform.DOUYIN
+        assert targets[0].account_id == "pubacc-test"
+        assert targets[0].auto_publish_authorized is True
 
     def test_publish_task_ids_accumulate(self):
         run = self.svc.create_run(keyword="发布测试")
@@ -669,6 +677,98 @@ class TestPipelineService:
         )
         assert "pub-1" in run.publish_task_ids
         assert "pub-2" in run.publish_task_ids
+
+    def test_publish_metadata_can_be_corrected_before_final_platform_click(self):
+        now = datetime.now().astimezone()
+        task = PublishTask(
+            task_id="publish-editable",
+            title="抖音待确认 · 旧标题",
+            status=TaskStatus.PAUSED,
+            progress=60,
+            created_at=now,
+            updated_at=now,
+            video_path="result.mp4",
+            target=PublishTarget(
+                platform=PublishPlatform.DOUYIN,
+                title="旧标题",
+                description="旧描述",
+                tags=["旧标签"],
+            ),
+            publish_status=PublishStatus.MANUAL_READY,
+            provider_name="douyin_local_browser",
+            stage="等待人工最终发布",
+            is_mock=False,
+        )
+        self.repo.save_task(task)
+        run = self.svc.create_run(
+            keyword="发布信息纠正",
+            config={"output_reviewed": True, "publish_confirmed": True},
+        ).model_copy(
+            update={
+                "status": PipelineRunStatus.PARTIAL,
+                "current_stage": PipelineStage.PUBLISHING,
+                "publish_task_ids": [task.task_id],
+            }
+        )
+        self.repo.save_pipeline_run(run)
+
+        updated = self.svc.confirm_publish_draft(
+            run_id=run.run_id,
+            reviewer="审核员",
+            title="新标题",
+            description="新描述",
+            tags=["商业思维", "AI获客"],
+        )
+
+        saved_task = self.repo.get_task(task.task_id)
+        assert isinstance(saved_task, PublishTask)
+        assert saved_task.target.title == "新标题"
+        assert saved_task.target.description == "新描述"
+        assert saved_task.target.tags == ["商业思维", "AI获客"]
+        assert saved_task.status == TaskStatus.PAUSED
+        assert saved_task.publish_status == PublishStatus.MANUAL_READY
+        assert saved_task.final_publish_started_at is None
+        assert updated.config["publish_draft"]["title"] == "新标题"
+        assert updated.events[-1].message == "发布信息已保存；尚未重新准备官方发布页，也未执行最终发布。"
+
+    def test_publish_metadata_cannot_change_after_final_platform_click(self):
+        now = datetime.now().astimezone()
+        task = PublishTask(
+            task_id="publish-final-started",
+            title="抖音发布 · 已点击",
+            status=TaskStatus.OUTCOME_UNKNOWN,
+            progress=90,
+            created_at=now,
+            updated_at=now,
+            video_path="result.mp4",
+            target=PublishTarget(platform=PublishPlatform.DOUYIN, title="已点击"),
+            publish_status=PublishStatus.OUTCOME_UNKNOWN,
+            provider_name="douyin_local_browser",
+            stage="等待平台结果",
+            final_publish_started_at=now,
+            outputs={"final_publish_clicked": "true"},
+        )
+        self.repo.save_task(task)
+        run = self.svc.create_run(
+            keyword="禁止发布后修改",
+            config={"output_reviewed": True, "publish_confirmed": True},
+        ).model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.PUBLISHING,
+                "publish_task_ids": [task.task_id],
+            }
+        )
+        self.repo.save_pipeline_run(run)
+
+        with pytest.raises(ValueError, match="不能再修改"):
+            self.svc.confirm_publish_draft(
+                run_id=run.run_id,
+                reviewer="审核员",
+                title="不能修改",
+                description="",
+                tags=[],
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 /** 云端轻量智能剪辑工作台。 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Alert,
   Button,
@@ -29,15 +29,14 @@ import {
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
-  CloseOutlined,
   CloudOutlined,
+  DownloadOutlined,
   EditOutlined,
   EyeOutlined,
   FileProtectOutlined,
   HistoryOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  SafetyCertificateOutlined,
   SettingOutlined,
   SoundOutlined,
   UploadOutlined,
@@ -51,9 +50,62 @@ import type {
   VideoEditorBatchItem,
   VideoEditorBgmAsset,
   VideoEditorSource,
+  VideoEditorOverlayPreview,
+  VideoEditorVisualSpec,
 } from "../api/types";
 
 const { Title, Text, Paragraph } = Typography;
+
+const BGM_CATEGORY_OPTIONS = [
+  "理性干货",
+  "情绪共鸣",
+  "故事叙事",
+  "商业表达",
+  "科技未来",
+  "轻松日常",
+  "励志成长",
+  "悬念揭秘",
+  "通用口播",
+].map((value) => ({ value, label: value }));
+
+const BGM_SOURCE_OPTIONS = [
+  { value: "manual", label: "本人/公司或已有授权" },
+  { value: "pixabay", label: "Pixabay 免费素材" },
+  { value: "light_factory", label: "光厂已购授权" },
+  { value: "bodian", label: "波点商用库授权" },
+];
+
+const BGM_SOURCE_LABELS: Record<string, string> = {
+  manual: "本地授权",
+  freepd: "FreePD 公共领域",
+  pixabay: "Pixabay",
+  light_factory: "光厂",
+  bodian: "波点商用库",
+};
+
+const BGM_LIBRARY_SOURCES = ["freepd", "pixabay", "light_factory", "bodian", "manual"];
+const CAPTION_BREAK_BEFORE_TOKENS = [
+  "因为", "所以", "但是", "不过", "而且", "然后", "如果", "虽然",
+  "为了", "其实", "结果", "现在", "大量", "少量", "很多", "有些", "倒闭",
+  "取代", "替代", "增长", "减少", "出现", "成为", "变成", "开始", "进入",
+  "面对", "发现", "需要", "可以", "不能", "没有", "不是", "就是", "已经",
+  "正在", "也是", "仍然", "被", "把", "让", "待",
+];
+const CAPTION_BREAK_AFTER_TOKENS = [
+  "的话", "以后", "之前", "之后", "时候", "一来", "说到底",
+  "个", "段", "条", "种", "次", "件", "位", "家", "台", "套",
+];
+const CAPTION_PROTECTED_TERMS = [
+  "待人工确认", "人工智能", "工业机器人", "机器人", "人工", "工厂", "倒闭", "废铁", "字幕",
+  "确认", "市场", "收入", "消费", "企业", "设备", "订单", "未来", "工作",
+  "用户", "客户", "视频", "标题", "音乐", "智能", "取代", "替代", "岗位",
+];
+
+const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
+  `${asset.voiceover_category || asset.mood} · ${asset.title} · ${
+    BGM_SOURCE_LABELS[asset.source_provider] || "授权素材"
+  }`
+);
 
 type OutputProfile = "720p" | "1080p";
 type CompactSection = "source" | "preview" | "plan";
@@ -115,6 +167,40 @@ interface EditPlanStep {
 
 type CloudBatchItem = VideoEditorBatchItem;
 type CloudBatch = VideoEditorBatch;
+
+const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
+  style_id: "business_talking_head_v7",
+  canvas: { width: 720, height: 1280, pixel_aspect_ratio: "1:1" },
+  title: {
+    visible_seconds: 2.5,
+    fade_in_ms: 0,
+    fade_out_ms: 0,
+    max_lines: 2,
+    max_chars_per_line: 9,
+    font_family: "Source Han Serif CN Heavy",
+    render_mode: "png_watermark",
+    font_size: 48,
+    line_height: 1.1,
+    safe_top: 84,
+    safe_left: 56,
+    asset_width: 520,
+    asset_height: 150,
+    outline_width: 1,
+    shadow: 3,
+    color: "#FFFFFF",
+  },
+  accent: { color: "transparent", width: 0, height: 0, gap: 0 },
+  subtitle: {
+    max_lines: 1,
+    max_chars_per_line: 10,
+    font_size: 46,
+    safe_bottom: 170,
+    outline_width: 2,
+    shadow: 3,
+    color: "#F8FAFC",
+    emphasis_color: "#FFE16A",
+  },
+};
 
 const PLATFORM_OPTIONS = [
   { value: "douyin", label: "抖音 · 9:16" },
@@ -279,7 +365,7 @@ function formatBytes(value?: number | null) {
 }
 
 function formatCost(value: number) {
-  return `¥${value.toFixed(value >= 1 ? 2 : 3)}`;
+  return `¥${value.toFixed(value >= 1 ? 2 : value > 0 && value < 0.001 ? 4 : 3)}`;
 }
 
 function statusTag(status: string) {
@@ -300,6 +386,7 @@ function quoteLines(quote: CostQuote | null): Array<{ key: string; label: string
         edit_planning: "qwen-flash 规划",
         render: "MPS H.264 渲染",
         cloud_render: "MPS H.264 渲染",
+        brand_title_overlay: "品牌标题排版",
       }[item.component || ""] || item.provider || "云服务"),
       amount: asNumber(item.amount_cny ?? item.estimated_cost_cny ?? item.cost_cny),
     }));
@@ -376,6 +463,43 @@ function normalizePlan(item?: CloudBatchItem | null): EditPlanStep[] {
   return normalized.length ? normalized : DEFAULT_PLAN;
 }
 
+function recommendReviewBgm(
+  item: CloudBatchItem,
+  assets: VideoEditorBgmAsset[],
+): VideoEditorBgmAsset | null {
+  const usableAssets = assets.filter((asset) => asset.content_id_risk !== "registered");
+  if (!usableAssets.length) return null;
+
+  const plan = item.edit_plan as unknown as Record<string, unknown> | null | undefined;
+  const planCategory = typeof plan?.bgm_category === "string"
+    ? plan.bgm_category.trim()
+    : "";
+  const transcript = (item.subtitle_segments || []).map((segment) => segment.text).join(" ");
+  const text = `${item.selected_title || ""} ${item.title || ""} ${transcript} ${
+    typeof plan?.explanation === "string" ? plan.explanation : ""
+  }`;
+  const inferredCategory = planCategory
+    || (/人工智能|AI|机器人|科技|智能|数智/i.test(text)
+      ? "科技未来"
+      : /商业|企业|老板|品牌|营销|获客|客户|市场|销售/.test(text)
+        ? "商业表达"
+        : /情绪|共鸣|焦虑|治愈|温柔/.test(text)
+          ? "情绪共鸣"
+          : /故事|经历|曾经|后来|回忆/.test(text)
+            ? "故事叙事"
+            : /成长|励志|坚持|成功/.test(text)
+              ? "励志成长"
+              : /真相|揭秘|为什么|竟然/.test(text)
+                ? "悬念揭秘"
+                : /日常|生活|轻松/.test(text)
+                  ? "轻松日常"
+                  : "理性干货");
+
+  return usableAssets.find((asset) => asset.voiceover_category === inferredCategory)
+    || usableAssets.find((asset) => asset.voiceover_category === "通用口播")
+    || usableAssets[0];
+}
+
 function normalizeSubtitleSegments(item?: CloudBatchItem | null): TranscriptSegment[] {
   if (!item || !Array.isArray(item.subtitle_segments)) return [];
   return item.subtitle_segments.flatMap((segment) => {
@@ -407,6 +531,294 @@ function silenceIntervals(steps: EditPlanStep[]) {
       return start >= 0 && end > start ? [{ start, end }] : [];
     });
   });
+}
+
+type PreviewInterval = { start: number; end: number };
+
+function sortedPreviewIntervals(intervals: PreviewInterval[]) {
+  return [...intervals].sort((left, right) => left.start - right.start);
+}
+
+function planTimeFromSourceTime(sourceTime: number, intervals: PreviewInterval[]) {
+  let effectiveTime = Math.max(0, sourceTime);
+  for (const interval of sortedPreviewIntervals(intervals)) {
+    if (sourceTime >= interval.end) {
+      effectiveTime -= interval.end - interval.start;
+      continue;
+    }
+    if (sourceTime > interval.start) {
+      effectiveTime -= sourceTime - interval.start;
+    }
+    break;
+  }
+  return Math.max(0, effectiveTime);
+}
+
+function sourceTimeFromPlanTime(
+  planTime: number,
+  sourceDuration: number,
+  intervals: PreviewInterval[],
+) {
+  const target = Math.max(0, planTime);
+  let sourceCursor = 0;
+  let planCursor = 0;
+  for (const interval of sortedPreviewIntervals(intervals)) {
+    const cutStart = Math.max(sourceCursor, Math.min(sourceDuration, interval.start));
+    const cutEnd = Math.max(cutStart, Math.min(sourceDuration, interval.end));
+    const keptDuration = cutStart - sourceCursor;
+    if (target < planCursor + keptDuration) {
+      return sourceCursor + target - planCursor;
+    }
+    planCursor += keptDuration;
+    sourceCursor = cutEnd;
+  }
+  return Math.min(sourceDuration, sourceCursor + target - planCursor);
+}
+
+function formatTimelineTime(seconds: number) {
+  const wholeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(wholeSeconds / 60);
+  return `${minutes}:${String(wholeSeconds % 60).padStart(2, "0")}`;
+}
+
+function captionBoundarySplits(piece: string) {
+  const boundaries = new Set<number>();
+  CAPTION_BREAK_BEFORE_TOKENS.forEach((token) => {
+    let start = piece.indexOf(token);
+    while (start >= 0) {
+      if (start > 0) boundaries.add(start);
+      start = piece.indexOf(token, start + 1);
+    }
+  });
+  CAPTION_BREAK_AFTER_TOKENS.forEach((token) => {
+    let start = piece.indexOf(token);
+    while (start >= 0) {
+      const end = start + token.length;
+      if (end < piece.length) boundaries.add(end);
+      start = piece.indexOf(token, start + 1);
+    }
+  });
+  return boundaries;
+}
+
+function splitInsideProtectedTerm(piece: string, splitAt: number) {
+  return CAPTION_PROTECTED_TERMS.some((term) => {
+    let start = piece.indexOf(term);
+    while (start >= 0) {
+      if (start < splitAt && splitAt < start + term.length) return true;
+      start = piece.indexOf(term, start + 1);
+    }
+    return false;
+  });
+}
+
+function captionPhraseParts(piece: string, maxChars: number) {
+  const parts: string[] = [];
+  let remaining = piece;
+  const minimumChars = Math.min(4, maxChars);
+  while (remaining.length > maxChars) {
+    const partCount = Math.ceil(remaining.length / maxChars);
+    const ideal = Math.round(remaining.length / partCount);
+    const minimumSplit = Math.max(
+      minimumChars,
+      remaining.length - maxChars * (partCount - 1),
+    );
+    const maximumSplit = Math.min(
+      maxChars,
+      remaining.length - minimumChars * (partCount - 1),
+    );
+    const safeSplits = Array.from(
+      { length: Math.max(0, maximumSplit - minimumSplit + 1) },
+      (_, index) => minimumSplit + index,
+    ).filter((splitAt) => !splitInsideProtectedTerm(remaining, splitAt));
+    const semanticSplits = captionBoundarySplits(remaining);
+    const semanticCandidates = safeSplits.filter((splitAt) => semanticSplits.has(splitAt));
+    const candidates = semanticCandidates.length ? semanticCandidates : safeSplits;
+    const fallback = Math.max(minimumSplit, Math.min(maximumSplit, ideal));
+    const splitAt = candidates.reduce(
+      (best, candidate) => (
+        Math.abs(candidate - ideal) < Math.abs(best - ideal)
+        || (
+          Math.abs(candidate - ideal) === Math.abs(best - ideal)
+          && candidate > best
+        )
+          ? candidate
+          : best
+      ),
+      candidates[0] ?? fallback,
+    );
+    parts.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
+}
+
+function captionChunks(text: string, maxChars: number) {
+  const characters = Array.from(text.replace(/\s+/g, ""));
+  const breakCharacters = new Set(Array.from("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—"));
+  const numericPunctuation = new Set([".", ",", ":"]);
+  const pieces: string[] = [];
+  let phrase = "";
+  characters.forEach((character, index) => {
+    const betweenDigits = numericPunctuation.has(character)
+      && index > 0
+      && index + 1 < characters.length
+      && /\d/.test(characters[index - 1])
+      && /\d/.test(characters[index + 1]);
+    if (breakCharacters.has(character) && !betweenDigits) {
+      if (phrase) pieces.push(phrase);
+      phrase = "";
+      return;
+    }
+    phrase += character;
+  });
+  if (phrase) pieces.push(phrase);
+  const chunks: string[] = [];
+  let current = "";
+  for (const piece of pieces) {
+    for (const part of captionPhraseParts(piece, maxChars)) {
+      if (current && current.length + part.length > maxChars) {
+        chunks.push(current);
+        current = "";
+      }
+      current += part;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+}
+
+function displayLines(
+  text: string,
+  charsPerLine: number,
+  maxLines?: number,
+  truncate = false,
+) {
+  let clean = text.replace(/\s+/g, "");
+  const maxChars = maxLines ? charsPerLine * maxLines : undefined;
+  if (truncate && maxChars && clean.length > maxChars) {
+    clean = `${clean.slice(0, maxChars - 1)}…`;
+  }
+  return Array.from({ length: Math.ceil(clean.length / charsPerLine) }, (_, index) => (
+    clean.slice(index * charsPerLine, (index + 1) * charsPerLine)
+  )).filter(Boolean);
+}
+
+function emphasisRange(lines: string[], terms?: string[]) {
+  const term = captionChunks(terms?.[0] || "", Number.MAX_SAFE_INTEGER)[0];
+  if (!term) return null;
+  for (const [lineIndex, line] of lines.entries()) {
+    const start = line.indexOf(term);
+    if (start >= 0) return { line_index: lineIndex, start, end: start + term.length };
+  }
+  return null;
+}
+
+function previewCaptionCues(segments: TranscriptSegment[], spec: VideoEditorVisualSpec) {
+  const maxChars = spec.subtitle.max_chars_per_line * spec.subtitle.max_lines;
+  return segments.flatMap((segment) => {
+    const start = asNumber(segment.start, -1);
+    const end = asNumber(segment.end, -1);
+    const chunks = captionChunks(segment.text, maxChars);
+    if (start < 0 || end <= start || !chunks.length) return [];
+    const totalChars = chunks.reduce((total, chunk) => total + chunk.length, 0) || 1;
+    let cursor = start;
+    return chunks.map((chunk, index) => {
+      const cueEnd = index === chunks.length - 1
+        ? end
+        : cursor + ((end - start) * chunk.length / totalChars);
+      const lines = displayLines(
+        chunk,
+        spec.subtitle.max_chars_per_line,
+        spec.subtitle.max_lines,
+      );
+      const cue = {
+        start: cursor,
+        end: cueEnd,
+        lines,
+        emphasis_range: emphasisRange(lines, segment.emphasis_terms),
+      };
+      cursor = cueEnd;
+      return cue;
+    });
+  });
+}
+
+function localOverlayPreview(
+  segments: TranscriptSegment[],
+  title: string,
+  spec: VideoEditorVisualSpec,
+): VideoEditorOverlayPreview {
+  return {
+    title: {
+      lines: displayLines(
+        title,
+        spec.title.max_chars_per_line,
+        spec.title.max_lines,
+        true,
+      ),
+      start: 0,
+      end: spec.title.visible_seconds,
+    },
+    cues: previewCaptionCues(segments, spec),
+  };
+}
+
+function resolveVisualSpec(spec?: VideoEditorVisualSpec | null): VideoEditorVisualSpec {
+  const canvas = { ...DEFAULT_VISUAL_SPEC.canvas, ...spec?.canvas };
+  const scale = canvas.width / DEFAULT_VISUAL_SPEC.canvas.width;
+  const v2Default: VideoEditorVisualSpec = {
+    ...DEFAULT_VISUAL_SPEC,
+    canvas,
+    title: {
+      ...DEFAULT_VISUAL_SPEC.title,
+      font_size: Math.round(DEFAULT_VISUAL_SPEC.title.font_size * scale),
+      safe_top: Math.round(DEFAULT_VISUAL_SPEC.title.safe_top * scale),
+      safe_left: Math.round(DEFAULT_VISUAL_SPEC.title.safe_left * scale),
+      asset_width: Math.round(DEFAULT_VISUAL_SPEC.title.asset_width * scale),
+      asset_height: Math.round(DEFAULT_VISUAL_SPEC.title.asset_height * scale),
+      outline_width: Math.max(0, Math.round(DEFAULT_VISUAL_SPEC.title.outline_width * scale)),
+      shadow: Math.max(1, Math.round(DEFAULT_VISUAL_SPEC.title.shadow * scale)),
+    },
+    accent: {
+      ...DEFAULT_VISUAL_SPEC.accent,
+      width: Math.round(DEFAULT_VISUAL_SPEC.accent.width * scale),
+      height: Math.round(DEFAULT_VISUAL_SPEC.accent.height * scale),
+      gap: Math.round(DEFAULT_VISUAL_SPEC.accent.gap * scale),
+    },
+    subtitle: {
+      ...DEFAULT_VISUAL_SPEC.subtitle,
+      font_size: Math.round(DEFAULT_VISUAL_SPEC.subtitle.font_size * scale),
+      safe_bottom: Math.round(DEFAULT_VISUAL_SPEC.subtitle.safe_bottom * scale),
+      outline_width: Math.max(1, Math.round(DEFAULT_VISUAL_SPEC.subtitle.outline_width * scale)),
+      shadow: Math.max(1, Math.round(DEFAULT_VISUAL_SPEC.subtitle.shadow * scale)),
+    },
+  };
+  if (spec?.style_id !== DEFAULT_VISUAL_SPEC.style_id) return v2Default;
+  return {
+    ...v2Default,
+    ...spec,
+    canvas,
+    title: { ...v2Default.title, ...spec.title },
+    accent: { ...v2Default.accent, ...spec.accent },
+    subtitle: { ...v2Default.subtitle, ...spec.subtitle },
+  };
+}
+
+function renderOverlayLine(
+  line: string,
+  lineIndex: number,
+  emphasis: VideoEditorOverlayPreview["cues"][number]["emphasis_range"],
+) {
+  if (!emphasis || emphasis.line_index !== lineIndex) return line;
+  return (
+    <>
+      {line.slice(0, emphasis.start)}
+      <span className="video-editor-subtitle-emphasis">{line.slice(emphasis.start, emphasis.end)}</span>
+      {line.slice(emphasis.end)}
+    </>
+  );
 }
 
 function createIdempotencyKey() {
@@ -447,8 +859,6 @@ export default function VideoEditorPage() {
   const [selectedSourceId, setSelectedSourceId] = useState<string>();
   const [platform, setPlatform] = useState("douyin");
   const [outputProfile, setOutputProfile] = useState<OutputProfile>("720p");
-  const [rightsConfirmed, setRightsConfirmed] = useState(false);
-  const [rightsHolder, setRightsHolder] = useState("本人/公司");
   const [quote, setQuote] = useState<CostQuote | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [quoteLoading, setQuoteLoading] = useState(false);
@@ -459,7 +869,8 @@ export default function VideoEditorPage() {
   const [compactSection, setCompactSection] = useState<CompactSection>("preview");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("original");
   const [previewTime, setPreviewTime] = useState(0);
-  const [dismissedStepIds, setDismissedStepIds] = useState<string[]>([]);
+  const [planPreviewElapsed, setPlanPreviewElapsed] = useState(0);
+  const [previewDuration, setPreviewDuration] = useState(0);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewItem, setReviewItem] = useState<CloudBatchItem | null>(null);
@@ -469,12 +880,18 @@ export default function VideoEditorPage() {
   const [reviewBgmId, setReviewBgmId] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
-  const [bgmEnabled, setBgmEnabled] = useState(false);
+  const [bgmEnabled, setBgmEnabled] = useState(true);
   const [bgmId, setBgmId] = useState<string>();
   const [bgmVolume, setBgmVolume] = useState(0.18);
   const [bgmRightsConfirmed, setBgmRightsConfirmed] = useState(false);
   const [bgmRightsHolder, setBgmRightsHolder] = useState("");
-  const [bgmMood, setBgmMood] = useState("通用");
+  const [bgmMood, setBgmMood] = useState("知识·讲解·平稳");
+  const [bgmVoiceoverCategory, setBgmVoiceoverCategory] = useState("理性干货");
+  const [bgmEnergy, setBgmEnergy] = useState("克制");
+  const [bgmSourceProvider, setBgmSourceProvider] = useState("manual");
+  const [bgmSourceUrl, setBgmSourceUrl] = useState("");
+  const [bgmLicenseUrl, setBgmLicenseUrl] = useState("");
+  const [bgmContentIdRisk, setBgmContentIdRisk] = useState<"none" | "registered" | "unknown">("unknown");
   const [bgmUploading, setBgmUploading] = useState(false);
 
   const refresh = useCallback(async (keepCurrent = true) => {
@@ -523,18 +940,68 @@ export default function VideoEditorPage() {
   }, []);
 
   const currentItem = (batch?.items[0] || null) as CloudBatchItem | null;
+  const usableBgmAssets = useMemo(
+    () => bgmAssets.filter((asset) => asset.content_id_risk !== "registered"),
+    [bgmAssets],
+  );
+  const recommendedBgm = useMemo(
+    () => currentItem ? recommendReviewBgm(currentItem, bgmAssets) : null,
+    [bgmAssets, currentItem],
+  );
+  const displayedBgmId = reviewBgmId
+    || currentItem?.selected_bgm_id
+    || bgmId
+    || recommendedBgm?.asset_id
+    || null;
+  const displayedBgm = useMemo(
+    () => bgmAssets.find((asset) => asset.asset_id === displayedBgmId) || null,
+    [bgmAssets, displayedBgmId],
+  );
+  const selectedReviewBgm = useMemo(
+    () => bgmAssets.find((asset) => asset.asset_id === reviewBgmId) || null,
+    [bgmAssets, reviewBgmId],
+  );
+  const reviewBgmExplanation = reviewItem?.bgm_reason
+    || (selectedReviewBgm
+      ? `当前任务原先未选配乐，已根据文案预选《${selectedReviewBgm.title}》；请试听后再确认生成。`
+      : null);
+  const bgmSourceCounts = useMemo(
+    () => BGM_LIBRARY_SOURCES.map((source) => ({
+      source,
+      count: bgmAssets.filter((asset) => asset.source_provider === source).length,
+    })),
+    [bgmAssets],
+  );
   const currentStatus = currentItem?.status || batch?.status || "idle";
   const selectedSource = useMemo(
     () => sources.find((source) => source.source_id === selectedSourceId) || null,
     [selectedSourceId, sources],
   );
-  const planSteps = useMemo(() => normalizePlan(currentItem), [currentItem]);
-  const visiblePlanSteps = planSteps.filter((step) => !dismissedStepIds.includes(step.id));
-  const enabledPlanSteps = planSteps.filter((step) => !dismissedStepIds.includes(step.id));
-  const estimatedRemovedSeconds = enabledPlanSteps.reduce(
+  const planSteps = useMemo(() => {
+    const normalized = normalizePlan(currentItem);
+    if (
+      !currentItem
+      || !usableBgmAssets.length
+      || normalized.some((step) => step.kind === "background_music")
+    ) {
+      return normalized;
+    }
+    return [
+      ...normalized,
+      {
+        ...DEFAULT_PLAN.find((step) => step.kind === "background_music")!,
+        id: "bgm",
+        label: "智能匹配口播配乐",
+        reason: "系统已根据文案语气预选一首低音量背景音乐，确认前可试听或更换。",
+      },
+    ];
+  }, [currentItem, usableBgmAssets.length]);
+  const enabledPlanSteps = planSteps.filter((step) => step.enabled);
+  const estimatedRemovedSeconds = planSteps.reduce(
     (total, step) => total + step.estimated_removed_seconds,
     0,
   );
+  const estimatedOutputSeconds = asNumber(currentItem?.edit_plan?.estimated_output_seconds, 0);
 
   const providerMode = batch?.provider_mode || capabilities?.provider_mode || "configuration_required";
   const isSandbox = Boolean(
@@ -598,15 +1065,9 @@ export default function VideoEditorPage() {
   }, [batch, currentStatus, pollingStopped]);
 
   useEffect(() => {
-    setDismissedStepIds([]);
-    if (currentItem?.enabled_plan_step_ids?.length) {
-      const enabledIds = new Set(currentItem.enabled_plan_step_ids);
-      setDismissedStepIds(planSteps.filter((step) => !enabledIds.has(step.id)).map((step) => step.id));
-    }
-  }, [currentItem?.item_id, currentItem?.review_confirmed_at, planSteps]);
-
-  useEffect(() => {
     setPreviewTime(0);
+    setPlanPreviewElapsed(0);
+    setPreviewDuration(0);
     if (previewRef.current) previewRef.current.currentTime = 0;
   }, [previewMode, selectedSourceId]);
 
@@ -650,17 +1111,18 @@ export default function VideoEditorPage() {
     setPreviewMode("original");
     setReviewSegments([]);
     setReviewTitle("");
-    setDismissedStepIds([]);
+    setReviewBgmId(null);
+    setBgmEnabled(true);
+    setBgmId(undefined);
   };
 
   const uploadSource = async (file: File) => {
-    if (!rightsConfirmed || !rightsHolder.trim()) {
-      message.warning("请先填写权利主体并确认素材使用权");
-      return;
-    }
     setUploading(true);
     try {
-      const response = await videoEditorApi.uploadVideoEditorSources([file], rightsHolder.trim());
+      const response = await videoEditorApi.uploadVideoEditorSources(
+        [file],
+        "当前账号（上传即确认）",
+      );
       const uploaded = response.items[0];
       setSources((items) => [
         ...response.items,
@@ -685,7 +1147,13 @@ export default function VideoEditorPage() {
       const asset = await videoEditorApi.uploadVideoEditorBgm({
         file,
         mood: bgmMood,
+        voiceoverCategory: bgmVoiceoverCategory,
+        energy: bgmEnergy,
         rightsHolder: bgmRightsHolder.trim(),
+        sourceProvider: bgmSourceProvider,
+        sourceUrl: bgmSourceUrl.trim(),
+        licenseUrl: bgmLicenseUrl.trim(),
+        contentIdRisk: bgmContentIdRisk,
       });
       setBgmAssets((items) => [asset, ...items.filter((item) => item.asset_id !== asset.asset_id)]);
       setBgmId(asset.asset_id);
@@ -754,9 +1222,17 @@ export default function VideoEditorPage() {
     const enabledIds = item.enabled_plan_step_ids?.length
         ? item.enabled_plan_step_ids
         : itemPlan.filter((step) => step.enabled).map((step) => step.id);
-    setReviewPlanStepIds(enabledIds.filter((stepId) => !dismissedStepIds.includes(stepId)));
     setReviewTitle(item.selected_title || titleCandidates(item)[0] || item.title);
-    setReviewBgmId(item.selected_bgm_id || bgmId || null);
+    const nextBgmId = reviewBgmId
+      || item.selected_bgm_id
+      || bgmId
+      || recommendReviewBgm(item, bgmAssets)?.asset_id
+      || null;
+    setReviewBgmId(nextBgmId);
+    setReviewPlanStepIds(Array.from(new Set([
+      ...enabledIds,
+      ...(nextBgmId ? ["bgm"] : []),
+    ])));
     if (!item.subtitle_task_id) return;
     setReviewLoading(true);
     try {
@@ -767,6 +1243,21 @@ export default function VideoEditorPage() {
     } finally {
       setReviewLoading(false);
     }
+  };
+
+  const chooseNextBgm = () => {
+    if (!usableBgmAssets.length) {
+      message.warning("配乐库还没有可用音乐");
+      return;
+    }
+    const currentIndex = usableBgmAssets.findIndex(
+      (asset) => asset.asset_id === displayedBgmId,
+    );
+    const next = usableBgmAssets[(currentIndex + 1) % usableBgmAssets.length];
+    setReviewBgmId(next.asset_id);
+    setBgmId(next.asset_id);
+    setBgmEnabled(true);
+    message.success(`已换为《${next.title}》，确认生成时会使用这首`);
   };
 
   const saveReview = async () => {
@@ -859,6 +1350,25 @@ export default function VideoEditorPage() {
     }
   };
 
+  const downloadFinishedVideo = () => {
+    if (!playableResultMediaUrl || isSandbox) {
+      message.warning("真实成片生成后才可以下载");
+      return;
+    }
+    const title = (currentItem?.selected_title || currentItem?.title || selectedSource?.title || "剪辑成片")
+      .replace(/[\\/:*?"<>|]/g, "")
+      .trim()
+      .slice(0, 48) || "剪辑成片";
+    const link = document.createElement("a");
+    link.href = playableResultMediaUrl;
+    link.download = `${title}.mp4`;
+    link.rel = "noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   const handlePrimaryAction = () => {
     if (!batch || currentStatus === "idle") {
       void loadQuote(outputProfile, true);
@@ -885,7 +1395,7 @@ export default function VideoEditorPage() {
           : configurationBlocked
             ? "查看出片参考与开通说明"
             : "查看费用并开始分析",
-        disabled: !selectedSourceId || !rightsConfirmed || !rightsHolder.trim(),
+        disabled: !selectedSourceId,
         icon: <CloudOutlined />,
       };
     }
@@ -894,7 +1404,7 @@ export default function VideoEditorPage() {
     }
     if (currentStatus === "awaiting_subtitle_review") {
       return {
-        label: isSandbox ? "查看字幕与剪辑方案" : "确认字幕与方案并生成",
+        label: "审核字幕、粗剪和配乐",
         disabled: false,
         icon: <EditOutlined />,
       };
@@ -931,12 +1441,74 @@ export default function VideoEditorPage() {
   const previewSegments = reviewSegments.length
     ? reviewSegments
     : normalizeSubtitleSegments(currentItem);
-  const currentSubtitle = previewSegments.find((segment) => (
-    asNumber(segment.start, -1) <= previewTime
-    && asNumber(segment.end, -1) >= previewTime
-  ));
+  const visualSpec = resolveVisualSpec(batch?.visual_spec);
   const previewTitle = reviewTitle || currentItem?.selected_title || titleCandidates(currentItem)[0] || "";
+  const localPreview = localOverlayPreview(previewSegments, previewTitle, visualSpec);
+  const serverPreviewUsesCurrentStyle = (
+    batch?.visual_spec?.style_id === DEFAULT_VISUAL_SPEC.style_id
+  );
+  const overlayPreview = reviewItem || !serverPreviewUsesCurrentStyle
+    ? localPreview
+    : currentItem?.overlay_preview || localPreview;
+  const previewCaption = overlayPreview.cues.find((cue) => (
+    cue.start <= previewTime && cue.end >= previewTime
+  ));
+  const titlePreviewTime = previewMode === "plan" ? planPreviewElapsed : previewTime;
+  const titleOpacity = 1;
+  const titleOverlayStyle = {
+    "--video-editor-title-font-size": `${visualSpec.title.font_size / visualSpec.canvas.width * 100}cqw`,
+    "--video-editor-title-line-height": String(visualSpec.title.line_height),
+    "--video-editor-title-outline": `${visualSpec.title.outline_width / visualSpec.canvas.width * 100}cqw`,
+    left: `${(visualSpec.title.safe_left / visualSpec.canvas.width) * 100}%`,
+    top: `${(visualSpec.title.safe_top / visualSpec.canvas.height) * 100}%`,
+    color: visualSpec.title.color,
+    opacity: titleOpacity,
+  } as CSSProperties;
+  const accentTop = visualSpec.title.safe_top
+    + overlayPreview.title.lines.length * visualSpec.title.font_size * visualSpec.title.line_height
+    + visualSpec.accent.gap;
+  const accentOverlayStyle = {
+    left: `${(visualSpec.title.safe_left / visualSpec.canvas.width) * 100}%`,
+    top: `${(accentTop / visualSpec.canvas.height) * 100}%`,
+    width: `${(visualSpec.accent.width / visualSpec.canvas.width) * 100}%`,
+    height: `${(visualSpec.accent.height / visualSpec.canvas.height) * 100}%`,
+    backgroundColor: visualSpec.accent.color,
+    opacity: titleOpacity,
+  } as CSSProperties;
+  const subtitleOverlayStyle = {
+    "--video-editor-subtitle-font-size": `${visualSpec.subtitle.font_size / visualSpec.canvas.width * 100}cqw`,
+    "--video-editor-subtitle-line-height": "1.28",
+    "--video-editor-subtitle-outline": `${visualSpec.subtitle.outline_width / visualSpec.canvas.width * 100}cqw`,
+    left: "7.5%",
+    right: "7.5%",
+    bottom: `${(visualSpec.subtitle.safe_bottom / visualSpec.canvas.height) * 100}%`,
+    color: visualSpec.subtitle.color,
+    "--video-editor-subtitle-emphasis": visualSpec.subtitle.emphasis_color,
+  } as CSSProperties;
+  const titleEnabled = enabledPlanSteps.some((step) => step.kind === "title");
   const activeIntervals = silenceIntervals(enabledPlanSteps);
+  const sourceTimelineDuration = previewDuration
+    || asNumber(currentItem?.edit_plan?.duration_seconds, 0);
+  const planTimelineDuration = planTimeFromSourceTime(
+    sourceTimelineDuration,
+    activeIntervals,
+  );
+  const planTimelineValue = Math.min(planPreviewElapsed, planTimelineDuration);
+
+  const togglePlanPreview = () => {
+    const video = previewRef.current;
+    if (!video) return;
+    if (video.paused) {
+      if (video.currentTime <= 0.05 || video.ended) {
+        video.currentTime = 0;
+        setPreviewTime(0);
+        setPlanPreviewElapsed(0);
+      }
+      void video.play();
+    } else {
+      video.pause();
+    }
+  };
 
   const handlePreviewTimeUpdate = () => {
     const video = previewRef.current;
@@ -945,9 +1517,33 @@ export default function VideoEditorPage() {
       const interval = activeIntervals.find(({ start, end }) => (
         video.currentTime >= start && video.currentTime < end
       ));
-      if (interval) video.currentTime = interval.end;
+      if (interval) {
+        video.currentTime = interval.end;
+        setPreviewTime(interval.end);
+        setPlanPreviewElapsed(
+          planTimeFromSourceTime(interval.end, activeIntervals),
+        );
+        return;
+      }
+      setPlanPreviewElapsed(
+        planTimeFromSourceTime(video.currentTime, activeIntervals),
+      );
     }
     setPreviewTime(video.currentTime);
+  };
+
+  const seekPlanPreview = (nextPlanTime: number) => {
+    const video = previewRef.current;
+    if (!video || sourceTimelineDuration <= 0) return;
+    video.pause();
+    const sourceTime = sourceTimeFromPlanTime(
+      nextPlanTime,
+      sourceTimelineDuration,
+      activeIntervals,
+    );
+    video.currentTime = sourceTime;
+    setPreviewTime(sourceTime);
+    setPlanPreviewElapsed(nextPlanTime);
   };
 
   const chooseHistory = (selected: CloudBatch) => {
@@ -1042,7 +1638,6 @@ export default function VideoEditorPage() {
                   block
                   icon={<UploadOutlined />}
                   loading={uploading}
-                  disabled={!rightsConfirmed || !rightsHolder.trim()}
                   style={{ marginTop: 8 }}
                 >
                   上传 MP4 / MOV
@@ -1091,21 +1686,6 @@ export default function VideoEditorPage() {
               </Text>
             </section>
 
-            <section className="video-editor-rights">
-              <Text strong><SafetyCertificateOutlined /> 权利确认</Text>
-              <Input
-                aria-label="视频权利主体"
-                value={rightsHolder}
-                onChange={(event) => setRightsHolder(event.target.value)}
-                placeholder="权利主体，例如：本人/公司"
-              />
-              <Checkbox
-                checked={rightsConfirmed}
-                onChange={(event) => setRightsConfirmed(event.target.checked)}
-              >
-                我确认拥有该视频及所用素材的使用权
-              </Checkbox>
-            </section>
           </Space>
           <Alert
             className="video-editor-local-free"
@@ -1147,29 +1727,94 @@ export default function VideoEditorPage() {
                 <video
                   key={`${previewMode}-${playableResultMediaUrl || selectedSource.media_url}`}
                   ref={previewRef}
-                  controls
+                  controls={previewMode !== "plan"}
                   preload="metadata"
                   src={previewMode === "output" && playableResultMediaUrl ? playableResultMediaUrl : selectedSource.media_url}
                   className={previewMode === "plan" ? "video-editor-plan-video" : ""}
+                  onLoadedMetadata={(event) => {
+                    const duration = Number.isFinite(event.currentTarget.duration)
+                      ? event.currentTarget.duration
+                      : 0;
+                    setPreviewDuration(duration);
+                    setPreviewTime(0);
+                    setPlanPreviewElapsed(0);
+                  }}
                   onTimeUpdate={handlePreviewTimeUpdate}
+                  onClick={previewMode === "plan" ? togglePlanPreview : undefined}
                 />
-                {previewMode === "plan" && previewTitle && (
-                  <div className="video-editor-title-overlay">{previewTitle}</div>
+                {previewMode === "plan" && titleEnabled && overlayPreview.title.lines.length > 0 && titlePreviewTime <= overlayPreview.title.end && (
+                  <>
+                    <div className="video-editor-title-overlay" style={titleOverlayStyle}>
+                      {overlayPreview.title.lines.map((line, index) => (
+                        <span className="video-editor-overlay-line" key={`${line}-${index}`}>{line}</span>
+                      ))}
+                    </div>
+                    <div className="video-editor-title-accent" style={accentOverlayStyle} />
+                  </>
                 )}
-                {previewMode === "plan" && currentSubtitle?.text && (
-                  <div className="video-editor-subtitle-overlay">{currentSubtitle.text}</div>
+                {previewMode === "plan" && previewCaption?.lines.length && (
+                  <div className="video-editor-subtitle-overlay" style={subtitleOverlayStyle}>
+                    {previewCaption.lines.map((line, index) => (
+                      <span className="video-editor-overlay-line" key={`${line}-${index}`}>
+                        {renderOverlayLine(line, index, previewCaption.emphasis_range)}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
           </div>
 
           <div className="video-editor-preview-footer">
+            {previewMode === "plan" && (
+              <div className="video-editor-preview-timeline">
+                <Slider
+                  ariaLabelForHandle="方案预览进度"
+                  min={0}
+                  max={Math.max(planTimelineDuration, 0.1)}
+                  step={0.05}
+                  value={planTimelineValue}
+                  tooltip={{
+                    formatter: (value) => formatTimelineTime(asNumber(value)),
+                  }}
+                  onChange={seekPlanPreview}
+                />
+                <div>
+                  <Text>
+                    {formatTimelineTime(planTimelineValue)}
+                    {" / "}
+                    {formatTimelineTime(planTimelineDuration)}
+                  </Text>
+                  <Text type="secondary">可拖动查看剪后时间</Text>
+                </div>
+              </div>
+            )}
             <Space wrap>
+              {previewMode === "plan" && (
+                <Button size="small" icon={<PlayCircleOutlined />} onClick={togglePlanPreview}>
+                  播放方案预览
+                </Button>
+              )}
               <Tag icon={<PlayCircleOutlined />}>
-                {previewMode === "plan" ? "浏览器模拟跳过建议区间" : previewMode === "output" ? "正式成片" : "原始素材"}
+                {previewMode === "plan" ? "按正式粗剪方案预览" : previewMode === "output" ? "正式成片" : "原始素材"}
               </Tag>
+              <Tooltip title={playableResultMediaUrl && !isSandbox ? "下载已生成的正式成片" : "真实成片生成后可下载"}>
+                <span>
+                  <Button
+                    size="small"
+                    icon={<DownloadOutlined />}
+                    disabled={!playableResultMediaUrl || isSandbox}
+                    onClick={downloadFinishedVideo}
+                  >
+                    下载成片
+                  </Button>
+                </span>
+              </Tooltip>
               {estimatedRemovedSeconds > 0 && (
                 <Text>预计删减 {estimatedRemovedSeconds.toFixed(1)} 秒</Text>
+              )}
+              {estimatedOutputSeconds > 0 && (
+                <Text>剪后约 {estimatedOutputSeconds.toFixed(1)} 秒</Text>
               )}
             </Space>
             {currentItem && (
@@ -1185,8 +1830,8 @@ export default function VideoEditorPage() {
 
         <Card
           className="video-editor-workspace-card video-editor-plan-card"
-          title={<Space><Tag>03</Tag><span>剪辑方案与出片参考</span></Space>}
-          extra={<Text type="secondary">安全轻剪</Text>}
+          title={<Space><Tag>03</Tag><span>粗剪方案与出片参考</span></Space>}
+          extra={<Text type="secondary">安全粗剪</Text>}
           styles={{ body: { padding: 16 } }}
         >
           <div className="video-editor-plan-body">
@@ -1229,20 +1874,13 @@ export default function VideoEditorPage() {
               <div>
                 <Text strong>可解释建议</Text>
                 <Paragraph type="secondary">
-                  可逐项关闭；不会删除或改写有人声区间。
+                  只处理可靠空白和长停顿；正式出片与此预览使用同一组保留片段。
                 </Paragraph>
               </div>
-              {!!dismissedStepIds.length && (
-                <Button type="link" size="small" onClick={() => setDismissedStepIds([])}>
-                  恢复全部
-                </Button>
-              )}
             </div>
 
             <div className="video-editor-plan-list">
-              {!visiblePlanSteps.length ? (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="所有建议已关闭" />
-              ) : visiblePlanSteps.map((step) => (
+              {planSteps.map((step) => (
                 <div className="video-editor-plan-item" key={step.id}>
                   <div className="video-editor-plan-icon">{STEP_ICON[step.kind] || <CheckCircleOutlined />}</div>
                   <div className="video-editor-plan-copy">
@@ -1254,16 +1892,55 @@ export default function VideoEditorPage() {
                     </Space>
                     <Text type="secondary">{step.reason}</Text>
                   </div>
-                  <Tooltip title="关闭这条建议">
-                    <Button
-                      type="text"
-                      aria-label={`关闭建议：${step.label}`}
-                      icon={<CloseOutlined />}
-                      onClick={() => setDismissedStepIds((ids) => [...ids, step.id])}
-                    />
-                  </Tooltip>
                 </div>
               ))}
+            </div>
+
+            <div className="video-editor-bgm-card">
+              <div className="video-editor-bgm-header">
+                <Space size={8}>
+                  <SoundOutlined />
+                  <Text strong>{displayedBgm ? "AI 已匹配配乐" : "AI 自动配乐"}</Text>
+                </Space>
+                {displayedBgm && (
+                  <Tag color="purple">
+                    {displayedBgm.voiceover_category || displayedBgm.mood}
+                  </Tag>
+                )}
+              </div>
+              {displayedBgm ? (
+                <>
+                  <div className="video-editor-bgm-result">
+                    <div>
+                      <Text strong>{displayedBgm.title}</Text>
+                      <Text type="secondary">
+                        {displayedBgm.energy || "克制"} · {Math.round(displayedBgm.duration_seconds)} 秒
+                      </Text>
+                    </div>
+                    <Text type="secondary">
+                      {currentItem?.selected_bgm_id === displayedBgm.asset_id && currentItem.bgm_reason
+                        ? currentItem.bgm_reason
+                        : `根据文案语气匹配“${displayedBgm.voiceover_category || displayedBgm.mood}”，将以低音量铺底。`}
+                    </Text>
+                  </div>
+                  <audio
+                    controls
+                    preload="metadata"
+                    src={displayedBgm.media_url}
+                    aria-label={`试听 AI 配乐：${displayedBgm.title}`}
+                  />
+                  <div className="video-editor-bgm-actions">
+                    <Button size="small" icon={<ReloadOutlined />} onClick={chooseNextBgm}>
+                      换一首
+                    </Button>
+                    <Text type="secondary">确认生成前仍可调整</Text>
+                  </div>
+                </>
+              ) : (
+                <Text type="secondary">
+                  分析文案后会自动匹配并直接提供试听；没有合适音乐时保持原声。
+                </Text>
+              )}
             </div>
 
             <div className="video-editor-cost-card">
@@ -1442,6 +2119,24 @@ export default function VideoEditorPage() {
                                 : item,
                             ))}
                           />
+                          <Input
+                            aria-label={`字幕片段 ${index + 1} 的强调词`}
+                            value={segment.emphasis_terms?.[0] || ""}
+                            maxLength={4}
+                            placeholder="强调词（可选，原文最多 4 字）"
+                            style={{ marginTop: 8 }}
+                            onChange={(event) => setReviewSegments((segments) => segments.map(
+                              (item, itemIndex) => itemIndex === index
+                                ? {
+                                    ...item,
+                                    emphasis_terms: event.target.value.trim()
+                                      ? [event.target.value.trim()]
+                                      : [],
+                                    reviewed: true,
+                                  }
+                                : item,
+                            ))}
+                          />
                         </Card>
                       ))}
                     </Space>
@@ -1454,7 +2149,7 @@ export default function VideoEditorPage() {
                 },
                 {
                   key: "plan",
-                  label: "方案确认",
+                  label: "粗剪方案",
                   children: (
                     <Checkbox.Group
                       value={reviewPlanStepIds}
@@ -1497,19 +2192,75 @@ export default function VideoEditorPage() {
                         />
                       </div>
                       <div>
-                        <Text strong>已授权 BGM</Text>
+                        <Text strong>AI 已选配乐</Text>
+                        <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+                          已按文案与视频语气自动匹配；不合适可换一首，清空则保持原声。
+                        </Text>
+                        {reviewBgmExplanation && (
+                          <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
+                            {reviewBgmExplanation}
+                          </Text>
+                        )}
                         <Select
                           aria-label="复核背景音乐"
                           allowClear
                           value={reviewBgmId || undefined}
                           onChange={(value) => setReviewBgmId(value || null)}
-                          placeholder="保持原声"
+                          placeholder="本次保持原声"
                           options={bgmAssets.map((asset) => ({
                             value: asset.asset_id,
-                            label: `${asset.mood} · ${asset.title}`,
+                            label: formatBgmOptionLabel(asset),
                           }))}
                           style={{ width: "100%", marginTop: 8 }}
                         />
+                        {selectedReviewBgm && (
+                          <div
+                            style={{
+                              marginTop: 10,
+                              padding: 12,
+                              border: "1px solid var(--border-default)",
+                              borderRadius: 10,
+                              background: "var(--surface-muted)",
+                            }}
+                          >
+                            <Space size={8} style={{ marginBottom: 8 }}>
+                              <SoundOutlined />
+                              <Text strong>{selectedReviewBgm.title}</Text>
+                              <Tag color="blue">
+                                {selectedReviewBgm.voiceover_category || selectedReviewBgm.mood}
+                              </Tag>
+                              <Tag>{selectedReviewBgm.energy || "克制"}</Tag>
+                              <Text type="secondary">
+                                {Math.round(selectedReviewBgm.duration_seconds)} 秒
+                              </Text>
+                            </Space>
+                            <Space wrap size={6} style={{ marginBottom: 8 }}>
+                              <Text type="secondary">
+                                来源：{BGM_SOURCE_LABELS[selectedReviewBgm.source_provider] || "授权素材"}
+                              </Text>
+                              {selectedReviewBgm.content_id_risk === "registered" && (
+                                <Tag color="orange">可能触发平台版权识别</Tag>
+                              )}
+                              {selectedReviewBgm.source_url && (
+                                <Typography.Link href={selectedReviewBgm.source_url} target="_blank">
+                                  查看素材来源
+                                </Typography.Link>
+                              )}
+                              {selectedReviewBgm.license_url && (
+                                <Typography.Link href={selectedReviewBgm.license_url} target="_blank">
+                                  查看授权说明
+                                </Typography.Link>
+                              )}
+                            </Space>
+                            <audio
+                              controls
+                              preload="metadata"
+                              src={selectedReviewBgm.media_url}
+                              aria-label={`试听背景音乐：${selectedReviewBgm.title}`}
+                              style={{ width: "100%", display: "block" }}
+                            />
+                          </div>
+                        )}
                       </div>
                     </Space>
                   ),
@@ -1536,20 +2287,31 @@ export default function VideoEditorPage() {
           <section>
             <Space>
               <Switch checked={bgmEnabled} onChange={setBgmEnabled} />
-              <Text strong>使用已授权背景音乐</Text>
+              <Text strong>AI 自动选择背景音乐</Text>
             </Space>
             <Select
+              aria-label="选择背景音乐"
               allowClear
               disabled={!bgmEnabled}
               value={bgmId}
               onChange={setBgmId}
-              placeholder="不选择则保持原声"
+              placeholder="让系统根据文案自动挑选"
               options={bgmAssets.map((asset) => ({
                 value: asset.asset_id,
-                label: `${asset.mood} · ${asset.title}`,
+                label: formatBgmOptionLabel(asset),
               }))}
               style={{ width: "100%", marginTop: 10 }}
             />
+            <Space wrap size={[6, 6]} style={{ marginTop: 10 }}>
+              {bgmSourceCounts.filter(({ count }) => count > 0).map(({ source, count }) => (
+                <Tag key={source} color={count ? "blue" : "default"}>
+                  {BGM_SOURCE_LABELS[source]} {count} 首
+                </Tag>
+              ))}
+            </Space>
+            <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+              这里只显示已真实入库的音乐；新增授权素材可在下方导入。
+            </Text>
             <Space style={{ width: "100%", marginTop: 10 }}>
               <Text type="secondary">BGM 音量</Text>
               <Slider
@@ -1564,8 +2326,24 @@ export default function VideoEditorPage() {
               <Text>{Math.round(bgmVolume * 100)}%</Text>
             </Space>
           </section>
-          <Card title="上传授权音乐" size="small" styles={{ body: { padding: 14 } }}>
+          <Card title="导入口播音乐" size="small" styles={{ body: { padding: 14 } }}>
             <Space direction="vertical" size={10} style={{ width: "100%" }}>
+              <Select
+                aria-label="口播音乐分类"
+                value={bgmVoiceoverCategory}
+                onChange={setBgmVoiceoverCategory}
+                options={BGM_CATEGORY_OPTIONS}
+                placeholder="适合哪类口播"
+                style={{ width: "100%" }}
+              />
+              <Select
+                aria-label="音乐能量等级"
+                value={bgmEnergy}
+                onChange={setBgmEnergy}
+                options={["克制", "平稳", "有推动感"].map((value) => ({ value, label: value }))}
+                placeholder="音乐能量"
+                style={{ width: "100%" }}
+              />
               <Input
                 value={bgmRightsHolder}
                 onChange={(event) => setBgmRightsHolder(event.target.value)}
@@ -1574,7 +2352,56 @@ export default function VideoEditorPage() {
               <Input
                 value={bgmMood}
                 onChange={(event) => setBgmMood(event.target.value)}
-                placeholder="情绪标签"
+                placeholder="补充标签，如：知识、讲解、钢琴"
+              />
+              <Select
+                aria-label="音乐素材来源"
+                value={bgmSourceProvider}
+                onChange={(value) => {
+                  setBgmSourceProvider(value);
+                  if (value !== "pixabay") {
+                    setBgmContentIdRisk("unknown");
+                  }
+                  if (value === "manual") {
+                    setBgmSourceUrl("");
+                    setBgmLicenseUrl("");
+                  }
+                }}
+                options={BGM_SOURCE_OPTIONS}
+                style={{ width: "100%" }}
+              />
+              {bgmSourceProvider !== "manual" && (
+                <>
+                  <Input
+                    value={bgmSourceUrl}
+                    onChange={(event) => setBgmSourceUrl(event.target.value)}
+                    placeholder="原始素材页面链接（必填）"
+                  />
+                  <Input
+                    value={bgmLicenseUrl}
+                    onChange={(event) => setBgmLicenseUrl(event.target.value)}
+                    placeholder="授权说明或订单凭证链接（建议填写）"
+                  />
+                </>
+              )}
+              {bgmSourceProvider === "pixabay" && (
+                <Select
+                  aria-label="Pixabay Content ID 状态"
+                  value={bgmContentIdRisk}
+                  onChange={setBgmContentIdRisk}
+                  options={[
+                    { value: "none", label: "页面未标记 Content ID" },
+                    { value: "registered", label: "页面已标记 Content ID" },
+                    { value: "unknown", label: "尚未确认 Content ID" },
+                  ]}
+                  style={{ width: "100%" }}
+                />
+              )}
+              <Alert
+                type="warning"
+                showIcon
+                message="短视频也要按实际发布用途确认音乐许可"
+                description="个人非推广内容按素材页允许范围使用；企业号、获客、品牌宣传或带货通常属于商业使用。光厂、波点和 Pixabay 都应保存对应作品的来源或授权记录。"
               />
               <Checkbox
                 checked={bgmRightsConfirmed}
@@ -1593,7 +2420,11 @@ export default function VideoEditorPage() {
                 <Button
                   icon={<UploadOutlined />}
                   loading={bgmUploading}
-                  disabled={!bgmRightsConfirmed || !bgmRightsHolder.trim()}
+                  disabled={
+                    !bgmRightsConfirmed
+                    || !bgmRightsHolder.trim()
+                    || (bgmSourceProvider !== "manual" && !bgmSourceUrl.trim())
+                  }
                 >
                   上传到授权音乐库
                 </Button>
@@ -1654,29 +2485,41 @@ export default function VideoEditorPage() {
         .video-editor-profile-options .ant-radio-button-wrapper span:not(.ant-radio-button){display:flex;flex-direction:column;align-items:center;gap:3px}
         .video-editor-profile-options small{font-size:11px;font-weight:400;white-space:nowrap}
         .video-editor-helper{display:block;margin-top:6px;font-size:12px}
-        .video-editor-rights{display:flex;flex-direction:column;gap:9px}
         .video-editor-local-free{margin-top:auto}
         .video-editor-preview-card>.ant-card-body{display:flex;flex-direction:column;min-height:0}
         .video-editor-preview-toolbar,.video-editor-preview-footer,.video-editor-cost-header,.video-editor-modal-total{display:flex;align-items:center;justify-content:space-between;gap:12px}
         .video-editor-preview-toolbar{flex-wrap:wrap}
-        .video-editor-preview-stage{display:flex;flex:1;min-height:0;align-items:center;justify-content:center;margin:12px 0;padding:12px;border-radius:var(--radius-md);background:#111827}
+        .video-editor-preview-stage{display:flex;flex:1;min-height:0;align-items:center;justify-content:center;margin:12px 0;padding:16px;border-radius:var(--radius-md);background:linear-gradient(145deg,#0f172a,#18223a)}
         .video-editor-preview-stage .ant-empty-description{color:#d1d5db}
-        .video-editor-phone-preview{position:relative;width:min(100%,310px);height:100%;max-height:570px;aspect-ratio:9/16;overflow:hidden;border-radius:12px;background:#030712;box-shadow:0 14px 34px rgba(0,0,0,.28)}
+        .video-editor-phone-preview{position:relative;width:auto;height:100%;max-width:100%;max-height:570px;aspect-ratio:9/16;overflow:hidden;container-type:inline-size;border:1px solid rgba(255,255,255,.28);border-radius:20px;background:#030712;box-shadow:0 18px 42px rgba(0,0,0,.34)}
         .video-editor-phone-preview video{width:100%;height:100%;object-fit:contain;background:#030712}
-        .video-editor-phone-preview video.video-editor-plan-video{object-fit:cover}
-        .video-editor-title-overlay{position:absolute;top:8%;left:7%;right:7%;padding:7px 10px;border-radius:7px;background:rgba(15,23,42,.8);color:#fff;font-weight:700;text-align:center;pointer-events:none}
-        .video-editor-subtitle-overlay{position:absolute;left:8%;right:8%;bottom:12%;padding:6px 9px;border-radius:6px;background:rgba(0,0,0,.72);color:#fff;font-weight:600;text-align:center;pointer-events:none}
+        .video-editor-phone-preview video.video-editor-plan-video{object-fit:contain}
+        @font-face{font-family:"VideoInsight Title Serif";src:url("/api/v1/video-editor/brand-title-font") format("opentype");font-display:swap;font-style:normal;font-weight:900}
+        .video-editor-title-overlay{position:absolute;width:76%;font-family:"VideoInsight Title Serif","Microsoft YaHei UI",serif;font-size:var(--video-editor-title-font-size);font-weight:900;line-height:var(--video-editor-title-line-height);letter-spacing:.01em;text-align:left;white-space:normal;text-shadow:0 3px 9px rgba(0,0,0,.48),0 1px 1px rgba(0,0,0,.68);pointer-events:none;transition:opacity .12s linear}
+        .video-editor-title-accent{position:absolute;border-radius:999px;pointer-events:none;transition:opacity .12s linear}
+        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.7);text-shadow:0 3px 8px rgba(0,0,0,.72);pointer-events:none}
+        .video-editor-overlay-line{display:block}
+        .video-editor-subtitle-emphasis{color:var(--video-editor-subtitle-emphasis);-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.42)}
         .video-editor-preview-footer{flex-direction:column;align-items:stretch}
+        .video-editor-preview-timeline{display:flex;flex-direction:column;gap:2px}
+        .video-editor-preview-timeline>.ant-slider{margin:4px 6px}
+        .video-editor-preview-timeline>div{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
         .video-editor-plan-card>.ant-card-body{overflow:hidden}
         .video-editor-plan-body{display:flex;flex-direction:column;height:100%;min-height:0;gap:12px}
         .video-editor-plan-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
         .video-editor-plan-heading .ant-typography{margin-bottom:0}
         .video-editor-plan-list{display:flex;flex:1;min-height:140px;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
-        .video-editor-plan-item{display:grid;grid-template-columns:30px minmax(0,1fr) 28px;align-items:start;gap:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-card)}
+        .video-editor-plan-item{display:grid;grid-template-columns:30px minmax(0,1fr);align-items:start;gap:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-card)}
         .video-editor-plan-icon{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;background:var(--primary-50);color:var(--primary-600)}
         .video-editor-plan-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
         .video-editor-plan-copy>.ant-typography{font-size:12px;line-height:1.45}
         .video-editor-cost-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--primary-200);border-radius:var(--radius-md);background:var(--primary-50)}
+        .video-editor-bgm-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-muted)}
+        .video-editor-bgm-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+        .video-editor-bgm-result{display:flex;flex-direction:column;gap:4px}
+        .video-editor-bgm-result>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .video-editor-bgm-card audio{display:block;width:100%;height:34px}
+        .video-editor-bgm-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
         .video-editor-cost-header>div{display:flex;flex-direction:column}
         .video-editor-cost-total{font-size:25px;font-weight:700;color:var(--primary-700)}
         .video-editor-cost-lines{display:flex;flex-direction:column;gap:4px}

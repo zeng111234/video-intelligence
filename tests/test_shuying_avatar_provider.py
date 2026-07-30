@@ -329,6 +329,53 @@ def test_cloud_avatar_training_persists_a_pending_video_asset(tmp_path):
     assert provider.list_assets()[-1].asset_id == asset.asset_id
 
 
+def test_cloud_avatar_training_reuses_the_configured_audio_upload_entry(tmp_path):
+    training_video = tmp_path / "training.mp4"
+    training_video.write_bytes(b"not-used-by-fake-upload")
+    upload_urls = []
+
+    def transport(method, url, headers, body, timeout):
+        assert url.endswith("/model")
+        return json.dumps({"code": 1, "data": {"id": 10080}}).encode(), "application/json"
+
+    def upload_transport(url, filename, mime_type, path, timeout):
+        upload_urls.append(url)
+        return (
+            json.dumps({"code": 1, "path": "https://media.example.com/training.mp4"}).encode(),
+            "application/json",
+        )
+
+    provider = _provider(
+        transport=transport,
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        audio_upload_url="https://upload.example.com/system/basic/test",
+        audio_allowed_hosts="media.example.com",
+        file_upload_transport=upload_transport,
+    )
+
+    assert provider.capabilities().supports_cloud_avatar_training is True
+
+    asset = provider.create_cloud_avatar(
+        name="复用入口的新形象",
+        training_video_path=training_video,
+        filename="training.mp4",
+    )
+
+    assert upload_urls == [
+        "https://upload.example.com/system/basic/test?is_video=1"
+    ]
+    assert asset.asset_id == "shuying-avatar-10080"
+
+
+def test_cloud_avatar_training_is_hidden_for_an_explicit_unapproved_upload_host():
+    provider = _provider(
+        model_upload_url="https://upload.example.com/system/basic/test",
+        model_upload_allowed_hosts="media.example.com",
+    )
+
+    assert provider.capabilities().supports_cloud_avatar_training is False
+
+
 def test_voice_cloning_is_hidden_until_a_dedicated_primary_route_is_configured():
     provider = _provider(
         audio_upload_url="https://upload.example.com/system/basic/test",

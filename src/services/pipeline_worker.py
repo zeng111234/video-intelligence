@@ -25,6 +25,8 @@ from src.models import (
 )
 from src.adapters.douyin_parser import DouyinParserError
 from src.adapters.publishers.sandbox import SandboxPublisher
+from src.services.production import DEFAULT_PRODUCTION_TEMPLATE_ID
+from src.services.publish_metadata import suggested_publish_draft
 
 logger = logging.getLogger(__name__)
 
@@ -593,9 +595,12 @@ class PipelineWorker:
 
     def _edit_and_package(self, run: PipelineRun, avatar_task: AvatarTask) -> None:
         profile = dict(run.config.get("profile") or {})
-        template = self.template_service.get_template(str(profile.get("edit_template_id") or ""))
+        template_id = str(
+            profile.get("edit_template_id") or DEFAULT_PRODUCTION_TEMPLATE_ID
+        )
+        template = self.template_service.get_template(template_id)
         if template is None:
-            self._fail(run, PipelineStage.VIDEO_EDITING, "IP 配方绑定的剪辑模板不存在。")
+            self._fail(run, PipelineStage.VIDEO_EDITING, "系统通用智能优化配置异常。")
             return
         steps = [
             VideoEditStep(kind=VideoEditStepKind(step.kind), params=step.params, order=index)
@@ -648,8 +653,20 @@ class PipelineWorker:
             self.repository.save_pipeline_run(paused)
             return
         platforms = [PublishPlatform(item) for item in run.config.get("publish_platforms", ["douyin"])]
+        draft = suggested_publish_draft(
+            approved_script=script,
+            creative_plan=(
+                dict(plan)
+                if isinstance(plan := run.config.get("creative_plan"), dict)
+                else None
+            ),
+            profile_tags=list((run.config.get("profile") or {}).get("tags") or []),
+        )
         targets = self.pipeline_service.build_publish_targets(
-            title=run.keyword[:100], description=script[:200], tags=[run.keyword], platforms=platforms
+            title=draft["title"],
+            description=draft["description"],
+            tags=draft["tags"],
+            platforms=platforms,
         )
         run = self.pipeline_service.update_stage(run, PipelineStage.PUBLISHING, TaskStatus.RUNNING)
         summary = self.publish_service.create_batch(
@@ -721,12 +738,14 @@ class PipelineWorker:
                     }
                     for item in run.config.get("publish_platforms", ["douyin"])
                 ]
-            copy_task = self.repository.get_task(run.copywriting_task_id or "")
-            script = str(run.config.get("approved_script_text") or getattr(copy_task, "result_text", "") or "")
+            draft = run.config.get("publish_draft")
+            if not bool(run.config.get("publish_draft_approved")) or not isinstance(draft, dict):
+                self._fail(run, PipelineStage.PUBLISHING, "请先确认标题、描述和标签，再准备发布。")
+                return
             targets = self.pipeline_service.build_publish_targets(
-                title=run.keyword[:100],
-                description=script[:200],
-                tags=[run.keyword],
+                title=str(draft.get("title") or ""),
+                description=str(draft.get("description") or ""),
+                tags=list(draft.get("tags") or []),
                 target_specs=target_specs,
             )
             real_targets = [

@@ -32,9 +32,14 @@ from src.services.video_editor_cloud import (
     ProviderJobStatus,
     RenderRequest,
     TimeRange,
+    build_business_talking_head_ass,
+    build_business_talking_head_overlay_preview,
+    build_business_talking_head_title_png,
     build_safe_edit_plan,
     create_cost_quote,
     get_cloud_capability,
+    retime_segments_after_cuts,
+    visual_style_spec,
     validate_cost_quote,
 )
 
@@ -82,6 +87,21 @@ def _render_request(*, confirmed: bool = True) -> RenderRequest:
         ),
         review_confirmed=confirmed,
         idempotency_key="idem-001",
+    )
+
+
+def _bgm_asset() -> CloudAsset:
+    return CloudAsset(
+        provider_name="aliyun_oss",
+        bucket="private-video-bucket",
+        object_key="video-editor-input/demo/bgm/low-volume.m4a",
+        uri="oss://private-video-bucket/video-editor-input/demo/bgm/low-volume.m4a",
+        media_type="audio/mp4",
+        size_bytes=1024,
+        provider_locator=(
+            "https://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
+            "video-editor-input/demo/bgm/low-volume.m4a?Signature=signed"
+        ),
     )
 
 
@@ -147,8 +167,9 @@ def test_cost_quote_matches_published_rates_and_expires_after_15_minutes():
         "speech_recognition": Decimal("0.013200"),
         "edit_planning": Decimal("0.001950"),
         "cloud_render": Decimal("0.032600"),
+        "brand_title_overlay": Decimal("0.000100"),
     }
-    assert quote.estimated_total == Decimal("0.047750")
+    assert quote.estimated_total == Decimal("0.047850")
     planning = next(
         item for item in quote.line_items if item.component == "edit_planning"
     )
@@ -213,7 +234,12 @@ def test_safe_plan_only_cuts_long_internal_silence_with_edge_padding():
         8,
     )
 
-    assert plan.remove_ranges == [TimeRange(start=4.35, end=5.65)]
+    assert plan.remove_ranges == [TimeRange(start=4.45, end=5.55)]
+    assert plan.kept_ranges == [
+        TimeRange(start=0, end=4.45),
+        TimeRange(start=5.55, end=8),
+    ]
+    assert plan.estimated_output_seconds == 6.9
     assert plan.trim_silence_enabled is True
     assert EditStepKind.TRIM_SILENCE in plan.enabled_steps
     for cut in plan.remove_ranges:
@@ -234,13 +260,31 @@ def test_edit_plan_model_rejects_deleting_spoken_content():
         )
 
 
-def test_safe_plan_disables_trimming_when_more_than_100_ranges_remain():
+def test_retime_subtitles_after_safe_rough_cut_and_reject_crossing_cue():
+    retimed = retime_segments_after_cuts(
+        [
+            {"start": 0.1, "end": 2.0, "text": "第一句"},
+            {"start": 4.0, "end": 5.0, "text": "第二句"},
+        ],
+        [TimeRange(start=2.45, end=3.55)],
+    )
+
+    assert retimed[1]["start"] == 2.9
+    assert retimed[1]["end"] == 3.9
+    with pytest.raises(CloudEditorError, match="跨越粗剪区间"):
+        retime_segments_after_cuts(
+            [{"start": 2.0, "end": 4.0, "text": "跨越切点"}],
+            [TimeRange(start=2.45, end=3.55)],
+        )
+
+
+def test_safe_plan_disables_trimming_when_too_many_output_segments_remain():
     spoken = [{"start": index * 3.0, "end": index * 3.0 + 0.5} for index in range(102)]
     plan = build_safe_edit_plan(spoken, 304)
 
     assert plan.trim_silence_enabled is False
     assert plan.remove_ranges == []
-    assert "超过 100 段" in plan.warnings[0]
+    assert "安全裁剪区间过多" in plan.warnings[0]
 
 
 def test_sandbox_bundle_never_calls_transports_or_creates_publishable_media(
@@ -475,6 +519,9 @@ def test_qwen_suggestions_cannot_inject_spoken_range_deletions():
                             {
                                 "title_candidates": ["安全标题"],
                                 "explanation": "只处理停顿",
+                                "bgm_category": "理性干货",
+                                "bgm_energy": "克制",
+                                "bgm_keywords": ["知识", "口播"],
                                 "enabled_steps": [
                                     "trim_silence",
                                     "delete_spoken_content",
@@ -501,9 +548,44 @@ def test_qwen_suggestions_cannot_inject_spoken_range_deletions():
     )
 
     assert plan.title_candidates == ["安全标题"]
-    assert plan.remove_ranges == [TimeRange(start=2.35, end=3.65)]
+    assert plan.bgm_category == "理性干货"
+    assert plan.bgm_energy == "克制"
+    assert plan.bgm_keywords == ["知识", "口播"]
+    assert plan.remove_ranges == [TimeRange(start=2.45, end=3.55)]
     assert all(step.value != "delete_spoken_content" for step in plan.enabled_steps)
     assert plan.usage == {"prompt_tokens": 100, "completion_tokens": 20}
+
+
+def test_qwen_bgm_profile_is_restricted_to_approved_values():
+    def transport(*args):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "title_candidates": ["标题"],
+                                "explanation": "测试",
+                                "enabled_steps": ["bgm"],
+                                "bgm_category": "任意外部分类",
+                                "bgm_energy": "爆炸",
+                                "bgm_keywords": ["科技", "未来", "第三个", "四", "五", "六", "七"],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    },
+                },
+            ],
+        }
+
+    plan = AliyunEditPlanProvider(
+        _aliyun_config(),
+        transport=transport,
+    ).create_plan("介绍一个知识点。", [{"start": 0, "end": 2}], 2)
+
+    assert plan.bgm_category == "通用口播"
+    assert plan.bgm_energy == "克制"
+    assert plan.bgm_keywords == ["科技", "未来", "第三个", "四", "五", "六"]
 
 
 def test_mps_request_uses_selected_profile_and_requires_human_review():
@@ -512,8 +594,14 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
         transport=lambda *args: {},
     )
     fixed_time = datetime(2026, 7, 28, 12, tzinfo=timezone.utc)
+    request = _render_request().model_copy(
+        update={
+            "subtitle_object_key": "review/approved.ass",
+            "title_watermark_object_key": "review/approved-title.png",
+        },
+    )
     _, headers, body = provider.build_submit_request(
-        _render_request(),
+        request,
         now=fixed_time,
         nonce="nonce-1",
     )
@@ -524,8 +612,183 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
     assert form["Action"] == ["SubmitJobs"]
     assert outputs[0]["TemplateId"] == "template-720"
     assert outputs[0]["UserData"] == "idem-001"
+    subtitle = outputs[0]["SubtitleConfig"]["ExtSubtitleList"][0]
+    assert subtitle["Input"]["Object"] == "review%2Fapproved.ass"
+    assert subtitle["CharEnc"] == "UTF-8"
+    assert subtitle["FontName"] == "YaHei"
+    watermark = outputs[0]["WaterMarks"][0]
+    assert watermark["Type"] == "Image"
+    assert watermark["InputFile"]["Object"] == "review%2Fapproved-title.png"
+    assert watermark["ReferPos"] == "TopLeft"
+    assert watermark["Width"] == "520"
+    assert watermark["Dx"] == "56"
+    assert watermark["Dy"] == "84"
+    assert watermark["Timeline"] == {"Start": "0", "Duration": "2.5"}
+    assert outputs[0]["Clip"]["ConfigToClipFirstPart"] is True
+    assert outputs[0]["MergeList"][0]["Start"] == "3.550"
     with pytest.raises(CloudProviderError, match="人工确认"):
         provider.build_submit_request(_render_request(confirmed=False))
+
+
+def test_mps_request_mixes_prepared_bgm_without_extending_video_duration():
+    provider = AliyunMPSRenderProvider(
+        _aliyun_config(),
+        transport=lambda *args: {},
+    )
+    _, _, body = provider.build_submit_request(
+        _render_request().model_copy(update={"bgm_asset": _bgm_asset()}),
+        now=datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
+        nonce="nonce-bgm",
+    )
+    outputs = json.loads(parse_qs(body.decode("utf-8"))["Outputs"][0])
+
+    assert outputs[0]["Amix"] == [
+        {
+            "AmixURL": _bgm_asset().provider_locator,
+            "Map": "0:a:0",
+            "MixDurMode": "first",
+            "Start": "0",
+        }
+    ]
+
+
+def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
+    spec = visual_style_spec("720p")
+    ass = build_business_talking_head_ass(
+        [
+            {
+                "start": 0.2,
+                "end": 4.2,
+                "text": "工厂没订单，再智能的设备也是一堆废铁。",
+            },
+        ],
+        title="机器人也被裁员？真相令人深思",
+        output_profile="720p",
+    ).decode("utf-8-sig")
+
+    assert spec["canvas"] == {
+        "width": 720,
+        "height": 1280,
+        "pixel_aspect_ratio": "1:1",
+    }
+    assert "PlayResX: 720" in ass
+    assert "PlayResY: 1280" in ass
+    assert spec["style_id"] == "business_talking_head_v7"
+    assert spec["title"]["max_chars_per_line"] == 9
+    assert spec["title"]["font_family"] == "Source Han Serif CN Heavy"
+    assert spec["title"]["render_mode"] == "png_watermark"
+    assert spec["subtitle"]["max_lines"] == 1
+    assert spec["subtitle"]["max_chars_per_line"] == 10
+    assert spec["subtitle"]["font_size"] == 46
+    assert "Style: Title,YaHei,48" in ass
+    assert "Style: Accent,Arial,1" in ass
+    assert "Style: Caption,YaHei,46" in ass
+    assert "&H8C000000,&H00000000,-1,0,0,0,100,100,0.18" in ass
+    assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
+    assert r"\fad" not in ass
+    assert r"\N" in ass
+    assert r"\\N" not in ass
+
+
+def test_business_talking_head_title_png_uses_brand_font_and_profile_size():
+    title_png = build_business_talking_head_title_png(
+        "机器人也被裁员？真相令人深思",
+        output_profile="720p",
+    )
+
+    assert title_png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert len(title_png) > 10_000
+
+
+def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuation():
+    segments = [
+        {
+            "start": 0,
+            "end": 3,
+            "text": "你发现没，机器人最近也被裁员了。",
+            "emphasis_terms": ["被裁员"],
+        }
+    ]
+    preview = build_business_talking_head_overlay_preview(
+        segments,
+        title="机器人也被裁员？真相令人深思",
+        output_profile="720p",
+    )
+    ass = build_business_talking_head_ass(
+        segments,
+        title="机器人也被裁员？真相令人深思",
+        output_profile="720p",
+    ).decode("utf-8-sig")
+
+    assert preview["title"]["lines"] == ["机器人也被裁员？真", "相令人深思"]
+    assert [cue["lines"] for cue in preview["cues"]] == [
+        ["你发现没"],
+        ["机器人最近也被裁员了"],
+    ]
+    assert all(len(cue["lines"]) == 1 for cue in preview["cues"])
+    assert all(
+        not any(mark in line for mark in "，。！？；：、,.!?;:")
+        for cue in preview["cues"]
+        for line in cue["lines"]
+    )
+    assert preview["cues"][1]["emphasis_range"] == {
+        "line_index": 0,
+        "start": 6,
+        "end": 9,
+    }
+    assert r"{\c&H006AE1FF&}被裁员{\c&H00F8FAFC&}" in ass
+
+
+def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 1.25,
+                "end": 5.75,
+                "text": "今天12:30开播，转化率增长3.5%，大家别错过！",
+            },
+        ],
+        title="直播提醒",
+        output_profile="720p",
+    )
+
+    cues = preview["cues"]
+    assert [cue["lines"] for cue in cues] == [
+        ["今天12:30开播"],
+        ["转化率增长3.5%"],
+        ["大家别错过"],
+    ]
+    assert cues[0]["start"] == 1.25
+    assert cues[-1]["end"] == 5.75
+    assert all(left["end"] == right["start"] for left, right in zip(cues, cues[1:]))
+
+
+def test_caption_balances_long_phrases_without_one_or_two_character_orphans():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 3.68,
+                "end": 11.36,
+                "text": (
+                    "以前都说机器取代工人，结果现在工厂倒闭潮一来，"
+                    "大量工业机器人被当废铁卖。"
+                ),
+            },
+        ],
+        title="机器人也会失业",
+        output_profile="720p",
+    )
+
+    lines = [cue["lines"][0] for cue in preview["cues"]]
+    assert lines == [
+        "以前都说机器取代工人",
+        "结果现在工厂",
+        "倒闭潮一来",
+        "大量工业机器人",
+        "被当废铁卖",
+    ]
+    assert "铁卖" not in lines
+    assert all(len(line) >= 4 for line in lines)
 
 
 def test_oss_presigned_read_url_is_short_lived_and_not_serialized():

@@ -77,7 +77,7 @@ describe("PublishPage", () => {
 
     expect((await screen.findAllByText("添加并扫码")).length).toBeGreaterThan(0);
     expect(screen.getByText("普通运营不需要填写 Key、Secret 或回调地址")).toBeTruthy();
-    expect(screen.getAllByText("在本机官方创作者窗口上传并填写；开启账号授权后才会自动点击最终发布。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。").length).toBeGreaterThan(0);
     expect((screen.getByLabelText("快手账号名称") as HTMLInputElement).value).toBe("公司主号");
     expect(screen.getByText("配置平台")).toBeTruthy();
     expect(screen.getByText("选择发布")).toBeTruthy();
@@ -129,7 +129,8 @@ describe("PublishPage", () => {
 
     await within(view.container).findByText("1. 选择平台");
     fireEvent.click(within(view.container).getByRole("button", { name: /配置平台/ }));
-    expect((await within(view.container).findAllByText("授权自动发布")).length).toBe(2);
+    expect((await within(view.container).findAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。")).length).toBe(2);
+    expect(within(view.container).queryByText("授权自动发布")).toBeNull();
   });
 
   it("loads completed publish metadata carried from the AI copywriting page", async () => {
@@ -147,5 +148,50 @@ describe("PublishPage", () => {
     expect(within(view.container).getByText("#品牌")).toBeTruthy();
     expect(within(view.container).getByText("#活动")).toBeTruthy();
     expect(window.sessionStorage.getItem("publish_ai_draft")).toBeNull();
+  });
+
+  it("does not let a queued task be manually marked as published", async () => {
+    vi.mocked(listPublishAccounts).mockResolvedValue([
+      { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
+    ]);
+    vi.mocked(listPublishBatches).mockResolvedValue({
+      total: 1,
+      items: [{
+        batch_id: "publish-batch-1",
+        status: "running",
+        total: 2,
+        succeeded: 0,
+        failed: 0,
+        outcome_unknown: 1,
+        pending: 1,
+        created_at: "2026-07-29T10:00:00+08:00",
+        updated_at: "2026-07-29T10:00:00+08:00",
+        tasks: [
+          { task_id: "queued-task", batch_id: "publish-batch-1", status: "queued", publish_status: "pending", platform: "douyin", title: "排队中的任务", native_music_mode: "auto_recommended", native_music_hint: "科技未来 克制", selected_music_title: null, stage: "等待上传", provider_name: "local_browser", platform_video_id: null, platform_url: null, is_mock: false, error_message: null, action_required: null, created_at: null, updated_at: null },
+          { task_id: "unknown-task", batch_id: "publish-batch-1", status: "paused", publish_status: "outcome_unknown", platform: "douyin", title: "待确认的任务", native_music_mode: "auto_recommended", native_music_hint: "科技未来 克制", selected_music_title: "示例音乐", stage: "已提交动作，等待平台结果", provider_name: "local_browser", platform_video_id: null, platform_url: null, is_mock: false, error_message: null, action_required: null, created_at: null, updated_at: null },
+        ],
+      }],
+    });
+
+    renderPage();
+
+    expect((await screen.findAllByText("平台结果待确认")).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "回填实际结果" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "重新准备" })).toBeNull();
+  });
+
+  it("defaults Douyin publishing to automatic native music without another customer control", async () => {
+    vi.mocked(listPublishAccounts).mockResolvedValue([
+      { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
+    ]);
+    const view = renderPage();
+
+    fireEvent.change(await within(view.container).findByLabelText("发布标题"), {
+      target: { value: "机器人会取代哪些岗位" },
+    });
+
+    expect(within(view.container).getByText("抖音原生配乐由系统自动选择")).toBeTruthy();
+    expect(within(view.container).getByText(/科技未来 克制/)).toBeTruthy();
+    expect(within(view.container).queryByRole("button", { name: /选择音乐/ })).toBeNull();
   });
 });

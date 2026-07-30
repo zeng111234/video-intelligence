@@ -36,12 +36,28 @@ from src.models import (
 )
 
 
-_WORKFLOW_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-workflow")
+_WORKFLOW_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix="video-workflow"
+)
 _MAX_SUBTITLE_BYTES = 50 * 1024 * 1024
 _MAX_SUBTITLE_SECONDS = 15 * 60
 _MAX_BATCH_ITEMS = 10
 _MAX_BGM_BYTES = 30 * 1024 * 1024
 _BGM_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac"}
+_BGM_VOICEOVER_CATEGORIES = {
+    "理性干货",
+    "情绪共鸣",
+    "故事叙事",
+    "商业表达",
+    "科技未来",
+    "轻松日常",
+    "励志成长",
+    "悬念揭秘",
+    "通用口播",
+}
+_BGM_ENERGY_LEVELS = {"克制", "平稳", "有推动感"}
+_BGM_SOURCE_PROVIDERS = {"manual", "freepd", "pixabay", "light_factory", "bodian"}
+_BGM_CONTENT_ID_RISKS = {"none", "registered", "unknown"}
 _MAX_VISUAL_ASSET_BYTES = 10 * 1024 * 1024
 _VISUAL_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
@@ -81,7 +97,11 @@ class VideoEditorWorkflowService:
             if not isinstance(task, AvatarTask):
                 continue
             path = Path(task.result_path or "")
-            if task.status != TaskStatus.SUCCEEDED or task.is_mock or not path.is_file():
+            if (
+                task.status != TaskStatus.SUCCEEDED
+                or task.is_mock
+                or not path.is_file()
+            ):
                 continue
             key = str(path.resolve()).casefold()
             if key in seen_paths:
@@ -99,10 +119,17 @@ class VideoEditorWorkflowService:
             )
 
         for task in self.repository.list_tasks():
-            if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") != "upload_source":
+            if (
+                not isinstance(task, VideoEditTask)
+                or task.outputs.get("workflow") != "upload_source"
+            ):
                 continue
             path = Path(task.source_video_path)
-            if task.status != TaskStatus.SUCCEEDED or task.is_mock or not path.is_file():
+            if (
+                task.status != TaskStatus.SUCCEEDED
+                or task.is_mock
+                or not path.is_file()
+            ):
                 continue
             key = str(path.resolve()).casefold()
             if key in seen_paths:
@@ -152,7 +179,11 @@ class VideoEditorWorkflowService:
             if not isinstance(task, AvatarTask):
                 raise VideoEditorWorkflowError("数字人成片不存在。")
             path = Path(task.result_path or "")
-            if task.status != TaskStatus.SUCCEEDED or task.is_mock or not path.is_file():
+            if (
+                task.status != TaskStatus.SUCCEEDED
+                or task.is_mock
+                or not path.is_file()
+            ):
                 raise VideoEditorWorkflowError("该数字人成片不可用或已被清理。")
             return self._source_payload(
                 source_id=source_id,
@@ -185,10 +216,17 @@ class VideoEditorWorkflowService:
 
         if source_type == "upload":
             task = self.repository.get_task(record_id)
-            if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") != "upload_source":
+            if (
+                not isinstance(task, VideoEditTask)
+                or task.outputs.get("workflow") != "upload_source"
+            ):
                 raise VideoEditorWorkflowError("上传素材不存在。")
             path = Path(task.source_video_path)
-            if task.status != TaskStatus.SUCCEEDED or task.is_mock or not path.is_file():
+            if (
+                task.status != TaskStatus.SUCCEEDED
+                or task.is_mock
+                or not path.is_file()
+            ):
                 raise VideoEditorWorkflowError("该上传素材不可用或已被清理。")
             return self._source_payload(
                 source_id=source_id,
@@ -223,9 +261,13 @@ class VideoEditorWorkflowService:
 
         now = datetime.now().astimezone()
         task_id = f"upload-{uuid4().hex[:10]}"
-        storage_dir = self.video_editing_service.output_directory.parent / "video_uploads"
+        storage_dir = (
+            self.video_editing_service.output_directory.parent / "video_uploads"
+        )
         storage_dir.mkdir(parents=True, exist_ok=True)
-        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file_name).name) or f"source{suffix}"
+        safe_name = (
+            re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file_name).name) or f"source{suffix}"
+        )
         path = storage_dir / f"{task_id}-{safe_name}"
         path.write_bytes(media_bytes)
         task = VideoEditTask(
@@ -274,7 +316,9 @@ class VideoEditorWorkflowService:
 
         now = datetime.now().astimezone()
         asset_id = f"{kind}-{uuid4().hex[:10]}"
-        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file_name).name) or f"{kind}{suffix}"
+        safe_name = (
+            re.sub(r"[^A-Za-z0-9._-]+", "_", Path(file_name).name) or f"{kind}{suffix}"
+        )
         directory = self._visual_asset_directory()
         path = directory / f"{asset_id}-{safe_name}"
         path.write_bytes(media_bytes)
@@ -316,7 +360,9 @@ class VideoEditorWorkflowService:
                 continue
         return sorted(items, key=lambda item: item["created_at"], reverse=True)
 
-    def resolve_visual_asset(self, asset_id: str, *, expected_kind: str | None = None) -> dict[str, Any]:
+    def resolve_visual_asset(
+        self, asset_id: str, *, expected_kind: str | None = None
+    ) -> dict[str, Any]:
         metadata_path = self._visual_asset_metadata_path(asset_id)
         if not metadata_path.is_file():
             raise VideoEditorWorkflowError("视觉素材不存在或已被清理。")
@@ -326,7 +372,9 @@ class VideoEditorWorkflowService:
                 raise VideoEditorWorkflowError("视觉素材标识无效。")
             if expected_kind is not None and metadata.get("kind") != expected_kind:
                 raise VideoEditorWorkflowError("视觉素材类型不匹配。")
-            media_path = self._visual_asset_directory(create=False) / str(metadata["stored_name"])
+            media_path = self._visual_asset_directory(create=False) / str(
+                metadata["stored_name"]
+            )
         except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
             raise VideoEditorWorkflowError("视觉素材记录无法读取。") from exc
         if not media_path.is_file():
@@ -368,7 +416,9 @@ class VideoEditorWorkflowService:
                         kind=VideoEditStepKind.PRODUCT_SHOWCASE,
                         params={
                             "product_path": product["_path"],
-                            "background_path": background["_path"] if background else None,
+                            "background_path": background["_path"]
+                            if background
+                            else None,
                             "layout": layout,
                         },
                         order=0,
@@ -393,7 +443,9 @@ class VideoEditorWorkflowService:
     def _run_product_showcase(self, task_id: str) -> None:
         task = self._get_workflow_task(task_id, "product_showcase")
         try:
-            self._update(task, status=TaskStatus.RUNNING, progress=10, stage="准备产品讲解合成")
+            self._update(
+                task, status=TaskStatus.RUNNING, progress=10, stage="准备产品讲解合成"
+            )
             result = self.video_editing_service.edit_video(
                 source_video_path=task.source_video_path,
                 edit_config=task.edit_config,
@@ -408,7 +460,12 @@ class VideoEditorWorkflowService:
             )
             self.repository.save_task(result)
         except Exception as exc:
-            self._update(task, status=TaskStatus.FAILED, stage="产品讲解合成失败", error_message=str(exc))
+            self._update(
+                task,
+                status=TaskStatus.FAILED,
+                stage="产品讲解合成失败",
+                error_message=str(exc),
+            )
 
     def list_bgm_assets(self) -> list[dict[str, Any]]:
         directory = self._bgm_directory()
@@ -435,16 +492,46 @@ class VideoEditorWorkflowService:
         mood: str,
         rights_confirmed: bool,
         rights_holder: str,
+        voiceover_category: str = "通用口播",
+        energy: str = "克制",
+        source_provider: str = "manual",
+        source_url: str = "",
+        license_url: str = "",
+        content_id_risk: str = "unknown",
     ) -> dict[str, Any]:
         suffix = Path(file_name).suffix.lower()
         if suffix not in _BGM_SUFFIXES:
-            raise VideoEditorWorkflowError("背景音乐仅支持 MP3、WAV、M4A、AAC 或 FLAC。")
+            raise VideoEditorWorkflowError(
+                "背景音乐仅支持 MP3、WAV、M4A、AAC 或 FLAC。"
+            )
         if not rights_confirmed or not rights_holder.strip():
             raise VideoEditorWorkflowError("请确认拥有音乐使用权并填写授权主体。")
         if not media_bytes:
             raise VideoEditorWorkflowError("上传的背景音乐为空。")
         if len(media_bytes) > _MAX_BGM_BYTES:
             raise VideoEditorWorkflowError("背景音乐超过 30MB 限制。")
+        normalized_category = voiceover_category.strip() or "通用口播"
+        if normalized_category not in _BGM_VOICEOVER_CATEGORIES:
+            raise VideoEditorWorkflowError("请选择系统支持的口播音乐分类。")
+        normalized_energy = energy.strip() or "克制"
+        if normalized_energy not in _BGM_ENERGY_LEVELS:
+            raise VideoEditorWorkflowError("请选择系统支持的音乐能量等级。")
+        normalized_provider = source_provider.strip().lower() or "manual"
+        if normalized_provider not in _BGM_SOURCE_PROVIDERS:
+            raise VideoEditorWorkflowError("背景音乐来源类型无效。")
+        normalized_content_id_risk = content_id_risk.strip().lower() or "unknown"
+        if normalized_content_id_risk not in _BGM_CONTENT_ID_RISKS:
+            raise VideoEditorWorkflowError("背景音乐版权识别风险标记无效。")
+        normalized_source_url = source_url.strip()
+        normalized_license_url = license_url.strip()
+        for label, value in (
+            ("素材来源链接", normalized_source_url),
+            ("授权说明链接", normalized_license_url),
+        ):
+            if value and urlparse(value).scheme not in {"http", "https"}:
+                raise VideoEditorWorkflowError(f"{label}必须是 http 或 https 地址。")
+        if normalized_provider != "manual" and not normalized_source_url:
+            raise VideoEditorWorkflowError("外部音乐必须保存原始素材页面链接。")
 
         asset_id = f"bgm-{uuid4().hex[:12]}"
         directory = self._bgm_directory()
@@ -457,17 +544,31 @@ class VideoEditorWorkflowService:
             media_path.unlink(missing_ok=True)
             raise
         now = datetime.now().astimezone()
+        normalized_media_type = (media_type or "").strip().lower()
+        if normalized_media_type in {"", "application/octet-stream", "binary/octet-stream"}:
+            normalized_media_type = mimetypes.guess_type(file_name)[0] or "audio/mpeg"
         metadata = {
             "asset_id": asset_id,
             "title": Path(file_name).stem[:100] or "本地背景音乐",
             "original_name": Path(file_name).name,
             "stored_name": media_path.name,
-            "media_type": media_type or mimetypes.guess_type(file_name)[0] or "audio/mpeg",
+            "media_type": normalized_media_type,
             "mood": (mood or "通用").strip()[:30],
             "rights_holder": rights_holder.strip()[:100],
             "rights_confirmed_at": now.isoformat(),
             "created_at": now.isoformat(),
             "duration_seconds": duration_seconds,
+            "voiceover_category": normalized_category,
+            "energy": normalized_energy,
+            "tags": [
+                token
+                for token in re.split(r"[\s,，、·/]+", (mood or "").strip())
+                if token
+            ][:12],
+            "source_provider": normalized_provider,
+            "source_url": normalized_source_url,
+            "license_url": normalized_license_url,
+            "content_id_risk": normalized_content_id_risk,
         }
         (directory / f"{asset_id}.json").write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2),
@@ -524,23 +625,107 @@ class VideoEditorWorkflowService:
         return round(duration, 2)
 
     @staticmethod
+    def _prepare_bgm_for_cloud_mix(source: Path, *, volume: float) -> Path:
+        """Create a low-volume audio-only asset before MPS mixes it with speech.
+
+        MPS Amix has no per-external-track volume control.  Preparing the BGM on
+        the server keeps the client lightweight and prevents a 1:1 mix from
+        overwhelming a talking-head recording.
+        """
+        if not shutil.which("ffmpeg"):
+            raise VideoEditorWorkflowError(
+                "未检测到 FFmpeg，暂不能为云端成片准备低音量背景音乐。"
+            )
+        safe_volume = min(max(float(volume), 0.08), 0.35)
+        handle = tempfile.NamedTemporaryFile(suffix=".m4a", delete=False)
+        handle.close()
+        prepared = Path(handle.name)
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(source),
+                "-vn",
+                "-af",
+                f"volume={safe_volume:.3f},afade=t=in:st=0:d=0.5",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                str(prepared),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+        if result.returncode != 0 or not prepared.is_file() or prepared.stat().st_size == 0:
+            prepared.unlink(missing_ok=True)
+            raise VideoEditorWorkflowError("背景音乐预处理失败，请更换音乐后重试。")
+        return prepared
+
+    @staticmethod
     def _bgm_payload(metadata: dict[str, Any], media_path: Path) -> dict[str, Any]:
+        mood = str(metadata.get("mood") or "通用")
+        category = str(metadata.get("voiceover_category") or "").strip()
+        if category not in _BGM_VOICEOVER_CATEGORIES:
+            category = (
+                "科技未来"
+                if "科技" in mood or "未来" in mood
+                else "理性干货"
+                if "知识" in mood or "讲解" in mood
+                else "故事叙事"
+                if "叙事" in mood or "故事" in mood
+                else "情绪共鸣"
+                if "温柔" in mood or "治愈" in mood
+                else "商业表达"
+                if "商务" in mood or "品牌" in mood
+                else "轻松日常"
+                if "轻松" in mood or "欢快" in mood
+                else "通用口播"
+            )
+        energy = str(metadata.get("energy") or "克制").strip()
+        if energy not in _BGM_ENERGY_LEVELS:
+            energy = "克制"
+        tags = metadata.get("tags")
+        normalized_tags = (
+            [str(item).strip() for item in tags if str(item).strip()]
+            if isinstance(tags, list)
+            else [
+                token
+                for token in re.split(r"[\s,，、·/]+", mood)
+                if token
+            ]
+        )
         return {
             "asset_id": metadata["asset_id"],
             "title": metadata["title"],
             "original_name": metadata["original_name"],
             "media_type": metadata["media_type"],
-            "mood": metadata["mood"],
+            "mood": mood,
+            "voiceover_category": category,
+            "energy": energy,
+            "tags": normalized_tags[:12],
             "rights_holder": metadata["rights_holder"],
             "rights_confirmed_at": metadata["rights_confirmed_at"],
             "created_at": metadata["created_at"],
             "duration_seconds": metadata["duration_seconds"],
             "size_bytes": media_path.stat().st_size,
             "media_url": f"/api/v1/video-editor/bgm/{metadata['asset_id']}/media",
+            "source_provider": str(metadata.get("source_provider") or "manual"),
+            "source_url": str(metadata.get("source_url") or ""),
+            "license_url": str(metadata.get("license_url") or ""),
+            "content_id_risk": str(metadata.get("content_id_risk") or "unknown"),
         }
 
     def _visual_asset_directory(self, *, create: bool = True) -> Path:
-        directory = self.video_editing_service.output_directory.parent / "creative_assets"
+        directory = (
+            self.video_editing_service.output_directory.parent / "creative_assets"
+        )
         if create:
             directory.mkdir(parents=True, exist_ok=True)
         return directory
@@ -563,7 +748,9 @@ class VideoEditorWorkflowService:
         )
 
     @staticmethod
-    def _visual_asset_payload(metadata: dict[str, Any], media_path: Path) -> dict[str, Any]:
+    def _visual_asset_payload(
+        metadata: dict[str, Any], media_path: Path
+    ) -> dict[str, Any]:
         return {
             "asset_id": metadata["asset_id"],
             "kind": metadata["kind"],
@@ -660,10 +847,14 @@ class VideoEditorWorkflowService:
     def _run_analysis(self, analysis_id: str) -> None:
         task = self._get_workflow_task(analysis_id, "analysis")
         try:
-            task = self._update(task, status=TaskStatus.RUNNING, progress=10, stage="读取媒体信息")
+            task = self._update(
+                task, status=TaskStatus.RUNNING, progress=10, stage="读取媒体信息"
+            )
             media = self._probe_media(Path(task.source_video_path))
             task = self._update(task, progress=35, stage="分析音频节奏")
-            audio = self._analyze_audio(Path(task.source_video_path), media.get("duration_seconds"))
+            audio = self._analyze_audio(
+                Path(task.source_video_path), media.get("duration_seconds")
+            )
             recommendations, findings = self._recommend(media, audio, task.outputs)
             transcript_id = ""
             subtitle_error = ""
@@ -705,16 +896,22 @@ class VideoEditorWorkflowService:
                 outputs=outputs,
             )
         except Exception as exc:
-            self._update(task, status=TaskStatus.FAILED, stage="分析失败", error_message=str(exc))
+            self._update(
+                task, status=TaskStatus.FAILED, stage="分析失败", error_message=str(exc)
+            )
 
     def _create_transcription(self, task: VideoEditTask, media: dict[str, Any]) -> str:
         path = Path(task.source_video_path)
         if path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
             raise VideoEditorWorkflowError("该成片格式暂不支持字幕识别。")
         if path.stat().st_size > _MAX_SUBTITLE_BYTES:
-            raise VideoEditorWorkflowError("成片超过 50MB，暂不能在智能剪辑中生成字幕。")
+            raise VideoEditorWorkflowError(
+                "成片超过 50MB，暂不能在智能剪辑中生成字幕。"
+            )
         if float(media.get("duration_seconds") or 0) > _MAX_SUBTITLE_SECONDS:
-            raise VideoEditorWorkflowError("成片超过 15 分钟，暂不能在智能剪辑中生成字幕。")
+            raise VideoEditorWorkflowError(
+                "成片超过 15 分钟，暂不能在智能剪辑中生成字幕。"
+            )
         transcript = self.transcription_service.create_task(
             media_name=path.name,
             media_type=mimetypes.guess_type(path.name)[0] or "video/mp4",
@@ -732,14 +929,26 @@ class VideoEditorWorkflowService:
         if not transcript_id:
             return ""
         task = self.repository.get_task(transcript_id)
-        return "".join(str(segment.text).strip() for segment in getattr(task, "segments", []) if str(segment.text).strip())
+        return "".join(
+            str(segment.text).strip()
+            for segment in getattr(task, "segments", [])
+            if str(segment.text).strip()
+        )
 
     @staticmethod
-    def _local_title_candidates(source_title: str, transcript_text: str, platform: str) -> list[str]:
-        clean_source = re.sub(r"^(本地上传|流水线成片|系统数字人成片)\s*[·：:-]?\s*", "", source_title).strip()
+    def _local_title_candidates(
+        source_title: str, transcript_text: str, platform: str
+    ) -> list[str]:
+        clean_source = re.sub(
+            r"^(本地上传|流水线成片|系统数字人成片)\s*[·：:-]?\s*", "", source_title
+        ).strip()
         clean_source = Path(clean_source).stem
-        first_sentence = re.split(r"[。！？!?；;\n]", transcript_text.strip(), maxsplit=1)[0]
-        subject = re.sub(r"\s+", "", first_sentence or clean_source or "这条视频")[:22].rstrip("，,。.")
+        first_sentence = re.split(
+            r"[。！？!?；;\n]", transcript_text.strip(), maxsplit=1
+        )[0]
+        subject = re.sub(r"\s+", "", first_sentence or clean_source or "这条视频")[
+            :22
+        ].rstrip("，,。.")
         prefix = "视频号" if platform == "wechat_channels" else "短视频"
         candidates = [
             subject,
@@ -763,16 +972,27 @@ class VideoEditorWorkflowService:
         if not shutil.which("ffprobe"):
             raise VideoEditorWorkflowError("未检测到 FFprobe，无法分析视频。")
         cmd = [
-            "ffprobe", "-v", "error", "-show_entries",
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
             "format=duration:stream=codec_type,width,height,r_frame_rate",
-            "-of", "json", str(path),
+            "-of",
+            "json",
+            str(path),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, check=False
+        )
         if result.returncode != 0:
-            raise VideoEditorWorkflowError((result.stderr or "媒体分析失败。").strip()[:240])
+            raise VideoEditorWorkflowError(
+                (result.stderr or "媒体分析失败。").strip()[:240]
+            )
         data = json.loads(result.stdout or "{}")
         streams = data.get("streams") or []
-        video = next((item for item in streams if item.get("codec_type") == "video"), {})
+        video = next(
+            (item for item in streams if item.get("codec_type") == "video"), {}
+        )
         has_audio = any(item.get("codec_type") == "audio" for item in streams)
         fps_text = str(video.get("r_frame_rate") or "0/1")
         try:
@@ -782,7 +1002,9 @@ class VideoEditorWorkflowService:
             fps = 0.0
         width, height = int(video.get("width") or 0), int(video.get("height") or 0)
         return {
-            "duration_seconds": round(float((data.get("format") or {}).get("duration") or 0), 2),
+            "duration_seconds": round(
+                float((data.get("format") or {}).get("duration") or 0), 2
+            ),
             "width": width,
             "height": height,
             "fps": fps,
@@ -795,11 +1017,30 @@ class VideoEditorWorkflowService:
     def _analyze_audio(path: Path, duration: float | None) -> dict[str, Any]:
         if not shutil.which("ffmpeg"):
             return {"available": False}
-        result: dict[str, Any] = {"available": True, "mean_volume_db": None, "silence_seconds": 0.0}
+        result: dict[str, Any] = {
+            "available": True,
+            "mean_volume_db": None,
+            "silence_seconds": 0.0,
+        }
         try:
             volume = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "info", "-i", str(path), "-af", "volumedetect", "-f", "null", "-"],
-                capture_output=True, text=True, timeout=90, check=False,
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "info",
+                    "-i",
+                    str(path),
+                    "-af",
+                    "volumedetect",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
             )
             match = re.search(r"mean_volume:\s*(-?[\d.]+)\s*dB", volume.stderr or "")
             if match:
@@ -808,12 +1049,37 @@ class VideoEditorWorkflowService:
             pass
         try:
             silence = subprocess.run(
-                ["ffmpeg", "-nostdin", "-v", "info", "-i", str(path), "-af", "silencedetect=noise=-30dB:d=0.5", "-f", "null", "-"],
-                capture_output=True, text=True, timeout=90, check=False,
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "info",
+                    "-i",
+                    str(path),
+                    "-af",
+                    "silencedetect=noise=-30dB:d=0.5",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
             )
-            starts = [float(item) for item in re.findall(r"silence_start:\s*([\d.]+)", silence.stderr or "")]
-            ends = [float(item) for item in re.findall(r"silence_end:\s*([\d.]+)", silence.stderr or "")]
-            result["silence_seconds"] = round(sum(max(0, end - start) for start, end in zip(starts, ends)), 2)
+            starts = [
+                float(item)
+                for item in re.findall(
+                    r"silence_start:\s*([\d.]+)", silence.stderr or ""
+                )
+            ]
+            ends = [
+                float(item)
+                for item in re.findall(r"silence_end:\s*([\d.]+)", silence.stderr or "")
+            ]
+            result["silence_seconds"] = round(
+                sum(max(0, end - start) for start, end in zip(starts, ends)), 2
+            )
             result["silence_intervals"] = [
                 {"start": round(start, 2), "end": round(end, 2)}
                 for start, end in zip(starts[:12], ends[:12])
@@ -823,16 +1089,29 @@ class VideoEditorWorkflowService:
         return result
 
     @staticmethod
-    def _recommend(media: dict[str, Any], audio: dict[str, Any], outputs: dict[str, str]) -> tuple[list[dict[str, Any]], list[str]]:
+    def _recommend(
+        media: dict[str, Any], audio: dict[str, Any], outputs: dict[str, str]
+    ) -> tuple[list[dict[str, Any]], list[str]]:
         steps: list[dict[str, Any]] = []
         findings: list[str] = []
         volume = audio.get("mean_volume_db")
         if isinstance(volume, (int, float)) and (volume < -18 or volume > -14):
-            steps.append({"kind": "ai_volume_norm", "params": {"target_i": -16}, "enabled": True, "label": "统一口播响度"})
+            steps.append(
+                {
+                    "kind": "ai_volume_norm",
+                    "params": {"target_i": -16},
+                    "enabled": True,
+                    "label": "统一口播响度",
+                }
+            )
             findings.append(f"平均音量约 {volume:.1f} dB，建议标准化到短视频常用响度。")
         silence_seconds = float(audio.get("silence_seconds") or 0)
         duration = float(media.get("duration_seconds") or 0)
-        if silence_seconds >= 1.5 and duration > 0 and silence_seconds / duration >= 0.05:
+        if (
+            silence_seconds >= 1.5
+            and duration > 0
+            and silence_seconds / duration >= 0.05
+        ):
             steps.append(
                 {
                     "kind": "ai_silence_trim",
@@ -846,13 +1125,26 @@ class VideoEditorWorkflowService:
                 }
             )
             findings.append(f"检测到约 {silence_seconds:.1f} 秒静音，可压缩口播节奏。")
-        if media.get("orientation") != "vertical" or (media.get("width", 0) and media.get("height", 0) and media.get("height", 0) < 1280):
-            steps.append({"kind": "resize", "params": {}, "enabled": True, "label": "适配竖屏平台"})
+        if media.get("orientation") != "vertical" or (
+            media.get("width", 0)
+            and media.get("height", 0)
+            and media.get("height", 0) < 1280
+        ):
+            steps.append(
+                {
+                    "kind": "resize",
+                    "params": {},
+                    "enabled": True,
+                    "label": "适配竖屏平台",
+                }
+            )
             findings.append("画幅或清晰度与竖屏发布预设不一致，建议等比适配。")
         if outputs.get("subtitle_enabled") == "true":
             findings.append("字幕会先进入人工复核；批准前不会烧录进成片。")
         if not steps:
-            findings.append("当前素材未发现必须处理的音频或画幅问题，可按需添加增强步骤。")
+            findings.append(
+                "当前素材未发现必须处理的音频或画幅问题，可按需添加增强步骤。"
+            )
         return steps, findings
 
     # ------------------------------------------------------------------
@@ -862,13 +1154,19 @@ class VideoEditorWorkflowService:
         task = self._get_workflow_task(analysis_id, "analysis")
         transcript_id = task.outputs.get("transcription_task_id", "")
         if not transcript_id:
-            raise VideoEditorWorkflowError("请先完成字幕识别和人工复核，再生成内容建议。")
+            raise VideoEditorWorkflowError(
+                "请先完成字幕识别和人工复核，再生成内容建议。"
+            )
         revision = self.transcription_service.get_approved_revision(transcript_id)
         if revision is None:
             raise VideoEditorWorkflowError("字幕尚未确认成稿，暂不能生成内容建议。")
         capabilities = self.copywriting_service.capabilities()
         if not capabilities.get("enabled", False):
-            return {"enabled": False, "message": "未配置真实大模型，已保留本地剪辑建议。", "advice": []}
+            return {
+                "enabled": False,
+                "message": "未配置真实大模型，已保留本地剪辑建议。",
+                "advice": [],
+            }
         source_text = "\n".join(
             f"[{segment.start:.1f}-{segment.end:.1f}] {segment.text}"
             for segment in revision.corrected_segments
@@ -883,7 +1181,11 @@ class VideoEditorWorkflowService:
         )[0]
         outputs = {**task.outputs, "content_advice": advice}
         self._update(task, outputs=outputs, stage="内容建议已生成")
-        return {"enabled": True, "message": "内容建议已生成，仅供人工参考，不会自动删改视频。", "advice": [advice]}
+        return {
+            "enabled": True,
+            "message": "内容建议已生成，仅供人工参考，不会自动删改视频。",
+            "advice": [advice],
+        }
 
     def create_edit_job(
         self,
@@ -903,12 +1205,18 @@ class VideoEditorWorkflowService:
         if subtitle_enabled:
             transcript_id = analysis.outputs.get("transcription_task_id", "")
             if not transcript_id:
-                raise VideoEditorWorkflowError("本次剪辑要求字幕，请先完成字幕识别和人工复核。")
+                raise VideoEditorWorkflowError(
+                    "本次剪辑要求字幕，请先完成字幕识别和人工复核。"
+                )
             if self.transcription_service.get_approved_revision(transcript_id) is None:
                 raise VideoEditorWorkflowError("字幕尚未完成复核确认，无法开始剪辑。")
         source = self.resolve_source(analysis.outputs.get("source_id", ""))
         validated_steps = [
-            VideoEditStep(kind=VideoEditStepKind(item["kind"]), params=dict(item.get("params") or {}), order=index)
+            VideoEditStep(
+                kind=VideoEditStepKind(item["kind"]),
+                params=dict(item.get("params") or {}),
+                order=index,
+            )
             for index, item in enumerate(steps)
             if item.get("enabled", True)
         ]
@@ -929,7 +1237,9 @@ class VideoEditorWorkflowService:
                 output_bitrate=output_bitrate,
             ),
             source_task_id=analysis.outputs.get("transcription_task_id") or None,
-            source_avatar_task_id=source["source_task_id"] if source["source_type"] == "avatar" else None,
+            source_avatar_task_id=source["source_task_id"]
+            if source["source_type"] == "avatar"
+            else None,
             stage="等待剪辑",
             is_mock=False,
             outputs={
@@ -951,16 +1261,29 @@ class VideoEditorWorkflowService:
             config = task.edit_config
             if task.outputs.get("subtitle_enabled") == "true":
                 transcript_id = task.source_task_id or ""
-                revision = self.transcription_service.get_approved_revision(transcript_id)
+                revision = self.transcription_service.get_approved_revision(
+                    transcript_id
+                )
                 if revision is None:
-                    raise VideoEditorWorkflowError("字幕尚未完成复核确认，无法开始剪辑。")
-                temp_srt = self.video_editing_service.output_directory / f"{task.task_id}.approved.srt"
-                temp_srt.write_bytes(self.transcription_service.export_srt(revision.corrected_segments))
+                    raise VideoEditorWorkflowError(
+                        "字幕尚未完成复核确认，无法开始剪辑。"
+                    )
+                temp_srt = (
+                    self.video_editing_service.output_directory
+                    / f"{task.task_id}.approved.srt"
+                )
+                temp_srt.write_bytes(
+                    self.transcription_service.export_srt(revision.corrected_segments)
+                )
                 config = config.model_copy(
                     update={
                         "steps": [
                             *config.steps,
-                            VideoEditStep(kind=VideoEditStepKind.SUBTITLE, params={"srt_path": str(temp_srt), "style": "default"}, order=len(config.steps)),
+                            VideoEditStep(
+                                kind=VideoEditStepKind.SUBTITLE,
+                                params={"srt_path": str(temp_srt), "style": "default"},
+                                order=len(config.steps),
+                            ),
                         ]
                     }
                 )
@@ -973,12 +1296,22 @@ class VideoEditorWorkflowService:
                 task_id=task.task_id,
             )
             # 底层服务会写入结果输出；补回工作流标识，供页面持续轮询。
-            result = result.model_copy(update={"outputs": {**result.outputs, **task.outputs}})
+            result = result.model_copy(
+                update={"outputs": {**result.outputs, **task.outputs}}
+            )
             self.repository.save_task(result)
             if result.status == TaskStatus.FAILED:
-                self._update(task, status=TaskStatus.FAILED, progress=result.progress, stage=result.stage, error_message=result.error_message or "剪辑失败")
+                self._update(
+                    task,
+                    status=TaskStatus.FAILED,
+                    progress=result.progress,
+                    stage=result.stage,
+                    error_message=result.error_message or "剪辑失败",
+                )
         except Exception as exc:
-            self._update(task, status=TaskStatus.FAILED, stage="剪辑失败", error_message=str(exc))
+            self._update(
+                task, status=TaskStatus.FAILED, stage="剪辑失败", error_message=str(exc)
+            )
         finally:
             if temp_srt is not None:
                 temp_srt.unlink(missing_ok=True)
@@ -989,7 +1322,10 @@ class VideoEditorWorkflowService:
 
     def get_edit_task(self, task_id: str) -> VideoEditTask:
         task = self.repository.get_task(task_id)
-        if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") not in {"edit", "product_showcase"}:
+        if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") not in {
+            "edit",
+            "product_showcase",
+        }:
             raise VideoEditorWorkflowError("智能剪辑任务不存在。")
         return task
 
@@ -1010,12 +1346,10 @@ class VideoEditorWorkflowService:
         from src.services.video_editor_cloud import CloudEditorConfiguration
 
         configuration = (
-            self._cloud_configuration_override
-            or CloudEditorConfiguration.from_env()
+            self._cloud_configuration_override or CloudEditorConfiguration.from_env()
         )
-        providers = (
-            self._cloud_providers_override
-            or build_cloud_providers(configuration)
+        providers = self._cloud_providers_override or build_cloud_providers(
+            configuration
         )
         return configuration, providers
 
@@ -1047,7 +1381,9 @@ class VideoEditorWorkflowService:
         except VideoEditorWorkflowError:
             raise
         except Exception as exc:
-            raise VideoEditorWorkflowError("无法读取素材时长，暂不能生成费用报价。") from exc
+            raise VideoEditorWorkflowError(
+                "无法读取素材时长，暂不能生成费用报价。"
+            ) from exc
         if duration_seconds <= 0:
             raise VideoEditorWorkflowError("素材时长无效，暂不能生成费用报价。")
 
@@ -1077,8 +1413,7 @@ class VideoEditorWorkflowService:
             [
                 "生产云配置不完整，请先补齐缺失配置后重新预检。",
             ]
-            if capability["provider_mode"] == "aliyun"
-            and not capability["live_ready"]
+            if capability["provider_mode"] == "aliyun" and not capability["live_ready"]
             else []
         )
         return {
@@ -1136,7 +1471,7 @@ class VideoEditorWorkflowService:
         quote_id: str,
         billing_confirmation: dict[str, Any],
         idempotency_key: str,
-        bgm_enabled: bool = False,
+        bgm_enabled: bool = True,
         bgm_id: str | None = None,
         bgm_volume: float = 0.2,
     ) -> dict[str, Any]:
@@ -1333,7 +1668,7 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError("素材时长无效，无法开始云端分析。")
 
         object_key = (
-            f"video-editor/{batch.batch_id}/input/"
+            f"video-editor-input/{batch.batch_id}/input/"
             f"{Path(source['file_name']).name}"
         )
         asset = providers.object_store.upload(
@@ -1441,9 +1776,7 @@ class VideoEditorWorkflowService:
                     "text": text,
                 }
                 segments.append(segment)
-                spoken_ranges.append(
-                    {"start": segment["start"], "end": segment["end"]}
-                )
+                spoken_ranges.append({"start": segment["start"], "end": segment["end"]})
         if not transcript:
             transcript = "".join(
                 segment["text"] for segment in segments if segment["text"]
@@ -1458,9 +1791,15 @@ class VideoEditorWorkflowService:
             3,
         )
         labels = {
-            "trim_silence": ("压缩长停顿", "只处理不少于 1.5 秒的无语音间隔，两端各保留 0.35 秒。"),
+            "trim_silence": (
+                "安全粗剪长停顿",
+                "只处理可靠无语音间隔；两端保留口型缓冲，正式成片按同一方案拼接。",
+            ),
             "vertical_fit": ("适配 9:16", "按已选择的输出档位统一画幅、帧率和码率。"),
-            "subtitles": ("烧录确认字幕", "只使用本次人工确认的一套字幕，不会再次识别。"),
+            "subtitles": (
+                "烧录确认字幕",
+                "只使用本次人工确认的一套字幕，不会再次识别。",
+            ),
             "title": ("添加标题", "标题仅使用候选或人工输入，不改写人声内容。"),
             "bgm": ("添加授权配乐", "只有确认权利的音乐才会进入正式渲染。"),
             "audio_mix": ("平衡人声与音乐", "保留原始人声并限制背景音乐音量。"),
@@ -1476,6 +1815,17 @@ class VideoEditorWorkflowService:
                 "estimated_removed_seconds": (
                     removed_seconds if kind.value == "trim_silence" else 0
                 ),
+                "params": (
+                    {
+                        "intervals": [
+                            item.model_dump(mode="json")
+                            for item in plan.remove_ranges
+                        ],
+                        "estimated_output_seconds": plan.estimated_output_seconds,
+                    }
+                    if kind.value == "trim_silence"
+                    else {}
+                ),
             }
             for kind in plan.enabled_steps
         ]
@@ -1487,16 +1837,16 @@ class VideoEditorWorkflowService:
         item: VideoEditorBatchItem,
         snapshot,
     ) -> VideoEditorBatch:
+        from src.services.video_editor_cloud import EditStepKind
+
         _, providers = self._cloud_runtime()
         cloud_transcript = providers.asr.fetch_result(snapshot)
         transcript = cloud_transcript.transcript
         segments = [
-            segment.model_dump(mode="json")
-            for segment in cloud_transcript.segments
+            segment.model_dump(mode="json") for segment in cloud_transcript.segments
         ]
         spoken_ranges = [
-            item.model_dump(mode="json")
-            for item in cloud_transcript.spoken_ranges
+            item.model_dump(mode="json") for item in cloud_transcript.spoken_ranges
         ]
         duration_seconds = float(
             (item.provider_payload.get("media") or {}).get("duration_seconds") or 0
@@ -1514,8 +1864,32 @@ class VideoEditorWorkflowService:
             spoken_ranges,
             duration_seconds,
         )
-        plan_payload = self._cloud_plan_with_steps(plan)
         titles = list(plan.title_candidates) or [item.title[:40]]
+        selected_bgm_id: str | None = None
+        bgm_reason: str | None = None
+        if batch.bgm_enabled:
+            bgm, bgm_reason = self._recommend_bgm_asset(
+                {
+                    "transcript": transcript_for_plan,
+                    "title_candidates": titles,
+                    "media": item.provider_payload.get("media") or {},
+                },
+                item.title,
+            )
+            if bgm is not None:
+                selected_bgm_id = bgm["asset_id"]
+                if EditStepKind.BGM not in plan.enabled_steps:
+                    plan = plan.model_copy(
+                        update={
+                            "enabled_steps": [
+                                *plan.enabled_steps,
+                                EditStepKind.BGM,
+                            ]
+                        }
+                    )
+        else:
+            bgm_reason = "已关闭自动配乐，保持素材原声。"
+        plan_payload = self._cloud_plan_with_steps(plan)
         updated = item.model_copy(
             update={
                 "status": "awaiting_subtitle_review",
@@ -1524,6 +1898,8 @@ class VideoEditorWorkflowService:
                 "edit_plan": plan_payload,
                 "title_candidates": titles,
                 "selected_title": item.selected_title or titles[0],
+                "selected_bgm_id": selected_bgm_id,
+                "bgm_reason": bgm_reason,
                 "actual_usage": {
                     **item.actual_usage,
                     "planning": plan.usage,
@@ -1549,7 +1925,7 @@ class VideoEditorWorkflowService:
         output_resolution: str,
         output_fps: int,
         output_bitrate: str,
-        bgm_enabled: bool = False,
+        bgm_enabled: bool = True,
         bgm_id: str | None = None,
         bgm_volume: float = 0.24,
     ) -> dict[str, Any]:
@@ -1566,7 +1942,11 @@ class VideoEditorWorkflowService:
         items: list[VideoEditorBatchItem] = []
         for source_id in unique_source_ids:
             source = self.resolve_source(source_id)
-            items.append(VideoEditorBatchItem(source_id=source_id, title=source["title"], status="analyzing"))
+            items.append(
+                VideoEditorBatchItem(
+                    source_id=source_id, title=source["title"], status="analyzing"
+                )
+            )
         batch = VideoEditorBatch(
             target_platform=target_platform,
             subtitle_enabled=subtitle_enabled,
@@ -1590,7 +1970,9 @@ class VideoEditorWorkflowService:
                 subtitle_enabled=subtitle_enabled,
                 subtitle_model=subtitle_model,
             )
-            updated_items.append(item.model_copy(update={"analysis_id": analysis.task_id}))
+            updated_items.append(
+                item.model_copy(update={"analysis_id": analysis.task_id})
+            )
         batch = batch.model_copy(update={"items": updated_items})
         self.repository.save_video_editor_batch(batch)
         return self._batch_payload(batch)
@@ -1624,7 +2006,21 @@ class VideoEditorWorkflowService:
                 raise VideoEditorWorkflowError("字幕时间戳超出素材范围。")
             if start < previous_end:
                 raise VideoEditorWorkflowError("字幕时间段不能互相重叠。")
-            normalized.append({"start": start, "end": end, "text": text})
+            raw_terms = raw.get("emphasis_terms") or []
+            if isinstance(raw_terms, (str, bytes)) or not isinstance(raw_terms, list):
+                raise VideoEditorWorkflowError("字幕强调词格式无效。")
+            if len(raw_terms) > 1:
+                raise VideoEditorWorkflowError("每条字幕最多设置一个强调词。")
+            normalized_segment = {"start": start, "end": end, "text": text}
+            if raw_terms:
+                emphasis = re.sub(r"\s+", "", str(raw_terms[0]))
+                clean_text = re.sub(r"\s+", "", text)
+                if not emphasis or len(emphasis) > 4 or emphasis not in clean_text:
+                    raise VideoEditorWorkflowError(
+                        "强调词必须是当前字幕中的连续原文，且不超过 4 个字。"
+                    )
+                normalized_segment["emphasis_terms"] = [emphasis]
+            normalized.append(normalized_segment)
             previous_end = end
         return normalized
 
@@ -1636,19 +2032,34 @@ class VideoEditorWorkflowService:
         secs, milliseconds = divmod(remainder, 1000)
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
 
-    @classmethod
-    def _review_srt_bytes(cls, segments: list[dict[str, Any]]) -> bytes:
-        blocks = [
-            (
-                f"{index}\n"
-                f"{cls._srt_timestamp(float(segment['start']))} --> "
-                f"{cls._srt_timestamp(float(segment['end']))}\n"
-                f"{segment['text']}"
-            )
-            for index, segment in enumerate(segments, 1)
-            if str(segment.get("text") or "").strip()
-        ]
-        return ("\n\n".join(blocks) + ("\n" if blocks else "")).encode("utf-8")
+    @staticmethod
+    def _review_ass_bytes(
+        segments: list[dict[str, Any]],
+        *,
+        output_profile: str,
+    ) -> bytes:
+        from src.services.video_editor_cloud import build_business_talking_head_ass
+
+        return build_business_talking_head_ass(
+            segments,
+            title="",
+            output_profile=output_profile,
+        )
+
+    @staticmethod
+    def _review_title_png_bytes(
+        title: str,
+        *,
+        output_profile: str,
+    ) -> bytes:
+        from src.services.video_editor_cloud import (
+            build_business_talking_head_title_png,
+        )
+
+        return build_business_talking_head_title_png(
+            title,
+            output_profile=output_profile,
+        )
 
     def review_cloud_batch_item(
         self,
@@ -1666,6 +2077,8 @@ class VideoEditorWorkflowService:
             EditPlan,
             EditStepKind,
             RenderRequest,
+            retime_segments_after_cuts,
+            visual_style_spec,
         )
 
         batch = self._sync_batch(self._require_batch(batch_id))
@@ -1703,6 +2116,11 @@ class VideoEditorWorkflowService:
         except (ValueError, TypeError) as exc:
             raise VideoEditorWorkflowError("剪辑方案步骤无效，请重新分析。") from exc
         allowed_steps = set(plan.enabled_steps)
+        # Older tasks may have been analyzed before BGM was included in the
+        # plan. A reviewed, locally authorized asset may be added explicitly;
+        # arbitrary render parameters remain impossible.
+        if selected_bgm_id:
+            allowed_steps.add(EditStepKind.BGM)
         if any(step not in allowed_steps for step in selected_steps):
             raise VideoEditorWorkflowError("不能启用服务端方案之外的剪辑步骤。")
         trim_enabled = EditStepKind.TRIM_SILENCE in selected_steps
@@ -1714,11 +2132,18 @@ class VideoEditorWorkflowService:
             }
         )
         reviewed_plan = EditPlan.model_validate(reviewed_plan.model_dump())
+        try:
+            render_segments = retime_segments_after_cuts(
+                segments,
+                reviewed_plan.remove_ranges,
+            )
+        except ValueError as exc:
+            raise VideoEditorWorkflowError(str(exc)) from exc
         plan_payload = self._cloud_plan_with_steps(reviewed_plan)
         plan_hash = self._cloud_request_hash(plan_payload)
         subtitle_hash = hashlib.sha256(
             json.dumps(
-                segments,
+                render_segments,
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -1732,6 +2157,7 @@ class VideoEditorWorkflowService:
             "plan_version": reviewed_plan.plan_version,
             "plan_hash": plan_hash,
             "subtitle_hash": subtitle_hash,
+            "visual_style_id": visual_style_spec(batch.output_profile)["style_id"],
         }
         reviewed_item = item.model_copy(
             update={
@@ -1744,6 +2170,28 @@ class VideoEditorWorkflowService:
                 "selected_bgm_id": selected_bgm_id,
                 "review_snapshot": review_snapshot,
                 "review_confirmed_at": review_time,
+                "provider_payload": {
+                    **item.provider_payload,
+                    "render_manifest": {
+                        "visual_style_id": visual_style_spec(batch.output_profile)[
+                            "style_id"
+                        ],
+                        "subtitle_format": "ass",
+                        "title_render_mode": "png_watermark",
+                        "title_font": "Source Han Serif CN Heavy",
+                        "title_burned_in": EditStepKind.TITLE in selected_steps,
+                        "subtitles_burned_in": EditStepKind.SUBTITLES in selected_steps,
+                        "rough_cut_burned_in": bool(reviewed_plan.remove_ranges),
+                        "source_kept_ranges": [
+                            item.model_dump(mode="json")
+                            for item in reviewed_plan.kept_ranges
+                        ],
+                        "estimated_output_seconds": reviewed_plan.estimated_output_seconds,
+                        "expected_resolution": self._cloud_output_settings(
+                            batch.output_profile
+                        )["output_resolution"],
+                    },
+                },
                 "publish_allowed": False,
                 "error_message": None,
                 "updated_at": review_time,
@@ -1771,10 +2219,7 @@ class VideoEditorWorkflowService:
         )
         if not claimed:
             operation = self.repository.get_video_editor_operation(render_key)
-            if (
-                operation is None
-                or operation["request_hash"] != render_request_hash
-            ):
+            if operation is None or operation["request_hash"] != render_request_hash:
                 raise VideoEditorWorkflowError("渲染幂等记录冲突，请人工检查。")
             return self.get_batch(batch.batch_id)
 
@@ -1783,13 +2228,21 @@ class VideoEditorWorkflowService:
             reviewed_item.provider_payload.get("input_asset") or {}
         )
         subtitle_object_key: str | None = None
+        title_watermark_object_key: str | None = None
         temp_subtitle: Path | None = None
+        temp_title: Path | None = None
+        temp_merge_config: Path | None = None
+        temp_bgm_mix: Path | None = None
+        merge_config_asset = None
         bgm_asset = None
         try:
-            subtitle_bytes = self._review_srt_bytes(segments)
+            subtitle_bytes = self._review_ass_bytes(
+                render_segments,
+                output_profile=batch.output_profile,
+            )
             if subtitle_bytes and EditStepKind.SUBTITLES in selected_steps:
                 handle = tempfile.NamedTemporaryFile(
-                    suffix=".srt",
+                    suffix=".ass",
                     delete=False,
                 )
                 try:
@@ -1800,32 +2253,93 @@ class VideoEditorWorkflowService:
                 temp_subtitle = Path(handle.name)
                 subtitle_asset = providers.object_store.upload(
                     temp_subtitle,
-                    f"video-editor/{batch.batch_id}/review/approved.srt",
-                    media_type="application/x-subrip",
+                    f"video-editor-input/{batch.batch_id}/review/approved.ass",
+                    media_type="text/x-ass",
                 )
                 subtitle_object_key = subtitle_asset.object_key
 
+            if EditStepKind.TITLE in selected_steps:
+                title_bytes = self._review_title_png_bytes(
+                    title,
+                    output_profile=batch.output_profile,
+                )
+                title_handle = tempfile.NamedTemporaryFile(
+                    suffix=".png",
+                    delete=False,
+                )
+                try:
+                    title_handle.write(title_bytes)
+                    title_handle.flush()
+                finally:
+                    title_handle.close()
+                temp_title = Path(title_handle.name)
+                title_asset = providers.object_store.upload(
+                    temp_title,
+                    (
+                        f"video-editor-input/{batch.batch_id}/review/"
+                        "approved-title.png"
+                    ),
+                    media_type="image/png",
+                )
+                title_watermark_object_key = title_asset.object_key
+
             if selected_bgm_id and EditStepKind.BGM in selected_steps:
                 selected_bgm = self.resolve_bgm_asset(selected_bgm_id)
+                temp_bgm_mix = self._prepare_bgm_for_cloud_mix(
+                    Path(selected_bgm["_path"]),
+                    volume=batch.bgm_volume,
+                )
                 bgm_asset = providers.object_store.upload(
-                    selected_bgm["_path"],
+                    temp_bgm_mix,
                     (
-                        f"video-editor/{batch.batch_id}/bgm/"
-                        f"{Path(selected_bgm['original_name']).name}"
+                        f"video-editor-input/{batch.batch_id}/bgm/"
+                        f"{selected_bgm['asset_id']}-low-volume.m4a"
                     ),
-                    media_type=selected_bgm["media_type"],
+                    media_type="audio/mp4",
+                )
+
+            if (
+                reviewed_plan.trim_silence_enabled
+                and len(reviewed_plan.kept_ranges) > 5
+            ):
+                merge_source_url = input_asset.provider_locator or input_asset.uri
+                merge_payload = {
+                    "MergeList": [
+                        {
+                            "MergeURL": merge_source_url,
+                            "Start": f"{item.start:.3f}",
+                            "Duration": f"{item.end - item.start:.3f}",
+                        }
+                        for item in reviewed_plan.kept_ranges[1:]
+                    ]
+                }
+                handle = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+                try:
+                    handle.write(
+                        json.dumps(merge_payload, separators=(",", ":")).encode("utf-8")
+                    )
+                    handle.flush()
+                finally:
+                    handle.close()
+                temp_merge_config = Path(handle.name)
+                merge_config_asset = providers.object_store.upload(
+                    temp_merge_config,
+                    f"video-editor-input/{batch.batch_id}/review/rough-cut-merge.json",
+                    media_type="application/json",
                 )
 
             render_request = RenderRequest(
                 input_asset=input_asset,
                 output_object_key=(
-                    f"video-editor/{batch.batch_id}/output/"
+                    f"video-editor-output/{batch.batch_id}/output/"
                     f"{batch.output_profile}.mp4"
                 ),
                 output_profile=batch.output_profile,
                 edit_plan=reviewed_plan,
                 review_confirmed=True,
                 subtitle_object_key=subtitle_object_key,
+                title_watermark_object_key=title_watermark_object_key,
+                merge_config_asset=merge_config_asset,
                 title=title,
                 bgm_asset=bgm_asset,
                 bgm_volume=batch.bgm_volume,
@@ -1920,6 +2434,12 @@ class VideoEditorWorkflowService:
         finally:
             if temp_subtitle is not None:
                 temp_subtitle.unlink(missing_ok=True)
+            if temp_title is not None:
+                temp_title.unlink(missing_ok=True)
+            if temp_merge_config is not None:
+                temp_merge_config.unlink(missing_ok=True)
+            if temp_bgm_mix is not None:
+                temp_bgm_mix.unlink(missing_ok=True)
 
     def continue_batch_item(self, batch_id: str, item_id: str) -> dict[str, Any]:
         batch = self._require_batch(batch_id)
@@ -1933,12 +2453,18 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError("批次素材不存在。")
         if item.status != "awaiting_subtitle_review":
             raise VideoEditorWorkflowError("该素材当前无需继续字幕复核。")
-        if not item.subtitle_task_id or self.transcription_service.get_approved_revision(item.subtitle_task_id) is None:
+        if (
+            not item.subtitle_task_id
+            or self.transcription_service.get_approved_revision(item.subtitle_task_id)
+            is None
+        ):
             raise VideoEditorWorkflowError("请先在当前页保存并确认字幕成稿。")
         batch = self._start_batch_render(batch, item)
         return self._batch_payload(batch)
 
-    def select_batch_item_title(self, batch_id: str, item_id: str, title: str) -> dict[str, Any]:
+    def select_batch_item_title(
+        self, batch_id: str, item_id: str, title: str
+    ) -> dict[str, Any]:
         batch = self._sync_batch(self._require_batch(batch_id))
         item = next((entry for entry in batch.items if entry.item_id == item_id), None)
         if item is None:
@@ -1960,7 +2486,10 @@ class VideoEditorWorkflowService:
                 self.repository.save_task(
                     task.model_copy(
                         update={
-                            "outputs": {**task.outputs, "publish_title": selected_title},
+                            "outputs": {
+                                **task.outputs,
+                                "publish_title": selected_title,
+                            },
                             "updated_at": datetime.now().astimezone(),
                         }
                     )
@@ -1970,15 +2499,20 @@ class VideoEditorWorkflowService:
     def retry_batch_item(self, batch_id: str, item_id: str) -> dict[str, Any]:
         batch = self._require_batch(batch_id)
         if batch.provider_mode in {"sandbox", "aliyun"}:
-            item = next((entry for entry in batch.items if entry.item_id == item_id), None)
+            item = next(
+                (entry for entry in batch.items if entry.item_id == item_id), None
+            )
             if item is None:
                 raise VideoEditorWorkflowError("批次素材不存在。")
-            if item.status not in {"failed", "outcome_unknown", "analyzing", "rendering"}:
+            if item.status not in {
+                "failed",
+                "outcome_unknown",
+                "analyzing",
+                "rendering",
+            }:
                 raise VideoEditorWorkflowError("该云任务当前无需查询重试。")
             synced = self._sync_cloud_batch(batch)
-            updated = next(
-                entry for entry in synced.items if entry.item_id == item_id
-            )
+            updated = next(entry for entry in synced.items if entry.item_id == item_id)
             if updated.status in {"failed", "outcome_unknown"}:
                 raise VideoEditorWorkflowError(
                     "已查询现有供应商任务，结果仍未恢复；系统未重复提交付费任务。"
@@ -2022,8 +2556,7 @@ class VideoEditorWorkflowService:
             hostname = (parsed.hostname or "").casefold()
             return (
                 raw_uri
-                if hostname == "aliyuncs.com"
-                or hostname.endswith(".aliyuncs.com")
+                if hostname == "aliyuncs.com" or hostname.endswith(".aliyuncs.com")
                 else None
             )
         if parsed.scheme != "oss":
@@ -2060,12 +2593,8 @@ class VideoEditorWorkflowService:
             )
         parsed = urlparse(preview_url)
         hostname = (parsed.hostname or "").casefold()
-        if (
-            parsed.scheme != "https"
-            or not (
-                hostname == "aliyuncs.com"
-                or hostname.endswith(".aliyuncs.com")
-            )
+        if parsed.scheme != "https" or not (
+            hostname == "aliyuncs.com" or hostname.endswith(".aliyuncs.com")
         ):
             raise VideoEditorWorkflowError("云成片下载地址不在允许的 OSS 域名内。")
 
@@ -2167,7 +2696,9 @@ class VideoEditorWorkflowService:
         self.repository.save_task(task)
         return task
 
-    def confirm_batch_results(self, batch_id: str, item_ids: list[str]) -> dict[str, Any]:
+    def confirm_batch_results(
+        self, batch_id: str, item_ids: list[str]
+    ) -> dict[str, Any]:
         batch = self._sync_batch(self._require_batch(batch_id))
         selected = set(item_ids)
         if not selected:
@@ -2177,14 +2708,11 @@ class VideoEditorWorkflowService:
             if item.item_id not in selected:
                 updated_items.append(item)
                 continue
-            if (
-                batch.provider_mode in {"sandbox", "aliyun"}
-                and (
-                    batch.is_mock
-                    or item.is_mock
-                    or not item.publish_allowed
-                    or not item.provider_payload.get("output_uri")
-                )
+            if batch.provider_mode in {"sandbox", "aliyun"} and (
+                batch.is_mock
+                or item.is_mock
+                or not item.publish_allowed
+                or not item.provider_payload.get("output_uri")
             ):
                 raise VideoEditorWorkflowError(
                     "当前没有真实且可发布的云端成片，不能交接发布。"
@@ -2204,7 +2732,9 @@ class VideoEditorWorkflowService:
                     }
                 )
             )
-        batch = batch.model_copy(update={"items": updated_items, "updated_at": datetime.now().astimezone()})
+        batch = batch.model_copy(
+            update={"items": updated_items, "updated_at": datetime.now().astimezone()}
+        )
         self.repository.save_video_editor_batch(batch)
         return self._batch_payload(batch)
 
@@ -2292,9 +2822,7 @@ class VideoEditorWorkflowService:
                     )
             elif item.status == "rendering" and item.provider_job_ids.get("render"):
                 try:
-                    snapshot = providers.render.query(
-                        item.provider_job_ids["render"]
-                    )
+                    snapshot = providers.render.query(item.provider_job_ids["render"])
                     self._save_cloud_job_snapshot(
                         batch=batch,
                         item=item,
@@ -2331,8 +2859,7 @@ class VideoEditorWorkflowService:
                                 "status": "failed",
                                 "provider_stage": snapshot.provider_stage,
                                 "error_message": str(
-                                    snapshot.detail.get("message")
-                                    or "MPS 渲染失败。"
+                                    snapshot.detail.get("message") or "MPS 渲染失败。"
                                 ),
                             }
                         )
@@ -2382,51 +2909,101 @@ class VideoEditorWorkflowService:
                 analysis = self.repository.get_task(item.analysis_id)
                 if isinstance(analysis, VideoEditTask):
                     if self._is_interrupted(analysis):
-                        updated = item.model_copy(update={"status": "interrupted", "error_message": "分析任务可能在服务重启时中断，请重试。"})
+                        updated = item.model_copy(
+                            update={
+                                "status": "interrupted",
+                                "error_message": "分析任务可能在服务重启时中断，请重试。",
+                            }
+                        )
                     elif analysis.status == TaskStatus.FAILED:
-                        updated = item.model_copy(update={"status": "failed", "error_message": analysis.error_message or "素材分析失败。"})
+                        updated = item.model_copy(
+                            update={
+                                "status": "failed",
+                                "error_message": analysis.error_message
+                                or "素材分析失败。",
+                            }
+                        )
                     elif analysis.status == TaskStatus.SUCCEEDED:
-                        transcript_id = analysis.outputs.get("transcription_task_id") or None
+                        transcript_id = (
+                            analysis.outputs.get("transcription_task_id") or None
+                        )
                         analysis_payload = self._analysis_payload(analysis)
-                        title_candidates = list(analysis_payload.get("title_candidates") or [])
+                        title_candidates = list(
+                            analysis_payload.get("title_candidates") or []
+                        )
                         creative_updates = {
                             "title_candidates": title_candidates,
-                            "selected_title": item.selected_title or (title_candidates[0] if title_candidates else item.title),
+                            "selected_title": item.selected_title
+                            or (
+                                title_candidates[0] if title_candidates else item.title
+                            ),
                         }
                         if batch.subtitle_enabled:
                             error = analysis.outputs.get("subtitle_error") or ""
                             updated = item.model_copy(
                                 update={
-                                    "status": "awaiting_subtitle_review" if transcript_id else "failed",
+                                    "status": "awaiting_subtitle_review"
+                                    if transcript_id
+                                    else "failed",
                                     "subtitle_task_id": transcript_id,
-                                    "error_message": error or (None if transcript_id else "字幕生成失败。"),
+                                    "error_message": error
+                                    or (None if transcript_id else "字幕生成失败。"),
                                     **creative_updates,
                                 }
                             )
                         else:
-                            updated = item.model_copy(update={"status": "ready_to_render", **creative_updates})
+                            updated = item.model_copy(
+                                update={"status": "ready_to_render", **creative_updates}
+                            )
             if updated.status == "ready_to_render":
                 batch = self._replace_batch_item(batch, updated, save=False)
                 batch = self._start_batch_render(batch, updated, save=False)
-                updated = next(entry for entry in batch.items if entry.item_id == item.item_id)
+                updated = next(
+                    entry for entry in batch.items if entry.item_id == item.item_id
+                )
             elif updated.status == "rendering" and updated.edit_task_id:
                 job = self.repository.get_task(updated.edit_task_id)
                 if isinstance(job, VideoEditTask):
                     if self._is_interrupted(job):
-                        updated = updated.model_copy(update={"status": "interrupted", "error_message": "剪辑任务可能在服务重启时中断，请重试。"})
+                        updated = updated.model_copy(
+                            update={
+                                "status": "interrupted",
+                                "error_message": "剪辑任务可能在服务重启时中断，请重试。",
+                            }
+                        )
                     elif job.status == TaskStatus.FAILED:
-                        updated = updated.model_copy(update={"status": "failed", "error_message": job.error_message or "剪辑失败。"})
+                        updated = updated.model_copy(
+                            update={
+                                "status": "failed",
+                                "error_message": job.error_message or "剪辑失败。",
+                            }
+                        )
                     elif job.status == TaskStatus.SUCCEEDED:
-                        updated = updated.model_copy(update={"status": "awaiting_output_confirmation"})
+                        updated = updated.model_copy(
+                            update={"status": "awaiting_output_confirmation"}
+                        )
             if updated != item:
                 changed = True
-            items.append(updated.model_copy(update={"updated_at": datetime.now().astimezone()}) if updated != item else updated)
-        synced = batch.model_copy(update={"items": items, "updated_at": datetime.now().astimezone() if changed else batch.updated_at})
+            items.append(
+                updated.model_copy(update={"updated_at": datetime.now().astimezone()})
+                if updated != item
+                else updated
+            )
+        synced = batch.model_copy(
+            update={
+                "items": items,
+                "updated_at": datetime.now().astimezone()
+                if changed
+                else batch.updated_at,
+            }
+        )
         if changed:
             self.repository.save_video_editor_batch(synced)
         return synced
 
-    def _start_batch_render(self, batch: VideoEditorBatch, item: VideoEditorBatchItem, *, save: bool = True) -> VideoEditorBatch:
+    def _start_batch_render(
+        self, batch: VideoEditorBatch, item: VideoEditorBatchItem, *, save: bool = True
+    ) -> VideoEditorBatch:
         if not item.analysis_id:
             raise VideoEditorWorkflowError("缺少素材分析结果，无法开始剪辑。")
         analysis = self.get_analysis(item.analysis_id)
@@ -2507,31 +3084,152 @@ class VideoEditorWorkflowService:
     ) -> tuple[dict[str, Any] | None, str]:
         assets = self.list_bgm_assets()
         if not assets:
-            return None, "本机授权音乐库为空，本条保持原声；上传一首有使用权的音乐后即可自动配乐。"
+            return (
+                None,
+                "本机授权音乐库为空，本条保持原声；上传一首有使用权的音乐后即可自动配乐。",
+            )
+        automatic_assets = [
+            asset
+            for asset in assets
+            if str(asset.get("content_id_risk") or "unknown") != "registered"
+        ]
+        if not automatic_assets:
+            return (
+                None,
+                "本机音乐都标记为可能触发平台版权识别，本条保持原声；仍可在复核时手动选择。",
+            )
+        assets = automatic_assets
 
         title_candidates = analysis.get("title_candidates") or []
-        text = " ".join([source_title, *[str(value) for value in title_candidates]]).casefold()
-        energetic_words = ("探店", "运动", "游戏", "促销", "开业", "挑战", "旅行", "展示", "节奏", "热血", "动感", "欢快")
-        calm_words = ("教程", "知识", "口播", "讲解", "访谈", "故事", "情感", "经验", "舒缓", "安静", "温柔")
-        desired = "动感" if any(word in text for word in energetic_words) else "舒缓" if any(word in text for word in calm_words) else "通用"
+        transcript = str(analysis.get("transcript") or "")
+        text = " ".join(
+            [source_title, transcript, *[str(value) for value in title_candidates]]
+        ).casefold()
+        technology_words = (
+            "ai",
+            "人工智能",
+            "机器人",
+            "科技",
+            "软件",
+            "数智",
+            "智能",
+            "系统",
+            "设备",
+        )
+        business_words = (
+            "客户",
+            "工厂",
+            "公司",
+            "老板",
+            "行业",
+            "产品",
+            "方案",
+            "经营",
+            "销售",
+        )
+        energetic_words = (
+            "探店",
+            "运动",
+            "游戏",
+            "促销",
+            "开业",
+            "挑战",
+            "旅行",
+            "展示",
+            "节奏",
+            "热血",
+            "动感",
+            "欢快",
+        )
+        calm_words = (
+            "教程",
+            "知识",
+            "口播",
+            "讲解",
+            "访谈",
+            "故事",
+            "情感",
+            "经验",
+            "舒缓",
+            "安静",
+            "温柔",
+        )
+        edit_plan = analysis.get("edit_plan") or {}
+        planned_category = (
+            str(edit_plan.get("bgm_category") or "").strip()
+            if isinstance(edit_plan, dict)
+            else ""
+        )
+        desired = (
+            planned_category
+            if planned_category in _BGM_VOICEOVER_CATEGORIES
+            else "科技未来"
+            if any(word in text for word in technology_words)
+            else "轻松日常"
+            if any(word in text for word in energetic_words)
+            else "故事叙事"
+            if "故事" in text or "经历" in text or "后来" in text
+            else "情绪共鸣"
+            if any(word in text for word in ("情感", "难过", "焦虑", "治愈", "共鸣"))
+            else "理性干货"
+            if any(word in text for word in calm_words)
+            else "商业表达"
+            if any(word in text for word in business_words)
+            else "通用口播"
+        )
 
-        mood_tokens = {
-            "动感": ("动感", "节奏", "欢快", "热血", "活力", "电子", "运动"),
-            "舒缓": ("舒缓", "安静", "温柔", "治愈", "叙事", "轻松", "钢琴"),
-            "通用": ("通用", "百搭", "轻快"),
+        category_tokens = {
+            "理性干货": ("知识", "教程", "讲解", "理性", "平稳", "商务"),
+            "情绪共鸣": ("情感", "共鸣", "温柔", "治愈", "钢琴", "舒缓"),
+            "故事叙事": ("故事", "叙事", "回忆", "温暖", "安静"),
+            "商业表达": ("商务", "品牌", "产品", "正向", "轻量"),
+            "科技未来": ("科技", "未来", "智能", "电子", "数智"),
+            "轻松日常": ("轻松", "日常", "欢快", "松弛", "轻快"),
+            "励志成长": ("励志", "成长", "积极", "希望", "向上"),
+            "悬念揭秘": ("悬念", "揭秘", "紧张", "神秘", "真相"),
+            "通用口播": ("通用", "百搭", "平稳", "轻量"),
         }
+        planned_keywords = (
+            edit_plan.get("bgm_keywords") or []
+            if isinstance(edit_plan, dict)
+            else []
+        )
+        normalized_keywords = [
+            str(item).casefold()
+            for item in planned_keywords
+            if str(item).strip()
+        ][:6]
+        planned_energy = (
+            str(edit_plan.get("bgm_energy") or "克制")
+            if isinstance(edit_plan, dict)
+            else "克制"
+        )
         duration = float((analysis.get("media") or {}).get("duration_seconds") or 0)
 
         def score(asset: dict[str, Any]) -> tuple[int, int, str]:
-            mood = str(asset.get("mood") or "").casefold()
-            mood_score = sum(4 for token in mood_tokens[desired] if token in mood)
-            mood_score += sum(1 for token in mood_tokens["通用"] if token in mood)
+            asset_category = str(asset.get("voiceover_category") or "")
+            searchable = " ".join(
+                [
+                    str(asset.get("mood") or ""),
+                    *[str(item) for item in asset.get("tags") or []],
+                ]
+            ).casefold()
+            mood_score = 14 if asset_category == desired else 0
+            mood_score += sum(
+                3 for token in category_tokens[desired] if token in searchable
+            )
+            mood_score += sum(2 for token in normalized_keywords if token in searchable)
+            if str(asset.get("energy") or "") == planned_energy:
+                mood_score += 2
             asset_duration = float(asset.get("duration_seconds") or 0)
             covers_video = int(duration <= 0 or asset_duration >= duration)
             return mood_score, covers_video, str(asset.get("created_at") or "")
 
         selected = max(assets, key=score)
-        reason = f"根据内容判断为“{desired}”氛围，自动选择授权音乐《{selected['title']}》并随人声压低音量。"
+        reason = (
+            f"AI 阅读转写文案与标题后归为“{desired}”，"
+            f"自动选择本地授权音乐《{selected['title']}》并使用低音量铺底。"
+        )
         return self.resolve_bgm_asset(selected["asset_id"]), reason
 
     @staticmethod
@@ -2545,10 +3243,15 @@ class VideoEditorWorkflowService:
             return 0.16
         return round(min(max(preferred_volume, 0.18), 0.24), 2)
 
-    def _replace_batch_item(self, batch: VideoEditorBatch, item: VideoEditorBatchItem, *, save: bool = True) -> VideoEditorBatch:
+    def _replace_batch_item(
+        self, batch: VideoEditorBatch, item: VideoEditorBatchItem, *, save: bool = True
+    ) -> VideoEditorBatch:
         updated = batch.model_copy(
             update={
-                "items": [item if entry.item_id == item.item_id else entry for entry in batch.items],
+                "items": [
+                    item if entry.item_id == item.item_id else entry
+                    for entry in batch.items
+                ],
                 "updated_at": datetime.now().astimezone(),
             }
         )
@@ -2558,14 +3261,38 @@ class VideoEditorWorkflowService:
 
     @staticmethod
     def _is_interrupted(task: VideoEditTask) -> bool:
-        return task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING} and datetime.now().astimezone() - task.updated_at > timedelta(minutes=5)
+        return task.status in {
+            TaskStatus.QUEUED,
+            TaskStatus.RUNNING,
+        } and datetime.now().astimezone() - task.updated_at > timedelta(minutes=5)
 
     def _batch_payload(self, batch: VideoEditorBatch) -> dict[str, Any]:
+        visual_spec = None
+        if batch.provider_mode in {"sandbox", "aliyun"} and batch.output_profile:
+            from src.services.video_editor_cloud import (
+                build_business_talking_head_overlay_preview,
+                visual_style_spec,
+            )
+
+            visual_spec = visual_style_spec(batch.output_profile)
         items: list[dict[str, Any]] = []
         for item in batch.items:
-            analysis = self.repository.get_task(item.analysis_id) if item.analysis_id else None
-            job = self.repository.get_task(item.edit_task_id) if item.edit_task_id else None
+            analysis = (
+                self.repository.get_task(item.analysis_id) if item.analysis_id else None
+            )
+            job = (
+                self.repository.get_task(item.edit_task_id)
+                if item.edit_task_id
+                else None
+            )
             result_media_url = item.result_media_url
+            overlay_preview = None
+            if visual_spec is not None:
+                overlay_preview = build_business_talking_head_overlay_preview(
+                    item.subtitle_segments,
+                    title=item.selected_title or item.title,
+                    output_profile=batch.output_profile,
+                )
             if (
                 batch.provider_mode == "aliyun"
                 and item.publish_allowed
@@ -2591,10 +3318,13 @@ class VideoEditorWorkflowService:
                     "provider_stage": item.provider_stage,
                     "provider_job_ids": item.provider_job_ids,
                     "provider_payload": item.provider_payload,
+                    "render_manifest": item.provider_payload.get("render_manifest")
+                    or None,
                     "actual_usage": item.actual_usage,
                     "edit_plan": item.edit_plan or None,
                     "enabled_plan_step_ids": item.enabled_plan_step_ids,
                     "subtitle_segments": item.subtitle_segments,
+                    "overlay_preview": overlay_preview,
                     "review_snapshot": item.review_snapshot,
                     "review_confirmed_at": (
                         item.review_confirmed_at.isoformat()
@@ -2605,17 +3335,30 @@ class VideoEditorWorkflowService:
                     "is_mock": item.is_mock,
                     "publish_allowed": item.publish_allowed,
                     "error_message": item.error_message,
-                    "confirmed_at": item.confirmed_at.isoformat() if item.confirmed_at else None,
-                    "analysis": self._analysis_payload(analysis) if isinstance(analysis, VideoEditTask) else None,
-                    "job": self._job_payload(job) if isinstance(job, VideoEditTask) else None,
+                    "confirmed_at": item.confirmed_at.isoformat()
+                    if item.confirmed_at
+                    else None,
+                    "analysis": self._analysis_payload(analysis)
+                    if isinstance(analysis, VideoEditTask)
+                    else None,
+                    "job": self._job_payload(job)
+                    if isinstance(job, VideoEditTask)
+                    else None,
                 }
             )
-        status = "ready_to_publish" if items and all(item["status"] == "ready_to_publish" for item in items) else "running"
+        status = (
+            "ready_to_publish"
+            if items and all(item["status"] == "ready_to_publish" for item in items)
+            else "running"
+        )
         if any(item["status"] == "configuration_required" for item in items):
             status = "configuration_required"
         elif any(item["status"] == "outcome_unknown" for item in items):
             status = "outcome_unknown"
-        elif any(item["status"] in {"analyzing", "rendering", "ready_to_render"} for item in items):
+        elif any(
+            item["status"] in {"analyzing", "rendering", "ready_to_render"}
+            for item in items
+        ):
             status = "running"
         elif any(item["status"] == "awaiting_subtitle_review" for item in items):
             status = "awaiting_subtitle_review"
@@ -2637,6 +3380,7 @@ class VideoEditorWorkflowService:
             "output_resolution": batch.output_resolution,
             "output_fps": batch.output_fps,
             "output_bitrate": batch.output_bitrate,
+            "visual_spec": visual_spec,
             "quote_id": batch.quote_id,
             "cost_quote": batch.cost_quote or None,
             "actual_usage": {
@@ -2653,7 +3397,11 @@ class VideoEditorWorkflowService:
             "idempotency_key": batch.idempotency_key,
             "is_mock": batch.is_mock,
             "bgm": (
-                {key: value for key, value in self.resolve_bgm_asset(batch.bgm_id).items() if key != "_path"}
+                {
+                    key: value
+                    for key, value in self.resolve_bgm_asset(batch.bgm_id).items()
+                    if key != "_path"
+                }
                 if batch.bgm_enabled and batch.bgm_id
                 else None
             ),
@@ -2667,12 +3415,17 @@ class VideoEditorWorkflowService:
     # ------------------------------------------------------------------
     def _get_workflow_task(self, task_id: str, workflow: str) -> VideoEditTask:
         task = self.repository.get_task(task_id)
-        if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") != workflow:
+        if (
+            not isinstance(task, VideoEditTask)
+            or task.outputs.get("workflow") != workflow
+        ):
             raise VideoEditorWorkflowError("智能剪辑任务不存在。")
         return task
 
     def _update(self, task: VideoEditTask, **changes: Any) -> VideoEditTask:
-        updated = task.model_copy(update={**changes, "updated_at": datetime.now().astimezone()})
+        updated = task.model_copy(
+            update={**changes, "updated_at": datetime.now().astimezone()}
+        )
         self.repository.save_task(updated)
         return updated
 
@@ -2698,7 +3451,11 @@ class VideoEditorWorkflowService:
 
     @staticmethod
     def _job_payload(task: VideoEditTask) -> dict[str, Any]:
-        media_url = f"/api/v1/video-editor/jobs/{task.task_id}/media" if task.result_path else None
+        media_url = (
+            f"/api/v1/video-editor/jobs/{task.task_id}/media"
+            if task.result_path
+            else None
+        )
         return {
             "task_id": task.task_id,
             "status": task.status.value,
@@ -2707,7 +3464,9 @@ class VideoEditorWorkflowService:
             "error_message": task.error_message,
             "result_size_bytes": task.result_size_bytes,
             "media_url": media_url,
-            "download_url": f"/api/v1/video-editor/jobs/{task.task_id}/download" if task.result_path else None,
+            "download_url": f"/api/v1/video-editor/jobs/{task.task_id}/download"
+            if task.result_path
+            else None,
             "source_id": task.outputs.get("source_id"),
             "analysis_id": task.outputs.get("analysis_id"),
             "publish_title": task.outputs.get("publish_title") or None,

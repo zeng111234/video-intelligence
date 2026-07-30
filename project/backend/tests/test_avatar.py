@@ -276,3 +276,44 @@ def test_pending_cloud_voice_sample_can_be_previewed(tmp_path):
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "audio/mpeg"
     assert resp.content == b"authorised-sample"
+
+
+def test_configured_edge_tts_voice_can_be_previewed_without_upload(tmp_path):
+    render_calls: list[tuple[str, float, str]] = []
+
+    def render_preview(text: str, speech_rate: float, voice: str) -> bytes:
+        render_calls.append((text, speech_rate, voice))
+        return b"preview-mp3"
+
+    provider = ShuyingLegacyAvatarProvider(
+        base_url="https://avatar-gateway.example.com",
+        api_code="test-api-code",
+        avatars_json='[{"asset_id":"avatar-1","name":"测试形象"}]',
+        voices_json='[{"asset_id":"voice-1","name":"通用女声"}]',
+        result_allowed_hosts="media.example.com",
+        audio_mode="edge_tts_upload",
+        audio_upload_url="https://upload.example.com/audio",
+        audio_allowed_hosts="upload.example.com",
+        edge_tts_voice="zh-CN-XiaoxiaoNeural",
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        audio_renderer=render_preview,
+        enabled=True,
+    )
+    app.dependency_overrides[get_avatar_service] = lambda: AvatarService(
+        MockRepository(), provider
+    )
+
+    try:
+        with TestClient(app) as client:
+            first = client.get("/api/v1/avatar/assets/voice-1/voice-preview")
+            second = client.get("/api/v1/avatar/assets/voice-1/voice-preview")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "audio/mpeg"
+    assert first.content == b"preview-mp3"
+    assert second.content == b"preview-mp3"
+    assert render_calls == [
+        ("你好，这是当前声音的试听效果。", 1.0, "zh-CN-XiaoxiaoNeural")
+    ]

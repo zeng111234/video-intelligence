@@ -108,8 +108,8 @@ def test_preflight_is_free_persisted_and_uses_profile_price(tmp_path: Path):
     assert quote_720["provider_mode"] == "sandbox"
     assert quote_720["is_mock"] is True
     assert quote_720["ttl_seconds"] == 900
-    assert float(quote_720["estimated_total"]) == pytest.approx(0.04775)
-    assert float(quote_1080["estimated_total"]) == pytest.approx(0.08025)
+    assert float(quote_720["estimated_total"]) == pytest.approx(0.04785)
+    assert float(quote_1080["estimated_total"]) == pytest.approx(0.08035)
     assert service.repository.get_video_editor_quote(quote_720["quote_id"])
 
 
@@ -176,6 +176,8 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert created["output_resolution"] == "720x1280"
     assert created["output_fps"] == 30
     assert created["output_bitrate"] == "2.5M"
+    assert created["visual_spec"]["style_id"] == "business_talking_head_v7"
+    assert created["visual_spec"]["canvas"]["pixel_aspect_ratio"] == "1:1"
     item = created["items"][0]
     assert item["status"] == "awaiting_subtitle_review"
     assert item["is_mock"] is True
@@ -186,7 +188,12 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
         created["batch_id"],
         item["item_id"],
         subtitle_segments=[
-            {"start": 0, "end": 2, "text": "人工确认的演示字幕"}
+            {
+                "start": 0,
+                "end": 2,
+                "text": "人工确认的演示字幕",
+                "emphasis_terms": ["演示"],
+            }
         ],
         enabled_plan_step_ids=item["edit_plan"]["enabled_steps"],
         selected_title=item["selected_title"],
@@ -195,7 +202,20 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     )
     reviewed_item = reviewed["items"][0]
     assert reviewed_item["review_snapshot"]["approval_mode"] == "manual"
+    assert reviewed_item["subtitle_segments"][0]["emphasis_terms"] == ["演示"]
     assert reviewed_item["status"] == "configuration_required"
+    assert reviewed_item["render_manifest"] == {
+        "visual_style_id": "business_talking_head_v7",
+        "subtitle_format": "ass",
+        "title_render_mode": "png_watermark",
+        "title_font": "Source Han Serif CN Heavy",
+        "title_burned_in": True,
+        "subtitles_burned_in": True,
+        "expected_resolution": "720x1280",
+        "rough_cut_burned_in": True,
+        "source_kept_ranges": [{"start": 0.0, "end": 2.25}],
+        "estimated_output_seconds": 2.25,
+    }
     assert reviewed_item["result_media_url"] is None
     assert reviewed_item["publish_allowed"] is False
 
@@ -204,6 +224,30 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
             created["batch_id"],
             [item["item_id"]],
         )
+
+
+def test_cloud_flow_automatically_selects_bgm_from_transcript_and_title(tmp_path: Path):
+    service = _service(tmp_path)
+    service._probe_bgm_duration = lambda _path: 120.0  # type: ignore[method-assign]
+    bgm = service.upload_bgm(
+        file_name="Tech-Voiceover.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"authorized-music",
+        mood="科技氛围",
+        rights_confirmed=True,
+        rights_holder="测试授权主体",
+    )
+    source_id = _source(service)
+    quote = _quote(service, source_id)
+
+    created = _create(service, source_id, quote, key="cloud-auto-bgm")
+    item = created["items"][0]
+
+    assert created["bgm_enabled"] is True
+    assert item["selected_bgm_id"] == bgm["asset_id"]
+    assert "bgm" in item["edit_plan"]["enabled_steps"]
+    assert "AI 阅读转写文案与标题" in item["bgm_reason"]
+    assert "《Tech-Voiceover》" in item["bgm_reason"]
 
 
 def test_sqlite_restores_quotes_operations_jobs_and_batch(tmp_path: Path):

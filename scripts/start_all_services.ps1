@@ -22,7 +22,7 @@ $services = @(
         Port = 2001
         HealthUrl = "http://localhost:2001/health"
         StartCommand = "python"
-        StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "2001")
+        StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
         EnvVars = @{ PYTHONPATH = $projectRoot }
@@ -193,7 +193,7 @@ function Install-Dependencies {
     # Install backend dependencies (incremental check). FastAPI/Uvicorn alone
     # are insufficient: crawler browser discovery also needs Playwright.
     Write-Log "Checking backend dependencies..." "INFO"
-    $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart; import playwright.sync_api" 2>&1
+    $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL; import playwright.sync_api" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Log "Backend dependencies already installed" "SUCCESS"
     } else {
@@ -201,7 +201,7 @@ function Install-Dependencies {
         Push-Location (Join-Path $projectRoot "project\backend")
         python -m pip install -r requirements.txt -q
         if ($LASTEXITCODE -eq 0) {
-            $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart; import playwright.sync_api" 2>&1
+            $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL; import playwright.sync_api" 2>&1
             if ($LASTEXITCODE -ne 0) {
                 Write-Log "Backend dependency verification failed. Run: python -m pip install -r project/backend/requirements.txt" "ERROR"
                 Pop-Location

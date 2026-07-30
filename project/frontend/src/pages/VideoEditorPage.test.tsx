@@ -49,6 +49,27 @@ const source: VideoEditorSource = {
   media_type: "video/mp4",
 };
 
+const bgm = {
+  asset_id: "bgm-tech-1",
+  title: "Sci-Fi Score",
+  original_name: "Sci-Fi-Score.mp3",
+  media_type: "audio/mpeg",
+  mood: "科技氛围",
+  voiceover_category: "科技未来",
+  energy: "克制",
+  tags: ["科技", "未来"],
+  rights_holder: "测试授权主体",
+  rights_confirmed_at: "2026-07-29T09:00:00+08:00",
+  created_at: "2026-07-29T09:00:00+08:00",
+  duration_seconds: 97.46,
+  size_bytes: 1024,
+  media_url: "/api/v1/video-editor/bgm/bgm-tech-1/media",
+  source_provider: "pixabay",
+  source_url: "https://pixabay.com/music/example/",
+  license_url: "https://pixabay.com/service/license-summary/",
+  content_id_risk: "none",
+};
+
 const sandboxCapabilities: VideoCapabilitiesResponse = {
   provider_name: "video_editor_cloud",
   display_name: "云端轻量智能剪辑",
@@ -139,6 +160,39 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
     cost_quote: quote("720p"),
     is_mock: true,
     bgm: null,
+    visual_spec: {
+      style_id: "business_talking_head_v5",
+      canvas: { width: 720, height: 1280, pixel_aspect_ratio: "1:1" },
+      title: {
+        visible_seconds: 2.5,
+        fade_in_ms: 0,
+        fade_out_ms: 0,
+        max_lines: 2,
+        max_chars_per_line: 9,
+        font_family: "Source Han Serif CN Heavy",
+        render_mode: "png_watermark",
+        font_size: 48,
+        line_height: 1.1,
+        safe_top: 84,
+        safe_left: 56,
+        asset_width: 520,
+        asset_height: 150,
+        outline_width: 1,
+        shadow: 3,
+        color: "#FFFFFF",
+      },
+      accent: { color: "transparent", width: 0, height: 0, gap: 0 },
+      subtitle: {
+        max_lines: 2,
+        max_chars_per_line: 12,
+        font_size: 38,
+        safe_bottom: 170,
+        outline_width: 2,
+        shadow: 3,
+        color: "#F8FAFC",
+        emphasis_color: "#FFE16A",
+      },
+    },
     items: [{
       item_id: "item-1",
       source_id: source.source_id,
@@ -173,6 +227,15 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
         confidence: 0.92,
         needs_review: false,
       }],
+      overlay_preview: {
+        title: { lines: ["测试口播标题"], start: 0, end: 2.5 },
+        cues: [{
+          start: 0,
+          end: 2.5,
+          lines: ["旧版两行长字幕", "不应继续使用"],
+          emphasis_range: null,
+        }],
+      },
       enabled_plan_step_ids: ["trim_silence", "vertical_fit", "subtitles", "title", "audio_mix"],
       is_mock: true,
       publish_allowed: false,
@@ -239,10 +302,8 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const primary = screen.getByTestId("primary-action") as HTMLButtonElement;
     expect(primary.textContent).toContain("免费体验剪辑方案");
-    expect(primary.disabled).toBe(true);
-
-    fireEvent.click(screen.getByRole("checkbox", { name: /拥有该视频及所用素材/ }));
-    await waitFor(() => expect(primary.disabled).toBe(false));
+    expect(primary.disabled).toBe(false);
+    expect(screen.queryByText("权利确认")).toBeNull();
     fireEvent.click(primary);
 
     const dialog = await screen.findByRole("dialog", { name: "免费体验剪辑方案" });
@@ -257,6 +318,9 @@ describe("VideoEditorPage cloud-light workflow", () => {
         quoteId: "quote-720p",
         billingConfirmation: { confirmed: true, maxCostCny: 0.048 },
         idempotencyKey: expect.stringMatching(/^video-editor-/),
+        bgmEnabled: true,
+        bgmId: undefined,
+        bgmVolume: 0.18,
       }));
     });
     expect(createVideoEditorBatch).toHaveBeenCalledTimes(1);
@@ -269,7 +333,6 @@ describe("VideoEditorPage cloud-light workflow", () => {
     renderPage();
 
     await screen.findByText("轻量智能剪辑");
-    fireEvent.click(screen.getByRole("checkbox", { name: /拥有该视频及所用素材/ }));
     fireEvent.click(screen.getByTestId("primary-action"));
     const dialog = await screen.findByRole("dialog", { name: "免费体验剪辑方案" });
     fireEvent.click(within(dialog).getByRole("button", { name: "暂不体验" }));
@@ -287,7 +350,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
   });
 
   it("blocks production when required cloud configuration is missing", async () => {
-    vi.mocked(getVideoCapabilities).mockResolvedValueOnce({
+    vi.mocked(getVideoCapabilities).mockResolvedValue({
       ...sandboxCapabilities,
       provider_mode: "aliyun",
       live_ready: false,
@@ -307,8 +370,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(await screen.findByText("云端出片尚未开通")).toBeTruthy();
     const primary = screen.getByTestId("primary-action") as HTMLButtonElement;
     expect(primary.textContent).toContain("查看出片参考与开通说明");
-    fireEvent.click(screen.getByRole("checkbox", { name: /拥有该视频及所用素材/ }));
-    await waitFor(() => expect(primary.disabled).toBe(false));
+    expect(primary.disabled).toBe(false);
     fireEvent.click(primary);
     const dialog = await screen.findByRole("dialog", { name: "确认预计费用" });
     expect(within(dialog).getByText("当前报价被阻塞")).toBeTruthy();
@@ -318,14 +380,28 @@ describe("VideoEditorPage cloud-light workflow", () => {
   });
 
   it("opens the single-item human review gate and saves the approved plan atomically", async () => {
-    vi.mocked(listVideoEditorBatches).mockResolvedValueOnce({
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({
       items: [sandboxBatch()],
       total: 1,
     });
     renderPage();
 
     const primary = await screen.findByTestId("primary-action");
-    expect(primary.textContent).toContain("查看字幕与剪辑方案");
+    expect(primary.textContent).toContain("审核字幕、粗剪和配乐");
+    fireEvent.click(screen.getByText("方案预览"));
+    const timeline = await screen.findByRole("slider", { name: "方案预览进度" });
+    expect(timeline.getAttribute("aria-valuemin")).toBe("0");
+    expect(timeline.getAttribute("aria-valuemax")).toBe("58");
+    expect(screen.getByText("可拖动查看剪后时间")).toBeTruthy();
+    const previewSubtitle = await waitFor(() => {
+      const overlay = document.querySelector(".video-editor-subtitle-overlay");
+      expect(overlay).toBeTruthy();
+      return overlay;
+    });
+    expect(previewSubtitle?.textContent).toBe("这是一段");
+    expect(
+      previewSubtitle?.querySelectorAll(".video-editor-overlay-line"),
+    ).toHaveLength(1);
     fireEvent.click(primary);
     const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
     expect(within(drawer).getByText("这是一段待人工确认的字幕")).toBeTruthy();
@@ -352,4 +428,50 @@ describe("VideoEditorPage cloud-light workflow", () => {
       );
     });
   });
+
+  it("lets the owner listen to the AI-selected BGM before confirming", async () => {
+    const batch = sandboxBatch();
+    batch.items[0].selected_bgm_id = bgm.asset_id;
+    batch.items[0].bgm_reason = "根据内容判断：自动选择科技氛围配乐。";
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    vi.mocked(listVideoEditorBgm).mockResolvedValue({ items: [bgm], total: 1 });
+    renderPage();
+
+    const primary = await screen.findByTestId("primary-action");
+    await waitFor(() => expect(primary.textContent).toContain("审核字幕、粗剪和配乐"));
+    expect(screen.getByText("AI 已匹配配乐")).toBeTruthy();
+    expect(screen.getByLabelText("试听 AI 配乐：Sci-Fi Score")).toBeTruthy();
+    expect(screen.queryByText("光厂 0 首")).toBeNull();
+    expect(screen.queryByRole("button", { name: /关闭建议/ })).toBeNull();
+    fireEvent.click(primary);
+    const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "标题与配乐" }));
+
+    const audio = await screen.findByLabelText("试听背景音乐：Sci-Fi Score");
+    expect(audio.getAttribute("src")).toBe(bgm.media_url);
+    expect(screen.getAllByText("根据内容判断：自动选择科技氛围配乐。")).toHaveLength(2);
+    expect(screen.getByText("来源：Pixabay")).toBeTruthy();
+  });
+
+  it("preselects a matching BGM when an older task enabled the BGM step but stored no selection", async () => {
+    const batch = sandboxBatch();
+    batch.items[0].edit_plan!.enabled_steps = [
+      ...(batch.items[0].edit_plan!.enabled_steps || []),
+      "bgm",
+    ];
+    batch.items[0].title = "机器人和人工智能行业观察";
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    vi.mocked(listVideoEditorBgm).mockResolvedValue({ items: [bgm], total: 1 });
+    renderPage();
+
+    const primary = await screen.findByTestId("primary-action");
+    fireEvent.click(primary);
+    const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
+    fireEvent.click(within(drawer).getByRole("tab", { name: "标题与配乐" }));
+
+    expect(await screen.findByText("当前任务原先未选配乐，已根据文案预选《Sci-Fi Score》；请试听后再确认生成。")).toBeTruthy();
+    const audio = screen.getByLabelText("试听背景音乐：Sci-Fi Score");
+    expect(audio.getAttribute("src")).toBe(bgm.media_url);
+  });
+
 });

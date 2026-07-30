@@ -119,7 +119,12 @@ def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
                 ),
                 json={
                     "subtitle_segments": [
-                        {"start": 0, "end": 2, "text": "人工确认字幕"}
+                        {
+                            "start": 0,
+                            "end": 2,
+                            "text": "人工确认字幕",
+                            "emphasis_terms": ["确认"],
+                        }
                     ],
                     "enabled_plan_step_ids": item["edit_plan"]["enabled_steps"],
                     "selected_title": item["selected_title"],
@@ -131,6 +136,7 @@ def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
             reviewed = reviewed_response.json()
             assert reviewed["status"] == "configuration_required"
             assert reviewed["items"][0]["result_media_url"] is None
+            assert reviewed["items"][0]["subtitle_segments"][0]["emphasis_terms"] == ["确认"]
 
             confirm_response = client.post(
                 f"/api/v1/video-editor/batches/{created['batch_id']}/confirm-results",
@@ -170,3 +176,12 @@ def test_capabilities_expose_missing_production_configuration(tmp_path: Path):
             video_editor_api.get_workflow_service,
             None,
         )
+
+
+def test_brand_title_font_is_served_from_the_same_editor_api():
+    with TestClient(app) as client:
+        response = client.get("/api/v1/video-editor/brand-title-font")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("font/otf")
+    assert len(response.content) > 100_000

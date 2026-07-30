@@ -1323,7 +1323,10 @@ class ShuyingLegacyAvatarProvider:
         self.assets_manifest_path = (
             manifest_path if manifest_path.is_absolute() else PROJECT_ROOT / manifest_path
         ).resolve()
-        self.model_upload_url = (model_upload_url.strip() or self.audio_upload_url).rstrip("/")
+        explicit_model_upload_url = model_upload_url.strip()
+        self.model_upload_url = (
+            explicit_model_upload_url or self.audio_upload_url
+        ).rstrip("/")
         self.model_upload_allowed_hosts = {
             item.strip().casefold()
             for item in (model_upload_allowed_hosts or audio_allowed_hosts)
@@ -1331,6 +1334,10 @@ class ShuyingLegacyAvatarProvider:
             .split(",")
             if item.strip()
         }
+        if not explicit_model_upload_url:
+            inherited_upload_host = urlsplit(self.model_upload_url).hostname
+            if inherited_upload_host:
+                self.model_upload_allowed_hosts.add(inherited_upload_host.casefold())
         self.voice_base_url = voice_base_url.strip().rstrip("/")
         self.voice_api_code = voice_api_code.strip()
         self.result_allowed_hosts = {
@@ -1341,6 +1348,7 @@ class ShuyingLegacyAvatarProvider:
         self.idempotency_index: dict[str, AvatarJobSnapshot] = {}
         self.job_idempotency: dict[str, str] = {}
         self.result_urls: dict[str, str] = {}
+        self.voice_preview_audio: dict[str, bytes] = {}
 
     @classmethod
     def from_env(cls) -> ShuyingLegacyAvatarProvider:
@@ -1470,6 +1478,46 @@ class ShuyingLegacyAvatarProvider:
         self._ensure_configured()
         custom_assets = self._refresh_custom_assets(self._load_custom_assets())
         return [*self.avatars, *self.voices, *custom_assets]
+
+    def render_voice_preview(self, voice_id: str) -> bytes:
+        """Render a short preview with the same Edge TTS voice used for production."""
+        self._ensure_configured()
+        selected_voice = next(
+            (
+                item
+                for item in self.list_assets()
+                if item.kind == AvatarAssetKind.VOICE
+                and item.asset_id == voice_id
+                and item.authorized
+                and item.status == "ready"
+            ),
+            None,
+        )
+        if selected_voice is None:
+            raise AvatarProviderError(
+                "声音不存在或尚未就绪。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        if (
+            self.audio_mode != "edge_tts_upload"
+            or selected_voice.source_type == "custom_clone"
+        ):
+            raise AvatarProviderError(
+                "当前声音没有可用的试听样本。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        cached = self.voice_preview_audio.get(voice_id)
+        if cached:
+            return cached
+        audio = self.audio_renderer(
+            "你好，这是当前声音的试听效果。",
+            1.0,
+            self.edge_tts_voice,
+        )
+        if not audio:
+            raise AvatarProviderError("声音试听生成失败。")
+        self.voice_preview_audio[voice_id] = audio
+        return audio
 
     def create_cloud_avatar(
         self, *, name: str, training_video_path: Path, filename: str
@@ -1614,10 +1662,13 @@ class ShuyingLegacyAvatarProvider:
         return destination
 
     def _can_train_avatar(self) -> bool:
+        upload_host = urlsplit(self.model_upload_url).hostname
         return bool(
             self.model_upload_url
             and self.model_upload_allowed_hosts
             and self._is_safe_upload_url(self.model_upload_url)
+            and upload_host
+            and upload_host.casefold() in self.model_upload_allowed_hosts
         )
 
     def _can_clone_voice(self) -> bool:

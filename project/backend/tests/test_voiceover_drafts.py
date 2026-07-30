@@ -188,3 +188,36 @@ def test_voiceover_draft_list_and_update_are_scoped_to_transcription() -> None:
         assert wrong_scope.status_code == 404
     finally:
         app.dependency_overrides.clear()
+
+
+def test_voiceover_draft_reuses_the_auto_generated_version() -> None:
+    repository, transcription_service, copywriting_service = _services(approved=True)
+    app.dependency_overrides[transcription_api.get_transcription_service] = lambda: (
+        transcription_service
+    )
+    app.dependency_overrides[transcription_api.get_copywriting_service] = lambda: (
+        copywriting_service
+    )
+    try:
+        client = TestClient(app)
+        first = client.post(
+            "/api/v1/transcriptions/transcript-voiceover-test/voiceover-drafts",
+            json={"target_seconds": 45, "speech_rate": 1, "variant_count": 2},
+        )
+        second = client.post(
+            "/api/v1/transcriptions/transcript-voiceover-test/voiceover-drafts",
+            json={"target_seconds": 45, "speech_rate": 1, "variant_count": 2},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["copywriting_task_id"] == first.json()["copywriting_task_id"]
+    assert len(
+        [
+            task
+            for task in repository.list_tasks()
+            if isinstance(task, CopywritingTask)
+        ]
+    ) == 1

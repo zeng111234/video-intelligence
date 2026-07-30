@@ -21,6 +21,12 @@ from src.services.video_editor_workflow import (
 )
 
 router = APIRouter(prefix="/api/v1/video-editor", tags=["video-editor"])
+_BRAND_TITLE_FONT = (
+    Path(__file__).resolve().parents[5]
+    / "assets"
+    / "fonts"
+    / "SourceHanSerifCN-Heavy.otf"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -130,7 +136,7 @@ class BatchCreateRequest(BaseModel):
     output_resolution: str = Field("1080x1920", pattern="^\\d{2,5}x\\d{2,5}$")
     output_fps: int = Field(30, ge=15, le=60)
     output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
-    bgm_enabled: bool = False
+    bgm_enabled: bool = True
     bgm_id: str | None = None
     bgm_volume: float = Field(0.24, ge=0, le=1)
     output_profile: str | None = Field(
@@ -155,6 +161,7 @@ class SubtitleSegmentReviewRequest(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
     text: str = Field(default="", max_length=2000)
+    emphasis_terms: list[str] = Field(default_factory=list, max_length=1)
 
 
 class CloudBatchReviewRequest(BaseModel):
@@ -248,6 +255,19 @@ def list_sources(workflow: VideoEditorWorkflowService = Depends(get_workflow_ser
     return {"items": items, "total": len(items)}
 
 
+@router.get("/brand-title-font")
+def get_brand_title_font():
+    """Serve the same open-source title font used by the MPS PNG overlay."""
+
+    if not _BRAND_TITLE_FONT.is_file():
+        raise HTTPException(status_code=503, detail="品牌标题字体暂不可用。")
+    return FileResponse(
+        _BRAND_TITLE_FONT,
+        media_type="font/otf",
+        filename="SourceHanSerifCN-Heavy.otf",
+    )
+
+
 @router.post("/uploads")
 async def upload_sources(
     files: list[UploadFile] = File(..., description="已授权的 MP4 / MOV 素材"),
@@ -338,8 +358,14 @@ def list_bgm(workflow: VideoEditorWorkflowService = Depends(get_workflow_service
 async def upload_bgm(
     file: UploadFile = File(..., description="已授权的背景音乐"),
     mood: str = Form("通用"),
+    voiceover_category: str = Form("通用口播"),
+    energy: str = Form("克制"),
     rights_confirmed: bool = Form(False),
     rights_holder: str = Form(""),
+    source_provider: str = Form("manual"),
+    source_url: str = Form(""),
+    license_url: str = Form(""),
+    content_id_risk: str = Form("unknown"),
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     if not file.filename:
@@ -352,6 +378,12 @@ async def upload_bgm(
             mood=mood,
             rights_confirmed=rights_confirmed,
             rights_holder=rights_holder,
+            voiceover_category=voiceover_category,
+            energy=energy,
+            source_provider=source_provider,
+            source_url=source_url,
+            license_url=license_url,
+            content_id_risk=content_id_risk,
         )
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc

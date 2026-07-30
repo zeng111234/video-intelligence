@@ -385,7 +385,7 @@ def test_authorized_bgm_is_added_to_batch_render(tmp_path: Path, monkeypatch: py
     assert captured["steps"][-1]["params"]["auto_adjusted"] is True
     assert captured["steps"][-1]["params"]["bgm_volume"] == 0.24
     assert running["items"][0]["selected_bgm_id"] == bgm["asset_id"]
-    assert "根据内容判断" in running["items"][0]["bgm_reason"]
+    assert "AI 阅读转写文案与标题" in running["items"][0]["bgm_reason"]
 
     service.select_batch_item_title(
         created["batch_id"],
@@ -395,6 +395,90 @@ def test_authorized_bgm_is_added_to_batch_render(tmp_path: Path, monkeypatch: py
     edit_task = repo.get_task("edit-bgm")
     assert isinstance(edit_task, VideoEditTask)
     assert edit_task.outputs["publish_title"] == "人工选择的新标题"
+
+
+def test_bgm_recommendation_prefers_ai_voiceover_category(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_probe_bgm_duration", lambda _: 120.0)
+    knowledge = service.upload_bgm(
+        file_name="knowledge.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"knowledge",
+        mood="知识·讲解·平稳",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        voiceover_category="理性干货",
+        energy="克制",
+    )
+    service.upload_bgm(
+        file_name="emotion.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"emotion",
+        mood="温柔·治愈·钢琴",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        voiceover_category="情绪共鸣",
+        energy="平稳",
+    )
+
+    selected, reason = service._recommend_bgm_asset(
+        {
+            "transcript": "今天解释一个机器人的工作原理。",
+            "media": {"duration_seconds": 60},
+            "edit_plan": {
+                "bgm_category": "理性干货",
+                "bgm_energy": "克制",
+                "bgm_keywords": ["知识", "讲解"],
+            },
+        },
+        "机器人原理",
+    )
+
+    assert selected is not None
+    assert selected["asset_id"] == knowledge["asset_id"]
+    assert "理性干货" in reason
+
+
+def test_bgm_recommendation_does_not_auto_select_content_id_registered_track(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_probe_bgm_duration", lambda _: 120.0)
+    service.upload_bgm(
+        file_name="pixabay-risk.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"pixabay",
+        mood="故事·叙事",
+        rights_confirmed=True,
+        rights_holder="作者 via Pixabay",
+        voiceover_category="故事叙事",
+        source_provider="pixabay",
+        source_url="https://pixabay.com/music/example/",
+        license_url="https://pixabay.com/service/license-summary/",
+        content_id_risk="registered",
+    )
+
+    selected, reason = service._recommend_bgm_asset(
+        {"transcript": "讲一个故事。", "media": {"duration_seconds": 30}},
+        "故事",
+    )
+
+    assert selected is None
+    assert "版权识别" in reason
 
 
 def test_auto_bgm_keeps_original_audio_when_library_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

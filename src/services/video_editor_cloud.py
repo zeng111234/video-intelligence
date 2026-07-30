@@ -7,7 +7,9 @@ replaceable and testable without making paid calls.
 
 from __future__ import annotations
 
+import io
 import os
+import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -19,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-PRICE_VERSION = "aliyun-cn-mainland-2026-07-28"
+PRICE_VERSION = "aliyun-cn-mainland-2026-07-29-safe-rough-cut"
 QUOTE_TTL_SECONDS = 15 * 60
 FUN_ASR_CNY_PER_SECOND = Decimal("0.00022")
 QWEN_FLASH_INPUT_CNY_PER_MILLION_TOKENS = Decimal("0.15")
@@ -28,10 +30,601 @@ MPS_CNY_PER_OUTPUT_MINUTE = {
     "720p": Decimal("0.0326"),
     "1080p": Decimal("0.0651"),
 }
+MPS_WATERMARK_CNY_PER_REQUEST = Decimal("0.0001")
+BGM_VOICEOVER_CATEGORIES = (
+    "理性干货",
+    "情绪共鸣",
+    "故事叙事",
+    "商业表达",
+    "科技未来",
+    "轻松日常",
+    "励志成长",
+    "悬念揭秘",
+    "通用口播",
+)
+BGM_ENERGY_LEVELS = ("克制", "平稳", "有推动感")
 MIN_SILENCE_SECONDS = 1.5
-SILENCE_EDGE_PADDING_SECONDS = 0.35
-MAX_REMOVE_RANGES = 100
+SILENCE_EDGE_PADDING_SECONDS = 0.45
+HEAD_TAIL_SILENCE_SECONDS = 0.8
+HEAD_TAIL_PADDING_SECONDS = 0.25
+# MPS MergeConfigUrl has a tighter practical limit than the editor's old
+# preview-only interval limit.  Keep the final render manifest conservative.
+MAX_KEEP_RANGES = 50
+MAX_REMOVE_RANGES = MAX_KEEP_RANGES - 1
 _COST_PRECISION = Decimal("0.000001")
+DEFAULT_VISUAL_STYLE_ID = "business_talking_head_v7"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
+_CAPTION_BREAK_CHARACTERS = frozenset(
+    "，。！？；：、,.!?;:“”‘’（）()【】[]《》…—"
+)
+_NUMERIC_PUNCTUATION = frozenset(".,:")
+_CAPTION_BREAK_BEFORE_TOKENS = (
+    "因为",
+    "所以",
+    "但是",
+    "不过",
+    "而且",
+    "然后",
+    "如果",
+    "虽然",
+    "为了",
+    "其实",
+    "结果",
+    "现在",
+    "大量",
+    "少量",
+    "很多",
+    "有些",
+    "倒闭",
+    "取代",
+    "替代",
+    "增长",
+    "减少",
+    "出现",
+    "成为",
+    "变成",
+    "开始",
+    "进入",
+    "面对",
+    "发现",
+    "需要",
+    "可以",
+    "不能",
+    "没有",
+    "不是",
+    "就是",
+    "已经",
+    "正在",
+    "也是",
+    "仍然",
+    "被",
+    "把",
+    "让",
+    "待",
+)
+_CAPTION_BREAK_AFTER_TOKENS = (
+    "的话",
+    "以后",
+    "之前",
+    "之后",
+    "时候",
+    "一来",
+    "说到底",
+    "个",
+    "段",
+    "条",
+    "种",
+    "次",
+    "件",
+    "位",
+    "家",
+    "台",
+    "套",
+)
+_CAPTION_PROTECTED_TERMS = (
+    "待人工确认",
+    "人工智能",
+    "工业机器人",
+    "机器人",
+    "人工",
+    "工厂",
+    "倒闭",
+    "废铁",
+    "字幕",
+    "确认",
+    "市场",
+    "收入",
+    "消费",
+    "企业",
+    "设备",
+    "订单",
+    "未来",
+    "工作",
+    "用户",
+    "客户",
+    "视频",
+    "标题",
+    "音乐",
+    "智能",
+    "取代",
+    "替代",
+    "岗位",
+)
+
+
+def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
+    """Return the public layout contract shared by preview and cloud render."""
+
+    profile = str(output_profile)
+    if profile.startswith("OutputProfile."):
+        profile = profile.rsplit(".", 1)[-1].replace("HD_", "").lower()
+    if profile == "720p":
+        width, height = 720, 1280
+    elif profile == "1080p":
+        width, height = 1080, 1920
+    else:
+        raise CloudEditorError("输出档位仅支持 720p 或 1080p。")
+    scale = width / 720
+    return {
+        "style_id": DEFAULT_VISUAL_STYLE_ID,
+        "canvas": {"width": width, "height": height, "pixel_aspect_ratio": "1:1"},
+        "title": {
+            "visible_seconds": 2.5,
+            "fade_in_ms": 0,
+            "fade_out_ms": 0,
+            "max_lines": 2,
+            "max_chars_per_line": 9,
+            "font_family": "Source Han Serif CN Heavy",
+            "render_mode": "png_watermark",
+            "font_size": round(48 * scale),
+            "line_height": 1.1,
+            "safe_top": round(84 * scale),
+            "safe_left": round(56 * scale),
+            "asset_width": round(520 * scale),
+            "asset_height": round(150 * scale),
+            "outline_width": max(1, round(1 * scale)),
+            "shadow": max(2, round(3 * scale)),
+            "color": "#FFFFFF",
+        },
+        "accent": {
+            "color": "transparent",
+            "width": 0,
+            "height": 0,
+            "gap": 0,
+        },
+        "subtitle": {
+            "max_lines": 1,
+            "max_chars_per_line": 10,
+            "font_size": round(46 * scale),
+            "safe_bottom": round(170 * scale),
+            "outline_width": max(1, round(2 * scale)),
+            "shadow": max(2, round(3 * scale)),
+            "color": "#F8FAFC",
+            "emphasis_color": "#FFE16A",
+        },
+    }
+
+
+def build_business_talking_head_title_png(
+    title: str,
+    *,
+    output_profile: str | "OutputProfile",
+    font_path: str | Path = BRAND_TITLE_FONT_PATH,
+) -> bytes:
+    """Render the approved brand title as a transparent MPS image watermark."""
+
+    try:
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    except ImportError as exc:
+        raise CloudEditorError("缺少标题排版组件 Pillow，不能提交正式出片。") from exc
+
+    font_file = Path(font_path)
+    if not font_file.is_file():
+        raise CloudEditorError("品牌标题字体文件缺失，不能提交正式出片。")
+    spec = visual_style_spec(output_profile)
+    title_style = spec["title"]
+    lines = _display_lines(
+        title,
+        chars_per_line=title_style["max_chars_per_line"],
+        max_lines=title_style["max_lines"],
+        truncate=True,
+    )
+    if not lines:
+        raise CloudEditorError("标题不能为空。")
+
+    width = int(title_style["asset_width"])
+    height = int(title_style["asset_height"])
+    font_size = int(title_style["font_size"])
+    scale = spec["canvas"]["width"] / 720
+    font = ImageFont.truetype(str(font_file), font_size)
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shadow_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    line_step = round(font_size * float(title_style["line_height"]))
+    text_x = round(8 * scale)
+    text_y = round(2 * scale)
+    shadow_offset = max(1, round(2 * scale))
+    for index, line in enumerate(lines):
+        y = text_y + index * line_step
+        shadow_draw.text(
+            (text_x + shadow_offset, y + shadow_offset),
+            line,
+            font=font,
+            fill=(0, 0, 0, 160),
+        )
+    shadow_layer = shadow_layer.filter(
+        ImageFilter.GaussianBlur(radius=max(1, round(2 * scale)))
+    )
+    image.alpha_composite(shadow_layer)
+
+    draw = ImageDraw.Draw(image)
+    for index, line in enumerate(lines):
+        draw.text(
+            (text_x, text_y + index * line_step),
+            line,
+            font=font,
+            fill=(255, 255, 255, 255),
+        )
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG", optimize=True)
+    return buffer.getvalue()
+
+
+def _ass_timestamp(seconds: float) -> str:
+    centiseconds = max(0, round(seconds * 100))
+    hours, remainder = divmod(centiseconds, 360_000)
+    minutes, remainder = divmod(remainder, 6_000)
+    secs, cents = divmod(remainder, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cents:02d}"
+
+
+def _ass_escape(text: str) -> str:
+    return (
+        text.replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\r", "")
+        .replace("\n", r"\N")
+    )
+
+
+def _display_lines(
+    text: str,
+    *,
+    chars_per_line: int,
+    max_lines: int | None = None,
+    truncate: bool = False,
+) -> list[str]:
+    clean = re.sub(r"\s+", "", text)
+    if not clean:
+        return []
+    max_chars = chars_per_line * max_lines if max_lines else None
+    if truncate and max_chars and len(clean) > max_chars:
+        clean = f"{clean[: max_chars - 1]}…"
+    return [
+        clean[index : index + chars_per_line]
+        for index in range(0, len(clean), chars_per_line)
+    ]
+
+
+def _wrap_ass_lines(lines: Sequence[str]) -> str:
+    return r"\N".join(_ass_escape(line) for line in lines)
+
+
+def _wrap_ass_text(text: str, *, chars_per_line: int) -> str:
+    return _wrap_ass_lines(_display_lines(text, chars_per_line=chars_per_line))
+
+
+def _is_numeric_caption_punctuation(
+    characters: Sequence[str],
+    index: int,
+) -> bool:
+    return (
+        characters[index] in _NUMERIC_PUNCTUATION
+        and index > 0
+        and index + 1 < len(characters)
+        and characters[index - 1].isdigit()
+        and characters[index + 1].isdigit()
+    )
+
+
+def _caption_phrases(text: str) -> list[str]:
+    characters = list(re.sub(r"\s+", "", text))
+    phrases: list[str] = []
+    current: list[str] = []
+    for index, character in enumerate(characters):
+        if (
+            character in _CAPTION_BREAK_CHARACTERS
+            and not _is_numeric_caption_punctuation(characters, index)
+        ):
+            if current:
+                phrases.append("".join(current))
+                current = []
+            continue
+        current.append(character)
+    if current:
+        phrases.append("".join(current))
+    return phrases
+
+
+def _clean_caption_text(text: str) -> str:
+    return "".join(_caption_phrases(text))
+
+
+def _caption_boundary_splits(piece: str) -> set[int]:
+    boundaries: set[int] = set()
+    for token in _CAPTION_BREAK_BEFORE_TOKENS:
+        start = piece.find(token)
+        while start >= 0:
+            if start > 0:
+                boundaries.add(start)
+            start = piece.find(token, start + 1)
+    for token in _CAPTION_BREAK_AFTER_TOKENS:
+        start = piece.find(token)
+        while start >= 0:
+            end = start + len(token)
+            if end < len(piece):
+                boundaries.add(end)
+            start = piece.find(token, start + 1)
+    return boundaries
+
+
+def _split_inside_protected_term(piece: str, split_at: int) -> bool:
+    for term in _CAPTION_PROTECTED_TERMS:
+        start = piece.find(term)
+        while start >= 0:
+            if start < split_at < start + len(term):
+                return True
+            start = piece.find(term, start + 1)
+    return False
+
+
+def _caption_phrase_parts(piece: str, *, max_chars: int) -> list[str]:
+    parts: list[str] = []
+    remaining = piece
+    minimum_chars = min(4, max_chars)
+    while len(remaining) > max_chars:
+        part_count = (len(remaining) + max_chars - 1) // max_chars
+        ideal = round(len(remaining) / part_count)
+        minimum_split = max(
+            minimum_chars,
+            len(remaining) - max_chars * (part_count - 1),
+        )
+        maximum_split = min(
+            max_chars,
+            len(remaining) - minimum_chars * (part_count - 1),
+        )
+        safe_splits = [
+            split_at
+            for split_at in range(minimum_split, maximum_split + 1)
+            if not _split_inside_protected_term(remaining, split_at)
+        ]
+        semantic_splits = _caption_boundary_splits(remaining)
+        candidates = [
+            split_at for split_at in safe_splits if split_at in semantic_splits
+        ]
+        if not candidates:
+            candidates = safe_splits
+        split_at = (
+            min(candidates, key=lambda value: (abs(value - ideal), -value))
+            if candidates
+            else max(minimum_split, min(maximum_split, ideal))
+        )
+        parts.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+    if remaining:
+        parts.append(remaining)
+    return parts
+
+
+def _caption_chunks(text: str, *, max_chars: int) -> list[str]:
+    pieces = _caption_phrases(text)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        for part in _caption_phrase_parts(piece, max_chars=max_chars):
+            if current and len(current) + len(part) > max_chars:
+                chunks.append(current)
+                current = ""
+            current += part
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _normalized_emphasis_terms(segment: Mapping[str, Any]) -> list[str]:
+    raw_terms = segment.get("emphasis_terms") or []
+    if not isinstance(raw_terms, Sequence) or isinstance(raw_terms, (str, bytes)):
+        return []
+    terms = [_clean_caption_text(str(term)) for term in raw_terms]
+    return [term for term in terms if term][:1]
+
+
+def _emphasis_range(lines: Sequence[str], terms: Sequence[str]) -> dict[str, int] | None:
+    for term in terms[:1]:
+        for line_index, line in enumerate(lines):
+            start = line.find(term)
+            if start >= 0:
+                return {
+                    "line_index": line_index,
+                    "start": start,
+                    "end": start + len(term),
+                }
+    return None
+
+
+def build_business_talking_head_overlay_preview(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    title: str,
+    output_profile: str | "OutputProfile",
+) -> dict[str, Any]:
+    """Normalize title/caption lines once for browser preview and ASS rendering."""
+
+    spec = visual_style_spec(output_profile)
+    title_style = spec["title"]
+    caption_style = spec["subtitle"]
+    title_lines = _display_lines(
+        title,
+        chars_per_line=title_style["max_chars_per_line"],
+        max_lines=title_style["max_lines"],
+        truncate=True,
+    )
+    cues: list[dict[str, Any]] = []
+    max_caption_chars = (
+        caption_style["max_chars_per_line"] * caption_style["max_lines"]
+    )
+    for segment in segments:
+        try:
+            start = float(segment.get("start", 0))
+            end = float(segment.get("end", 0))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        chunks = _caption_chunks(str(segment.get("text") or ""), max_chars=max_caption_chars)
+        total_chars = sum(len(chunk) for chunk in chunks) or 1
+        cursor = start
+        for index, chunk in enumerate(chunks):
+            cue_end = (
+                end
+                if index == len(chunks) - 1
+                else cursor + (end - start) * len(chunk) / total_chars
+            )
+            lines = _display_lines(
+                chunk,
+                chars_per_line=caption_style["max_chars_per_line"],
+                max_lines=caption_style["max_lines"],
+            )
+            terms = _normalized_emphasis_terms(segment)
+            emphasis = _emphasis_range(lines, terms)
+            # Never let the optional highlighted phrase split across caption
+            # lines: a split highlight reads poorly on a phone screen.
+            if terms and emphasis is None:
+                clean_chunk = re.sub(r"\s+", "", chunk)
+                term_start = clean_chunk.find(terms[0])
+                chars_per_line = caption_style["max_chars_per_line"]
+                if (
+                    term_start > 0
+                    and term_start <= chars_per_line
+                    and len(clean_chunk) - term_start <= chars_per_line
+                    and term_start % chars_per_line + len(terms[0]) > chars_per_line
+                ):
+                    candidate = _display_lines(
+                        clean_chunk[:term_start],
+                        chars_per_line=chars_per_line,
+                        max_lines=1,
+                    ) + _display_lines(
+                        clean_chunk[term_start:],
+                        chars_per_line=chars_per_line,
+                        max_lines=1,
+                    )
+                    if len(candidate) <= caption_style["max_lines"]:
+                        lines = candidate
+                        emphasis = _emphasis_range(lines, terms)
+            cues.append(
+                {
+                    "start": round(cursor, 3),
+                    "end": round(cue_end, 3),
+                    "lines": lines,
+                    "emphasis_range": emphasis,
+                }
+            )
+            cursor = cue_end
+    return {
+        "title": {
+            "lines": title_lines,
+            "start": 0,
+            "end": float(title_style["visible_seconds"]),
+        },
+        "cues": cues,
+    }
+
+
+def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
+    lines = [str(line) for line in cue.get("lines") or []]
+    emphasis = cue.get("emphasis_range")
+    if not isinstance(emphasis, Mapping):
+        return _wrap_ass_lines(lines)
+    line_index = emphasis.get("line_index")
+    start = emphasis.get("start")
+    end = emphasis.get("end")
+    if not all(isinstance(value, int) for value in (line_index, start, end)):
+        return _wrap_ass_lines(lines)
+    rendered: list[str] = []
+    for index, line in enumerate(lines):
+        if index != line_index or start < 0 or end <= start or end > len(line):
+            rendered.append(_ass_escape(line))
+            continue
+        rendered.append(
+            f"{_ass_escape(line[:start])}{{\\c{emphasis_colour}}}"
+            f"{_ass_escape(line[start:end])}{{\\c&H00F8FAFC&}}"
+            f"{_ass_escape(line[end:])}"
+        )
+    return r"\N".join(rendered)
+
+
+def build_business_talking_head_ass(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    title: str,
+    output_profile: str | "OutputProfile",
+) -> bytes:
+    """Create one approved ASS overlay for the title and manually reviewed captions."""
+
+    spec = visual_style_spec(output_profile)
+    canvas = spec["canvas"]
+    title_style = spec["title"]
+    accent_style = spec["accent"]
+    caption_style = spec["subtitle"]
+    overlay_preview = build_business_talking_head_overlay_preview(
+        segments,
+        title=title,
+        output_profile=output_profile,
+    )
+    header = f"""[Script Info]
+Title: VideoInsight business talking-head overlay
+ScriptType: v4.00+
+PlayResX: {canvas["width"]}
+PlayResY: {canvas["height"]}
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Title,YaHei,{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H5A000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
+Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Caption,YaHei,{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H8C000000,&H00000000,-1,0,0,0,100,100,0.18,0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+"""
+    lines: list[str] = []
+    title_preview = overlay_preview["title"]
+    if title_preview["lines"]:
+        visible_seconds = float(title_style["visible_seconds"])
+        lines.append(
+            "Dialogue: 0,0:00:00.00,"
+            f"{_ass_timestamp(visible_seconds)},Title,,0,0,0,,"
+            f"{_wrap_ass_lines(title_preview['lines'])}"
+        )
+        title_height = len(title_preview["lines"]) * round(title_style["font_size"] * 1.22)
+        accent_y = title_style["safe_top"] + title_height + accent_style["gap"]
+        accent_path = (
+            f"m 0 0 l {accent_style['width']} 0 l {accent_style['width']} "
+            f"{accent_style['height']} l 0 {accent_style['height']}"
+        )
+        lines.append(
+            "Dialogue: 0,0:00:00.00,"
+            f"{_ass_timestamp(visible_seconds)},Accent,,0,0,0,,"
+            f"{{\\pos({title_style['safe_left']},{accent_y})\\p1}}{accent_path}"
+        )
+    for cue in overlay_preview["cues"]:
+        lines.append(
+            f"Dialogue: 0,{_ass_timestamp(float(cue['start']))},"
+            f"{_ass_timestamp(float(cue['end']))},Caption,,0,0,0,,"
+            f"{_ass_caption_text(cue, emphasis_colour='&H006AE1FF&')}"
+        )
+    return (header + "\n".join(lines) + "\n").encode("utf-8-sig")
 
 
 class CloudEditorError(ValueError):
@@ -83,16 +676,21 @@ class EditPlan(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    plan_version: str = "safe-light-edit-v1"
+    plan_version: str = "safe-rough-cut-v2"
     duration_seconds: float = Field(gt=0)
     spoken_ranges: list[TimeRange] = Field(default_factory=list)
     remove_ranges: list[TimeRange] = Field(
         default_factory=list,
         max_length=MAX_REMOVE_RANGES,
     )
+    kept_ranges: list[TimeRange] = Field(default_factory=list)
+    estimated_output_seconds: float = Field(default=0, ge=0)
     enabled_steps: list[EditStepKind] = Field(default_factory=list)
     trim_silence_enabled: bool = False
     title_candidates: list[str] = Field(default_factory=list, max_length=5)
+    bgm_category: str = "通用口播"
+    bgm_energy: str = "克制"
+    bgm_keywords: list[str] = Field(default_factory=list, max_length=6)
     explanation: str = ""
     warnings: list[str] = Field(default_factory=list)
     provider_name: str = "deterministic_rules"
@@ -101,6 +699,10 @@ class EditPlan(BaseModel):
 
     @model_validator(mode="after")
     def _validate_safe_ranges(self) -> EditPlan:
+        if self.bgm_category not in BGM_VOICEOVER_CATEGORIES:
+            raise ValueError("BGM 分类不在允许范围内。")
+        if self.bgm_energy not in BGM_ENERGY_LEVELS:
+            raise ValueError("BGM 能量等级不在允许范围内。")
         spoken = sorted(self.spoken_ranges, key=lambda item: (item.start, item.end))
         removed = sorted(self.remove_ranges, key=lambda item: (item.start, item.end))
 
@@ -126,6 +728,11 @@ class EditPlan(BaseModel):
             and EditStepKind.TRIM_SILENCE not in self.enabled_steps
         ):
             raise ValueError("存在删除区间时必须启用 trim_silence 步骤。")
+        expected_kept = kept_ranges_for_plan(self.duration_seconds, removed)
+        if self.kept_ranges and self.kept_ranges != expected_kept:
+            raise ValueError("保留区间必须由安全裁剪区间推导。")
+        if len(expected_kept) > MAX_KEEP_RANGES:
+            raise ValueError("正式云端粗剪最多保留 50 个片段。")
         return self
 
 
@@ -243,6 +850,8 @@ class RenderRequest(BaseModel):
     edit_plan: EditPlan
     review_confirmed: bool = False
     subtitle_object_key: str | None = None
+    title_watermark_object_key: str | None = None
+    merge_config_asset: CloudAsset | None = None
     title: str = ""
     bgm_asset: CloudAsset | None = None
     bgm_volume: float = Field(default=0.2, ge=0, le=1)
@@ -477,6 +1086,7 @@ def create_cost_quote(
     output_minutes = output_seconds / Decimal(60)
     render_rate = MPS_CNY_PER_OUTPUT_MINUTE[profile.value]
     render_cost = _money(output_minutes * render_rate)
+    title_overlay_cost = _money(MPS_WATERMARK_CNY_PER_REQUEST)
 
     line_items = [
         QuoteLineItem(
@@ -507,6 +1117,14 @@ def create_cost_quote(
             unit_price_cny=render_rate,
             estimated_cost_cny=render_cost,
         ),
+        QuoteLineItem(
+            component="brand_title_overlay",
+            provider="MPS image watermark",
+            quantity=Decimal("1"),
+            unit="request",
+            unit_price_cny=MPS_WATERMARK_CNY_PER_REQUEST,
+            estimated_cost_cny=title_overlay_cost,
+        ),
     ]
     total = _money(sum((item.estimated_cost_cny for item in line_items), Decimal("0")))
     issued_at = now or datetime.now(timezone.utc)
@@ -534,6 +1152,15 @@ def validate_cost_quote(
 ) -> CostQuote:
     if quote.quote_id != quote_id:
         raise CloudEditorError("费用报价与本次确认不匹配，请重新预检。")
+    required_components = {
+        "speech_recognition",
+        "edit_planning",
+        "cloud_render",
+        "brand_title_overlay",
+    }
+    quoted_components = {item.component for item in quote.line_items}
+    if not required_components.issubset(quoted_components):
+        raise CloudEditorError("费用项目已变化，请重新确认费用。")
     if quote.price_version != expected_price_version:
         raise CloudEditorError("计费价格版本已变化，请重新确认费用。")
     checked_at = now or datetime.now(timezone.utc)
@@ -561,11 +1188,60 @@ def _merge_ranges(ranges: Sequence[TimeRange]) -> list[TimeRange]:
     return merged
 
 
+def kept_ranges_for_plan(
+    duration_seconds: float,
+    remove_ranges: Sequence[TimeRange | Mapping[str, float]],
+) -> list[TimeRange]:
+    """Return the source ranges that remain after safe rough-cut intervals."""
+
+    cursor = 0.0
+    kept: list[TimeRange] = []
+    for removed in _merge_ranges([_as_time_range(item) for item in remove_ranges]):
+        if removed.start > cursor:
+            kept.append(TimeRange(start=cursor, end=removed.start))
+        cursor = max(cursor, removed.end)
+    if duration_seconds > cursor:
+        kept.append(TimeRange(start=cursor, end=duration_seconds))
+    return kept
+
+
+def retime_segments_after_cuts(
+    segments: Sequence[Mapping[str, Any]],
+    remove_ranges: Sequence[TimeRange | Mapping[str, float]],
+) -> list[dict[str, Any]]:
+    """Map approved source subtitle timestamps onto the edited output timeline."""
+
+    removed = _merge_ranges([_as_time_range(item) for item in remove_ranges])
+    retimed: list[dict[str, Any]] = []
+    for segment in segments:
+        try:
+            start = float(segment.get("start", 0))
+            end = float(segment.get("end", 0))
+        except (TypeError, ValueError):
+            continue
+        if end <= start:
+            continue
+        if any(start < cut.end and cut.start < end for cut in removed):
+            raise CloudEditorError("字幕片段跨越粗剪区间，请关闭该切点后再生成。")
+        shift = sum(cut.end - cut.start for cut in removed if cut.end <= start)
+        retimed.append(
+            {
+                **dict(segment),
+                "start": round(start - shift, 3),
+                "end": round(end - shift, 3),
+            }
+        )
+    return retimed
+
+
 def build_safe_edit_plan(
     spoken_ranges: Sequence[TimeRange | Mapping[str, float]],
     duration_seconds: float,
     *,
     title_candidates: Sequence[str] | None = None,
+    bgm_category: str = "通用口播",
+    bgm_energy: str = "克制",
+    bgm_keywords: Sequence[str] | None = None,
     explanation: str = "",
     enabled_steps: Sequence[EditStepKind | str] | None = None,
     provider_name: str = "deterministic_rules",
@@ -579,6 +1255,10 @@ def build_safe_edit_plan(
         raise CloudEditorError("语音区间不能超出视频时长。")
 
     cuts: list[TimeRange] = []
+    if spoken and spoken[0].start >= HEAD_TAIL_SILENCE_SECONDS:
+        cut_end = spoken[0].start - HEAD_TAIL_PADDING_SECONDS
+        if cut_end > 0:
+            cuts.append(TimeRange(start=0, end=cut_end))
     for left, right in zip(spoken, spoken[1:], strict=False):
         gap_seconds = right.start - left.end
         if gap_seconds < MIN_SILENCE_SECONDS:
@@ -587,14 +1267,18 @@ def build_safe_edit_plan(
         cut_end = right.start - SILENCE_EDGE_PADDING_SECONDS
         if cut_end > cut_start:
             cuts.append(TimeRange(start=cut_start, end=cut_end))
+    if spoken and duration_seconds - spoken[-1].end >= HEAD_TAIL_SILENCE_SECONDS:
+        cut_start = spoken[-1].end + HEAD_TAIL_PADDING_SECONDS
+        if duration_seconds > cut_start:
+            cuts.append(TimeRange(start=cut_start, end=duration_seconds))
     cuts = _merge_ranges(cuts)
 
     warnings: list[str] = []
     if not spoken:
         warnings.append("未检测到可靠语音区间，未自动裁剪。")
-    if len(cuts) > MAX_REMOVE_RANGES:
+    if len(kept_ranges_for_plan(duration_seconds, cuts)) > MAX_KEEP_RANGES:
         cuts = []
-        warnings.append("安全裁剪区间合并后仍超过 100 段，已关闭自动裁停顿。")
+        warnings.append("安全裁剪区间过多，已关闭自动粗剪以保证正式出片稳定。")
 
     requested_steps = (
         [
@@ -623,9 +1307,21 @@ def build_safe_edit_plan(
         duration_seconds=duration_seconds,
         spoken_ranges=spoken,
         remove_ranges=cuts,
+        kept_ranges=kept_ranges_for_plan(duration_seconds, cuts),
+        estimated_output_seconds=round(
+            duration_seconds - sum(item.end - item.start for item in cuts),
+            3,
+        ),
         enabled_steps=unique_steps,
         trim_silence_enabled=bool(cuts),
         title_candidates=titles[:5],
+        bgm_category=bgm_category,
+        bgm_energy=bgm_energy,
+        bgm_keywords=[
+            str(item).strip()[:20]
+            for item in (bgm_keywords or [])
+            if str(item).strip()
+        ][:6],
         explanation=explanation.strip(),
         warnings=warnings,
         provider_name=provider_name,

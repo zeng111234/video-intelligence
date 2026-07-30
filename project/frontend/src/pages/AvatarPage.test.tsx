@@ -11,6 +11,8 @@ import {
   getAvatarCapabilities,
   listAvatarAssets,
   listAvatarJobs,
+  trainCloudAvatar,
+  trainCloudVoice,
 } from "../api/client";
 
 vi.mock("../api/client", () => ({
@@ -191,6 +193,116 @@ describe("AvatarPage avatar library", () => {
 
     await waitFor(() => expect(within(view.container).getByText("通用男声")).toBeTruthy());
     expect(view.container.querySelector("audio")).toBeNull();
+  });
+
+  it("submits a selected cloud-avatar training video", async () => {
+    vi.mocked(trainCloudAvatar).mockResolvedValue({
+      asset_id: "avatar-training-new",
+      kind: "avatar",
+      name: "老板训练视频",
+      preview_url: "/avatar-training-new.mp4",
+      authorized: true,
+      preview_type: "video",
+      status: "training",
+      status_message: "训练中",
+      source_type: "custom",
+    });
+    const view = renderPage();
+
+    await within(view.container).findByText("形象一");
+    fireEvent.click(within(view.container).getByTestId("avatar-library-trigger"));
+
+    const uploadButton = (await screen.findByText(
+      "上传训练视频新增云形象",
+    )).closest("button");
+    expect(uploadButton).toBeTruthy();
+    const fileInput = uploadButton!
+      .closest(".ant-upload-wrapper")
+      ?.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    const file = new File(["training-video"], "老板训练视频.mp4", {
+      type: "video/mp4",
+    });
+
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(trainCloudAvatar).toHaveBeenCalledWith({
+        file,
+        name: "老板训练视频",
+      }),
+    );
+  });
+
+  it("saves a selected cloud voice sample without claiming it is cloned", async () => {
+    vi.mocked(trainCloudVoice).mockResolvedValue({
+      asset_id: "voice-sample-new",
+      kind: "voice",
+      name: "老板声音样本",
+      preview_url: "/voice-sample-new.mp3",
+      authorized: true,
+      preview_type: "audio",
+      status: "pending_configuration",
+      status_message: "待训练",
+      source_type: "pending_clone",
+    });
+    const view = renderPage();
+
+    await within(view.container).findByText("通用女声");
+    fireEvent.click(within(view.container).getByTestId("voice-library-trigger"));
+
+    expect(
+      await screen.findByText(
+        "声音样本会先保存为“待训练”；当前不会自动克隆，也不能直接用于视频。",
+      ),
+    ).toBeTruthy();
+    const uploadButton = screen.getByText("上传声音样本").closest("button");
+    expect(uploadButton).toBeTruthy();
+    const fileInput = uploadButton!
+      .closest(".ant-upload-wrapper")
+      ?.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    const file = new File(["voice-sample"], "老板声音样本.mp3", {
+      type: "audio/mpeg",
+    });
+
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(trainCloudVoice).toHaveBeenCalledWith({
+        file,
+        name: "老板声音样本",
+      }),
+    );
+  });
+
+  it("explains why cloud-avatar training is unavailable", async () => {
+    vi.mocked(getAvatarCapabilities).mockResolvedValueOnce({
+      provider_name: "shuying_legacy_cloud",
+      display_name: "公司数影云数字人",
+      mode: "production",
+      enabled: true,
+      permission_status: "authorized",
+      max_script_chars: 2000,
+      supported_aspect_ratios: ["9:16"],
+      estimated_cost_cny: null,
+      estimated_seconds: null,
+      missing_configuration: [],
+      profiles: [],
+      supports_cloud_avatar_training: false,
+      supports_voice_cloning: false,
+      supports_voice_sample_upload: true,
+    });
+    const view = renderPage();
+
+    await within(view.container).findByText("形象一");
+    fireEvent.click(within(view.container).getByTestId("avatar-library-trigger"));
+
+    expect(
+      await screen.findByText(
+        "云形象训练线路配置未完成，请联系管理员检查上传地址和允许域名。",
+      ),
+    ).toBeTruthy();
   });
 
   it("uses the provider default and leaves publishing ownership out of avatar submission", async () => {

@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
+from src.adapters.publishers.douyin_browser import (
+    DOUYIN_VIDEO_DESCRIPTION_SELECTOR,
+    DOUYIN_VIDEO_TITLE_SELECTOR,
+    DouyinBrowserPublisher,
+)
 from src.adapters.publishers.local_browser import LocalBrowserAutoPublisher
 from src.adapters.publishers.sandbox import SandboxPublisher, build_publisher
 from src.models import (
@@ -223,6 +227,69 @@ class TestPublishServiceEdgeCases:
         with pytest.raises(ValueError, match="已重试过一次"):
             svc.retry_task(retried.task_id)
 
+    def test_prepare_official_page_is_not_limited_by_failure_retry_count(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="重新准备官方页")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        saved = task.model_copy(
+            update={
+                "status": TaskStatus.PAUSED,
+                "publish_status": PublishStatus.MANUAL_READY,
+                "provider_name": "douyin_local_browser",
+                "stage": "发布信息已保存，等待人工核对",
+                "retry_count": 1,
+            }
+        )
+        self.repo.save_task(saved)
+
+        prepared = self.svc.prepare_official_page(saved.task_id)
+
+        assert prepared.status == TaskStatus.QUEUED
+        assert prepared.publish_status == PublishStatus.PENDING
+        assert prepared.stage == "正在准备抖音官方发布页"
+        assert prepared.retry_count == 1
+        assert self.svc.prepare_official_page(saved.task_id).status == TaskStatus.QUEUED
+
+    def test_prepare_official_page_stops_after_final_publish_click(self):
+        target = PublishTarget(platform=PublishPlatform.DOUYIN, title="最终点击后不可重备")
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        clicked = task.model_copy(
+            update={
+                "provider_name": "douyin_local_browser",
+                "final_publish_started_at": task.created_at,
+                "outputs": {"final_publish_clicked": "true"},
+            }
+        )
+        self.repo.save_task(clicked)
+
+        with pytest.raises(ValueError, match="已经点击最终发布"):
+            self.svc.prepare_official_page(clicked.task_id)
+
+    def test_confirm_auto_publish_authorizes_only_the_selected_task(self):
+        target = PublishTarget(
+            platform=PublishPlatform.DOUYIN,
+            account_id="pubacc-test",
+            title="本次自动发布",
+        )
+        task = self.svc.publish(video_path=str(self._temp_video), target=target)
+        saved = task.model_copy(
+            update={
+                "status": TaskStatus.PAUSED,
+                "publish_status": PublishStatus.MANUAL_READY,
+                "provider_name": "douyin_local_browser",
+                "stage": "已在账号“测试号”的官方页面选择视频并填写内容",
+            }
+        )
+        self.repo.save_task(saved)
+
+        confirmed = self.svc.confirm_auto_publish(saved.task_id)
+
+        assert confirmed.status == TaskStatus.QUEUED
+        assert confirmed.publish_status == PublishStatus.PENDING
+        assert confirmed.target.auto_publish_authorized is True
+        assert confirmed.target.use_prepared_page is True
+        assert confirmed.outputs["task_auto_publish_authorized"] == "true"
+        assert saved.target.auto_publish_authorized is False
+
     def test_final_publish_task_cannot_be_retried(self):
         target = PublishTarget(platform=PublishPlatform.DOUYIN, title="最终点击后不可重试")
         task = self.svc.publish(video_path=str(self._temp_video), target=target)
@@ -288,6 +355,274 @@ def test_douyin_publisher_navigates_from_home_to_upload_page():
     assert not DouyinBrowserPublisher._is_upload_page(
         "https://creator.douyin.com/creator-micro/home"
     )
+    assert DouyinBrowserPublisher._is_publish_page(
+        "https://creator.douyin.com/creator-micro/content/post/video?enter_from=publish_page"
+    )
+    assert DouyinBrowserPublisher._is_publish_page(
+        "https://creator.douyin.com/creator-micro/content/publish?enter_from=publish_page"
+    )
+    assert not DouyinBrowserPublisher._is_publish_page(
+        "https://creator.douyin.com/creator-micro/content/upload"
+    )
+    assert not DouyinBrowserPublisher._is_publish_page(
+        "https://creator.douyin.com/creator-micro/content/post/image?enter_from=publish_page"
+    )
+    assert not DouyinBrowserPublisher._is_publish_page(
+        "https://creator.douyin.com/creator-micro/content/manage"
+    )
+
+
+def test_douyin_publish_guard_accepts_only_the_exact_video_form():
+    target = PublishTarget(
+        platform=PublishPlatform.DOUYIN,
+        title="作品标题",
+        description="作品描述",
+        tags=["商业思维", "#企业经营"],
+    )
+
+    class FakeLocator:
+        def __init__(self, *, value="", text="", count=1, visible=True):
+            self._value = value
+            self._text = text
+            self._count = count
+            self._visible = visible
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return self._count
+
+        def is_visible(self):
+            return self._visible
+
+        def input_value(self):
+            return self._value
+
+        def inner_text(self):
+            return self._text
+
+    class FakePage:
+        url = (
+            "https://creator.douyin.com/creator-micro/content/post/video"
+            "?enter_from=publish_page"
+        )
+
+        @staticmethod
+        def locator(selector):
+            if selector == DOUYIN_VIDEO_TITLE_SELECTOR:
+                return FakeLocator(value="作品标题")
+            if selector == DOUYIN_VIDEO_DESCRIPTION_SELECTOR:
+                return FakeLocator(text="作品描述 #商业思维 #企业经营")
+            raise AssertionError(f"不应查询通用编辑框: {selector}")
+
+    matched, evidence = DouyinBrowserPublisher._prepared_form_matches(
+        FakePage(),
+        target,
+    )
+
+    assert matched is True
+    assert "标题、描述和标签" in evidence
+
+
+def test_douyin_publish_guard_rejects_a_generic_comment_editor():
+    target = PublishTarget(
+        platform=PublishPlatform.DOUYIN,
+        title="作品标题",
+        description="不能进入评论区",
+    )
+
+    class FakeLocator:
+        def __init__(self, *, value="", count=1):
+            self._value = value
+            self._count = count
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return self._count
+
+        @staticmethod
+        def is_visible():
+            return True
+
+        def input_value(self):
+            return self._value
+
+    class FakePage:
+        url = (
+            "https://creator.douyin.com/creator-micro/content/post/video"
+            "?enter_from=publish_page"
+        )
+
+        @staticmethod
+        def locator(selector):
+            if selector == DOUYIN_VIDEO_TITLE_SELECTOR:
+                return FakeLocator(value="作品标题")
+            if selector == DOUYIN_VIDEO_DESCRIPTION_SELECTOR:
+                return FakeLocator(count=0)
+            raise AssertionError(f"不应查询通用编辑框: {selector}")
+
+    matched, evidence = DouyinBrowserPublisher._prepared_form_matches(
+        FakePage(),
+        target,
+    )
+
+    assert matched is False
+    assert "不会使用通用编辑框" in evidence
+
+
+def test_douyin_selects_and_reads_back_the_top_official_music_recommendation():
+    target = PublishTarget(
+        platform=PublishPlatform.DOUYIN,
+        title="机器人会取代哪些岗位",
+        native_music_mode="auto_recommended",
+        native_music_hint="科技未来 克制",
+    )
+
+    class FakeLocator:
+        def __init__(
+            self,
+            *,
+            count=0,
+            visible=True,
+            enabled=True,
+            evaluated="",
+            on_click=None,
+        ):
+            self._count = count
+            self._visible = visible
+            self._enabled = enabled
+            self._evaluated = evaluated
+            self._on_click = on_click
+
+        @property
+        def first(self):
+            return self
+
+        def count(self):
+            return self._count
+
+        def nth(self, _index):
+            return self
+
+        def is_visible(self):
+            return self._visible
+
+        def is_enabled(self):
+            return self._enabled
+
+        def click(self, **_kwargs):
+            if self._on_click:
+                self._on_click()
+
+        def evaluate(self, _script):
+            return self._evaluated
+
+        def inner_text(self, **_kwargs):
+            return "作品发布页"
+
+    class FakePage:
+        url = "https://creator.douyin.com/creator-micro/content/post/video"
+
+        def __init__(self):
+            self.selected = False
+
+        def locator(self, selector):
+            assert selector == "body"
+            return FakeLocator(count=1)
+
+        def get_by_role(self, role, name, exact):
+            assert role == "button"
+            assert exact is True
+            if name == "选择音乐":
+                return FakeLocator(count=1)
+            if name == "使用":
+                return FakeLocator(
+                    count=1,
+                    evaluated="未来感轻节奏\n使用",
+                    on_click=lambda: setattr(self, "selected", True),
+                )
+            return FakeLocator(count=0)
+
+        def get_by_text(self, text, exact):
+            assert exact is True
+            if text == "推荐":
+                return FakeLocator(count=1)
+            if text == "未来感轻节奏" and self.selected:
+                return FakeLocator(count=1)
+            return FakeLocator(count=0)
+
+        @staticmethod
+        def wait_for_timeout(_milliseconds):
+            return None
+
+    selected, title, evidence = DouyinBrowserPublisher._select_recommended_music(
+        FakePage(),
+        target,
+    )
+
+    assert selected is True
+    assert title == "未来感轻节奏"
+    assert "官方推荐音乐" in evidence
+
+
+def test_douyin_music_picker_fails_closed_when_entry_is_not_unique():
+    target = PublishTarget(
+        platform=PublishPlatform.DOUYIN,
+        title="测试",
+        native_music_mode="auto_recommended",
+    )
+
+    class FakeLocator:
+        @property
+        def first(self):
+            return self
+
+        @staticmethod
+        def count():
+            return 2
+
+        @staticmethod
+        def is_visible():
+            return True
+
+        @staticmethod
+        def inner_text(**_kwargs):
+            return "作品发布页"
+
+    class FakePage:
+        url = "https://creator.douyin.com/creator-micro/content/post/video"
+
+        @staticmethod
+        def locator(selector):
+            assert selector == "body"
+            return FakeLocator()
+
+        @staticmethod
+        def get_by_role(role, name, exact):
+            assert role == "button"
+            assert exact is True
+            return FakeLocator() if name == "选择音乐" else type(
+                "EmptyLocator",
+                (),
+                {
+                    "count": staticmethod(lambda: 0),
+                    "first": property(lambda self: self),
+                },
+            )()
+
+    selected, title, evidence = DouyinBrowserPublisher._select_recommended_music(
+        FakePage(),
+        target,
+    )
+
+    assert selected is False
+    assert title is None
+    assert "没有猜测点击" in evidence
 
 
 def test_douyin_publisher_selects_large_file_by_local_cdp_path(tmp_path):

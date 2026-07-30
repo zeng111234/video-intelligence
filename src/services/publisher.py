@@ -181,8 +181,12 @@ class PublishService:
                     "platform_video_id": result.platform_video_id,
                     "platform_url": result.platform_url,
                     "stage": result.stage,
+                    "action_required": result.action_required,
+                    "final_publish_started_at": result.final_publish_started_at,
+                    "outcome_evidence": result.outcome_evidence,
                     "updated_at": datetime.now().astimezone(),
                     "is_mock": result.is_mock,
+                    "outputs": {**task.outputs, **result.outputs},
                 }
             )
             self._save(updated, on_progress)
@@ -469,6 +473,86 @@ class PublishService:
                 "error_message": None,
                 "action_required": None,
                 "retry_count": task.retry_count + 1,
+            }
+        )
+        self._save(updated, None)
+        return updated
+
+    def prepare_official_page(self, task_id: str) -> PublishTask:
+        """Queue a reversible local-browser draft preparation.
+
+        Preparing the official page is not a failed-job retry: the operator may
+        save revised metadata and prepare the page again while the irreversible
+        final publish click has not happened.
+        """
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError("发布任务不存在。")
+        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
+            raise ValueError("系统已经点击最终发布，请先到抖音后台核对结果。")
+        if task.publish_status in {PublishStatus.SUCCEEDED, PublishStatus.OUTCOME_UNKNOWN}:
+            raise ValueError("当前发布结果不能重新准备官方页，请先到抖音后台核对。")
+        if task.provider_name != "douyin_local_browser":
+            raise ValueError("当前任务不是抖音本机发布任务，不能准备抖音官方页。")
+        if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
+            return task
+        updated = task.model_copy(
+            update={
+                "status": TaskStatus.QUEUED,
+                "publish_status": PublishStatus.PENDING,
+                "progress": 0,
+                "stage": "正在准备抖音官方发布页",
+                "updated_at": datetime.now().astimezone(),
+                "error_message": None,
+                "action_required": None,
+            }
+        )
+        self._save(updated, None)
+        return updated
+
+    def confirm_auto_publish(self, task_id: str) -> PublishTask:
+        """Authorize one Douyin task to use its prepared page and submit once."""
+        task = self.get_task(task_id)
+        if task is None:
+            raise ValueError("发布任务不存在。")
+        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
+            raise ValueError("系统已经点击最终发布，请先到抖音后台核对结果。")
+        if task.publish_status in {
+            PublishStatus.SUCCEEDED,
+            PublishStatus.OUTCOME_UNKNOWN,
+        }:
+            raise ValueError("当前发布结果不能再次自动提交，请先到抖音后台核对。")
+        if (
+            task.provider_name != "douyin_local_browser"
+            or task.target.platform != PublishPlatform.DOUYIN
+        ):
+            raise ValueError("当前任务不是抖音本机发布任务，不能自动提交。")
+        if (
+            task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
+            and task.target.auto_publish_authorized
+        ):
+            return task
+        now = datetime.now().astimezone()
+        updated = task.model_copy(
+            update={
+                "target": task.target.model_copy(
+                    update={
+                        "auto_publish_authorized": True,
+                        "use_prepared_page": True,
+                    }
+                ),
+                "status": TaskStatus.QUEUED,
+                "publish_status": PublishStatus.PENDING,
+                "progress": max(task.progress, 60),
+                "stage": "等待上传完成后自动发布",
+                "updated_at": now,
+                "error_message": None,
+                "action_required": None,
+                "outputs": {
+                    **task.outputs,
+                    "task_auto_publish_authorized": "true",
+                    "task_auto_publish_confirmed_at": now.isoformat(),
+                },
             }
         )
         self._save(updated, None)

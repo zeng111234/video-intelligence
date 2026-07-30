@@ -1175,6 +1175,7 @@ class TestPublish:
             assert batch["total"] == 2
             task_id = batch["tasks"][0]["task_id"]
             assert batch["tasks"][0]["publish_status"] == "pending"
+            assert batch["tasks"][0]["native_music_mode"] == "auto_recommended"
 
             manual_resp = client.post(
                 f"/api/v1/publish/tasks/{task_id}/manual-result",
@@ -1207,6 +1208,52 @@ class TestPublish:
             assert resp.status_code == 200
             assert resp.json()["status"] == "queued"
             assert resp.json()["publish_status"] == "pending"
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_publish_service, None)
+
+    def test_confirm_auto_publish_requires_explicit_task_confirmation(
+        self, client: TestClient
+    ):
+        service = PublishService(
+            MockRepository(),
+            {"douyin": DouyinBrowserPublisher()},
+        )
+        app.dependency_overrides[backend_deps.get_publish_service] = lambda: service
+        try:
+            batch = service.create_batch(
+                video_path="/some/video.mp4",
+                targets=[
+                    PublishTarget(
+                        platform=PublishPlatform.DOUYIN,
+                        account_id="pubacc-test",
+                        title="本次授权",
+                    )
+                ],
+            )
+            task = batch["tasks"][0].model_copy(
+                update={
+                    "status": TaskStatus.PAUSED,
+                    "publish_status": PublishStatus.MANUAL_READY,
+                    "stage": "已在账号“测试号”的官方页面选择视频并填写内容",
+                }
+            )
+            service.repository.save_task(task)
+
+            rejected = client.post(
+                f"/api/v1/publish/tasks/{task.task_id}/confirm-auto-publish",
+                json={"confirmation_accepted": False},
+            )
+            assert rejected.status_code == 400
+
+            accepted = client.post(
+                f"/api/v1/publish/tasks/{task.task_id}/confirm-auto-publish",
+                json={"confirmation_accepted": True},
+            )
+            assert accepted.status_code == 200
+            stored = service.get_task(task.task_id)
+            assert stored is not None
+            assert stored.target.auto_publish_authorized is True
+            assert stored.target.use_prepared_page is True
         finally:
             app.dependency_overrides.pop(backend_deps.get_publish_service, None)
 
@@ -1328,6 +1375,25 @@ class TestPublish:
         finally:
             app.dependency_overrides.pop(backend_deps.get_publish_service, None)
         assert resp.status_code == 400
+
+    def test_confirmed_douyin_batch_authorizes_only_that_task(self):
+        body = publish_api.PublishBatchRequest(
+            video_path="/some/video.mp4",
+            platforms=["douyin", "kuaishou"],
+            title="自动发布边界",
+            native_music_mode="auto_recommended",
+            native_music_hint="商业表达 平稳",
+            confirmation_accepted=True,
+        )
+
+        targets = publish_api._build_targets(body)
+
+        assert targets[0].platform == PublishPlatform.DOUYIN
+        assert targets[0].auto_publish_authorized is True
+        assert targets[0].native_music_mode == "auto_recommended"
+        assert targets[0].native_music_hint == "商业表达 平稳"
+        assert targets[1].auto_publish_authorized is False
+        assert targets[1].native_music_mode == "off"
 
     def test_publish_config_can_be_saved_to_root_env(
         self,

@@ -19,7 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from project.backend.app.core.deps import get_avatar_service
@@ -322,6 +322,26 @@ def get_asset_media(
     ):
         media_type = "audio/webm"
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@router.get("/assets/{asset_id}/voice-preview")
+def get_voice_preview(
+    asset_id: str,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    provider = service.provider
+    if not isinstance(provider, ShuyingLegacyAvatarProvider):
+        raise HTTPException(status_code=404, detail="当前声音没有可用的试听样本。")
+    try:
+        audio = provider.render_voice_preview(asset_id)
+    except AvatarProviderError as exc:
+        status_code = 404 if exc.kind.value == "validation" else 502
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.post("/jobs", response_model=AvatarJobResponse)

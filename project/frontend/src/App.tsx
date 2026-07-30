@@ -26,7 +26,6 @@ import AiCopyPage from "./pages/AiCopyPage";
 import PublishPage from "./pages/PublishPage";
 import AvatarPage from "./pages/AvatarPage";
 import VideoEditorPage from "./pages/VideoEditorPage";
-import SubtitlePage from "./pages/SubtitlePage";
 import HelpPage from "./pages/HelpPage";
 import KeywordCrawlerPage from "./pages/KeywordCrawlerPage";
 import StudioPage from "./pages/StudioPage";
@@ -72,7 +71,8 @@ function AppInner() {
               <Route path="/publish" element={<PublishPage />} />
               <Route path="/avatar" element={<AvatarPage />} />
               <Route path="/video-editor" element={<VideoEditorPage />} />
-              <Route path="/subtitle" element={<SubtitlePage />} />
+              {/* 字幕已合并入剪辑成片；保留旧链接，避免收藏地址失效。 */}
+              <Route path="/subtitle" element={<Navigate to="/video-editor" replace />} />
 
               {/* 关键词爬虫 */}
               <Route path="/crawler" element={<KeywordCrawlerPage />} />

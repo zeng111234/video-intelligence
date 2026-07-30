@@ -376,7 +376,10 @@ export function listProductionProfiles(): Promise<{ items: ProductionProfile[] }
   return request("/production/profiles");
 }
 
-export function createProductionProfile(params: Omit<ProductionProfile, "profile_id" | "created_at" | "updated_at">): Promise<ProductionProfile> {
+export function createProductionProfile(
+  params: Omit<ProductionProfile, "profile_id" | "created_at" | "updated_at" | "edit_template_id">
+    & { edit_template_id?: string | null },
+): Promise<ProductionProfile> {
   return request("/production/profiles", { method: "POST", body: JSON.stringify(params) });
 }
 
@@ -439,7 +442,7 @@ export function getProductionBatchWorkspace(batchId: string): Promise<Production
 
 export function reviewProductionBatchItems(
   batchId: string,
-  params: { stage: "transcript" | "script" | "output"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string }> },
+  params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },
 ): Promise<{ batch: ProductionBatch; results: ProductionBatchReviewResult[] }> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/reviews`, {
     method: "POST",
@@ -1036,6 +1039,8 @@ export function preflightPublish(params: {
   description?: string;
   tags?: string[];
   account_ids?: Record<string, string>;
+  native_music_mode?: "off" | "auto_recommended";
+  native_music_hint?: string;
 }): Promise<PublishPreflightResponse> {
   return request("/publish/preflight", {
     method: "POST",
@@ -1061,6 +1066,8 @@ export function createPublishBatch(params: {
   description?: string;
   tags?: string[];
   account_ids?: Record<string, string>;
+  native_music_mode?: "off" | "auto_recommended";
+  native_music_hint?: string;
   confirmation_accepted: boolean;
 }): Promise<PublishBatchResponse> {
   return request("/publish/batches", {
@@ -1091,6 +1098,19 @@ export function recordManualPublishResult(
 export function retryPublishTask(taskId: string): Promise<PublishResponse> {
   return request(`/publish/tasks/${taskId}/retry`, {
     method: "POST",
+  });
+}
+
+export function preparePublishOfficialPage(taskId: string): Promise<PublishResponse> {
+  return request(`/publish/tasks/${taskId}/prepare-official-page`, {
+    method: "POST",
+  });
+}
+
+export function confirmPublishTaskAuto(taskId: string): Promise<PublishResponse> {
+  return request(`/publish/tasks/${taskId}/confirm-auto-publish`, {
+    method: "POST",
+    body: JSON.stringify({ confirmation_accepted: true }),
   });
 }
 
@@ -1421,13 +1441,25 @@ export function listVideoEditorBgm(): Promise<VideoEditorBgmListResponse> {
 export async function uploadVideoEditorBgm(params: {
   file: File;
   mood: string;
+  voiceoverCategory: string;
+  energy: string;
   rightsHolder: string;
+  sourceProvider: string;
+  sourceUrl?: string;
+  licenseUrl?: string;
+  contentIdRisk?: "none" | "registered" | "unknown";
 }): Promise<VideoEditorBgmAsset> {
   const formData = new FormData();
   formData.append("file", params.file);
   formData.append("mood", params.mood);
+  formData.append("voiceover_category", params.voiceoverCategory);
+  formData.append("energy", params.energy);
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", params.rightsHolder);
+  formData.append("source_provider", params.sourceProvider);
+  formData.append("source_url", params.sourceUrl || "");
+  formData.append("license_url", params.licenseUrl || "");
+  formData.append("content_id_risk", params.contentIdRisk || "unknown");
   const resp = await fetch(`${BASE}/video-editor/bgm`, { method: "POST", body: formData });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
@@ -1483,9 +1515,9 @@ export function createVideoEditorBatch(params: {
       output_resolution: params.outputResolution || (params.outputProfile === "720p" ? "720x1280" : "1080x1920"),
       output_fps: params.outputFps ?? 30,
       output_bitrate: params.outputBitrate || (params.outputProfile === "720p" ? "2.5M" : "5M"),
-      bgm_enabled: params.bgmEnabled ?? false,
+      bgm_enabled: params.bgmEnabled ?? true,
       bgm_id: params.bgmId || null,
-      bgm_volume: params.bgmVolume ?? 0.2,
+      bgm_volume: params.bgmVolume ?? 0.18,
       output_profile: params.outputProfile || null,
       quote_id: params.quoteId || null,
       billing_confirmation: params.billingConfirmation

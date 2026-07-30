@@ -11,21 +11,17 @@ import {
   AudioOutlined,
   EditOutlined,
   RocketOutlined,
-  SettingOutlined,
-  QuestionCircleOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   BugOutlined,
   VideoCameraOutlined,
   AppstoreOutlined,
   RobotOutlined,
-  SubnodeOutlined,
   DownOutlined,
 } from "@ant-design/icons";
 import {
   ADVANCED_NAVIGATION_ITEMS,
   CORE_NAVIGATION_ITEMS,
-  SUPPORT_NAVIGATION_ITEMS,
   type NavigationItem,
 } from "../navigation";
 
@@ -39,9 +35,6 @@ const NAV_ICONS: Record<string, ReactNode> = {
   "ai-copy": <EditOutlined />,
   avatar: <VideoCameraOutlined />,
   "video-editor": <RobotOutlined />,
-  subtitle: <SubnodeOutlined />,
-  help: <QuestionCircleOutlined />,
-  admin: <SettingOutlined />,
 };
 
 /** 导航分组类型 */
@@ -81,10 +74,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: ADVANCED_NAVIGATION_ITEMS,
         collapsible: true,
       },
-      {
-        title: "支持",
-        items: SUPPORT_NAVIGATION_ITEMS,
-      },
     ],
     []
   );
@@ -98,9 +87,10 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
   /** 导航点击处理 */
   const handleNavClick = useCallback(
     (path: string) => {
+      if (location.pathname === path) return;
       navigate(path);
     },
-    [navigate]
+    [location.pathname, navigate]
   );
 
   /** 判断当前激活项 */
@@ -158,6 +148,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
                   className={`vi-nav-item${isActive(item) ? " active" : ""}${item.disabled ? " disabled" : ""}`}
                   onClick={() => handleNavClick(item.path)}
                   disabled={item.disabled}
+                  aria-current={isActive(item) ? "page" : undefined}
                   title={item.disabled ? `${item.label}（暂未开放）` : collapsed ? item.label : undefined}
                 >
                   <span className="vi-nav-item-icon">{NAV_ICONS[item.id]}</span>

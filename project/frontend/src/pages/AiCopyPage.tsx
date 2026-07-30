@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -53,6 +53,16 @@ const { TextArea } = Input;
 
 type CopyMode = "generate" | "rewrite";
 
+const TRANSCRIPT_DEDUP_REWRITE_PROMPT = [
+  "去重改写：保留原文中可核实的事实，不补充数据、案例、资质或效果承诺。",
+  "先重组表达顺序，再用自然口语重新写；除必要的专有名词、参数、金额和事实外，不沿用原句或只替换同义词。",
+].join("\n");
+
+interface CopyHandoffState {
+  sourceText?: unknown;
+  sourceLabel?: unknown;
+}
+
 function formatTime(value: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN") : "-";
 }
@@ -75,6 +85,7 @@ function highlightedCopy(text: string, terms: string[]) {
 export default function AiCopyPage() {
   const toast = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
   const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
   const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
@@ -94,6 +105,7 @@ export default function AiCopyPage() {
   const [variants, setVariants] = useState<string[]>([]);
   const [publishMetadata, setPublishMetadata] = useState<PublishMetadataResponse | null>(null);
   const [metadataLoading, setMetadataLoading] = useState(false);
+  const handledHandoffKeyRef = useRef<string | null>(null);
 
   const inputReady = mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
   const hasLocalDraft = Boolean(
@@ -108,6 +120,23 @@ export default function AiCopyPage() {
     : capability && !capability.enabled
       ? `未配置 ${capability.missing_configuration.join("、") || "模型密钥"}，请在本机私密配置中设置后重启后端。`
       : "";
+
+  useEffect(() => {
+    if (handledHandoffKeyRef.current === location.key) return;
+    const handoff = location.state as CopyHandoffState | null;
+    const handoffText = typeof handoff?.sourceText === "string" ? handoff.sourceText.trim() : "";
+    if (!handoffText) return;
+    handledHandoffKeyRef.current = location.key;
+
+    setMode("rewrite");
+    setSourceText(handoffText);
+    setTaskId(null);
+    setLastResponse(null);
+    setVariants([]);
+    setPublishMetadata(null);
+    const label = typeof handoff?.sourceLabel === "string" ? handoff.sourceLabel : "转写稿";
+    toast.success(`已带入「${label}」，确认内容后再开始改写`);
+  }, [location.key, location.state, setMode, setSourceText, toast]);
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -201,7 +230,7 @@ export default function AiCopyPage() {
     setPublishMetadata(null);
     try {
       const common = {
-        style_prompt: "",
+        style_prompt: mode === "rewrite" ? TRANSCRIPT_DEDUP_REWRITE_PROMPT : "",
         tone: "natural",
         variant_count: 1,
       };
@@ -226,7 +255,9 @@ export default function AiCopyPage() {
       toast.success(
         resp.compliance_status === "best_effort"
           ? "已采用自动优化后的最终版本"
-          : "已生成 1 篇去重口播文案",
+          : mode === "rewrite"
+            ? "已完成去重改写，请核对事实后再使用"
+            : "已生成 1 篇口播文案",
       );
     } catch (err) {
       toast.error((err as Error).message || "文案生成失败");
@@ -346,9 +377,9 @@ export default function AiCopyPage() {
       <Row justify="space-between" align="middle" gutter={[16, 12]}>
         <Col>
           <Title level={4} style={{ margin: 0 }}>
-            <EditOutlined /> AI 文案生成
+            <EditOutlined /> AI 文案去重改写
           </Title>
-          <Text type="secondary">真实大模型生成自然口播文案，支持需求生成、口播优化与风险表达改写</Text>
+          <Text type="secondary">把已确认的转写稿改成新的自然口播表达，也支持从需求直接生成文案</Text>
         </Col>
         <Col>
           <Space wrap>
@@ -373,7 +404,7 @@ export default function AiCopyPage() {
                 value={mode}
                 onChange={(value) => setMode(value as CopyMode)}
                 options={[
-                  { label: "改写已有文案", value: "rewrite" },
+                  { label: "转写稿去重改写", value: "rewrite" },
                   { label: "从需求生成", value: "generate" },
                 ]}
               />
@@ -405,18 +436,30 @@ export default function AiCopyPage() {
                   />
                 </>
               ) : (
-                <TextArea
-                  placeholder="粘贴已有文案、脚本或口播稿..."
-                  rows={8}
-                  value={sourceText}
-                  onChange={(e) => setSourceText(e.target.value)}
-                  showCount
-                  maxLength={5000}
-                  style={{ resize: "none" }}
-                />
+                <>
+                  <TextArea
+                    aria-label="待去重的转写或口播稿"
+                    placeholder="粘贴已确认的转写稿、口播稿或原始文案..."
+                    rows={8}
+                    value={sourceText}
+                    onChange={(e) => setSourceText(e.target.value)}
+                    showCount
+                    maxLength={5000}
+                    style={{ resize: "none" }}
+                  />
+                  <Alert
+                    type="info"
+                    showIcon
+                    message="系统会检测与原文的表达重复；过于相似时会自动重新组织表达，不会覆盖原始转写稿。"
+                  />
+                </>
               )}
 
-              <Text type="secondary" style={{ fontSize: 12 }}>系统会根据内容自动判断适合的受众，并保留原文可核实的事实。</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {mode === "rewrite"
+                  ? "请先确认转写内容准确；点击后才会调用 AI 去重改写。"
+                  : "系统会根据内容自动判断适合的受众，并保留原文可核实的事实。"}
+              </Text>
 
               <Button
                 type="primary"
@@ -427,7 +470,7 @@ export default function AiCopyPage() {
                 onClick={handleSubmit}
                 disabled={!inputReady || !enabled}
               >
-                {mode === "generate" ? "生成口播文案" : "优化口播文案"}
+                {mode === "generate" ? "生成口播文案" : "开始去重改写"}
               </Button>
             </Space>
           </Card>
@@ -437,7 +480,7 @@ export default function AiCopyPage() {
           <Card
             title={
               <Space wrap>
-                <EditOutlined /> 生成结果
+                <EditOutlined /> {mode === "rewrite" ? "去重改写结果" : "生成结果"}
                 {taskId && <Tag color="blue">任务 {taskId}</Tag>}
                 {lastResponse?.model_name && <Tag>{lastResponse.model_name}</Tag>}
               </Space>

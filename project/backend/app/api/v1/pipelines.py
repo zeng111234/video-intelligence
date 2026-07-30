@@ -23,6 +23,7 @@ from project.backend.app.schemas.requests import PipelineCreateRequest
 from project.backend.app.schemas.responses import PipelineResponse
 from src.adapters.douyin_parser import DouyinParserError
 from src.models import CopywritingTask, PipelineStage, Platform, TranscriptionTask
+from src.services.production import DEFAULT_PRODUCTION_TEMPLATE_ID
 
 router = APIRouter(prefix="/api/v1/pipelines", tags=["pipelines"])
 
@@ -114,8 +115,6 @@ def _guided_preflight(
             missing.append("IP 配方未绑定数字人形象")
         if not profile.voice_id:
             missing.append("IP 配方未绑定音色")
-        if not profile.edit_template_id:
-            missing.append("IP 配方未绑定剪辑模板")
         if profile.avatar_id and profile.voice_id:
             assets = {item.asset_id: item for item in avatar_service.list_assets()}
             for asset_id, label in ((profile.avatar_id, "数字人形象"), (profile.voice_id, "音色")):
@@ -124,8 +123,9 @@ def _guided_preflight(
                     missing.append(f"IP 配方绑定的{label}不存在")
                 elif not asset.authorized:
                     missing.append(f"IP 配方绑定的{label}未确认授权")
-        if profile.edit_template_id and template_service.get_template(profile.edit_template_id) is None:
-            missing.append("IP 配方绑定的剪辑模板不存在")
+        template_id = profile.edit_template_id or DEFAULT_PRODUCTION_TEMPLATE_ID
+        if template_service.get_template(template_id) is None:
+            missing.append("系统通用智能优化配置异常")
     if not body.rights_confirmed or not body.rights_holder.strip():
         missing.append("请填写授权主体并确认拥有媒体、文案、肖像和声音处理权")
 

@@ -14,7 +14,6 @@ import {
   Select,
   Space,
   Spin,
-  Switch,
   Table,
   Tag,
   Typography,
@@ -50,7 +49,6 @@ import {
   recordManualPublishResult,
   resumePublishTask,
   retryPublishTask,
-  updatePublishAccount,
   uploadPublishAsset,
 } from "../api/client";
 import type {
@@ -78,14 +76,24 @@ const PLATFORM_LABELS: Record<string, string> = {
 };
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
-  succeeded: { label: "已确认发布", color: "success" },
+  succeeded: { label: "已发布", color: "success" },
   failed: { label: "发布失败", color: "error" },
-  outcome_unknown: { label: "结果待确认", color: "warning" },
+  outcome_unknown: { label: "平台结果待确认", color: "warning" },
   action_required: { label: "等待你处理", color: "processing" },
   pending: { label: "排队中", color: "blue" },
   manual_ready: { label: "待人工完成", color: "gold" },
   waiting_user: { label: "等待你确认", color: "processing" },
 };
+
+function inferDouyinMusicHint(title: string, description: string) {
+  const text = `${title} ${description}`;
+  if (/(机器人|人工智能|AI|科技|智能|未来)/i.test(text)) return "科技未来 克制";
+  if (/(老板|商业|赚钱|经营|公司|创业|客户)/i.test(text)) return "商业表达 平稳";
+  if (/(故事|曾经|后来|经历|回忆)/i.test(text)) return "故事叙事 克制";
+  if (/(焦虑|情绪|治愈|共鸣|关系|人生)/i.test(text)) return "情绪共鸣 克制";
+  if (/(揭秘|真相|为什么|居然|没想到)/i.test(text)) return "悬念揭秘 有推动感";
+  return "通用口播 克制";
+}
 
 function platformLabel(platform: string) {
   return PLATFORM_LABELS[platform] || platform;
@@ -101,7 +109,7 @@ function accountStatusMeta(status: string) {
 function platformHint(platform: PublishPlatformCapability) {
   if (platform.mode === "local_browser") return platform.manual_only
     ? "在本机打开官方创作者窗口；只有核验成功的账号才可创建任务。"
-    : "在本机官方创作者窗口上传并填写；开启账号授权后才会自动点击最终发布。";
+    : "系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。";
   if (platform.mode === "manual") return "无需账号配置；创建任务后按提示在官方平台完成发布。";
   return "当前不可用。";
 }
@@ -127,6 +135,7 @@ export default function PublishPage() {
   const [description, setDescription] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [nativeMusicHint, setNativeMusicHint] = useState("");
   const [preflight, setPreflight] = useState<PublishPreflightResponse | null>(null);
   const [manualTask, setManualTask] = useState<PublishResponse | null>(null);
   const [manualOutcome, setManualOutcome] = useState<"success" | "failed" | "unknown">("success");
@@ -136,10 +145,6 @@ export default function PublishPage() {
   const readyAccounts = useMemo(
     () => accounts.filter((account) => account.status === "ready"),
     [accounts],
-  );
-  const autoCapablePlatforms = useMemo(
-    () => new Set(availablePlatforms.filter((platform) => !platform.manual_only).map((platform) => platform.platform)),
-    [availablePlatforms],
   );
 
   const loadData = useCallback(async () => {
@@ -180,6 +185,7 @@ export default function PublishPage() {
         setAssets((current) => [asset, ...current.filter((item) => item.path !== asset.path)]);
         setVideoPath(asset.path);
         if (asset.recommended_title) setTitle((current) => current || asset.recommended_title || "");
+        setNativeMusicHint(asset.recommended_music_hint || "");
         setPageStep("publish");
         toast.success("已带入剪辑成片");
       })
@@ -231,6 +237,29 @@ export default function PublishPage() {
     }, 4000);
     return () => window.clearInterval(timer);
   }, [waitingAccountKey]);
+
+  const activeTaskKey = useMemo(
+    () => tasks
+      .filter((task) => ["pending", "action_required", "manual_ready", "outcome_unknown"].includes(task.publish_status))
+      .map((task) => task.task_id)
+      .join(","),
+    [tasks],
+  );
+
+  useEffect(() => {
+    if (!activeTaskKey) return;
+    const timer = window.setInterval(() => {
+      void listPublishBatches()
+        .then((data) => {
+          const refreshed = data.items.flatMap((batch) => batch.tasks);
+          setTasks(refreshed);
+          setSelectedTaskIds((current) => current.filter((taskId) => refreshed.some((task) => task.task_id === taskId)));
+        })
+        // 定时读取失败不打断当前操作；用户仍可使用“刷新”看到明确错误。
+        .catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [activeTaskKey]);
 
   const addAndConnectAccount = async (platform: string) => {
     const normalizedName = (accountNames[platform] ?? DEFAULT_ACCOUNT_NAME).trim();
@@ -317,11 +346,13 @@ export default function PublishPage() {
         description,
         tags,
         account_ids: currentAccountIds,
+        native_music_mode: platforms.includes("douyin") ? "auto_recommended" : "off",
+        native_music_hint: nativeMusicHint || inferDouyinMusicHint(title, description),
         confirmation_accepted: true,
       });
       setTasks((current) => [...batch.tasks, ...current]);
       setPreflight(null);
-      toast.success("发布任务已创建，请按每个平台的提示完成最后确认");
+      toast.success("发布任务已创建；系统会自动选抖音配乐并填写发布页");
     } catch (error) {
       toast.error((error as Error).message || "创建发布任务失败");
     } finally {
@@ -353,7 +384,16 @@ export default function PublishPage() {
         toast.error(`${platformLabel(unavailable)}账号尚未核验，请重新扫码或核验`);
         return;
       }
-      const result = await preflightPublish({ video_path: videoPath, platforms, title, description, tags, account_ids: currentAccountIds });
+      const result = await preflightPublish({
+        video_path: videoPath,
+        platforms,
+        title,
+        description,
+        tags,
+        account_ids: currentAccountIds,
+        native_music_mode: platforms.includes("douyin") ? "auto_recommended" : "off",
+        native_music_hint: nativeMusicHint || inferDouyinMusicHint(title, description),
+      });
       setPreflight(result);
       if (result.blocked) {
         if (result.platforms.some((platform) => platform.issue_code?.startsWith("account_"))) {
@@ -365,8 +405,8 @@ export default function PublishPage() {
       }
       Modal.confirm({
         title: "确认创建发布任务？",
-        content: `将为 ${platforms.map(platformLabel).join("、")} 创建单任务队列。只有已明确授权自动发布的账号才会自动点击最终发布；验证码、风控和异常仍由你处理。`,
-        okText: "确认创建",
+        content: `系统会上传视频、填写文案、自动选择抖音官方推荐配乐并提交发布。你只需在官方窗口完成登录、验证码或风控验证；结果不明确时系统会停止，不会重复发布。`,
+        okText: "确认并开始",
         cancelText: "返回修改",
         onOk: () => confirmCreateBatch(currentAccountIds),
       });
@@ -463,9 +503,9 @@ export default function PublishPage() {
       title: "下一步",
       width: 180,
       render: (_value, task) => <Space wrap>
-        {task.publish_status !== "succeeded" && <Button size="small" onClick={() => { setManualTask(task); setManualOutcome("success"); setManualUrl(task.platform_url || ""); setManualNote(""); }}>回填结果</Button>}
+        {["action_required", "manual_ready", "outcome_unknown"].includes(task.publish_status) && <Button size="small" onClick={() => { setManualTask(task); setManualOutcome("success"); setManualUrl(task.platform_url || ""); setManualNote(""); }}>回填实际结果</Button>}
         {task.publish_status === "action_required" && <Button size="small" type="primary" onClick={() => resumeTask(task)}>验证后继续</Button>}
-        {["failed", "outcome_unknown"].includes(task.publish_status) && <Button size="small" icon={<ReloadOutlined />} onClick={() => retryTask(task)}>重新准备</Button>}
+        {task.publish_status === "failed" && <Button size="small" icon={<ReloadOutlined />} onClick={() => retryTask(task)}>重新准备</Button>}
         {canDeleteTask(task) && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => confirmDeleteTasks([task.task_id])}>删除</Button>}
       </Space>,
     },
@@ -476,7 +516,7 @@ export default function PublishPage() {
   return <div>
     <div style={{ marginBottom: 20 }}>
       <Title level={4} style={{ margin: 0 }}><RocketOutlined /> 发布中心</Title>
-      <Text type="secondary">先核验账号，再选择成片。默认停在官方页面；仅对你明确授权的账号自动点击最终发布。</Text>
+      <Text type="secondary">先登录账号，再选择成片。系统负责上传、配乐、填写和提交；你只处理登录与验证码。</Text>
     </div>
 
     <Card size="small" style={{ marginBottom: 16 }}>
@@ -516,7 +556,6 @@ export default function PublishPage() {
                       <Text type="secondary" style={{ fontSize: 12 }}>{account.message}</Text>
                       <Space wrap>
                         {account.status === "ready" ? <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => { setSelectedAccountIds((current) => ({ ...current, [account.platform]: account.account_id })); setPageStep("publish"); }}>用这个账号发布</Button> : <Button size="small" type="primary" loading={connecting === account.account_id} onClick={() => connectAccount(account.account_id)}>打开浏览器登录</Button>}
-                        {autoCapablePlatforms.has(account.platform) && account.status === "ready" && <Space size={4}><Switch size="small" checked={account.auto_publish_authorized} onChange={async (checked) => { try { const updated = await updatePublishAccount(account.account_id, { auto_publish_authorized: checked }); setAccounts((current) => current.map((item) => item.account_id === updated.account_id ? updated : item)); toast.success(checked ? "已授权该账号自动点击最终发布" : "已关闭自动点击最终发布"); } catch (error) { toast.error((error as Error).message || "更新授权失败"); } }} /><Text type="secondary" style={{ fontSize: 12 }}>授权自动发布</Text></Space>}
                         <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeAccount(account)}>移除</Button>
                       </Space>
                     </Space>
@@ -559,7 +598,7 @@ export default function PublishPage() {
               <div>
                 <Text strong style={{ display: "block", marginBottom: 8 }}>2. 选择成片</Text>
                 <Space.Compact style={{ width: "100%" }}>
-                  <Select showSearch allowClear style={{ width: "100%" }} placeholder="选择已上传成片，或直接上传新文件" value={videoPath || undefined} options={assets.map((asset) => ({ label: asset.name, value: asset.path }))} onChange={(value) => { setVideoPath(value || ""); setPreflight(null); }} />
+                  <Select showSearch allowClear style={{ width: "100%" }} placeholder="选择已上传成片，或直接上传新文件" value={videoPath || undefined} options={assets.map((asset) => ({ label: asset.name, value: asset.path }))} onChange={(value) => { const asset = assets.find((item) => item.path === value); setVideoPath(value || ""); setNativeMusicHint(asset?.recommended_music_hint || ""); setPreflight(null); }} />
                   <Upload accept=".mp4,.mov,.m4v" showUploadList={false} customRequest={async (options) => {
                     try { const asset = await uploadPublishAsset(options.file as File); setAssets((current) => [asset, ...current]); setVideoPath(asset.path); options.onSuccess?.(asset); toast.success("成片已上传"); }
                     catch (error) { options.onError?.(error as Error); toast.error((error as Error).message || "上传失败"); }
@@ -577,6 +616,13 @@ export default function PublishPage() {
                 </Space>
               </div>
 
+              {platforms.includes("douyin") && <Alert
+                type="success"
+                showIcon
+                message="抖音原生配乐由系统自动选择"
+                description={`系统会根据文案方向“${nativeMusicHint || inferDouyinMusicHint(title, description)}”使用抖音官方推荐音乐；你不用自己打开音乐库。遇到登录或验证码时才需要你处理。`}
+              />}
+
               {preflight && <Alert type={preflight.blocked ? "warning" : "success"} showIcon message={preflight.blocked ? "请先处理以下问题" : "发布前检查通过"} description={<Space direction="vertical" size={4}>{preflight.issues.length > 0 && <Text>{preflight.issues.join("；")}</Text>}{preflight.platforms.filter((item) => item.issue).map((item) => <Text key={item.platform}>{platformLabel(item.platform)}：{item.issue}</Text>)}</Space>} />}
               <Divider style={{ margin: "2px 0" }} />
               <Button type="primary" icon={<RocketOutlined />} loading={submitting} onClick={startPublishing}>开始发布</Button>
@@ -587,7 +633,7 @@ export default function PublishPage() {
 
       <Col xs={24} xl={11}>
         <Card title={<Space><ClockCircleOutlined /> 发布任务 <Tag color="blue">{tasks.length}</Tag></Space>} extra={<Space><Button size="small" danger icon={<DeleteOutlined />} disabled={!selectedTaskIds.length} onClick={() => confirmDeleteTasks(selectedTaskIds)}>批量删除{selectedTaskIds.length ? `（${selectedTaskIds.length}）` : ""}</Button><Button size="small" onClick={loadData}>刷新</Button></Space>}>
-          <Alert type="info" showIcon message="单任务顺序处理" description={selectedPlatforms.length ? `已选择：${selectedPlatforms.map((platform) => platformLabel(platform.platform)).join("、")}。仅对明确授权的账号自动点击最终发布；遇到验证码、风控或结果不明确会暂停并交给你。` : "选择平台和成片后，任务会显示在这里。"} style={{ marginBottom: 16 }} />
+          <Alert type="info" showIcon message="单任务顺序处理" description={selectedPlatforms.length ? `已选择：${selectedPlatforms.map((platform) => platformLabel(platform.platform)).join("、")}。确认当前任务后，系统会自动上传、配乐、填写和提交；只在登录、验证码或结果不明确时请你接手。` : "选择平台和成片后，任务会显示在这里。"} style={{ marginBottom: 16 }} />
           {loading ? <SkeletonCard rows={4} /> : tasks.length ? <Table rowKey="task_id" columns={columns} dataSource={tasks} rowSelection={{ selectedRowKeys: selectedTaskIds, onChange: (keys) => setSelectedTaskIds(keys.map(String)), getCheckboxProps: (task) => ({ disabled: !canDeleteTask(task) }) }} pagination={{ pageSize: 8 }} size="middle" /> : <Empty description="还没有发布任务" />}
         </Card>
       </Col>

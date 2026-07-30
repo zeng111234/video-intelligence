@@ -283,4 +283,24 @@ describe("ProductionPage review and cost gates", () => {
     expect(firstKey).toBeTruthy();
     expect(secondKey).toBe(firstKey);
   }, 10_000);
+
+  it("keeps historical source tags and duplicated titles out of the queue header", async () => {
+    const unsafeBatch = {
+      ...batch("failed"),
+      name: "单条创作 · 机器人也失业，如今到底谁输谁赢？ 机器人也失业，如今到底谁输谁赢？#商业思维#AI数字人#石杨兵",
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [unsafeBatch] });
+
+    renderPage();
+
+    const safeTitle = "单条创作 · 机器人也失业，如今到底谁输谁赢？";
+    const header = (await screen.findByText(safeTitle)).closest(".ant-collapse-header");
+    expect(header).toBeTruthy();
+    expect(screen.queryByText(/石杨兵/)).toBeNull();
+    fireEvent.click(header as HTMLElement);
+    fireEvent.click((await screen.findByText("预检并启动")).closest("button") as HTMLButtonElement);
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText(`执行批次：${safeTitle}`)).toBeTruthy();
+    expect(within(drawer).queryByText(/石杨兵/)).toBeNull();
+  });
 });

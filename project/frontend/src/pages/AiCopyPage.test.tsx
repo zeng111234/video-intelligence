@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, waitFor, within } from "@testing-library/react";
-import { BrowserRouter } from "react-router-dom";
+import { BrowserRouter, MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import AiCopyPage from "./AiCopyPage";
@@ -34,6 +34,7 @@ function renderPage() {
 
 describe("AiCopyPage publish metadata", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     window.localStorage.clear();
     window.sessionStorage.clear();
     window.history.pushState({}, "", "/ai-copy");
@@ -95,12 +96,17 @@ describe("AiCopyPage publish metadata", () => {
     const view = renderPage();
 
     fireEvent.change(
-      within(view.container).getByPlaceholderText("粘贴已有文案、脚本或口播稿..."),
+      within(view.container).getByPlaceholderText("粘贴已确认的转写稿、口播稿或原始文案..."),
       { target: { value: "原始文案" } },
     );
-    const optimizeButton = within(view.container).getByRole("button", { name: /优化口播文案/ });
+    const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(optimizeButton);
+
+    await waitFor(() => expect(rewriteCopywriting).toHaveBeenCalledWith(expect.objectContaining({
+      source_text: "原始文案",
+      style_prompt: expect.stringContaining("去重改写"),
+    })));
 
     await within(view.container).findByText("发布标题、描述和话题");
     fireEvent.click(within(view.container).getByRole("button", { name: "AI 生成发布信息" }));
@@ -144,10 +150,10 @@ describe("AiCopyPage publish metadata", () => {
     const view = renderPage();
 
     fireEvent.change(
-      within(view.container).getByPlaceholderText("粘贴已有文案、脚本或口播稿..."),
+      within(view.container).getByPlaceholderText("粘贴已确认的转写稿、口播稿或原始文案..."),
       { target: { value: "原始文案" } },
     );
-    const optimizeButton = within(view.container).getByRole("button", { name: /优化口播文案/ });
+    const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(optimizeButton);
 
@@ -178,14 +184,25 @@ describe("AiCopyPage publish metadata", () => {
     const view = renderPage();
 
     fireEvent.change(
-      within(view.container).getByPlaceholderText("粘贴已有文案、脚本或口播稿..."),
+      within(view.container).getByPlaceholderText("粘贴已确认的转写稿、口播稿或原始文案..."),
       { target: { value: "原始文案" } },
     );
-    const optimizeButton = within(view.container).getByRole("button", { name: /优化口播文案/ });
+    const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(optimizeButton);
 
     expect(await within(view.container).findByText("这是自动优化后的最后版本。")).toBeTruthy();
     expect(within(view.container).getByText("已使用自动优化后的最终版本")).toBeTruthy();
+  });
+
+  it("accepts a reviewed transcript from transcription without starting a rewrite", async () => {
+    const view = render(
+      <MemoryRouter initialEntries={[{ pathname: "/ai-copy", state: { sourceText: "已质检的转写稿", sourceLabel: "真实视频.mp4" } }]}>
+        <ToastProvider><AiCopyPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await within(view.container).findByDisplayValue("已质检的转写稿")).toBeTruthy();
+    expect(rewriteCopywriting).not.toHaveBeenCalled();
   });
 });

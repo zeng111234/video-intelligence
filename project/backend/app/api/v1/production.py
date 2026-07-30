@@ -5,10 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from project.backend.app.core.deps import get_pipeline_service, get_production_service
-from src.services.production import IdempotencyConflictError
+from src.services.production import (
+    DEFAULT_PRODUCTION_TEMPLATE_ID,
+    IdempotencyConflictError,
+)
 
 router = APIRouter(prefix="/api/v1/production", tags=["production"])
 
@@ -21,7 +24,7 @@ class ProfileCreateRequest(BaseModel):
     script_style: str = Field("", max_length=500)
     avatar_id: str | None = None
     voice_id: str | None = None
-    edit_template_id: str | None = None
+    edit_template_id: str | None = DEFAULT_PRODUCTION_TEMPLATE_ID
     tags: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -73,6 +76,7 @@ class PublishTargetRequest(BaseModel):
     platform: str = Field(..., min_length=1, max_length=40)
     account_id: str | None = Field(default=None, max_length=80)
     use_manual_fallback: bool = True
+    auto_publish_authorized: bool = False
 
 
 class BatchPublishRequest(BaseModel):
@@ -82,14 +86,41 @@ class BatchPublishRequest(BaseModel):
     confirmation_accepted: bool = False
 
 
+class CreativePlanRequest(BaseModel):
+    """文案确认时一并保存的低成本改编方案，不会触发新的模型调用。"""
+
+    hook: str = Field(..., min_length=1, max_length=160)
+    key_points: list[str] = Field(..., min_length=1, max_length=5)
+    call_to_action: str = Field(..., min_length=1, max_length=160)
+    visual_sections: list[str] = Field(..., min_length=1, max_length=3)
+
+    @field_validator("key_points", "visual_sections")
+    @classmethod
+    def _require_short_non_empty_items(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values if value.strip()]
+        if not cleaned:
+            raise ValueError("创作方案至少需要一项内容。")
+        if any(len(value) > 180 for value in cleaned):
+            raise ValueError("创作方案的单项内容不能超过 180 个字。")
+        return cleaned
+
+
+class PublishDraftRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=30)
+    description: str = Field("", max_length=1000)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+
+
 class BatchReviewItem(BaseModel):
     run_id: str = Field(..., min_length=1)
     approved_text: str = Field("", max_length=10000)
     note: str = Field("", max_length=500)
+    creative_plan: CreativePlanRequest | None = None
+    publish_draft: PublishDraftRequest | None = None
 
 
 class BatchReviewRequest(BaseModel):
-    stage: str = Field(..., pattern="^(transcript|script|output)$")
+    stage: str = Field(..., pattern="^(transcript|script|output|publish)$")
     reviewer: str = Field(..., min_length=1, max_length=80)
     items: list[BatchReviewItem] = Field(..., min_length=1, max_length=50)
 
@@ -229,6 +260,8 @@ def review_batch_items(
             status_code=400,
             detail=f"{body.stage} 审核必须提交非空的最终文本。",
         )
+    if body.stage == "publish" and any(item.publish_draft is None for item in body.items):
+        raise HTTPException(status_code=400, detail="发布信息确认必须提交标题、描述和标签。")
     results: list[dict[str, Any]] = []
     for item in body.items:
         if item.run_id not in owned:
@@ -266,6 +299,19 @@ def review_batch_items(
                     reviewer=body.reviewer,
                     note=item.note,
                     approved_text=item.approved_text,
+                    creative_plan=(
+                        item.creative_plan.model_dump()
+                        if item.creative_plan is not None
+                        else None
+                    ),
+                )
+            elif body.stage == "publish":
+                assert item.publish_draft is not None
+                pipeline_service.confirm_publish_draft(
+                    run_id=item.run_id,
+                    reviewer=body.reviewer,
+                    note=item.note,
+                    **item.publish_draft.model_dump(),
                 )
             else:
                 pipeline_service.confirm_output_review(
@@ -396,8 +442,6 @@ def keyword_run_preflight(body: KeywordAutoRunRequest, service=Depends(get_produ
             missing.append("IP 配方未绑定数字人形象")
         if not profile.voice_id:
             missing.append("IP 配方未绑定音色")
-        if not profile.edit_template_id:
-            missing.append("IP 配方未绑定剪辑模板")
     if not body.rights_confirmed:
         missing.append("未确认媒体处理授权")
     return {
@@ -419,8 +463,8 @@ def start_keyword_auto_run(
     profile = next((item for item in service.list_profiles() if item.profile_id == body.profile_id), None)
     if profile is None:
         raise HTTPException(status_code=400, detail="IP 配方不存在。")
-    if not all([profile.avatar_id, profile.voice_id, profile.edit_template_id]):
-        raise HTTPException(status_code=400, detail="IP 配方必须绑定形象、音色和剪辑模板。")
+    if not all([profile.avatar_id, profile.voice_id]):
+        raise HTTPException(status_code=400, detail="IP 配方必须绑定形象和音色。")
     run = pipeline_service.start_keyword_auto_run(
         keyword=body.keyword,
         candidate_count=body.candidate_count,
