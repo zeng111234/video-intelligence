@@ -24,6 +24,11 @@ from src.adapters.official import (  # noqa: E402
 from src.services.candidate import CandidateService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
 from src.services.transcription import TranscriptionService  # noqa: E402
+from src.services.cloud_transcription import (  # noqa: E402
+    ASRAuthorizationStore,
+    AliyunFunASRRuntime,
+)
+from src.services.transcription_worker import TranscriptionWorker  # noqa: E402
 from src.services.doubao_browser import (  # noqa: E402
     DoubaoBrowserAutomationService,
     DoubaoMobileAutomationService,
@@ -63,10 +68,6 @@ from project.backend.app.core.config import (  # noqa: E402
     PROJECT_ROOT,
     ASRMode,
     ASR_MODE,
-    ASR_CLOUD_PROVIDER,
-    ALIYUN_ASR_ACCESS_KEY_ID,
-    ALIYUN_ASR_ACCESS_KEY_SECRET,
-    ALIYUN_ASR_APP_KEY,
     CRAWLER_PROVIDER_MODE,
     CRAWLER_PROVIDER_NAME,
     CRAWLER_ACTIVE_PLATFORMS,
@@ -88,7 +89,6 @@ from project.backend.app.core.config import (  # noqa: E402
     DOUYIN_BROWSER_DISCOVERY_ENABLED,
     DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
     DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
-    XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED,
     XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
     XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
     KUAISHOU_BROWSER_DISCOVERY_ENABLED,
@@ -169,7 +169,9 @@ def get_hotspot_search_service() -> CommercialSearchService:
 def get_xiaohongshu_browser_provider() -> LocalPlatformBrowserSearchProvider:
     return LocalPlatformBrowserSearchProvider(
         platform=Platform.XIAOHONGSHU,
-        enabled=XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED,
+        # 小红书账号已出现第三方自动化预警。即使旧环境变量仍为 true，也不能
+        # 重新启用登录态浏览；只允许人工导入已观察到的素材。
+        enabled=False,
         profile_dir=XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
         browser_channel=DOUYIN_BROWSER_CHANNEL,
         debug_port=XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
@@ -295,27 +297,14 @@ def _build_asr_model_loader():
 
 
 def _build_cloud_asr_loader():
-    """构建云端 ASR model_loader。未配置凭证时自动降级为 sandbox。"""
-    from src.adapters.cloud_asr import SandboxCloudASR
-    from src.adapters.asr_bridge import ASRBridge
+    """Cloud mode is handled by the persisted Fun-ASR runtime."""
 
-    if ASR_CLOUD_PROVIDER.value == "aliyun":
-        if not all(
-            [ALIYUN_ASR_ACCESS_KEY_ID, ALIYUN_ASR_ACCESS_KEY_SECRET, ALIYUN_ASR_APP_KEY]
-        ):
-            # 凭证不完整，降级为 sandbox
-            return lambda _: ASRBridge(SandboxCloudASR())
-        from src.adapters.aliyun_asr import AliyunASRProvider
-
-        provider = AliyunASRProvider(
-            access_key_id=ALIYUN_ASR_ACCESS_KEY_ID,
-            access_key_secret=ALIYUN_ASR_ACCESS_KEY_SECRET,
-            app_key=ALIYUN_ASR_APP_KEY,
+    def unavailable_legacy_loader(_model_name: str):
+        raise RuntimeError(
+            "云端 ASR 不会加载本地模型，也不会降级到演示数据。"
         )
-        return lambda _: ASRBridge(provider)
 
-    # 其他供应商暂未实现，降级为 sandbox
-    return lambda _: ASRBridge(SandboxCloudASR())
+    return unavailable_legacy_loader
 
 
 def _local_model_loader(model_name: str):
@@ -340,11 +329,29 @@ def get_transcription_service() -> TranscriptionService:
         if capabilities.get("mode") == "production" and capabilities.get("enabled")
         else None
     )
+    cloud_runtime = None
+    cloud_storage_directory = None
+    if ASR_MODE == ASRMode.CLOUD:
+        cloud_runtime = AliyunFunASRRuntime(
+            authorization_store=ASRAuthorizationStore(
+                PROJECT_ROOT / "data" / "production" / "asr_authorization.json"
+            )
+        )
+        cloud_storage_directory = (
+            PROJECT_ROOT / "data" / "production" / "transcription_media"
+        )
     return TranscriptionService(
         get_repository(),
         model_loader=model_loader,
         transcript_reviewer=review_method if callable(review_method) else None,
+        cloud_runtime=cloud_runtime,
+        cloud_storage_directory=cloud_storage_directory,
     )
+
+
+@lru_cache
+def get_transcription_worker() -> TranscriptionWorker:
+    return TranscriptionWorker(get_transcription_service())
 
 
 @lru_cache

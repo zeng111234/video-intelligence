@@ -67,13 +67,20 @@ async def lifespan(application: FastAPI):
         logger.warning("数据库迁移检查失败（不影响启动）: %s", exc)
     worker = None
     publish_worker = None
+    transcription_worker = None
     try:
-        from project.backend.app.core.deps import get_pipeline_worker, get_publish_worker
+        from project.backend.app.core.deps import (
+            get_pipeline_worker,
+            get_publish_worker,
+            get_transcription_worker,
+        )
 
         worker = get_pipeline_worker()
         await worker.start()
         publish_worker = get_publish_worker()
         await publish_worker.start()
+        transcription_worker = get_transcription_worker()
+        await transcription_worker.start()
         logger.info("流水线 worker 已启动")
     except Exception as exc:
         logger.warning("流水线 worker 启动失败（不影响 API）: %s", exc)
@@ -84,6 +91,8 @@ async def lifespan(application: FastAPI):
             await worker.stop()
         if publish_worker is not None:
             await publish_worker.stop()
+        if transcription_worker is not None:
+            await transcription_worker.stop()
 
 
 app = FastAPI(

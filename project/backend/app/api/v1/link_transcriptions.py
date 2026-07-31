@@ -65,8 +65,8 @@ def capabilities(service=Depends(get_douyin_link_transcription_service)):
     enabled, message = service.parser.capabilities()
     return {
         "experimental": True,
-        "supported_platforms": ["douyin", "xiaohongshu", "kuaishou", "bilibili"],
-        "supported_platform_labels": ["抖音", "小红书", "快手", "B站"],
+        "supported_platforms": ["douyin", "kuaishou", "bilibili"],
+        "supported_platform_labels": ["抖音", "快手", "B站"],
         "parser_enabled": enabled,
         "parser_message": message,
         "oneapi_estimated_cost_cny": service._fallback_price(),
@@ -121,14 +121,13 @@ def create_from_candidate(
         raise HTTPException(status_code=404, detail="候选不存在。")
     supported_platforms = {
         Platform.DOUYIN,
-        Platform.XIAOHONGSHU,
         Platform.KUAISHOU,
         Platform.BILIBILI,
     }
     if candidate.platform not in supported_platforms:
         raise HTTPException(
             status_code=400,
-            detail="当前仅支持抖音、小红书、快手和B站候选；视频号请上传有权处理的视频文件。",
+            detail="当前仅支持抖音、快手和B站候选；小红书请上传有权处理的本地文件。",
         )
     if not candidate.source_url:
         raise HTTPException(status_code=400, detail="该候选没有可用的原视频链接。")

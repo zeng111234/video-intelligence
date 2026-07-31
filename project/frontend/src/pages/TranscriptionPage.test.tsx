@@ -28,6 +28,8 @@ vi.mock("../api/client", () => ({
   listTranscriptions: vi.fn(),
   listVoiceoverDrafts: vi.fn(),
   previewCrawlerLinkTranscription: vi.fn(),
+  reconnectTranscription: vi.fn(),
+  retryTranscription: vi.fn(),
   updateVoiceoverDraft: vi.fn(),
   uploadAndTranscribe: vi.fn(),
 }));
@@ -151,6 +153,42 @@ describe("TranscriptionPage", () => {
     expect(await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接")).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /抖音分享链接/ })).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText(/公司阿里云 Fun-ASR/)).toBeTruthy();
+    expect(screen.queryByText(/large-v3-turbo/)).toBeNull();
+  });
+
+  it("shows cloud transcript as review-required without a second ASR claim", async () => {
+    vi.mocked(listTranscriptions).mockResolvedValue([{
+      ...autoReviewedTask,
+      task_id: "transcript-cloud",
+      provider_name: "aliyun_fun_asr",
+      provider_job_id: "aliyun-job-1",
+      provider_status: "succeeded",
+      model_name: "fun-asr",
+      stage: "待人工复核",
+      approved_revision_id: null,
+      auto_reviewed: false,
+      uncertain_segment_count: 1,
+      secondary_asr_count: 0,
+      llm_review_count: 0,
+      segments: [{
+        ...autoReviewedTask.segments[0],
+        confidence: null,
+        needs_review: true,
+        quality_status: "pending",
+        quality_source: "primary_asr",
+      }],
+    }]);
+
+    render(
+      <MemoryRouter initialEntries={["/transcription?task=transcript-cloud"]}>
+        <ToastProvider><TranscriptionPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("云端识别结果")).toBeTruthy();
+    expect(screen.getAllByText("待人工复核").length).toBeGreaterThan(0);
+    expect(screen.getByText(/系统未做二次识别或自动改写/)).toBeTruthy();
   });
 
   it("shows a mock low-confidence LLM rewrite without claiming a real model call", async () => {

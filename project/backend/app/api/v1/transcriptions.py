@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
@@ -27,6 +28,12 @@ from src.models import (
     TranscriptionTask,
 )
 from src.services.transcription import TranscriptionError
+from src.services.cloud_transcription import (
+    ASRAuthorization,
+    ASR_PER_TASK_CAP_CNY,
+    ASR_PRICE_VERSION,
+    ASR_UNIT_PRICE_CNY_PER_SECOND,
+)
 
 router = APIRouter(prefix="/api/v1/transcriptions", tags=["transcriptions"])
 
@@ -97,6 +104,15 @@ class TranscriptionHistoryDeleteResponse(BaseModel):
     deleted_count: int
 
 
+class ASRAuthorizationRequest(BaseModel):
+    confirmed: bool
+    per_task_cap_cny: Decimal = Field(
+        default=ASR_PER_TASK_CAP_CNY,
+        gt=0,
+        le=ASR_PER_TASK_CAP_CNY,
+    )
+
+
 def _to_response(task, service=None) -> TranscriptionResponse:
     source_segments = task.segments or []
     if service is not None and not task.is_mock:
@@ -126,6 +142,12 @@ def _to_response(task, service=None) -> TranscriptionResponse:
         stage=task.stage,
         media_name=task.media_name,
         model_name=task.model_name,
+        provider_name=task.provider_name,
+        provider_job_id=task.provider_job_id,
+        provider_status=task.provider_status,
+        estimated_cost_cny=task.estimated_cost_cny,
+        pricing_version=task.pricing_version,
+        billing_authorized=task.billing_authorized,
         source_kind=task.source_kind,
         timing_available=task.timing_available,
         duration_seconds=task.duration_seconds,
@@ -169,7 +191,7 @@ def create_transcription(
     return _to_response(task, service)
 
 
-@router.post("/upload", response_model=TranscriptionResponse)
+@router.post("/upload", response_model=TranscriptionResponse, status_code=202)
 async def upload_and_transcribe(
     file: UploadFile = File(..., description="视频文件（MP4 / MOV）"),
     rights_confirmed: bool = Form(True, description="是否确认拥有媒体处理权"),
@@ -177,6 +199,7 @@ async def upload_and_transcribe(
     model_name: str = Form("large-v3-turbo", description="识别模型名称"),
     language: str = Form("zh", description="识别语言：auto/zh/en/ja/ko"),
     hotwords: str = Form("", description="专有词提示"),
+    candidate_id: str = Form("", description="可选的候选素材编号"),
     service=Depends(get_transcription_service),
 ) -> TranscriptionResponse:
     """上传视频文件并执行真实转写。
@@ -204,9 +227,11 @@ async def upload_and_transcribe(
             media_bytes=media_bytes,
             rights_confirmed=rights_confirmed,
             rights_holder=rights_holder,
+            candidate_id=candidate_id.strip() or None,
             model_name=model_name,
             language=language,
             hotwords=hotwords or None,
+            async_processing=ASR_MODE == ASRMode.CLOUD,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -214,7 +239,7 @@ async def upload_and_transcribe(
     return _to_response(task, service)
 
 
-@router.post("/url", response_model=TranscriptionResponse)
+@router.post("/url", response_model=TranscriptionResponse, status_code=202)
 async def create_transcription_by_url(
     body: TranscriptionUrlRequest,
     service=Depends(get_transcription_service),
@@ -241,6 +266,7 @@ async def create_transcription_by_url(
             rights_confirmed=body.rights_confirmed,
             rights_holder=body.rights_holder.strip() or "API用户",
             model_name=body.model_name,
+            async_processing=ASR_MODE == ASRMode.CLOUD,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -248,8 +274,18 @@ async def create_transcription_by_url(
 
 
 @router.get("/config", response_model=dict[str, Any])
-def get_asr_config() -> dict[str, Any]:
+def get_asr_config(
+    service=Depends(get_transcription_service),
+) -> dict[str, Any]:
     """返回当前 ASR 配置信息，供前端展示。"""
+    if ASR_MODE == ASRMode.CLOUD:
+        capability = service.cloud_runtime.capability()
+        return {
+            "asr_mode": ASR_MODE.value,
+            "supports_upload": capability["enabled"],
+            "description": "公司阿里云语音识别，不使用客户电脑 CPU。",
+            **capability,
+        }
     return {
         "asr_mode": ASR_MODE.value,
         "supports_upload": ASR_MODE in {ASRMode.LOCAL, ASRMode.CLOUD},
@@ -259,6 +295,81 @@ def get_asr_config() -> dict[str, Any]:
             ASRMode.CLOUD: "云端识别 —— 调用阿里云等供应商 API",
         }.get(ASR_MODE, "未知模式"),
     }
+
+
+@router.post("/authorization", response_model=dict[str, Any])
+def authorize_cloud_asr(
+    body: ASRAuthorizationRequest,
+    service=Depends(get_transcription_service),
+):
+    if ASR_MODE != ASRMode.CLOUD or service.cloud_runtime is None:
+        raise HTTPException(
+            status_code=400,
+            detail="请先由管理员将 ASR_MODE 切换为 cloud。",
+        )
+    if not body.confirmed:
+        raise HTTPException(status_code=400, detail="必须明确确认费用授权。")
+    authorization = ASRAuthorization(
+        confirmed=True,
+        provider_name="aliyun_fun_asr",
+        price_version=ASR_PRICE_VERSION,
+        unit_price_cny_per_second=ASR_UNIT_PRICE_CNY_PER_SECOND,
+        per_task_cap_cny=body.per_task_cap_cny,
+        confirmed_at=datetime.now().astimezone(),
+    )
+    service.cloud_runtime.authorization_store.save(authorization)
+    return service.cloud_runtime.capability()
+
+
+@router.post("/{task_id}/reconnect", response_model=TranscriptionResponse)
+def reconnect_cloud_transcription(
+    task_id: str,
+    service=Depends(get_transcription_service),
+):
+    task = service.repository.get_task(task_id)
+    if not isinstance(task, TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+    if not task.provider_job_id:
+        raise HTTPException(
+            status_code=400,
+            detail="该任务没有可查询的阿里云任务 ID，不能安全重连。",
+        )
+    try:
+        refreshed = service.process_cloud_task(task_id)
+    except TranscriptionError:
+        refreshed = service.repository.get_task(task_id)
+    return _to_response(refreshed, service)
+
+
+@router.post("/{task_id}/retry", response_model=TranscriptionResponse, status_code=202)
+def retry_cloud_transcription(
+    task_id: str,
+    service=Depends(get_transcription_service),
+):
+    task = service.repository.get_task(task_id)
+    if not isinstance(task, TranscriptionTask):
+        raise HTTPException(status_code=404, detail="转写任务不存在。")
+    if task.status != TaskStatus.FAILED:
+        raise HTTPException(
+            status_code=400,
+            detail="只有阿里云已明确失败的任务才能重新识别；结果未知时不能重提。",
+        )
+    if task.retry_count >= 1:
+        raise HTTPException(status_code=400, detail="该任务已经重试过一次。")
+    retrying = task.model_copy(
+        update={
+            "status": TaskStatus.QUEUED,
+            "stage": "等待重新识别",
+            "progress": 5,
+            "provider_job_id": None,
+            "provider_status": "queued",
+            "error_message": None,
+            "retry_count": task.retry_count + 1,
+            "updated_at": datetime.now().astimezone(),
+        }
+    )
+    service.repository.save_task(retrying)
+    return _to_response(retrying, service)
 
 
 @router.get("", response_model=list[TranscriptionResponse])

@@ -245,6 +245,7 @@ class ProductionBatchItemStatus(StrEnum):
     AWAITING_REVIEW = "awaiting_review"
     AWAITING_PUBLISH = "awaiting_publish"
     READY_TO_PUBLISH = "ready_to_publish"
+    SKIPPED = "skipped"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -684,7 +685,7 @@ class DiscoveryResult(BaseModel):
 class SearchBatch(BaseModel):
     batch_id: str = Field(default_factory=lambda: f"batch-{uuid4().hex[:12]}")
     keyword: str = Field(min_length=2, max_length=50)
-    # 0 表示不限发布时间；180 天供小红书半年召回，300 天供快手近 10 个月召回。
+    # 0 表示不限发布时间；30 天供快手近期召回，历史批次仍兼容 180/300 天。
     published_window_days: int = Field(default=0)
     # 热点宝的榜单统计周期，和发布时间筛选分开保存。
     hotspot_window_hours: int | None = None
@@ -712,9 +713,9 @@ class SearchBatch(BaseModel):
 
     @model_validator(mode="after")
     def validate_window(self):
-        if self.published_window_days not in {0, 1, 3, 7, 180, 300}:
+        if self.published_window_days not in {0, 1, 3, 7, 30, 180, 300}:
             raise ValueError(
-                "发布时间范围只支持不限、近 1 天、近 3 天、近 7 天、近半年或近 10 个月。"
+                "发布时间范围只支持不限、近 1 天、近 3 天、近 7 天、近 30 天、近半年或近 10 个月。"
             )
         if self.hotspot_window_hours not in {None, 1, 24, 72, 168}:
             raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
@@ -910,6 +911,13 @@ class TranscriptionTask(TaskRecord):
     stage: str = "等待处理"
     media_sha256: str | None = None
     model_name: str | None = None
+    provider_name: str | None = None
+    provider_job_id: str | None = None
+    provider_status: str | None = None
+    provider_object_key: str | None = None
+    estimated_cost_cny: float | None = Field(default=None, ge=0)
+    pricing_version: str | None = None
+    billing_authorized: bool = False
     asr_hotwords: str | None = None
     language: str | None = None
     duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
@@ -1323,6 +1331,9 @@ class ProductionBatchItem(BaseModel):
     source_type: str = "candidate"
     source_value: str = ""
     display_title: str = ""
+    candidate_role: str = "primary"
+    spoken_material_status: str = "pending"
+    spoken_material_message: str = ""
     profile_overrides: dict[str, str] = Field(default_factory=dict)
     status: ProductionBatchItemStatus = ProductionBatchItemStatus.PLANNED
     blocked_reasons: list[str] = Field(default_factory=list)

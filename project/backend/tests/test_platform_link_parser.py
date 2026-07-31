@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from src.adapters.douyin_parser import LocalDouyinBrowserParserClient
@@ -114,6 +115,63 @@ def test_kuaishou_payload_extracts_photo_url():
     assert captured["media_url"] == "https://video.kuaishou.example/play.mp4"
 
 
+def test_kuaishou_payload_only_accepts_the_requested_work():
+    captured: dict[str, str] = {}
+
+    _client()._capture_media_payload(
+        {
+            "data": {
+                "feed": [
+                    {
+                        "photo": {
+                            "id": "wrong-work",
+                            "caption": "推荐流视频",
+                            "photoUrl": "https://video.kuaishou.example/wrong.mp4",
+                        }
+                    },
+                    {
+                        "photo": {
+                            "id": "target-work",
+                            "caption": "贴标机",
+                            "photoUrl": "https://video.kuaishou.example/target.mp4",
+                        }
+                    },
+                ]
+            }
+        },
+        Platform.KUAISHOU,
+        captured,
+        expected_work_id="target-work",
+    )
+
+    assert captured == {
+        "media_url": "https://video.kuaishou.example/target.mp4",
+        "work_id": "target-work",
+        "title": "贴标机",
+    }
+
+
+def test_kuaishou_payload_rejects_media_when_requested_work_is_missing():
+    captured: dict[str, str] = {}
+
+    _client()._capture_media_payload(
+        {
+            "data": {
+                "photo": {
+                    "id": "wrong-work",
+                    "caption": "推荐流视频",
+                    "photoUrl": "https://video.kuaishou.example/wrong.mp4",
+                }
+            }
+        },
+        Platform.KUAISHOU,
+        captured,
+        expected_work_id="target-work",
+    )
+
+    assert captured == {}
+
+
 def test_bilibili_payload_prefers_progressive_stream_then_dash_audio():
     captured: dict[str, str] = {}
     client = _client()
@@ -122,9 +180,7 @@ def test_bilibili_payload_prefers_progressive_stream_then_dash_audio():
         {
             "data": {
                 "durl": [{"url": "https://upos.example/progressive.mp4"}],
-                "dash": {
-                    "audio": [{"baseUrl": "https://upos.example/audio.m4s"}]
-                },
+                "dash": {"audio": [{"baseUrl": "https://upos.example/audio.m4s"}]},
             }
         },
         Platform.BILIBILI,
@@ -135,18 +191,65 @@ def test_bilibili_payload_prefers_progressive_stream_then_dash_audio():
 
     captured.clear()
     client._capture_media_payload(
-        {
-            "data": {
-                "dash": {
-                    "audio": [{"baseUrl": "https://upos.example/audio.m4s"}]
-                }
-            }
-        },
+        {"data": {"dash": {"audio": [{"baseUrl": "https://upos.example/audio.m4s"}]}}},
         Platform.BILIBILI,
         captured,
     )
 
     assert captured["media_url"] == "https://upos.example/audio.m4s"
+
+
+def test_bilibili_audio_is_not_replaced_by_a_video_only_page_stream():
+    client = _client()
+
+    assert client._may_capture_generic_video_response(Platform.BILIBILI) is False
+    assert client._may_capture_generic_video_response(Platform.KUAISHOU) is False
+    assert client._may_capture_generic_video_response(Platform.XIAOHONGSHU) is True
+
+
+def test_bilibili_public_api_resolves_the_target_audio_stream():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/view"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "bvid": "BV1bZ3t64EvY",
+                        "cid": 40448491583,
+                        "title": "外贸获客讲解",
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "audio": [
+                            {"baseUrl": "https://upos.example/audio.m4s"}
+                        ]
+                    }
+                },
+            },
+        )
+
+    client = LocalPlatformLinkParserClient(
+        douyin_parser=LocalDouyinBrowserParserClient(enabled=True),
+        platform_providers={},
+        http_client_factory=lambda **kwargs: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            **kwargs,
+        ),
+    )
+
+    media = client.resolve("https://www.bilibili.com/video/BV1bZ3t64EvY")
+
+    assert media.work_id == "BV1bZ3t64EvY"
+    assert media.title == "外贸获客讲解"
+    assert media.media_url == "https://upos.example/audio.m4s"
+    assert media.media_request_headers["Referer"].endswith("/BV1bZ3t64EvY")
 
 
 def test_platform_capability_requires_the_corresponding_browser_session():

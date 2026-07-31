@@ -277,6 +277,7 @@ class ProductionService:
             for source in normalized_sources:
                 source_type = source["source_type"]
                 source_value = source["source_value"]
+                candidate_role = source["candidate_role"]
                 overrides = source["profile_overrides"]
                 candidate = None
                 if source_type == "candidate":
@@ -301,11 +302,19 @@ class ProductionService:
                         "source": "production_batch_plan",
                         "source_type": source_type,
                         "source_value": source_value,
-                        "share_text": source_value if source_type == "share_link" else "",
+                        "share_text": (
+                            str(candidate.source_url or "")
+                            if candidate is not None
+                            else (source_value if source_type == "share_link" else "")
+                        ),
                         "workflow": workflow,
                         "batch_id": batch.batch_id,
                         "profile": merged_profile,
                         "candidate_id": candidate.video_id if candidate is not None else "",
+                        "candidate_role": candidate_role,
+                        "candidate_platform": (
+                            candidate.platform.value if candidate is not None else ""
+                        ),
                         "next_action": "完成批次预检并启动后，后台将按队列执行。",
                     },
                 )
@@ -335,6 +344,7 @@ class ProductionService:
                         source_type=source_type,
                         source_value=source_value,
                         display_title=title,
+                        candidate_role=candidate_role,
                         profile_overrides=overrides,
                     )
                 )
@@ -527,6 +537,12 @@ class ProductionService:
                 "source_type": source_type,
                 "source_value": value,
                 "display_title": str(item.get("display_title") or item.get("title") or "").strip(),
+                "candidate_role": (
+                    "reserve"
+                    if source_type == "candidate"
+                    and str(item.get("candidate_role") or "").casefold() == "reserve"
+                    else "primary"
+                ),
                 "profile_overrides": {
                     key: str(value)
                     for key, value in overrides.items()
@@ -545,6 +561,7 @@ class ProductionService:
         concurrency: int = 1,
         max_total_cost_cny: float | None = None,
         paid_actions_confirmed: bool = False,
+        automation_mode: str = "manual",
     ) -> dict[str, Any]:
         batch = self.get_batch(batch_id)
         if batch is None:
@@ -646,12 +663,21 @@ class ProductionService:
         total_cost = 0.0
         budget_used = 0.0
         all_costs_known = True
+        manual_script_audit = str(automation_mode or "manual").casefold() != "auto"
         for item in batch.items:
             reasons = list(shared)
             item_cost = avatar_cost
             item_cost_known = avatar_cost_known
             use_paid_fallback = False
-            if item.source_type in {"candidate", "share_link", "brief"}:
+            rewrite_required = item.source_type in {"candidate", "share_link", "brief"}
+            audit_required = manual_script_audit and item.source_type in {
+                "candidate",
+                "share_link",
+                "brief",
+                "script",
+            }
+            copy_call_count = int(rewrite_required) + int(audit_required)
+            if copy_call_count:
                 if copy_capability_error:
                     reasons.append(copy_capability_error)
                     item_cost_known = False
@@ -689,9 +715,9 @@ class ProductionService:
                             if configured_cost is None:
                                 item_cost_known = False
                             else:
-                                item_cost += float(configured_cost)
+                                item_cost += float(configured_cost) * copy_call_count
                     else:
-                        item_cost += float(copy_cost or 0)
+                        item_cost += float(copy_cost or 0) * copy_call_count
             if item.profile_overrides:
                 if self.avatar_service is not None:
                     for key, label in (("avatar_id", "数字人形象"), ("voice_id", "音色")):
@@ -711,13 +737,9 @@ class ProductionService:
                 candidate = getattr(self.repository, "get_candidate", lambda _: None)(item.candidate_id)
                 if candidate is None:
                     reasons.append("候选不存在或已被删除。")
-                elif candidate.platform.value != "douyin":
-                    reasons.append(
-                        "当前自动生产只支持抖音候选；其他平台请改用链接、选题或已有文案。"
-                    )
-                elif self.media_resolution_service is None:
+                elif candidate.platform.value == "douyin" and self.media_resolution_service is None:
                     reasons.append("媒体解析服务未配置。")
-                else:
+                elif candidate.platform.value == "douyin":
                     preview = self.media_resolution_service.preview(candidate)
                     if bundled_compute:
                         item_cost += 0.0
@@ -728,6 +750,26 @@ class ProductionService:
                     budget_used = max(budget_used, float(preview.monthly_budget_used_cny or 0))
                     if not preview.resolvable:
                         reasons.append(preview.block_reason or "候选不能进入媒体解析。")
+                elif not str(candidate.source_url or "").lower().startswith(
+                    ("http://", "https://")
+                ):
+                    reasons.append("该平台候选缺少可打开的原视频链接。")
+                elif self.link_transcription_service is None:
+                    item_cost_known = False
+                    reasons.append("本机平台链接解析服务未配置。")
+                else:
+                    try:
+                        link_preview = self.link_transcription_service.preview(
+                            str(candidate.source_url)
+                        )
+                    except DouyinParserError as exc:
+                        reasons.append(exc.user_message)
+                    else:
+                        if not link_preview.parser_enabled:
+                            reasons.append(
+                                link_preview.parser_message
+                                or "本机浏览器暂时不能解析该平台链接。"
+                            )
             elif item.source_type == "share_link":
                 if not item.source_value.lower().startswith(("http://", "https://")):
                     reasons.append("分享链接格式无效。")
@@ -765,10 +807,13 @@ class ProductionService:
                 "candidate_id": item.candidate_id,
                 "source_type": item.source_type,
                 "display_title": item.display_title or item.source_value,
+                "candidate_role": item.candidate_role,
                 "reasons": reasons,
                 "estimated_cost_cny": round(item_cost, 2) if item_cost_known else None,
                 "cost_known": item_cost_known,
                 "use_paid_fallback": use_paid_fallback,
+                "copy_call_count": copy_call_count,
+                "manual_script_audit": audit_required,
             })
         cost_issues: list[str] = []
         if not all_costs_known:
@@ -883,6 +928,29 @@ class ProductionService:
                     "paid_actions_confirmed": bool(
                         options.get("paid_actions_confirmed")
                     ),
+                    "automation_mode": (
+                        "auto"
+                        if str(options.get("automation_mode") or "").casefold()
+                        == "auto"
+                        else "manual"
+                    ),
+                    "auto_review_state": (
+                        "pending"
+                        if str(options.get("automation_mode") or "").casefold()
+                        == "auto"
+                        else "not_required"
+                    ),
+                    "auto_target_count": sum(
+                        1
+                        for item in batch.items
+                        if item.candidate_role != "reserve"
+                    ),
+                    "auto_reserve_count": sum(
+                        1
+                        for item in batch.items
+                        if item.candidate_role == "reserve"
+                    ),
+                    "auto_reserve_activated_count": 0,
                     "item_costs": {
                         item["run_id"]: {
                             "estimated_cost_cny": item["estimated_cost_cny"],
@@ -895,6 +963,7 @@ class ProductionService:
                 key=idempotency_key,
                 request_hash=request_hash,
             )
+            queued_count = 0
             for item in batch.items:
                 result = by_run[item.run_id]
                 run = self.repository.get_pipeline_run(item.run_id)
@@ -932,6 +1001,8 @@ class ProductionService:
                     "rights_holder": execution_config["rights_holder"],
                     "rights_confirmed": execution_config["rights_confirmed"],
                     "publish_platforms": execution_config["publish_platforms"],
+                    "automation_mode": execution_config["automation_mode"],
+                    "candidate_role": item.candidate_role,
                     "candidate_request": {
                         "rights_confirmed": execution_config["rights_confirmed"],
                         "rights_holder": execution_config["rights_holder"],
@@ -946,6 +1017,36 @@ class ProductionService:
                         result.get("use_paid_fallback")
                     ),
                 }
+                if (
+                    execution_config["automation_mode"] == "auto"
+                    and item.candidate_role == "reserve"
+                ):
+                    reserved = run.model_copy(
+                        update={
+                            "config": config,
+                            "status": PipelineRunStatus.PAUSED,
+                            "current_stage": None,
+                            "updated_at": now,
+                            "error_message": None,
+                        }
+                    )
+                    reserved = pipeline_service._event(
+                        reserved,
+                        action="auto_reserve_prepared",
+                        message="候补素材已完成预检；只有首批口播不可用时才会转写。",
+                        details={"batch_id": batch.batch_id},
+                    )
+                    updated_runs.append(reserved)
+                    updated_items.append(
+                        item.model_copy(
+                            update={
+                                "status": ProductionBatchItemStatus.PLANNED,
+                                "blocked_reasons": [],
+                                "updated_at": now,
+                            }
+                        )
+                    )
+                    continue
                 queued = run.model_copy(
                     update={
                         "config": config,
@@ -962,6 +1063,7 @@ class ProductionService:
                     details={"batch_id": batch.batch_id},
                 )
                 updated_runs.append(queued)
+                queued_count += 1
                 updated_items.append(
                     item.model_copy(
                         update={
@@ -976,7 +1078,7 @@ class ProductionService:
                     "items": updated_items,
                     "status": (
                         ProductionBatchStatus.RUNNING
-                        if preflight["ready_count"]
+                        if queued_count
                         else ProductionBatchStatus.FAILED
                     ),
                     "is_paused": False,
@@ -1531,6 +1633,317 @@ class ProductionService:
         self.repository.save_production_batch(updated)
         return updated
 
+    def _activate_auto_reserves(
+        self,
+        batch: ProductionBatch,
+        *,
+        pipeline_service,
+        count: int,
+    ) -> ProductionBatch:
+        """Activate only the already preflighted reserve items that are needed."""
+        now = datetime.now().astimezone()
+        activated_ids: set[str] = set()
+        for item in batch.items:
+            if len(activated_ids) >= count:
+                break
+            if (
+                item.candidate_role != "reserve"
+                or item.status != ProductionBatchItemStatus.PLANNED
+            ):
+                continue
+            run = self.repository.get_pipeline_run(item.run_id)
+            if run is None:
+                continue
+            queued = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PENDING,
+                    "current_stage": None,
+                    "updated_at": now,
+                    "error_message": None,
+                }
+            )
+            queued = pipeline_service._event(
+                queued,
+                action="auto_reserve_activated",
+                message="首批素材没有足够可用口播，已启用一条候补转写。",
+                details={"batch_id": batch.batch_id},
+            )
+            self.repository.save_pipeline_run(queued)
+            activated_ids.add(item.run_id)
+
+        if not activated_ids:
+            return batch
+        config = dict(batch.execution_config or {})
+        updated = batch.model_copy(
+            update={
+                "items": [
+                    item.model_copy(
+                        update={
+                            "status": ProductionBatchItemStatus.QUEUED,
+                            "updated_at": now,
+                        }
+                    )
+                    if item.run_id in activated_ids
+                    else item
+                    for item in batch.items
+                ],
+                "status": ProductionBatchStatus.RUNNING,
+                "execution_config": {
+                    **config,
+                    "auto_reserve_activated_count": int(
+                        config.get("auto_reserve_activated_count") or 0
+                    )
+                    + len(activated_ids),
+                    "auto_reserve_last_activated_at": now.isoformat(),
+                },
+                "finished_at": None,
+                "updated_at": now,
+            }
+        )
+        self.repository.save_production_batch(updated)
+        return self.sync_batch(batch.batch_id) or updated
+
+    def maybe_auto_review_batch(self, batch_id: str, *, pipeline_service) -> ProductionBatch | None:
+        """When all selected sources are transcribed, choose one and continue it.
+
+        The state is claimed before the model call.  A failed or interrupted
+        claim is deliberately not replayed automatically because selection and
+        rewrite can be billable.
+        """
+        batch = self.sync_batch(batch_id)
+        if batch is None:
+            return None
+        config = dict(batch.execution_config or {})
+        if str(config.get("automation_mode") or "") != "auto":
+            return batch
+        if str(config.get("auto_review_state") or "pending") != "pending":
+            return batch
+
+        ready: list[tuple[ProductionBatchItem, Any, TranscriptionTask, str]] = []
+        still_processing = False
+        for item in batch.items:
+            if (
+                item.candidate_role == "reserve"
+                and item.status == ProductionBatchItemStatus.PLANNED
+            ):
+                continue
+            run = self.repository.get_pipeline_run(item.run_id)
+            if run is None:
+                continue
+            if (
+                run.status == PipelineRunStatus.PAUSED
+                and run.current_stage == PipelineStage.HUMAN_REVIEW
+                and run.config.get("review_stage") == "transcript"
+            ):
+                task = self._transcription_task(run)
+                text = (
+                    "\n".join(
+                        segment.text.strip()
+                        for segment in task.segments
+                        if segment.text.strip()
+                    )
+                    if task is not None
+                    else ""
+                )
+                material_status, _ = (
+                    pipeline_service.classify_spoken_material(task)
+                    if task is not None
+                    else ("visual_only", "")
+                )
+                if task is not None and text and material_status != "visual_only":
+                    ready.append((item, run, task, text))
+                continue
+            if run.status not in {
+                PipelineRunStatus.FAILED,
+                PipelineRunStatus.PARTIAL,
+                PipelineRunStatus.SUCCEEDED,
+            }:
+                still_processing = True
+        if still_processing:
+            return batch
+        target_count = max(
+            1,
+            int(
+                config.get("auto_target_count")
+                or sum(1 for item in batch.items if item.candidate_role != "reserve")
+                or 1
+            ),
+        )
+        dormant_reserves = [
+            item
+            for item in batch.items
+            if item.candidate_role == "reserve"
+            and item.status == ProductionBatchItemStatus.PLANNED
+        ]
+        if len(ready) < target_count and dormant_reserves:
+            return self._activate_auto_reserves(
+                batch,
+                pipeline_service=pipeline_service,
+                count=min(target_count - len(ready), len(dormant_reserves)),
+            )
+        if not ready:
+            failed = batch.model_copy(
+                update={
+                    "execution_config": {
+                        **config,
+                        "auto_review_state": "failed",
+                        "auto_review_error": "本次没有识别到可用口播，素材已保留为画面参考，未生成文案。",
+                    },
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_production_batch(failed)
+            return self.sync_batch(batch_id)
+
+        claimed_at = datetime.now().astimezone()
+        claimed = batch.model_copy(
+            update={
+                "execution_config": {
+                    **config,
+                    "auto_review_state": "running",
+                    "auto_review_started_at": claimed_at.isoformat(),
+                },
+                "updated_at": claimed_at,
+            }
+        )
+        self.repository.save_production_batch(claimed)
+        try:
+            if self.copywriting_service is None:
+                raise RuntimeError("AI 文案服务未配置，无法自动选稿。")
+            profile = self.get_profile(batch.profile_id)
+            decision = self.copywriting_service.select_best_spoken_script(
+                candidates=[
+                    {
+                        "id": run.run_id,
+                        "platform": str(run.config.get("candidate_platform") or ""),
+                        "title": item.display_title or run.keyword,
+                        "text": text,
+                    }
+                    for item, run, _, text in ready
+                ],
+                target_audience=profile.target_audience if profile is not None else "",
+                style_prompt=profile.script_style if profile is not None else "",
+            )
+            winner_id = decision["winner_id"]
+            reason = decision["reason"]
+            winner = next(
+                (entry for entry in ready if entry[1].run_id == winner_id),
+                None,
+            )
+            if winner is None:
+                raise RuntimeError("AI 选中的文案不在当前批次中。")
+            _, winner_run, _, winner_text = winner
+            rewritten = pipeline_service.review_transcript(
+                run_id=winner_run.run_id,
+                reviewer="AI 自动审核",
+                approved_text=winner_text,
+                note=f"从 {len(ready)} 条可用转写中择优：{reason}",
+            )
+            if (
+                rewritten.status != PipelineRunStatus.PAUSED
+                or rewritten.current_stage != PipelineStage.HUMAN_REVIEW
+                or rewritten.config.get("review_stage") != "script"
+                or not rewritten.copywriting_task_id
+            ):
+                raise RuntimeError(rewritten.error_message or "AI 降重改写未完成。")
+            copy_task = self.repository.get_task(rewritten.copywriting_task_id)
+            approved_script = (
+                str(copy_task.result_text or "").strip()
+                if isinstance(copy_task, CopywritingTask)
+                else ""
+            )
+            if not approved_script:
+                raise RuntimeError("AI 降重改写没有返回可用口播稿。")
+            pipeline_service.review_candidate_script(
+                run_id=winner_run.run_id,
+                approved=True,
+                reviewer="AI 自动审核",
+                note=f"已从本批转写中择优并完成降重：{reason}",
+                approved_text=approved_script,
+            )
+            finished_at = datetime.now().astimezone()
+            for _, run, _, _ in ready:
+                if run.run_id == winner_id:
+                    continue
+                skipped = run.model_copy(
+                    update={
+                        "status": PipelineRunStatus.SUCCEEDED,
+                        "finished_at": finished_at,
+                        "updated_at": finished_at,
+                        "error_message": None,
+                        "config": {
+                            **run.config,
+                            "auto_selection_status": "not_selected",
+                            "auto_selection_reason": reason,
+                        },
+                    }
+                )
+                skipped = pipeline_service._event(
+                    skipped,
+                    action="auto_candidate_not_selected",
+                    stage=PipelineStage.HUMAN_REVIEW,
+                    message="该转写已参与 AI 对比，本次未进入数字人制作。",
+                    details={"winner_run_id": winner_id, "reason": reason},
+                )
+                self.repository.save_pipeline_run(skipped)
+            for item in batch.items:
+                if (
+                    item.candidate_role != "reserve"
+                    or item.status != ProductionBatchItemStatus.PLANNED
+                ):
+                    continue
+                run = self.repository.get_pipeline_run(item.run_id)
+                if run is None:
+                    continue
+                unused = run.model_copy(
+                    update={
+                        "status": PipelineRunStatus.SUCCEEDED,
+                        "finished_at": finished_at,
+                        "updated_at": finished_at,
+                        "error_message": None,
+                        "config": {
+                            **run.config,
+                            "auto_selection_status": "reserve_not_needed",
+                            "auto_selection_reason": "首批已有足够可用口播，未调用该候补。",
+                        },
+                    }
+                )
+                unused = pipeline_service._event(
+                    unused,
+                    action="auto_reserve_not_needed",
+                    message="首批已有足够可用口播，该候补未调用转写。",
+                    details={"winner_run_id": winner_id},
+                )
+                self.repository.save_pipeline_run(unused)
+            current = self.get_batch(batch_id) or claimed
+            completed = current.model_copy(
+                update={
+                    "execution_config": {
+                        **dict(current.execution_config or {}),
+                        "auto_review_state": "completed",
+                        "auto_selected_run_id": winner_id,
+                        "auto_selection_reason": reason,
+                        "auto_review_finished_at": finished_at.isoformat(),
+                    },
+                    "updated_at": finished_at,
+                }
+            )
+            self.repository.save_production_batch(completed)
+        except Exception as exc:
+            current = self.get_batch(batch_id) or claimed
+            failed = current.model_copy(
+                update={
+                    "execution_config": {
+                        **dict(current.execution_config or {}),
+                        "auto_review_state": "failed",
+                        "auto_review_error": str(exc),
+                    },
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_production_batch(failed)
+        return self.sync_batch(batch_id)
+
     def workspace(self, batch_id: str) -> dict[str, Any]:
         """聚合客户工作台所需状态，不在读取接口触发外部服务。"""
         batch = self.sync_batch(batch_id)
@@ -1665,6 +2078,14 @@ class ProductionService:
                                 if isinstance(copy_task, CopywritingTask)
                                 else []
                             ),
+                            "ai_audit": (
+                                dict(audit)
+                                if isinstance(
+                                    audit := (run.config.get("script_ai_audit") if run is not None else None),
+                                    dict,
+                                )
+                                else None
+                            ),
                             "creative_plan": (
                                 dict(plan)
                                 if isinstance(
@@ -1796,6 +2217,31 @@ class ProductionService:
             "allowed_actions": active["allowed_actions"] if active else [],
             "retry_allowed": bool(active and active["retry_allowed"]),
             "items": workspace_items,
+            "automation": {
+                "mode": str(
+                    batch.execution_config.get("automation_mode") or "manual"
+                ),
+                "review_state": str(
+                    batch.execution_config.get("auto_review_state")
+                    or "not_required"
+                ),
+                "selected_run_id": batch.execution_config.get(
+                    "auto_selected_run_id"
+                ),
+                "selection_reason": batch.execution_config.get(
+                    "auto_selection_reason"
+                ),
+                "error": batch.execution_config.get("auto_review_error"),
+                "target_count": int(
+                    batch.execution_config.get("auto_target_count") or 0
+                ),
+                "reserve_count": int(
+                    batch.execution_config.get("auto_reserve_count") or 0
+                ),
+                "reserve_activated_count": int(
+                    batch.execution_config.get("auto_reserve_activated_count") or 0
+                ),
+            },
             "cost": {
                 # estimated_cost_cny is the public workspace field used by the
                 # customer client; keep estimated_total_cny as a compatibility
@@ -2040,7 +2486,27 @@ class ProductionService:
             and task.publish_status.value == "manual_ready"
             for task in publish_tasks
         )
-        if publish_completed:
+        material_status = str(
+            run.config.get("spoken_material_status")
+            or item.spoken_material_status
+            or "pending"
+        )
+        material_message = str(
+            run.config.get("spoken_material_message")
+            or item.spoken_material_message
+            or ""
+        )
+        if (
+            material_status == "visual_only"
+            and str(run.config.get("automation_mode") or "") == "auto"
+        ):
+            status = ProductionBatchItemStatus.SKIPPED
+        elif run.config.get("auto_selection_status") in {
+            "not_selected",
+            "reserve_not_needed",
+        }:
+            status = ProductionBatchItemStatus.SKIPPED
+        elif publish_completed:
             status = ProductionBatchItemStatus.SUCCEEDED
         elif waiting_for_manual_publish:
             # Preparing a local browser page intentionally pauses the task so
@@ -2081,7 +2547,17 @@ class ProductionService:
                 if step.stage == PipelineStage.VIDEO_EDITING:
                     video_path = str(step.outputs.get("video_path") or step.outputs.get("result_path") or "") or None
                     break
-        return item.model_copy(update={"status": status, "current_stage": stage, "error_message": run.error_message, "video_path": video_path, "updated_at": now})
+        return item.model_copy(
+            update={
+                "status": status,
+                "current_stage": stage,
+                "error_message": run.error_message,
+                "video_path": video_path,
+                "spoken_material_status": material_status,
+                "spoken_material_message": material_message,
+                "updated_at": now,
+            }
+        )
 
     def _video_path(self, run) -> str:
         task = self.repository.get_task(run.edit_task_id or "") if run.edit_task_id else None
@@ -2162,13 +2638,27 @@ class ProductionService:
         statuses = [item.status for item in items]
         if paused:
             return ProductionBatchStatus.PAUSED
+        if statuses and all(
+            status == ProductionBatchItemStatus.PLANNED for status in statuses
+        ):
+            return ProductionBatchStatus.PLANNED
         if any(status in {ProductionBatchItemStatus.RUNNING, ProductionBatchItemStatus.QUEUED} for status in statuses):
             return ProductionBatchStatus.RUNNING
         if any(status == ProductionBatchItemStatus.AWAITING_REVIEW for status in statuses):
             return ProductionBatchStatus.AWAITING_REVIEW
         if any(status in {ProductionBatchItemStatus.AWAITING_PUBLISH, ProductionBatchItemStatus.READY_TO_PUBLISH} for status in statuses):
             return ProductionBatchStatus.AWAITING_PUBLISH
-        if statuses and all(status == ProductionBatchItemStatus.SUCCEEDED for status in statuses):
+        if any(status == ProductionBatchItemStatus.PLANNED for status in statuses):
+            return ProductionBatchStatus.RUNNING
+        completed_statuses = {
+            ProductionBatchItemStatus.SUCCEEDED,
+            ProductionBatchItemStatus.SKIPPED,
+        }
+        if (
+            statuses
+            and any(status == ProductionBatchItemStatus.SUCCEEDED for status in statuses)
+            and all(status in completed_statuses for status in statuses)
+        ):
             return ProductionBatchStatus.SUCCEEDED
         if any(status == ProductionBatchItemStatus.SUCCEEDED for status in statuses):
             return ProductionBatchStatus.PARTIAL

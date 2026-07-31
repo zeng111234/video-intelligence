@@ -91,6 +91,81 @@ class CopywritingService:
     def capabilities(self) -> dict[str, Any]:
         return self.engine.capabilities()
 
+    def select_best_spoken_script(
+        self,
+        *,
+        candidates: list[dict[str, str]],
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, str]:
+        """Use the configured real model to choose one transcript for production."""
+        capability = self.engine.capabilities()
+        if not bool(capability.get("enabled")):
+            raise RuntimeError("AI 文案服务不可用，无法自动选稿。")
+        decision = self.engine.select_best_spoken_script(
+            candidates=candidates,
+            target_audience=target_audience,
+            style_prompt=style_prompt,
+        )
+        valid_ids = {
+            str(item.get("id") or "").strip()
+            for item in candidates
+            if str(item.get("id") or "").strip()
+        }
+        winner_id = str(decision.get("winner_id") or "").strip()
+        if winner_id not in valid_ids:
+            raise RuntimeError("AI 返回的胜出文案不在本次候选中。")
+        return {
+            "winner_id": winner_id,
+            "reason": str(decision.get("reason") or "综合口播适配度最高。").strip()[:160],
+        }
+
+    def audit_spoken_script(
+        self,
+        *,
+        script_text: str,
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, Any]:
+        """Run one explicit AI review for a manual-production spoken script."""
+        text = script_text.strip()
+        if not text:
+            raise ValueError("口播文案为空，无法进行 AI 审核。")
+        capability = self.engine.capabilities()
+        if not bool(capability.get("enabled")):
+            raise RuntimeError("AI 文案服务不可用，无法进行口播文案审核。")
+        reviewed = self.engine.review_spoken_script(
+            script_text=text,
+            target_audience=target_audience,
+            style_prompt=style_prompt,
+        )
+        raw_issues = reviewed.get("issues")
+        issues: list[dict[str, str]] = []
+        if isinstance(raw_issues, list):
+            for item in raw_issues[:8]:
+                if not isinstance(item, dict):
+                    continue
+                message = str(item.get("message") or "").strip()[:100]
+                if not message:
+                    continue
+                severity = str(item.get("severity") or "warning").strip().lower()
+                issues.append(
+                    {
+                        "severity": "block" if severity == "block" else "warning",
+                        "category": str(item.get("category") or "文案建议").strip()[:40],
+                        "message": message,
+                    }
+                )
+        approved = bool(reviewed.get("approved")) and not any(
+            item["severity"] == "block" for item in issues
+        )
+        return {
+            "status": "mock" if bool(reviewed.get("is_mock")) else "completed",
+            "approved": approved,
+            "summary": str(reviewed.get("summary") or "请人工核对文案内容。").strip()[:160],
+            "issues": issues,
+        }
+
     @staticmethod
     def _risk_categories(texts: list[str]) -> list[str]:
         combined = "\n".join(texts)
@@ -333,6 +408,7 @@ class CopywritingService:
         self,
         *,
         title: str,
+        reference_text: str = "",
         hot_words: list[str] | None = None,
         metrics: VideoMetricSnapshot | None = None,
         platform: str = "douyin",
@@ -349,6 +425,11 @@ class CopywritingService:
             raise ValueError("标题不能为空。")
         platform_enum = self._validate_platform(platform)
         brief_parts = [f"参考视频标题：{title.strip()}"]
+        if reference_text.strip():
+            brief_parts.append(
+                "操作者提供的可见文案（只可概括和改写，不得逐句复述）："
+                + reference_text.strip()[:1500]
+            )
         if hot_words:
             brief_parts.append("关联热点词：" + "、".join(hot_words))
         if metrics is not None:

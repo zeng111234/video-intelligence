@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -39,6 +39,7 @@ class BatchSourceItem(BaseModel):
     source_type: str = Field(..., pattern="^(candidate|share_link|brief|script)$")
     source_value: str = Field(..., min_length=1, max_length=5000)
     display_title: str = Field("", max_length=120)
+    candidate_role: Literal["primary", "reserve"] = "primary"
     profile_overrides: dict[str, str] = Field(default_factory=dict)
 
 
@@ -58,6 +59,7 @@ class BatchExecutionRequest(BaseModel):
     concurrency: int = Field(1, ge=1, le=5)
     max_total_cost_cny: float | None = Field(default=None, ge=0)
     paid_actions_confirmed: bool = False
+    automation_mode: Literal["manual", "auto"] = "manual"
 
 
 class WorkspaceConfigurationRequest(BaseModel):
@@ -147,6 +149,9 @@ def _batch_response(batch, service) -> dict[str, Any]:
                 "source_type": item.source_type,
                 "source_value": item.source_value,
                 "display_title": item.display_title,
+                "candidate_role": item.candidate_role,
+                "spoken_material_status": item.spoken_material_status,
+                "spoken_material_message": item.spoken_material_message,
                 "profile_overrides": item.profile_overrides,
                 "status": "pending" if item.status.value == "planned" else item.status.value,
                 "current_stage": item.current_stage.value if item.current_stage else (run.current_stage.value if run and run.current_stage else None),

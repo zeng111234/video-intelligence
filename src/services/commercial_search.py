@@ -60,6 +60,7 @@ RECRAWL_OFFSETS_BY_WINDOW = {
     1: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     3: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     7: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
+    30: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     180: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
     300: (ADAPTIVE_FIRST_RECRAWL_HOURS,),
 }
@@ -88,7 +89,11 @@ def title_matches_keyword(*, title: str, keyword: str) -> bool:
         if not normalized_keyword.endswith(suffix):
             continue
         subject = normalized_keyword[: -len(suffix)]
-        return len(subject) >= 2 and subject in normalized_title and suffix in normalized_title
+        return (
+            len(subject) >= 2
+            and subject in normalized_title
+            and any(intent in normalized_title for intent in _BUSINESS_INTENT_SUFFIXES)
+        )
     return False
 
 
@@ -693,7 +698,7 @@ class CommercialSearchService:
                 published_window_days=published_window_days,
                 rank_by_item={
                     item.platform_item_id: item.provider_rank
-                    for item in page.items[:count]
+                    for item in page.items
                     if item.platform == platform
                 },
                 schedule_recrawls=schedule_recrawls,
@@ -845,7 +850,7 @@ class CommercialSearchService:
             )
         normalized: list[NormalizedCandidate] = []
         seen: set[str] = set()
-        for index, item in enumerate(page.items[:limit]):
+        for index, item in enumerate(page.items):
             reason = None
             if item.platform != platform:
                 reason = "作品平台与当前子任务不一致。"
@@ -911,6 +916,8 @@ class CommercialSearchService:
                     data_quality_warnings=item.data_quality_warnings,
                 )
             )
+            if len(normalized) >= limit:
+                break
         return normalized, errors, counts
 
     @staticmethod
@@ -1165,7 +1172,7 @@ class CommercialSearchService:
             raise ValueError("关键词长度必须为 2 到 50 个字符。")
         if published_window_days not in RECRAWL_OFFSETS_BY_WINDOW:
             raise ValueError(
-                "召回时间范围只支持不限、近 24 小时、近 3 天、近 7 天、近半年或近 10 个月。"
+                "召回时间范围只支持不限、近 24 小时、近 3 天、近 7 天、近 30 天、近半年或近 10 个月。"
             )
         if hotspot_window_hours not in {None, 1, 24, 72, 168}:
             raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")

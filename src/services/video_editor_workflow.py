@@ -60,6 +60,11 @@ _BGM_SOURCE_PROVIDERS = {"manual", "freepd", "pixabay", "light_factory", "bodian
 _BGM_CONTENT_ID_RISKS = {"none", "registered", "unknown"}
 _MAX_VISUAL_ASSET_BYTES = 10 * 1024 * 1024
 _VISUAL_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_GENERIC_AVATAR_TITLE = re.compile(r"^数字人视频\d*$")
+_LOCAL_PREVIEW_EXPORT_STYLE_VERSION = (
+    "business_talking_head_v8-speed-1.15-caption-clock-v1"
+)
+_LOCAL_PREVIEW_PLAYBACK_RATE = 1.15
 
 
 class VideoEditorWorkflowError(ValueError):
@@ -107,12 +112,17 @@ class VideoEditorWorkflowService:
             if key in seen_paths:
                 continue
             seen_paths.add(key)
+            source_id = f"avatar:{task.task_id}"
             sources.append(
                 self._source_payload(
-                    source_id=f"avatar:{task.task_id}",
+                    source_id=source_id,
                     source_type="avatar",
                     source_task_id=task.task_id,
-                    title=task.title,
+                    title=self._semantic_source_title(
+                        source_id,
+                        task.title,
+                        task.script_text,
+                    ),
                     path=path,
                     created_at=task.created_at,
                 )
@@ -189,7 +199,11 @@ class VideoEditorWorkflowService:
                 source_id=source_id,
                 source_type=source_type,
                 source_task_id=record_id,
-                title=task.title,
+                title=self._semantic_source_title(
+                    source_id,
+                    task.title,
+                    task.script_text,
+                ),
                 path=path,
                 created_at=task.created_at,
             )
@@ -238,6 +252,128 @@ class VideoEditorWorkflowService:
             )
 
         raise VideoEditorWorkflowError("不支持的系统素材来源。")
+
+    def _cached_source_context(self, source_id: str) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            "selected_title": "",
+            "title_candidates": [],
+            "subtitle_segments": [],
+            "duration_seconds": 0.0,
+            "selected_bgm_id": None,
+            "bgm_reason": None,
+            "edit_plan": {},
+            "enabled_plan_step_ids": [],
+            "review_snapshot": {},
+        }
+        list_batches = getattr(self.repository, "list_video_editor_batches", None)
+        if not callable(list_batches):
+            return context
+        for batch in list_batches(limit=100):
+            for item in batch.items:
+                if item.source_id != source_id:
+                    continue
+                if not context["selected_title"] and item.selected_title:
+                    context["selected_title"] = item.selected_title
+                if not context["title_candidates"] and item.title_candidates:
+                    context["title_candidates"] = list(item.title_candidates)
+                if not context["subtitle_segments"] and item.subtitle_segments:
+                    context["subtitle_segments"] = [
+                        dict(segment) for segment in item.subtitle_segments
+                    ]
+                if not context["selected_bgm_id"] and item.selected_bgm_id:
+                    context["selected_bgm_id"] = item.selected_bgm_id
+                    context["bgm_reason"] = item.bgm_reason
+                if not context["edit_plan"] and item.edit_plan:
+                    context["edit_plan"] = dict(item.edit_plan)
+                if (
+                    not context["enabled_plan_step_ids"]
+                    and item.enabled_plan_step_ids
+                ):
+                    context["enabled_plan_step_ids"] = list(
+                        item.enabled_plan_step_ids
+                    )
+                if not context["review_snapshot"] and item.review_snapshot:
+                    context["review_snapshot"] = dict(item.review_snapshot)
+                media = item.provider_payload.get("media") or {}
+                if not context["duration_seconds"] and media.get("duration_seconds"):
+                    context["duration_seconds"] = float(media["duration_seconds"])
+            if (
+                context["selected_title"]
+                and context["title_candidates"]
+                and context["subtitle_segments"]
+                and context["duration_seconds"]
+            ):
+                break
+        return context
+
+    @staticmethod
+    def _script_topic_title(script_text: str, fallback: str) -> str:
+        script = re.sub(r"\s+", " ", script_text).strip()
+        if not script:
+            return fallback
+        first_sentence = re.split(r"[。！？!?；;\n]", script, maxsplit=1)[0]
+        subject = re.sub(
+            r"^(最近|大家好|你知道吗|你发现没|今天(?:我们)?(?:来)?聊聊)\s*",
+            "",
+            first_sentence,
+        ).strip(" ，,：:")
+        return (subject or first_sentence or fallback)[:40]
+
+    def _semantic_source_title(
+        self,
+        source_id: str,
+        stored_title: str,
+        script_text: str = "",
+    ) -> str:
+        cached = self._cached_source_context(source_id)
+        cached_title = str(cached.get("selected_title") or "").strip()
+        if cached_title:
+            return cached_title
+        candidates = list(cached.get("title_candidates") or [])
+        if candidates:
+            return str(candidates[0]).strip()[:100]
+        if not _GENERIC_AVATAR_TITLE.fullmatch(stored_title.strip()):
+            return stored_title
+        return self._script_topic_title(script_text, stored_title)
+
+    def _avatar_script_text(self, source_id: str) -> str:
+        source_type, _, record_id = source_id.partition(":")
+        if source_type != "avatar" or not record_id:
+            return ""
+        task = self.repository.get_task(record_id)
+        return task.script_text if isinstance(task, AvatarTask) else ""
+
+    @staticmethod
+    def _estimated_script_segments(
+        script_text: str,
+        duration_seconds: float,
+    ) -> list[dict[str, Any]]:
+        parts = [
+            part.strip()
+            for part in re.findall(r"[^。！？!?；;\n]+[。！？!?；;]?", script_text)
+            if part.strip()
+        ]
+        if not parts:
+            return []
+        total_characters = sum(len(part) for part in parts) or 1
+        duration = duration_seconds or max(2.0, total_characters / 4.2)
+        cursor = 0.0
+        segments: list[dict[str, Any]] = []
+        for index, part in enumerate(parts):
+            end = (
+                duration
+                if index == len(parts) - 1
+                else cursor + duration * len(part) / total_characters
+            )
+            segments.append(
+                {
+                    "start": round(cursor, 3),
+                    "end": round(end, 3),
+                    "text": part,
+                }
+            )
+            cursor = end
+        return segments
 
     def upload_source(
         self,
@@ -1325,6 +1461,7 @@ class VideoEditorWorkflowService:
         if not isinstance(task, VideoEditTask) or task.outputs.get("workflow") not in {
             "edit",
             "product_showcase",
+            "local_preview_export",
         }:
             raise VideoEditorWorkflowError("智能剪辑任务不存在。")
         return task
@@ -1334,7 +1471,8 @@ class VideoEditorWorkflowService:
             task
             for task in self.repository.list_tasks()
             if isinstance(task, VideoEditTask)
-            and task.outputs.get("workflow") in {"edit", "product_showcase"}
+            and task.outputs.get("workflow")
+            in {"edit", "product_showcase", "local_preview_export"}
         ]
         return [self._job_payload(task) for task in tasks[:limit]]
 
@@ -1863,6 +2001,7 @@ class VideoEditorWorkflowService:
             transcript_for_plan,
             spoken_ranges,
             duration_seconds,
+            segments,
         )
         titles = list(plan.title_candidates) or [item.title[:40]]
         selected_bgm_id: str | None = None
@@ -1987,6 +2126,465 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError("智能剪辑批次不存在。")
         return self._batch_payload(self._sync_batch(batch))
 
+    def prepare_batch_item_download(
+        self,
+        batch_id: str,
+        item_id: str,
+    ) -> dict[str, str]:
+        """为已完成的真实云成片生成一次性下载信息，不改变审核或发布状态。"""
+        batch = self._require_batch(batch_id)
+        item = next(
+            (entry for entry in batch.items if entry.item_id == item_id),
+            None,
+        )
+        if item is None:
+            raise VideoEditorWorkflowError("批次素材不存在。")
+        if batch.provider_mode != "aliyun" or batch.is_mock or item.is_mock:
+            raise VideoEditorWorkflowError("体验任务没有真实成片可下载。")
+        if item.status not in {
+            "awaiting_output_confirmation",
+            "ready_to_publish",
+        }:
+            raise VideoEditorWorkflowError("真实成片尚未生成，暂时不能下载。")
+        try:
+            media_url = self._cloud_preview_url(item)
+        except Exception as exc:
+            raise VideoEditorWorkflowError(
+                "云成片下载地址暂时不可用，请检查云配置后重试。"
+            ) from exc
+        if not media_url:
+            raise VideoEditorWorkflowError("真实成片文件不存在，暂时不能下载。")
+
+        title = re.sub(
+            r'[\\/:*?"<>|]+',
+            "",
+            item.selected_title or item.title or "剪辑成片",
+        ).strip()
+        return {
+            "media_url": media_url,
+            "filename": f"{title[:48] or '剪辑成片'}.mp4",
+        }
+
+    def create_local_preview_export(
+        self,
+        batch_id: str,
+        item_id: str,
+    ) -> dict[str, Any]:
+        """把当前已审核的浏览器方案免费烧录为本机 MP4。"""
+        batch = self._sync_batch(self._require_batch(batch_id))
+        item = next(
+            (entry for entry in batch.items if entry.item_id == item_id),
+            None,
+        )
+        if item is None:
+            raise VideoEditorWorkflowError("批次素材不存在。")
+        if batch.is_mock or item.is_mock:
+            raise VideoEditorWorkflowError("体验任务没有真实媒体，不能生成下载文件。")
+
+        if item.edit_task_id:
+            existing = self.repository.get_task(item.edit_task_id)
+            if (
+                isinstance(existing, VideoEditTask)
+                and existing.outputs.get("workflow") == "local_preview_export"
+                and existing.outputs.get("style_version")
+                == _LOCAL_PREVIEW_EXPORT_STYLE_VERSION
+                and existing.status
+                in {TaskStatus.QUEUED, TaskStatus.RUNNING, TaskStatus.SUCCEEDED}
+                and (
+                    existing.status != TaskStatus.SUCCEEDED
+                    or (
+                        existing.result_path
+                        and Path(existing.result_path).is_file()
+                    )
+                )
+            ):
+                return self._batch_payload(batch)
+
+        cached = self._cached_source_context(item.source_id)
+        segments = [
+            dict(segment)
+            for segment in (
+                item.subtitle_segments
+                or list(cached.get("subtitle_segments") or [])
+            )
+        ]
+        cached_review = dict(cached.get("review_snapshot") or {})
+        current_reviewed = bool(
+            item.review_confirmed_at
+            or item.review_snapshot.get("confirmed")
+        )
+        if not segments or not (
+            current_reviewed or cached_review.get("confirmed")
+        ):
+            raise VideoEditorWorkflowError(
+                "当前只有估算字幕，没有可复用的人工确认字幕，暂不能生成成片。"
+            )
+
+        source = self.resolve_source(item.source_id)
+        media = self._probe_media(Path(source["_path"]))
+        segments = self._validated_review_segments(
+            segments,
+            duration_seconds=float(media["duration_seconds"]),
+        )
+        title = (
+            item.selected_title
+            or str(cached.get("selected_title") or "").strip()
+            or item.title
+        ).strip()
+        if not title:
+            raise VideoEditorWorkflowError("当前方案缺少标题，暂不能生成成片。")
+
+        edit_plan = dict(item.edit_plan or cached.get("edit_plan") or {})
+        if edit_plan.get("remove_ranges"):
+            raise VideoEditorWorkflowError(
+                "当前方案包含真实粗剪区间，本机免费导出暂不支持；请先关闭粗剪或使用云端出片。"
+            )
+        enabled_steps = list(
+            item.enabled_plan_step_ids
+            or cached.get("enabled_plan_step_ids")
+            or ["vertical_fit", "subtitles", "title"]
+        )
+        selected_bgm_id = (
+            item.selected_bgm_id
+            or str(cached.get("selected_bgm_id") or "").strip()
+            or None
+        )
+        if "bgm" not in enabled_steps:
+            selected_bgm_id = None
+
+        now = datetime.now().astimezone()
+        task = VideoEditTask(
+            task_id=f"edit-local-{uuid4().hex[:10]}",
+            title=f"本机导出 · {title}",
+            status=TaskStatus.QUEUED,
+            progress=0,
+            created_at=now,
+            updated_at=now,
+            source_video_path=source["_path"],
+            edit_config=VideoEditConfig(
+                output_format="mp4",
+                output_resolution=batch.output_resolution,
+                output_fps=batch.output_fps,
+                output_bitrate=batch.output_bitrate,
+            ),
+            source_avatar_task_id=(
+                source["source_task_id"]
+                if source["source_type"] == "avatar"
+                else None
+            ),
+            stage="等待本机免费导出",
+            is_mock=False,
+            outputs={
+                "workflow": "local_preview_export",
+                "batch_id": batch.batch_id,
+                "item_id": item.item_id,
+                "source_id": item.source_id,
+                "publish_title": title,
+                "output_profile": batch.output_profile or "720p",
+                "style_version": _LOCAL_PREVIEW_EXPORT_STYLE_VERSION,
+                "playback_rate": str(_LOCAL_PREVIEW_PLAYBACK_RATE),
+                "subtitle_segments_json": json.dumps(
+                    segments,
+                    ensure_ascii=False,
+                ),
+                "edit_plan_json": json.dumps(edit_plan, ensure_ascii=False),
+                "bgm_id": selected_bgm_id or "",
+            },
+        )
+        self.repository.save_task(task)
+        updated = item.model_copy(
+            update={
+                "status": "rendering",
+                "edit_task_id": task.task_id,
+                "selected_title": title,
+                "selected_bgm_id": selected_bgm_id,
+                "bgm_reason": item.bgm_reason or cached.get("bgm_reason"),
+                "edit_plan": edit_plan,
+                "enabled_plan_step_ids": enabled_steps,
+                "provider_stage": "local_export_rendering",
+                "provider_payload": {
+                    **item.provider_payload,
+                    "local_export": {
+                        "cost_cny": "0",
+                        "reused_approved_subtitles": True,
+                        "playback_rate": _LOCAL_PREVIEW_PLAYBACK_RATE,
+                        "style_version": _LOCAL_PREVIEW_EXPORT_STYLE_VERSION,
+                    },
+                },
+                "publish_allowed": False,
+                "error_message": None,
+                "updated_at": now,
+            }
+        )
+        batch = self._replace_batch_item(batch, updated)
+        _WORKFLOW_EXECUTOR.submit(self._run_local_preview_export, task.task_id)
+        return self._batch_payload(batch)
+
+    @staticmethod
+    def _ffmpeg_filter_path(path: Path) -> str:
+        return (
+            str(path)
+            .replace("\\", "/")
+            .replace(":", r"\:")
+            .replace("'", r"\'")
+        )
+
+    def _run_local_preview_export(self, task_id: str) -> None:
+        task = self._get_workflow_task(task_id, "local_preview_export")
+        output_dir = self.video_editing_service.output_directory
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"{task.task_id}.mp4"
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"{task.task_id}-"))
+        try:
+            if not shutil.which("ffmpeg"):
+                raise VideoEditorWorkflowError(
+                    "未检测到 FFmpeg，无法在本机生成下载文件。"
+                )
+            source_path = Path(task.source_video_path)
+            media = self._probe_media(source_path)
+            if not media["has_audio"]:
+                raise VideoEditorWorkflowError(
+                    "当前原片没有可用人声轨道，暂不能按口播方案导出。"
+                )
+            profile = task.outputs.get("output_profile") or "720p"
+            playback_rate = float(
+                task.outputs.get("playback_rate")
+                or _LOCAL_PREVIEW_PLAYBACK_RATE
+            )
+            segments = json.loads(
+                task.outputs.get("subtitle_segments_json") or "[]"
+            )
+            rendered_segments = [
+                {
+                    **segment,
+                    "start": round(
+                        float(segment.get("start", 0)) / playback_rate,
+                        3,
+                    ),
+                    "end": round(
+                        float(segment.get("end", 0)) / playback_rate,
+                        3,
+                    ),
+                }
+                for segment in segments
+            ]
+            edit_plan = json.loads(task.outputs.get("edit_plan_json") or "{}")
+            rendered_spoken_ranges = [
+                {
+                    "start": round(
+                        float(item.get("start", 0)) / playback_rate,
+                        3,
+                    ),
+                    "end": round(
+                        float(item.get("end", 0)) / playback_rate,
+                        3,
+                    ),
+                }
+                for item in edit_plan.get("spoken_ranges") or []
+                if isinstance(item, dict)
+            ]
+            ass_path = temp_dir / "approved.ass"
+            title_path = temp_dir / "title.png"
+            ass_path.write_bytes(
+                self._review_ass_bytes(
+                    rendered_segments,
+                    output_profile=profile,
+                    caption_groups=edit_plan.get("caption_groups"),
+                    caption_emphasis=edit_plan.get("caption_emphasis"),
+                    spoken_ranges=rendered_spoken_ranges,
+                )
+            )
+            title_path.write_bytes(
+                self._review_title_png_bytes(
+                    task.outputs.get("publish_title") or task.title,
+                    output_profile=profile,
+                )
+            )
+
+            from src.services.video_editor_cloud import visual_style_spec
+
+            spec = visual_style_spec(profile)
+            canvas = spec["canvas"]
+            title_style = spec["title"]
+            width = int(canvas["width"])
+            height = int(canvas["height"])
+            fps = task.edit_config.output_fps
+            subtitle_filter = self._ffmpeg_filter_path(ass_path)
+            filter_parts = [
+                (
+                    f"[0:v]scale={width}:{height}:"
+                    "force_original_aspect_ratio=decrease,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:"
+                    "color=0x101827,setsar=1,"
+                    f"setpts=PTS/{playback_rate:.3f},fps={fps},"
+                    f"subtitles='{subtitle_filter}'[captioned]"
+                ),
+                "[1:v]format=rgba[title]",
+                (
+                    "[captioned][title]overlay="
+                    f"{int(title_style['safe_left'])}:"
+                    f"{int(title_style['safe_top'])}:"
+                    "enable='between(t,0,"
+                    f"{float(title_style['visible_seconds']):.3f})':"
+                    "eof_action=pass[vout]"
+                ),
+            ]
+            command = [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                str(source_path),
+                "-loop",
+                "1",
+                "-framerate",
+                str(fps),
+                "-i",
+                str(title_path),
+            ]
+            bgm_id = task.outputs.get("bgm_id") or ""
+            filter_parts.append(
+                f"[0:a]atempo={playback_rate:.3f},"
+                "aresample=async=1:first_pts=0[voice]"
+            )
+            if bgm_id:
+                bgm = self.resolve_bgm_asset(bgm_id)
+                command.extend(
+                    ["-stream_loop", "-1", "-i", str(bgm["_path"])]
+                )
+                filter_parts.extend(
+                    [
+                        (
+                            "[2:a]volume=0.18,"
+                            "afade=t=in:st=0:d=0.5,"
+                            "aresample=async=1:first_pts=0[bgm]"
+                        ),
+                        (
+                            "[voice][bgm]amix=inputs=2:duration=first:"
+                            "dropout_transition=2:normalize=0[aout]"
+                        ),
+                    ]
+                )
+            command.extend(
+                [
+                    "-filter_complex",
+                    ";".join(filter_parts),
+                    "-map",
+                    "[vout]",
+                    "-map",
+                    "[aout]" if bgm_id else "[voice]",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-b:v",
+                    task.edit_config.output_bitrate,
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                    "-shortest",
+                    str(output_path),
+                ]
+            )
+            task = self._update(
+                task,
+                status=TaskStatus.RUNNING,
+                progress=15,
+                stage="正在写入标题、字幕和配乐",
+            )
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=15 * 60,
+                check=False,
+            )
+            if (
+                result.returncode != 0
+                or not output_path.is_file()
+                or output_path.stat().st_size == 0
+            ):
+                detail = (result.stderr or "本机编码没有生成文件。").strip()
+                raise VideoEditorWorkflowError(
+                    f"本机成片生成失败：{detail[-600:]}"
+                )
+            output_media = self._probe_media(output_path)
+            if (
+                output_media["width"] != width
+                or output_media["height"] != height
+            ):
+                raise VideoEditorWorkflowError("本机成片分辨率校验失败。")
+            expected_duration = float(media["duration_seconds"]) / playback_rate
+            if abs(float(output_media["duration_seconds"]) - expected_duration) > 1:
+                raise VideoEditorWorkflowError("本机成片语速与时长校验失败。")
+
+            task = task.model_copy(
+                update={
+                    "status": TaskStatus.SUCCEEDED,
+                    "progress": 100,
+                    "stage": "本机成片已生成，可直接下载",
+                    "result_path": str(output_path),
+                    "result_mime": "video/mp4",
+                    "result_size_bytes": output_path.stat().st_size,
+                    "error_message": None,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_task(task)
+            latest = self._require_batch(task.outputs["batch_id"])
+            latest_item = next(
+                entry
+                for entry in latest.items
+                if entry.item_id == task.outputs["item_id"]
+            )
+            completed = latest_item.model_copy(
+                update={
+                    "status": "awaiting_output_confirmation",
+                    "provider_stage": "local_export_complete",
+                    "publish_allowed": True,
+                    "error_message": None,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self._replace_batch_item(latest, completed)
+        except Exception as exc:
+            output_path.unlink(missing_ok=True)
+            self._update(
+                task,
+                status=TaskStatus.FAILED,
+                progress=0,
+                stage="本机成片生成失败",
+                error_message=str(exc),
+            )
+            try:
+                latest = self._require_batch(task.outputs["batch_id"])
+                latest_item = next(
+                    entry
+                    for entry in latest.items
+                    if entry.item_id == task.outputs["item_id"]
+                )
+                failed = latest_item.model_copy(
+                    update={
+                        "status": "failed",
+                        "provider_stage": "local_export_failed",
+                        "publish_allowed": False,
+                        "error_message": str(exc),
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._replace_batch_item(latest, failed)
+            except Exception:
+                pass
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     @staticmethod
     def _validated_review_segments(
         segments: list[dict[str, Any]],
@@ -2015,11 +2613,20 @@ class VideoEditorWorkflowService:
             if raw_terms:
                 emphasis = re.sub(r"\s+", "", str(raw_terms[0]))
                 clean_text = re.sub(r"\s+", "", text)
-                if not emphasis or len(emphasis) > 4 or emphasis not in clean_text:
+                if not emphasis or len(emphasis) > 6 or emphasis not in clean_text:
                     raise VideoEditorWorkflowError(
-                        "强调词必须是当前字幕中的连续原文，且不超过 4 个字。"
+                        "强调词必须是当前字幕中的连续原文，且不超过 6 个字。"
                     )
                 normalized_segment["emphasis_terms"] = [emphasis]
+                emphasis_kind = str(raw.get("emphasis_kind") or "keyword")
+                if emphasis_kind not in {
+                    "number",
+                    "benefit",
+                    "warning",
+                    "keyword",
+                }:
+                    raise VideoEditorWorkflowError("字幕强调样式无效。")
+                normalized_segment["emphasis_kind"] = emphasis_kind
             normalized.append(normalized_segment)
             previous_end = end
         return normalized
@@ -2037,6 +2644,9 @@ class VideoEditorWorkflowService:
         segments: list[dict[str, Any]],
         *,
         output_profile: str,
+        caption_groups: object = None,
+        caption_emphasis: object = None,
+        spoken_ranges: object = None,
     ) -> bytes:
         from src.services.video_editor_cloud import build_business_talking_head_ass
 
@@ -2044,6 +2654,9 @@ class VideoEditorWorkflowService:
             segments,
             title="",
             output_profile=output_profile,
+            caption_groups=caption_groups,
+            caption_emphasis=caption_emphasis,
+            spoken_ranges=spoken_ranges,
         )
 
     @staticmethod
@@ -2078,6 +2691,8 @@ class VideoEditorWorkflowService:
             EditStepKind,
             RenderRequest,
             retime_segments_after_cuts,
+            validated_caption_emphasis,
+            validated_caption_groups,
             visual_style_spec,
         )
 
@@ -2124,17 +2739,55 @@ class VideoEditorWorkflowService:
         if any(step not in allowed_steps for step in selected_steps):
             raise VideoEditorWorkflowError("不能启用服务端方案之外的剪辑步骤。")
         trim_enabled = EditStepKind.TRIM_SILENCE in selected_steps
+        approved_caption_groups = validated_caption_groups(
+            plan.caption_groups,
+            segments,
+            max_chars=11,
+        )
+        reviewed_caption_emphasis = validated_caption_emphasis(
+            [
+                {
+                    "segment_index": index,
+                    "term": (segment.get("emphasis_terms") or [""])[0],
+                    "kind": segment.get("emphasis_kind") or "keyword",
+                }
+                for index, segment in enumerate(segments)
+                if segment.get("emphasis_terms")
+            ],
+            segments,
+            caption_groups=approved_caption_groups,
+        )
+        caption_warnings = list(plan.warnings)
+        if plan.caption_groups and not approved_caption_groups:
+            caption_warnings.append(
+                "字幕经人工修改，原 AI 语义断句已失效，正式出片改用安全规则断句。"
+            )
         reviewed_plan = plan.model_copy(
             update={
                 "enabled_steps": selected_steps,
                 "remove_ranges": plan.remove_ranges if trim_enabled else [],
                 "trim_silence_enabled": trim_enabled,
+                "caption_groups": approved_caption_groups,
+                "caption_group_source": (
+                    "qwen_semantic"
+                    if approved_caption_groups
+                    else "deterministic_fallback"
+                ),
+                "caption_emphasis": reviewed_caption_emphasis,
+                "warnings": caption_warnings,
             }
         )
         reviewed_plan = EditPlan.model_validate(reviewed_plan.model_dump())
         try:
             render_segments = retime_segments_after_cuts(
                 segments,
+                reviewed_plan.remove_ranges,
+            )
+            render_spoken_ranges = retime_segments_after_cuts(
+                [
+                    item.model_dump(mode="json")
+                    for item in reviewed_plan.spoken_ranges
+                ],
                 reviewed_plan.remove_ranges,
             )
         except ValueError as exc:
@@ -2239,6 +2892,9 @@ class VideoEditorWorkflowService:
             subtitle_bytes = self._review_ass_bytes(
                 render_segments,
                 output_profile=batch.output_profile,
+                caption_groups=reviewed_plan.caption_groups,
+                caption_emphasis=reviewed_plan.caption_emphasis,
+                spoken_ranges=render_spoken_ranges,
             )
             if subtitle_bytes and EditStepKind.SUBTITLES in selected_steps:
                 handle = tempfile.NamedTemporaryFile(
@@ -2708,7 +3364,20 @@ class VideoEditorWorkflowService:
             if item.item_id not in selected:
                 updated_items.append(item)
                 continue
-            if batch.provider_mode in {"sandbox", "aliyun"} and (
+            local_task = (
+                self.repository.get_task(item.edit_task_id)
+                if item.edit_task_id
+                else None
+            )
+            has_local_result = bool(
+                isinstance(local_task, VideoEditTask)
+                and local_task.outputs.get("workflow")
+                == "local_preview_export"
+                and local_task.status == TaskStatus.SUCCEEDED
+                and local_task.result_path
+                and Path(local_task.result_path).is_file()
+            )
+            if batch.provider_mode in {"sandbox", "aliyun"} and not has_local_result and (
                 batch.is_mock
                 or item.is_mock
                 or not item.publish_allowed
@@ -2720,7 +3389,7 @@ class VideoEditorWorkflowService:
             if item.status != "awaiting_output_confirmation":
                 raise VideoEditorWorkflowError("只能确认已成功生成的成片。")
             edit_task_id = item.edit_task_id
-            if batch.provider_mode == "aliyun":
+            if batch.provider_mode == "aliyun" and not has_local_result:
                 edit_task_id = self._materialize_cloud_edit_task(batch, item).task_id
             updated_items.append(
                 item.model_copy(
@@ -2899,6 +3568,60 @@ class VideoEditorWorkflowService:
         return synced
 
     def _sync_batch(self, batch: VideoEditorBatch) -> VideoEditorBatch:
+        local_changed = False
+        local_items: list[VideoEditorBatchItem] = []
+        for item in batch.items:
+            updated = item
+            if (
+                item.edit_task_id
+                and str(item.provider_stage or "").startswith("local_export_")
+            ):
+                task = self.repository.get_task(item.edit_task_id)
+                if (
+                    isinstance(task, VideoEditTask)
+                    and task.outputs.get("workflow") == "local_preview_export"
+                ):
+                    if task.status == TaskStatus.SUCCEEDED and task.result_path:
+                        updated = item.model_copy(
+                            update={
+                                "status": "awaiting_output_confirmation",
+                                "provider_stage": "local_export_complete",
+                                "publish_allowed": True,
+                                "error_message": None,
+                            }
+                        )
+                    elif task.status == TaskStatus.FAILED:
+                        updated = item.model_copy(
+                            update={
+                                "status": "failed",
+                                "provider_stage": "local_export_failed",
+                                "publish_allowed": False,
+                                "error_message": task.error_message
+                                or "本机成片生成失败。",
+                            }
+                        )
+                    else:
+                        updated = item.model_copy(
+                            update={
+                                "status": "rendering",
+                                "provider_stage": "local_export_rendering",
+                                "publish_allowed": False,
+                            }
+                        )
+            if updated != item:
+                local_changed = True
+                updated = updated.model_copy(
+                    update={"updated_at": datetime.now().astimezone()}
+                )
+            local_items.append(updated)
+        if local_changed:
+            batch = batch.model_copy(
+                update={
+                    "items": local_items,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_video_editor_batch(batch)
         if batch.provider_mode in {"sandbox", "aliyun"}:
             return self._sync_cloud_batch(batch)
         changed = False
@@ -3277,6 +4000,41 @@ class VideoEditorWorkflowService:
             visual_spec = visual_style_spec(batch.output_profile)
         items: list[dict[str, Any]] = []
         for item in batch.items:
+            cached_context = self._cached_source_context(item.source_id)
+            script_text = self._avatar_script_text(item.source_id)
+            effective_title = (
+                item.selected_title
+                or str(cached_context.get("selected_title") or "").strip()
+                or self._semantic_source_title(
+                    item.source_id,
+                    item.title,
+                    script_text,
+                )
+            )
+            effective_title_candidates = (
+                list(item.title_candidates)
+                or list(cached_context.get("title_candidates") or [])
+                or ([effective_title] if effective_title else [])
+            )
+            if item.subtitle_segments:
+                preview_subtitle_segments = [
+                    dict(segment) for segment in item.subtitle_segments
+                ]
+                subtitle_preview_source = "current_asr"
+            elif cached_context.get("subtitle_segments"):
+                preview_subtitle_segments = [
+                    dict(segment)
+                    for segment in cached_context["subtitle_segments"]
+                ]
+                subtitle_preview_source = "cached_asr"
+            else:
+                preview_subtitle_segments = self._estimated_script_segments(
+                    script_text,
+                    float(cached_context.get("duration_seconds") or 0),
+                )
+                subtitle_preview_source = (
+                    "script_estimate" if preview_subtitle_segments else "none"
+                )
             analysis = (
                 self.repository.get_task(item.analysis_id) if item.analysis_id else None
             )
@@ -3288,10 +4046,23 @@ class VideoEditorWorkflowService:
             result_media_url = item.result_media_url
             overlay_preview = None
             if visual_spec is not None:
+                caption_groups = (
+                    (item.edit_plan or {}).get("caption_groups")
+                    if subtitle_preview_source == "current_asr"
+                    else None
+                )
+                caption_emphasis = (
+                    (item.edit_plan or {}).get("caption_emphasis")
+                    if subtitle_preview_source == "current_asr"
+                    else None
+                )
                 overlay_preview = build_business_talking_head_overlay_preview(
-                    item.subtitle_segments,
-                    title=item.selected_title or item.title,
+                    preview_subtitle_segments,
+                    title=effective_title,
                     output_profile=batch.output_profile,
+                    caption_groups=caption_groups,
+                    caption_emphasis=caption_emphasis,
+                    spoken_ranges=(item.edit_plan or {}).get("spoken_ranges"),
                 )
             if (
                 batch.provider_mode == "aliyun"
@@ -3311,8 +4082,8 @@ class VideoEditorWorkflowService:
                     "analysis_id": item.analysis_id,
                     "subtitle_task_id": item.subtitle_task_id,
                     "edit_task_id": item.edit_task_id,
-                    "title_candidates": item.title_candidates,
-                    "selected_title": item.selected_title,
+                    "title_candidates": effective_title_candidates,
+                    "selected_title": effective_title,
                     "selected_bgm_id": item.selected_bgm_id,
                     "bgm_reason": item.bgm_reason,
                     "provider_stage": item.provider_stage,
@@ -3324,6 +4095,8 @@ class VideoEditorWorkflowService:
                     "edit_plan": item.edit_plan or None,
                     "enabled_plan_step_ids": item.enabled_plan_step_ids,
                     "subtitle_segments": item.subtitle_segments,
+                    "preview_subtitle_segments": preview_subtitle_segments,
+                    "subtitle_preview_source": subtitle_preview_source,
                     "overlay_preview": overlay_preview,
                     "review_snapshot": item.review_snapshot,
                     "review_confirmed_at": (

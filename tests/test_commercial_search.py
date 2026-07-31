@@ -519,6 +519,69 @@ def test_strict_keyword_relevance_keeps_title_or_hashtag_matches_only() -> None:
     assert [item.offset_hours for item in repository.list_sampling_checkpoints("带货")] == [2]
 
 
+def test_relevance_filter_scans_beyond_first_page_limit_before_truncating() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.DOUYIN,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id=f"noise-{index}",
+                title=f"无关日常记录 {index}",
+                author_id=f"noise-author-{index}",
+                author_name="普通作者",
+                published_at=now - timedelta(hours=2),
+                source_url=f"https://www.douyin.com/video/noise-{index}",
+                provider_rank=index + 1,
+                metrics={
+                    "item_id": f"noise-{index}",
+                    "sampled_at": now,
+                    "likes": 10,
+                    "confidence": 0.9,
+                },
+            )
+            for index in range(30)
+        ]
+        + [
+            ProviderSearchItem(
+                platform=Platform.DOUYIN,
+                platform_item_id=f"match-{index}",
+                title=f"餐饮门店引流方法 {index}",
+                author_id=f"match-author-{index}",
+                author_name="餐饮作者",
+                published_at=now - timedelta(hours=3),
+                source_url=f"https://www.douyin.com/video/match-{index}",
+                provider_rank=31 + index,
+                metrics={
+                    "item_id": f"match-{index}",
+                    "sampled_at": now,
+                    "likes": 100,
+                    "confidence": 0.9,
+                },
+            )
+            for index in range(5)
+        ],
+        observed_at=now,
+        request_id="provider-deep-relevance",
+        api_call_count=1,
+        raw_item_count=35,
+        parsed_item_count=35,
+    )
+
+    batch = _douyin_only_service(repository, provider, now).execute(
+        keyword="餐饮获客",
+        count=5,
+    )
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.returned_count == 5
+    assert run.irrelevant_count == 30
+    assert len(repository.list_candidate_matches(run.run_id)) == 5
+
+
 def test_all_strictly_irrelevant_results_are_reported_without_importing() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
@@ -564,6 +627,7 @@ def test_all_strictly_irrelevant_results_are_reported_without_importing() -> Non
 
 def test_strict_keyword_relevance_normalizes_spacing_and_punctuation() -> None:
     assert title_matches_keyword(title="AI-获客案例 #AI获客", keyword="ＡＩ 获客")
+    assert title_matches_keyword(title="餐饮门店低成本引流方法", keyword="餐饮获客")
     assert title_matches_keyword(
         title="餐饮店在抖音怎么做才能获客",
         keyword="餐饮获客",
@@ -953,14 +1017,22 @@ def test_search_batch_model_rejects_unsupported_window() -> None:
     )
     assert supported.published_window_days == 300
 
+    recent = SearchBatch(
+        keyword="二手车",
+        published_window_days=30,
+        provider="fixture",
+        mode=ProviderMode.SANDBOX,
+    )
+    assert recent.published_window_days == 30
+
     try:
         SearchBatch(
             keyword="二手车",
-            published_window_days=30,
+            published_window_days=60,
             provider="fixture",
             mode=ProviderMode.SANDBOX,
         )
     except ValueError as exc:
-        assert "不限、近 1 天、近 3 天、近 7 天、近半年或近 10 个月" in str(exc)
+        assert "近 30 天" in str(exc)
     else:
         raise AssertionError("unsupported window must be rejected")

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from project.backend.app.core import deps as backend_deps
 from project.backend.app.main import app
+from src.adapters.llm import SandboxCopywritingEngine
 from src.models import (
     AvatarAsset,
     AvatarAssetKind,
@@ -35,6 +36,7 @@ from src.repositories.mock import MockRepository
 from src.repositories.sqlite import SQLiteRepository
 from src.services.pipeline import PipelineService
 from src.services.pipeline_worker import PipelineWorker
+from src.services.copywriting import CopywritingService
 from src.services.publish_metadata import publish_draft_fingerprint
 from src.services.production import (
     DEFAULT_PRODUCTION_TEMPLATE_ID,
@@ -289,6 +291,17 @@ class _PaidLinkPreview:
         )
 
 
+class _LocalLinkPreview:
+    def preview(self, share_text):
+        assert share_text.startswith("https://")
+        return SimpleNamespace(
+            parser_enabled=True,
+            parser_message="本机浏览器已连接",
+            oneapi_fallback_available=False,
+            oneapi_estimated_cost_cny=None,
+        )
+
+
 class _Assets:
     def list_assets(self):
         return [
@@ -357,6 +370,14 @@ class _Copywriting:
             source_task_id=kwargs.get("source_task_id"),
             is_mock=True,
         )
+
+    def audit_spoken_script(self, **kwargs):
+        return {
+            "status": "completed",
+            "approved": True,
+            "summary": "未发现需要阻止制作的问题。",
+            "issues": [],
+        }
 
 
 class _UnknownCostCopywriting(_Copywriting):
@@ -486,6 +507,130 @@ def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_p
     assert started.items[1].status.value == "blocked"
     assert service.can_run(started.items[0].run_id) is True
     assert service.can_run(started.items[1].run_id) is False
+
+
+def test_auto_batch_keeps_reserve_idle_until_visual_only_primary_needs_it(tmp_path):
+    repository = MockRepository()
+    primary = _candidate("candidate-primary")
+    reserve = _candidate("candidate-reserve")
+    repository.save_candidate(primary)
+    repository.save_candidate(reserve)
+    copywriting = CopywritingService(repository, SandboxCopywritingEngine())
+    pipeline_service = PipelineService(repository, None, copywriting, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        copywriting_service=copywriting,
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="候补配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="候补批次",
+        profile_id=profile.profile_id,
+        source_items=[
+            {
+                "source_type": "candidate",
+                "source_value": primary.video_id,
+                "candidate_role": "primary",
+            },
+            {
+                "source_type": "candidate",
+                "source_value": reserve.video_id,
+                "candidate_role": "reserve",
+            },
+        ],
+        pipeline_service=pipeline_service,
+    )
+    started = service.start_batch(
+        batch.batch_id,
+        options={
+            "rights_holder": "测试公司",
+            "rights_confirmed": True,
+            "publish_platforms": ["douyin"],
+            "concurrency": 1,
+            "max_total_cost_cny": 10,
+            "paid_actions_confirmed": True,
+            "automation_mode": "auto",
+        },
+        pipeline_service=pipeline_service,
+    )
+
+    assert started.items[0].status == ProductionBatchItemStatus.QUEUED
+    assert started.items[1].status == ProductionBatchItemStatus.PLANNED
+    reserve_run = repository.get_pipeline_run(started.items[1].run_id)
+    assert reserve_run is not None
+    assert reserve_run.status == PipelineRunStatus.PAUSED
+
+    primary_run = repository.get_pipeline_run(started.items[0].run_id)
+    assert primary_run is not None
+    repository.save_pipeline_run(
+        primary_run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "error_message": "没有识别到足够可核验的口播。",
+                "config": {
+                    **primary_run.config,
+                    "spoken_material_status": "visual_only",
+                    "spoken_material_message": "素材仅作画面参考。",
+                },
+            }
+        )
+    )
+
+    replenished = service.maybe_auto_review_batch(
+        batch.batch_id,
+        pipeline_service=pipeline_service,
+    )
+
+    assert replenished is not None
+    assert replenished.execution_config["auto_reserve_activated_count"] == 1
+    assert replenished.items[1].status == ProductionBatchItemStatus.QUEUED
+    reserve_run = repository.get_pipeline_run(started.items[1].run_id)
+    assert reserve_run is not None
+    assert reserve_run.status == PipelineRunStatus.PENDING
+
+
+def test_visual_only_transcription_stops_before_copywriting(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, _Copywriting(), None, None)
+    run = pipeline_service.create_run(
+        keyword="纯画面素材",
+        config={"workflow": "production_batch_candidate"},
+    )
+    now = datetime.now().astimezone()
+    transcription = TranscriptionTask(
+        task_id="transcription-visual-only",
+        title="纯画面转写",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="visual.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        duration_seconds=30,
+        segments=[TranscriptSegment(text="嗯", confidence=0.4)],
+        is_mock=True,
+    )
+    repository.save_task(transcription)
+
+    stopped = pipeline_service.pause_for_transcript_review(
+        run=run,
+        transcription=transcription,
+    )
+
+    assert stopped.status == PipelineRunStatus.FAILED
+    assert stopped.config["spoken_material_status"] == "visual_only"
+    assert "不会据此编造文案" in stopped.error_message
+    assert stopped.copywriting_task_id is None
 
 
 def test_batch_preflight_isolates_an_invalid_single_item_profile_override(tmp_path):
@@ -637,6 +782,8 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
             "config": {
                 **run.config,
                 "transcription_task_id": transcription.task_id,
+                "source": "production_batch",
+                "automation_mode": "manual",
             }
         }
     )
@@ -687,6 +834,9 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
                     ],
                 },
             )
+            script_workspace = client.get(
+                f"/api/v1/production/batches/{batch.batch_id}/workspace"
+            )
             script_review = client.post(
                 f"/api/v1/production/batches/{batch.batch_id}/reviews",
                 json={
@@ -720,6 +870,13 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     assert transcript_review.json()["results"][0]["ok"] is True
     assert repeated_transcript_review.json()["results"][0]["ok"] is True
     assert copywriting.rewrite_calls == 1
+    assert script_workspace.status_code == 200, script_workspace.text
+    assert script_workspace.json()["items"][0]["reviews"]["script"]["ai_audit"] == {
+        "status": "completed",
+        "approved": True,
+        "summary": "未发现需要阻止制作的问题。",
+        "issues": [],
+    }
     assert script_review.status_code == 200, script_review.text
     stored = repository.get_pipeline_run(run.run_id)
     assert stored is not None
@@ -1562,7 +1719,10 @@ def test_workspace_cost_quote_unblocks_unknown_copywriting_cost(tmp_path):
 
     assert preflight["cost_known"] is True
     assert preflight["ready_count"] == 1
-    assert preflight["estimated_cost_cny"] == 0.05
+    # 手动模式会先改写、再做一次 AI 文案审核，两次均使用已配置的单次报价。
+    assert preflight["estimated_cost_cny"] == 0.1
+    assert preflight["items"][0]["manual_script_audit"] is True
+    assert preflight["items"][0]["copy_call_count"] == 2
 
 
 def test_bundled_compute_treats_unknown_provider_prices_as_included(tmp_path):
@@ -1822,10 +1982,13 @@ def test_sqlite_production_operation_claim_is_persistent_and_resource_locked(
     assert stored["request_hash"] == "hash-one"
 
 
-def test_non_douyin_candidate_is_rejected_during_preflight(tmp_path):
+def test_non_douyin_candidate_uses_local_link_preflight(tmp_path):
     repository = MockRepository()
     candidate = _candidate("candidate-xhs").model_copy(
-        update={"platform": Platform.XIAOHONGSHU}
+        update={
+            "platform": Platform.XIAOHONGSHU,
+            "source_url": "https://www.xiaohongshu.com/explore/example",
+        }
     )
     repository.save_candidate(candidate)
     pipeline_service = PipelineService(repository, None, None, None, None)
@@ -1833,6 +1996,7 @@ def test_non_douyin_candidate_is_rejected_during_preflight(tmp_path):
         repository,
         tmp_path / "production",
         media_resolution_service=_MediaPreview(),
+        link_transcription_service=_LocalLinkPreview(),
         copywriting_service=_Copywriting(),
         avatar_service=_Assets(),
         template_service=_Templates(),
@@ -1860,10 +2024,93 @@ def test_non_douyin_candidate_is_rejected_during_preflight(tmp_path):
         paid_actions_confirmed=True,
     )
 
-    assert preflight["ready_count"] == 0
-    assert "只支持抖音候选" in "；".join(
-        preflight["items"][0]["reasons"]
+    assert preflight["ready_count"] == 1
+    assert preflight["items"][0]["reasons"] == []
+
+
+def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):
+    repository = MockRepository()
+    candidates = [_candidate(f"candidate-auto-{index}") for index in range(4)]
+    for candidate in candidates:
+        repository.save_candidate(candidate)
+    copywriting = CopywritingService(repository, SandboxCopywritingEngine())
+    pipeline_service = PipelineService(
+        repository,
+        None,
+        copywriting,
+        None,
+        None,
     )
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        copywriting_service=copywriting,
+    )
+    profile = service.create_profile(name="自动选稿配方")
+    batch = service.create_batch(
+        name="自动选稿批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id for candidate in candidates],
+        pipeline_service=pipeline_service,
+    )
+    repository.save_production_batch(
+        batch.model_copy(
+            update={
+                "execution_config": {
+                    "automation_mode": "auto",
+                    "auto_review_state": "pending",
+                }
+            }
+        )
+    )
+    now = datetime.now().astimezone()
+    for index, item in enumerate(batch.items):
+        run = repository.get_pipeline_run(item.run_id)
+        assert run is not None
+        transcription = TranscriptionTask(
+            task_id=f"transcription-auto-{index}",
+            title=f"自动候选转写 {index}",
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            media_name=f"candidate-{index}.mp4",
+            media_type="video/mp4",
+            rights_confirmed=True,
+            segments=[TranscriptSegment(text=f"第 {index + 1} 条真实口播转写", confidence=0.95)],
+            is_mock=True,
+        )
+        repository.save_task(transcription)
+        run = run.model_copy(
+            update={
+                "config": {
+                    **run.config,
+                    "transcription_task_id": transcription.task_id,
+                }
+            }
+        )
+        repository.save_pipeline_run(run)
+        pipeline_service.pause_for_transcript_review(
+            run=run,
+            transcription=transcription,
+        )
+
+    updated = service.maybe_auto_review_batch(
+        batch.batch_id,
+        pipeline_service=pipeline_service,
+    )
+
+    assert updated is not None
+    assert updated.execution_config["auto_review_state"] == "completed"
+    assert updated.execution_config["auto_selected_run_id"] == batch.items[0].run_id
+    assert sum(
+        item.status == ProductionBatchItemStatus.SKIPPED
+        for item in updated.items
+    ) == 3
+    winner = repository.get_pipeline_run(batch.items[0].run_id)
+    assert winner is not None
+    assert winner.status == PipelineRunStatus.PENDING
+    assert winner.current_stage == PipelineStage.AVATAR_GENERATION
 
 
 def test_active_pipeline_scan_does_not_drop_items_after_five_hundred():

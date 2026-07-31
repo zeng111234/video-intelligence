@@ -113,7 +113,12 @@ class PipelineWorker:
                 self._fail(run, run.current_stage or PipelineStage.KEYWORD_SEARCH, str(exc))
             finally:
                 if workflow.startswith("production_batch_") and self.production_service is not None:
-                    self.production_service.sync_batch(str(run.config.get("batch_id") or ""))
+                    batch_id = str(run.config.get("batch_id") or "")
+                    self.production_service.sync_batch(batch_id)
+                    self.production_service.maybe_auto_review_batch(
+                        batch_id,
+                        pipeline_service=self.pipeline_service,
+                    )
 
     def _recover_interrupted_run(self, run: PipelineRun) -> PipelineRun:
         """Recover only stages whose replay is provably free of duplicate charges."""
@@ -344,12 +349,16 @@ class PipelineWorker:
 
     def _run_guided_share_link(self, run: PipelineRun) -> None:
         """从客户明确提供的平台分享链接开始，不经过关键词发现。"""
+        share_text = str(run.config.get("share_text") or "")
+        candidate_platform = str(run.config.get("candidate_platform") or "").lower()
+        if candidate_platform == Platform.XIAOHONGSHU.value or "xiaohongshu.com" in share_text.lower():
+            self._pause_for_xiaohongshu_safety(run)
+            return
         if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
             if self.douyin_link_transcription_service is None:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "分享链接转写服务未配置。")
                 return
             request = dict(run.config.get("candidate_request") or {})
-            share_text = str(run.config.get("share_text") or "")
             if not share_text:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "缺少平台分享链接。")
                 return
@@ -399,7 +408,10 @@ class PipelineWorker:
                 }
             )
             self.repository.save_pipeline_run(run)
-            if str(run.config.get("workflow") or "") == "production_batch_share_link":
+            if str(run.config.get("workflow") or "") in {
+                "production_batch_share_link",
+                "production_batch_candidate",
+            }:
                 self.pipeline_service.pause_for_transcript_review(
                     run=run,
                     transcription=transcription,
@@ -438,11 +450,39 @@ class PipelineWorker:
             return
         source_type = str(run.config.get("source_type") or "candidate")
         if source_type == "candidate":
-            self._run_candidate(run)
+            candidate_platform = str(run.config.get("candidate_platform") or "douyin")
+            if candidate_platform == Platform.XIAOHONGSHU.value:
+                self._pause_for_xiaohongshu_safety(run)
+            elif candidate_platform == Platform.DOUYIN.value:
+                self._run_candidate(run)
+            else:
+                self._run_guided_share_link(run)
         elif source_type == "share_link":
             self._run_guided_share_link(run)
         else:
             self._run_production_batch_text(run, source_type)
+
+    def _pause_for_xiaohongshu_safety(self, run: PipelineRun) -> None:
+        """Keep historical XHS items visible while preventing any link automation."""
+        paused = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.HUMAN_REVIEW,
+                "updated_at": datetime.now().astimezone(),
+                "error_message": None,
+                "config": {
+                    **run.config,
+                    "manual_action_required": "小红书安全模式已开启：系统不会打开、解析或抓取该链接。请改为人工整理可见文案，或上传已获授权的本地文件。",
+                },
+            }
+        )
+        paused = self.pipeline_service._event(
+            paused,
+            action="xiaohongshu_manual_only",
+            stage=PipelineStage.HUMAN_REVIEW,
+            message="小红书安全模式：已暂停自动链接处理，等待人工素材。",
+        )
+        self.repository.save_pipeline_run(paused)
 
     def _run_production_batch_text(self, run: PipelineRun, source_type: str) -> None:
         """选题生成或人工成稿都必须进入同一个文案审核阶段。"""

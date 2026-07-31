@@ -89,8 +89,8 @@ _SPECS = {
 
 _ACCESS_MARKERS = ("访问频繁", "操作频繁", "请求过于频繁", "网络环境存在风险")
 _HARD_VERIFICATION_MARKERS = ("请通过验证", "请完成验证", "安全验证")
-_MAX_SCROLL_ROUNDS = 10
-_RAW_TARGET_FLOOR = 40
+_MAX_SCROLL_ROUNDS = 18
+_RAW_TARGET_FLOOR = 90
 _ADAPTER_VERSION = "visible_browser_network_v1"
 
 
@@ -115,7 +115,9 @@ class LocalPlatformBrowserSearchProvider:
             raise ValueError(f"不支持的本机浏览器平台：{platform.value}")
         self.platform = platform
         self.spec = _SPECS[platform]
-        self.enabled = enabled
+        # 小红书已切换为人工素材模式。把限制放在适配器内部，避免其他调用方
+        # 通过旧环境变量或直接构造实例重新启用浏览器自动化。
+        self.enabled = enabled and platform != Platform.XIAOHONGSHU
         self.profile_dir = profile_dir
         self.browser_channel = browser_channel
         self.debug_port = debug_port
@@ -149,7 +151,11 @@ class LocalPlatformBrowserSearchProvider:
                 True,
                 False,
                 "disabled",
-                f"{self.spec.label}浏览器搜索已关闭。",
+                (
+                    "小红书安全模式已开启：不会自动打开、浏览或读取小红书账号。"
+                    if self.platform == Platform.XIAOHONGSHU
+                    else f"{self.spec.label}浏览器搜索已关闭。"
+                ),
             )
         if missing:
             return BrowserSessionStatus(
@@ -219,9 +225,17 @@ class LocalPlatformBrowserSearchProvider:
             f"{self.spec.label}公开浏览器已就绪；只读取搜索页已加载的作品元数据。",
         )
 
+    def open_login_browser(self) -> BrowserSessionStatus:
+        """Show a user-facing window for QR login or manual verification."""
+        return self._start_browser(visible=True)
+
     def start_login_browser(self) -> BrowserSessionStatus:
+        """Start the dedicated profile without interrupting background work."""
+        return self._start_browser(visible=False)
+
+    def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
-        if status.running:
+        if status.running and not visible:
             return status
         capability = self.capabilities()
         if not capability.enabled:
@@ -236,18 +250,24 @@ class LocalPlatformBrowserSearchProvider:
                 kind=ProviderErrorKind.VALIDATION,
             )
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        browser_args = [
+            str(executable),
+            f"--remote-debugging-port={self.debug_port}",
+            f"--user-data-dir={self.profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if visible:
+            browser_args.extend(
+                ["--new-window", "--window-position=80,80", "--window-size=1100,800"]
+            )
+        else:
+            browser_args.extend(
+                ["--start-minimized", "--window-position=-32000,-32000", "--window-size=900,700"]
+            )
+        browser_args.append(self.spec.home_url)
         subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
-            [
-                str(executable),
-                f"--remote-debugging-port={self.debug_port}",
-                f"--user-data-dir={self.profile_dir}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-minimized",
-                "--window-position=-32000,-32000",
-                "--window-size=900,700",
-                self.spec.home_url,
-            ],
+            browser_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -263,7 +283,11 @@ class LocalPlatformBrowserSearchProvider:
             False,
             False,
             "starting",
-            f"{self.spec.label}公开浏览器正在后台启动；系统随后会自动开始搜索。",
+            (
+                f"{self.spec.label}登录窗口正在打开，请在可见窗口中扫码或完成人工验证。"
+                if visible
+                else f"{self.spec.label}公开浏览器正在后台启动；系统随后会自动开始搜索。"
+            ),
         )
 
     def search(
@@ -420,7 +444,7 @@ class LocalPlatformBrowserSearchProvider:
             for group, option in (
                 ("排序依据", "最多点赞"),
                 ("笔记类型", "视频"),
-                ("发布时间", "半年内"),
+                ("发布时间", "一周内"),
             ):
                 panel = page.locator(".filter-panel")
                 if not panel.count() or not panel.is_visible():
@@ -765,7 +789,7 @@ class LocalPlatformBrowserSearchProvider:
             if not time_confident:
                 if self.platform == Platform.XIAOHONGSHU:
                     warnings.append(
-                        "小红书已选择“半年内”；搜索卡片未返回精确发布时间。"
+                        "小红书已选择“一周内”；搜索卡片未返回精确发布时间。"
                     )
                 else:
                     warnings.append("搜索结果未返回可靠发布时间；按平台搜索顺序作为近期候选。")
@@ -829,7 +853,11 @@ class LocalPlatformBrowserSearchProvider:
 
     def _missing_prerequisites(self) -> list[str]:
         if not self.enabled:
-            return [f"{self.spec.label}浏览器发现开关"]
+            return [
+                "小红书安全模式（仅支持人工导入）"
+                if self.platform == Platform.XIAOHONGSHU
+                else f"{self.spec.label}浏览器发现开关"
+            ]
         missing: list[str] = []
         try:
             playwright_spec = importlib.util.find_spec("playwright.sync_api")
@@ -913,7 +941,7 @@ class LocalPlatformBrowserSearchProvider:
             return observed_at - timedelta(days=1)
         if "前天" in compact:
             return observed_at - timedelta(days=2)
-        match = re.search(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})(?!\d)", compact)
+        match = re.search(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})(?!\d)", text)
         if match:
             try:
                 candidate = observed_at.replace(

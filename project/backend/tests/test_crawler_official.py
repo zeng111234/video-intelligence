@@ -76,24 +76,12 @@ def test_hotspot_request_rejects_unsupported_statistical_window():
         crawler_module.CrawlerSearchRequest(keyword="二手车", hotspot_window_hours=2)
 
 
-def test_hotspot_real_run_cooldown_uses_random_eight_to_twelve_minute_window(
-    monkeypatch,
-):
-    requested_bounds: list[tuple[int, int]] = []
-
-    class FakeRandom:
-        def randint(self, lower, upper):
-            requested_bounds.append((lower, upper))
-            return 9 * 60 + 17
-
-    monkeypatch.setattr(crawler_module.random, "SystemRandom", FakeRandom)
-
-    assert crawler_module._next_hotspot_cooldown_seconds() == 9 * 60 + 17
-    assert requested_bounds == [(8 * 60, 12 * 60)]
+def test_hotspot_real_run_cooldown_is_fixed_one_hour_for_account_safety():
+    assert crawler_module._next_hotspot_cooldown_seconds() == 60 * 60
 
 
-def test_hotspot_real_run_limit_supports_multi_customer_usage():
-    assert crawler_module.HOTSPOT_MAX_REAL_RUNS_PER_WINDOW == 48
+def test_hotspot_real_run_limit_is_restricted_for_account_safety():
+    assert crawler_module.HOTSPOT_MAX_REAL_RUNS_PER_WINDOW == 4
 
 
 def test_hotspot_run_returns_low_incremental_candidates_only_as_reference_items():

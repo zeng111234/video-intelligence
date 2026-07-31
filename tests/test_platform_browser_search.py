@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.licensed import LicensedProviderError
+from src.adapters.douyin_browser_search import BrowserSessionStatus
 from src.adapters.platform_browser_search import LocalPlatformBrowserSearchProvider
 from src.models import Platform
 
@@ -43,6 +44,62 @@ def test_optional_login_prompt_does_not_block_public_search_attempt():
 
     with pytest.raises(LicensedProviderError, match="要求登录或人工验证"):
         provider._raise_for_login_gate(page)
+
+
+def test_login_button_opens_visible_platform_window_even_when_session_is_running(
+    tmp_path, monkeypatch
+):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29992,
+    )
+    launched: list[list[str]] = []
+    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.subprocess.Popen",
+        lambda args, **kwargs: launched.append(args),
+    )
+    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+
+    status = provider.open_login_browser()
+
+    assert status.ready_to_crawl is True
+    assert len(launched) == 1
+    assert "--new-window" in launched[0]
+    assert "--window-position=80,80" in launched[0]
+    assert "--start-minimized" not in launched[0]
+
+
+def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.KUAISHOU,
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29991,
+    )
+    launched: list[list[str]] = []
+    closed = BrowserSessionStatus(
+        True, False, True, False, "browser_closed", "未打开"
+    )
+    monkeypatch.setattr(provider, "session_status", lambda: closed)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.subprocess.Popen",
+        lambda args, **kwargs: launched.append(args),
+    )
+    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+
+    provider.start_login_browser()
+
+    assert "--start-minimized" in launched[0]
+    assert "--window-position=-32000,-32000" in launched[0]
+    assert "--new-window" not in launched[0]
 
 
 def test_hard_verification_stops_public_search_attempt():
@@ -215,7 +272,7 @@ def test_bilibili_search_response_normalizes_visible_video_metadata():
     assert str(item.source_url) == "https://www.bilibili.com/video/BV1TEST2026"
 
 
-def test_xiaohongshu_missing_publish_time_trusts_selected_half_year_filter():
+def test_xiaohongshu_missing_publish_time_trusts_selected_week_filter():
     provider = _provider(Platform.XIAOHONGSHU)
     observed_at = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
     items = provider._to_items(
@@ -235,7 +292,43 @@ def test_xiaohongshu_missing_publish_time_trusts_selected_half_year_filter():
     assert len(items) == 1
     assert items[0].published_at == observed_at
     assert "time=platform_filter" in (items[0].evidence or "")
-    assert any("已选择“半年内”" in warning for warning in items[0].data_quality_warnings)
+    assert any("已选择“一周内”" in warning for warning in items[0].data_quality_warnings)
+
+
+def test_rendered_card_date_keeps_spaces_before_trailing_like_count():
+    observed_at = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+
+    published_at = LocalPlatformBrowserSearchProvider._parse_published_at(
+        "餐饮行业怎么拍视频 作者 06-24 47",
+        observed_at,
+    )
+
+    assert published_at == datetime(2026, 6, 24, tzinfo=timezone.utc)
+
+
+def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    captured: dict[str, int] = {}
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_rows",
+        lambda _keyword, *, target: captured.update(target=target) or [],
+    )
+
+    provider.search(
+        Platform.BILIBILI,
+        "餐饮获客",
+        None,
+        30,
+        "larger-pool",
+    )
+
+    assert captured["target"] == 90
 
 
 def test_browser_provider_keeps_parsed_rows_for_shared_relevance_filtering():

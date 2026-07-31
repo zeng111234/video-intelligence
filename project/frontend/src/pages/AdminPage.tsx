@@ -12,9 +12,19 @@ import {
   Typography,
 } from "antd";
 import { ReloadOutlined, SettingOutlined } from "@ant-design/icons";
-import { getAdminStatus, getPublishConfig, updatePublishConfig } from "../api/client";
+import {
+  authorizeCloudAsr,
+  getAdminStatus,
+  getAsrConfig,
+  getPublishConfig,
+  updatePublishConfig,
+} from "../api/client";
 import { useToast } from "../components/Toast";
-import type { AdminStatusResponse, PublishConfigResponse } from "../api/types";
+import type {
+  AdminStatusResponse,
+  AsrCapabilityResponse,
+  PublishConfigResponse,
+} from "../api/types";
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -43,9 +53,11 @@ export default function AdminPage() {
   const toast = useToast();
   const [status, setStatus] = useState<AdminStatusResponse | null>(null);
   const [publishConfig, setPublishConfig] = useState<PublishConfigResponse | null>(null);
+  const [asrConfig, setAsrConfig] = useState<AsrCapabilityResponse | null>(null);
   const [drafts, setDrafts] = useState<Record<string, PlatformDraft>>({});
   const [loading, setLoading] = useState(false);
   const [savingPlatform, setSavingPlatform] = useState<string | null>(null);
+  const [savingAsr, setSavingAsr] = useState(false);
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
@@ -83,10 +95,31 @@ export default function AdminPage() {
     }
   }, [toast]);
 
+  const fetchAsrConfig = useCallback(async () => {
+    try {
+      setAsrConfig(await getAsrConfig());
+    } catch (err) {
+      toast.error((err as Error).message || "加载语音识别状态失败");
+    }
+  }, [toast]);
+
   useEffect(() => {
     void fetchStatus();
     void fetchPublishConfig();
-  }, [fetchPublishConfig, fetchStatus]);
+    void fetchAsrConfig();
+  }, [fetchAsrConfig, fetchPublishConfig, fetchStatus]);
+
+  const authorizeAsr = async () => {
+    setSavingAsr(true);
+    try {
+      setAsrConfig(await authorizeCloudAsr(0.2));
+      toast.success("阿里云语音识别已授权，单条费用上限 ¥0.20");
+    } catch (err) {
+      toast.error((err as Error).message || "语音识别授权失败");
+    } finally {
+      setSavingAsr(false);
+    }
+  };
 
   const updateDraft = (platform: string, patch: Partial<PlatformDraft>) => {
     setDrafts((current) => ({
@@ -147,6 +180,48 @@ export default function AdminPage() {
           </Descriptions>
         </Card>
       )}
+
+      <Card
+        title="公司云端语音识别"
+        extra={(
+          <Tag color={asrConfig?.enabled ? "success" : "warning"}>
+            {asrConfig?.enabled ? "已启用" : "待管理员确认"}
+          </Tag>
+        )}
+      >
+        <Space direction="vertical" size={12} style={{ width: "100%" }}>
+          <Alert
+            showIcon
+            type={asrConfig?.live_ready ? "info" : "warning"}
+            message="客户电脑不会运行本地语音识别"
+            description={
+              asrConfig?.live_ready
+                ? "所有转写统一使用公司阿里云 Fun-ASR；失败不会转用客户 CPU。"
+                : `云配置尚未完成：${asrConfig?.missing_configuration?.join("、") || "请刷新后重试"}`
+            }
+          />
+          <Descriptions size="small" column={2} bordered>
+            <Descriptions.Item label="公开单价">
+              ¥{(asrConfig?.unit_price_cny_per_second ?? 0.00022).toFixed(5)}/秒
+            </Descriptions.Item>
+            <Descriptions.Item label="单条上限">¥0.20</Descriptions.Item>
+            <Descriptions.Item label="最长视频">15 分钟</Descriptions.Item>
+            <Descriptions.Item label="额外费用">
+              OSS 存储和流量暂无法精确确定
+            </Descriptions.Item>
+          </Descriptions>
+          {!asrConfig?.billing_authorized && (
+            <Button
+              type="primary"
+              loading={savingAsr}
+              disabled={!asrConfig?.live_ready}
+              onClick={authorizeAsr}
+            >
+              确认费用并启用云端识别
+            </Button>
+          )}
+        </Space>
+      </Card>
 
       <Collapse
         items={[

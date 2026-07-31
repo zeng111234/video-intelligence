@@ -4,6 +4,7 @@
 
 import type {
   AdminStatusResponse,
+  AsrCapabilityResponse,
   AnalyticsResponse,
   AvatarAsset,
   AvatarCapability,
@@ -33,6 +34,8 @@ import type {
   CrawlerOriginalScriptResponse,
   CrawlerPreviewResponse,
   CrawlerSearchRequest,
+  XiaohongshuManualMaterialInput,
+  XiaohongshuManualMaterialResponse,
   EditTemplate,
   PipelineFromCandidateRequest,
   GuidedPipelinePreflight,
@@ -134,6 +137,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
     );
   }
+  // 删除接口以 204 表示已完成且不返回 JSON。继续解析响应体会把成功误判为失败，
+  // 从而阻断调用方即时更新页面列表。
+  if (resp.status === 204) return undefined as T;
   return resp.json();
 }
 
@@ -190,6 +196,34 @@ export function getTranscription(taskId: string): Promise<TranscriptionResponse>
 
 export function listTranscriptions(): Promise<TranscriptionResponse[]> {
   return request("/transcriptions");
+}
+
+export function getAsrConfig(): Promise<AsrCapabilityResponse> {
+  return request("/transcriptions/config");
+}
+
+export function authorizeCloudAsr(
+  perTaskCapCny = 0.2,
+): Promise<AsrCapabilityResponse> {
+  return request("/transcriptions/authorization", {
+    method: "POST",
+    body: JSON.stringify({
+      confirmed: true,
+      per_task_cap_cny: perTaskCapCny,
+    }),
+  });
+}
+
+export function reconnectTranscription(
+  taskId: string,
+): Promise<TranscriptionResponse> {
+  return request(`/transcriptions/${taskId}/reconnect`, { method: "POST" });
+}
+
+export function retryTranscription(
+  taskId: string,
+): Promise<TranscriptionResponse> {
+  return request(`/transcriptions/${taskId}/retry`, { method: "POST" });
 }
 
 export function clearTranscriptionHistory(): Promise<{ deleted_count: number }> {
@@ -261,6 +295,7 @@ export async function uploadAndTranscribe(
   modelName = "large-v3-turbo",
   rightsHolder = "本人/公司已授权",
   language = "zh",
+  candidateId = "",
 ): Promise<TranscriptionResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -268,6 +303,7 @@ export async function uploadAndTranscribe(
   formData.append("rights_holder", rightsHolder);
   formData.append("model_name", modelName);
   formData.append("language", language);
+  if (candidateId) formData.append("candidate_id", candidateId);
 
   const resp = await fetch(`${BASE}/transcriptions/upload`, {
     method: "POST",
@@ -455,6 +491,7 @@ export function preflightProductionBatch(batchId: string, params: {
   concurrency: number;
   maxTotalCostCny?: number | null;
   paidActionsConfirmed?: boolean;
+  automationMode?: "manual" | "auto";
 }): Promise<ProductionBatchPreflight> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/preflight`, {
     method: "POST",
@@ -465,6 +502,7 @@ export function preflightProductionBatch(batchId: string, params: {
       concurrency: params.concurrency,
       max_total_cost_cny: params.maxTotalCostCny ?? null,
       paid_actions_confirmed: params.paidActionsConfirmed ?? false,
+      automation_mode: params.automationMode ?? "manual",
     }),
   });
 }
@@ -476,6 +514,7 @@ export function startProductionBatch(batchId: string, params: {
   concurrency: number;
   maxTotalCostCny?: number | null;
   paidActionsConfirmed?: boolean;
+  automationMode?: "manual" | "auto";
   idempotencyKey: string;
 }): Promise<ProductionBatch> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/start`, {
@@ -491,6 +530,7 @@ export function startProductionBatch(batchId: string, params: {
       concurrency: params.concurrency,
       max_total_cost_cny: params.maxTotalCostCny ?? null,
       paid_actions_confirmed: params.paidActionsConfirmed ?? false,
+      automation_mode: params.automationMode ?? "manual",
     }),
   });
 }
@@ -686,8 +726,13 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
   };
 }
 
-export function getCrawlerBrowserDiscoveryCapabilities(): Promise<CrawlerBrowserDiscoveryCapabilities> {
-  return request("/crawler/browser-discovery/capabilities");
+export function getCrawlerBrowserDiscoveryCapabilities(
+  platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili" = "douyin",
+): Promise<CrawlerBrowserDiscoveryCapabilities> {
+  const path = platform === "douyin"
+    ? "/crawler/browser-discovery/capabilities"
+    : `/crawler/browser-discovery/${platform}/capabilities`;
+  return request(path);
 }
 
 export function startCrawlerBrowserDiscovery(
@@ -697,6 +742,16 @@ export function startCrawlerBrowserDiscovery(
     ? "/crawler/browser-discovery/start"
     : `/crawler/browser-discovery/${platform}/start`;
   return request(path, { method: "POST" });
+}
+
+/** 保存操作者已经看见的素材；服务端不会打开或抓取小红书链接。 */
+export function importXiaohongshuManualMaterials(
+  items: XiaohongshuManualMaterialInput[],
+): Promise<XiaohongshuManualMaterialResponse> {
+  return request("/crawler/manual-materials/xiaohongshu", {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
 }
 
 /** 官方实时热点词（用于搜索框建议）；后端未上线时由调用方 catch 降级 */
@@ -1532,6 +1587,20 @@ export function listVideoEditorBatches(): Promise<VideoEditorBatchListResponse> 
 
 export function getVideoEditorBatch(batchId: string): Promise<VideoEditorBatch> {
   return request(`/video-editor/batches/${encodeURIComponent(batchId)}`);
+}
+
+export function getVideoEditorBatchItemDownloadUrl(batchId: string, itemId: string): string {
+  return `${BASE}/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/download`;
+}
+
+export function createVideoEditorLocalExport(
+  batchId: string,
+  itemId: string,
+): Promise<VideoEditorBatch> {
+  return request(
+    `/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/local-export`,
+    { method: "POST" },
+  );
 }
 
 export function continueVideoEditorBatchItem(batchId: string, itemId: string): Promise<VideoEditorBatch> {

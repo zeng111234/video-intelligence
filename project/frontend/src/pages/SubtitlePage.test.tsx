@@ -32,23 +32,23 @@ describe("SubtitlePage", () => {
     });
     vi.mocked(getSubtitleStatus).mockResolvedValue({
       whisper_available: true,
-      version: "1.2.1",
       supported_formats: ["srt", "ass"],
-      provider_name: "faster-whisper",
+      provider_name: "阿里云 Fun-ASR",
       ffmpeg_available: true,
-      asr_mode: "local",
-      supported_models: ["large-v3-turbo", "base"],
-      default_model: "large-v3-turbo",
+      asr_mode: "cloud",
+      supported_models: ["fun-asr"],
+      default_model: "fun-asr",
     });
   });
 
-  it("shows real local-engine status and review-first workflow", async () => {
+  it("shows company cloud status and review-first workflow", async () => {
     render(<SubtitlePage />);
 
-    expect(await screen.findByText("faster-whisper")).toBeTruthy();
-    expect(screen.getByText(/准确优先/)).toBeTruthy();
-    expect(screen.getByText(/低置信片段复核后可导出 SRT 或 ASS/)).toBeTruthy();
+    expect(await screen.findByText("阿里云 Fun-ASR")).toBeTruthy();
+    expect(screen.getAllByText(/不使用客户 CPU/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/人工确认后可导出 SRT 或 ASS/)).toBeTruthy();
     expect(screen.getByText("点击或拖拽 MP4/MOV 文件上传")).toBeTruthy();
     expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByText(/large-v3-turbo/)).toBeNull();
   });
 });

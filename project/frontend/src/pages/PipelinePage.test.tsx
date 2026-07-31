@@ -8,13 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PipelinePage from "./PipelinePage";
 import {
   confirmPublishTaskAuto,
+  connectPublishAccount,
   createCrawlerBatch,
+  createPublishAccount,
   createProductionBatch,
   createProductionProfile,
   getAvatarCapabilities,
   getCrawlerBrowserDiscoveryCapabilities,
   getCrawlerBatch,
   getCrawlerHotWords,
+  getPublishAccountStatus,
   getProductionBatchWorkspace,
   getProductionWorkspaceConfiguration,
   listAvatarAssets,
@@ -28,6 +31,7 @@ import {
   recordManualPublishResult,
   reviewProductionBatchItems,
   saveProductionWorkspaceConfiguration,
+  startCrawlerBrowserDiscovery,
   startProductionBatch,
   trainCloudVoice,
 } from "../api/client";
@@ -46,13 +50,16 @@ vi.mock("../api/client", async () => {
     ...actual,
     confirmPublishTaskAuto: vi.fn(),
     confirmProductionBatchPublish: vi.fn(),
+    connectPublishAccount: vi.fn(),
     createCrawlerBatch: vi.fn(),
+    createPublishAccount: vi.fn(),
     createProductionBatch: vi.fn(),
     createProductionProfile: vi.fn(),
     getAvatarCapabilities: vi.fn(),
     getCrawlerBrowserDiscoveryCapabilities: vi.fn(),
     getCrawlerBatch: vi.fn(),
     getCrawlerHotWords: vi.fn(),
+    getPublishAccountStatus: vi.fn(),
     getProductionBatchWorkspace: vi.fn(),
     getProductionWorkspaceConfiguration: vi.fn(),
     listAvatarAssets: vi.fn(),
@@ -120,6 +127,17 @@ const avatarAssets: AvatarAsset[] = [
     kind: "voice",
     name: "企业主音色",
     preview_url: null,
+    authorized: true,
+    preview_type: "audio",
+    status: "ready",
+    status_message: null,
+    source_type: "cloud",
+  },
+  {
+    asset_id: "voice-dashu",
+    kind: "voice",
+    name: "大树1",
+    preview_url: "/voice-dashu.mp3",
     authorized: true,
     preview_type: "audio",
     status: "ready",
@@ -322,23 +340,73 @@ describe("PipelinePage customer workspace", () => {
       avatar_id: "avatar-ready",
     });
     vi.mocked(listPublishPlatforms).mockResolvedValue({
-      platforms: [{
-        platform: "douyin",
-        enabled: false,
-        display_name: "抖音",
-        mode: "manual",
-        provider_name: "sandbox_douyin",
-        requires_account: false,
-        setup_required: false,
-        manual_only: true,
-        manual_fallback: true,
-        supports_scheduled: false,
-        supports_tags: true,
-        supports_cover: false,
-        missing_configuration: [],
-      }],
+      platforms: [
+        {
+          platform: "douyin",
+          enabled: false,
+          display_name: "抖音",
+          mode: "manual",
+          provider_name: "sandbox_douyin",
+          requires_account: false,
+          setup_required: false,
+          manual_only: true,
+          manual_fallback: true,
+          supports_scheduled: false,
+          supports_tags: true,
+          supports_cover: false,
+          missing_configuration: [],
+        },
+        {
+          platform: "xiaohongshu",
+          enabled: false,
+          display_name: "小红书",
+          mode: "manual",
+          provider_name: "sandbox_xiaohongshu",
+          requires_account: false,
+          setup_required: false,
+          manual_only: true,
+          manual_fallback: true,
+          supports_scheduled: false,
+          supports_tags: true,
+          supports_cover: false,
+          missing_configuration: [],
+        },
+      ],
     });
     vi.mocked(listPublishAccounts).mockResolvedValue([]);
+    vi.mocked(createPublishAccount).mockResolvedValue({
+      account_id: "pubacc-douyin",
+      platform: "douyin",
+      name: "公司主号",
+      status: "needs_login",
+      message: "请打开抖音官方扫码窗口完成首次登录。",
+      auto_publish_authorized: false,
+      last_verified_at: null,
+      created_at: "2026-07-31T11:00:00+08:00",
+      updated_at: "2026-07-31T11:00:00+08:00",
+    });
+    vi.mocked(connectPublishAccount).mockResolvedValue({
+      account_id: "pubacc-douyin",
+      platform: "douyin",
+      name: "公司主号",
+      status: "browser_open",
+      message: "已打开抖音官方创作者窗口，请扫码或完成平台验证。",
+      auto_publish_authorized: false,
+      last_verified_at: null,
+      created_at: "2026-07-31T11:00:00+08:00",
+      updated_at: "2026-07-31T11:01:00+08:00",
+    });
+    vi.mocked(getPublishAccountStatus).mockResolvedValue({
+      account_id: "pubacc-douyin",
+      platform: "douyin",
+      name: "公司主号",
+      status: "ready",
+      message: "已核验进入抖音创作者中心；可创建发布任务。",
+      auto_publish_authorized: false,
+      last_verified_at: "2026-07-31T11:02:00+08:00",
+      created_at: "2026-07-31T11:00:00+08:00",
+      updated_at: "2026-07-31T11:02:00+08:00",
+    });
     vi.mocked(listProductionBatches).mockResolvedValue({ items: [] });
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(getAvatarCapabilities).mockResolvedValue({
@@ -368,6 +436,20 @@ describe("PipelinePage customer workspace", () => {
       provider_name: "热点宝",
       message: "素材浏览器已连接。",
     });
+    vi.mocked(startCrawlerBrowserDiscovery).mockResolvedValue({
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      enabled: true,
+      running: true,
+      login_required: true,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      ready_to_crawl: false,
+      phase: "waiting_login",
+      provider_name: "xiaohongshu_local_browser",
+      message: "小红书浏览器已打开，请完成登录。",
+      started: true,
+    });
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({
       configured: true,
       rights_holder: "测试商家",
@@ -394,6 +476,15 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getAllByRole("combobox")).toHaveLength(2);
   });
 
+  it("does not offer the removed topic brief entry", async () => {
+    renderPage();
+
+    expect(await screen.findByRole("radio", { name: "关键词找素材" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "视频链接" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "已有文案" })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: "输入选题" })).toBeNull();
+  });
+
   it("requires the one-time setup before the workspace can be used", async () => {
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
     vi.mocked(saveProductionWorkspaceConfiguration).mockResolvedValue({
@@ -406,52 +497,106 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    expect(screen.queryByText("开工前准备")).toBeNull();
-    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
     expect(await screen.findByText("开工前准备")).toBeTruthy();
-    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: "抖音" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "小红书" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: "小红书" }));
     fireEvent.change(screen.getByPlaceholderText("公司名称或本人姓名"), { target: { value: "测试商家" } });
-    fireEvent.click(screen.getByRole("button", { name: "确认授权并进入工作台" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
 
     await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalledWith(
-      expect.objectContaining({ rightsHolder: "测试商家", agreementAccepted: true }),
+      expect.objectContaining({
+        rightsHolder: "测试商家",
+        agreementAccepted: true,
+        defaultPublishPlatforms: ["douyin", "xiaohongshu"],
+      }),
     ));
   });
 
+  it("requires selected publishing accounts to be scanned and verified in the workspace", async () => {
+    vi.mocked(listPublishPlatforms).mockResolvedValue({
+      platforms: [{
+        platform: "douyin",
+        enabled: true,
+        display_name: "抖音本机扫码发布",
+        mode: "local_browser",
+        provider_name: "douyin_local_browser",
+        requires_account: true,
+        setup_required: true,
+        manual_only: false,
+        manual_fallback: true,
+        supports_scheduled: false,
+        supports_tags: true,
+        supports_cover: false,
+        missing_configuration: [],
+      }],
+    });
+
+    renderPage();
+
+    const settingsButton = (await screen.findByText("修改设置")).closest("button");
+    fireEvent.click(settingsButton!);
+    expect(await screen.findByText("未登录")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
+    expect(await screen.findByText(/请先完成发布账号扫码核验：抖音/)).toBeTruthy();
+    expect(saveProductionWorkspaceConfiguration).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "添加并扫码" }));
+    await waitFor(() => expect(createPublishAccount).toHaveBeenCalledWith({
+      platform: "douyin",
+      name: "公司主号",
+    }));
+    expect(connectPublishAccount).toHaveBeenCalledWith("pubacc-douyin");
+
+    fireEvent.click(await screen.findByRole("button", { name: "我已登录，检查状态" }));
+    await waitFor(() => expect(getPublishAccountStatus).toHaveBeenCalledWith("pubacc-douyin"));
+    expect(await screen.findByText("已核验可发布")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
+    await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalled());
+  });
+
   it("keeps the workspace behind setup until the material browser is connected", async () => {
-    vi.mocked(getCrawlerBrowserDiscoveryCapabilities)
-      .mockResolvedValueOnce({
-        enabled: true,
-        running: false,
-        login_required: true,
-        missing_configuration: [],
-        browser_channel: "chrome",
-        ready_to_crawl: false,
-        phase: "browser_closed",
-        provider_name: "热点宝",
-        message: "请先打开素材浏览器并登录抖音。",
-      })
-      .mockResolvedValueOnce({
-        enabled: true,
-        running: true,
-        login_required: false,
-        missing_configuration: [],
-        browser_channel: "chrome",
-        ready_to_crawl: true,
-        phase: "ready",
-        provider_name: "热点宝",
-        message: "素材浏览器已连接。",
-      });
+    vi.mocked(getCrawlerBrowserDiscoveryCapabilities).mockResolvedValue({
+      enabled: true,
+      running: false,
+      login_required: true,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      ready_to_crawl: false,
+      phase: "browser_closed",
+      provider_name: "本机浏览器",
+      message: "请先打开平台浏览器并登录。",
+    });
 
     renderPage();
 
     expect(screen.queryByText("开工前准备")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
-    expect(await screen.findByText("先连接素材来源")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "打开素材浏览器并登录" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: "确认授权并进入工作台" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "我已登录，检查连接" }));
-    await waitFor(() => expect(screen.getByText("素材来源已准备好")).toBeTruthy());
+    expect(await screen.findByText("先连接至少一个素材平台")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录抖音热点宝" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录快手" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录B站" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "登录小红书" })).toBeNull();
+    expect((screen.getByRole("button", { name: "保存设置并进入工作台" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "登录快手" }));
+    await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("kuaishou"));
+
+    vi.mocked(getCrawlerBrowserDiscoveryCapabilities).mockResolvedValue({
+      enabled: true,
+      running: true,
+      login_required: false,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      ready_to_crawl: true,
+      phase: "ready",
+      provider_name: "本机浏览器",
+      message: "素材浏览器已连接。",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "我已登录，刷新状态" }));
+    await waitFor(() => expect(screen.getByText("三个素材平台都已连接")).toBeTruthy());
   });
 
   it("shows the workspace without waiting for the material browser status check", async () => {
@@ -470,6 +615,18 @@ describe("PipelinePage customer workspace", () => {
     const preview = screen.getByLabelText("当前 IP 出镜人预览");
 
     expect(details.compareDocumentPosition(preview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("lets an existing customer reopen the startup settings", async () => {
+    renderPage();
+
+    const settingsButton = (await screen.findByText("修改设置")).closest("button");
+    expect(settingsButton).toBeTruthy();
+    fireEvent.click(settingsButton!);
+
+    expect(await screen.findByRole("dialog", { name: "开工前准备" })).toBeTruthy();
+    expect(screen.getByDisplayValue("测试商家")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "换一个" })).toBeTruthy();
   });
 
   it("shows the workspace frame instead of a blank spinner while core settings load", () => {
@@ -519,6 +676,51 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByText("选择形象和声音即可，系统会自动完成通用智能优化。")).toBeTruthy();
     expect(screen.queryByPlaceholderText("选择剪辑模板")).toBeNull();
     expect(screen.queryByText("短视频一键优化")).toBeNull();
+  });
+
+  it("switches from every ready avatar and voice, not only from saved profiles", async () => {
+    vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "换一个" }));
+
+    expect(await screen.findByText("选择出镜人和声音")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "选择形象：企业主形象" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "选择形象：大树1" }));
+    fireEvent.click(screen.getByRole("button", { name: "使用这个出镜组合" }));
+
+    await waitFor(() => expect(createProductionProfile).toHaveBeenCalledWith(expect.objectContaining({
+      avatar_id: "avatar-dashu",
+      voice_id: "voice-dashu",
+    })));
+  });
+
+  it("reuses an already saved combination even when it is not in the ready-profile list", async () => {
+    vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+    vi.mocked(listProductionProfiles).mockResolvedValue({
+      items: [
+        profile,
+        {
+          ...profile,
+          profile_id: "ip-dashu-existing",
+          name: "大树1",
+          avatar_id: "avatar-dashu",
+          voice_id: "voice-dashu",
+        },
+      ],
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "换一个" }));
+    fireEvent.click(await screen.findByRole("button", { name: "选择形象：大树1" }));
+    fireEvent.click(screen.getByRole("button", { name: "使用这个出镜组合" }));
+
+    await waitFor(() => expect(screen.getByText("已切换到这个出镜人和声音。")).toBeTruthy());
+    expect(createProductionProfile).not.toHaveBeenCalled();
   });
 
   it("saves a new person without asking the customer for an editing template", async () => {
@@ -649,14 +851,211 @@ describe("PipelinePage customer workspace", () => {
 
     expect(await screen.findByText("换一个更具体的词再试试。")).toBeTruthy();
     expect(previewCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
-      count_per_platform: 3,
-      target_main_count: 3,
-      hotspot_result_limit: 3,
-      max_paid_calls: 1,
+      count_per_platform: 30,
+      target_main_count: 30,
+      hotspot_result_limit: 30,
+      max_paid_calls: 0,
       allow_paid_fallback: false,
     }));
     expect(screen.queryByText("供应商无返回")).toBeNull();
     expect(screen.queryByText("检索范围与费用预览")).toBeNull();
+  });
+
+  it("distinguishes a rejected search request from an empty result", async () => {
+    vi.mocked(previewCrawlerBatch).mockRejectedValue(new Error("请求参数校验失败"));
+    renderPage();
+
+    const input = await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑");
+    fireEvent.change(input, { target: { value: "贴标机" } });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("搜索请求没有成功提交，请刷新页面后再试；你的关键词不会丢失。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
+    expect(createCrawlerBatch).not.toHaveBeenCalled();
+  });
+
+  it("shows every qualified candidate with its original video link in manual mode", async () => {
+    const manualCandidates = [1, 2, 3].map((rank) => ({
+      ...candidate,
+      video_id: `manual-candidate-${rank}`,
+      title: `贴标机候选素材 ${rank}`,
+      source_url: `https://example.com/video-${rank}`,
+      system_rank: rank,
+    }));
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 7,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch(manualCandidates));
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("radio", { name: "手动选择" }));
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("本次找到的全部素材（3）")).toBeTruthy();
+    const sourceLinks = screen.getAllByRole("link", { name: /查看「贴标机候选素材 \d」原视频/ });
+    expect(sourceLinks).toHaveLength(3);
+    expect(sourceLinks.map((link) => link.getAttribute("href"))).toEqual([
+      "https://example.com/video-1",
+      "https://example.com/video-2",
+      "https://example.com/video-3",
+    ]);
+    manualCandidates.forEach((item) => {
+      expect(screen.getByRole("button", { name: new RegExp(item.title) })).toBeTruthy();
+    });
+  });
+
+  it("keeps two reserve materials idle behind the first four automatic candidates", async () => {
+    const automaticPool = [1, 2, 3, 4, 5, 6].map((rank) => ({
+      ...candidate,
+      video_id: `auto-candidate-${rank}`,
+      title: `自动候选素材 ${rank}`,
+      source_url: `https://example.com/auto-${rank}`,
+      system_rank: rank,
+      spoken_material_status: "transcript_ready",
+    }));
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 7,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch(automaticPool));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findAllByText("口播候选 4 条＋候补 2 条")).toHaveLength(2);
+    expect(screen.getAllByText(/候补参考 · 已有可用口播/)).toHaveLength(2);
+    expect(screen.getByText("0 条画面参考不参与 ASR")).toBeTruthy();
+  });
+
+  it("keeps likely machine showcases out of the automatic spoken pool", async () => {
+    const showcaseCandidates = [
+      "贴标机",
+      "高速口服液灌装机 立转卧高速贴标机 200瓶/分",
+      "圆形贴标机全自动生产线精准定位高效出标视频",
+      "派加福贴标机在化工涂料行业应用",
+      "首先切标鼓角度不对，导致标签不能有效接触瓶子；其次要调整粘标点位置。",
+    ].map((title, index) => ({
+      ...candidate,
+      video_id: `showcase-${index}`,
+      title,
+      system_rank: index + 1,
+      spoken_material_status: "topic_only",
+    }));
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 7,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch(showcaseCandidates));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findAllByText("口播候选 1 条")).toHaveLength(2);
+    expect(screen.getByText("4 条画面参考不参与 ASR")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^#\d+ 贴标机 B站/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /首先切标鼓角度不对/ })).toBeTruthy();
+  });
+
+  it("shows low-heat references instead of deleting them in manual mode", async () => {
+    const response = crawlerBatch([{
+      ...candidate,
+      video_id: "priority-candidate",
+      title: "优先素材",
+      source_url: "https://example.com/priority",
+    }]);
+    response.platform_runs[0].low_incremental_candidates = [{
+      ...candidate,
+      video_id: "low-heat-candidate",
+      title: "低热度但相关的候补",
+      source_url: "https://example.com/low-heat",
+      system_rank: 99,
+    }];
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 7,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(response);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("radio", { name: "手动选择" }));
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("本次找到的全部素材（2）")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /低热度但相关的候补/ })).toBeTruthy();
+    expect(screen.getByText(/低热度候补 · 疑似纯展示，仅作画面参考/)).toBeTruthy();
   });
 
   it("restores a crawler handoff and selects the highest candidate without starting production", async () => {
@@ -668,7 +1067,7 @@ describe("PipelinePage customer workspace", () => {
     const selected = screen.getByRole("button", { name: new RegExp(candidate.title) });
     expect(selected.className).toContain("selected");
     expect(createProductionBatch).not.toHaveBeenCalled();
-    expect(screen.getByText("已帮你选好第 1 条")).toBeTruthy();
+    expect(screen.getByText("1 条口播优先 · 0 条画面参考")).toBeTruthy();
   });
 
   it("preserves an explicitly selected low-threshold crawler candidate during handoff", async () => {
@@ -753,6 +1152,12 @@ describe("PipelinePage customer workspace", () => {
             required: true,
             reviewed: false,
             draft_text: "先说客户最关心的问题。再给出一个可执行的做法。最后留言获取清单。",
+            ai_audit: {
+              status: "completed",
+              approved: false,
+              summary: "有一处效果表述需要人工核对。",
+              issues: [{ severity: "warning", category: "事实边界", message: "请确认效果表述有依据。" }],
+            },
           },
           output: { required: true, reviewed: false },
         },
@@ -767,7 +1172,11 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    expect(await screen.findByText("创作方案")).toBeTruthy();
+    const creativePlanDetails = (await screen.findByText("查看创作拆解")).closest("details") as HTMLDetailsElement;
+    expect(creativePlanDetails.open).toBe(false);
+    expect(screen.getByText("只需确认这一份，系统会自动带入后续制作")).toBeTruthy();
+    expect(screen.getByText("AI 文案审核提示需核对")).toBeTruthy();
+    expect(screen.getByText("请确认效果表述有依据。", { exact: false })).toBeTruthy();
     expect((screen.getByLabelText("开头吸引点") as HTMLInputElement).value).toBe("先说客户最关心的问题。");
     expect((screen.getByLabelText("三个画面段落") as HTMLTextAreaElement).value).toContain("开场：");
     fireEvent.click(screen.getByRole("button", { name: "确认方案并制作视频" }));

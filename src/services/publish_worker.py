@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from src.models import PublishTask, TaskStatus
+from datetime import datetime
+
+from src.models import PublishPlatform, PublishStatus, PublishTask, TaskStatus
 from src.services.publisher import PublishService
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,18 @@ class PublishWorker:
             (task for task in self.publish_service.list_tasks() if task.status == TaskStatus.QUEUED),
             key=lambda task: task.created_at,
         )
-        if not queued:
-            return None
-        return self.publish_service.execute_queued_task(queued[0].task_id)
+        for task in queued:
+            if task.target.platform == PublishPlatform.XIAOHONGSHU:
+                paused = task.model_copy(
+                    update={
+                        "status": TaskStatus.PAUSED,
+                        "publish_status": PublishStatus.MANUAL_READY,
+                        "stage": "小红书人工发布包已就绪",
+                        "action_required": "小红书安全模式已开启：请人工打开官方创作端上传并发布；系统不会再操作账号。",
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self.publish_service.repository.save_task(paused)
+                continue
+            return self.publish_service.execute_queued_task(task.task_id)
+        return None

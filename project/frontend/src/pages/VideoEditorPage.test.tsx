@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import VideoEditorPage from "./VideoEditorPage";
 import {
+  confirmVideoEditorBatchResults,
   createVideoEditorBatch,
+  createVideoEditorLocalExport,
+  getVideoEditorBatchItemDownloadUrl,
   listVideoEditorBatches,
   listVideoEditorBgm,
   listVideoEditorSources,
@@ -24,9 +27,15 @@ import type {
 vi.mock("../api/client", () => ({
   confirmVideoEditorBatchResults: vi.fn(),
   createVideoEditorBatch: vi.fn(),
+  createVideoEditorLocalExport: vi.fn(),
   getTranscription: vi.fn(),
   getVideoCapabilities: vi.fn(),
   getVideoEditorBatch: vi.fn(),
+  getVideoEditorBatchItemDownloadUrl: vi.fn(
+    (batchId: string, itemId: string) => (
+      `/api/v1/video-editor/batches/${batchId}/items/${itemId}/download`
+    ),
+  ),
   listVideoEditorBatches: vi.fn(),
   listVideoEditorBgm: vi.fn(),
   listVideoEditorSources: vi.fn(),
@@ -162,6 +171,7 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
     bgm: null,
     visual_spec: {
       style_id: "business_talking_head_v5",
+      playback_rate: 1.15,
       canvas: { width: 720, height: 1280, pixel_aspect_ratio: "1:1" },
       title: {
         visible_seconds: 2.5,
@@ -171,7 +181,7 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
         max_chars_per_line: 9,
         font_family: "Source Han Serif CN Heavy",
         render_mode: "png_watermark",
-        font_size: 48,
+        font_size: 52,
         line_height: 1.1,
         safe_top: 84,
         safe_left: 56,
@@ -185,7 +195,7 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
       subtitle: {
         max_lines: 2,
         max_chars_per_line: 12,
-        font_size: 38,
+        font_size: 52,
         safe_bottom: 170,
         outline_width: 2,
         shadow: 3,
@@ -395,7 +405,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
     fireEvent.click(screen.getByText("方案预览"));
     const timeline = await screen.findByRole("slider", { name: "方案预览进度" });
     expect(timeline.getAttribute("aria-valuemin")).toBe("0");
-    expect(timeline.getAttribute("aria-valuemax")).toBe("58");
+    expect(Number(timeline.getAttribute("aria-valuemax"))).toBeCloseTo(58 / 1.15, 4);
     expect(screen.getByText("可拖动查看剪后时间")).toBeTruthy();
     const previewSubtitle = await waitFor(() => {
       const overlay = document.querySelector(".video-editor-subtitle-overlay");
@@ -433,7 +443,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
     });
   });
 
-  it("offers a fresh quote instead of silently resubmitting an unknown render", async () => {
+  it("exports the approved preview locally without reopening cloud billing", async () => {
     const batch = sandboxBatch("outcome_unknown");
     batch.is_mock = false;
     batch.provider_mode = "aliyun";
@@ -446,20 +456,75 @@ describe("VideoEditorPage cloud-light workflow", () => {
       live_ready: true,
     });
     vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    const rendering = structuredClone(batch);
+    rendering.items[0].status = "rendering";
+    rendering.items[0].provider_stage = "local_export_rendering";
+    rendering.items[0].edit_task_id = "edit-local-1";
+    rendering.items[0].job = {
+      task_id: "edit-local-1",
+      status: "running",
+      progress: 15,
+      stage: "正在写入标题、字幕和配乐",
+      error_message: null,
+      result_size_bytes: null,
+      media_url: null,
+      download_url: null,
+      source_id: "source-1",
+      analysis_id: null,
+      publish_title: "测试口播标题",
+      workflow: "local_preview_export",
+    };
+    vi.mocked(createVideoEditorLocalExport).mockResolvedValue(rendering);
     renderPage();
 
     const primary = await screen.findByTestId("primary-action");
-    expect(primary.textContent).toContain("重新报价并生成带字幕成片");
+    expect(primary.textContent).toContain("本机免费生成并下载");
     expect((primary as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(primary);
+    const generateDownload = screen.getAllByRole(
+      "button",
+      { name: /本机免费生成并下载$/ },
+    )[0];
+    expect((generateDownload as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(generateDownload);
 
-    expect(await screen.findByRole("dialog", { name: "确认预计费用" })).toBeTruthy();
-    expect(preflightVideoEditor).toHaveBeenCalledWith(expect.objectContaining({
-      sourceId: "source-1",
-      outputProfile: "720p",
-      targetPlatform: "douyin",
-    }));
+    await waitFor(() => {
+      expect(createVideoEditorLocalExport).toHaveBeenCalledWith(
+        "batch-cloud-1",
+        "item-1",
+      );
+    });
+    expect(screen.queryByRole("dialog", { name: "确认预计费用" })).toBeNull();
+    expect(preflightVideoEditor).not.toHaveBeenCalled();
     expect(createVideoEditorBatch).not.toHaveBeenCalled();
+  });
+
+  it("downloads a real cloud result directly without confirming publication", async () => {
+    const batch = sandboxBatch("awaiting_output_confirmation");
+    batch.is_mock = false;
+    batch.provider_mode = "aliyun";
+    batch.items[0].is_mock = false;
+    batch.items[0].publish_allowed = true;
+    batch.items[0].result_media_url = "https://private-bucket.oss-cn-beijing.aliyuncs.com/output.mp4";
+    vi.mocked(getVideoCapabilities).mockResolvedValue({
+      ...sandboxCapabilities,
+      provider_mode: "aliyun",
+      is_mock: false,
+      live_ready: true,
+    });
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    renderPage();
+
+    const button = await screen.findByRole("button", { name: /下载成片$/ });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(button);
+
+    expect(downloadClick).toHaveBeenCalledTimes(1);
+    expect(getVideoEditorBatchItemDownloadUrl).toHaveBeenCalledWith(
+      "batch-cloud-1",
+      "item-1",
+    );
+    expect(confirmVideoEditorBatchResults).not.toHaveBeenCalled();
   });
 
   it("lets the owner listen to the AI-selected BGM before confirming", async () => {

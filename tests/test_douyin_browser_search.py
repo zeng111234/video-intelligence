@@ -3,7 +3,10 @@ from datetime import datetime
 import pytest
 
 from src.adapters.licensed import LicensedProviderError
-from src.adapters.douyin_browser_search import LocalDouyinBrowserSearchProvider
+from src.adapters.douyin_browser_search import (
+    BrowserSessionStatus,
+    LocalDouyinBrowserSearchProvider,
+)
 from src.models import Platform, ProviderMode
 
 
@@ -110,6 +113,60 @@ def test_browser_provider_checks_the_configured_browser_channel(tmp_path, monkey
 
     assert capability.enabled is False
     assert capability.missing_configuration == ["Microsoft Edge"]
+
+
+def test_login_button_opens_visible_hotspot_window_even_when_session_is_running(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29994,
+    )
+    launched: list[list[str]] = []
+    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.subprocess.Popen",
+        lambda args, **kwargs: launched.append(args),
+    )
+    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
+
+    status = provider.open_login_browser()
+
+    assert status.ready_to_crawl is True
+    assert len(launched) == 1
+    assert "--new-window" in launched[0]
+    assert "--window-position=80,80" in launched[0]
+    assert "--start-minimized" not in launched[0]
+
+
+def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29993,
+    )
+    launched: list[list[str]] = []
+    closed = BrowserSessionStatus(
+        True, False, True, False, "browser_closed", "未打开"
+    )
+    monkeypatch.setattr(provider, "session_status", lambda: closed)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.subprocess.Popen",
+        lambda args, **kwargs: launched.append(args),
+    )
+    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
+
+    provider.start_login_browser()
+
+    assert "--start-minimized" in launched[0]
+    assert "--window-position=-32000,-32000" in launched[0]
+    assert "--new-window" not in launched[0]
 
 
 def test_hotspot_keyword_is_typed_gradually_before_search():

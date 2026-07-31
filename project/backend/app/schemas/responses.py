@@ -50,6 +50,12 @@ class TranscriptionResponse(BaseModel):
     stage: str = ""
     media_name: str = ""
     model_name: str | None = None
+    provider_name: str | None = None
+    provider_job_id: str | None = None
+    provider_status: str | None = None
+    estimated_cost_cny: float | None = None
+    pricing_version: str | None = None
+    billing_authorized: bool = False
     source_kind: str = "asr"
     timing_available: bool = True
     duration_seconds: float | None = None

@@ -13,6 +13,16 @@ from src.repositories.mock import MockRepository
 from src.services.copywriting import CopywritingService
 
 
+def test_audit_spoken_script_keeps_sandbox_result_truthful():
+    service = CopywritingService(MockRepository(), SandboxCopywritingEngine())
+
+    result = service.audit_spoken_script(script_text="这是一段待审核的口播稿。")
+
+    assert result["status"] == "mock"
+    assert result["approved"] is False
+    assert "未执行真实 AI 文案审核" in result["summary"]
+
+
 class _FailingEngine:
     """模拟引擎抛出异常的场景。"""
 

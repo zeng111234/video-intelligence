@@ -9,10 +9,11 @@ from __future__ import annotations
 import importlib.metadata
 import shutil
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.config import ASRMode, ASR_MODE
+from project.backend.app.core.deps import get_transcription_service
 from src.adapters.subtitle_generator import SubtitleGenerator
 
 router = APIRouter(prefix="/subtitles", tags=["subtitles"])
@@ -46,8 +47,29 @@ class SubtitleStatusResponse(BaseModel):
 
 
 @router.get("/status", response_model=SubtitleStatusResponse)
-def subtitle_status():
-    """检查真实本地字幕工作流的依赖状态。"""
+def subtitle_status(service=Depends(get_transcription_service)):
+    """检查字幕工作流当前选择的真实识别能力。"""
+    if ASR_MODE == ASRMode.CLOUD and service.cloud_runtime is not None:
+        capability = service.cloud_runtime.capability()
+        enabled = bool(capability["enabled"])
+        reason = None
+        if not capability["live_ready"]:
+            reason = "公司云识别配置不完整，请联系管理员。"
+        elif not capability["billing_authorized"]:
+            reason = "公司云识别费用尚未授权，请管理员到系统设置确认。"
+        return SubtitleStatusResponse(
+            whisper_available=enabled,
+            version=None,
+            supported_formats=["srt", "ass"],
+            install_command=None,
+            provider_name="阿里云 Fun-ASR",
+            ffmpeg_available=True,
+            asr_mode=ASR_MODE.value,
+            supported_models=["fun-asr"],
+            default_model="fun-asr",
+            reason=reason,
+        )
+
     engine_available = SubtitleGenerator.whisper_available()
     ffmpeg_available = shutil.which("ffmpeg") is not None
     local_mode = ASR_MODE == ASRMode.LOCAL

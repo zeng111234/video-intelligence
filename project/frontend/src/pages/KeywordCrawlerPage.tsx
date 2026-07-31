@@ -32,6 +32,7 @@ import {
   getCrawlerBatch,
   getCrawlerCapabilities,
   getCrawlerHotWords,
+  importXiaohongshuManualMaterials,
   listCrawlerBatches,
   previewCrawlerCandidateMedia,
   startCrawlerBrowserDiscovery,
@@ -46,11 +47,13 @@ import type {
   CrawlerOriginalScriptResponse,
   CrawlerPlatformRun,
   CrawlerSearchRequest,
+  XiaohongshuManualMaterialInput,
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
 
 const { Text, Title, Paragraph } = Typography;
+const GENERIC_SEARCH_KEYWORDS = new Set(["获客", "引流", "营销", "运营", "带货", "招生", "招聘"]);
 
 const STATUS_COLOR: Record<string, string> = {
   queued: "default",
@@ -122,6 +125,7 @@ function resultStateMessage(run: CrawlerPlatformRun) {
     all_out_of_window: `供应商返回了 ${run.raw_item_count} 条，但全部早于本次时间范围，未额外翻页以避免增加费用。`,
     all_invalid: "供应商返回的候选全部未通过平台、链接或去重校验，请核对供应商字段。",
     all_irrelevant: `供应商返回了内容，但均未通过标题/话题的严格关键词匹配；已过滤 ${run.irrelevant_count ?? 0} 条。`,
+    all_low_spoken_value: `找到了相关内容，但公开文字不足以支撑原创口播；已隐藏 ${run.low_spoken_value_count ?? 0} 条。`,
     all_below_heat_floor: `有 ${run.strict_relevant_count ?? 0} 条严格相关内容，但互动热度均低于 100，已不进入主榜。`,
     no_hot: "已得到候选，但没有达到本产品的热门/潜力阈值；它们不会被标为爆款。",
   };
@@ -178,6 +182,8 @@ export default function KeywordCrawlerPage() {
   const [originalScriptLoadingId, setOriginalScriptLoadingId] = useState<string | null>(null);
   const [connectionDrawerOpen, setConnectionDrawerOpen] = useState(false);
   const [connectingPlatform, setConnectingPlatform] = useState<BrowserPlatform | null>(null);
+  const [manualXiaohongshuText, setManualXiaohongshuText] = useState("");
+  const [manualXiaohongshuSaving, setManualXiaohongshuSaving] = useState(false);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
@@ -192,22 +198,25 @@ export default function KeywordCrawlerPage() {
     hotspot_result_limit: 30,
   }), [keyword, hotspotWindowHours]);
   const keywordLength = requestPayload.keyword.length;
-  const canSearch = keywordLength >= 2 && keywordLength <= 50;
+  const keywordTooBroad = GENERIC_SEARCH_KEYWORDS.has(requestPayload.keyword.trim());
+  const canSearch = keywordLength >= 2 && keywordLength <= 50 && !keywordTooBroad;
   const keywordHelp =
     keywordLength === 0
       ? "输入一个词，马上开始找素材。"
+        : keywordTooBroad
+          ? `“${requestPayload.keyword.trim()}”范围太宽，请补充产品或行业，例如“贴标机${requestPayload.keyword.trim()}”。`
         : !canSearch
         ? "关键词需为 2–50 个字符。"
-          : "每个平台最多保留30条：抖音爆款榜、小红书、快手和B站都可作为免费候选来源。";
+          : "每个平台最多保留30条：抖音爆款榜、快手和B站可自动找素材；小红书请用下方人工素材箱。";
   const isSandboxMode = capabilities?.mode === "sandbox";
   const crawlerDescription = capabilities
     ? isSandboxMode
       ? "当前为 Sandbox 演示模式，不代表真实平台生产数据。"
-      : "输入一个关键词，系统会自动打开热点宝、小红书、快手和B站的公开页面并开始找素材。"
+      : "输入一个关键词，系统会自动打开热点宝、快手和B站的公开页面找素材；小红书保持人工素材模式。"
     : "加载发现能力中。";
   const browserConnections = useMemo(() => [
     capabilities?.hotspot_browser,
-    ...(capabilities?.platform_browsers ?? []),
+    ...(capabilities?.platform_browsers ?? []).filter((item) => item.platform !== "xiaohongshu"),
   ].filter((item): item is CrawlerBrowserDiscoveryCapabilities => Boolean(item)), [capabilities]);
   const readyBrowserCount = browserConnections.filter((item) => item.ready_to_crawl).length;
 
@@ -245,19 +254,6 @@ export default function KeywordCrawlerPage() {
       .catch(() => setHotWords([]));
   }, [toast]);
 
-  const handleCreateCandidateLinkTranscription = async (candidate: CrawlerCandidateResult) => {
-    const supportedPlatforms = new Set(["douyin", "xiaohongshu", "kuaishou", "bilibili"]);
-    if (!supportedPlatforms.has(candidate.platform)) {
-      toast.info("视频号暂不能自动解析；请上传有权处理的视频文件。");
-      return;
-    }
-    if (!candidate.source_url) {
-      toast.warning("该候选没有可用的原视频链接");
-      return;
-    }
-    navigate(`/transcription?share_text=${encodeURIComponent(candidate.source_url)}&title=${encodeURIComponent(candidate.title)}`);
-  };
-
   const handleSendCandidateToWorkspace = (
     batchId: string,
     candidate: CrawlerCandidateResult,
@@ -269,6 +265,32 @@ export default function KeywordCrawlerPage() {
     navigate(`/pipeline?${query.toString()}`);
   };
 
+  const handleSaveManualXiaohongshu = async () => {
+    const items: XiaohongshuManualMaterialInput[] = manualXiaohongshuText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const [title = "", source_url = "", visible_copy = ""] = line.split("|").map((part) => part.trim());
+        return { title, source_url, visible_copy };
+      });
+    if (!items.length || items.some((item) => !item.title || !/^https?:\/\//i.test(item.source_url))) {
+      toast.warning("请每行按“标题 | 链接 | 可见文案”填写，链接需以 http:// 或 https:// 开头。");
+      return;
+    }
+    setManualXiaohongshuSaving(true);
+    try {
+      const result = await importXiaohongshuManualMaterials(items);
+      setManualXiaohongshuText("");
+      toast.success(result.message);
+      if (result.errors.length) toast.warning(result.errors[0]);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setManualXiaohongshuSaving(false);
+    }
+  };
+
   useEffect(() => {
     void loadBatches();
     void loadSecondaryData();
@@ -278,6 +300,10 @@ export default function KeywordCrawlerPage() {
     const searchKeyword = (keywordOverride ?? keyword).trim();
     if (searchKeyword.length < 2 || searchKeyword.length > 50) {
       toast.warning("关键词需为 2–50 个字符");
+      return;
+    }
+    if (GENERIC_SEARCH_KEYWORDS.has(searchKeyword)) {
+      toast.warning(`“${searchKeyword}”范围太宽，请补充产品或行业，例如“贴标机${searchKeyword}”。`);
       return;
     }
     const payload: CrawlerSearchRequest = { ...requestPayload, keyword: searchKeyword };
@@ -318,7 +344,7 @@ export default function KeywordCrawlerPage() {
       });
       toast.success(started.ready_to_crawl
         ? `${started.platform_label}已连接`
-        : `${started.platform_label}浏览器已在后台打开，请从任务栏完成登录`);
+        : `${started.platform_label}登录窗口已打开，请在窗口中扫码或完成验证`);
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -490,7 +516,7 @@ export default function KeywordCrawlerPage() {
         title="你想做什么内容？"
         extra={(
           <Button icon={<LinkOutlined />} onClick={() => setConnectionDrawerOpen(true)}>
-            {capabilities ? `账号连接（${readyBrowserCount}/4）` : "账号连接"}
+            {capabilities ? `账号连接（${readyBrowserCount}/3）` : "账号连接"}
           </Button>
         )}
       >
@@ -540,8 +566,27 @@ export default function KeywordCrawlerPage() {
           </Tooltip>
         </Space>
         <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-          点“找素材”后浏览器会自动打开并开始搜索；热点宝不限制作品发布时间，小红书选择“最多点赞、视频、半年内”，快手保留近10个月，B站选择“最多播放、最近一周”。每个平台最多保留30条。
+          点“找素材”后浏览器会自动搜索热点宝、快手和B站；小红书不会被打开、浏览或抓取。快手保留近30天，B站选择“最多播放、最近一周”，每个平台最多保留30条。
         </Text>
+      </Card>
+
+      <Card title="小红书人工素材箱">
+        <Alert
+          type="warning"
+          showIcon
+          message="小红书安全模式已开启"
+          description="为保护账号，系统不会打开、浏览、抓取或发布小红书内容。把你已经人工看到的标题、链接和可见文案保存到这里；保存过程不会访问该链接。"
+          style={{ marginBottom: 12 }}
+        />
+        <Input.TextArea
+          value={manualXiaohongshuText}
+          onChange={(event) => setManualXiaohongshuText(event.target.value)}
+          rows={4}
+          placeholder={"每行一条：标题 | https://链接 | 你看到的可见文案\n例如：贴标机选型避坑 | https://www.xiaohongshu.com/explore/… | 选型先看精度和速度"}
+        />
+        <Button type="primary" style={{ marginTop: 12 }} loading={manualXiaohongshuSaving} onClick={() => void handleSaveManualXiaohongshu()}>
+          保存人工素材
+        </Button>
       </Card>
 
       <Drawer
@@ -568,7 +613,11 @@ export default function KeywordCrawlerPage() {
                 extra={<Tag color={color}>{status}</Tag>}
               >
                 <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                  {ready ? "已可找素材。" : connection.message}
+                  {ready
+                    ? "已可找素材。"
+                    : connection.enabled
+                      ? "点击连接会打开可见登录窗口，扫码或完成验证后再回来找素材。"
+                      : connection.message}
                 </Paragraph>
                 <Button
                   type={ready ? "default" : "primary"}
@@ -591,7 +640,6 @@ export default function KeywordCrawlerPage() {
         <BatchDetail
           batch={selectedBatch}
           onResolveMedia={handleOpenCandidateMedia}
-          onCreateCandidateLinkTranscription={handleCreateCandidateLinkTranscription}
           onSendToWorkspace={handleSendCandidateToWorkspace}
           onGenerateOriginalScript={handleGenerateOriginalScript}
           originalScriptLoadingId={originalScriptLoadingId}
@@ -699,14 +747,12 @@ export default function KeywordCrawlerPage() {
 function BatchDetail({
   batch,
   onResolveMedia,
-  onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
   batch: CrawlerBatchResponse;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
@@ -719,21 +765,20 @@ function BatchDetail({
     <Card title={`本次素材：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
       <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
         {!isSingleSnapshotBatch && <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>}
-        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : isFreeMultiPlatformBatch ? "平台规则" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : isFreeMultiPlatformBatch ? "热点宝不限 · 小红书近半年 · B站近一周 · 快手近10个月" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : batch.published_window_days === 3 ? "近 3 天（历史）" : batch.published_window_days === 180 ? "近半年（历史）" : batch.published_window_days === 300 ? "近 10 个月（历史）" : "近 7 天（历史）"}</Descriptions.Item>
+        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : isFreeMultiPlatformBatch ? "平台规则" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : isFreeMultiPlatformBatch ? "热点宝不限 · 小红书仅人工素材 · B站近一周 · 快手近30天" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : batch.published_window_days === 3 ? "近 3 天（历史）" : batch.published_window_days === 30 ? "近 30 天（历史）" : batch.published_window_days === 180 ? "近半年（历史）" : batch.published_window_days === 300 ? "近 10 个月（历史）" : "近 7 天（历史）"}</Descriptions.Item>
         <Descriptions.Item label={isSingleSnapshotBatch ? "本次候选目标" : "每平台"}>{batch.count_per_platform} 条</Descriptions.Item>
         {!isSingleSnapshotBatch && <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>}
         {batch.mode === "smart" && <Descriptions.Item label="免费来源候选">{batch.free_candidate_count || 0} 条</Descriptions.Item>}
         {batch.mode === "smart" && <Descriptions.Item label="付费接口">{batch.paid_fallback_used ? "已使用" : "未调用 OneAPI"}</Descriptions.Item>}
       </Descriptions>
       <Space style={{ marginBottom: 12 }} wrap>
-        <Text type="secondary">选一条生成原创文案或送入后续创作；每次搜索只抓取一次。</Text>
+        <Text type="secondary">先看素材状态：只有“已有授权转写”或“有可见文案参考”可送入创作；其余只能据选题生成原创口播。</Text>
       </Space>
       {isFreeMultiPlatformBatch ? (
         <UnifiedPlatformResults
           runs={batch.platform_runs}
           batchId={batch.batch_id}
           onResolveMedia={onResolveMedia}
-          onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
           onSendToWorkspace={onSendToWorkspace}
           onGenerateOriginalScript={onGenerateOriginalScript}
           originalScriptLoadingId={originalScriptLoadingId}
@@ -746,7 +791,6 @@ function BatchDetail({
               run={run}
               batchId={batch.batch_id}
               onResolveMedia={onResolveMedia}
-              onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
               onSendToWorkspace={onSendToWorkspace}
               onGenerateOriginalScript={onGenerateOriginalScript}
               originalScriptLoadingId={originalScriptLoadingId}
@@ -767,6 +811,7 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
       run.out_of_window_count ? `时间不符 ${run.out_of_window_count}` : "",
       run.irrelevant_count ? `关键词不符 ${run.irrelevant_count}` : "",
       run.below_heat_floor_count ? `热度不足 ${run.below_heat_floor_count}` : "",
+      run.low_spoken_value_count ? `口播信息不足 ${run.low_spoken_value_count}` : "",
       run.invalid_count ? `字段无效 ${run.invalid_count}` : "",
       run.duplicate_count ? `重复 ${run.duplicate_count}` : "",
     ].filter(Boolean);
@@ -779,7 +824,6 @@ function UnifiedPlatformResults({
   runs,
   batchId,
   onResolveMedia,
-  onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
@@ -787,7 +831,6 @@ function UnifiedPlatformResults({
   runs: CrawlerPlatformRun[];
   batchId: string;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
@@ -838,7 +881,6 @@ function UnifiedPlatformResults({
               item={item}
               batchId={batchId}
               onResolveMedia={onResolveMedia}
-              onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
               onSendToWorkspace={onSendToWorkspace}
               onGenerateOriginalScript={onGenerateOriginalScript}
               originalScriptLoading={originalScriptLoadingId === item.video_id}
@@ -861,7 +903,6 @@ function PlatformRunDetail({
   run,
   batchId,
   onResolveMedia,
-  onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
@@ -869,7 +910,6 @@ function PlatformRunDetail({
   run: CrawlerPlatformRun;
   batchId: string;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
@@ -897,7 +937,7 @@ function PlatformRunDetail({
         <Descriptions size="small" column={{ xs: 1, md: 4 }}>
           <Descriptions.Item label="主榜候选">{run.relevant_count ?? run.returned_count}/{run.requested_count}</Descriptions.Item>
           <Descriptions.Item label="原始 / 解析">{run.raw_item_count} / {run.parsed_item_count}</Descriptions.Item>
-          <Descriptions.Item label="过滤">{`关键词不相关 ${run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 无效 ${run.invalid_count} · 重复 ${run.duplicate_count}`}</Descriptions.Item>
+          <Descriptions.Item label="过滤">{`关键词不相关 ${run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 口播信息不足 ${run.low_spoken_value_count ?? 0} · 无效 ${run.invalid_count} · 重复 ${run.duplicate_count}`}</Descriptions.Item>
           <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
           <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
           <Descriptions.Item label="估算费用">{formatCurrency(run.billable_units)}</Descriptions.Item>
@@ -916,7 +956,6 @@ function PlatformRunDetail({
           <HotspotCandidateTable
             candidates={lowIncrementalCandidates}
             batchId={batchId}
-            onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
             onSendToWorkspace={onSendToWorkspace}
             onGenerateOriginalScript={onGenerateOriginalScript}
             originalScriptLoadingId={originalScriptLoadingId}
@@ -942,7 +981,6 @@ function PlatformRunDetail({
         <HotspotCandidateTable
           candidates={candidates}
           batchId={batchId}
-          onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
           onSendToWorkspace={onSendToWorkspace}
           onGenerateOriginalScript={onGenerateOriginalScript}
           originalScriptLoadingId={originalScriptLoadingId}
@@ -967,7 +1005,6 @@ function PlatformRunDetail({
                       item={item}
                       batchId={batchId}
                       onResolveMedia={onResolveMedia}
-                      onCreateCandidateLinkTranscription={onCreateCandidateLinkTranscription}
                       onSendToWorkspace={onSendToWorkspace}
                       onGenerateOriginalScript={onGenerateOriginalScript}
                       originalScriptLoading={originalScriptLoadingId === item.video_id}
@@ -986,14 +1023,12 @@ function PlatformRunDetail({
 function HotspotCandidateTable({
   candidates,
   batchId,
-  onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
   candidates: CrawlerCandidateResult[];
   batchId: string;
-  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
@@ -1021,7 +1056,9 @@ function HotspotCandidateTable({
       title: "视频 / 作者",
       dataIndex: "title",
       width: "36%",
-      render: (_, item) => (
+      render: (_, item) => {
+        const topicOnly = (item.spoken_material_status || "topic_only") === "topic_only";
+        return (
         <Space direction="vertical" size={0} style={{ width: "100%" }}>
           <Paragraph
             ellipsis={{ rows: 2, tooltip: item.title }}
@@ -1033,8 +1070,15 @@ function HotspotCandidateTable({
           <Text type="secondary" ellipsis={{ tooltip: `作者：${item.author_name || "未返回"}` }} style={{ width: "100%" }}>
             作者：{item.author_name || "未返回"}
           </Text>
+          <Text type="success" ellipsis={{ tooltip: item.spoken_seed_message }} style={{ width: "100%" }}>
+            值得写{item.spoken_seed_score != null ? `（${item.spoken_seed_score}分）` : ""}：{item.spoken_seed_message}
+          </Text>
+          <Text type={topicOnly ? "warning" : "secondary"} ellipsis={{ tooltip: item.audio_message }} style={{ width: "100%" }}>
+            {item.audio_message || "声音未检测；需上传授权视频。"}
+          </Text>
         </Space>
-      ),
+        );
+      },
     },
     {
       title: "点赞",
@@ -1065,16 +1109,20 @@ function HotspotCandidateTable({
     },
     {
       title: "操作",
-      width: 360,
-      render: (_, item) => (
+      width: 280,
+      render: (_, item) => {
+        const topicOnly = (item.spoken_material_status || "topic_only") === "topic_only";
+        return (
         <Space size={6}>
-          <Button
-            size="small"
-            type="primary"
-            onClick={() => onSendToWorkspace(batchId, item)}
-          >
-            送入智能创作
-          </Button>
+          {!topicOnly && (
+            <Button
+              size="small"
+              type="primary"
+              onClick={() => onSendToWorkspace(batchId, item)}
+            >
+              送入智能创作
+            </Button>
+          )}
           <Button
             size="small"
             loading={originalScriptLoadingId === item.video_id}
@@ -1082,17 +1130,12 @@ function HotspotCandidateTable({
           >
             按这个话题写原创
           </Button>
-          <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : "进入转写页后确认内容处理权，再提取原视频文案。"}>
-            <span>
-              <Button
-                size="small"
-                disabled={!item.source_url}
-                onClick={() => onCreateCandidateLinkTranscription(item)}
-              >
-                去转写页提取文案
-              </Button>
-            </span>
-          </Tooltip>
+          <Button
+            size="small"
+            href={`/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`}
+          >
+            上传检测声音
+          </Button>
           <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : undefined}>
             <span>
               <Button
@@ -1106,7 +1149,8 @@ function HotspotCandidateTable({
             </span>
           </Tooltip>
         </Space>
-      ),
+        );
+      },
     },
   ];
 
@@ -1149,6 +1193,9 @@ function HotspotCandidateTable({
               <Descriptions.Item label="日均点赞">{formatLikesPerDay(detail.likes_per_day)}</Descriptions.Item>
               {detail.quality_source && <Descriptions.Item label="计算方式">{detail.quality_source}</Descriptions.Item>}
               <Descriptions.Item label="时长">{detail.duration_seconds ? `${formatNumber(detail.duration_seconds)} 秒` : "未返回"}</Descriptions.Item>
+              <Descriptions.Item label="素材状态">{detail.spoken_material_message || "仅有标题和互动数据，只能用于选题参考。"}</Descriptions.Item>
+              <Descriptions.Item label="口播价值">{detail.spoken_seed_message || "公开文字不足以支撑原创口播。"}</Descriptions.Item>
+              <Descriptions.Item label="声音状态">{detail.audio_message || "尚未检测声音；需上传已获授权的本地视频。"}</Descriptions.Item>
               {detail.source_url && <Descriptions.Item label="原视频"><a href={detail.source_url} target="_blank" rel="noreferrer">打开原视频</a></Descriptions.Item>}
               {detail.evidence?.includes(";") && <Descriptions.Item label="榜单指标">{hotspotEvidenceSummary(detail.evidence)}</Descriptions.Item>}
             </Descriptions>
@@ -1159,23 +1206,22 @@ function HotspotCandidateTable({
               <Text type="secondary">分享：{formatNumber(detail.share_count)}；收藏：{formatNumber(detail.collect_count)}</Text>
             )}
             <Space>
-              <Button
-                type="primary"
-                onClick={() => onSendToWorkspace(batchId, detail)}
-              >
-                送入智能创作
-              </Button>
+              {(detail.spoken_material_status || "topic_only") !== "topic_only" && (
+                <Button
+                  type="primary"
+                  onClick={() => onSendToWorkspace(batchId, detail)}
+                >
+                  送入智能创作
+                </Button>
+              )}
               <Button
                 loading={originalScriptLoadingId === detail.video_id}
                 onClick={() => onGenerateOriginalScript(detail)}
               >
                 按这个话题写原创
               </Button>
-              <Button
-                disabled={!detail.source_url}
-                onClick={() => onCreateCandidateLinkTranscription(detail)}
-              >
-                去转写页提取文案
+              <Button href={`/transcription?candidate=${encodeURIComponent(detail.video_id)}&title=${encodeURIComponent(detail.title)}`}>
+                上传视频检测声音
               </Button>
               <Button href={detail.source_url || undefined} target="_blank" disabled={!detail.source_url}>
                 原视频
@@ -1192,7 +1238,6 @@ function CandidateListItem({
   item,
   batchId,
   onResolveMedia,
-  onCreateCandidateLinkTranscription,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoading,
@@ -1200,7 +1245,6 @@ function CandidateListItem({
   item: CrawlerCandidateResult;
   batchId: string;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
-  onCreateCandidateLinkTranscription: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoading: boolean;
@@ -1211,43 +1255,57 @@ function CandidateListItem({
   const displayedReasons = item.reasons.filter(
     (reason) => !/(按发布时间折算|快照|复爬|复搜|采样|增长|趋势|小时|分位 P\d+)/.test(reason),
   );
-  const linkTranscriptionAvailable = ["douyin", "xiaohongshu", "kuaishou", "bilibili"].includes(item.platform);
   // 已有原版转写（或正在/已有转写任务）的候选不提供元数据文案，避免与原版转写混淆。
   const hasOriginalTranscript =
     item.is_original_transcript === true ||
     item.copy_source === "doubao_mobile_transcript" ||
     item.copy_source === "authorized_asr_transcript" ||
     Boolean(item.media_transcription_task_id);
+  const materialStatus = item.spoken_material_status || "topic_only";
+  const isTopicOnly = materialStatus === "topic_only";
+  const materialMessage = item.spoken_material_message || (isTopicOnly
+    ? "仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。"
+    : "已有可核验的文字素材，请先核对原意再继续创作。");
+  const seedStatus = item.spoken_seed_status || "low_information";
+  const seedTag = seedStatus === "writeable"
+    ? { color: "success", label: `值得写${item.spoken_seed_score != null ? ` · ${item.spoken_seed_score}分` : ""}` }
+    : seedStatus === "reference_only"
+      ? { color: "gold", label: "仅作选题" }
+      : { color: "default", label: "信息不足" };
+  const audioStatus = item.audio_status || "unknown";
+  const audioTag = audioStatus === "speech_detected"
+    ? { color: "success", label: "已检测到人声" }
+    : audioStatus === "no_audio"
+      ? { color: "error", label: "没有音轨" }
+      : audioStatus === "no_clear_speech"
+        ? { color: "warning", label: "未识别出口播" }
+        : audioStatus === "checking"
+          ? { color: "processing", label: "声音检测中" }
+          : { color: "default", label: "声音未检测" };
+  const materialTag = materialStatus === "transcript_ready"
+    ? { color: "success", label: "已有授权转写" }
+    : materialStatus === "text_reference"
+      ? { color: "gold", label: "有可见文案参考" }
+      : { color: "default", label: "仅作选题参考" };
 
   return (
     <List.Item
       actions={[
-        <Button
-          type="link"
-          size="small"
-          onClick={() => onSendToWorkspace(batchId, item)}
-        >
-          送入智能创作
-        </Button>,
+        !isTopicOnly ? (
+          <Button
+            type="link"
+            size="small"
+            onClick={() => onSendToWorkspace(batchId, item)}
+          >
+            送入智能创作
+          </Button>
+        ) : null,
         item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
         item.media_transcription_task_id ? (
           <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看原文案</Button>
-        ) : (
-          <Tooltip title={!item.source_url ? "该候选没有可用原视频链接。" : !linkTranscriptionAvailable ? "视频号暂不能自动解析，请上传有权处理的视频文件。" : item.platform === "douyin" ? "在转写页确认授权、识别链接并选择本机解析；只有抖音可明确确认付费回退。" : "在转写页确认授权，并使用已连接的平台专用浏览器解析。"}>
-            <span>
-              <Button
-                type="link"
-                size="small"
-                disabled={!item.source_url || !linkTranscriptionAvailable}
-                onClick={() => onCreateCandidateLinkTranscription(item)}
-              >
-                {linkTranscriptionAvailable ? "去转写页提取文案" : "请上传文件"}
-              </Button>
-            </span>
-          </Tooltip>
-        ),
+        ) : null,
         !hasOriginalTranscript ? (
-          <Tooltip title="基于标题、热点词与互动数据，生成适合数字人口播的短句文案；使用前请人工核对。">
+          <Tooltip title={materialStatus === "text_reference" ? "基于人工保存的可见文案进行原创改写，不会还原原视频逐字内容。" : "这条没有可提取的原文案；系统只会根据标题、热点词和互动数据生成原创口播。"}>
             <Button
               type="link"
               size="small"
@@ -1255,9 +1313,18 @@ function CandidateListItem({
               loading={originalScriptLoading}
               onClick={() => onGenerateOriginalScript(item)}
             >
-              生成原创文案
+              {materialStatus === "text_reference" ? "根据可见文案改写" : "生成原创口播"}
             </Button>
           </Tooltip>
+        ) : null,
+        audioStatus !== "speech_detected" ? (
+          <Button
+            type="link"
+            size="small"
+            href={`/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`}
+          >
+            上传视频检测声音
+          </Button>
         ) : null,
       ]}
     >
@@ -1274,6 +1341,9 @@ function CandidateListItem({
                 <Tag color="green">{item.relevance_reason || "标题/话题命中"}</Tag>
               )}
               {item.media_resolution_status && <Tag>{statusLabel(item.media_resolution_status)}</Tag>}
+              <Tag color={materialTag.color}>{materialTag.label}</Tag>
+              <Tag color={seedTag.color}>{seedTag.label}</Tag>
+              <Tag color={audioTag.color}>{audioTag.label}</Tag>
           </Space>
         }
         description={
@@ -1281,6 +1351,9 @@ function CandidateListItem({
             <Text type="secondary">
               作者：{item.author_name}{isHotspotLeaderboard ? `；${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : ""}
             </Text>
+            <Text type={isTopicOnly ? "warning" : "secondary"}>{materialMessage}</Text>
+            <Text type={seedStatus === "writeable" ? "success" : "secondary"}>{item.spoken_seed_message}</Text>
+            <Text type="secondary">{item.audio_message || "尚未检测声音；需上传已获授权的本地视频。"}</Text>
             {metrics.length > 0 && (
               <Text type="secondary">
                 {metrics.map(([label, value]) => `${label}：${formatNumber(value)}`).join("；")}

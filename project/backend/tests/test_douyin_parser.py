@@ -13,6 +13,14 @@ def test_share_text_extracts_short_link_and_modal_id():
     work = parse_douyin_share_text("https://www.douyin.com/video/7351002003004005000?x=1")
     assert work.work_id == "7351002003004005000"
 
+    search = parse_douyin_share_text(
+        "https://www.douyin.com/jingxuan/search/%E5%8F%A3%E6%92%AD"
+        "?modal_id=7583741167041367359&type=general"
+    )
+    assert LocalDouyinBrowserParserClient._target_url(search) == (
+        "https://www.douyin.com/video/7583741167041367359"
+    )
+
 
 def test_parser_is_disabled_without_explicit_flag():
     client = LocalDouyinBrowserParserClient(enabled=False)
@@ -77,4 +85,46 @@ def test_router_payload_keeps_the_public_play_address_unchanged():
         "work_id": "7351002003004005000",
         "title": "公开页面标题",
         "media_url": "https://media.example/aweme/v1/playwm/?video_id=1",
+    }
+
+
+def test_router_payload_only_accepts_the_modal_target():
+    captured: dict[str, str] = {}
+    LocalDouyinBrowserParserClient._capture_router_payload(
+        {
+            "loaderData": {
+                "search/page": {
+                    "videoInfoRes": {
+                        "item_list": [
+                            {
+                                "aweme_id": "1111111111111111111",
+                                "desc": "搜索页里的其他作品",
+                                "video": {
+                                    "play_addr": {
+                                        "url_list": ["https://media.example/wrong.mp4"]
+                                    }
+                                },
+                            },
+                            {
+                                "aweme_id": "7583741167041367359",
+                                "desc": "用户点开的作品",
+                                "video": {
+                                    "play_addr": {
+                                        "url_list": ["https://media.example/target.mp4"]
+                                    }
+                                },
+                            },
+                        ]
+                    }
+                }
+            }
+        },
+        captured,
+        expected_work_id="7583741167041367359",
+    )
+
+    assert captured == {
+        "work_id": "7583741167041367359",
+        "title": "用户点开的作品",
+        "media_url": "https://media.example/target.mp4",
     }

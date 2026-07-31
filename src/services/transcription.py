@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 import subprocess
 import tempfile
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Callable
 from uuid import uuid4
 
@@ -28,7 +28,7 @@ MAX_MEDIA_BYTES = 50 * 1024 * 1024
 MAX_PROVIDER_MEDIA_BYTES = 300 * 1024 * 1024
 MAX_DURATION_SECONDS = 15 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov"}
-ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo"}
+ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo", "fun-asr"}
 ALLOWED_ASR_LANGUAGES = {"auto", "zh", "en", "ja", "ko"}
 MAX_HOTWORDS_LENGTH = 500
 
@@ -74,11 +74,23 @@ class TranscriptionService:
         model_loader=load_asr_model,
         command_runner=subprocess.run,
         transcript_reviewer: Callable[..., dict[str, Any]] | None = None,
+        cloud_runtime=None,
+        cloud_storage_directory: str | Path | None = None,
+        cloud_poll_interval_seconds: float = 5.0,
+        cloud_timeout_seconds: float = 30 * 60,
     ) -> None:
         self.repository = repository
         self.model_loader = model_loader
         self.command_runner = command_runner
         self.transcript_reviewer = transcript_reviewer
+        self.cloud_runtime = cloud_runtime
+        self.cloud_storage_directory = (
+            Path(cloud_storage_directory)
+            if cloud_storage_directory is not None
+            else None
+        )
+        self.cloud_poll_interval_seconds = cloud_poll_interval_seconds
+        self.cloud_timeout_seconds = cloud_timeout_seconds
 
     def create_task(
         self,
@@ -96,6 +108,7 @@ class TranscriptionService:
         source_kind: str = "asr",
         source_url: str | None = None,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
+        async_processing: bool = False,
     ) -> TranscriptionTask:
         if not rights_confirmed:
             raise TranscriptionError(
@@ -127,6 +140,20 @@ class TranscriptionService:
             media_bytes,
             max_media_bytes=max_media_bytes,
         )
+        if self.cloud_runtime is not None:
+            return self._create_cloud_task(
+                media_name=media_name,
+                media_type=media_type,
+                media_bytes=media_bytes,
+                rights_holder=rights_holder,
+                candidate_id=candidate_id,
+                language=language,
+                hotwords=normalized_hotwords,
+                source_kind=source_kind,
+                source_url=source_url,
+                async_processing=async_processing,
+                on_progress=on_progress,
+            )
         now = datetime.now().astimezone()
         task = TranscriptionTask(
             task_id=f"transcript-{uuid4().hex[:10]}",
@@ -237,6 +264,284 @@ class TranscriptionService:
             if safe_error is exc:
                 raise safe_error
             raise safe_error from exc
+
+    def _create_cloud_task(
+        self,
+        *,
+        media_name: str,
+        media_type: str,
+        media_bytes: bytes,
+        rights_holder: str,
+        candidate_id: str | None,
+        language: str,
+        hotwords: str,
+        source_kind: str,
+        source_url: str | None,
+        async_processing: bool,
+        on_progress: Callable[[TranscriptionTask], None] | None,
+    ) -> TranscriptionTask:
+        if hotwords:
+            raise TranscriptionError(
+                "当前阿里云识别暂未接入专有词表，请清空专有词后重试。",
+                code="cloud_hotwords_not_supported",
+            )
+        if self.cloud_storage_directory is None:
+            raise TranscriptionError(
+                "云端转写存储目录未配置，请联系管理员。",
+                code="cloud_storage_not_configured",
+            )
+        now = datetime.now().astimezone()
+        task_id = f"transcript-{uuid4().hex[:10]}"
+        extension = Path(media_name).suffix.casefold()
+        task_directory = self.cloud_storage_directory / task_id
+        task_directory.mkdir(parents=True, exist_ok=True)
+        media_path = task_directory / f"input{extension}"
+        media_path.write_bytes(media_bytes)
+        try:
+            duration = self._probe(media_path)
+            estimated_cost = self.cloud_runtime.ensure_authorized(duration)
+        except Exception:
+            media_path.unlink(missing_ok=True)
+            try:
+                task_directory.rmdir()
+            except OSError:
+                pass
+            raise
+        task = TranscriptionTask(
+            task_id=task_id,
+            title=media_name,
+            status=TaskStatus.QUEUED,
+            progress=5,
+            created_at=now,
+            updated_at=now,
+            media_name=media_name,
+            media_type=media_type,
+            rights_confirmed=True,
+            rights_holder=rights_holder.strip(),
+            rights_confirmed_at=now,
+            candidate_id=candidate_id,
+            stage="等待云端识别",
+            media_sha256=hashlib.sha256(media_bytes).hexdigest(),
+            model_name="fun-asr",
+            provider_name="aliyun_fun_asr",
+            provider_status="queued",
+            estimated_cost_cny=float(estimated_cost),
+            pricing_version=self.cloud_runtime.capability()["price_version"],
+            billing_authorized=True,
+            language=language,
+            duration_seconds=duration,
+            source_kind=source_kind,
+            source_url=source_url,
+            is_mock=False,
+            outputs={"source_media_path": str(media_path)},
+        )
+        self._save_task(task, on_progress)
+        if async_processing:
+            return task
+        return self.process_cloud_task(task.task_id, on_progress=on_progress)
+
+    def process_cloud_task(
+        self,
+        task_id: str,
+        *,
+        on_progress: Callable[[TranscriptionTask], None] | None = None,
+    ) -> TranscriptionTask:
+        from src.services.video_editor_cloud import ProviderJobStatus
+
+        task = self.repository.get_task(task_id)
+        if not isinstance(task, TranscriptionTask):
+            raise TranscriptionError("转写任务不存在。", code="task_not_found")
+        if task.provider_name != "aliyun_fun_asr" or self.cloud_runtime is None:
+            raise TranscriptionError("该任务不是阿里云转写任务。", code="provider_mismatch")
+        if task.status == TaskStatus.SUCCEEDED:
+            return task
+
+        media_path = Path(task.outputs.get("source_media_path", ""))
+        started = monotonic()
+        try:
+            if task.provider_job_id:
+                task = task.model_copy(
+                    update={
+                        "status": TaskStatus.RUNNING,
+                        "stage": "正在查询云端结果",
+                        "progress": max(task.progress, 60),
+                        "provider_status": "running",
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._save_task(task, on_progress)
+                snapshot = self.cloud_runtime.query(task.provider_job_id)
+            else:
+                if task.status not in {TaskStatus.QUEUED, TaskStatus.FAILED}:
+                    raise TranscriptionError(
+                        "上次云端提交结果无法确认，系统不会自动重复扣费。",
+                        code="submission_outcome_unknown",
+                        task_id=task.task_id,
+                    )
+                if not media_path.is_file():
+                    raise TranscriptionError(
+                        "待识别素材已过期，请重新上传。",
+                        code="source_media_expired",
+                    )
+                task = task.model_copy(
+                    update={
+                        "status": TaskStatus.RUNNING,
+                        "stage": "正在上传到公司云端",
+                        "progress": 20,
+                        "provider_status": "uploading",
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._save_task(task, on_progress)
+                object_key = (
+                    f"asr-input/{task.task_id}/"
+                    f"{Path(task.media_name).name}"
+                )
+                asset = self.cloud_runtime.upload(
+                    media_path,
+                    object_key=object_key,
+                    media_type=task.media_type,
+                )
+                task = task.model_copy(
+                    update={
+                        "stage": "正在提交云端识别",
+                        "progress": 40,
+                        "provider_status": "submitting",
+                        "provider_object_key": object_key,
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._save_task(task, on_progress)
+                snapshot = self.cloud_runtime.submit(
+                    asset,
+                    language=task.language or "zh",
+                )
+                task = task.model_copy(
+                    update={
+                        "status": TaskStatus.SUBMITTED,
+                        "stage": "云端识别中",
+                        "progress": 55,
+                        "provider_job_id": snapshot.provider_job_id,
+                        "provider_status": snapshot.status.value,
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._save_task(task, on_progress)
+
+            while snapshot.status in {
+                ProviderJobStatus.PENDING,
+                ProviderJobStatus.RUNNING,
+            }:
+                if monotonic() - started > self.cloud_timeout_seconds:
+                    raise TranscriptionError(
+                        "云端识别仍在处理中，请稍后点击重新连接查看结果。",
+                        code="cloud_asr_timeout",
+                        task_id=task.task_id,
+                    )
+                sleep(self.cloud_poll_interval_seconds)
+                snapshot = self.cloud_runtime.query(snapshot.provider_job_id)
+                task = task.model_copy(
+                    update={
+                        "status": TaskStatus.RUNNING,
+                        "stage": "云端识别中",
+                        "progress": min(90, max(task.progress, 60)),
+                        "provider_status": snapshot.status.value,
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self._save_task(task, on_progress)
+
+            if snapshot.status == ProviderJobStatus.FAILED:
+                raise TranscriptionError(
+                    "阿里云语音识别明确失败，素材已保留，可手动重试。",
+                    code="cloud_asr_failed",
+                    task_id=task.task_id,
+                )
+            if snapshot.status == ProviderJobStatus.OUTCOME_UNKNOWN:
+                raise TranscriptionError(
+                    "阿里云识别结果暂时无法确认，请先重新连接查询，系统不会重复提交。",
+                    code="cloud_asr_outcome_unknown",
+                    task_id=task.task_id,
+                )
+
+            cloud_transcript = self.cloud_runtime.fetch_result(snapshot)
+            segments = [
+                TranscriptSegment(
+                    start=item.start,
+                    end=item.end,
+                    text=item.text,
+                    confidence=None,
+                    needs_review=True,
+                    quality_status="pending",
+                    quality_source="primary_asr",
+                    quality_note="阿里云识别结果，等待人工复核。",
+                )
+                for item in cloud_transcript.segments
+                if item.text.strip()
+            ]
+            self._validate_segments(segments)
+            completed = task.model_copy(
+                update={
+                    "status": TaskStatus.SUCCEEDED,
+                    "stage": "待人工复核",
+                    "progress": 100,
+                    "provider_status": "succeeded",
+                    "segments": segments,
+                    "duration_seconds": cloud_transcript.duration_seconds
+                    or task.duration_seconds,
+                    "language": cloud_transcript.language
+                    or task.language
+                    or "zh",
+                    "uncertain_segment_count": len(segments),
+                    "auto_reviewed": False,
+                    "secondary_asr_count": 0,
+                    "llm_review_count": 0,
+                    "elapsed_seconds": round(monotonic() - started, 2),
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self._save_task(completed, on_progress)
+            media_path.unlink(missing_ok=True)
+            return completed
+        except Exception as exc:
+            code = getattr(exc, "code", "")
+            outcome_unknown = (
+                bool(getattr(exc, "outcome_unknown", False))
+                or code
+                in {
+                    "cloud_asr_timeout",
+                    "cloud_asr_outcome_unknown",
+                    "submission_outcome_unknown",
+                }
+            )
+            failed = task.model_copy(
+                update={
+                    "status": (
+                        TaskStatus.OUTCOME_UNKNOWN
+                        if outcome_unknown
+                        else TaskStatus.FAILED
+                    ),
+                    "stage": (
+                        "结果待确认" if outcome_unknown else "云端识别失败"
+                    ),
+                    "provider_status": (
+                        "outcome_unknown"
+                        if outcome_unknown
+                        else "failed"
+                    ),
+                    "error_message": str(exc),
+                    "elapsed_seconds": round(monotonic() - started, 2),
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self._save_task(failed, on_progress)
+            if isinstance(exc, TranscriptionError):
+                raise
+            raise TranscriptionError(
+                "阿里云语音识别失败，素材已保留；不会使用本地 CPU。",
+                code="cloud_asr_failed",
+                task_id=task.task_id,
+            ) from exc
 
     @staticmethod
     def _validate_upload(

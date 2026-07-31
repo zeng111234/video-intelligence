@@ -424,6 +424,22 @@ class CopywritingEngine(Protocol):
         variant_count: int = 1,
     ) -> list[str]: ...
 
+    def select_best_spoken_script(
+        self,
+        *,
+        candidates: list[dict[str, str]],
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, str]: ...
+
+    def review_spoken_script(
+        self,
+        *,
+        script_text: str,
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, Any]: ...
+
 
 # ---------------------------------------------------------------------------
 # 视频编辑器协议

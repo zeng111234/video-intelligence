@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { BrowserRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Modal } from "antd";
 
 import PublishPage from "./PublishPage";
 import { ToastProvider } from "../components/Toast";
@@ -11,6 +12,7 @@ import {
   listPublishAssets,
   listPublishBatches,
   listPublishPlatforms,
+  deletePublishAccount,
   preflightPublish,
 } from "../api/client";
 
@@ -45,6 +47,11 @@ function renderPage() {
 }
 
 describe("PublishPage", () => {
+  afterEach(() => {
+    Modal.destroyAll();
+    cleanup();
+  });
+
   beforeEach(() => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
@@ -93,6 +100,22 @@ describe("PublishPage", () => {
     expect(within(view.container).getByRole("button", { name: /打开浏览器登录/ })).toBeTruthy();
     expect(within(view.container).queryByText("我已扫码，核验")).toBeNull();
     expect(within(view.container).queryByText("打开官方扫码窗口")).toBeNull();
+  });
+
+  it("removes a local account from the page as soon as deletion succeeds", async () => {
+    vi.mocked(listPublishAccounts).mockResolvedValue([
+      { account_id: "pubacc-remove", platform: "douyin", name: "待移除账号", status: "needs_login", message: "需要重新登录", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
+    ]);
+    vi.mocked(deletePublishAccount).mockResolvedValue(undefined);
+    const view = renderPage();
+
+    await within(view.container).findByText("待移除账号");
+    fireEvent.click(within(view.container).getByRole("button", { name: /移除/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "移除本机账号" }));
+
+    await waitFor(() => expect(within(view.container).queryByText("待移除账号")).toBeNull());
+    expect(deletePublishAccount).toHaveBeenCalledWith("pubacc-remove");
+    expect(within(view.container).getByText("还没有抖音账号")).toBeTruthy();
   });
 
   it("blocks publishing when the selected account disappears on the server", async () => {

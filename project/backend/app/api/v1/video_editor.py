@@ -4,9 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+import httpx
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
@@ -495,6 +506,95 @@ def list_batches(limit: int = 20, workflow: VideoEditorWorkflowService = Depends
 def get_batch(batch_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
     try:
         return workflow.get_batch(batch_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/batches/{batch_id}/items/{item_id}/download")
+def download_cloud_batch_item(
+    batch_id: str,
+    item_id: str,
+    request: Request,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """代理下载真实 OSS 成片；下载本身不确认审核，也不交接发布。"""
+    try:
+        download = workflow.prepare_batch_item_download(batch_id, item_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+    upstream_headers = {
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+    }
+    range_header = request.headers.get("range")
+    if range_header and range_header.startswith("bytes="):
+        upstream_headers["Range"] = range_header
+
+    client = httpx.Client(
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        follow_redirects=False,
+    )
+    try:
+        upstream = client.send(
+            client.build_request(
+                "GET",
+                download["media_url"],
+                headers=upstream_headers,
+            ),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        client.close()
+        raise HTTPException(
+            status_code=502,
+            detail="云成片暂时无法读取，请稍后重试。",
+        ) from exc
+
+    if upstream.status_code not in {200, 206}:
+        upstream.close()
+        client.close()
+        raise HTTPException(
+            status_code=502,
+            detail="云成片暂时无法读取，请刷新任务后重试。",
+        )
+
+    filename = download["filename"]
+    response_headers = {
+        "Content-Disposition": (
+            f"attachment; filename=\"video.mp4\"; "
+            f"filename*=UTF-8''{quote(filename)}"
+        ),
+        "Cache-Control": "private, no-store",
+    }
+    for header in ("content-length", "content-range", "accept-ranges"):
+        value = upstream.headers.get(header)
+        if value:
+            response_headers[header.title()] = value
+
+    def iter_media():
+        try:
+            yield from upstream.iter_bytes(chunk_size=1024 * 1024)
+        finally:
+            upstream.close()
+            client.close()
+
+    return StreamingResponse(
+        iter_media(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "video/mp4"),
+        headers=response_headers,
+    )
+
+
+@router.post("/batches/{batch_id}/items/{item_id}/local-export")
+def create_local_preview_export(
+    batch_id: str,
+    item_id: str,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """免费把当前已审核方案烧录到本机 MP4，不调用云供应商。"""
+    try:
+        return workflow.create_local_preview_export(batch_id, item_id)
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
 

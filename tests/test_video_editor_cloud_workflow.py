@@ -343,3 +343,48 @@ def test_real_cloud_confirmation_materializes_publish_handoff(
     assert task is not None
     assert task.is_mock is False
     assert Path(task.result_path).is_file()
+
+
+def test_real_cloud_output_can_download_before_publish_confirmation(tmp_path: Path):
+    configuration = CloudEditorConfiguration(
+        provider_mode=CloudProviderMode.ALIYUN,
+        workspace_id="workspace",
+        dashscope_api_key="test-key",
+        oss_bucket="private-bucket",
+        oss_location="oss-cn-beijing",
+        aliyun_region="cn-beijing",
+        access_key_id="test-access-key",
+        access_key_secret="test-access-secret",
+        mps_pipeline_id="pipeline",
+        mps_template_id_720p="template-720",
+        mps_template_id_1080p="template-1080",
+    )
+    service = _service(tmp_path)
+    service._cloud_configuration_override = configuration
+    service._cloud_providers_override = build_cloud_providers(configuration)
+    item = VideoEditorBatchItem(
+        source_id="source-1",
+        title="不能用于文件名:测试",
+        status="awaiting_output_confirmation",
+        provider_stage="render_complete",
+        selected_title="确认前也能下载:成片",
+        provider_payload={
+            "output_uri": "oss://private-bucket/video-editor/batch/output/720p.mp4"
+        },
+        is_mock=False,
+        publish_allowed=True,
+    )
+    batch = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        items=[item],
+    )
+    service.repository.save_video_editor_batch(batch)
+
+    download = service.prepare_batch_item_download(batch.batch_id, item.item_id)
+
+    assert download["media_url"].startswith("https://private-bucket.")
+    assert download["filename"] == "确认前也能下载成片.mp4"
+    stored = service.repository.get_video_editor_batch(batch.batch_id)
+    assert stored is not None
+    assert stored.items[0].status == "awaiting_output_confirmation"

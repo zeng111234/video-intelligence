@@ -7,7 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from src.models import AvatarTask, AvatarProviderStatus, TaskStatus, VideoEditTask, VideoEditorBatch
+from src.models import (
+    AvatarProviderStatus,
+    AvatarTask,
+    TaskStatus,
+    VideoEditTask,
+    VideoEditorBatch,
+    VideoEditorBatchItem,
+)
 from src.repositories.mock import MockRepository
 from src.repositories.sqlite import SQLiteRepository
 from src.resources import asr_model_status
@@ -31,16 +38,23 @@ class _VideoEditingStub:
         self.output_directory = output_directory
 
 
-def _avatar_task(task_id: str, result_path: Path | None, *, is_mock: bool = False) -> AvatarTask:
+def _avatar_task(
+    task_id: str,
+    result_path: Path | None,
+    *,
+    is_mock: bool = False,
+    title: str = "系统数字人成片",
+    script_text: str = "测试口播",
+) -> AvatarTask:
     now = datetime.now().astimezone()
     return AvatarTask(
         task_id=task_id,
-        title="系统数字人成片",
+        title=title,
         status=TaskStatus.SUCCEEDED,
         progress=100,
         created_at=now,
         updated_at=now,
-        script_text="测试口播",
+        script_text=script_text,
         avatar_id="avatar-1",
         avatar_name="测试数字人",
         voice_id="voice-1",
@@ -88,6 +102,174 @@ def test_list_sources_only_exposes_real_existing_system_media(tmp_path: Path):
     assert [item["source_id"] for item in sources] == ["avatar:avatar-real"]
     assert sources[0]["source_type"] == "avatar"
     assert sources[0]["media_url"].endswith("/avatar:avatar-real/media")
+
+
+def test_avatar_filename_never_overrides_cached_copy_topic_or_preview_subtitles(
+    tmp_path: Path,
+):
+    video = tmp_path / "avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    source_id = "avatar:avatar-copy-topic"
+    repo.save_task(
+        _avatar_task(
+            "avatar-copy-topic",
+            video,
+            title="数字人视频4",
+            script_text="最近广州有一家烧烤店，用会员和共享店长做裂变。",
+        )
+    )
+    service = VideoEditorWorkflowService(repo, None, _TranscriptionStub(), None)
+
+    uncached_source = service.resolve_source(source_id)
+    assert uncached_source["title"] == "广州有一家烧烤店，用会员和共享店长做裂变"
+
+    previous = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        items=[
+            VideoEditorBatchItem(
+                source_id=source_id,
+                title="数字人视频4",
+                status="outcome_unknown",
+                selected_title="49元变小店长，吃烧烤还能赚钱？",
+                title_candidates=[
+                    "49元变小店长，吃烧烤还能赚钱？",
+                    "广州烧烤店的会员裂变玩法",
+                ],
+                subtitle_segments=[
+                    {"start": 0.4, "end": 2.8, "text": "最近广州有一家烧烤店"}
+                ],
+                provider_payload={"media": {"duration_seconds": 60}},
+            )
+        ],
+    )
+    repo.save_video_editor_batch(previous)
+    latest = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        items=[
+            VideoEditorBatchItem(
+                source_id=source_id,
+                title="数字人视频4",
+                status="outcome_unknown",
+                provider_stage="submission_outcome_unknown",
+                error_message="OSS 上传连接失败。",
+            )
+        ],
+    )
+    repo.save_video_editor_batch(latest)
+
+    payload = service.get_batch(latest.batch_id)
+    item = payload["items"][0]
+
+    assert item["selected_title"] == "49元变小店长，吃烧烤还能赚钱？"
+    assert item["title_candidates"][0] == "49元变小店长，吃烧烤还能赚钱？"
+    assert item["subtitle_segments"] == []
+    assert item["preview_subtitle_segments"][0]["text"] == "最近广州有一家烧烤店"
+    assert item["subtitle_preview_source"] == "cached_asr"
+    assert item["overlay_preview"]["title"]["lines"][0] != "数字人视频4"
+    assert item["overlay_preview"]["cues"]
+
+
+def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    source_id = "avatar:avatar-local-export"
+    repo.save_task(
+        _avatar_task(
+            "avatar-local-export",
+            video,
+            title="数字人视频4",
+        )
+    )
+    previous = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        items=[
+            VideoEditorBatchItem(
+                source_id=source_id,
+                title="数字人视频4",
+                status="outcome_unknown",
+                selected_title="49元变小店长，吃烧烤还能赚钱？",
+                subtitle_segments=[
+                    {"start": 0.4, "end": 2.8, "text": "最近广州有一家烧烤店"}
+                ],
+                review_snapshot={"confirmed": True},
+                enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
+                edit_plan={"remove_ranges": []},
+            )
+        ],
+    )
+    repo.save_video_editor_batch(previous)
+    current = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        output_resolution="720x1280",
+        output_bitrate="2.5M",
+        is_mock=False,
+        items=[
+            VideoEditorBatchItem(
+                source_id=source_id,
+                title="数字人视频4",
+                status="outcome_unknown",
+                provider_stage="submission_outcome_unknown",
+                publish_allowed=False,
+            )
+        ],
+    )
+    repo.save_video_editor_batch(current)
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "outputs"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_sync_batch", lambda batch: batch)
+    monkeypatch.setattr(
+        service,
+        "_probe_media",
+        lambda _path: {
+            "duration_seconds": 60.0,
+            "width": 720,
+            "height": 1280,
+            "fps": 30.0,
+            "orientation": "vertical",
+            "has_audio": True,
+            "size_bytes": 5,
+        },
+    )
+    submitted: list[str] = []
+    monkeypatch.setattr(
+        workflow_module._WORKFLOW_EXECUTOR,
+        "submit",
+        lambda _runner, task_id: submitted.append(task_id),
+    )
+
+    payload = service.create_local_preview_export(
+        current.batch_id,
+        current.items[0].item_id,
+    )
+
+    item = payload["items"][0]
+    assert item["status"] == "rendering"
+    assert item["provider_stage"] == "local_export_rendering"
+    assert item["provider_payload"]["local_export"]["cost_cny"] == "0"
+    assert item["selected_title"] == "49元变小店长，吃烧烤还能赚钱？"
+    task = repo.get_task(item["edit_task_id"])
+    assert isinstance(task, VideoEditTask)
+    assert task.outputs["workflow"] == "local_preview_export"
+    assert (
+        task.outputs["style_version"]
+        == "business_talking_head_v8-speed-1.15-caption-clock-v1"
+    )
+    assert task.outputs["playback_rate"] == "1.15"
+    assert "最近广州有一家烧烤店" in task.outputs["subtitle_segments_json"]
+    assert submitted == [task.task_id]
 
 
 def test_subtitle_enabled_job_requires_an_approved_revision(tmp_path: Path):

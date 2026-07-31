@@ -8,6 +8,7 @@ replaceable and testable without making paid calls.
 from __future__ import annotations
 
 import io
+import math
 import os
 import re
 from collections.abc import Mapping, Sequence
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+import jieba
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -43,6 +45,7 @@ BGM_VOICEOVER_CATEGORIES = (
     "通用口播",
 )
 BGM_ENERGY_LEVELS = ("克制", "平稳", "有推动感")
+CAPTION_EMPHASIS_KINDS = ("number", "benefit", "warning", "keyword")
 MIN_SILENCE_SECONDS = 1.5
 SILENCE_EDGE_PADDING_SECONDS = 0.45
 HEAD_TAIL_SILENCE_SECONDS = 0.8
@@ -52,7 +55,8 @@ HEAD_TAIL_PADDING_SECONDS = 0.25
 MAX_KEEP_RANGES = 50
 MAX_REMOVE_RANGES = MAX_KEEP_RANGES - 1
 _COST_PRECISION = Decimal("0.000001")
-DEFAULT_VISUAL_STYLE_ID = "business_talking_head_v7"
+DEFAULT_VISUAL_STYLE_ID = "business_talking_head_v8"
+DEFAULT_PLAYBACK_RATE = 1.15
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
 _CAPTION_BREAK_CHARACTERS = frozenset(
@@ -70,6 +74,10 @@ _CAPTION_BREAK_BEFORE_TOKENS = (
     "虽然",
     "为了",
     "其实",
+    "基本",
+    "通常",
+    "一般",
+    "几乎",
     "结果",
     "现在",
     "大量",
@@ -86,6 +94,7 @@ _CAPTION_BREAK_BEFORE_TOKENS = (
     "变成",
     "开始",
     "进入",
+    "通过",
     "面对",
     "发现",
     "需要",
@@ -101,6 +110,7 @@ _CAPTION_BREAK_BEFORE_TOKENS = (
     "被",
     "把",
     "让",
+    "比",
     "待",
 )
 _CAPTION_BREAK_AFTER_TOKENS = (
@@ -111,48 +121,137 @@ _CAPTION_BREAK_AFTER_TOKENS = (
     "时候",
     "一来",
     "说到底",
+)
+_CAPTION_BAD_LINE_ENDINGS = (
+    "的",
+    "地",
+    "得",
+    "了",
+    "着",
+    "过",
+    "和",
+    "与",
+    "及",
+    "或",
+    "跟",
+    "比",
+    "把",
+    "被",
+    "让",
+    "给",
+    "向",
+    "对",
+    "在",
+    "从",
+    "为",
+    "还",
+    "就",
+    "才",
+    "都",
+    "又",
+    "再",
+    "更",
+    "最",
+    "很",
+    "太",
+    "也",
+    "挺",
+    "正",
+    "将",
+    "要",
+    "会",
+    "能",
+    "可",
+    "无",
+    "不",
+    "没",
+    "未",
+    "非",
+    "主动",
+    "自动",
+    "直接",
+    "立刻",
+    "马上",
+    "基本",
+    "通常",
+    "一般",
+    "几乎",
+    "自然",
+    "通过",
+    "想",
+    "用",
+    "办",
+    "拿",
+    "加",
+    "送",
+    "发",
+    "搞",
+    "打",
+    "第",
+    "每",
+    "各",
+    "这",
+    "那",
+    "此",
+    "其",
+    "一",
+    "两",
+    "几",
+    "多",
     "个",
-    "段",
+    "位",
+    "名",
+    "家",
+    "户",
+    "只",
     "条",
+    "件",
+    "张",
     "种",
     "次",
-    "件",
-    "位",
-    "家",
-    "台",
     "套",
+    "台",
+    "份",
+    "部",
+    "本",
+    "辆",
 )
-_CAPTION_PROTECTED_TERMS = (
-    "待人工确认",
-    "人工智能",
-    "工业机器人",
-    "机器人",
-    "人工",
-    "工厂",
-    "倒闭",
-    "废铁",
-    "字幕",
-    "确认",
-    "市场",
-    "收入",
-    "消费",
-    "企业",
-    "设备",
-    "订单",
-    "未来",
-    "工作",
-    "用户",
-    "客户",
-    "视频",
-    "标题",
-    "音乐",
-    "智能",
-    "取代",
-    "替代",
-    "岗位",
+_CAPTION_BAD_LINE_STARTS = (
+    "的",
+    "地",
+    "得",
+    "了",
+    "着",
+    "过",
+    "们",
+    "吗",
+    "呢",
+    "吧",
+    "啊",
+    "呀",
+    "嘛",
+    "个",
+    "位",
+    "名",
+    "家",
+    "户",
+    "只",
+    "条",
+    "件",
+    "张",
+    "种",
+    "次",
+    "套",
+    "台",
+    "份",
+    "部",
+    "本",
+    "辆",
+    "斤",
+    "米",
+    "块",
+    "元",
 )
-
-
 def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
     """Return the public layout contract shared by preview and cloud render."""
 
@@ -168,6 +267,7 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
     scale = width / 720
     return {
         "style_id": DEFAULT_VISUAL_STYLE_ID,
+        "playback_rate": DEFAULT_PLAYBACK_RATE,
         "canvas": {"width": width, "height": height, "pixel_aspect_ratio": "1:1"},
         "title": {
             "visible_seconds": 2.5,
@@ -177,7 +277,7 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
             "max_chars_per_line": 9,
             "font_family": "Source Han Serif CN Heavy",
             "render_mode": "png_watermark",
-            "font_size": round(48 * scale),
+            "font_size": round(52 * scale),
             "line_height": 1.1,
             "safe_top": round(84 * scale),
             "safe_left": round(56 * scale),
@@ -195,8 +295,8 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
         },
         "subtitle": {
             "max_lines": 1,
-            "max_chars_per_line": 10,
-            "font_size": round(46 * scale),
+            "max_chars_per_line": 11,
+            "font_size": round(52 * scale),
             "safe_bottom": round(170 * scale),
             "outline_width": max(1, round(2 * scale)),
             "shadow": max(2, round(3 * scale)),
@@ -259,12 +359,15 @@ def build_business_talking_head_title_png(
     image.alpha_composite(shadow_layer)
 
     draw = ImageDraw.Draw(image)
+    outline_width = int(title_style["outline_width"])
     for index, line in enumerate(lines):
         draw.text(
             (text_x, text_y + index * line_step),
             line,
             font=font,
             fill=(255, 255, 255, 255),
+            stroke_width=outline_width,
+            stroke_fill=(0, 0, 0, 205),
         )
     buffer = io.BytesIO()
     image.save(buffer, format="PNG", optimize=True)
@@ -370,14 +473,24 @@ def _caption_boundary_splits(piece: str) -> set[int]:
     return boundaries
 
 
-def _split_inside_protected_term(piece: str, split_at: int) -> bool:
-    for term in _CAPTION_PROTECTED_TERMS:
-        start = piece.find(term)
-        while start >= 0:
-            if start < split_at < start + len(term):
-                return True
-            start = piece.find(term, start + 1)
-    return False
+def _caption_word_splits(piece: str) -> set[int]:
+    """Return Chinese word boundaries so captions never cut through a word."""
+
+    boundaries: set[int] = set()
+    cursor = 0
+    for token in jieba.lcut(piece, cut_all=False, HMM=True):
+        cursor += len(token)
+        if cursor < len(piece):
+            boundaries.add(cursor)
+    return boundaries
+
+
+def _caption_split_reads_naturally(piece: str, split_at: int) -> bool:
+    left = piece[:split_at]
+    right = piece[split_at:]
+    return not left.endswith(_CAPTION_BAD_LINE_ENDINGS) and not right.startswith(
+        _CAPTION_BAD_LINE_STARTS
+    )
 
 
 def _caption_phrase_parts(piece: str, *, max_chars: int) -> list[str]:
@@ -395,12 +508,18 @@ def _caption_phrase_parts(piece: str, *, max_chars: int) -> list[str]:
             max_chars,
             len(remaining) - minimum_chars * (part_count - 1),
         )
-        safe_splits = [
+        word_splits = _caption_word_splits(remaining)
+        semantic_splits = _caption_boundary_splits(remaining)
+        available_splits = [
             split_at
             for split_at in range(minimum_split, maximum_split + 1)
-            if not _split_inside_protected_term(remaining, split_at)
+            if split_at in word_splits or split_at in semantic_splits
         ]
-        semantic_splits = _caption_boundary_splits(remaining)
+        safe_splits = [
+            split_at
+            for split_at in available_splits
+            if _caption_split_reads_naturally(remaining, split_at)
+        ] or available_splits
         candidates = [
             split_at for split_at in safe_splits if split_at in semantic_splits
         ]
@@ -421,15 +540,8 @@ def _caption_phrase_parts(piece: str, *, max_chars: int) -> list[str]:
 def _caption_chunks(text: str, *, max_chars: int) -> list[str]:
     pieces = _caption_phrases(text)
     chunks: list[str] = []
-    current = ""
     for piece in pieces:
-        for part in _caption_phrase_parts(piece, max_chars=max_chars):
-            if current and len(current) + len(part) > max_chars:
-                chunks.append(current)
-                current = ""
-            current += part
-    if current:
-        chunks.append(current)
+        chunks.extend(_caption_phrase_parts(piece, max_chars=max_chars))
     return chunks
 
 
@@ -454,11 +566,318 @@ def _emphasis_range(lines: Sequence[str], terms: Sequence[str]) -> dict[str, int
     return None
 
 
+def _caption_cue_timings(
+    chunks: Sequence[str],
+    *,
+    segment_start: float,
+    segment_end: float,
+    spoken_ranges: object = None,
+) -> list[tuple[float, float]]:
+    """Align split captions to the ASR sentence clock when it is available."""
+
+    total_chars = sum(len(chunk) for chunk in chunks) or 1
+    fallback: list[tuple[float, float]] = []
+    cursor = segment_start
+    for index, chunk in enumerate(chunks):
+        cue_end = (
+            segment_end
+            if index == len(chunks) - 1
+            else cursor
+            + (segment_end - segment_start) * len(chunk) / total_chars
+        )
+        fallback.append((cursor, cue_end))
+        cursor = cue_end
+    if (
+        not chunks
+        or not isinstance(spoken_ranges, Sequence)
+        or isinstance(spoken_ranges, (str, bytes))
+    ):
+        return fallback
+
+    ranges: list[tuple[float, float]] = []
+    for raw in spoken_ranges:
+        if not isinstance(raw, Mapping):
+            continue
+        try:
+            start = max(segment_start, float(raw.get("start", 0)))
+            end = min(segment_end, float(raw.get("end", 0)))
+        except (TypeError, ValueError):
+            continue
+        if end > start:
+            ranges.append((start, end))
+    ranges.sort()
+    if not ranges or len(ranges) > len(chunks):
+        return fallback
+
+    chunk_lengths = [max(1, len(chunk)) for chunk in chunks]
+    range_durations = [end - start for start, end in ranges]
+    total_duration = sum(range_durations) or 1
+    chunk_prefix = [0]
+    for length in chunk_lengths:
+        chunk_prefix.append(chunk_prefix[-1] + length)
+
+    range_count = len(ranges)
+    chunk_count = len(chunks)
+    costs = [[math.inf] * (chunk_count + 1) for _ in range(range_count + 1)]
+    previous = [[-1] * (chunk_count + 1) for _ in range(range_count + 1)]
+    costs[0][0] = 0
+    for range_index in range(1, range_count + 1):
+        min_chunks = range_index
+        max_chunks = chunk_count - (range_count - range_index)
+        duration_share = range_durations[range_index - 1] / total_duration
+        for chunk_end in range(min_chunks, max_chunks + 1):
+            for chunk_start in range(range_index - 1, chunk_end):
+                prior = costs[range_index - 1][chunk_start]
+                if math.isinf(prior):
+                    continue
+                char_share = (
+                    chunk_prefix[chunk_end] - chunk_prefix[chunk_start]
+                ) / chunk_prefix[-1]
+                cost = prior + (char_share - duration_share) ** 2
+                if cost < costs[range_index][chunk_end]:
+                    costs[range_index][chunk_end] = cost
+                    previous[range_index][chunk_end] = chunk_start
+
+    if previous[range_count][chunk_count] < 0:
+        return fallback
+    assignments: list[tuple[int, int]] = []
+    chunk_end = chunk_count
+    for range_index in range(range_count, 0, -1):
+        chunk_start = previous[range_index][chunk_end]
+        assignments.append((chunk_start, chunk_end))
+        chunk_end = chunk_start
+    assignments.reverse()
+
+    timings: list[tuple[float, float]] = []
+    for (range_start, range_end), (chunk_start, chunk_end) in zip(
+        ranges,
+        assignments,
+        strict=True,
+    ):
+        group_total = chunk_prefix[chunk_end] - chunk_prefix[chunk_start]
+        cursor = range_start
+        for index in range(chunk_start, chunk_end):
+            cue_end = (
+                range_end
+                if index == chunk_end - 1
+                else cursor
+                + (range_end - range_start) * chunk_lengths[index] / group_total
+            )
+            timings.append((cursor, cue_end))
+            cursor = cue_end
+    return timings if len(timings) == len(chunks) else fallback
+
+
+class CaptionGroup(BaseModel):
+    """A semantic line break suggestion tied to one exact ASR segment."""
+
+    model_config = ConfigDict(frozen=True)
+
+    segment_index: int = Field(ge=0)
+    parts: list[str] = Field(min_length=1, max_length=20)
+
+
+class CaptionEmphasis(BaseModel):
+    """One restrained AI-selected emphasis term from an exact ASR segment."""
+
+    model_config = ConfigDict(frozen=True)
+
+    segment_index: int = Field(ge=0)
+    term: str = Field(min_length=1, max_length=6)
+    kind: str = "keyword"
+
+    @model_validator(mode="after")
+    def _validate_kind(self) -> CaptionEmphasis:
+        if self.kind not in CAPTION_EMPHASIS_KINDS:
+            raise ValueError("字幕强调类型不在允许范围内。")
+        return self
+
+
+def validated_caption_groups(
+    raw_groups: object,
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    max_chars: int,
+) -> list[CaptionGroup]:
+    """Accept semantic breaks only when they preserve every source character.
+
+    Punctuation and whitespace are display-only and may be omitted. All other
+    characters must remain in the original order, with every non-empty ASR
+    segment represented exactly once.
+    """
+
+    if (
+        not isinstance(raw_groups, Sequence)
+        or isinstance(raw_groups, (str, bytes))
+        or not raw_groups
+    ):
+        return []
+    expected = {
+        index: _clean_caption_text(str(segment.get("text") or ""))
+        for index, segment in enumerate(segments)
+        if _clean_caption_text(str(segment.get("text") or ""))
+    }
+    if not expected or len(raw_groups) != len(expected):
+        return []
+
+    accepted: dict[int, CaptionGroup] = {}
+    for raw_group in raw_groups:
+        try:
+            group = (
+                raw_group
+                if isinstance(raw_group, CaptionGroup)
+                else CaptionGroup.model_validate(raw_group)
+            )
+        except (TypeError, ValueError):
+            return []
+        if group.segment_index not in expected or group.segment_index in accepted:
+            return []
+        parts = [_clean_caption_text(part) for part in group.parts]
+        if (
+            any(not part or len(part) > max_chars for part in parts)
+            or "".join(parts) != expected[group.segment_index]
+        ):
+            return []
+        source_text = expected[group.segment_index]
+        word_splits = _caption_word_splits(source_text)
+        cursor = 0
+        for part in parts[:-1]:
+            cursor += len(part)
+            if cursor not in word_splits:
+                return []
+        accepted[group.segment_index] = group.model_copy(update={"parts": parts})
+    if set(accepted) != set(expected):
+        return []
+    return [accepted[index] for index in sorted(accepted)]
+
+
+def validated_caption_emphasis(
+    raw_emphasis: object,
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    caption_groups: object = None,
+) -> list[CaptionEmphasis]:
+    """Keep sparse emphasis terms only when they are exact source substrings."""
+
+    if not isinstance(raw_emphasis, Sequence) or isinstance(
+        raw_emphasis,
+        (str, bytes),
+    ):
+        return []
+    expected = {
+        index: _clean_caption_text(str(segment.get("text") or ""))
+        for index, segment in enumerate(segments)
+        if _clean_caption_text(str(segment.get("text") or ""))
+    }
+    if not expected:
+        return []
+    groups = validated_caption_groups(caption_groups, segments, max_chars=11)
+    if caption_groups and not groups:
+        return []
+    group_parts = {
+        group.segment_index: list(group.parts) for group in groups
+    }
+    accepted: list[CaptionEmphasis] = []
+    seen_segments: set[int] = set()
+    for raw_item in raw_emphasis:
+        try:
+            item = (
+                raw_item
+                if isinstance(raw_item, CaptionEmphasis)
+                else CaptionEmphasis.model_validate(raw_item)
+            )
+        except (TypeError, ValueError):
+            return []
+        term = _clean_caption_text(item.term)
+        source_text = expected.get(item.segment_index)
+        if (
+            not source_text
+            or item.segment_index in seen_segments
+            or not term
+            or len(term) > 6
+            or (len(term) < 2 and not term.isdigit())
+            or term not in source_text
+            or (
+                item.segment_index in group_parts
+                and not any(term in part for part in group_parts[item.segment_index])
+            )
+        ):
+            return []
+        accepted.append(item.model_copy(update={"term": term}))
+        seen_segments.add(item.segment_index)
+    density_limit = max(1, math.ceil(len(expected) / 3))
+    return accepted[:density_limit]
+
+
+def _caption_emphasis_style(kind: str) -> dict[str, Any]:
+    return {
+        "color": "#FFE16A",
+        "scale": 1.5,
+        "animation": "soft_pop",
+        "duration_ms": 120,
+    }
+
+
+_AUTO_EMPHASIS_NUMBER = re.compile(
+    r"\d+(?:\.\d+)?(?:%|元|块|万|倍|折|公里|分钟|秒|张|个|家|人|套)"
+)
+_AUTO_EMPHASIS_PROMOTION_REWARD = re.compile(
+    r"送(\d+(?:\.\d+)?(?:元|块)?)"
+)
+_AUTO_EMPHASIS_KEYWORDS = (
+    "现金奖励",
+    "自动执行",
+    "不用人管",
+    "免费",
+    "赚钱",
+    "省钱",
+    "优惠",
+    "奖励",
+    "增长",
+    "翻倍",
+    "关键",
+    "重点",
+    "注意",
+    "千万",
+    "必须",
+    "不要",
+    "风险",
+    "警告",
+    "爆款",
+    "成交",
+    "引流",
+    "裂变",
+    "回头客",
+)
+
+
+def _automatic_emphasis_term(text: str) -> tuple[str, str] | None:
+    clean = _clean_caption_text(text)
+    reward = _AUTO_EMPHASIS_PROMOTION_REWARD.search(clean)
+    if reward and len(reward.group(1)) <= 6:
+        return reward.group(1), "number"
+    number = _AUTO_EMPHASIS_NUMBER.search(clean)
+    if number and len(number.group(0)) <= 6:
+        return number.group(0), "number"
+    for keyword in _AUTO_EMPHASIS_KEYWORDS:
+        if keyword in clean and len(keyword) <= 6:
+            kind = (
+                "warning"
+                if keyword in {"注意", "千万", "必须", "不要", "风险", "警告"}
+                else "benefit"
+            )
+            return keyword, kind
+    return None
+
+
 def build_business_talking_head_overlay_preview(
     segments: Sequence[Mapping[str, Any]],
     *,
     title: str,
     output_profile: str | "OutputProfile",
+    caption_groups: object = None,
+    caption_emphasis: object = None,
+    spoken_ranges: object = None,
 ) -> dict[str, Any]:
     """Normalize title/caption lines once for browser preview and ASS rendering."""
 
@@ -475,7 +894,23 @@ def build_business_talking_head_overlay_preview(
     max_caption_chars = (
         caption_style["max_chars_per_line"] * caption_style["max_lines"]
     )
-    for segment in segments:
+    semantic_groups = validated_caption_groups(
+        caption_groups,
+        segments,
+        max_chars=max_caption_chars,
+    )
+    semantic_parts = {
+        group.segment_index: list(group.parts) for group in semantic_groups
+    }
+    approved_emphasis = validated_caption_emphasis(
+        caption_emphasis,
+        segments,
+        caption_groups=semantic_groups,
+    )
+    emphasis_by_segment = {
+        item.segment_index: item for item in approved_emphasis
+    }
+    for segment_index, segment in enumerate(segments):
         try:
             start = float(segment.get("start", 0))
             end = float(segment.get("end", 0))
@@ -483,26 +918,44 @@ def build_business_talking_head_overlay_preview(
             continue
         if end <= start:
             continue
-        chunks = _caption_chunks(str(segment.get("text") or ""), max_chars=max_caption_chars)
-        total_chars = sum(len(chunk) for chunk in chunks) or 1
-        cursor = start
+        chunks = semantic_parts.get(segment_index) or _caption_chunks(
+            str(segment.get("text") or ""),
+            max_chars=max_caption_chars,
+        )
+        cue_timings = _caption_cue_timings(
+            chunks,
+            segment_start=start,
+            segment_end=end,
+            spoken_ranges=spoken_ranges,
+        )
         for index, chunk in enumerate(chunks):
-            cue_end = (
-                end
-                if index == len(chunks) - 1
-                else cursor + (end - start) * len(chunk) / total_chars
-            )
+            cue_start, cue_end = cue_timings[index]
             lines = _display_lines(
                 chunk,
                 chars_per_line=caption_style["max_chars_per_line"],
                 max_lines=caption_style["max_lines"],
             )
-            terms = _normalized_emphasis_terms(segment)
+            ai_emphasis = emphasis_by_segment.get(segment_index)
+            manual_terms = _normalized_emphasis_terms(segment)
+            clean_chunk = re.sub(r"\s+", "", chunk)
+            active_manual_terms = [
+                term for term in manual_terms if term in clean_chunk
+            ]
+            active_ai_term = (
+                ai_emphasis.term
+                if ai_emphasis is not None and ai_emphasis.term in clean_chunk
+                else ""
+            )
+            automatic = _automatic_emphasis_term(clean_chunk)
+            terms = active_manual_terms or (
+                [active_ai_term]
+                if active_ai_term
+                else ([automatic[0]] if automatic is not None else [])
+            )
             emphasis = _emphasis_range(lines, terms)
             # Never let the optional highlighted phrase split across caption
             # lines: a split highlight reads poorly on a phone screen.
             if terms and emphasis is None:
-                clean_chunk = re.sub(r"\s+", "", chunk)
                 term_start = clean_chunk.find(terms[0])
                 chars_per_line = caption_style["max_chars_per_line"]
                 if (
@@ -525,13 +978,29 @@ def build_business_talking_head_overlay_preview(
                         emphasis = _emphasis_range(lines, terms)
             cues.append(
                 {
-                    "start": round(cursor, 3),
+                    "start": round(cue_start, 3),
                     "end": round(cue_end, 3),
                     "lines": lines,
                     "emphasis_range": emphasis,
+                    "emphasis_style": (
+                        _caption_emphasis_style(
+                            str(segment.get("emphasis_kind") or "keyword")
+                            if active_manual_terms
+                            else (
+                                ai_emphasis.kind
+                                if active_ai_term and ai_emphasis is not None
+                                else (
+                                    automatic[1]
+                                    if automatic is not None
+                                    else "keyword"
+                                )
+                            )
+                        )
+                        if emphasis is not None
+                        else None
+                    ),
                 }
             )
-            cursor = cue_end
     return {
         "title": {
             "lines": title_lines,
@@ -539,7 +1008,18 @@ def build_business_talking_head_overlay_preview(
             "end": float(title_style["visible_seconds"]),
         },
         "cues": cues,
+        "caption_group_source": (
+            "qwen_semantic" if semantic_groups else "deterministic_fallback"
+        ),
     }
+
+
+def _hex_to_ass_colour(value: str) -> str:
+    clean = value.strip().lstrip("#")
+    if not re.fullmatch(r"[0-9A-Fa-f]{6}", clean):
+        return "&H006AE1FF&"
+    red, green, blue = clean[0:2], clean[2:4], clean[4:6]
+    return f"&H00{blue}{green}{red}&"
 
 
 def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
@@ -552,14 +1032,22 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
     end = emphasis.get("end")
     if not all(isinstance(value, int) for value in (line_index, start, end)):
         return _wrap_ass_lines(lines)
+    raw_style = cue.get("emphasis_style")
+    style = raw_style if isinstance(raw_style, Mapping) else {}
+    colour = _hex_to_ass_colour(str(style.get("color") or "")) or emphasis_colour
+    scale = max(100, min(150, round(float(style.get("scale") or 1.5) * 100)))
+    duration_ms = max(0, min(180, int(style.get("duration_ms") or 120)))
     rendered: list[str] = []
     for index, line in enumerate(lines):
         if index != line_index or start < 0 or end <= start or end > len(line):
             rendered.append(_ass_escape(line))
             continue
         rendered.append(
-            f"{_ass_escape(line[:start])}{{\\c{emphasis_colour}}}"
-            f"{_ass_escape(line[start:end])}{{\\c&H00F8FAFC&}}"
+            f"{_ass_escape(line[:start])}"
+            f"{{\\c{colour}\\fscx100\\fscy100"
+            f"\\t(0,{duration_ms},\\fscx{scale}\\fscy{scale})}}"
+            f"{_ass_escape(line[start:end])}"
+            f"{{\\c&H00F8FAFC&\\fscx100\\fscy100}}"
             f"{_ass_escape(line[end:])}"
         )
     return r"\N".join(rendered)
@@ -570,6 +1058,9 @@ def build_business_talking_head_ass(
     *,
     title: str,
     output_profile: str | "OutputProfile",
+    caption_groups: object = None,
+    caption_emphasis: object = None,
+    spoken_ranges: object = None,
 ) -> bytes:
     """Create one approved ASS overlay for the title and manually reviewed captions."""
 
@@ -582,6 +1073,9 @@ def build_business_talking_head_ass(
         segments,
         title=title,
         output_profile=output_profile,
+        caption_groups=caption_groups,
+        caption_emphasis=caption_emphasis,
+        spoken_ranges=spoken_ranges,
     )
     header = f"""[Script Info]
 Title: VideoInsight business talking-head overlay
@@ -591,9 +1085,9 @@ PlayResY: {canvas["height"]}
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Title,YaHei,{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H5A000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
+Style: Title,YaHei,{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
 Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: Caption,YaHei,{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H8C000000,&H00000000,-1,0,0,0,100,100,0.18,0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
+Style: Caption,YaHei,{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0.18,0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
@@ -691,6 +1185,9 @@ class EditPlan(BaseModel):
     bgm_category: str = "通用口播"
     bgm_energy: str = "克制"
     bgm_keywords: list[str] = Field(default_factory=list, max_length=6)
+    caption_groups: list[CaptionGroup] = Field(default_factory=list, max_length=400)
+    caption_group_source: str = "deterministic_fallback"
+    caption_emphasis: list[CaptionEmphasis] = Field(default_factory=list, max_length=140)
     explanation: str = ""
     warnings: list[str] = Field(default_factory=list)
     provider_name: str = "deterministic_rules"
@@ -887,6 +1384,7 @@ class EditPlanProvider(Protocol):
         transcript: str,
         spoken_ranges: Sequence[TimeRange | Mapping[str, float]],
         duration_seconds: float,
+        segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> EditPlan: ...
 
 
@@ -1242,6 +1740,9 @@ def build_safe_edit_plan(
     bgm_category: str = "通用口播",
     bgm_energy: str = "克制",
     bgm_keywords: Sequence[str] | None = None,
+    caption_groups: Sequence[CaptionGroup | Mapping[str, Any]] | None = None,
+    caption_group_source: str = "deterministic_fallback",
+    caption_emphasis: Sequence[CaptionEmphasis | Mapping[str, Any]] | None = None,
     explanation: str = "",
     enabled_steps: Sequence[EditStepKind | str] | None = None,
     provider_name: str = "deterministic_rules",
@@ -1322,6 +1823,9 @@ def build_safe_edit_plan(
             for item in (bgm_keywords or [])
             if str(item).strip()
         ][:6],
+        caption_groups=list(caption_groups or []),
+        caption_group_source=caption_group_source,
+        caption_emphasis=list(caption_emphasis or []),
         explanation=explanation.strip(),
         warnings=warnings,
         provider_name=provider_name,

@@ -191,9 +191,17 @@ class LocalDouyinBrowserSearchProvider:
                 True, False, True, False, "browser_closed", "请先打开热点宝专用浏览器并登录抖音；验证出现时系统会暂停。"
             )
 
+    def open_login_browser(self) -> BrowserSessionStatus:
+        """Show a user-facing window for QR login or manual verification."""
+        return self._start_browser(visible=True)
+
     def start_login_browser(self) -> BrowserSessionStatus:
+        """Start the dedicated profile without interrupting background work."""
+        return self._start_browser(visible=False)
+
+    def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
-        if status.running:
+        if status.running and not visible:
             return status
         capability = self.capabilities()
         if not capability.enabled:
@@ -222,18 +230,24 @@ class LocalDouyinBrowserSearchProvider:
                 kind=ProviderErrorKind.VALIDATION,
             )
         self.profile_dir.mkdir(parents=True, exist_ok=True)
+        browser_args = [
+            str(executable),
+            f"--remote-debugging-port={self.debug_port}",
+            f"--user-data-dir={self.profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ]
+        if visible:
+            browser_args.extend(
+                ["--new-window", "--window-position=80,80", "--window-size=1100,800"]
+            )
+        else:
+            browser_args.extend(
+                ["--start-minimized", "--window-position=-32000,-32000", "--window-size=900,700"]
+            )
+        browser_args.append(_HOTSPOT_ENTRY_URL)
         subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
-            [
-                str(executable),
-                f"--remote-debugging-port={self.debug_port}",
-                f"--user-data-dir={self.profile_dir}",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--start-minimized",
-                "--window-position=-32000,-32000",
-                "--window-size=900,700",
-                _HOTSPOT_ENTRY_URL,
-            ],
+            browser_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -251,7 +265,11 @@ class LocalDouyinBrowserSearchProvider:
             True,
             False,
             "starting",
-            "专用 Chrome 正在后台启动；如需登录或人工验证，请从任务栏打开该窗口。",
+            (
+                "热点宝登录窗口正在打开，请在可见窗口中扫码或完成人工验证。"
+                if visible
+                else "热点宝专用浏览器正在后台启动；需要登录时请点击登录按钮。"
+            ),
         )
 
     def search(

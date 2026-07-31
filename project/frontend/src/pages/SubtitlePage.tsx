@@ -17,7 +17,6 @@ export default function SubtitlePage() {
   const [status, setStatus] = useState<SubtitleStatusResponse | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [modelName, setModelName] = useState("large-v3-turbo");
   const [language, setLanguage] = useState("zh");
   const [rightsHolder, setRightsHolder] = useState("本人/公司已授权");
 
@@ -45,18 +44,18 @@ export default function SubtitlePage() {
     try {
       const task = await uploadAndTranscribe(
         file,
-        modelName,
+        "fun-asr",
         rightsHolder.trim(),
         language,
       );
-      message.success("识别完成，请复核字幕后确认成稿并导出");
+      message.success("已提交公司云端识别，可在转写工作区查看进度");
       navigate(`/transcription?task=${encodeURIComponent(task.task_id)}`);
     } catch (err) {
       message.error((err as Error).message || "字幕识别失败");
     } finally {
       setSubmitting(false);
     }
-  }, [language, modelName, navigate, rightsHolder]);
+  }, [language, navigate, rightsHolder]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -65,10 +64,10 @@ export default function SubtitlePage() {
           <AudioOutlined style={{ marginRight: 8, color: "var(--primary-600)" }} />
           字幕生成
         </Title>
-        <Text type="secondary">上传已授权视频，完成真实识别后进入校对工作区；低置信片段复核后可导出 SRT 或 ASS。</Text>
+        <Text type="secondary">上传已授权视频，由公司云端识别后进入校对工作区；人工确认后可导出 SRT 或 ASS。</Text>
       </div>
 
-      <Card size="small" title={<Space><GlobalOutlined /> 本地识别能力</Space>} extra={<Button size="small" onClick={loadStatus} loading={loadingStatus}>刷新</Button>}>
+      <Card size="small" title={<Space><GlobalOutlined /> 公司云端识别</Space>} extra={<Button size="small" onClick={loadStatus} loading={loadingStatus}>刷新</Button>}>
         {status ? (
           <Space direction="vertical" size="small" style={{ width: "100%" }}>
             <Space wrap>
@@ -76,10 +75,10 @@ export default function SubtitlePage() {
               <Tag color={status.whisper_available ? "success" : "error"}>{status.whisper_available ? "可用" : "不可用"}</Tag>
               <Tag>{status.provider_name}</Tag>
               {status.version && <Tag color="blue">v{status.version}</Tag>}
-              <Tag color={status.ffmpeg_available ? "success" : "error"}>FFmpeg {status.ffmpeg_available ? "可用" : "不可用"}</Tag>
+              <Tag color="blue">不使用客户 CPU</Tag>
             </Space>
             <Text type="secondary">默认模型：{status.default_model}；支持：{status.supported_models.join("、")}；导出：{status.supported_formats.join("、").toUpperCase()}</Text>
-            {!status.whisper_available && <Alert type="warning" showIcon message={status.reason || "本地字幕能力不可用"} description={status.install_command ? <Text code>{status.install_command}</Text> : undefined} />}
+            {!status.whisper_available && <Alert type="warning" showIcon message={status.reason || "公司云端字幕能力不可用"} />}
           </Space>
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载能力状态" />}
       </Card>
@@ -91,11 +90,8 @@ export default function SubtitlePage() {
               <Alert type="info" showIcon message="仅支持已授权的 MP4/MOV，单个文件不超过 50MB、时长不超过 15 分钟。" />
               <Row gutter={[12, 12]}>
                 <Col xs={24} md={12}>
-                  <Text type="secondary">识别模式</Text>
-                  <Select value={modelName} onChange={setModelName} style={{ width: "100%", marginTop: 4 }} options={[
-                    { value: "large-v3-turbo", label: "准确优先 · large-v3-turbo" },
-                    { value: "base", label: "快速预览 · base" },
-                  ]} />
+                  <Text type="secondary">识别方式</Text>
+                  <div style={{ marginTop: 8 }}><Tag color="blue">公司阿里云 Fun-ASR</Tag></div>
                 </Col>
                 <Col xs={24} md={12}>
                   <Text type="secondary">语言</Text>
@@ -109,7 +105,7 @@ export default function SubtitlePage() {
                 </Col>
               </Row>
               <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" maxLength={100} />
-              <Text type="secondary">选择文件即确认拥有该文件的处理权，并允许本地识别。</Text>
+              <Text type="secondary">选择文件即确认拥有处理权，并允许上传到公司私有云进行识别。</Text>
               <Upload.Dragger
                 accept=".mp4,.mov"
                 beforeUpload={(file) => { void upload(file); return false; }}
@@ -127,7 +123,7 @@ export default function SubtitlePage() {
         <Col xs={24} lg={10}>
           <Card size="small" title={<Space><CheckCircleOutlined /> 后续流程</Space>}>
             <Space direction="vertical" size="middle">
-              <Text>1. 本地 faster-whisper 识别并生成时间轴片段。</Text>
+              <Text>1. 公司阿里云识别并生成时间轴片段。</Text>
               <Text>2. 在“语音转写”工作区编辑文本并复核低置信片段。</Text>
               <Text>3. 确认成稿后下载 SRT 或 ASS 字幕。</Text>
               <Button type="primary" icon={<RocketOutlined />} disabled={!status?.whisper_available} onClick={() => message.info("请填写权利主体，再选择文件上传。")}>开始生成字幕</Button>

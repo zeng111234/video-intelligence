@@ -86,6 +86,31 @@ class SandboxPublisher:
         return task.platform_url if task else None
 
 
+class ManualPackagePublisher(SandboxPublisher):
+    """真实的人工发布包，不访问平台、也不把结果标为演示。"""
+
+    def capabilities(self) -> dict[str, str | bool]:
+        return {
+            **super().capabilities(),
+            "provider_name": f"manual_package_{self._platform.value}",
+            "display_name": "小红书人工发布包",
+            "mode": "manual",
+            "manual_only": True,
+        }
+
+    def publish(self, video_path: str, target: PublishTarget) -> PublishTask:
+        task = super().publish(video_path, target)
+        return task.model_copy(
+            update={
+                "title": f"小红书发布包 · {target.title[:20]}",
+                "provider_name": "manual_package_xiaohongshu",
+                "stage": "发布包已准备，请在小红书官方 App 或创作后台手动发布",
+                "action_required": "系统不会打开小红书或代为发布；请人工完成发布后再回填结果。",
+                "is_mock": False,
+            }
+        )
+
+
 class PlatformPublisherAdapter:
     """单平台发布适配器骨架。
 
@@ -153,10 +178,11 @@ def build_publisher(platform: PublishPlatform):
         from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
 
         return DouyinBrowserPublisher()
+    if platform == PublishPlatform.XIAOHONGSHU:
+        return ManualPackagePublisher(platform)
     if platform in {
         PublishPlatform.KUAISHOU,
         PublishPlatform.WECHAT_CHANNELS,
-        PublishPlatform.XIAOHONGSHU,
         PublishPlatform.BILIBILI,
     }:
         return LocalBrowserAutoPublisher(platform)

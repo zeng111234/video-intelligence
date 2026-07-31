@@ -131,7 +131,7 @@ class LocalBrowserAutoPublisher:
         base_outputs = {"account_id": account.account_id, "account_name": account.name}
         if not prepared:
             return self._action_required_task(video, target, now, detail, base_outputs)
-        if not account.auto_publish_authorized:
+        if not (target.auto_publish_authorized or account.auto_publish_authorized):
             return PublishTask(
                 task_id=f"publish-{uuid4().hex[:10]}",
                 title=f"{self._spec.display_name}待确认 · {target.title[:20]}",

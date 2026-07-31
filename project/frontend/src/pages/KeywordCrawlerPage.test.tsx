@@ -136,6 +136,11 @@ const candidate: CrawlerCandidateResult = {
   reasons: ["标题命中关键词"],
   media_resolution_status: null,
   media_transcription_task_id: null,
+  spoken_seed_score: 4,
+  spoken_seed_status: "writeable",
+  spoken_seed_message: "具备口播信息量：包含具体问题、包含使用场景。",
+  audio_status: "unknown",
+  audio_message: "尚未检测声音；需上传已获授权的本地视频。",
 };
 
 const batchWithCandidate: CrawlerBatchResponse = {
@@ -261,23 +266,27 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(getCrawlerHotWords).not.toHaveBeenCalled();
   });
 
-  it("keeps searching simple and puts account connection behind a compact entry", async () => {
+  it("keeps searching simple while keeping Xiaohongshu out of browser connections", async () => {
     renderPage();
 
-    expect(await screen.findByText(/点“找素材”后浏览器会自动打开并开始搜索/)).toBeTruthy();
-    expect(screen.getByText(/热点宝不限制作品发布时间/)).toBeTruthy();
-    expect(screen.getByText(/小红书选择“最多点赞、视频、半年内”/)).toBeTruthy();
-    expect(screen.getByText(/快手保留近10个月/)).toBeTruthy();
+    expect(await screen.findByText(/输入一个关键词，系统会自动打开热点宝、快手和B站/)).toBeTruthy();
+    expect(screen.getByText(/点“找素材”后浏览器会自动搜索热点宝、快手和B站；小红书不会被打开、浏览或抓取/)).toBeTruthy();
+    expect(screen.getByText(/快手保留近30天/)).toBeTruthy();
     expect(screen.getByText(/B站选择“最多播放、最近一周”/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /账号连接/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "连接小红书" })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    expect(screen.getByText(/“获客”范围太宽，请补充产品或行业/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: "找素材" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: /账号连接/ }));
 
     const drawer = await screen.findByRole("dialog");
     expect(within(drawer).getByText("账号连接")).toBeTruthy();
-    fireEvent.click(within(drawer).getByRole("button", { name: "连接小红书" }));
-    await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("xiaohongshu"));
+    expect(within(drawer).queryByRole("button", { name: "连接小红书" })).toBeNull();
+    fireEvent.click(within(drawer).getByRole("button", { name: "连接快手" }));
+    await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("kuaishou"));
   });
 
   it("removes a batch immediately without triggering a full page reload", async () => {
@@ -297,7 +306,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(getCrawlerCapabilities).toHaveBeenCalledTimes(1);
   });
 
-  it("sends a displayed candidate to intelligent creation with its source batch", async () => {
+  it("keeps a title-only candidate in original-script mode instead of sending it to creation", async () => {
     const view = renderPage();
 
     await screen.findByText("企业获客");
@@ -308,13 +317,11 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByRole("button", { name: "追踪这批走势" })).toBeNull();
     expect(view.container.querySelector(".recharts-responsive-container")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "送入智能创作" }));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("location").textContent).toBe(
-        "/pipeline?crawler_batch_id=batch-fast-history&candidate_id=candidate-001",
-      );
-    });
+    expect(screen.getByText(/仅有标题和互动数据，只能用于选题参考/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "送入智能创作" })).toBeNull();
+    expect(screen.getByRole("button", { name: /生成原创口播/ })).toBeTruthy();
+    expect(screen.getByText(/具备口播信息量/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "上传视频检测声音" })).toBeTruthy();
   });
 
   it("merges platform candidates and explains discovered rows that were not usable", async () => {

@@ -140,13 +140,18 @@ class LocalDouyinBrowserParserClient:
             return self._resolve_with_browser(link)
 
     def _resolve_from_public_page(self, link: ParsedDouyinLink) -> ParsedDouyinMedia:
-        current_url, html = self._fetch_public_share_page(link.share_url)
+        target_url = self._target_url(link)
+        current_url, html = self._fetch_public_share_page(target_url)
         marker = re.search(r"window\._ROUTER_DATA\s*=\s*", html)
         if marker is None:
             raise RuntimeError("公开分享页未提供可读取的作品数据")
         payload, _ = json.JSONDecoder().raw_decode(html[marker.end() :].lstrip())
         captured: dict[str, str] = {}
-        self._capture_router_payload(payload, captured)
+        self._capture_router_payload(
+            payload,
+            captured,
+            expected_work_id=link.work_id,
+        )
         work_id = captured.get("work_id") or link.work_id
         media_url = captured.get("media_url")
         if not media_url:
@@ -208,10 +213,18 @@ class LocalDouyinBrowserParserClient:
                         response_url = response.url
                         try:
                             if "/aweme/v1/web/aweme/detail/" in response_url:
-                                self._capture_detail_payload(response.json(), captured)
+                                self._capture_detail_payload(
+                                    response.json(),
+                                    captured,
+                                    expected_work_id=link.work_id,
+                                )
                                 return
                             content_type = response.headers.get("content-type", "").casefold()
-                            if "video/" in content_type and response_url.startswith("https://"):
+                            if (
+                                link.work_id is None
+                                and "video/" in content_type
+                                and response_url.startswith("https://")
+                            ):
                                 captured["media_url"] = response_url
                         except Exception:
                             # A non-JSON or unreadable response is not a parse failure by itself.
@@ -219,7 +232,11 @@ class LocalDouyinBrowserParserClient:
 
                     page.on("response", capture_response)
                     try:
-                        page.goto(link.share_url, wait_until="domcontentloaded", timeout=timeout_ms)
+                        page.goto(
+                            self._target_url(link),
+                            wait_until="domcontentloaded",
+                            timeout=timeout_ms,
+                        )
                     except PlaywrightError:
                         pass
                     page.wait_for_timeout(5_000)
@@ -256,11 +273,24 @@ class LocalDouyinBrowserParserClient:
         return ParsedDouyinMedia(link.share_url, work_id, media_url, title[:200])
 
     @staticmethod
-    def _capture_detail_payload(payload: Any, captured: dict[str, str]) -> None:
+    def _target_url(link: ParsedDouyinLink) -> str:
+        if link.work_id:
+            return f"https://www.douyin.com/video/{link.work_id}"
+        return link.share_url
+
+    @staticmethod
+    def _capture_detail_payload(
+        payload: Any,
+        captured: dict[str, str],
+        *,
+        expected_work_id: str | None = None,
+    ) -> None:
         detail = payload.get("aweme_detail", payload) if isinstance(payload, dict) else {}
         if not isinstance(detail, dict):
             return
         identifier = detail.get("aweme_id") or detail.get("awemeId")
+        if expected_work_id and str(identifier or "") != expected_work_id:
+            return
         if isinstance(identifier, (str, int)) and str(identifier).isdigit():
             captured["work_id"] = str(identifier)
         title = detail.get("desc") or detail.get("title")
@@ -281,7 +311,12 @@ class LocalDouyinBrowserParserClient:
                         return
 
     @staticmethod
-    def _capture_router_payload(payload: Any, captured: dict[str, str]) -> None:
+    def _capture_router_payload(
+        payload: Any,
+        captured: dict[str, str],
+        *,
+        expected_work_id: str | None = None,
+    ) -> None:
         """Read the public page's original play address without altering it."""
         if not isinstance(payload, dict):
             return
@@ -297,8 +332,13 @@ class LocalDouyinBrowserParserClient:
             items = detail.get("item_list") or detail.get("itemList")
             if not isinstance(items, list) or not items or not isinstance(items[0], dict):
                 continue
-            LocalDouyinBrowserParserClient._capture_detail_payload(
-                {"aweme_detail": items[0]}, captured
-            )
-            if captured.get("media_url"):
-                return
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                LocalDouyinBrowserParserClient._capture_detail_payload(
+                    {"aweme_detail": item},
+                    captured,
+                    expected_work_id=expected_work_id,
+                )
+                if captured.get("media_url"):
+                    return

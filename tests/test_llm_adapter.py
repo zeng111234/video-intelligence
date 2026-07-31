@@ -41,6 +41,13 @@ class TestSandboxCopywritingEngineExtended:
         }
         assert required_keys.issubset(cap.keys())
 
+    def test_spoken_script_review_is_explicitly_marked_as_demo(self):
+        result = self.engine.review_spoken_script(script_text="这是一段待审核的口播稿。")
+
+        assert result["is_mock"] is True
+        assert result["approved"] is False
+        assert "未执行真实 AI 文案审核" in result["summary"]
+
     def test_rewrite_with_style_prompt(self):
         results = self.engine.rewrite("测试", style_prompt="专业权威，数据支撑，理性分析")
         assert len(results) >= 1
@@ -237,6 +244,38 @@ class TestOpenAICompatibleCopywritingEngine:
         }
         sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
         assert "低置信片段" in sent["messages"][1]["content"]
+
+    @patch("src.adapters.llm.urlopen")
+    def test_review_spoken_script_returns_structured_review(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"approved":false,"summary":"效果表述需要确认。",'
+                                '"issues":[{"severity":"block","category":"事实边界",'
+                                '"message":"请确认效果表述有依据。"}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        result = engine.review_spoken_script(script_text="用了就能马上见效。")
+
+        assert result["approved"] is False
+        assert result["issues"] == [
+            {"severity": "block", "category": "事实边界", "message": "请确认效果表述有依据。"}
+        ]
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert "待审核口播稿" in sent["messages"][1]["content"]
 
     def test_from_env_defaults(self):
         """from_env 应使用环境变量。"""

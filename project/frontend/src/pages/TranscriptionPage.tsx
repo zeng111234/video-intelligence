@@ -44,6 +44,8 @@ import {
   exportTranscription,
   getTranscription,
   listTranscriptions,
+  reconnectTranscription,
+  retryTranscription,
   uploadAndTranscribe,
 } from "../api/client";
 import type {
@@ -77,8 +79,10 @@ const STATUS_COLOR: Record<string, string> = {
   queued: "default",
   pending: "default",
   running: "processing",
+  submitted: "processing",
   succeeded: "success",
   failed: "error",
+  outcome_unknown: "warning",
 };
 
 function statusLabel(status: string) {
@@ -86,8 +90,10 @@ function statusLabel(status: string) {
     queued: "排队中",
     pending: "等待中",
     running: "转写中",
+    submitted: "已提交云端",
     succeeded: "已完成",
     failed: "失败",
+    outcome_unknown: "结果待确认",
   };
   return labels[status] || status;
 }
@@ -124,7 +130,6 @@ export default function TranscriptionPage() {
   const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
-  const [asrModel, setAsrModel] = usePersistentState("transcription_asr_model", "large-v3-turbo");
   const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -225,6 +230,12 @@ export default function TranscriptionPage() {
     getCrawlerLinkTranscriptionCapabilities().then(setLinkCapabilities).catch(() => setLinkCapabilities(null));
   }, []);
 
+  useEffect(() => {
+    if (!selected || !["queued", "submitted", "running"].includes(selected.status)) return undefined;
+    const timer = window.setInterval(() => { void refresh(); }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [refresh, selected]);
+
   const handlePreviewShareLink = async () => {
     if (!shareText.trim()) return toast.warning("请粘贴一条平台分享链接");
     setSubmitting(true);
@@ -244,8 +255,8 @@ export default function TranscriptionPage() {
       const result = fallback
         ? await fallbackCrawlerLinkTranscription({ shareText, workId: linkPreview.work_id || "", rightsHolder, rightsConfirmed: true, idempotencyKey: `link-${Date.now()}` })
         : candidateFromQuery
-          ? await createCrawlerCandidateLinkTranscription({ candidateId: candidateFromQuery, rightsHolder, rightsConfirmed: true, modelName: asrModel })
-          : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: asrModel });
+          ? await createCrawlerCandidateLinkTranscription({ candidateId: candidateFromQuery, rightsHolder, rightsConfirmed: true, modelName: "fun-asr" })
+          : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: "fun-asr" });
       if (result.status === "fallback_required") {
         toast.warning(result.message);
         return;
@@ -278,7 +289,7 @@ export default function TranscriptionPage() {
     }
     setSubmitting(true);
     try {
-      const created = await createTranscriptionByUrl(url, true, asrModel, rightsHolder);
+      const created = await createTranscriptionByUrl(url, true, "fun-asr", rightsHolder);
       toast.success("转写任务已创建");
       setVideoUrl("");
       setCreateOpen(false);
@@ -294,11 +305,37 @@ export default function TranscriptionPage() {
   const handleFileUpload = async (file: File) => {
     setSubmitting(true);
     try {
-      const created = await uploadAndTranscribe(file, asrModel, rightsHolder);
+      const created = await uploadAndTranscribe(file, "fun-asr", rightsHolder, "zh", candidateFromQuery);
       toast.success("文件已上传并创建转写任务");
       setCreateOpen(false);
       applyTask(created, false);
       await refresh();
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReconnect = async () => {
+    if (!selected) return;
+    setSubmitting(true);
+    try {
+      applyTask(await reconnectTranscription(selected.task_id), false);
+      toast.success("已重新查询原阿里云任务，没有重复提交");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!selected) return;
+    setSubmitting(true);
+    try {
+      applyTask(await retryTranscription(selected.task_id), false);
+      toast.success("已重新加入云端识别队列");
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -361,10 +398,12 @@ export default function TranscriptionPage() {
       title: "置信度",
       dataIndex: "confidence",
       width: 110,
-      render: (value: number | null) => value === null ? "人工导入" : `${Math.round(value * 100)}%`,
+      render: (value: number | null) => value === null
+        ? selected?.source_kind === "manual_text" ? "人工导入" : "待人工复核"
+        : `${Math.round(value * 100)}%`,
     },
     {
-      title: selected?.is_mock ? "演示结果" : "AI质检",
+      title: selected?.is_mock ? "演示结果" : "复核状态",
       width: 160,
       render: (_, record) => {
         if (selected?.is_mock) {
@@ -378,6 +417,7 @@ export default function TranscriptionPage() {
           auto_corrected: { color: "processing", text: "AI已修正" },
           llm_rewritten: { color: "processing", text: "LLM已修订" },
           uncertain: { color: "warning", text: "AI标记存疑" },
+          pending: { color: "warning", text: "待人工复核" },
         };
         const isManualText = selected?.source_kind === "manual_text";
         const isProcessing = ["queued", "pending", "running"].includes(selected?.status || "");
@@ -397,7 +437,7 @@ export default function TranscriptionPage() {
       <Row justify="space-between" align="middle" gutter={[16, 12]}>
         <Col>
           <Title level={4} style={{ margin: 0 }}>语音转写</Title>
-          <Text type="secondary">低置信片段会自动二次识别，并由 LLM 修订为自然口播句。</Text>
+          <Text type="secondary">使用公司阿里云识别，不占用客户电脑；识别结果需人工复核。</Text>
         </Col>
         <Col>
           <Space wrap>
@@ -424,7 +464,7 @@ export default function TranscriptionPage() {
         extra={selected && (
           <Space wrap>
             <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
-            {selected.approved_revision_id && <Tag color="success">已自动成稿</Tag>}
+            {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
             <Select
               value="txt"
               style={{ width: 90 }}
@@ -446,6 +486,8 @@ export default function TranscriptionPage() {
               <Text strong>{selected.media_name}</Text>
               <Text code>{selected.task_id}</Text>
               <Tag>{selected.is_mock ? "演示数据" : (selected.model_name || "识别模型未记录")}</Tag>
+              {selected.provider_name && <Tag color="blue">公司云端</Tag>}
+              {selected.estimated_cost_cny != null && <Tag>预计 ¥{selected.estimated_cost_cny.toFixed(4)}</Tag>}
               {selected.source_kind === "manual_text" && <Tag color="blue">人工回填 · 无时间轴</Tag>}
               {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
               {selected.auto_reviewed && <Tag color="success">{selected.llm_review_count > 0 ? `LLM自动修订 ${selected.llm_review_count} 段` : "AI自动质检完成"}</Tag>}
@@ -453,26 +495,38 @@ export default function TranscriptionPage() {
               <Text type="secondary">{selected.stage}</Text>
             </Space>
             {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
+            {selected.status === "outcome_unknown" && selected.provider_job_id && (
+              <Button type="primary" loading={submitting} onClick={handleReconnect}>
+                重新连接原任务
+              </Button>
+            )}
+            {selected.status === "failed" && (
+              <Button type="primary" loading={submitting} onClick={handleRetry}>
+                保留素材并重试
+              </Button>
+            )}
             {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
             <Space direction="vertical" style={{ width: "100%" }} size={16}>
               {segments.length > 0 ? (
                 <>
-                  <Card size="small" title={selected.is_mock ? "演示结果" : "AI质检结果"}>
+                  <Card size="small" title={selected.is_mock ? "演示结果" : selected.provider_name === "aliyun_fun_asr" ? "云端识别结果" : "AI质检结果"}>
                     <Space direction="vertical" style={{ width: "100%" }} size={16}>
                       <Alert
-                        type={selected.is_mock ? "info" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
+                        type={selected.is_mock ? "info" : selected.provider_name === "aliyun_fun_asr" ? "warning" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
                         showIcon
                         message={selected.is_mock
                           ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
                           : selected.llm_review_count > 0
                             ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
-                            : selected.uncertain_segment_count > 0
-                              ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
-                              : "AI 已完成自动质检并生成成稿。"}
+                            : selected.provider_name === "aliyun_fun_asr"
+                              ? `阿里云已返回 ${segments.length} 个时间轴片段。系统未做二次识别或自动改写，请人工复核后再继续。`
+                              : selected.uncertain_segment_count > 0
+                                ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
+                                : "AI 已完成自动质检并生成成稿。"}
                       />
                       {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
                       <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
-                      <Card size="small" title="AI修订口播稿预览"><Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph></Card>
+                      <Card size="small" title={selected.provider_name === "aliyun_fun_asr" ? "识别稿预览" : "AI修订口播稿预览"}><Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph></Card>
                     </Space>
                   </Card>
                 </>
@@ -485,7 +539,7 @@ export default function TranscriptionPage() {
                     showIcon
                     message="确认后会带入 AI 文案改写；系统不会自动改写、不会自动制作数字人视频。"
                   />
-                  <Button type="primary" onClick={handleSendToAiCopy} disabled={segments.length === 0}>
+                  <Button type="primary" onClick={handleSendToAiCopy} disabled={selected.status !== "succeeded" || segments.length === 0}>
                     确认并带到 AI 文案
                   </Button>
                 </Space>
@@ -512,15 +566,7 @@ export default function TranscriptionPage() {
             description="确认有权后，可用本机浏览器解析单条平台分享链接；不会批量下载、绕过验证或自动调用付费回退。也可以上传文件或填写授权直链。"
           />
           <Space wrap>
-            <Select
-              value={asrModel}
-              onChange={setAsrModel}
-              style={{ width: 230 }}
-              options={[
-                { value: "large-v3-turbo", label: "准确率优先 · large-v3-turbo" },
-                { value: "base", label: "快速预览 · base" },
-              ]}
-            />
+            <Tag color="blue">公司阿里云 Fun-ASR · 单条上限 ¥0.20</Tag>
             <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" style={{ width: 300 }} />
           </Space>
           <Tabs
@@ -543,8 +589,8 @@ export default function TranscriptionPage() {
                     <Alert
                       type={linkCapabilities?.parser_enabled ? "info" : "warning"}
                       showIcon
-                      message={linkCapabilities?.parser_enabled ? "本机解析已安装，待实际链接验证" : "本机解析器未就绪"}
-                      description="支持单条、已获授权的抖音、小红书、快手或B站分享链接。后三个平台需先连接对应专用浏览器；只有抖音解析失败且你明确确认时才可使用 OneAPI 付费回退。"
+                      message={linkCapabilities?.parser_enabled ? "链接解析已就绪" : "链接解析器未就绪"}
+                      description="链接解析完成后统一交给公司阿里云识别；客户电脑不会运行本地语音识别。"
                     />
                     <TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} placeholder="粘贴抖音、小红书、快手或B站分享链接" rows={3} />
                     <Button loading={submitting} onClick={handlePreviewShareLink}>识别链接</Button>
@@ -552,10 +598,10 @@ export default function TranscriptionPage() {
                       <Alert
                         type={linkPreview.parser_enabled ? "info" : "warning"}
                         showIcon
-                        message={linkPreview.parser_enabled ? `已识别${linkPreview.platform_label}作品：${linkPreview.work_id || "等待页面返回作品 ID"}` : `${linkPreview.platform_label}本机解析不可用`}
+                        message={linkPreview.parser_enabled ? `已识别${linkPreview.platform_label}作品：${linkPreview.work_id || "等待页面返回作品 ID"}` : `${linkPreview.platform_label}链接解析不可用`}
                         description={
                           <Space wrap>
-                            <Text>{linkPreview.parser_message || "可开始本机解析并转写。"}</Text>
+                            <Text>{linkPreview.parser_message || "可开始解析并交给公司云端转写。"}</Text>
                             <Button type="primary" loading={submitting} disabled={!linkPreview.parser_enabled} onClick={() => handleShareLinkTranscribe(false)}>确认有权并转写</Button>
                             {linkPreview.oneapi_fallback_available && <Button danger loading={submitting} onClick={() => Modal.confirm({ title: "确认 OneAPI 付费回退", content: `预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleShareLinkTranscribe(true) })}>确认后付费回退</Button>}
                           </Space>

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -677,6 +678,50 @@ def test_local_browser_auto_publisher_formats_tags_without_private_api():
     )
 
     assert publisher._content(target) == "描述\n#品牌 #活动"
+
+
+def test_local_browser_allows_one_task_authorization_without_persisting_account_permission(
+    tmp_path,
+    monkeypatch,
+):
+    publisher = LocalBrowserAutoPublisher(PublishPlatform.XIAOHONGSHU)
+    video = tmp_path / "authorized-once.mp4"
+    video.write_bytes(b"video")
+    account = SimpleNamespace(
+        account_id="account-xhs",
+        name="小红书主号",
+        status="ready",
+        last_message="",
+        debug_port=9333,
+        auto_publish_authorized=False,
+    )
+    monkeypatch.setattr(
+        "src.adapters.publishers.local_browser.publish_account_manager.get",
+        lambda *args, **kwargs: account,
+    )
+    monkeypatch.setattr(
+        "src.adapters.publishers.local_browser.publish_account_manager.verify_session",
+        lambda *args, **kwargs: account,
+    )
+    monkeypatch.setattr(publisher, "_prepare_draft", lambda *args: (True, "已填入"))
+    monkeypatch.setattr(
+        publisher,
+        "_submit_and_verify",
+        lambda *args: (True, "平台页面已确认", True),
+    )
+    target = PublishTarget(
+        platform=PublishPlatform.XIAOHONGSHU,
+        title="标题",
+        description="描述",
+        account_id=account.account_id,
+        auto_publish_authorized=True,
+    )
+
+    task = publisher.publish(str(video), target)
+
+    assert task.status == TaskStatus.SUCCEEDED
+    assert task.outputs["final_publish_clicked"] == "true"
+    assert account.auto_publish_authorized is False
 
 
 def test_publish_worker_claims_only_one_queued_task(tmp_path):

@@ -132,6 +132,16 @@ class DisabledCopywritingEngine:
             "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行低置信口播修订。"
         )
 
+    def select_best_spoken_script(self, **kwargs) -> dict[str, str]:
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行四稿择优。"
+        )
+
+    def review_spoken_script(self, **kwargs) -> dict[str, Any]:
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行口播文案审核。"
+        )
+
 
 class SandboxCopywritingEngine:
     """离线沙箱文案引擎，不发起真实 LLM 调用。"""
@@ -237,6 +247,28 @@ class SandboxCopywritingEngine:
         return {
             "corrected_text": candidates[0] if candidates else "",
             "note": "演示模式未执行真实低置信口播修订。",
+            "is_mock": True,
+        }
+
+    def select_best_spoken_script(
+        self,
+        *,
+        candidates: list[dict[str, str]],
+        **kwargs,
+    ) -> dict[str, str]:
+        if not candidates:
+            raise LLMAdapterError("四稿择优至少需要一条候选文案。")
+        return {
+            "winner_id": str(candidates[0].get("id") or ""),
+            "reason": "演示模式未执行真实语义择优，按候选顺序选择第一条。",
+            "is_mock": "true",
+        }
+
+    def review_spoken_script(self, *, script_text: str, **kwargs) -> dict[str, Any]:
+        return {
+            "approved": False,
+            "summary": "演示模式未执行真实 AI 文案审核，请由人工核对后再制作。",
+            "issues": [],
             "is_mock": True,
         }
 
@@ -452,6 +484,131 @@ class OpenAICompatibleCopywritingEngine:
         return {
             "corrected_text": corrected_text,
             "note": note,
+        }
+
+    def select_best_spoken_script(
+        self,
+        *,
+        candidates: list[dict[str, str]],
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, str]:
+        """Select one transcript for a single digital-human production run."""
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        normalized = [
+            {
+                "id": str(item.get("id") or "").strip(),
+                "platform": str(item.get("platform") or "").strip(),
+                "title": str(item.get("title") or "").strip()[:200],
+                "text": str(item.get("text") or "").strip()[:12000],
+            }
+            for item in candidates
+            if str(item.get("id") or "").strip()
+            and str(item.get("text") or "").strip()
+        ]
+        if not normalized:
+            raise LLMAdapterError("没有可供 AI 择优的有效转写文案。")
+        system_prompt = "\n".join(
+            [
+                "你是企业短视频口播选稿审核员。",
+                "从候选转写中只选择一条最适合继续改写为数字人口播的素材。",
+                "优先判断：开头抓人、主题清楚、结构完整、口播自然、事实边界清晰、可改写空间大。",
+                "不得因为具体金额、效果承诺或无法核实的数据而提高评分；不得编造候选中没有的事实。",
+                "只返回严格 JSON，不要 Markdown 或额外解释。",
+                'JSON 格式：{"winner_id":"候选id","reason":"不超过80字的选择理由"}',
+            ]
+        )
+        user_prompt = "\n".join(
+            [
+                f"目标受众：{target_audience or '根据候选内容判断'}",
+                f"口播风格：{style_prompt or '自然、简短、适合数字人口播'}",
+                "候选转写：",
+                json.dumps(normalized, ensure_ascii=False),
+            ]
+        )
+        content = self._chat_completion(system_prompt, user_prompt)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("LLM 未返回有效的选稿 JSON。") from exc
+        if not isinstance(payload, dict):
+            raise LLMAdapterError("LLM 未返回有效的选稿对象。")
+        valid_ids = {item["id"] for item in normalized}
+        winner_id = str(payload.get("winner_id") or "").strip()
+        if winner_id not in valid_ids:
+            raise LLMAdapterError("LLM 返回的胜出文案不在本次候选中。")
+        reason = str(payload.get("reason") or "").strip()[:160]
+        return {
+            "winner_id": winner_id,
+            "reason": reason or "综合口播适配度最高。",
+        }
+
+    def review_spoken_script(
+        self,
+        *,
+        script_text: str,
+        target_audience: str = "",
+        style_prompt: str = "",
+    ) -> dict[str, Any]:
+        """Review an already rewritten spoken script without changing it."""
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        text = script_text.strip()
+        if not text:
+            raise LLMAdapterError("口播文案为空，无法审核。")
+        system_prompt = "\n".join(
+            [
+                "你是企业短视频口播文案审核员。",
+                "只审核给定文案，不改写、不补充任何事实，也不承诺平台审核结果。",
+                "检查：事实边界是否清楚、是否含夸大或绝对化承诺、是否有疑似导流或虚假背书、表达是否重复、是否适合自然口播。",
+                "无法核实的信息要提醒人工确认，不要把它判断为事实。",
+                "只有存在严重风险或文案无法用于口播时 approved 才为 false；普通优化建议可保留为 warning。",
+                "只返回严格 JSON，不要 Markdown 或额外解释。",
+                'JSON 格式：{"approved":true,"summary":"不超过120字","issues":[{"severity":"warning或block","category":"问题类别","message":"不超过100字"}]}',
+            ]
+        )
+        user_prompt = "\n".join(
+            [
+                f"目标受众：{target_audience or '未填写'}",
+                f"口播风格：{style_prompt or '自然、清晰'}",
+                "待审核口播稿：",
+                text[:12000],
+            ]
+        )
+        content = self._chat_completion(system_prompt, user_prompt)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("LLM 未返回有效的文案审核 JSON。") from exc
+        if not isinstance(payload, dict):
+            raise LLMAdapterError("LLM 未返回有效的文案审核对象。")
+        issues: list[dict[str, str]] = []
+        raw_issues = payload.get("issues")
+        if isinstance(raw_issues, list):
+            for item in raw_issues[:8]:
+                if not isinstance(item, dict):
+                    continue
+                message = str(item.get("message") or "").strip()[:100]
+                if not message:
+                    continue
+                severity = str(item.get("severity") or "warning").strip().lower()
+                issues.append(
+                    {
+                        "severity": "block" if severity == "block" else "warning",
+                        "category": str(item.get("category") or "文案建议").strip()[:40],
+                        "message": message,
+                    }
+                )
+        approved = bool(payload.get("approved")) and not any(
+            issue["severity"] == "block" for issue in issues
+        )
+        return {
+            "approved": approved,
+            "summary": str(payload.get("summary") or "请人工核对文案内容。").strip()[:160],
+            "issues": issues,
         }
 
     def _provider_name(self) -> str:

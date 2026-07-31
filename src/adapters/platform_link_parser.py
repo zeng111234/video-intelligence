@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
 from src.adapters.douyin_parser import (
     DouyinParserError,
     LocalDouyinBrowserParserClient,
@@ -125,7 +127,11 @@ class ParsedPlatformMedia:
     @property
     def media_request_headers(self) -> dict[str, str]:
         return {
-            "Referer": _PLATFORM_HOME[self.platform],
+            "Referer": (
+                self.share_url
+                if self.platform == Platform.BILIBILI
+                else _PLATFORM_HOME[self.platform]
+            ),
             "User-Agent": _BROWSER_USER_AGENT,
         }
 
@@ -195,10 +201,12 @@ class LocalPlatformLinkParserClient:
         douyin_parser: LocalDouyinBrowserParserClient,
         platform_providers: dict[Platform, Any],
         timeout_seconds: float = 35.0,
+        http_client_factory: Any = httpx.Client,
     ) -> None:
         self.douyin_parser = douyin_parser
         self.platform_providers = dict(platform_providers)
         self.timeout_seconds = max(10.0, min(float(timeout_seconds), 60.0))
+        self.http_client_factory = http_client_factory
 
     def capabilities(self) -> tuple[bool, str | None]:
         try:
@@ -210,6 +218,11 @@ class LocalPlatformLinkParserClient:
         return True, None
 
     def capabilities_for(self, platform: Platform) -> tuple[bool, str | None]:
+        if platform == Platform.XIAOHONGSHU:
+            return (
+                False,
+                "小红书安全模式已开启：请手工导入素材或上传有权处理的本地文件。",
+            )
         if platform == Platform.DOUYIN:
             return self.douyin_parser.capabilities()
         available, message = self.capabilities()
@@ -232,6 +245,12 @@ class LocalPlatformLinkParserClient:
 
     def resolve(self, share_text: str) -> ParsedPlatformMedia:
         link = self.parse(share_text)
+        if link.platform == Platform.XIAOHONGSHU:
+            raise PlatformLinkParserError(
+                "小红书安全模式已开启：系统不会打开分享链接、读取视频流或自动转写。",
+                platform=link.platform,
+                work_id=link.work_id,
+            )
         if link.platform == Platform.DOUYIN:
             media = self.douyin_parser.resolve(share_text)
             return ParsedPlatformMedia(
@@ -241,6 +260,13 @@ class LocalPlatformLinkParserClient:
                 media_url=media.media_url,
                 title=media.title,
             )
+        if link.platform == Platform.BILIBILI and link.work_id:
+            try:
+                return self._resolve_bilibili_public(link)
+            except (httpx.HTTPError, PlatformLinkParserError, ValueError):
+                # The visible browser remains a no-cost fallback when B站临时
+                # limits its public metadata endpoint.
+                pass
         available, message = self.capabilities_for(link.platform)
         if not available:
             raise PlatformLinkParserError(
@@ -259,6 +285,81 @@ class LocalPlatformLinkParserClient:
         finally:
             _BROWSER_LOCK.release()
 
+    def _resolve_bilibili_public(
+        self,
+        link: ParsedPlatformLink,
+    ) -> ParsedPlatformMedia:
+        work_id = link.work_id or ""
+        headers = {
+            "Referer": f"https://www.bilibili.com/video/{work_id}",
+            "User-Agent": _BROWSER_USER_AGENT,
+        }
+        with self.http_client_factory(
+            timeout=min(self.timeout_seconds, 20.0),
+            headers=headers,
+        ) as client:
+            view_response = client.get(
+                "https://api.bilibili.com/x/web-interface/view",
+                params={"bvid": work_id},
+            )
+            view_response.raise_for_status()
+            view_payload = view_response.json()
+            view_data = view_payload.get("data")
+            if (
+                view_payload.get("code") != 0
+                or not isinstance(view_data, dict)
+                or str(view_data.get("bvid") or "").casefold()
+                != work_id.casefold()
+            ):
+                raise PlatformLinkParserError(
+                    "B站没有返回目标作品信息。",
+                    platform=link.platform,
+                    work_id=work_id,
+                )
+            cid = view_data.get("cid")
+            if not isinstance(cid, int) or cid <= 0:
+                raise PlatformLinkParserError(
+                    "B站没有返回目标作品的音频编号。",
+                    platform=link.platform,
+                    work_id=work_id,
+                )
+            play_response = client.get(
+                "https://api.bilibili.com/x/player/playurl",
+                params={
+                    "bvid": work_id,
+                    "cid": cid,
+                    "fnval": 16,
+                },
+            )
+            play_response.raise_for_status()
+            play_payload = play_response.json()
+        play_data = play_payload.get("data")
+        dash = play_data.get("dash") if isinstance(play_data, dict) else None
+        audio_items = dash.get("audio") if isinstance(dash, dict) else None
+        media_url = ""
+        if isinstance(audio_items, list):
+            for item in audio_items:
+                if not isinstance(item, dict):
+                    continue
+                candidate = item.get("baseUrl") or item.get("base_url")
+                if isinstance(candidate, str) and candidate.startswith("https://"):
+                    media_url = candidate
+                    break
+        if play_payload.get("code") != 0 or not media_url:
+            raise PlatformLinkParserError(
+                "B站没有返回可转写的独立音频流。",
+                platform=link.platform,
+                work_id=work_id,
+            )
+        title = str(view_data.get("title") or f"B站作品 {work_id}").strip()
+        return ParsedPlatformMedia(
+            platform=link.platform,
+            share_url=f"https://www.bilibili.com/video/{work_id}",
+            work_id=work_id,
+            media_url=media_url,
+            title=title[:200],
+        )
+
     def _resolve_with_connected_browser(
         self, link: ParsedPlatformLink
     ) -> ParsedPlatformMedia:
@@ -268,6 +369,7 @@ class LocalPlatformLinkParserClient:
         provider = self.platform_providers[link.platform]
         endpoint = f"http://127.0.0.1:{provider.debug_port}"
         captured: dict[str, str] = {}
+        media_payloads: list[Any] = []
         page = None
         try:
             with sync_playwright() as playwright:
@@ -293,7 +395,10 @@ class LocalPlatformLinkParserClient:
                                 "content-type", ""
                             ).casefold()
                             if (
-                                not captured.get("media_url")
+                                self._may_capture_generic_video_response(
+                                    link.platform
+                                )
+                                and not captured.get("media_url")
                                 and content_type.startswith("video/")
                                 and response.url.startswith("https://")
                                 and ".m3u8" not in response.url.casefold()
@@ -302,23 +407,28 @@ class LocalPlatformLinkParserClient:
                             if "json" in content_type or self._is_media_api_url(
                                 link.platform, response.url
                             ):
-                                self._capture_media_payload(
-                                    response.json(), link.platform, captured
-                                )
+                                payload = response.json()
+                                if link.platform == Platform.KUAISHOU:
+                                    if len(media_payloads) < 50:
+                                        media_payloads.append(payload)
+                                else:
+                                    self._capture_media_payload(
+                                        payload, link.platform, captured
+                                    )
                         except Exception:
                             return
 
                     page.on("response", capture_response)
-                    response = page.goto(
-                        link.share_url, wait_until="domcontentloaded"
-                    )
+                    response = page.goto(link.share_url, wait_until="domcontentloaded")
                     if response is not None and response.status in {403, 412, 429}:
                         raise PlatformLinkParserError(
                             f"{platform_label(link.platform)}返回 {response.status}，已停止解析。",
                             platform=link.platform,
                             work_id=link.work_id,
                         )
-                    page.wait_for_timeout(5_000)
+                    page.wait_for_timeout(
+                        800 if link.platform == Platform.KUAISHOU else 5_000
+                    )
                     check_block = getattr(provider, "_raise_for_visible_block", None)
                     if callable(check_block):
                         try:
@@ -329,17 +439,6 @@ class LocalPlatformLinkParserClient:
                                 platform=link.platform,
                                 work_id=link.work_id,
                             ) from exc
-                    video = page.locator("video")
-                    if video.count() > 0:
-                        media_url = video.first.evaluate(
-                            "node => node.currentSrc || node.src || ''"
-                        )
-                        if (
-                            isinstance(media_url, str)
-                            and media_url.startswith("https://")
-                            and ".m3u8" not in media_url.casefold()
-                        ):
-                            captured["media_url"] = media_url
                     final_url = page.url
                     final_link = parse_platform_share_text(final_url)
                     if final_link.platform != link.platform:
@@ -348,10 +447,47 @@ class LocalPlatformLinkParserClient:
                             platform=link.platform,
                             work_id=link.work_id,
                         )
+                    if link.platform == Platform.KUAISHOU:
+                        expected_work_id = final_link.work_id or link.work_id
+                        video = page.locator("video")
+                        page_title = self._clean_page_title(page.title(), link.platform)
+                        if expected_work_id and page_title and video.count() == 1:
+                            media_url = video.first.evaluate(
+                                "node => node.currentSrc || node.src || ''"
+                            )
+                            if (
+                                isinstance(media_url, str)
+                                and media_url.startswith("https://")
+                                and ".m3u8" not in media_url.casefold()
+                            ):
+                                video.first.evaluate("node => node.pause()")
+                                captured["media_url"] = media_url
+                                captured["work_id"] = expected_work_id
+                                captured["title"] = page_title
+                        if expected_work_id and not captured.get("media_url"):
+                            for payload in media_payloads:
+                                self._capture_media_payload(
+                                    payload,
+                                    link.platform,
+                                    captured,
+                                    expected_work_id=expected_work_id,
+                                )
+                                if captured.get("media_url"):
+                                    break
+                    else:
+                        video = page.locator("video")
+                        if not captured.get("media_url") and video.count() > 0:
+                            media_url = video.first.evaluate(
+                                "node => node.currentSrc || node.src || ''"
+                            )
+                            if (
+                                isinstance(media_url, str)
+                                and media_url.startswith("https://")
+                                and ".m3u8" not in media_url.casefold()
+                            ):
+                                captured["media_url"] = media_url
                     work_id = (
-                        captured.get("work_id")
-                        or final_link.work_id
-                        or link.work_id
+                        captured.get("work_id") or final_link.work_id or link.work_id
                     )
                     title = captured.get("title") or self._clean_page_title(
                         page.title(), link.platform
@@ -372,6 +508,12 @@ class LocalPlatformLinkParserClient:
             ) from exc
         media_url = captured.get("media_url")
         if not media_url:
+            if link.platform == Platform.KUAISHOU:
+                raise PlatformLinkParserError(
+                    "未能确认视频流属于目标快手作品，系统已停止解析。",
+                    platform=link.platform,
+                    work_id=work_id,
+                )
             raise PlatformLinkParserError(
                 "该分享页没有返回可转写的视频流；可能是图文内容、链接失效或平台要求人工验证。",
                 platform=link.platform,
@@ -399,17 +541,31 @@ class LocalPlatformLinkParserClient:
             return "xiaohongshu.com" in normalized and "/feed" in normalized
         return "kuaishou.com" in normalized and "/graphql" in normalized
 
+    @staticmethod
+    def _may_capture_generic_video_response(platform: Platform) -> bool:
+        """B站的普通 video 响应可能是无声画面，必须等待 playurl 音频。"""
+        return platform not in {Platform.KUAISHOU, Platform.BILIBILI}
+
     @classmethod
     def _capture_media_payload(
         cls,
         payload: Any,
         platform: Platform,
         captured: dict[str, str],
+        *,
+        expected_work_id: str | None = None,
     ) -> None:
         if not isinstance(payload, dict):
             return
         if platform == Platform.BILIBILI:
             cls._capture_bilibili_payload(payload, captured)
+            return
+        if platform == Platform.KUAISHOU and expected_work_id:
+            cls._capture_kuaishou_payload(
+                payload,
+                captured,
+                expected_work_id=expected_work_id,
+            )
             return
         allowed_keys = _MEDIA_KEYS.get(platform, set())
 
@@ -434,6 +590,51 @@ class LocalPlatformLinkParserClient:
                         walk(child)
 
         walk(payload)
+
+    @classmethod
+    def _capture_kuaishou_payload(
+        cls,
+        payload: dict[str, Any],
+        captured: dict[str, str],
+        *,
+        expected_work_id: str,
+    ) -> None:
+        target = expected_work_id.casefold()
+        id_keys = {"id", "photoid", "photo_id"}
+
+        def matching_photo(value: Any) -> dict[str, Any] | None:
+            if isinstance(value, dict):
+                identifiers = {
+                    str(child).casefold()
+                    for key, child in value.items()
+                    if str(key).casefold() in id_keys and isinstance(child, (str, int))
+                }
+                if target in identifiers:
+                    return value
+                for child in value.values():
+                    match = matching_photo(child)
+                    if match is not None:
+                        return match
+            elif isinstance(value, list):
+                for child in value:
+                    match = matching_photo(child)
+                    if match is not None:
+                        return match
+            return None
+
+        photo = matching_photo(payload)
+        if photo is None:
+            return
+
+        scoped: dict[str, str] = {}
+        cls._capture_media_payload(photo, Platform.KUAISHOU, scoped)
+        media_url = scoped.get("media_url")
+        if not media_url:
+            return
+        captured["media_url"] = media_url
+        captured["work_id"] = expected_work_id
+        if scoped.get("title"):
+            captured["title"] = scoped["title"]
 
     @staticmethod
     def _capture_https_value(value: Any, captured: dict[str, str]) -> None:

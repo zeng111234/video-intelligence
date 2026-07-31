@@ -865,6 +865,60 @@ class TestCrawlerBatches:
         assert bilibili_resp.status_code == 200
         assert bilibili_resp.json()["platform"] == "bilibili"
 
+    def test_browser_login_endpoint_prefers_visible_window(self, client: TestClient):
+        class VisibleBrowserProvider:
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            def __init__(self):
+                self.visible_open_calls = 0
+
+            def capabilities(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    missing_configuration=[],
+                    provider_name="douyin_local_browser",
+                )
+
+            def session_status(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    running=False,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="browser_closed",
+                    message="尚未打开",
+                )
+
+            def open_login_browser(self):
+                self.visible_open_calls += 1
+                return SimpleNamespace(
+                    enabled=True,
+                    running=True,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="waiting_login",
+                    message="登录窗口已显示",
+                )
+
+            def start_login_browser(self):
+                raise AssertionError("手动登录入口不应使用后台启动")
+
+        provider = VisibleBrowserProvider()
+        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
+            lambda: provider
+        )
+        try:
+            response = client.post("/api/v1/crawler/browser-discovery/start")
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_hotspot_browser_provider, None
+            )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "登录窗口已显示"
+        assert provider.visible_open_calls == 1
+
     def test_recrawl_is_disabled(self, client: TestClient):
         rejected = client.post(
             "/api/v1/crawler/preview",
@@ -904,10 +958,11 @@ class TestCrawlerBatches:
         assert data["published_window_days"] == 0
         assert [item["platform_label"] for item in data["platforms"]] == [
             "抖音热点宝五类爆款榜（本机授权，可选）",
-            "小红书浏览器搜索（最多点赞、视频、半年内）",
-            "快手浏览器搜索（近10个月）",
+            "小红书浏览器搜索（最多点赞、视频、一周内）",
+            "快手浏览器搜索（近30天）",
             "B站浏览器搜索（最多播放、最近一周）",
         ]
+        assert data["cache_ttl_minutes"] == 10
         assert data["sampling_offsets_hours"] == [0]
         assert data["max_api_calls_per_platform"] == 0
         assert data["trend_tracking_enabled"] is False
@@ -1429,14 +1484,15 @@ class TestEditingTemplatesAndSubtitles:
         assert isinstance(data["items"][0]["steps"][0], dict)
         assert "kind" in data["items"][0]["steps"][0]
 
-    def test_subtitle_status_reports_local_engine_contract(self, client: TestClient):
+    def test_subtitle_status_reports_cloud_engine_contract(self, client: TestClient):
         resp = client.get("/api/v1/subtitles/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["provider_name"] == "faster-whisper"
-        assert data["default_model"] == "large-v3-turbo"
+        assert data["provider_name"] == "阿里云 Fun-ASR"
+        assert data["default_model"] == "fun-asr"
+        assert data["whisper_available"] is True
         assert data["supported_formats"] == ["srt", "ass"]
-        assert "ffmpeg_available" in data
+        assert data["supported_models"] == ["fun-asr"]
 
 
 # ---------------------------------------------------------------------------

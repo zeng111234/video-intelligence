@@ -614,7 +614,8 @@ class PipelineService:
             run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
             rewrite_goal = (
                 "仅在 AI 质检和人工确认转写后，基于真实转写整理数字人口播稿。"
-                "保留可确认事实和表达逻辑，删除口头禅、重复句和噪声；"
+                "保留可确认事实，重新组织开头、信息顺序和句式，改成自然口语；"
+                "删除口头禅、重复句和噪声，避免连续照搬原文表达；"
                 "不得补写未在转写中出现的事实、数据、案例或效果承诺。"
                 "输出可人工审核的口播文案，不要 Markdown。"
             )
@@ -622,7 +623,7 @@ class PipelineService:
                 source_text=source_text,
                 platform=platform.value,
                 target_audience=target_audience,
-                style_prompt=style_prompt or "短视频口播，清晰直接，保留原视频爆款表达结构",
+                style_prompt=style_prompt or "短视频口播，清晰直接，重组表达但不新增事实",
                 target_length=target_length,
                 tone=tone,
                 rewrite_goal=rewrite_goal,
@@ -631,43 +632,11 @@ class PipelineService:
             )
             if copy_task.status == TaskStatus.FAILED:
                 raise RuntimeError(copy_task.error_message or "文案改写失败。")
-            run = self.update_stage(
-                run,
-                PipelineStage.COPYWRITING,
-                TaskStatus.SUCCEEDED,
-                task_id=copy_task.task_id,
-                outputs={
-                    "task_id": copy_task.task_id,
-                    "source_task_id": transcription.task_id,
-                    "variant_count": str(len(copy_task.result_variants)),
-                    "review_state": "awaiting_human_approval",
-                },
+            return self.pause_for_copy_review(
+                run=run,
+                copy_task=copy_task,
+                instruction="人工审核后再进入数字人、剪辑或发布。",
             )
-            run = self.update_stage(
-                run,
-                PipelineStage.HUMAN_REVIEW,
-                TaskStatus.RUNNING,
-                task_id=copy_task.task_id,
-                outputs={
-                    "copywriting_task_id": copy_task.task_id,
-                    "instruction": "人工审核后再进入数字人、剪辑或发布。",
-                },
-            )
-            paused = run.model_copy(
-                update={
-                    "status": PipelineRunStatus.PAUSED,
-                    "copywriting_task_id": copy_task.task_id,
-                    "current_stage": PipelineStage.HUMAN_REVIEW,
-                    "updated_at": datetime.now().astimezone(),
-                    "config": {
-                        **run.config,
-                        "review_stage": "script",
-                        "transcript_review_in_progress": False,
-                    },
-                }
-            )
-            self.repository.save_pipeline_run(paused)
-            return paused
         except Exception as exc:
             error_msg = str(exc)
             run = self.update_stage(
@@ -678,6 +647,75 @@ class PipelineService:
             )
             return self.complete_run(run, success=False, error_message=error_msg)
 
+    def _manual_script_ai_audit(
+        self,
+        *,
+        run: PipelineRun,
+        script_text: str,
+        target_audience: str,
+        style_prompt: str,
+    ) -> dict[str, Any] | None:
+        """Audit manual batch copy once, but never turn an audit outage into a fake pass."""
+        if (
+            run.config.get("source") != "production_batch"
+            or str(run.config.get("automation_mode") or "manual").casefold() == "auto"
+        ):
+            return None
+        audit_method = getattr(self.copywriting_service, "audit_spoken_script", None)
+        if not callable(audit_method):
+            return {
+                "status": "unavailable",
+                "approved": False,
+                "summary": "当前 AI 文案服务未提供审核能力，请人工核对后再制作。",
+                "issues": [],
+            }
+        try:
+            result = audit_method(
+                script_text=script_text,
+                target_audience=target_audience,
+                style_prompt=style_prompt,
+            )
+        except Exception as exc:
+            logger.warning("流水线 %s 的手动文案 AI 审核未完成: %s", run.run_id, exc)
+            return {
+                "status": "unavailable",
+                "approved": False,
+                "summary": f"AI 文案审核未完成：{str(exc)[:120]}。请人工核对后再制作。",
+                "issues": [],
+            }
+        if not isinstance(result, dict):
+            return {
+                "status": "unavailable",
+                "approved": False,
+                "summary": "AI 文案审核未返回有效结果，请人工核对后再制作。",
+                "issues": [],
+            }
+        return result
+
+    @staticmethod
+    def classify_spoken_material(
+        transcription: TranscriptionTask,
+    ) -> tuple[str, str]:
+        """Keep visual-only media out of copy generation without guessing facts."""
+        text = PipelineService._transcription_text(transcription)
+        meaningful_characters = [character for character in text if character.isalnum()]
+        duration = float(transcription.duration_seconds or 0)
+        too_sparse = duration >= 20 and len(meaningful_characters) / duration < 0.2
+        too_short = (
+            len(meaningful_characters) < 8
+            if duration > 0
+            else len(meaningful_characters) < 2
+        )
+        if too_short or too_sparse:
+            return (
+                "visual_only",
+                "没有识别到足够可核验的口播；素材保留作画面参考，不会据此编造文案。",
+            )
+        return (
+            "rewriteable",
+            "已识别到可用内容；AI 会保留事实并重组为自然口播。",
+        )
+
     def pause_for_transcript_review(
         self,
         *,
@@ -686,6 +724,32 @@ class PipelineService:
     ) -> PipelineRun:
         """候选和链接必须先确认真实转写，再允许调用文案改写。"""
         now = datetime.now().astimezone()
+        material_status, material_message = self.classify_spoken_material(
+            transcription
+        )
+        run = run.model_copy(
+            update={
+                "config": {
+                    **run.config,
+                    "spoken_material_status": material_status,
+                    "spoken_material_message": material_message,
+                },
+                "updated_at": now,
+            }
+        )
+        if material_status == "visual_only":
+            run = self._event(
+                run,
+                action="spoken_material_unavailable",
+                stage=PipelineStage.TRANSCRIPTION,
+                message=material_message,
+            )
+            self.repository.save_pipeline_run(run)
+            return self.complete_run(
+                run,
+                success=False,
+                error_message=material_message,
+            )
         run = self.update_stage(
             run,
             PipelineStage.HUMAN_REVIEW,
@@ -842,6 +906,22 @@ class PipelineService:
     ) -> PipelineRun:
         """把已生成或人工提供的文案统一送入人工审核闸门。"""
         now = datetime.now().astimezone()
+        profile = dict(run.config.get("profile") or {})
+        audit = self._manual_script_ai_audit(
+            run=run,
+            script_text=str(copy_task.result_text or ""),
+            target_audience=str(profile.get("target_audience") or ""),
+            style_prompt=str(profile.get("script_style") or ""),
+        )
+        if audit is not None:
+            run = run.model_copy(
+                update={
+                    "config": {
+                        **run.config,
+                        "script_ai_audit": audit,
+                    }
+                }
+            )
         run = self.update_stage(
             run,
             PipelineStage.COPYWRITING,
@@ -851,6 +931,7 @@ class PipelineService:
                 "task_id": copy_task.task_id,
                 "variant_count": str(len(copy_task.result_variants or [copy_task.result_text or ""])),
                 "review_state": "awaiting_human_approval",
+                "ai_audit_status": str((audit or {}).get("status") or "not_required"),
             },
         )
         run = self.update_stage(
@@ -869,6 +950,7 @@ class PipelineService:
                     **run.config,
                     "review_stage": "script",
                     "script_reviewed": False,
+                    "transcript_review_in_progress": False,
                 },
             }
         )

@@ -42,6 +42,7 @@ export interface TranscriptSegment {
   quality_note?: string | null;
   alternatives?: string[];
   emphasis_terms?: string[];
+  emphasis_kind?: "number" | "benefit" | "warning" | "keyword" | string;
 }
 
 export interface TranscriptionResponse {
@@ -52,6 +53,12 @@ export interface TranscriptionResponse {
   stage: string;
   media_name: string;
   model_name: string | null;
+  provider_name?: string | null;
+  provider_job_id?: string | null;
+  provider_status?: string | null;
+  estimated_cost_cny?: number | null;
+  pricing_version?: string | null;
+  billing_authorized?: boolean;
   source_kind: string;
   timing_available: boolean;
   duration_seconds: number | null;
@@ -67,6 +74,24 @@ export interface TranscriptionResponse {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+}
+
+export interface AsrCapabilityResponse {
+  asr_mode?: string;
+  provider_mode: string;
+  provider_name: string;
+  enabled: boolean;
+  live_ready: boolean;
+  missing_configuration: string[];
+  is_mock: boolean;
+  billing_authorized: boolean;
+  unit_price_cny_per_second: number;
+  per_task_cost_cap_cny: number;
+  price_version: string;
+  supports_local_fallback: boolean;
+  cost_exclusions: string[];
+  supports_upload?: boolean;
+  description?: string;
 }
 
 export interface PipelineStage {
@@ -195,6 +220,9 @@ export interface ProductionBatchItem {
   source_type: "candidate" | "share_link" | "brief" | "script" | string;
   source_value: string;
   display_title: string;
+  candidate_role?: "primary" | "reserve" | string;
+  spoken_material_status?: "pending" | "rewriteable" | "visual_only" | string;
+  spoken_material_message?: string;
   profile_overrides: Record<string, string>;
   status: string;
   current_stage: string | null;
@@ -209,6 +237,7 @@ export interface ProductionBatchSourceItem {
   source_type: "candidate" | "share_link" | "brief" | "script";
   source_value: string;
   display_title?: string;
+  candidate_role?: "primary" | "reserve";
   profile_overrides?: Record<string, string>;
 }
 
@@ -281,6 +310,16 @@ export interface ProductionWorkspaceReview {
   attention_terms?: string[];
   compliance_status?: string | null;
   compliance_notes?: string[];
+  ai_audit?: {
+    status: "completed" | "mock" | "unavailable" | string;
+    approved: boolean;
+    summary: string;
+    issues: Array<{
+      severity: "warning" | "block" | string;
+      category: string;
+      message: string;
+    }>;
+  } | null;
   creative_plan?: ProductionCreativePlan | null;
 }
 
@@ -369,6 +408,16 @@ export interface ProductionWorkspace {
   items: ProductionWorkspaceItem[];
   cost: ProductionWorkspaceCost;
   publish: ProductionWorkspacePublish;
+  automation?: {
+    mode: "manual" | "auto";
+    review_state: string;
+    selected_run_id?: string | null;
+    selection_reason?: string | null;
+    error?: string | null;
+    target_count?: number;
+    reserve_count?: number;
+    reserve_activated_count?: number;
+  };
 }
 
 export interface ProductionBatchPreflightItem {
@@ -376,6 +425,7 @@ export interface ProductionBatchPreflightItem {
   candidate_id: string;
   source_type?: string;
   display_title?: string;
+  candidate_role?: "primary" | "reserve" | string;
   ready: boolean;
   reasons: string[];
   estimated_cost_cny?: number | null;
@@ -772,6 +822,18 @@ export interface CrawlerCandidateResult {
   is_original_transcript?: boolean;
   /** 是否需要人工复核 */
   needs_manual_review?: boolean;
+  /** 素材是否有可核验的文本，而非只有视频标题/互动数据。 */
+  spoken_material_status?: "transcript_ready" | "text_reference" | "topic_only" | string;
+  spoken_material_message?: string;
+  /** 公开文字能否支撑原创口播的可解释评分。 */
+  spoken_seed_score?: number;
+  spoken_seed_status?: "writeable" | "reference_only" | "low_information" | string;
+  spoken_seed_message?: string;
+  /** 仅基于用户授权上传后的本地检测结果。 */
+  audio_status?: "unknown" | "checking" | "speech_detected" | "no_clear_speech" | "no_audio" | "check_failed" | string;
+  audio_message?: string;
+  /** 工作台本次选择层级；仅用于区分优先素材和候补参考。 */
+  selection_tier?: "priority" | "reserve";
   /** 分享数（供应商未返回时为 null，前端显示「未返回」） */
   share_count?: number | null;
   /** 收藏数（供应商未返回时为 null，前端显示「未返回」） */
@@ -861,6 +923,8 @@ export interface CrawlerPlatformRun {
   relevant_count?: number;
   strict_relevant_count?: number;
   below_heat_floor_count?: number;
+  /** 严格相关且热度达标，但公开文字不足以支撑口播的数量。 */
+  low_spoken_value_count?: number;
   /** 已解析但未通过标题/话题严格匹配的候选数 */
   irrelevant_count?: number;
   /** 热点宝过滤：时长为 0 或未返回时长。 */
@@ -1104,6 +1168,21 @@ export interface PublishAsset {
   updated_at?: number;
   recommended_title?: string | null;
   recommended_music_hint?: string | null;
+}
+
+export interface XiaohongshuManualMaterialInput {
+  title: string;
+  source_url: string;
+  visible_copy?: string;
+  author_name?: string;
+}
+
+export interface XiaohongshuManualMaterialResponse {
+  added: number;
+  updated: number;
+  duplicates: number;
+  errors: string[];
+  message: string;
 }
 
 export interface PublishAssetListResponse {
@@ -1396,6 +1475,16 @@ export interface VideoEditorEditPlan {
   enabled_steps: string[];
   trim_silence_enabled: boolean;
   title_candidates: string[];
+  caption_groups?: Array<{
+    segment_index: number;
+    parts: string[];
+  }>;
+  caption_group_source?: "qwen_semantic" | "deterministic_fallback" | string;
+  caption_emphasis?: Array<{
+    segment_index: number;
+    term: string;
+    kind: "number" | "benefit" | "warning" | "keyword" | string;
+  }>;
   explanation: string;
   warnings: string[];
   provider_name: string;
@@ -1498,6 +1587,8 @@ export interface VideoEditorBatchItem {
   edit_plan?: VideoEditorEditPlan | null;
   enabled_plan_step_ids?: string[];
   subtitle_segments?: Array<Record<string, unknown>>;
+  preview_subtitle_segments?: Array<Record<string, unknown>>;
+  subtitle_preview_source?: "current_asr" | "cached_asr" | "script_estimate" | "none" | string;
   overlay_preview?: VideoEditorOverlayPreview | null;
   review_snapshot?: Record<string, unknown>;
   review_confirmed_at?: string | null;
@@ -1612,6 +1703,7 @@ export interface VideoCapabilitiesResponse {
 
 export interface VideoEditorVisualSpec {
   style_id: string;
+  playback_rate?: number;
   canvas: {
     width: number;
     height: number;
@@ -1668,7 +1760,14 @@ export interface VideoEditorOverlayPreview {
       start: number;
       end: number;
     } | null;
+    emphasis_style?: {
+      color: string;
+      scale: number;
+      animation: "soft_pop" | string;
+      duration_ms: number;
+    } | null;
   }>;
+  caption_group_source?: "qwen_semantic" | "deterministic_fallback" | string;
 }
 
 export interface StepKindParam {

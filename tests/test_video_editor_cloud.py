@@ -39,6 +39,8 @@ from src.services.video_editor_cloud import (
     create_cost_quote,
     get_cloud_capability,
     retime_segments_after_cuts,
+    validated_caption_emphasis,
+    validated_caption_groups,
     visual_style_spec,
     validate_cost_quote,
 )
@@ -588,6 +590,260 @@ def test_qwen_bgm_profile_is_restricted_to_approved_values():
     assert plan.bgm_keywords == ["科技", "未来", "第三个", "四", "五", "六"]
 
 
+def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
+    segments = [
+        {
+            "start": 0,
+            "end": 4,
+            "text": "80%的顾客还主动加了店里的私域。",
+        },
+        {
+            "start": 4,
+            "end": 8,
+            "text": "附近5公里的居民基本都成了回头客。",
+        },
+    ]
+
+    def transport(*args):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "title_candidates": ["顾客主动进私域的原因"],
+                                "explanation": "按完整语义短语显示字幕",
+                                "enabled_steps": ["subtitles", "title"],
+                                "caption_groups": [
+                                    {
+                                        "segment_index": 0,
+                                        "parts": ["80%的顾客", "还主动加了", "店里的私域"],
+                                    },
+                                    {
+                                        "segment_index": 1,
+                                        "parts": [
+                                            "附近5公里的居民",
+                                            "基本都成了回头客",
+                                        ],
+                                    },
+                                ],
+                                "caption_emphasis": [
+                                    {
+                                        "segment_index": 0,
+                                        "term": "80%",
+                                        "kind": "number",
+                                    }
+                                ],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        }
+
+    provider = AliyunEditPlanProvider(_aliyun_config(), transport=transport)
+    plan = provider.create_plan(
+        "".join(segment["text"] for segment in segments),
+        [{"start": 0, "end": 4}, {"start": 4, "end": 8}],
+        8,
+        segments,
+    )
+    preview = build_business_talking_head_overlay_preview(
+        segments,
+        title=plan.title_candidates[0],
+        output_profile="720p",
+        caption_groups=plan.caption_groups,
+        caption_emphasis=plan.caption_emphasis,
+    )
+
+    assert plan.caption_group_source == "qwen_semantic"
+    assert [group.parts for group in plan.caption_groups] == [
+        ["80%的顾客", "还主动加了", "店里的私域"],
+        ["附近5公里的居民", "基本都成了回头客"],
+    ]
+    assert [cue["lines"][0] for cue in preview["cues"]] == [
+        "80%的顾客",
+        "还主动加了",
+        "店里的私域",
+        "附近5公里的居民",
+        "基本都成了回头客",
+    ]
+    assert preview["caption_group_source"] == "qwen_semantic"
+    assert [item.model_dump() for item in plan.caption_emphasis] == [
+        {"segment_index": 0, "term": "80%", "kind": "number"}
+    ]
+    assert preview["cues"][0]["emphasis_range"] == {
+        "line_index": 0,
+        "start": 0,
+        "end": 3,
+    }
+    assert preview["cues"][0]["emphasis_style"] == {
+        "color": "#FFE16A",
+        "scale": 1.5,
+        "animation": "soft_pop",
+        "duration_ms": 120,
+    }
+
+
+def test_qwen_caption_groups_reject_changed_text_and_mid_word_breaks():
+    segments = [{"start": 0, "end": 4, "text": "顾客还主动加了店里的私域。"}]
+    changed = validated_caption_groups(
+        [{"segment_index": 0, "parts": ["顾客主动加了", "店里的私域"]}],
+        segments,
+        max_chars=11,
+    )
+    mid_word = validated_caption_groups(
+        [{"segment_index": 0, "parts": ["顾客还主", "动加了店里的私域"]}],
+        segments,
+        max_chars=11,
+    )
+
+    assert changed == []
+    assert mid_word == []
+
+
+def test_caption_emphasis_is_sparse_exact_and_kept_inside_one_caption_part():
+    segments = [
+        {"start": 0, "end": 2, "text": "只需要49元就能参加活动。"},
+        {"start": 2, "end": 4, "text": "附近5公里都可以使用。"},
+        {"start": 4, "end": 6, "text": "这就是今天的核心结论。"},
+        {"start": 6, "end": 8, "text": "千万不要错过最后一天。"},
+    ]
+    groups = [
+        {"segment_index": 0, "parts": ["只需要49元", "就能参加活动"]},
+        {"segment_index": 1, "parts": ["附近5公里", "都可以使用"]},
+        {"segment_index": 2, "parts": ["这就是今天的", "核心结论"]},
+        {"segment_index": 3, "parts": ["千万不要错过", "最后一天"]},
+    ]
+    emphasis = validated_caption_emphasis(
+        [
+            {"segment_index": 0, "term": "49元", "kind": "number"},
+            {"segment_index": 1, "term": "5公里", "kind": "number"},
+            {"segment_index": 2, "term": "核心结论", "kind": "benefit"},
+        ],
+        segments,
+        caption_groups=groups,
+    )
+
+    assert [item.term for item in emphasis] == ["49元", "5公里"]
+    assert validated_caption_emphasis(
+        [{"segment_index": 0, "term": "49元就能", "kind": "number"}],
+        segments,
+        caption_groups=groups,
+    ) == []
+    assert validated_caption_emphasis(
+        [{"segment_index": 0, "term": "免费", "kind": "benefit"}],
+        segments,
+        caption_groups=groups,
+    ) == []
+
+
+def test_qwen_request_contains_only_indexed_subtitle_text_for_semantic_grouping():
+    provider = AliyunEditPlanProvider(_aliyun_config(), transport=lambda *args: {})
+    _, _, body = provider.build_request(
+        "这是完整文案。",
+        [{"start": 0, "end": 2}],
+        2,
+        [{"start": 0, "end": 2, "text": "这是完整文案。", "confidence": 0.8}],
+    )
+    payload = json.loads(body)
+    user_payload = json.loads(payload["messages"][1]["content"])
+
+    assert user_payload["subtitle_segments"] == [
+        {"segment_index": 0, "text": "这是完整文案。"}
+    ]
+    assert "caption_groups" in payload["messages"][0]["content"]
+    assert "caption_emphasis" in payload["messages"][0]["content"]
+    assert "逐字一致" in payload["messages"][0]["content"]
+
+
+def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
+    segments = [{"start": 0, "end": 2, "text": "只需要49元就能参加活动。"}]
+    ass = build_business_talking_head_ass(
+        segments,
+        title="活动说明",
+        output_profile="720p",
+        caption_groups=[
+            {"segment_index": 0, "parts": ["只需要49元", "就能参加活动"]}
+        ],
+        caption_emphasis=[
+            {"segment_index": 0, "term": "49元", "kind": "number"}
+        ],
+    ).decode("utf-8-sig")
+
+    assert r"{\c&H006AE1FF&\fscx100\fscy100\t(0,120,\fscx150\fscy150)}49元" in ass
+    assert r"{\c&H00F8FAFC&\fscx100\fscy100}" in ass
+
+
+def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {"start": 0, "end": 2, "text": "只要49元就能参加活动"},
+            {"start": 2, "end": 4, "text": "顾客还能拿到现金奖励"},
+        ],
+        title="活动说明",
+        output_profile="720p",
+    )
+
+    assert preview["cues"][0]["emphasis_style"] == {
+        "color": "#FFE16A",
+        "scale": 1.5,
+        "animation": "soft_pop",
+        "duration_ms": 120,
+    }
+    assert preview["cues"][0]["emphasis_range"] is not None
+    assert any(
+        cue["emphasis_range"] is not None
+        for cue in preview["cues"][1:]
+    )
+
+
+def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 19.96,
+                "end": 25.76,
+                "text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+            }
+        ],
+        title="充值活动",
+        output_profile="720p",
+        spoken_ranges=[
+            {"start": 19.96, "end": 21.88},
+            {"start": 22.12, "end": 23.24},
+            {"start": 23.56, "end": 24.68},
+            {"start": 24.96, "end": 25.76},
+        ],
+    )
+
+    assert [cue["lines"][0] for cue in preview["cues"]] == [
+        "普通烧烤店搞充值活动",
+        "充100送10块",
+        "充200送30",
+        "早就过时了",
+    ]
+    assert [
+        (cue["start"], cue["end"]) for cue in preview["cues"]
+    ] == [
+        (19.96, 21.88),
+        (22.12, 23.24),
+        (23.56, 24.68),
+        (24.96, 25.76),
+    ]
+    assert preview["cues"][1]["emphasis_range"] == {
+        "line_index": 0,
+        "start": 5,
+        "end": 8,
+    }
+    assert preview["cues"][2]["emphasis_range"] == {
+        "line_index": 0,
+        "start": 5,
+        "end": 7,
+    }
+
+
 def test_mps_request_uses_selected_profile_and_requires_human_review():
     provider = AliyunMPSRenderProvider(
         _aliyun_config(),
@@ -673,17 +929,19 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     }
     assert "PlayResX: 720" in ass
     assert "PlayResY: 1280" in ass
-    assert spec["style_id"] == "business_talking_head_v7"
+    assert spec["style_id"] == "business_talking_head_v8"
+    assert spec["playback_rate"] == 1.15
     assert spec["title"]["max_chars_per_line"] == 9
     assert spec["title"]["font_family"] == "Source Han Serif CN Heavy"
     assert spec["title"]["render_mode"] == "png_watermark"
     assert spec["subtitle"]["max_lines"] == 1
-    assert spec["subtitle"]["max_chars_per_line"] == 10
-    assert spec["subtitle"]["font_size"] == 46
-    assert "Style: Title,YaHei,48" in ass
+    assert spec["subtitle"]["max_chars_per_line"] == 11
+    assert spec["subtitle"]["font_size"] == 52
+    assert spec["subtitle"]["outline_width"] == 2
+    assert "Style: Title,YaHei,52" in ass
     assert "Style: Accent,Arial,1" in ass
-    assert "Style: Caption,YaHei,46" in ass
-    assert "&H8C000000,&H00000000,-1,0,0,0,100,100,0.18" in ass
+    assert "Style: Caption,YaHei,52" in ass
+    assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.18" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
     assert r"\fad" not in ass
     assert r"\N" in ass
@@ -736,7 +994,10 @@ def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuat
         "start": 6,
         "end": 9,
     }
-    assert r"{\c&H006AE1FF&}被裁员{\c&H00F8FAFC&}" in ass
+    assert (
+        r"{\c&H006AE1FF&\fscx100\fscy100\t(0,120,\fscx150\fscy150)}"
+        r"被裁员{\c&H00F8FAFC&\fscx100\fscy100}"
+    ) in ass
 
 
 def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
@@ -782,13 +1043,91 @@ def test_caption_balances_long_phrases_without_one_or_two_character_orphans():
     lines = [cue["lines"][0] for cue in preview["cues"]]
     assert lines == [
         "以前都说机器取代工人",
-        "结果现在工厂",
-        "倒闭潮一来",
+        "结果现在工厂倒闭潮一来",
         "大量工业机器人",
         "被当废铁卖",
     ]
     assert "铁卖" not in lines
     assert all(len(line) >= 4 for line in lines)
+
+
+def test_caption_keeps_basic_together_and_prefers_the_phrase_boundary():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 4,
+                "end": 10,
+                "text": (
+                    "街上有家烧烤店，才开一个月，"
+                    "附近5公里的居民基本都成了他的回头客。"
+                ),
+            },
+        ],
+        title="烧烤店的回头客秘密",
+        output_profile="720p",
+    )
+
+    lines = [cue["lines"][0] for cue in preview["cues"]]
+    assert lines == [
+        "街上有家烧烤店",
+        "才开一个月",
+        "附近5公里的居民",
+        "基本都成了他的回头客",
+    ]
+    assert all("居民基" not in line and not line.startswith("本都") for line in lines)
+
+
+def test_caption_uses_chinese_word_boundaries_instead_of_splitting_active():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 11.04,
+                "end": 19.16,
+                "text": (
+                    "80%的顾客还主动加了店里的私域，"
+                    "生意好的不行，我也跑去试了几次。"
+                ),
+            },
+        ],
+        title="顾客为什么主动推荐",
+        output_profile="720p",
+    )
+
+    lines = [cue["lines"][0] for cue in preview["cues"]]
+    assert lines[:2] == [
+        "80%的顾客",
+        "还主动加了店里的私域",
+    ]
+    assert all(not line.endswith("主") and not line.startswith("动") for line in lines)
+
+
+def test_caption_avoids_dangling_particles_prefixes_and_classifiers():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 0,
+                "end": 12,
+                "text": (
+                    "但重头戏是后面的共享店长活动。"
+                    "立刻拿到6张无门槛优惠券。"
+                    "这种口碑效果比花大钱打广告强多了。"
+                    "如果你的店也想用这套系统搞活动。"
+                ),
+            },
+        ],
+        title="自然断句检查",
+        output_profile="720p",
+    )
+
+    lines = [cue["lines"][0] for cue in preview["cues"]]
+    assert "但重头戏是" in lines
+    assert "后面的共享店长活动" in lines
+    assert "立刻拿到" in lines
+    assert "6张无门槛优惠券" in lines
+    assert "这种口碑效果" in lines
+    assert "比花大钱打广告强多了" in lines
+    assert "如果你的店" in lines
+    assert "也想用这套系统搞活动" in lines
 
 
 def test_oss_presigned_read_url_is_short_lived_and_not_serialized():
@@ -807,6 +1146,59 @@ def test_oss_presigned_read_url_is_short_lived_and_not_serialized():
     assert query["OSSAccessKeyId"] == ["access-key-id"]
     assert query["Expires"] == [str(int(now.timestamp()) + 3600)]
     assert query["Signature"][0]
+
+
+def test_oss_upload_retries_one_connection_failure(tmp_path: Path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    calls = 0
+
+    def transport(*_args):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise CloudProviderError("temporary connection failure", kind="connection")
+        return {}
+
+    store = AliyunCloudObjectStore(
+        _aliyun_config(),
+        transport=transport,
+    )
+
+    asset = store.upload(
+        source,
+        "input/retry-once.mp4",
+        media_type="video/mp4",
+    )
+
+    assert calls == 2
+    assert asset.object_key == "input/retry-once.mp4"
+
+
+def test_oss_upload_stops_after_one_retry(tmp_path: Path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    calls = 0
+
+    def transport(*_args):
+        nonlocal calls
+        calls += 1
+        raise CloudProviderError("connection down", kind="connection")
+
+    store = AliyunCloudObjectStore(
+        _aliyun_config(),
+        transport=transport,
+    )
+
+    with pytest.raises(CloudProviderError) as caught:
+        store.upload(
+            source,
+            "input/fail-after-retry.mp4",
+            media_type="video/mp4",
+        )
+
+    assert calls == 2
+    assert caught.value.outcome_unknown is True
 
 
 def test_mps_submit_connection_failure_is_outcome_unknown_without_retry():

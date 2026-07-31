@@ -51,6 +51,7 @@ import type {
   VideoEditorBgmAsset,
   VideoEditorSource,
   VideoEditorOverlayPreview,
+  VideoEditorTimeRange,
   VideoEditorVisualSpec,
 } from "../api/types";
 
@@ -86,21 +87,30 @@ const BGM_SOURCE_LABELS: Record<string, string> = {
 const BGM_LIBRARY_SOURCES = ["freepd", "pixabay", "light_factory", "bodian", "manual"];
 const CAPTION_BREAK_BEFORE_TOKENS = [
   "因为", "所以", "但是", "不过", "而且", "然后", "如果", "虽然",
-  "为了", "其实", "结果", "现在", "大量", "少量", "很多", "有些", "倒闭",
+  "为了", "其实", "基本", "通常", "一般", "几乎", "结果", "现在", "大量", "少量", "很多", "有些", "倒闭",
   "取代", "替代", "增长", "减少", "出现", "成为", "变成", "开始", "进入",
-  "面对", "发现", "需要", "可以", "不能", "没有", "不是", "就是", "已经",
-  "正在", "也是", "仍然", "被", "把", "让", "待",
+  "通过", "面对", "发现", "需要", "可以", "不能", "没有", "不是", "就是", "已经",
+  "正在", "也是", "仍然", "被", "把", "让", "比", "待",
 ];
 const CAPTION_BREAK_AFTER_TOKENS = [
   "的话", "以后", "之前", "之后", "时候", "一来", "说到底",
-  "个", "段", "条", "种", "次", "件", "位", "家", "台", "套",
 ];
-const CAPTION_PROTECTED_TERMS = [
-  "待人工确认", "人工智能", "工业机器人", "机器人", "人工", "工厂", "倒闭", "废铁", "字幕",
-  "确认", "市场", "收入", "消费", "企业", "设备", "订单", "未来", "工作",
-  "用户", "客户", "视频", "标题", "音乐", "智能", "取代", "替代", "岗位",
+const CAPTION_BAD_LINE_ENDINGS = [
+  "的", "地", "得", "了", "着", "过", "和", "与", "及", "或", "跟", "比",
+  "把", "被", "让", "给", "向", "对", "在", "从", "为", "还", "就", "才",
+  "都", "又", "再", "更", "最", "很", "太", "也", "挺", "正", "将", "要", "会",
+  "能", "可", "无", "不", "没", "未", "非", "主动", "自动", "直接", "立刻",
+  "马上", "基本", "通常", "一般", "几乎", "自然", "通过", "想", "用", "办",
+  "拿", "加", "送", "发", "搞", "打", "第", "每", "各", "这", "那",
+  "此", "其", "一", "两", "几", "多", "个", "位", "名", "家", "户", "只",
+  "条", "件", "张", "种", "次", "套", "台", "份", "部", "本", "辆", "斤",
+  "米", "块", "元",
 ];
-
+const CAPTION_BAD_LINE_STARTS = [
+  "的", "地", "得", "了", "着", "过", "们", "吗", "呢", "吧", "啊", "呀", "嘛",
+  "个", "位", "名", "家", "户", "只", "条", "件", "张", "种", "次", "套",
+  "台", "份", "部", "本", "辆",
+];
 const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
   `${asset.voiceover_category || asset.mood} · ${asset.title} · ${
     BGM_SOURCE_LABELS[asset.source_provider] || "授权素材"
@@ -169,7 +179,8 @@ type CloudBatchItem = VideoEditorBatchItem;
 type CloudBatch = VideoEditorBatch;
 
 const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
-  style_id: "business_talking_head_v7",
+  style_id: "business_talking_head_v8",
+  playback_rate: 1.15,
   canvas: { width: 720, height: 1280, pixel_aspect_ratio: "1:1" },
   title: {
     visible_seconds: 2.5,
@@ -179,7 +190,7 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
     max_chars_per_line: 9,
     font_family: "Source Han Serif CN Heavy",
     render_mode: "png_watermark",
-    font_size: 48,
+    font_size: 52,
     line_height: 1.1,
     safe_top: 84,
     safe_left: 56,
@@ -192,8 +203,8 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
   accent: { color: "transparent", width: 0, height: 0, gap: 0 },
   subtitle: {
     max_lines: 1,
-    max_chars_per_line: 10,
-    font_size: 46,
+    max_chars_per_line: 11,
+    font_size: 52,
     safe_bottom: 170,
     outline_width: 2,
     shadow: 3,
@@ -265,6 +276,9 @@ const PROVIDER_STAGE_LABELS: Record<string, string> = {
   submission_outcome_unknown: "云任务提交结果待查",
   planning_outcome_unknown: "规划任务结果待查",
   render_submission_outcome_unknown: "MPS 提交结果待查",
+  local_export_rendering: "本机正在生成可下载成片",
+  local_export_complete: "本机成片已生成",
+  local_export_failed: "本机成片生成失败",
   completed: "供应商处理完成",
 };
 
@@ -502,13 +516,26 @@ function recommendReviewBgm(
 
 function normalizeSubtitleSegments(item?: CloudBatchItem | null): TranscriptSegment[] {
   if (!item || !Array.isArray(item.subtitle_segments)) return [];
-  return item.subtitle_segments.flatMap((segment) => {
+  const emphasisBySegment = new Map(
+    (item.edit_plan?.caption_emphasis || []).map((entry) => [
+      entry.segment_index,
+      entry,
+    ]),
+  );
+  return item.subtitle_segments.flatMap((segment, index) => {
     if (!isRecord(segment)) return [];
+    const aiEmphasis = emphasisBySegment.get(index);
     return [{
       ...segment,
       start: asNumber(segment.start),
       end: asNumber(segment.end),
       text: String(segment.text || ""),
+      emphasis_terms: Array.isArray(segment.emphasis_terms)
+        ? segment.emphasis_terms.map(String)
+        : aiEmphasis
+          ? [aiEmphasis.term]
+          : [],
+      emphasis_kind: String(segment.emphasis_kind || aiEmphasis?.kind || "keyword"),
     } as TranscriptSegment];
   });
 }
@@ -601,15 +628,31 @@ function captionBoundarySplits(piece: string) {
   return boundaries;
 }
 
-function splitInsideProtectedTerm(piece: string, splitAt: number) {
-  return CAPTION_PROTECTED_TERMS.some((term) => {
-    let start = piece.indexOf(term);
-    while (start >= 0) {
-      if (start < splitAt && splitAt < start + term.length) return true;
-      start = piece.indexOf(term, start + 1);
-    }
-    return false;
-  });
+function captionWordSplits(piece: string) {
+  type Segment = { segment: string };
+  type Segmenter = { segment: (input: string) => Iterable<Segment> };
+  type SegmenterConstructor = new (
+    locale: string,
+    options: { granularity: "word" },
+  ) => Segmenter;
+  const SegmenterApi = (
+    Intl as unknown as { Segmenter?: SegmenterConstructor }
+  ).Segmenter;
+  if (!SegmenterApi) return new Set<number>();
+  const boundaries = new Set<number>();
+  let cursor = 0;
+  for (const token of new SegmenterApi("zh-CN", { granularity: "word" }).segment(piece)) {
+    cursor += token.segment.length;
+    if (cursor < piece.length) boundaries.add(cursor);
+  }
+  return boundaries;
+}
+
+function captionSplitReadsNaturally(piece: string, splitAt: number) {
+  const left = piece.slice(0, splitAt);
+  const right = piece.slice(splitAt);
+  return !CAPTION_BAD_LINE_ENDINGS.some((token) => left.endsWith(token))
+    && !CAPTION_BAD_LINE_STARTS.some((token) => right.startsWith(token));
 }
 
 function captionPhraseParts(piece: string, maxChars: number) {
@@ -627,11 +670,16 @@ function captionPhraseParts(piece: string, maxChars: number) {
       maxChars,
       remaining.length - minimumChars * (partCount - 1),
     );
-    const safeSplits = Array.from(
+    const wordSplits = captionWordSplits(remaining);
+    const semanticSplits = captionBoundarySplits(remaining);
+    const availableSplits = Array.from(
       { length: Math.max(0, maximumSplit - minimumSplit + 1) },
       (_, index) => minimumSplit + index,
-    ).filter((splitAt) => !splitInsideProtectedTerm(remaining, splitAt));
-    const semanticSplits = captionBoundarySplits(remaining);
+    ).filter((splitAt) => wordSplits.has(splitAt) || semanticSplits.has(splitAt));
+    const naturalSplits = availableSplits.filter(
+      (splitAt) => captionSplitReadsNaturally(remaining, splitAt),
+    );
+    const safeSplits = naturalSplits.length ? naturalSplits : availableSplits;
     const semanticCandidates = safeSplits.filter((splitAt) => semanticSplits.has(splitAt));
     const candidates = semanticCandidates.length ? semanticCandidates : safeSplits;
     const fallback = Math.max(minimumSplit, Math.min(maximumSplit, ideal));
@@ -674,19 +722,7 @@ function captionChunks(text: string, maxChars: number) {
     phrase += character;
   });
   if (phrase) pieces.push(phrase);
-  const chunks: string[] = [];
-  let current = "";
-  for (const piece of pieces) {
-    for (const part of captionPhraseParts(piece, maxChars)) {
-      if (current && current.length + part.length > maxChars) {
-        chunks.push(current);
-        current = "";
-      }
-      current += part;
-    }
-  }
-  if (current) chunks.push(current);
-  return chunks;
+  return pieces.flatMap((piece) => captionPhraseParts(piece, maxChars));
 }
 
 function displayLines(
@@ -715,31 +751,210 @@ function emphasisRange(lines: string[], terms?: string[]) {
   return null;
 }
 
-function previewCaptionCues(segments: TranscriptSegment[], spec: VideoEditorVisualSpec) {
+function captionEmphasisStyle(_kind?: string) {
+  return {
+    color: "#FFE16A",
+    scale: 1.5,
+    animation: "soft_pop",
+    duration_ms: 120,
+  };
+}
+
+const AUTO_EMPHASIS_NUMBER = /\d+(?:\.\d+)?(?:%|元|块|万|倍|折|公里|分钟|秒|张|个|家|人|套)/;
+const AUTO_EMPHASIS_PROMOTION_REWARD = /送(\d+(?:\.\d+)?(?:元|块)?)/;
+const AUTO_EMPHASIS_KEYWORDS = [
+  "现金奖励",
+  "自动执行",
+  "不用人管",
+  "免费",
+  "赚钱",
+  "省钱",
+  "优惠",
+  "奖励",
+  "增长",
+  "翻倍",
+  "关键",
+  "重点",
+  "注意",
+  "千万",
+  "必须",
+  "不要",
+  "风险",
+  "警告",
+  "爆款",
+  "成交",
+  "引流",
+  "裂变",
+  "回头客",
+];
+
+function automaticEmphasisTerm(text: string) {
+  const clean = captionChunks(text, Number.MAX_SAFE_INTEGER).join("");
+  const reward = clean.match(AUTO_EMPHASIS_PROMOTION_REWARD)?.[1];
+  if (reward && reward.length <= 6) return { term: reward, kind: "number" };
+  const number = clean.match(AUTO_EMPHASIS_NUMBER)?.[0];
+  if (number && number.length <= 6) return { term: number, kind: "number" };
+  const keyword = AUTO_EMPHASIS_KEYWORDS.find((item) => clean.includes(item));
+  if (!keyword) return null;
+  return {
+    term: keyword,
+    kind: ["注意", "千万", "必须", "不要", "风险", "警告"].includes(keyword)
+      ? "warning"
+      : "benefit",
+  };
+}
+
+function captionCueTimings(
+  chunks: string[],
+  segmentStart: number,
+  segmentEnd: number,
+  spokenRanges?: VideoEditorTimeRange[],
+) {
+  const totalChars = chunks.reduce((total, chunk) => total + chunk.length, 0) || 1;
+  let fallbackCursor = segmentStart;
+  const fallback = chunks.map((chunk, index) => {
+    const end = index === chunks.length - 1
+      ? segmentEnd
+      : fallbackCursor + ((segmentEnd - segmentStart) * chunk.length / totalChars);
+    const timing = { start: fallbackCursor, end };
+    fallbackCursor = end;
+    return timing;
+  });
+  const ranges = (spokenRanges || [])
+    .map((range) => ({
+      start: Math.max(segmentStart, asNumber(range.start)),
+      end: Math.min(segmentEnd, asNumber(range.end)),
+    }))
+    .filter((range) => range.end > range.start)
+    .sort((left, right) => left.start - right.start);
+  if (!ranges.length || ranges.length > chunks.length) return fallback;
+
+  const chunkLengths = chunks.map((chunk) => Math.max(1, chunk.length));
+  const chunkPrefix = [0];
+  chunkLengths.forEach((length) => chunkPrefix.push(
+    chunkPrefix[chunkPrefix.length - 1] + length,
+  ));
+  const rangeDurations = ranges.map((range) => range.end - range.start);
+  const totalDuration = rangeDurations.reduce((total, duration) => total + duration, 0) || 1;
+  const costs = Array.from(
+    { length: ranges.length + 1 },
+    () => Array(chunks.length + 1).fill(Number.POSITIVE_INFINITY),
+  );
+  const previous = Array.from(
+    { length: ranges.length + 1 },
+    () => Array(chunks.length + 1).fill(-1),
+  );
+  costs[0][0] = 0;
+  for (let rangeIndex = 1; rangeIndex <= ranges.length; rangeIndex += 1) {
+    const maxChunks = chunks.length - (ranges.length - rangeIndex);
+    const durationShare = rangeDurations[rangeIndex - 1] / totalDuration;
+    for (let chunkEnd = rangeIndex; chunkEnd <= maxChunks; chunkEnd += 1) {
+      for (let chunkStart = rangeIndex - 1; chunkStart < chunkEnd; chunkStart += 1) {
+        const prior = costs[rangeIndex - 1][chunkStart];
+        if (!Number.isFinite(prior)) continue;
+        const charShare = (
+          chunkPrefix[chunkEnd] - chunkPrefix[chunkStart]
+        ) / chunkPrefix[chunkPrefix.length - 1];
+        const cost = prior + ((charShare - durationShare) ** 2);
+        if (cost < costs[rangeIndex][chunkEnd]) {
+          costs[rangeIndex][chunkEnd] = cost;
+          previous[rangeIndex][chunkEnd] = chunkStart;
+        }
+      }
+    }
+  }
+  if (previous[ranges.length][chunks.length] < 0) return fallback;
+
+  const assignments: Array<[number, number]> = [];
+  let chunkEnd = chunks.length;
+  for (let rangeIndex = ranges.length; rangeIndex > 0; rangeIndex -= 1) {
+    const chunkStart = previous[rangeIndex][chunkEnd];
+    assignments.push([chunkStart, chunkEnd]);
+    chunkEnd = chunkStart;
+  }
+  assignments.reverse();
+  return assignments.flatMap(([chunkStart, groupEnd], rangeIndex) => {
+    const range = ranges[rangeIndex];
+    const groupTotal = chunkPrefix[groupEnd] - chunkPrefix[chunkStart];
+    let cursor = range.start;
+    return chunks.slice(chunkStart, groupEnd).map((_chunk, offset) => {
+      const index = chunkStart + offset;
+      const end = index === groupEnd - 1
+        ? range.end
+        : cursor + ((range.end - range.start) * chunkLengths[index] / groupTotal);
+      const timing = { start: cursor, end };
+      cursor = end;
+      return timing;
+    });
+  });
+}
+
+function validatedSemanticCaptionParts(
+  segments: TranscriptSegment[],
+  groups: Array<{ segment_index: number; parts: string[] }> | undefined,
+  maxChars: number,
+) {
+  if (!groups?.length) return null;
+  const expected = new Map(
+    segments
+      .map((segment, index) => [index, captionChunks(segment.text, Number.MAX_SAFE_INTEGER).join("")] as const)
+      .filter(([, text]) => Boolean(text)),
+  );
+  if (groups.length !== expected.size) return null;
+  const accepted = new Map<number, string[]>();
+  for (const group of groups) {
+    const parts = Array.isArray(group.parts)
+      ? group.parts.map((part) => captionChunks(part, Number.MAX_SAFE_INTEGER).join(""))
+      : [];
+    if (
+      !expected.has(group.segment_index)
+      || accepted.has(group.segment_index)
+      || !parts.length
+      || parts.some((part) => !part || part.length > maxChars)
+      || parts.join("") !== expected.get(group.segment_index)
+    ) {
+      return null;
+    }
+    accepted.set(group.segment_index, parts);
+  }
+  return accepted.size === expected.size ? accepted : null;
+}
+
+function previewCaptionCues(
+  segments: TranscriptSegment[],
+  spec: VideoEditorVisualSpec,
+  captionGroups?: Array<{ segment_index: number; parts: string[] }>,
+  spokenRanges?: VideoEditorTimeRange[],
+) {
   const maxChars = spec.subtitle.max_chars_per_line * spec.subtitle.max_lines;
-  return segments.flatMap((segment) => {
+  const semanticParts = validatedSemanticCaptionParts(segments, captionGroups, maxChars);
+  return segments.flatMap((segment, segmentIndex) => {
     const start = asNumber(segment.start, -1);
     const end = asNumber(segment.end, -1);
-    const chunks = captionChunks(segment.text, maxChars);
+    const chunks = semanticParts?.get(segmentIndex) || captionChunks(segment.text, maxChars);
     if (start < 0 || end <= start || !chunks.length) return [];
-    const totalChars = chunks.reduce((total, chunk) => total + chunk.length, 0) || 1;
-    let cursor = start;
+    const timings = captionCueTimings(chunks, start, end, spokenRanges);
     return chunks.map((chunk, index) => {
-      const cueEnd = index === chunks.length - 1
-        ? end
-        : cursor + ((end - start) * chunk.length / totalChars);
+      const automatic = automaticEmphasisTerm(chunk);
+      const emphasisTerms = (segment.emphasis_terms || []).filter((term) => (
+        chunk.includes(term)
+      ));
+      if (!emphasisTerms.length && automatic) emphasisTerms.push(automatic.term);
       const lines = displayLines(
         chunk,
         spec.subtitle.max_chars_per_line,
         spec.subtitle.max_lines,
       );
+      const emphasis = emphasisRange(lines, emphasisTerms);
       const cue = {
-        start: cursor,
-        end: cueEnd,
+        start: timings[index].start,
+        end: timings[index].end,
         lines,
-        emphasis_range: emphasisRange(lines, segment.emphasis_terms),
+        emphasis_range: emphasis,
+        emphasis_style: emphasis
+          ? captionEmphasisStyle(segment.emphasis_kind || automatic?.kind)
+          : null,
       };
-      cursor = cueEnd;
       return cue;
     });
   });
@@ -749,7 +964,11 @@ function localOverlayPreview(
   segments: TranscriptSegment[],
   title: string,
   spec: VideoEditorVisualSpec,
+  captionGroups?: Array<{ segment_index: number; parts: string[] }>,
+  spokenRanges?: VideoEditorTimeRange[],
 ): VideoEditorOverlayPreview {
+  const maxChars = spec.subtitle.max_chars_per_line * spec.subtitle.max_lines;
+  const semanticParts = validatedSemanticCaptionParts(segments, captionGroups, maxChars);
   return {
     title: {
       lines: displayLines(
@@ -761,7 +980,8 @@ function localOverlayPreview(
       start: 0,
       end: spec.title.visible_seconds,
     },
-    cues: previewCaptionCues(segments, spec),
+    cues: previewCaptionCues(segments, spec, captionGroups, spokenRanges),
+    caption_group_source: semanticParts ? "qwen_semantic" : "deterministic_fallback",
   };
 }
 
@@ -810,12 +1030,22 @@ function renderOverlayLine(
   line: string,
   lineIndex: number,
   emphasis: VideoEditorOverlayPreview["cues"][number]["emphasis_range"],
+  emphasisStyle: VideoEditorOverlayPreview["cues"][number]["emphasis_style"],
 ) {
   if (!emphasis || emphasis.line_index !== lineIndex) return line;
   return (
     <>
       {line.slice(0, emphasis.start)}
-      <span className="video-editor-subtitle-emphasis">{line.slice(emphasis.start, emphasis.end)}</span>
+      <span
+        className="video-editor-subtitle-emphasis"
+        style={{
+          color: emphasisStyle?.color,
+          "--video-editor-emphasis-size": emphasisStyle?.scale || 1.5,
+          "--video-editor-emphasis-duration": `${emphasisStyle?.duration_ms || 120}ms`,
+        } as CSSProperties}
+      >
+        {line.slice(emphasis.start, emphasis.end)}
+      </span>
       {line.slice(emphasis.end)}
     </>
   );
@@ -839,6 +1069,21 @@ function isBrowserMediaUrl(value?: string | null): value is string {
   );
 }
 
+function downloadBrowserMedia(mediaUrl: string, fallbackTitle: string) {
+  const title = fallbackTitle
+    .replace(/[\\/:*?"<>|]/g, "")
+    .trim()
+    .slice(0, 48) || "视频";
+  const link = document.createElement("a");
+  link.href = mediaUrl;
+  link.download = `${title}.mp4`;
+  link.rel = "noopener";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
   const cloudBatch = batch as CloudBatch;
   return (
@@ -851,6 +1096,7 @@ function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
 export default function VideoEditorPage() {
   const navigate = useNavigate();
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  const pendingLocalDownloadRef = useRef<string | null>(null);
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
   const [capabilities, setCapabilities] = useState<CloudCapabilities | null>(null);
@@ -972,6 +1218,10 @@ export default function VideoEditorPage() {
     [bgmAssets],
   );
   const currentStatus = currentItem?.status || batch?.status || "idle";
+  const isLocalExport = Boolean(
+    currentItem?.job?.workflow === "local_preview_export"
+    || currentItem?.provider_stage?.startsWith("local_export_"),
+  );
   const selectedSource = useMemo(
     () => sources.find((source) => source.source_id === selectedSourceId) || null,
     [selectedSourceId, sources],
@@ -1000,7 +1250,10 @@ export default function VideoEditorPage() {
     (total, step) => total + step.estimated_removed_seconds,
     0,
   );
-  const estimatedOutputSeconds = asNumber(currentItem?.edit_plan?.estimated_output_seconds, 0);
+  const estimatedOutputSourceSeconds = asNumber(
+    currentItem?.edit_plan?.estimated_output_seconds,
+    0,
+  );
 
   const providerMode = batch?.provider_mode || capabilities?.provider_mode || "configuration_required";
   const isSandbox = Boolean(
@@ -1058,6 +1311,19 @@ export default function VideoEditorPage() {
           cloudBatch,
           ...items.filter((item) => item.batch_id !== cloudBatch.batch_id),
         ]);
+        const exported = cloudBatch.items[0];
+        if (
+          pendingLocalDownloadRef.current === cloudBatch.batch_id
+          && exported?.job?.status === "succeeded"
+          && exported.job.download_url
+        ) {
+          pendingLocalDownloadRef.current = null;
+          downloadBrowserMedia(
+            exported.job.download_url,
+            exported.selected_title || exported.title || "剪辑成片",
+          );
+          message.success("成片已生成，正在下载");
+        }
       }).catch(() => {
         setPollingStopped(true);
         message.warning("状态查询失败，已停止自动查询；可手动刷新后继续。");
@@ -1352,28 +1618,59 @@ export default function VideoEditorPage() {
     }
   };
 
-  const downloadVideo = (mediaUrl: string, fallbackTitle: string) => {
-    const title = fallbackTitle
-      .replace(/[\\/:*?"<>|]/g, "")
-      .trim()
-      .slice(0, 48) || "视频";
-    const link = document.createElement("a");
-    link.href = mediaUrl;
-    link.download = `${title}.mp4`;
-    link.rel = "noopener";
-    link.style.display = "none";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  };
-
-  const downloadFinishedVideo = () => {
-    if (!playableResultMediaUrl || isSandbox) {
+  const downloadFinishedVideo = async () => {
+    if (
+      batch
+      && currentItem
+      && !isSandbox
+      && currentStatus === "outcome_unknown"
+      && !playableResultMediaUrl
+    ) {
+      setSubmitting(true);
+      try {
+        const next = await videoEditorApi.createVideoEditorLocalExport(
+          batch.batch_id,
+          currentItem.item_id,
+        ) as CloudBatch;
+        pendingLocalDownloadRef.current = next.batch_id;
+        setBatch(next);
+        setBatches((items) => [
+          next,
+          ...items.filter((item) => item.batch_id !== next.batch_id),
+        ]);
+        setPollingStopped(false);
+        const exported = next.items[0];
+        if (exported?.job?.status === "succeeded" && exported.job.download_url) {
+          pendingLocalDownloadRef.current = null;
+          downloadBrowserMedia(
+            exported.job.download_url,
+            exported.selected_title || exported.title || "剪辑成片",
+          );
+        } else {
+          message.info("正在本机免费生成 MP4，完成后会自动下载");
+        }
+      } catch (error) {
+        message.error((error as Error).message || "本机成片生成失败");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    if (!batch || !currentItem || !playableResultMediaUrl || isSandbox) {
       message.warning("真实成片生成后才可以下载");
       return;
     }
-    downloadVideo(
-      playableResultMediaUrl,
+    const downloadUrl = currentItem.job?.workflow === "local_preview_export"
+      && currentItem.job.download_url
+      ? currentItem.job.download_url
+      : providerMode === "aliyun"
+        ? videoEditorApi.getVideoEditorBatchItemDownloadUrl(
+          batch.batch_id,
+          currentItem.item_id,
+        )
+        : playableResultMediaUrl;
+    downloadBrowserMedia(
+      downloadUrl,
       currentItem?.selected_title || currentItem?.title || selectedSource?.title || "剪辑成片",
     );
   };
@@ -1383,7 +1680,7 @@ export default function VideoEditorPage() {
       message.warning("当前原片暂时不可下载");
       return;
     }
-    downloadVideo(playableSourceMediaUrl, `${selectedSource?.title || "视频"}-原片`);
+    downloadBrowserMedia(playableSourceMediaUrl, `${selectedSource?.title || "视频"}-原片`);
   };
 
   const handlePrimaryAction = () => {
@@ -1396,7 +1693,7 @@ export default function VideoEditorPage() {
       return;
     }
     if (currentStatus === "outcome_unknown") {
-      void loadQuote(outputProfile, true);
+      void downloadFinishedVideo();
       return;
     }
     if (["failed", "interrupted"].includes(currentStatus)) {
@@ -1404,6 +1701,10 @@ export default function VideoEditorPage() {
       return;
     }
     if (["awaiting_output_confirmation", "ready_to_publish"].includes(currentStatus)) {
+      if (currentItem?.job?.workflow === "local_preview_export") {
+        void downloadFinishedVideo();
+        return;
+      }
       void confirmAndPublish();
     }
   };
@@ -1438,9 +1739,9 @@ export default function VideoEditorPage() {
     }
     if (currentStatus === "outcome_unknown") {
       return {
-        label: "重新报价并生成带字幕成片",
+        label: "本机免费生成并下载",
         disabled: !selectedSourceId,
-        icon: <CloudOutlined />,
+        icon: <DownloadOutlined />,
       };
     }
     if (currentStatus === "configuration_required") {
@@ -1454,6 +1755,13 @@ export default function VideoEditorPage() {
       return { label: "重试当前任务", disabled: false, icon: <ReloadOutlined /> };
     }
     if (["awaiting_output_confirmation", "ready_to_publish"].includes(currentStatus)) {
+      if (currentItem?.job?.workflow === "local_preview_export") {
+        return {
+          label: "下载成片",
+          disabled: !playableResultMediaUrl,
+          icon: <DownloadOutlined />,
+        };
+      }
       return {
         label: "确认成片并去发布",
         disabled: currentStatus === "ready_to_publish" ? !publishHandoffReady : !canConfirmOutput,
@@ -1467,8 +1775,18 @@ export default function VideoEditorPage() {
     ? reviewSegments
     : normalizeSubtitleSegments(currentItem);
   const visualSpec = resolveVisualSpec(batch?.visual_spec);
+  const playbackRate = asNumber(visualSpec.playback_rate, 1.15);
+  const estimatedOutputSeconds = estimatedOutputSourceSeconds > 0
+    ? estimatedOutputSourceSeconds / playbackRate
+    : 0;
   const previewTitle = reviewTitle || currentItem?.selected_title || titleCandidates(currentItem)[0] || "";
-  const localPreview = localOverlayPreview(previewSegments, previewTitle, visualSpec);
+  const localPreview = localOverlayPreview(
+    previewSegments,
+    previewTitle,
+    visualSpec,
+    currentItem?.edit_plan?.caption_groups,
+    currentItem?.edit_plan?.spoken_ranges,
+  );
   const serverPreviewUsesCurrentStyle = (
     batch?.visual_spec?.style_id === DEFAULT_VISUAL_SPEC.style_id
   );
@@ -1478,7 +1796,9 @@ export default function VideoEditorPage() {
   const previewCaption = overlayPreview.cues.find((cue) => (
     cue.start <= previewTime && cue.end >= previewTime
   ));
-  const titlePreviewTime = previewMode === "plan" ? planPreviewElapsed : previewTime;
+  const titlePreviewTime = previewMode === "plan"
+    ? planPreviewElapsed / playbackRate
+    : previewTime;
   const titleOpacity = 1;
   const titleOverlayStyle = {
     "--video-editor-title-font-size": `${visualSpec.title.font_size / visualSpec.canvas.width * 100}cqw`,
@@ -1517,12 +1837,16 @@ export default function VideoEditorPage() {
   const planTimelineDuration = planTimeFromSourceTime(
     sourceTimelineDuration,
     activeIntervals,
+  ) / playbackRate;
+  const planTimelineValue = Math.min(
+    planPreviewElapsed / playbackRate,
+    planTimelineDuration,
   );
-  const planTimelineValue = Math.min(planPreviewElapsed, planTimelineDuration);
 
   const togglePlanPreview = () => {
     const video = previewRef.current;
     if (!video) return;
+    video.playbackRate = playbackRate;
     if (video.paused) {
       if (video.currentTime <= 0.05 || video.ended) {
         video.currentTime = 0;
@@ -1562,13 +1886,13 @@ export default function VideoEditorPage() {
     if (!video || sourceTimelineDuration <= 0) return;
     video.pause();
     const sourceTime = sourceTimeFromPlanTime(
-      nextPlanTime,
+      nextPlanTime * playbackRate,
       sourceTimelineDuration,
       activeIntervals,
     );
     video.currentTime = sourceTime;
     setPreviewTime(sourceTime);
-    setPlanPreviewElapsed(nextPlanTime);
+    setPlanPreviewElapsed(nextPlanTime * playbackRate);
   };
 
   const chooseHistory = (selected: CloudBatch) => {
@@ -1763,6 +2087,9 @@ export default function VideoEditorPage() {
                     setPreviewDuration(duration);
                     setPreviewTime(0);
                     setPlanPreviewElapsed(0);
+                    event.currentTarget.playbackRate = previewMode === "plan"
+                      ? playbackRate
+                      : 1;
                   }}
                   onTimeUpdate={handlePreviewTimeUpdate}
                   onClick={previewMode === "plan" ? togglePlanPreview : undefined}
@@ -1781,7 +2108,12 @@ export default function VideoEditorPage() {
                   <div className="video-editor-subtitle-overlay" style={subtitleOverlayStyle}>
                     {previewCaption.lines.map((line, index) => (
                       <span className="video-editor-overlay-line" key={`${line}-${index}`}>
-                        {renderOverlayLine(line, index, previewCaption.emphasis_range)}
+                        {renderOverlayLine(
+                          line,
+                          index,
+                          previewCaption.emphasis_range,
+                          previewCaption.emphasis_style,
+                        )}
                       </span>
                     ))}
                   </div>
@@ -1821,7 +2153,11 @@ export default function VideoEditorPage() {
                 </Button>
               )}
               <Tag icon={<PlayCircleOutlined />}>
-                {previewMode === "plan" ? "按正式粗剪方案预览" : previewMode === "output" ? "正式成片" : "原始素材"}
+                {previewMode === "plan"
+                  ? `按正式方案 ${playbackRate.toFixed(2)}× 预览`
+                  : previewMode === "output"
+                    ? "正式成片"
+                    : "原始素材"}
               </Tag>
               {!playableResultMediaUrl && playableSourceMediaUrl && (
                 <Tooltip title="原片可直接下载；不含字幕、剪辑或配乐">
@@ -1842,15 +2178,35 @@ export default function VideoEditorPage() {
                   去审核并生成成片
                 </Button>
               ) : (
-                <Tooltip title={playableResultMediaUrl && !isSandbox ? "下载已生成的正式成片" : "真实成片生成后可下载"}>
+                <Tooltip
+                  title={
+                    playableResultMediaUrl && !isSandbox
+                      ? "下载已生成的正式成片"
+                      : currentStatus === "outcome_unknown" && !isSandbox
+                        ? "复用现有字幕和方案，在本机免费生成 MP4"
+                        : "真实成片生成后可下载"
+                  }
+                >
                   <span>
                     <Button
                       size="small"
-                      icon={<DownloadOutlined />}
-                      disabled={!playableResultMediaUrl || isSandbox}
+                      icon={
+                        currentStatus === "outcome_unknown" && !playableResultMediaUrl
+                          ? <DownloadOutlined />
+                          : <DownloadOutlined />
+                      }
+                      disabled={
+                        isSandbox
+                        || (
+                          !playableResultMediaUrl
+                          && currentStatus !== "outcome_unknown"
+                        )
+                      }
                       onClick={downloadFinishedVideo}
                     >
-                      下载成片
+                      {currentStatus === "outcome_unknown" && !playableResultMediaUrl
+                        ? "本机免费生成并下载"
+                        : "下载成片"}
                     </Button>
                   </span>
                 </Tooltip>
@@ -1860,6 +2216,14 @@ export default function VideoEditorPage() {
               )}
               {estimatedOutputSeconds > 0 && (
                 <Text>剪后约 {estimatedOutputSeconds.toFixed(1)} 秒</Text>
+              )}
+              {currentItem?.subtitle_preview_source === "cached_asr" && (
+                <Tag color="blue">字幕预览已复用同一素材的识别结果</Tag>
+              )}
+              {currentItem?.subtitle_preview_source === "script_estimate" && (
+                <Tooltip title="仅用于失败或等待状态下预览排版；正式出片仍使用识别并复核后的时间戳。">
+                  <Tag color="gold">字幕预览来自原始文案</Tag>
+                </Tooltip>
               )}
             </Space>
             {currentItem && (
@@ -1880,7 +2244,8 @@ export default function VideoEditorPage() {
           styles={{ body: { padding: 16 } }}
         >
           <div className="video-editor-plan-body">
-            {isSandbox && (
+            <div className="video-editor-plan-scroll">
+              {isSandbox && (
               <Alert
                 data-testid="provider-alert"
                 type="info"
@@ -1888,8 +2253,8 @@ export default function VideoEditorPage() {
                 message="免费体验：不调用真实云服务"
                 description="先查看操作流程和方案预览；不会调用真实识别、生成成片或发布。"
               />
-            )}
-            {configurationBlocked && (
+              )}
+              {configurationBlocked && (
               <Alert
                 data-testid="provider-alert"
                 type="warning"
@@ -1897,51 +2262,59 @@ export default function VideoEditorPage() {
                 message="云端出片尚未开通"
                 description="可先使用免费体验查看流程；需要真实字幕和成片时，再一次性开通云端服务。"
               />
-            )}
-            {pollingStopped && (
+              )}
+              {pollingStopped && (
               <Alert
                 type="warning"
                 showIcon
                 message="自动查询已停止"
                 description="网络查询失败后没有连续重试；请手动刷新确认供应商原任务状态。"
               />
-            )}
-            {currentStatus === "outcome_unknown" && (
+              )}
+              {currentStatus === "outcome_unknown" && (
               <Alert
                 type="warning"
                 showIcon
                 message="付费提交结果未知"
                 description="旧任务不会自动重提。可重新获取报价，确认后按已校对的字幕生成一条新成片。"
               />
-            )}
+              )}
+              {isLocalExport && currentStatus !== "rendering" && (
+              <Alert
+                type="success"
+                showIcon
+                message="本机成片已生成，本次新增费用 ¥0"
+                description="已复用同一素材审核过的字幕、标题和配乐方案，没有再次调用 Fun-ASR、qwen 或 MPS。"
+              />
+              )}
 
-            <div className="video-editor-plan-heading">
-              <div>
-                <Text strong>可解释建议</Text>
-                <Paragraph type="secondary">
-                  只处理可靠空白和长停顿；正式出片与此预览使用同一组保留片段。
-                </Paragraph>
-              </div>
-            </div>
-
-            <div className="video-editor-plan-list">
-              {planSteps.map((step) => (
-                <div className="video-editor-plan-item" key={step.id}>
-                  <div className="video-editor-plan-icon">{STEP_ICON[step.kind] || <CheckCircleOutlined />}</div>
-                  <div className="video-editor-plan-copy">
-                    <Space size={6} wrap>
-                      <Text strong>{step.label}</Text>
-                      {step.estimated_removed_seconds > 0 && (
-                        <Tag>约 -{step.estimated_removed_seconds.toFixed(1)} 秒</Tag>
-                      )}
-                    </Space>
-                    <Text type="secondary">{step.reason}</Text>
-                  </div>
+              <div className="video-editor-plan-heading">
+                <div>
+                  <Text strong>可解释建议</Text>
+                  <Paragraph type="secondary">
+                    只处理可靠空白和长停顿；正式出片与此预览使用同一组保留片段。
+                  </Paragraph>
                 </div>
-              ))}
-            </div>
+              </div>
 
-            <div className="video-editor-bgm-card">
+              <div className="video-editor-plan-list">
+                {planSteps.map((step) => (
+                  <div className="video-editor-plan-item" key={step.id}>
+                    <div className="video-editor-plan-icon">{STEP_ICON[step.kind] || <CheckCircleOutlined />}</div>
+                    <div className="video-editor-plan-copy">
+                      <Space size={6} wrap>
+                        <Text strong>{step.label}</Text>
+                        {step.estimated_removed_seconds > 0 && (
+                          <Tag>约 -{step.estimated_removed_seconds.toFixed(1)} 秒</Tag>
+                        )}
+                      </Space>
+                      <Text type="secondary">{step.reason}</Text>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="video-editor-bgm-card">
               <div className="video-editor-bgm-header">
                 <Space size={8}>
                   <SoundOutlined />
@@ -1986,9 +2359,26 @@ export default function VideoEditorPage() {
                   分析文案后会自动匹配并直接提供试听；没有合适音乐时保持原声。
                 </Text>
               )}
-            </div>
+              </div>
 
-            <div className="video-editor-cost-card">
+              {isLocalExport ? (
+              <div className="video-editor-cost-card">
+                <div className="video-editor-cost-header">
+                  <div>
+                    <Text strong>本次导出费用</Text>
+                    <Text type="secondary">复用已有审核结果</Text>
+                  </div>
+                  <Text className="video-editor-cost-total" data-testid="cost-total">
+                    ¥0
+                  </Text>
+                </div>
+                <Text type="secondary">
+                  由本机 FFmpeg 生成可下载 MP4；旧云报价仅保留在任务历史中，不会自动扣费或重提。
+                </Text>
+                <Tag color="green">真实 MP4 已生成</Tag>
+              </div>
+              ) : (
+              <div className="video-editor-cost-card">
               <div className="video-editor-cost-header">
                 <div>
                   <Text strong>{isSandbox ? "云端出片参考费用" : "预计费用上限"}</Text>
@@ -2021,6 +2411,8 @@ export default function VideoEditorPage() {
                   : null}
                 {isSandbox && <Tag>免费体验不收费</Tag>}
               </Space>
+              </div>
+              )}
             </div>
 
             <div className="video-editor-primary-zone">
@@ -2167,8 +2559,8 @@ export default function VideoEditorPage() {
                           <Input
                             aria-label={`字幕片段 ${index + 1} 的强调词`}
                             value={segment.emphasis_terms?.[0] || ""}
-                            maxLength={4}
-                            placeholder="强调词（可选，原文最多 4 字）"
+                            maxLength={6}
+                            placeholder="强调词（可选，AI 已预选，原文最多 6 字）"
                             style={{ marginTop: 8 }}
                             onChange={(event) => setReviewSegments((segments) => segments.map(
                               (item, itemIndex) => itemIndex === index
@@ -2177,6 +2569,9 @@ export default function VideoEditorPage() {
                                     emphasis_terms: event.target.value.trim()
                                       ? [event.target.value.trim()]
                                       : [],
+                                    emphasis_kind: /\d/.test(event.target.value)
+                                      ? "number"
+                                      : item.emphasis_kind || "keyword",
                                     reviewed: true,
                                   }
                                 : item,
@@ -2512,7 +2907,7 @@ export default function VideoEditorPage() {
         .video-editor-cloud-page{display:flex;flex-direction:column;gap:14px;width:100%;min-width:0}
         .video-editor-cloud-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
         .video-editor-compact-nav{display:none}
-        .video-editor-cloud-workspace{display:grid;grid-template-columns:minmax(252px,.78fr) minmax(340px,1.22fr) minmax(310px,.9fr);gap:14px;height:clamp(630px,calc(100vh - 174px),760px);min-height:0}
+        .video-editor-cloud-workspace{display:grid;grid-template-columns:minmax(252px,.78fr) minmax(340px,1.22fr) minmax(310px,.9fr);gap:14px;height:clamp(480px,calc(100dvh - 260px),760px);min-height:0}
         .video-editor-workspace-card{height:100%;overflow:hidden;border-color:var(--border-default);box-shadow:var(--shadow-sm)}
         .video-editor-workspace-card>.ant-card-head{min-height:50px;padding-inline:16px}
         .video-editor-workspace-card>.ant-card-body{height:calc(100% - 51px);overflow:auto}
@@ -2533,20 +2928,22 @@ export default function VideoEditorPage() {
         .video-editor-phone-preview video{width:100%;height:100%;object-fit:contain;background:#030712}
         .video-editor-phone-preview video.video-editor-plan-video{object-fit:contain}
         @font-face{font-family:"VideoInsight Title Serif";src:url("/api/v1/video-editor/brand-title-font") format("opentype");font-display:swap;font-style:normal;font-weight:900}
-        .video-editor-title-overlay{position:absolute;width:76%;font-family:"VideoInsight Title Serif","Microsoft YaHei UI",serif;font-size:var(--video-editor-title-font-size);font-weight:900;line-height:var(--video-editor-title-line-height);letter-spacing:.01em;text-align:left;white-space:normal;text-shadow:0 3px 9px rgba(0,0,0,.48),0 1px 1px rgba(0,0,0,.68);pointer-events:none;transition:opacity .12s linear}
+        .video-editor-title-overlay{position:absolute;width:76%;font-family:"VideoInsight Title Serif","Microsoft YaHei UI",serif;font-size:var(--video-editor-title-font-size);font-weight:900;line-height:var(--video-editor-title-line-height);letter-spacing:.01em;text-align:left;white-space:normal;-webkit-text-stroke:var(--video-editor-title-outline) rgba(0,0,0,.72);paint-order:stroke fill;text-shadow:0 2px 7px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.62);pointer-events:none;transition:opacity .12s linear}
         .video-editor-title-accent{position:absolute;border-radius:999px;pointer-events:none;transition:opacity .12s linear}
-        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.7);text-shadow:0 3px 8px rgba(0,0,0,.72);pointer-events:none}
+        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);paint-order:stroke fill;text-shadow:0 1px 2px rgba(0,0,0,.72),0 3px 8px rgba(0,0,0,.48);pointer-events:none}
         .video-editor-overlay-line{display:block}
-        .video-editor-subtitle-emphasis{color:var(--video-editor-subtitle-emphasis);-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.42)}
+        .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.5) * 1em);line-height:0;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,120ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
+        @keyframes video-editor-emphasis-pop{0%{transform:scale(.94)}70%{transform:scale(1.05)}100%{transform:scale(1)}}
         .video-editor-preview-footer{flex-direction:column;align-items:stretch}
         .video-editor-preview-timeline{display:flex;flex-direction:column;gap:2px}
         .video-editor-preview-timeline>.ant-slider{margin:4px 6px}
         .video-editor-preview-timeline>div{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
         .video-editor-plan-card>.ant-card-body{overflow:hidden}
-        .video-editor-plan-body{display:flex;flex-direction:column;height:100%;min-height:0;gap:12px}
+        .video-editor-plan-body{display:grid;grid-template-rows:minmax(0,1fr) auto;height:100%;min-height:0;gap:10px}
+        .video-editor-plan-scroll{display:flex;min-height:0;flex-direction:column;gap:12px;overflow-y:auto;overscroll-behavior:contain;padding-right:4px}
         .video-editor-plan-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
         .video-editor-plan-heading .ant-typography{margin-bottom:0}
-        .video-editor-plan-list{display:flex;flex:1;min-height:140px;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
+        .video-editor-plan-list{display:flex;min-height:120px;max-height:220px;flex:none;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
         .video-editor-plan-item{display:grid;grid-template-columns:30px minmax(0,1fr);align-items:start;gap:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-card)}
         .video-editor-plan-icon{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;background:var(--primary-50);color:var(--primary-600)}
         .video-editor-plan-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
@@ -2562,7 +2959,7 @@ export default function VideoEditorPage() {
         .video-editor-cost-total{font-size:25px;font-weight:700;color:var(--primary-700)}
         .video-editor-cost-lines{display:flex;flex-direction:column;gap:4px}
         .video-editor-cost-lines>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
-        .video-editor-primary-zone{display:flex;flex-direction:column;gap:6px;text-align:center}
+        .video-editor-primary-zone{display:flex;flex-direction:column;gap:6px;padding-top:10px;border-top:1px solid var(--border-default);background:var(--bg-card);text-align:center}
         .video-editor-primary-zone>.ant-typography{font-size:12px}
         .video-editor-modal-total{padding:12px;border-radius:var(--radius-sm);background:var(--primary-50)}
         @media(max-width:1180px){

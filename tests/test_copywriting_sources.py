@@ -50,6 +50,7 @@ def test_generate_metadata_original_marks_not_transcript() -> None:
 
     task = service.generate_metadata_original(
         title="AI 数字人口播获客实战",
+        reference_text="这是操作者整理的可见文案。它只用于概括原意并改写成新的口播稿。",
         hot_words=["AI数字人", "口播获客"],
         metrics=metrics,
     )
@@ -65,6 +66,8 @@ def test_generate_metadata_original_marks_not_transcript() -> None:
     assert "\n" in task.result_text
     # 概要包含标题、热点词与可用互动数据，缺失字段不展示为 0
     assert "AI 数字人口播获客实战" in task.content_brief
+    assert "操作者提供的可见文案" in task.content_brief
+    assert "只用于概括原意" in task.content_brief
     assert "AI数字人" in task.content_brief
     assert "点赞 1200" in task.content_brief
     assert "分享" not in task.content_brief

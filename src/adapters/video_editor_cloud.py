@@ -24,6 +24,7 @@ import httpx
 from src.services.video_editor_cloud import (
     BGM_ENERGY_LEVELS,
     BGM_VOICEOVER_CATEGORIES,
+    CAPTION_EMPHASIS_KINDS,
     CloudASRProvider,
     CloudAsset,
     CloudEditorConfiguration,
@@ -42,6 +43,8 @@ from src.services.video_editor_cloud import (
     TranscriptSegment,
     build_safe_edit_plan,
     kept_ranges_for_plan,
+    validated_caption_emphasis,
+    validated_caption_groups,
     visual_style_spec,
 )
 
@@ -286,10 +289,11 @@ class SandboxEditPlanProvider(EditPlanProvider):
         transcript: str,
         spoken_ranges: Sequence[TimeRange | Mapping[str, float]],
         duration_seconds: float,
+        segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> EditPlan:
         normalized = " ".join(transcript.split())
         title = normalized[:28].strip("，。！？、 ") if normalized else ""
-        return build_safe_edit_plan(
+        plan = build_safe_edit_plan(
             spoken_ranges,
             duration_seconds,
             title_candidates=[title] if title else [],
@@ -297,6 +301,7 @@ class SandboxEditPlanProvider(EditPlanProvider):
             provider_name="sandbox_edit_plan",
             is_mock=True,
         )
+        return plan
 
 
 class SandboxCloudRenderProvider(CloudRenderProvider):
@@ -428,22 +433,26 @@ class AliyunCloudObjectStore(CloudObjectStore):
             object_key,
             media_type=media_type,
         )
-        try:
-            self.transport(url, headers, source, self.timeout_seconds)
-        except CloudProviderError as exc:
-            if exc.kind == "connection":
-                raise CloudProviderError(
-                    str(exc),
-                    kind=exc.kind,
-                    outcome_unknown=True,
-                ) from exc
-            raise
-        except (ConnectionError, TimeoutError, OSError) as exc:
+        connection_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                self.transport(url, headers, source, self.timeout_seconds)
+                connection_error = None
+                break
+            except CloudProviderError as exc:
+                if exc.kind != "connection":
+                    raise
+                connection_error = exc
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                connection_error = exc
+            if attempt == 0:
+                continue
+        if connection_error is not None:
             raise CloudProviderError(
                 "OSS 上传连接失败，结果未确认，请勿直接重复提交。",
                 kind="connection",
                 outcome_unknown=True,
-            ) from exc
+            ) from connection_error
         read_url = self.presign_get_url(object_key)
         return CloudAsset(
             provider_name="aliyun_oss",
@@ -806,6 +815,7 @@ class AliyunEditPlanProvider(EditPlanProvider):
         transcript: str,
         spoken_ranges: Sequence[TimeRange | Mapping[str, float]],
         duration_seconds: float,
+        segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> tuple[str, dict[str, str], bytes]:
         self._ensure_configured()
         normalized_ranges = [
@@ -815,19 +825,41 @@ class AliyunEditPlanProvider(EditPlanProvider):
         system = (
             "你是安全轻剪规划器。只返回 JSON，字段仅允许 "
             "title_candidates、explanation、enabled_steps、bgm_category、"
-            "bgm_energy、bgm_keywords。"
+            "bgm_energy、bgm_keywords、caption_groups、caption_emphasis。"
             "enabled_steps 只能取 trim_silence、vertical_fit、subtitles、"
             "title、bgm、audio_mix。不得建议删除、改写或重排有人声内容。"
             f"bgm_category 只能取 {'、'.join(BGM_VOICEOVER_CATEGORIES)}；"
             f"bgm_energy 只能取 {'、'.join(BGM_ENERGY_LEVELS)}；"
             "bgm_keywords 最多 6 个短标签。根据整段文案的主题、情绪和语速选择，"
             "口播配乐应克制、无人声、不抢对白。"
+            "caption_groups 必须覆盖 subtitle_segments 中每个非空 segment_index "
+            "且每个只出现一次，格式为 "
+            '[{"segment_index":0,"parts":["第一段","第二段"]}]。'
+            "parts 只决定显示断点：去掉标点和空白后拼接，必须与对应 text "
+            "逐字一致，不得增删、改写、调序。每段最多 11 个显示字符；"
+            "按完整语义短语分组，不拆数字、英文、专有名词或双字词，"
+            "不要让助词、介词、量词或单字悬空。"
+            "caption_emphasis 用于克制的口播关键词强调，格式为 "
+            '[{"segment_index":0,"term":"49元","kind":"number"}]。'
+            "term 必须是对应字幕中的连续原文，最多 6 个字，每个字幕片段最多一个；"
+            "每 3 个字幕片段最多选择一个，优先具体数字、金额、比例、核心利益点、"
+            "风险警示或结论，不要选择虚词和普通动词。kind 只能取 "
+            f"{'、'.join(CAPTION_EMPHASIS_KINDS)}。"
         )
+        subtitle_segments = [
+            {
+                "segment_index": index,
+                "text": str(segment.get("text") or ""),
+            }
+            for index, segment in enumerate(segments or [])
+            if str(segment.get("text") or "").strip()
+        ]
         user = json.dumps(
             {
                 "transcript": transcript,
                 "spoken_ranges": normalized_ranges,
                 "duration_seconds": duration_seconds,
+                "subtitle_segments": subtitle_segments,
             },
             ensure_ascii=False,
         )
@@ -870,11 +902,13 @@ class AliyunEditPlanProvider(EditPlanProvider):
         transcript: str,
         spoken_ranges: Sequence[TimeRange | Mapping[str, float]],
         duration_seconds: float,
+        segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> EditPlan:
         url, headers, body = self.build_request(
             transcript,
             spoken_ranges,
             duration_seconds,
+            segments,
         )
         payload = _submit_once(
             self.transport,
@@ -919,6 +953,19 @@ class AliyunEditPlanProvider(EditPlanProvider):
             if isinstance(raw_bgm_keywords, list)
             else []
         )
+        caption_groups = validated_caption_groups(
+            suggestion.get("caption_groups"),
+            segments or [],
+            max_chars=11,
+        )
+        caption_group_source = (
+            "qwen_semantic" if caption_groups else "deterministic_fallback"
+        )
+        caption_emphasis = validated_caption_emphasis(
+            suggestion.get("caption_emphasis"),
+            segments or [],
+            caption_groups=caption_groups,
+        )
         raw_usage = payload.get("usage")
         usage = (
             {
@@ -929,19 +976,32 @@ class AliyunEditPlanProvider(EditPlanProvider):
             if isinstance(raw_usage, Mapping)
             else {}
         )
-        return build_safe_edit_plan(
+        plan = build_safe_edit_plan(
             spoken_ranges,
             duration_seconds,
             title_candidates=[str(item) for item in titles],
             bgm_category=bgm_category,
             bgm_energy=bgm_energy,
             bgm_keywords=bgm_keywords,
+            caption_groups=caption_groups,
+            caption_group_source=caption_group_source,
+            caption_emphasis=caption_emphasis,
             explanation=str(suggestion.get("explanation") or ""),
             enabled_steps=steps,
             provider_name="aliyun_qwen_flash",
             is_mock=False,
             usage=usage,
         )
+        if segments and not caption_groups:
+            plan = plan.model_copy(
+                update={
+                    "warnings": [
+                        *plan.warnings,
+                        "AI 语义断句未通过逐字校验，已改用安全规则断句。",
+                    ]
+                }
+            )
+        return plan
 
 
 def _rpc_percent_encode(value: object) -> str:
