@@ -183,6 +183,7 @@ class CloudBatchReviewRequest(BaseModel):
     enabled_plan_step_ids: list[str] = Field(default_factory=list, max_length=10)
     selected_title: str = Field(min_length=1, max_length=100)
     selected_bgm_id: str | None = None
+    smart_opening_enabled: bool = True
     confirmed: bool = False
 
 
@@ -625,6 +626,7 @@ def review_cloud_batch_item(
             enabled_plan_step_ids=body.enabled_plan_step_ids,
             selected_title=body.selected_title,
             selected_bgm_id=body.selected_bgm_id,
+            smart_opening_enabled=body.smart_opening_enabled,
             confirmed=body.confirmed,
         )
     except (VideoEditorWorkflowError, ValueError) as exc:

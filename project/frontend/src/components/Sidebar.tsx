@@ -37,6 +37,11 @@ const NAV_ICONS: Record<string, ReactNode> = {
   "video-editor": <RobotOutlined />,
 };
 
+const ADVANCED_TOOL_ITEMS = [
+  ...ADVANCED_NAVIGATION_ITEMS,
+  ...CORE_NAVIGATION_ITEMS.filter((item) => item.id === "publish"),
+];
+
 /** 导航分组类型 */
 interface NavGroup {
   title: string;
@@ -59,7 +64,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
   const navigate = useNavigate();
   const location = useLocation();
   const [advancedOpen, setAdvancedOpen] = useState(() =>
-    ADVANCED_NAVIGATION_ITEMS.some((item) => item.path === location.pathname)
+    ADVANCED_TOOL_ITEMS.some((item) => item.path === location.pathname)
   );
 
   /** 导航分组配置 */
@@ -67,11 +72,11 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
     () => [
       {
         title: "工作台",
-        items: CORE_NAVIGATION_ITEMS,
+        items: CORE_NAVIGATION_ITEMS.filter((item) => item.id !== "publish"),
       },
       {
         title: "高级工具",
-        items: ADVANCED_NAVIGATION_ITEMS,
+        items: ADVANCED_TOOL_ITEMS,
         collapsible: true,
       },
     ],
@@ -79,7 +84,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
   );
 
   useEffect(() => {
-    if (ADVANCED_NAVIGATION_ITEMS.some((item) => item.path === location.pathname)) {
+    if (ADVANCED_TOOL_ITEMS.some((item) => item.path === location.pathname)) {
       setAdvancedOpen(true);
     }
   }, [location.pathname]);
@@ -109,16 +114,19 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         }}
       >
         {/* Logo 区域 */}
-        <div className="vi-sidebar-header">
-          <div className="vi-logo">
-            <div className="vi-logo-icon">V</div>
-            {!collapsed && <span className="vi-logo-text">VideoInsight</span>}
-          </div>
+        <div className={`vi-sidebar-header${collapsed ? " collapsed" : ""}`}>
+          {!collapsed && (
+            <div className="vi-logo">
+              <div className="vi-logo-icon">V</div>
+              <span className="vi-logo-text">VideoInsight</span>
+            </div>
+          )}
           {/* 折叠按钮 - 仅桌面端显示 */}
           <button
             className="vi-sidebar-collapse-btn"
             onClick={() => onCollapse?.(!collapsed)}
             title={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+            aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
           >
             {collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
           </button>
@@ -149,6 +157,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
                   onClick={() => handleNavClick(item.path)}
                   disabled={item.disabled}
                   aria-current={isActive(item) ? "page" : undefined}
+                  aria-label={collapsed ? item.label : undefined}
                   title={item.disabled ? `${item.label}（暂未开放）` : collapsed ? item.label : undefined}
                 >
                   <span className="vi-nav-item-icon">{NAV_ICONS[item.id]}</span>
@@ -164,7 +173,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           ))}
         </nav>
 
-        <div className={collapsed ? "vi-sidebar-footer-collapsed" : "vi-sidebar-footer"} />
       </aside>
 
       {/* 侧边栏样式 */}
@@ -183,12 +191,17 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         }
 
         .vi-sidebar-header {
-          padding: 24px;
+          padding: 24px 18px;
           border-bottom: 1px solid var(--border-light);
           display: flex;
           align-items: center;
           justify-content: space-between;
           min-height: 72px;
+        }
+
+        .vi-sidebar-header.collapsed {
+          justify-content: center;
+          padding-inline: 0;
         }
 
         .vi-logo {
@@ -214,11 +227,8 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
 
         .vi-logo-text {
           font-size: 18px;
-          font-weight: 600;
-          background: linear-gradient(135deg, var(--primary-400), var(--primary-600));
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
+          font-weight: 700;
+          color: #f8fafc;
           white-space: nowrap;
         }
 
@@ -323,8 +333,20 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         }
 
         .vi-nav-item.active {
-          background: var(--primary-600);
+          position: relative;
+          background: rgba(255, 255, 255, 0.08);
           color: white;
+        }
+
+        .vi-nav-item.active::after {
+          content: "";
+          position: absolute;
+          top: 8px;
+          right: 0;
+          bottom: 8px;
+          width: 3px;
+          border-radius: 999px;
+          background: var(--primary-500);
         }
 
         .vi-nav-item.disabled {
@@ -339,7 +361,7 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         }
 
         [data-theme="dark"] .vi-nav-item.active {
-          background: var(--primary-500);
+          background: rgba(255, 255, 255, 0.08);
           color: white;
         }
 
@@ -366,18 +388,6 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
           font-size: 11px;
           font-weight: 400;
           color: var(--gray-500);
-        }
-
-        .vi-sidebar-footer {
-          padding: 16px;
-          border-top: 1px solid var(--border-light);
-        }
-
-        .vi-sidebar-footer-collapsed {
-          padding: 16px;
-          border-top: 1px solid var(--border-light);
-          display: flex;
-          justify-content: center;
         }
 
         .vi-upgrade-icon {

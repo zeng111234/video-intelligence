@@ -108,8 +108,8 @@ def test_preflight_is_free_persisted_and_uses_profile_price(tmp_path: Path):
     assert quote_720["provider_mode"] == "sandbox"
     assert quote_720["is_mock"] is True
     assert quote_720["ttl_seconds"] == 900
-    assert float(quote_720["estimated_total"]) == pytest.approx(0.04785)
-    assert float(quote_1080["estimated_total"]) == pytest.approx(0.08035)
+    assert float(quote_720["estimated_total"]) == pytest.approx(0.048611)
+    assert float(quote_1080["estimated_total"]) == pytest.approx(0.081869)
     assert service.repository.get_video_editor_quote(quote_720["quote_id"])
 
 
@@ -176,7 +176,7 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert created["output_resolution"] == "720x1280"
     assert created["output_fps"] == 30
     assert created["output_bitrate"] == "2.5M"
-    assert created["visual_spec"]["style_id"] == "business_talking_head_v7"
+    assert created["visual_spec"]["style_id"] == "business_talking_head_v8"
     assert created["visual_spec"]["canvas"]["pixel_aspect_ratio"] == "1:1"
     item = created["items"][0]
     assert item["status"] == "awaiting_subtitle_review"
@@ -205,7 +205,7 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert reviewed_item["subtitle_segments"][0]["emphasis_terms"] == ["演示"]
     assert reviewed_item["status"] == "configuration_required"
     assert reviewed_item["render_manifest"] == {
-        "visual_style_id": "business_talking_head_v7",
+            "visual_style_id": "business_talking_head_v8",
         "subtitle_format": "ass",
         "title_render_mode": "png_watermark",
         "title_font": "Source Han Serif CN Heavy",

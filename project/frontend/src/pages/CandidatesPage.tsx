@@ -9,7 +9,6 @@ import {
   Typography,
   Select,
   Tooltip,
-  Alert,
 } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
@@ -26,12 +25,6 @@ const PLATFORM_LABELS: Record<string, string> = {
   kuaishou: "快手",
 };
 
-const HEAT_COLORS: Record<string, string> = {
-  S: "red",
-  A: "orange",
-  B: "blue",
-};
-
 function keywordRecordLabel(value: string) {
   return value.startsWith("关键词/") ? value.slice("关键词/".length) : value;
 }
@@ -39,8 +32,9 @@ function keywordRecordLabel(value: string) {
 export default function CandidatesPage() {
   const toast = useToast();
   const navigate = useNavigate();
+  const pageSize = 10;
   const [keyword, setKeyword] = useState("");
-  const [limit, setLimit] = useState(10);
+  const [page, setPage] = useState(1);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [category, setCategory] = useState<string | undefined>();
   const [data, setData] = useState<CandidateItem[]>([]);
@@ -48,10 +42,10 @@ export default function CandidatesPage() {
   const [categoryOptions, setCategoryOptions] = useState<{ value: string; count: number }[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const doSearch = useCallback(async () => {
+  const doSearch = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
-      const resp = await searchCandidates(keyword, limit, platforms, category);
+      const resp = await searchCandidates(keyword, pageSize, platforms, category, targetPage);
       setData(resp.items);
       setTotal(resp.total);
       setCategoryOptions(
@@ -74,7 +68,7 @@ export default function CandidatesPage() {
     } finally {
       setLoading(false);
     }
-  }, [keyword, limit, platforms, category]);
+  }, [keyword, pageSize, platforms, category]);
 
   const goToTranscription = (item: CandidateItem) => {
     const params = new URLSearchParams({
@@ -88,8 +82,14 @@ export default function CandidatesPage() {
   };
 
   useEffect(() => {
-    doSearch();
+    setPage(1);
+    doSearch(1);
   }, [doSearch]);
+
+  const startSearch = () => {
+    setPage(1);
+    doSearch(1);
+  };
 
   const columns: ColumnsType<CandidateItem> = [
     {
@@ -109,19 +109,6 @@ export default function CandidatesPage() {
       width: 100,
       sorter: (a, b) => a.heat_score - b.heat_score,
       render: (v: number) => v.toFixed(1),
-    },
-    {
-      title: "热度状态",
-      dataIndex: "heat_level",
-      width: 190,
-      render: (v: string, item) => (
-        <Tooltip title={item.heat_reasons?.join("；") || "官方榜单来源与模型增长结论独立展示。"}>
-          <Space size={[2, 2]} wrap>
-            {item.official_hot && <Tag color="purple">官方榜单</Tag>}
-            <Tag color={HEAT_COLORS[v] || "default"}>模型：{v}</Tag>
-          </Space>
-        </Tooltip>
-      ),
     },
     {
       title: "时间",
@@ -168,12 +155,6 @@ export default function CandidatesPage() {
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Title level={4}>爆火视频候选检索</Typography.Title>
-      <Alert
-        type="info"
-        showIcon
-        message="这是本地候选库检索"
-        description="搜索只读取 SQLite 已入库候选，不暗示每次都会调用外部平台。候选跳转转写页后，仍需重新确认权利并上传文件或填写授权 MP4/MOV 直链；不会自动下载平台分享页。"
-      />
       <Card>
         <Space wrap>
           <Input
@@ -181,7 +162,7 @@ export default function CandidatesPage() {
             prefix={<SearchOutlined />}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            onPressEnter={doSearch}
+            onPressEnter={startSearch}
             style={{ width: 280 }}
             allowClear
           />
@@ -207,13 +188,7 @@ export default function CandidatesPage() {
               label: `${keywordRecordLabel(item.value)} (${item.count})`,
             }))}
           />
-          <Select
-            value={limit}
-            onChange={setLimit}
-            style={{ width: 100 }}
-            options={[5, 10, 20, 50].map((n) => ({ value: n, label: `${n} 条` }))}
-          />
-          <Button type="primary" onClick={doSearch} loading={loading}>
+          <Button type="primary" onClick={startSearch} loading={loading}>
             搜索
           </Button>
           <Typography.Text type="secondary">共 {total} 条结果</Typography.Text>
@@ -228,7 +203,17 @@ export default function CandidatesPage() {
             columns={columns}
             dataSource={data}
             loading={loading}
-            pagination={{ pageSize: 10, showSizeChanger: false }}
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: false,
+              showTotal: (count) => `共 ${count} 条`,
+              onChange: (nextPage) => {
+                setPage(nextPage);
+                doSearch(nextPage);
+              },
+            }}
             size="middle"
           />
         )}

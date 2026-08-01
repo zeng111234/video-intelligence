@@ -6,8 +6,9 @@ from src.adapters.licensed import LicensedProviderError
 from src.adapters.douyin_browser_search import (
     BrowserSessionStatus,
     LocalDouyinBrowserSearchProvider,
+    LocalDouyinPublicSearchProvider,
 )
-from src.models import Platform, ProviderMode
+from src.models import Platform, ProviderErrorKind, ProviderMode
 
 
 def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
@@ -127,6 +128,7 @@ def test_login_button_opens_visible_hotspot_window_even_when_session_is_running(
     ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
     monkeypatch.setattr(provider, "session_status", lambda: ready)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr("src.adapters.douyin_browser_search.restart_browser_for_login", lambda _port: True)
     monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
     monkeypatch.setattr(
         "src.adapters.douyin_browser_search.subprocess.Popen",
@@ -141,6 +143,23 @@ def test_login_button_opens_visible_hotspot_window_even_when_session_is_running(
     assert "--new-window" in launched[0]
     assert "--window-position=80,80" in launched[0]
     assert "--start-minimized" not in launched[0]
+
+
+def test_login_button_restarts_hidden_hotspot_window_for_login(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile", debug_port=29990)
+    ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
+    launched: list[list[str]] = []
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr("src.adapters.douyin_browser_search.restart_browser_for_login", lambda _port: True)
+    monkeypatch.setattr("src.adapters.douyin_browser_search.subprocess.Popen", lambda args, **kwargs: launched.append(args))
+    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
+
+    provider.open_login_browser()
+
+    assert len(launched) == 1
+    assert "--new-window" in launched[0]
 
 
 def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
@@ -639,3 +658,209 @@ def test_hotspot_search_exposes_low_incremental_items_only_when_main_list_is_emp
 
     assert page.items == []
     assert [item.metrics.plays for item in page.low_incremental_items] == [800]
+
+
+def test_automatic_start_minimizes_an_already_running_browser(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29988,
+    )
+    minimized_ports: list[int] = []
+    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.minimize_browser_window",
+        minimized_ports.append,
+    )
+
+    status = provider.start_login_browser()
+
+    assert status.ready_to_crawl is True
+    assert minimized_ports == [29988]
+
+
+def test_normal_hotspot_search_minimizes_the_dedicated_browser(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29987,
+        clock=lambda: datetime.fromisoformat("2026-08-01T12:00:00+08:00"),
+    )
+    minimized_ports: list[int] = []
+    monkeypatch.setattr(
+        provider,
+        "capabilities",
+        lambda: type("Capability", (), {"enabled": True, "max_page_size": 100})(),
+    )
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_hotspot_rows",
+        lambda keyword, *, window_hours, observed_at, target_limit: ([], []),
+    )
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.minimize_browser_window",
+        minimized_ports.append,
+    )
+
+    provider.search(
+        Platform.DOUYIN,
+        "贴标机",
+        published_after=None,
+        limit=3,
+        idempotency_key="minimize-hotspot",
+    )
+
+    assert minimized_ports == [29987]
+
+
+def test_collection_reuses_existing_douyin_tab_without_closing_it(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class ExistingPage:
+        url = "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=video"
+        closed = False
+
+        def is_closed(self):
+            return self.closed
+
+    class Context:
+        pages = [ExistingPage()]
+
+        def new_page(self):
+            pytest.fail("an existing dedicated Douyin tab should be reused")
+
+    page, created_page = provider._reuse_or_create_collection_page(
+        Context(),
+        preferred_url_fragments=("www.douyin.com/search/",),
+    )
+
+    assert page is Context.pages[0]
+    assert created_page is False
+
+
+def test_collection_never_reuses_a_login_or_oauth_tab(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class Page:
+        def __init__(self, url):
+            self.url = url
+
+        def is_closed(self):
+            return False
+
+    created_page = Page("about:blank")
+
+    class Context:
+        pages = [Page("https://open.douyin.com/platform/oauth/connect")]
+
+        def new_page(self):
+            return created_page
+
+    page, was_created = provider._reuse_or_create_collection_page(
+        Context(),
+        preferred_url_fragments=("www.douyin.com/search/",),
+    )
+
+    assert page is created_page
+    assert was_created is True
+
+
+def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gate(
+    tmp_path, monkeypatch
+):
+    observed_at = datetime.fromisoformat("2026-08-01T12:00:00+08:00")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+        clock=lambda: observed_at,
+    )
+    minimized_ports: list[int] = []
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_public_search_rows",
+        lambda keyword, *, target_limit: ([
+            {
+                "item_id": "7538955201693994321",
+                "href": "https://www.douyin.com/video/7538955201693994321",
+                "title": "贴标机常见掉标问题怎么排查",
+                "duration": 26,
+                "likes": 2,
+                "published_text": "2026-07-31",
+            },
+            {
+                "item_id": "7538955201693994322",
+                "href": "https://www.douyin.com/video/7538955201693994322",
+                "title": "贴标机使用前的三个检查点",
+                "duration": 22,
+                "published_text": "",
+            },
+            {
+                "item_id": "7538955201693994323",
+                "href": "https://www.douyin.com/video/7538955201693994323",
+                "title": "贴标机旧款操作说明",
+                "duration": 24,
+                "published_text": "2026-07-01",
+            },
+        ], []),
+    )
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.minimize_browser_window",
+        minimized_ports.append,
+    )
+
+    page = provider.search(
+        Platform.DOUYIN,
+        "贴标机",
+        published_after=datetime.fromisoformat("2026-07-28T12:00:00+08:00"),
+        limit=5,
+        idempotency_key="public-search",
+    )
+
+    assert provider.capabilities().provider_name == "douyin_public_browser_v2"
+    assert provider.capabilities().max_page_size == 30
+    assert page.provider == "douyin_public_browser_v2"
+    assert [item.platform_item_id for item in page.items] == [
+        "7538955201693994321",
+        "7538955201693994322",
+    ]
+    assert page.items[0].metrics.likes == 2
+    assert page.items[0].evidence.startswith("douyin_public_search:")
+    assert page.items[1].data_quality_warnings
+    assert "排除 1 条" in (page.payload_diagnostic or "")
+    assert minimized_ports == [29986]
+
+
+@pytest.mark.parametrize("marker", ["安全验证", "登录后即可搜索更多精彩视频"])
+def test_public_search_url_and_safety_stop_are_explicit(tmp_path, marker):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    assert provider._public_search_url("贴标机") == (
+        "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=video"
+    )
+
+    class Body:
+        def inner_text(self, *, timeout):
+            assert timeout == 3_000
+            return marker
+
+    class Page:
+        def locator(self, selector):
+            assert selector == "body"
+            return Body()
+
+    with pytest.raises(LicensedProviderError, match="登录或安全验证") as exc_info:
+        provider._raise_for_public_search_block(Page())
+
+    assert exc_info.value.kind == ProviderErrorKind.AUTHORIZATION

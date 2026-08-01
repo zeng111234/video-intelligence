@@ -36,6 +36,7 @@ from src.services.video_editor_cloud import (
     build_business_talking_head_overlay_preview,
     build_business_talking_head_title_png,
     build_safe_edit_plan,
+    build_smart_opening,
     create_cost_quote,
     get_cloud_capability,
     retime_segments_after_cuts,
@@ -103,6 +104,24 @@ def _bgm_asset() -> CloudAsset:
         provider_locator=(
             "https://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
             "video-editor-input/demo/bgm/low-volume.m4a?Signature=signed"
+        ),
+    )
+
+
+def _opening_asset() -> CloudAsset:
+    return CloudAsset(
+        provider_name="aliyun_oss",
+        bucket="private-video-bucket",
+        object_key="video-editor-input/demo/opening/number-focus.mp4",
+        uri=(
+            "oss://private-video-bucket/video-editor-input/demo/opening/"
+            "number-focus.mp4"
+        ),
+        media_type="video/mp4",
+        size_bytes=2048,
+        provider_locator=(
+            "https://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
+            "video-editor-input/demo/opening/number-focus.mp4?Signature=signed"
         ),
     )
 
@@ -755,7 +774,45 @@ def test_qwen_request_contains_only_indexed_subtitle_text_for_semantic_grouping(
     ]
     assert "caption_groups" in payload["messages"][0]["content"]
     assert "caption_emphasis" in payload["messages"][0]["content"]
+    assert "opening_style_id" in payload["messages"][0]["content"]
+    assert "suspense_reveal" in payload["messages"][0]["content"]
+    assert "story_unfold" in payload["messages"][0]["content"]
+    assert "number_focus" in payload["messages"][0]["content"]
     assert "逐字一致" in payload["messages"][0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("transcript", "title", "expected_style", "expected_sound"),
+    [
+        ("充200送30活动今天开始", "充200送30", "number_focus", "soft_chime"),
+        ("故事的序章从这里开始", "帷幕拉开", "story_unfold", "soft_page_turn"),
+        ("很多人一直忽略这个真相", "你真的看懂了吗", "suspense_reveal", "soft_whoosh"),
+    ],
+)
+def test_smart_opening_uses_only_approved_templates(
+    transcript: str,
+    title: str,
+    expected_style: str,
+    expected_sound: str,
+):
+    opening = build_smart_opening(transcript, [title])
+
+    assert opening is not None
+    assert opening.style_id == expected_style
+    assert opening.sound_effect_id == expected_sound
+    assert opening.duration_seconds == 1.4
+    assert len(opening.hook_text) <= 14
+
+
+def test_smart_opening_rejects_unapproved_preferred_style():
+    opening = build_smart_opening(
+        "这件事很多人都不知道",
+        ["真相马上揭晓"],
+        preferred_style="arbitrary_explosion_effect",
+    )
+
+    assert opening is not None
+    assert opening.style_id == "suspense_reveal"
 
 
 def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
@@ -886,6 +943,31 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
         provider.build_submit_request(_render_request(confirmed=False))
 
 
+def test_mps_request_prepends_opening_and_offsets_title_timeline():
+    provider = AliyunMPSRenderProvider(
+        _aliyun_config(),
+        transport=lambda *args: {},
+    )
+    request = _render_request().model_copy(
+        update={
+            "opening_asset": _opening_asset(),
+            "opening_duration_seconds": 1.4,
+            "title_watermark_object_key": "review/approved-title.png",
+        },
+    )
+    _, _, body = provider.build_submit_request(
+        request,
+        now=datetime(2026, 7, 28, 12, tzinfo=timezone.utc),
+        nonce="nonce-opening",
+    )
+    outputs = json.loads(parse_qs(body.decode("utf-8"))["Outputs"][0])
+
+    assert outputs[0]["OpeningList"] == [
+        {"openUrl": _opening_asset().provider_locator, "Start": "0"}
+    ]
+    assert outputs[0]["WaterMarks"][0]["Timeline"]["Start"] == "1.400"
+
+
 def test_mps_request_mixes_prepared_bgm_without_extending_video_duration():
     provider = AliyunMPSRenderProvider(
         _aliyun_config(),
@@ -946,6 +1028,18 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     assert r"\fad" not in ass
     assert r"\N" in ass
     assert r"\\N" not in ass
+
+
+def test_business_talking_head_ass_offsets_title_and_subtitles_for_opening():
+    ass = build_business_talking_head_ass(
+        [{"start": 0.2, "end": 2.2, "text": "最近广州出了一个活动"}],
+        title="活动说明",
+        output_profile="720p",
+        time_offset_seconds=1.4,
+    ).decode("utf-8-sig")
+
+    assert "Dialogue: 0,0:00:01.40,0:00:03.90,Title" in ass
+    assert "Dialogue: 0,0:00:01.60" in ass
 
 
 def test_business_talking_head_title_png_uses_brand_font_and_profile_size():

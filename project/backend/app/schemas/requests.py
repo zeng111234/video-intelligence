@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 class CandidateSearchRequest(BaseModel):
     keyword: str = Field("", max_length=200, description="搜索关键词")
-    limit: int = Field(10, ge=1, le=100, description="返回数量")
+    limit: int = Field(10, ge=1, le=100, description="每页返回数量")
+    page: int = Field(1, ge=1, description="页码")
     platforms: list[str] = Field(default_factory=list, description="平台筛选")
     category: str | None = Field(None, description="分类筛选")
 

@@ -825,13 +825,17 @@ export interface CrawlerCandidateResult {
   /** 素材是否有可核验的文本，而非只有视频标题/互动数据。 */
   spoken_material_status?: "transcript_ready" | "text_reference" | "topic_only" | string;
   spoken_material_message?: string;
-  /** 公开文字能否支撑原创口播的可解释评分。 */
+  /** 标题信息量评分；不能代替视频文案检测。 */
   spoken_seed_score?: number;
   spoken_seed_status?: "writeable" | "reference_only" | "low_information" | string;
   spoken_seed_message?: string;
-  /** 仅基于用户授权上传后的本地检测结果。 */
+  /** 本地短片段抽样或用户授权转写后的文案检测结果。 */
   audio_status?: "unknown" | "checking" | "speech_detected" | "no_clear_speech" | "no_audio" | "check_failed" | string;
   audio_message?: string;
+  /** 本次文案池中的展示位置；旧批次没有该字段时仍按原候选榜展示。 */
+  copy_pool_status?: "primary" | "reserve" | "excluded";
+  /** 未进入文案池时的简短原因，不代表原视频已被转写。 */
+  copy_rejection_reason?: string | null;
   /** 工作台本次选择层级；仅用于区分优先素材和候补参考。 */
   selection_tier?: "priority" | "reserve";
   /** 分享数（供应商未返回时为 null，前端显示「未返回」） */
@@ -976,6 +980,20 @@ export interface CrawlerBatchResponse {
   tracking_status?: "not_started" | "scheduled" | "complete" | "cancelled" | "partial" | string;
   next_tracking_at?: string | null;
   crawl_safety?: CrawlerSafetyStatus | null;
+  /** 已检测到可识别文案的候选数，不等同于已提取转写。 */
+  copy_detected_count?: number;
+  /** 优先展示的检测到文案候选数。 */
+  copy_primary_count?: number;
+  /** 备用的检测到文案候选数。 */
+  copy_reserve_count?: number;
+  /** 本批实际尝试文案检测的候选数。 */
+  copy_probe_attempt_count?: number;
+  /** 仍可用较长窗口复查的旧版未识别候选数。 */
+  copy_probe_recheckable_count?: number;
+  /** 为补足文案候选已执行的搜索词次数。 */
+  copy_queries_executed?: number;
+  /** 所有预设补充搜索词都已执行，仍可能不足目标数。 */
+  copy_matrix_exhausted?: boolean;
 }
 
 export interface CrawlerBatchListResponse {

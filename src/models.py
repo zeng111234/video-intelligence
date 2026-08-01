@@ -337,6 +337,16 @@ class VideoCandidate(BaseModel):
     heat: HeatResult
 
 
+class CandidateCopyProbe(BaseModel):
+    """Ephemeral three-second ASR result; the recognised text is never stored."""
+
+    candidate_id: str
+    status: str
+    message: str
+    checked_at: datetime
+    version: str = "copy_probe_v1"
+
+
 class HotWordRecord(BaseModel):
     """官方实时热点词持久化记录（供前端搜索建议读取）。"""
 
@@ -703,6 +713,11 @@ class SearchBatch(BaseModel):
         ]
     )
     platform_run_ids: list[str] = Field(default_factory=list)
+    # 文案质量补检的搜索轨迹。保存在批次 JSON 中，历史批次缺省时仍可读取，
+    # 不增加数据库表，也不会把识别出的文字保存下来。
+    copy_search_queries: list[str] = Field(default_factory=list)
+    copy_related_terms: list[str] = Field(default_factory=list)
+    copy_matrix_exhausted: bool = False
     force_refresh: bool = False
     # 只有用户在批次详情中明确确认后，才允许定时任务发起后续付费采样。
     tracking_authorized: bool = False

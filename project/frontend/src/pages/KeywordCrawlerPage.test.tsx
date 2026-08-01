@@ -13,6 +13,7 @@ import {
   getCrawlerCapabilities,
   getCrawlerHotWords,
   listCrawlerBatches,
+  recheckCrawlerBatchLegacyNoText,
   startCrawlerBrowserDiscovery,
 } from "../api/client";
 import type {
@@ -30,6 +31,7 @@ vi.mock("../api/client", async () => {
     getCrawlerCapabilities: vi.fn(),
     getCrawlerHotWords: vi.fn(),
     listCrawlerBatches: vi.fn(),
+    recheckCrawlerBatchLegacyNoText: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
   };
 });
@@ -210,6 +212,66 @@ const freeMultiPlatformBatch: CrawlerBatchResponse = {
   ],
 };
 
+const copyPoolBatch: CrawlerBatchResponse = {
+  ...freeMultiPlatformBatch,
+  copy_detected_count: 2,
+  copy_primary_count: 1,
+  copy_reserve_count: 1,
+  copy_probe_attempt_count: 5,
+  copy_queries_executed: 2,
+  copy_matrix_exhausted: true,
+  platform_runs: [
+    {
+      ...freeMultiPlatformBatch.platform_runs[0],
+      candidates: [
+        {
+          ...candidate,
+          video_id: "candidate-primary",
+          title: "主结果：贴标机使用讲解",
+          audio_status: "speech_detected",
+          audio_message: "抽样检测到可识别文案；未保存文字。",
+          copy_pool_status: "primary",
+        },
+        {
+          ...candidate,
+          video_id: "candidate-reserve",
+          title: "备用结果：贴标机常见问题",
+          audio_status: "speech_detected",
+          audio_message: "抽样检测到可识别文案；未保存文字。",
+          copy_pool_status: "reserve",
+        },
+        {
+          ...candidate,
+          video_id: "candidate-failed",
+          title: "检测失败候选",
+          audio_status: "check_failed",
+          audio_message: "无法完成本次文案检测。",
+          copy_pool_status: "excluded",
+          copy_rejection_reason: "本次检测失败，未作为文案素材推荐。",
+        },
+      ],
+    },
+    freeMultiPlatformBatch.platform_runs[1],
+  ],
+};
+
+const publicSearchCopyPoolBatch: CrawlerBatchResponse = {
+  ...copyPoolBatch,
+  platform_runs: [
+    {
+      ...copyPoolBatch.platform_runs[0],
+      provider: "douyin_public_browser_v2",
+      candidates: [
+        {
+          ...copyPoolBatch.platform_runs[0].candidates[0],
+          evidence: "douyin_public_search:关键词=贴标机;来源=browser_rendered;发布时间=3天前;点赞数=120;时长秒=48",
+          duration_seconds: 48,
+        },
+      ],
+    },
+  ],
+};
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
@@ -240,6 +302,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
       })),
     });
     vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [batch], total: 1 });
+    vi.mocked(recheckCrawlerBatchLegacyNoText).mockResolvedValue(copyPoolBatch);
     vi.mocked(getCrawlerBatch).mockResolvedValue(batchWithCandidate);
     vi.mocked(getCrawlerCapabilities).mockResolvedValue(capabilities);
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
@@ -270,23 +333,49 @@ describe("KeywordCrawlerPage performance behavior", () => {
     renderPage();
 
     expect(await screen.findByText(/输入一个关键词，系统会自动打开热点宝、快手和B站/)).toBeTruthy();
-    expect(screen.getByText(/点“找素材”后浏览器会自动搜索热点宝、快手和B站；小红书不会被打开、浏览或抓取/)).toBeTruthy();
-    expect(screen.getByText(/快手保留近30天/)).toBeTruthy();
-    expect(screen.getByText(/B站选择“最多播放、最近一周”/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /账号连接/ })).toBeTruthy();
+    expect(screen.getByText(/点“找素材”后浏览器会自动搜索热点宝、快手和B站；文案不足时会顺序补查抖音官网公开搜索/)).toBeTruthy();
+    expect(screen.getByText(/抖音要求登录或验证时会立即停下并提示/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /浏览器状态/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "连接小红书" })).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
     expect(screen.getByText(/“获客”范围太宽，请补充产品或行业/)).toBeTruthy();
     expect((screen.getByRole("button", { name: "找素材" }) as HTMLButtonElement).disabled).toBe(true);
 
-    fireEvent.click(screen.getByRole("button", { name: /账号连接/ }));
+    fireEvent.click(screen.getByRole("button", { name: /浏览器状态/ }));
 
     const drawer = await screen.findByRole("dialog");
-    expect(within(drawer).getByText("账号连接")).toBeTruthy();
+    expect(within(drawer).getByText("素材浏览器")).toBeTruthy();
     expect(within(drawer).queryByRole("button", { name: "连接小红书" })).toBeNull();
     fireEvent.click(within(drawer).getByRole("button", { name: "连接快手" }));
     await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("kuaishou"));
+  });
+
+  it("does not present a ready Hotspot browser as a logged-in Douyin public search", async () => {
+    vi.mocked(getCrawlerCapabilities).mockResolvedValue({
+      ...capabilities,
+      hotspot_browser: {
+        platform: "douyin",
+        platform_label: "抖音",
+        enabled: true,
+        running: true,
+        login_required: false,
+        ready_to_crawl: true,
+        phase: "ready",
+        browser_channel: "chrome",
+        provider_name: "douyin_local_browser",
+        message: "热点宝已就绪。",
+        missing_configuration: [],
+      },
+    } as CrawlerCapabilitiesResponse);
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /浏览器状态/ }));
+
+    const drawer = await screen.findByRole("dialog");
+    expect(within(drawer).getByText("热点宝就绪")).toBeTruthy();
+    expect(within(drawer).getByText(/抖音官网补充搜索会在文案不足时再核验登录/)).toBeTruthy();
+    expect(within(drawer).queryByText("已可找素材。")).toBeNull();
   });
 
   it("removes a batch immediately without triggering a full page reload", async () => {
@@ -320,8 +409,8 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText(/仅有标题和互动数据，只能用于选题参考/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "送入智能创作" })).toBeNull();
     expect(screen.getByRole("button", { name: /生成原创口播/ })).toBeTruthy();
-    expect(screen.getByText(/具备口播信息量/)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "上传视频检测声音" })).toBeTruthy();
+    expect(screen.getByText(/标题信息较完整/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "上传视频转写" })).toBeTruthy();
   });
 
   it("merges platform candidates and explains discovered rows that were not usable", async () => {
@@ -337,5 +426,65 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText(/B站发现 39 条页面结果/)).toBeTruthy();
     expect(screen.queryByText("主榜候选")).toBeNull();
     expect(screen.queryByRole("button", { name: "付费自动解析" })).toBeNull();
+  });
+
+  it("prioritizes detected-copy candidates and keeps rejected candidates collapsed", async () => {
+    vi.mocked(getCrawlerBatch).mockResolvedValue(copyPoolBatch);
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    expect(await screen.findByText("检测到文案候选（2）")).toBeTruthy();
+    expect(screen.getByText("优先素材（1）")).toBeTruthy();
+    expect(screen.getByText("备用素材（1）")).toBeTruthy();
+    expect(screen.getByText(/已检测到 2 条可识别文案/)).toBeTruthy();
+    expect(screen.getByText(/检测以开头短片段为准，新检测最多前10秒，不会提取或保存原视频文字/)).toBeTruthy();
+    expect(screen.getByText("其余候选（1）")).toBeTruthy();
+    expect(screen.queryByText("检测失败候选")).toBeNull();
+
+    fireEvent.click(screen.getByText("其余候选（1）"));
+
+    expect(await screen.findByText("检测失败候选")).toBeTruthy();
+    expect(screen.getByText("检测失败")).toBeTruthy();
+    expect(screen.getByText(/未入选原因：本次检测失败/)).toBeTruthy();
+  });
+
+  it("rechecks only legacy short-window misses without launching another search", async () => {
+    const legacyBatch = {
+      ...copyPoolBatch,
+      copy_probe_recheckable_count: 1,
+    };
+    vi.mocked(getCrawlerBatch).mockResolvedValue(legacyBatch);
+    vi.mocked(recheckCrawlerBatchLegacyNoText).mockResolvedValue({
+      ...legacyBatch,
+      copy_probe_recheckable_count: 0,
+    });
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "复查未识别候选（前10秒）" }),
+    );
+
+    await waitFor(() => {
+      expect(recheckCrawlerBatchLegacyNoText).toHaveBeenCalledWith(
+        legacyBatch.batch_id,
+      );
+    });
+  });
+
+  it("marks direct Douyin public-search candidates separately from Hotspot results", async () => {
+    vi.mocked(getCrawlerBatch).mockResolvedValue(publicSearchCopyPoolBatch);
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    expect(await screen.findByText("抖音官网搜索")).toBeTruthy();
+    expect(screen.queryByText("浏览器爆款榜")).toBeNull();
+    expect(screen.getByText(/时长：48 秒/)).toBeTruthy();
+    expect(screen.getByText(/目标是8条优先素材和4条备用/)).toBeTruthy();
   });
 });

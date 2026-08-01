@@ -26,6 +26,10 @@ from urllib.request import urlopen
 
 from pydantic import HttpUrl
 
+from src.adapters.browser_window import (
+    minimize_browser_window,
+    restart_browser_for_login,
+)
 from src.adapters.douyin_browser_search import BrowserSessionStatus
 from src.adapters.licensed import LicensedProviderError
 from src.models import (
@@ -235,7 +239,10 @@ class LocalPlatformBrowserSearchProvider:
 
     def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
+        if status.running and visible:
+            restart_browser_for_login(self.debug_port)
         if status.running and not visible:
+            minimize_browser_window(self.debug_port)
             return status
         capability = self.capabilities()
         if not capability.enabled:
@@ -272,10 +279,17 @@ class LocalPlatformBrowserSearchProvider:
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        if not visible:
+            # Chromium can restore its window while opening the initial tab,
+            # even when --start-minimized is present.  Keep routine discovery
+            # in the background without touching an explicit login window.
+            minimize_browser_window(self.debug_port)
         for delay_seconds in (0.5, 1.0, 1.5):
             time.sleep(delay_seconds)
             status = self.session_status()
             if status.running:
+                if not visible:
+                    minimize_browser_window(self.debug_port)
                 return status
         return BrowserSessionStatus(
             True,
@@ -370,8 +384,7 @@ class LocalPlatformBrowserSearchProvider:
         with sync_playwright() as playwright:
             try:
                 browser = playwright.chromium.connect_over_cdp(endpoint)
-                context = browser.contexts[0]
-                page = context.new_page()
+                page, owns_page = self._acquire_collection_page(browser)
             except PlaywrightError as exc:
                 raise LicensedProviderError(
                     f"{self.spec.label}浏览器连接失败；请重新打开专用浏览器。",
@@ -393,12 +406,14 @@ class LocalPlatformBrowserSearchProvider:
 
             page.on("response", capture_response)
             try:
+                minimize_browser_window(self.debug_port)
                 page.set_default_timeout(int(self.timeout_seconds * 1000))
                 # Keep the human-entered keyword intact here.  Playwright will
                 # encode it once; pre-encoding makes Xiaohongshu encode the
                 # percent signs again and search for the wrong literal text.
                 url = self.spec.search_url.format(keyword=keyword.strip())
                 response = page.goto(url, wait_until="domcontentloaded")
+                minimize_browser_window(self.debug_port)
                 if response is not None and response.status in {403, 412, 429}:
                     raise LicensedProviderError(
                         f"{self.spec.label}返回 {response.status}，已停止搜索。",
@@ -431,12 +446,29 @@ class LocalPlatformBrowserSearchProvider:
                 if not network_rows and not rendered_rows:
                     self._raise_for_login_gate(page)
             finally:
-                page.close()
+                page.remove_listener("response", capture_response)
+                if owns_page:
+                    page.close()
+                minimize_browser_window(self.debug_port)
 
         merged = dict(rendered_rows)
         for item_id, row in network_rows.items():
             merged[item_id] = {**merged.get(item_id, {}), **row}
         return list(merged.values())
+
+    def _acquire_collection_page(self, browser) -> tuple[Any, bool]:
+        """Prefer an existing page for this platform; own only a fallback page."""
+        for context in browser.contexts:
+            for page in context.pages:
+                if self.spec.page_host in str(page.url or "").casefold():
+                    return page, False
+        if not browser.contexts:
+            raise LicensedProviderError(
+                f"{self.spec.label}浏览器没有可用会话；请重新打开专用浏览器。",
+                kind=ProviderErrorKind.CONNECTION,
+                retryable=False,
+            )
+        return browser.contexts[0].new_page(), True
 
     def _apply_platform_filters(self, page) -> None:
         """Use the visible platform controls before reading result metadata."""

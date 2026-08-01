@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
     CandidateMatch,
+    CandidateCopyProbe,
     DiscoveryResult,
     HotWordRecord,
     KeywordTrendResult,
@@ -43,6 +44,7 @@ class MockRepository:
             for item in initial_candidates
         }
         self._reviews: dict[str, RelevanceReview] = {}
+        self._candidate_copy_probes: dict[str, CandidateCopyProbe] = {}
         self._sync_reports: dict[str, SyncReport] = {}
         self._discovery_results: dict[str, DiscoveryResult] = {}
         self._candidate_matches: dict[tuple[str, str], CandidateMatch] = {}
@@ -110,6 +112,12 @@ class MockRepository:
 
     def get_candidate(self, video_id: str) -> VideoCandidate | None:
         return self._candidates.get(video_id)
+
+    def save_candidate_copy_probe(self, probe: CandidateCopyProbe) -> None:
+        self._candidate_copy_probes[probe.candidate_id] = probe
+
+    def get_candidate_copy_probe(self, candidate_id: str) -> CandidateCopyProbe | None:
+        return self._candidate_copy_probes.get(candidate_id)
 
     def save_candidate(self, candidate: VideoCandidate) -> str:
         self._candidates[candidate.video_id] = candidate

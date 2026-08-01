@@ -22,7 +22,10 @@ from project.backend.app.core.deps import (
     get_bilibili_browser_provider,
     get_bilibili_browser_search_service,
     get_commercial_search_service,
+    get_candidate_copy_probe_service,
     get_discovery_search_provider,
+    get_douyin_public_browser_provider,
+    get_douyin_public_search_service,
     get_hotspot_browser_provider,
     get_hotspot_search_service,
     get_kuaishou_browser_provider,
@@ -45,6 +48,7 @@ from project.backend.app.core.config import ASRMode
 from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import (
     CopySource,
+    CandidateCopyProbe,
     DataSource,
     NormalizedCandidate,
     Platform,
@@ -61,6 +65,7 @@ from src.models import (
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.official import OfficialAdapterDisabledError, OfficialApiError
 from src.services.doubao_browser import DoubaoBrowserAutomationError
+from src.services.candidate_copy_probe import COPY_PROBE_VERSION
 from src.services.hot_pool import _candidate_hot_words
 from src.services.media_resolution import MediaResolutionError
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
@@ -96,8 +101,28 @@ FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS = 0
 XIAOHONGSHU_PUBLISHED_WINDOW_DAYS = 7
 KUAISHOU_PUBLISHED_WINDOW_DAYS = 30
 BILIBILI_PUBLISHED_WINDOW_DAYS = 7
+# 当热点宝的候选不足时，抖音官网搜索只取近一周、最多 20 条可见卡片；
+# 它和热点宝共用浏览器，会顺序执行，不额外开浏览器或并发刷页面。
+DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS = 7
+DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 20
 HOTSPOT_CACHE_TTL_MINUTES = 60
 HOTSPOT_COOLDOWN_MIN_SECONDS = 60 * 60
+# 质量池只收“真实检测到文案”的候选：8 条主素材 + 4 条备用。
+# 探测仅判断每条候选开头的前 10 秒，单条下载上限由 CandidateCopyProbeService 固定为 4 MiB。
+COPY_PROBE_MAX_ATTEMPTS = 36
+COPY_PROBE_LEGACY_VERSION = "copy_probe_v1"
+COPY_PROBE_SUPPORTED_VERSIONS = frozenset(
+    {COPY_PROBE_LEGACY_VERSION, COPY_PROBE_VERSION}
+)
+COPY_POOL_PRIMARY_TARGET = 8
+COPY_POOL_RESERVE_TARGET = 4
+COPY_PROBE_TARGET_DETECTIONS = COPY_POOL_PRIMARY_TARGET + COPY_POOL_RESERVE_TARGET
+COPY_SEARCH_MATRIX_LIMIT = 8
+COPY_SEARCH_MAX_VARIANTS_PER_PLATFORM = 3
+COPY_SEARCH_SUFFIXES = ("讲解", "怎么选", "使用方法", "常见问题", "应用案例")
+COPY_REFERENCE_LOW_HEAT_WARNING = (
+    "互动数据不足：已检测到文案，仅作内容参考，不代表热门素材。"
+)
 HOTSPOT_COOLDOWN_MAX_SECONDS = 60 * 60
 HOTSPOT_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 HOTSPOT_LEASE_SECONDS = 10 * 60
@@ -385,9 +410,11 @@ class CrawlerCandidateResult(BaseModel):
     spoken_material_message: str = "仅有标题和互动数据，只能用于选题参考。"
     spoken_seed_score: int = 0
     spoken_seed_status: str = "low_information"
-    spoken_seed_message: str = "公开文字不足以支撑原创口播。"
+    spoken_seed_message: str = "公开文字不足以支撑原创文案。"
     audio_status: str = "unknown"
-    audio_message: str = "尚未检测声音；需上传已获授权的本地视频。"
+    audio_message: str = "尚未检测文案。"
+    copy_pool_status: Literal["primary", "reserve", "excluded"] | None = None
+    copy_rejection_reason: str | None = None
     share_count: int | None = None
     collect_count: int | None = None
     relevance_basis: str | None = None
@@ -531,7 +558,9 @@ class CrawlerPlatformRunResponse(BaseModel):
     finished_at: datetime | None = None
     candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
     # 仅在热点宝主榜为空时返回：严格相关但新增播放量不超过 1,000 的参考视频。
-    low_incremental_candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
+    low_incremental_candidates: list[CrawlerCandidateResult] = Field(
+        default_factory=list
+    )
 
 
 class CrawlerBatchResponse(BaseModel):
@@ -562,6 +591,13 @@ class CrawlerBatchResponse(BaseModel):
     tracking_status: str = "not_started"
     next_tracking_at: datetime | None = None
     crawl_safety: CrawlerSafetyStatus | None = None
+    copy_detected_count: int = 0
+    copy_primary_count: int = 0
+    copy_reserve_count: int = 0
+    copy_probe_attempt_count: int = 0
+    copy_probe_recheckable_count: int = 0
+    copy_queries_executed: int = 0
+    copy_matrix_exhausted: bool = False
 
 
 class CrawlerTrackingResponse(BaseModel):
@@ -653,9 +689,7 @@ def _capability_payload(
     capability = provider.capabilities()
     active_platforms = list(service.active_platforms)
     paused_platforms = [
-        item
-        for item in capability.supported_platforms
-        if item not in active_platforms
+        item for item in capability.supported_platforms if item not in active_platforms
     ]
     # Capability discovery must not call a remote supplier.  This page no
     # longer exposes paid fallback controls, and a usage probe can otherwise
@@ -674,9 +708,13 @@ def _capability_payload(
             _platform_label(item.value) for item in capability.supported_platforms
         ],
         active_platforms=[item.value for item in active_platforms],
-        active_platform_labels=[_platform_label(item.value) for item in active_platforms],
+        active_platform_labels=[
+            _platform_label(item.value) for item in active_platforms
+        ],
         paused_platforms=[item.value for item in paused_platforms],
-        paused_platform_labels=[_platform_label(item.value) for item in paused_platforms],
+        paused_platform_labels=[
+            _platform_label(item.value) for item in paused_platforms
+        ],
         missing_configuration=capability.missing_configuration,
         permission_status=capability.permission_status,
         monthly_query_count=service.monthly_query_count(),
@@ -810,7 +848,9 @@ def start_browser_discovery_login(
         enabled=status.enabled,
         running=status.running,
         login_required=status.login_required,
-        missing_configuration=getattr(provider.capabilities(), "missing_configuration", []),
+        missing_configuration=getattr(
+            provider.capabilities(), "missing_configuration", []
+        ),
         browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=status.ready_to_crawl,
         phase=status.phase,
@@ -927,18 +967,22 @@ def import_xiaohongshu_manual_materials(
         reference = f"{item.source_url.strip()}|{item.title.strip()}"
         item_id = f"manual-{hashlib.sha256(reference.encode('utf-8')).hexdigest()[:16]}"
         try:
-            pages.append(NormalizedCandidate(
-                platform_item_id=item_id,
-                title=item.title,
-                author_id="",
-                author_name=item.author_name or "人工观察",
-                platform=Platform.XIAOHONGSHU,
-                published_at=observed_at,
-                source_url=item.source_url,
-                source_type=DataSource.MANUAL,
-                metrics=VideoMetricSnapshot(item_id=item_id, sampled_at=observed_at, confidence=0.7),
-                evidence=f"人工素材箱；操作者观察时间={observed_at.isoformat()}；可见文案={item.visible_copy.strip()}",
-            ))
+            pages.append(
+                NormalizedCandidate(
+                    platform_item_id=item_id,
+                    title=item.title,
+                    author_id="",
+                    author_name=item.author_name or "人工观察",
+                    platform=Platform.XIAOHONGSHU,
+                    published_at=observed_at,
+                    source_url=item.source_url,
+                    source_type=DataSource.MANUAL,
+                    metrics=VideoMetricSnapshot(
+                        item_id=item_id, sampled_at=observed_at, confidence=0.7
+                    ),
+                    evidence=f"人工素材箱；操作者观察时间={observed_at.isoformat()}；可见文案={item.visible_copy.strip()}",
+                )
+            )
         except Exception as exc:
             errors.append(f"第{index}条：{exc}")
     report = source_service.import_page(SourcePage(items=pages))
@@ -1173,7 +1217,9 @@ def preview_crawler_batch(
         cache_ttl_minutes=CACHE_TTL_MINUTES,
         platforms=platform_items,
         estimated_total_cost_cny=estimated_total_cost,
-        monitoring_policy=("adaptive_three_sample_v1" if body.track_trend else "manual_tracking_v1"),
+        monitoring_policy=(
+            "adaptive_three_sample_v1" if body.track_trend else "manual_tracking_v1"
+        ),
         sampling_offsets_hours=[0, 2] if body.track_trend else [0],
         max_api_calls_per_platform=3 if body.track_trend else 1,
         trend_tracking_enabled=body.track_trend,
@@ -1282,7 +1328,9 @@ def _hotspot_rolling_usage(state, now: datetime) -> tuple[int, datetime | None]:
     return state.real_runs_in_window, window_ends_at
 
 
-def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) -> CrawlerSafetyStatus:
+def _hotspot_safety_status(
+    body: CrawlerSearchRequest, hotspot_service, repo
+) -> CrawlerSafetyStatus:
     """Report cache/cooldown state without opening the browser or changing it."""
     now = datetime.now().astimezone()
     cache_hit = False
@@ -1322,10 +1370,18 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
             state="safety_pause",
             cooldown_remaining_seconds=remaining,
             next_available_at=state.blocked_until,
-            message=(state.blocked_reason or "热点宝出现安全验证或访问频繁提示，已暂停真实采集。"),
+            message=(
+                state.blocked_reason
+                or "热点宝出现安全验证或访问频繁提示，已暂停真实采集。"
+            ),
             **common,
         )
-    if state and state.active_run_id and state.lease_expires_at and state.lease_expires_at > now:
+    if (
+        state
+        and state.active_run_id
+        and state.lease_expires_at
+        and state.lease_expires_at > now
+    ):
         remaining = max(1, int((state.lease_expires_at - now).total_seconds()))
         return CrawlerSafetyStatus(
             state="running",
@@ -1335,7 +1391,9 @@ def _hotspot_safety_status(body: CrawlerSearchRequest, hotspot_service, repo) ->
             **common,
         )
     if real_runs >= HOTSPOT_MAX_REAL_RUNS_PER_WINDOW:
-        remaining = max(1, int((window_ends_at - now).total_seconds())) if window_ends_at else 1
+        remaining = (
+            max(1, int((window_ends_at - now).total_seconds())) if window_ends_at else 1
+        )
         return CrawlerSafetyStatus(
             state="daily_limit",
             cooldown_remaining_seconds=remaining,
@@ -1373,7 +1431,9 @@ def _hotspot_safety_exception(status: CrawlerSafetyStatus) -> HTTPException:
             "code": f"hotspot_{status.state}",
             "message": status.message,
             "retry_after_seconds": retry_after,
-            "next_available_at": status.next_available_at.isoformat() if status.next_available_at else None,
+            "next_available_at": status.next_available_at.isoformat()
+            if status.next_available_at
+            else None,
         },
         headers={"Retry-After": str(retry_after)},
     )
@@ -1403,10 +1463,16 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
             state="safety_pause",
             cooldown_remaining_seconds=remaining,
             next_available_at=state.blocked_until,
-            message=state.blocked_reason or f"{_platform_label(platform.value)}已暂停真实采集。",
+            message=state.blocked_reason
+            or f"{_platform_label(platform.value)}已暂停真实采集。",
             **common,
         )
-    if state and state.active_run_id and state.lease_expires_at and state.lease_expires_at > now:
+    if (
+        state
+        and state.active_run_id
+        and state.lease_expires_at
+        and state.lease_expires_at > now
+    ):
         remaining = max(1, int((state.lease_expires_at - now).total_seconds()))
         return CrawlerSafetyStatus(
             state="running",
@@ -1416,7 +1482,9 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
             **common,
         )
     if real_runs >= BROWSER_MAX_REAL_RUNS_PER_WINDOW:
-        remaining = max(1, int((window_ends_at - now).total_seconds())) if window_ends_at else 1
+        remaining = (
+            max(1, int((window_ends_at - now).total_seconds())) if window_ends_at else 1
+        )
         return CrawlerSafetyStatus(
             state="daily_limit",
             cooldown_remaining_seconds=remaining,
@@ -1444,7 +1512,17 @@ def _browser_safety_event(error: str | None) -> bool:
     text = str(error or "")
     return any(
         marker in text
-        for marker in ("安全验证", "验证码", "访问频繁", "操作频繁", "请求过于频繁", "账号异常", "返回 403", "返回 412", "返回 429")
+        for marker in (
+            "安全验证",
+            "验证码",
+            "访问频繁",
+            "操作频繁",
+            "请求过于频繁",
+            "账号异常",
+            "返回 403",
+            "返回 412",
+            "返回 429",
+        )
     )
 
 
@@ -1464,20 +1542,16 @@ def _preview_free_multi_platform_batch(
     hotspot_capability = hotspot_provider.capabilities()
     hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
     hotspot_ready = bool(
-        hotspot_capability.enabled
-        and hotspot_status
-        and hotspot_status.ready_to_crawl
+        hotspot_capability.enabled and hotspot_status and hotspot_status.ready_to_crawl
     )
     crawl_safety = (
-        _hotspot_safety_status(body, hotspot_service, repo)
-        if hotspot_ready
-        else None
+        _hotspot_safety_status(body, hotspot_service, repo) if hotspot_ready else None
     )
     hotspot_blocked = bool(
         crawl_safety
-        and crawl_safety.state
-        in {"safety_pause", "cooldown", "running", "daily_limit"}
+        and crawl_safety.state in {"safety_pause", "cooldown", "running", "daily_limit"}
     )
+
     def browser_preview(
         service,
         provider,
@@ -1486,9 +1560,7 @@ def _preview_free_multi_platform_batch(
     ):
         status = getattr(provider, "session_status", lambda: None)()
         ready = bool(
-            provider.capabilities().enabled
-            and status
-            and status.ready_to_crawl
+            provider.capabilities().enabled and status and status.ready_to_crawl
         )
         preview = service.preview(
             keyword=body.keyword,
@@ -1526,7 +1598,9 @@ def _preview_free_multi_platform_batch(
                 if hotspot_blocked and crawl_safety
                 else None
                 if hotspot_ready
-                else (hotspot_status.message if hotspot_status else "抖音浏览器未连接。")
+                else (
+                    hotspot_status.message if hotspot_status else "抖音浏览器未连接。"
+                )
             ),
         ),
         CrawlerPlatformPreview(
@@ -1616,6 +1690,317 @@ def _start_browser_for_search(provider):
     return start()
 
 
+def _copy_search_matrix(keyword: str, related_terms: list[str]) -> list[str]:
+    """Build bounded intent variants without widening into unrelated topics."""
+    base = keyword.strip()
+    queries: list[str] = []
+    seen: set[str] = set()
+    for value in (
+        base,
+        *_related_terms(related_terms),
+        *(f"{base}{suffix}" for suffix in COPY_SEARCH_SUFFIXES),
+    ):
+        query = str(value or "").strip()
+        normalized = normalized_keyword_text(query)
+        if not normalized or len(query) > 50 or normalized in seen:
+            continue
+        seen.add(normalized)
+        queries.append(query)
+        if len(queries) >= COPY_SEARCH_MATRIX_LIMIT:
+            break
+    return queries
+
+
+def _copy_match_is_relevant(batch: SearchBatch, match, candidate) -> bool:
+    """Keep an expanded query's own relevance evidence instead of dropping it by the base word."""
+    evidence = match.evidence or candidate.evidence
+    matched_query = str(getattr(match, "keyword", "") or batch.keyword).strip()
+    return item_matches_keyword(
+        title=candidate.title,
+        keyword=batch.keyword,
+        evidence=evidence,
+    ) or item_matches_keyword(
+        title=candidate.title,
+        keyword=matched_query,
+        evidence=evidence,
+    )
+
+
+def _is_direct_public_douyin_copy_reference(match, candidate) -> bool:
+    """Allow only a narrow, ASR-gated public-search path below the hot floor.
+
+    The title/hashtag match is still only a discovery hint.  Such a candidate
+    cannot become visible or count toward the copy pool until the separate
+    local copy probe detects speech.
+    """
+    evidence = str(getattr(match, "evidence", None) or candidate.evidence or "")
+    if (
+        candidate.platform != Platform.DOUYIN
+        or str(getattr(match, "provider_name", "")) != "douyin_public_browser_v2"
+        or not evidence.startswith("douyin_public_search:")
+        or candidate.source_url is None
+    ):
+        return False
+    seed = _spoken_seed_quality(
+        title=candidate.title,
+        keyword=str(getattr(match, "keyword", "") or candidate.title),
+        evidence=evidence,
+    )
+    return seed["status"] == "writeable"
+
+
+def _is_copy_probe_eligible(match, candidate) -> bool:
+    """Keep the hot main board strict while letting one verified content lane probe."""
+    return _passes_main_board_heat_floor(
+        candidate
+    ) or _is_direct_public_douyin_copy_reference(match, candidate)
+
+
+def _has_detected_copy_probe(repo, candidate_id: str) -> bool:
+    probe = repo.get_candidate_copy_probe(candidate_id)
+    return _is_detected_copy_probe(probe)
+
+
+def _is_supported_copy_probe(probe: CandidateCopyProbe | None) -> bool:
+    return bool(probe is not None and probe.version in COPY_PROBE_SUPPORTED_VERSIONS)
+
+
+def _is_detected_copy_probe(probe: CandidateCopyProbe | None) -> bool:
+    return bool(_is_supported_copy_probe(probe) and probe.status == "detected")
+
+
+def _should_widen_legacy_no_text_probe(probe: CandidateCopyProbe | None) -> bool:
+    """Recheck only the old three-second miss once; detected results stay reused."""
+    return bool(
+        probe is not None
+        and probe.version == COPY_PROBE_LEGACY_VERSION
+        and probe.status == "no_text"
+    )
+
+
+def _has_legacy_no_text_probe(batch: SearchBatch, repo) -> bool:
+    """Keep an old batch's wider audio recheck free of additional page searches."""
+    return any(
+        _should_widen_legacy_no_text_probe(
+            repo.get_candidate_copy_probe(candidate.video_id)
+        )
+        for _, candidate in _copy_probe_candidates(batch, repo)
+    )
+
+
+def _recheck_legacy_no_text_probes(
+    batch: SearchBatch,
+    repo,
+    service,
+) -> int:
+    """Widen only saved three-second misses; this path never searches pages."""
+    attempts = 0
+    blocked_platforms: set[Platform] = set()
+    for _, candidate in _copy_probe_candidates(batch, repo):
+        if (
+            attempts >= COPY_PROBE_MAX_ATTEMPTS
+            or candidate.platform in blocked_platforms
+        ):
+            break
+        existing = repo.get_candidate_copy_probe(candidate.video_id)
+        if not _should_widen_legacy_no_text_probe(existing):
+            continue
+        attempts += 1
+        probe = service.probe(candidate)
+        repo.save_candidate_copy_probe(probe)
+        if probe.status in {"failed", "unsupported"} and _browser_safety_event(
+            probe.message
+        ):
+            blocked_platforms.add(candidate.platform)
+    return attempts
+
+
+def _copy_probe_candidates(
+    batch: SearchBatch,
+    repo,
+    *,
+    blocked_platforms: set[Platform] | None = None,
+) -> list[tuple[Any, Any]]:
+    """Return a de-duplicated global queue; title heuristics only control probe order."""
+    blocked = blocked_platforms or set()
+    best: dict[str, tuple[tuple[Any, ...], Any, Any]] = {}
+    for run in repo.list_platform_search_runs(batch.batch_id):
+        if run.platform == Platform.XIAOHONGSHU or run.platform in blocked:
+            continue
+        match_run_id = run.cached_from_run_id or run.run_id
+        for match in repo.list_candidate_matches(match_run_id):
+            candidate = repo.get_candidate(match.video_id)
+            if (
+                candidate is None
+                or candidate.platform in blocked
+                or not _copy_match_is_relevant(batch, match, candidate)
+                or not _is_copy_probe_eligible(match, candidate)
+            ):
+                continue
+            seed = _spoken_seed_quality(
+                title=candidate.title,
+                keyword=str(getattr(match, "keyword", "") or batch.keyword),
+                evidence=match.evidence or candidate.evidence,
+            )
+            sort_key = (
+                candidate.source_url is None,
+                not _passes_main_board_heat_floor(candidate),
+                -int(seed["score"]),
+                -(candidate.metrics.plays or 0),
+                -_interaction_heat(candidate),
+                match.platform_rank,
+                candidate.video_id,
+            )
+            previous = best.get(candidate.video_id)
+            if previous is None or sort_key < previous[0]:
+                best[candidate.video_id] = (sort_key, match, candidate)
+    return [
+        (match, candidate)
+        for _, match, candidate in sorted(best.values(), key=lambda item: item[0])
+    ]
+
+
+def _probe_copy_candidates(
+    batch: SearchBatch,
+    repo,
+    service,
+    *,
+    attempts: int,
+    blocked_platforms: set[Platform],
+) -> tuple[int, int, set[Platform]]:
+    """Probe only unclassified candidates and stop at the fixed no-cost budget."""
+    detected_ids = {
+        candidate.video_id
+        for _, candidate in _copy_probe_candidates(batch, repo)
+        if (
+            (existing := repo.get_candidate_copy_probe(candidate.video_id)) is not None
+            and _is_detected_copy_probe(existing)
+        )
+    }
+    for _, candidate in _copy_probe_candidates(
+        batch, repo, blocked_platforms=blocked_platforms
+    ):
+        existing = repo.get_candidate_copy_probe(candidate.video_id)
+        if existing is not None:
+            if _is_detected_copy_probe(existing):
+                detected_ids.add(candidate.video_id)
+                continue
+            if not _should_widen_legacy_no_text_probe(existing):
+                continue
+        if (
+            attempts >= COPY_PROBE_MAX_ATTEMPTS
+            or len(detected_ids) >= COPY_PROBE_TARGET_DETECTIONS
+        ):
+            break
+        attempts += 1
+        probe = service.probe(candidate)
+        repo.save_candidate_copy_probe(probe)
+        if probe.status == "detected":
+            detected_ids.add(candidate.video_id)
+        if probe.status in {"failed", "unsupported"} and _browser_safety_event(
+            probe.message
+        ):
+            blocked_platforms.add(candidate.platform)
+    return attempts, len(detected_ids), blocked_platforms
+
+
+def _append_copy_search_variant(
+    batch: SearchBatch,
+    query: str,
+    *,
+    repo,
+    douyin_public_service,
+    douyin_public_provider,
+    kuaishou_service,
+    kuaishou_provider,
+    bilibili_service,
+    bilibili_provider,
+    blocked_platforms: set[Platform],
+) -> tuple[SearchBatch, list[str]]:
+    """Search one bounded intent variant on the already-open public browser sessions."""
+    errors: list[str] = []
+    supplemental_batches: list[SearchBatch] = []
+    for service, provider, platform, window_days, result_limit in (
+        (
+            douyin_public_service,
+            douyin_public_provider,
+            Platform.DOUYIN,
+            DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS,
+            DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT,
+        ),
+        (
+            kuaishou_service,
+            kuaishou_provider,
+            Platform.KUAISHOU,
+            KUAISHOU_PUBLISHED_WINDOW_DAYS,
+            batch.requested_count_per_platform,
+        ),
+        (
+            bilibili_service,
+            bilibili_provider,
+            Platform.BILIBILI,
+            BILIBILI_PUBLISHED_WINDOW_DAYS,
+            batch.requested_count_per_platform,
+        ),
+    ):
+        if platform in blocked_platforms:
+            continue
+        status = getattr(provider, "session_status", lambda: None)()
+        ready = bool(
+            provider.capabilities().enabled and status and status.ready_to_crawl
+        )
+        if not ready:
+            errors.append(
+                status.message
+                if status is not None
+                else f"{_platform_label(platform.value)}浏览器未连接。"
+            )
+            continue
+        try:
+            supplemental = service.execute(
+                keyword=query,
+                published_window_days=window_days,
+                count=result_limit,
+                # 扩展词只复用正常缓存，不强制刷新。抖音只访问一页官网
+                # 搜索结果，避免为补充素材重复打开热点宝或放大平台访问。
+                force_refresh=False,
+                platforms=(platform,),
+                cache_ttl_minutes=10,
+                schedule_recrawls=False,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        supplemental_batches.append(supplemental)
+        if supplemental.error:
+            errors.append(supplemental.error)
+            if _browser_safety_event(supplemental.error):
+                blocked_platforms.add(platform)
+
+    moved_runs = repo.list_platform_search_runs(batch.batch_id)
+    for supplemental in supplemental_batches:
+        if supplemental.batch_id == batch.batch_id:
+            continue
+        for run in repo.list_platform_search_runs(supplemental.batch_id):
+            moved = run.model_copy(update={"batch_id": batch.batch_id})
+            repo.save_platform_search_run(moved)
+            moved_runs.append(moved)
+        repo.delete_search_batch(supplemental.batch_id)
+
+    executed = [*batch.copy_search_queries]
+    if supplemental_batches:
+        executed.append(query)
+    updated = batch.model_copy(
+        update={
+            "platform_run_ids": [run.run_id for run in moved_runs],
+            "copy_search_queries": executed,
+            "finished_at": datetime.now().astimezone(),
+        }
+    )
+    repo.save_search_batch(updated)
+    return updated, errors
+
+
 def _execute_free_multi_platform_batch(
     body: CrawlerSearchRequest,
     bilibili_service,
@@ -1680,9 +2065,7 @@ def _execute_free_multi_platform_batch(
     ) -> None:
         status = browser_statuses[platform]
         ready = bool(
-            provider.capabilities().enabled
-            and status
-            and status.ready_to_crawl
+            provider.capabilities().enabled and status and status.ready_to_crawl
         )
         if not ready:
             errors.append(
@@ -1739,6 +2122,12 @@ def _execute_free_multi_platform_batch(
             error="；".join(errors) or "免费来源暂时没有返回候选。",
             monitoring_policy="free_single_snapshot_v1",
             sampling_offsets_hours=[0],
+            copy_search_queries=[body.keyword.strip()],
+            copy_related_terms=(
+                _related_terms(body.related_terms)
+                if body.allow_related_fallback
+                else []
+            ),
         )
         repo.save_search_batch(failed)
         return _batch_to_response(failed, repo).model_copy(
@@ -1804,6 +2193,13 @@ def _execute_free_multi_platform_batch(
             "monitoring_policy": "free_single_snapshot_v1",
             "sampling_offsets_hours": [0],
             "tracking_authorized": False,
+            "copy_search_queries": [body.keyword.strip()],
+            "copy_related_terms": (
+                _related_terms(body.related_terms)
+                if body.allow_related_fallback
+                else []
+            ),
+            "copy_matrix_exhausted": False,
         }
     )
     repo.save_search_batch(combined)
@@ -1817,20 +2213,30 @@ def _execute_free_multi_platform_batch(
     )
 
 
-def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_provider, hotspot_service, repo):
+def _preview_smart_batch(
+    body: CrawlerSearchRequest,
+    service,
+    hot_pool,
+    hotspot_provider,
+    hotspot_service,
+    repo,
+):
     """Preview Hotspot-first discovery; paid fallback always needs opt-in."""
     discovery_capability = service.provider.capabilities()
     hotspot_capability = hotspot_provider.capabilities()
     hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
     hotspot_ready = bool(
-        hotspot_capability.enabled
-        and hotspot_status
-        and hotspot_status.ready_to_crawl
+        hotspot_capability.enabled and hotspot_status and hotspot_status.ready_to_crawl
     )
     if hotspot_ready:
         hotspot_window_label = _hotspot_window_label(body.hotspot_window_hours)
         crawl_safety = _hotspot_safety_status(body, hotspot_service, repo)
-        blocked = crawl_safety.state in {"safety_pause", "cooldown", "running", "daily_limit"}
+        blocked = crawl_safety.state in {
+            "safety_pause",
+            "cooldown",
+            "running",
+            "daily_limit",
+        }
         return CrawlerPreviewResponse(
             keyword=body.keyword.strip(),
             published_window_days=0,
@@ -1878,7 +2284,13 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
             target_main_count=body.hotspot_result_limit,
             paid_call_cap=0,
             hotspot_result_limit=body.hotspot_result_limit,
-            hotspot_list_types=["视频总榜", "低粉爆款", "高完播率", "高涨粉率", "高点赞率"],
+            hotspot_list_types=[
+                "视频总榜",
+                "低粉爆款",
+                "高完播率",
+                "高涨粉率",
+                "高点赞率",
+            ],
             crawl_safety=crawl_safety,
         )
     free_count = 0
@@ -1932,22 +2344,29 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
             estimated_api_calls=0,
             platform_unit_price_cny=0.0,
             estimated_cost_cny=0.0,
-            blocked_reason=None if hotspot_ready else (hotspot_status.message if hotspot_status else "请先连接热点宝专用浏览器。"),
+            blocked_reason=None
+            if hotspot_ready
+            else (
+                hotspot_status.message
+                if hotspot_status
+                else "请先连接热点宝专用浏览器。"
+            ),
         ),
         *[
-        CrawlerPlatformPreview(
-            platform=item.platform.value,
-            platform_label=_platform_label(item.platform.value),
-            cache_hit=item.cache_hit,
-            estimated_api_calls=(body.max_paid_calls if not item.cache_hit else 0),
-            platform_unit_price_cny=item.platform_unit_price_cny,
-            estimated_cost_cny=(
-                round((item.estimated_cost_cny or 0) * body.max_paid_calls, 4)
-                if not item.cache_hit else 0.0
-            ),
-            blocked_reason=item.blocked_reason,
-        )
-        for item in previews
+            CrawlerPlatformPreview(
+                platform=item.platform.value,
+                platform_label=_platform_label(item.platform.value),
+                cache_hit=item.cache_hit,
+                estimated_api_calls=(body.max_paid_calls if not item.cache_hit else 0),
+                platform_unit_price_cny=item.platform_unit_price_cny,
+                estimated_cost_cny=(
+                    round((item.estimated_cost_cny or 0) * body.max_paid_calls, 4)
+                    if not item.cache_hit
+                    else 0.0
+                ),
+                blocked_reason=item.blocked_reason,
+            )
+            for item in previews
         ],
         *(
             [
@@ -2000,10 +2419,12 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
         free_candidate_count=free_count,
         free_pool_status=free_pool_status,
         free_pool_message=free_pool_message,
-        paid_fallback_required=paid_fallback_requested and discovery_capability.mode.value == "production",
+        paid_fallback_required=paid_fallback_requested
+        and discovery_capability.mode.value == "production",
         paid_fallback_cache_ttl_minutes=(
             SMART_FALLBACK_CACHE_TTL_MINUTES
-            if paid_fallback_requested and discovery_capability.mode.value == "production"
+            if paid_fallback_requested
+            and discovery_capability.mode.value == "production"
             else None
         ),
         paid_fallback_blocked_reason=(
@@ -2020,7 +2441,11 @@ def _preview_smart_batch(body: CrawlerSearchRequest, service, hot_pool, hotspot_
         hotspot_message=(
             f"热点宝已连接：将读取{_hotspot_window_label(body.hotspot_window_hours)}并采集五类爆款榜。"
             if hotspot_ready
-            else (hotspot_status.message if hotspot_status else "请先连接热点宝专用浏览器。")
+            else (
+                hotspot_status.message
+                if hotspot_status
+                else "请先连接热点宝专用浏览器。"
+            )
         ),
         target_main_count=body.target_main_count,
         paid_call_cap=body.max_paid_calls,
@@ -2111,7 +2536,9 @@ def _execute_official_hot_batch(
     )
 
 
-def _deduplicate_smart_runs(runs: list[CrawlerPlatformRunResponse]) -> list[CrawlerPlatformRunResponse]:
+def _deduplicate_smart_runs(
+    runs: list[CrawlerPlatformRunResponse],
+) -> list[CrawlerPlatformRunResponse]:
     """Keep the first source's richer evidence for each Douyin work."""
     seen_ids: set[str] = set()
     deduplicated_runs: list[CrawlerPlatformRunResponse] = []
@@ -2210,21 +2637,32 @@ def _execute_hotspot_single_snapshot_batch(
                     response.error if "response" in locals() else "",
                     *(
                         run.error or ""
-                        for run in (response.platform_runs if "response" in locals() else [])
+                        for run in (
+                            response.platform_runs if "response" in locals() else []
+                        )
                     ),
                 ]
                 if part
             )
             is_safety_event = any(
                 marker in error_text
-                for marker in ("安全验证", "访问频繁", "操作频繁", "请求过于频繁", "返回 403", "返回 429")
+                for marker in (
+                    "安全验证",
+                    "访问频繁",
+                    "操作频繁",
+                    "请求过于频繁",
+                    "返回 403",
+                    "返回 429",
+                )
             )
             released = repo.release_provider_safety_lease(
                 provider=HOTSPOT_PROVIDER_KEY,
                 run_id=lease_id,
                 now=datetime.now().astimezone(),
                 cooldown_seconds=cooldown_seconds,
-                safety_pause_seconds=HOTSPOT_SAFETY_PAUSE_SECONDS if is_safety_event else 0,
+                safety_pause_seconds=HOTSPOT_SAFETY_PAUSE_SECONDS
+                if is_safety_event
+                else 0,
                 safety_reason=(
                     "热点宝出现安全验证或访问频繁提示，已自动暂停真实采集 60 分钟。"
                     if is_safety_event
@@ -2246,7 +2684,14 @@ def _execute_hotspot_single_snapshot_batch(
                 cooldown_remaining_seconds=(
                     HOTSPOT_SAFETY_PAUSE_SECONDS
                     if is_safety_event
-                    else max(1, int((window_ends_at - datetime.now().astimezone()).total_seconds()))
+                    else max(
+                        1,
+                        int(
+                            (
+                                window_ends_at - datetime.now().astimezone()
+                            ).total_seconds()
+                        ),
+                    )
                     if daily_limit_reached and window_ends_at
                     else cooldown_seconds
                 ),
@@ -2268,7 +2713,8 @@ def _execute_hotspot_single_snapshot_batch(
                         "本次真实采集已完成；"
                         f"下次真实采集约在 {(cooldown_seconds + 59) // 60} 分钟后开放。"
                     )
-                ) or "热点宝安全状态已更新。",
+                )
+                or "热点宝安全状态已更新。",
             )
         else:
             current_state = repo.get_provider_safety_state(HOTSPOT_PROVIDER_KEY)
@@ -2296,7 +2742,14 @@ def _execute_hotspot_single_snapshot_batch(
     )
 
 
-def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, hotspot_provider, hot_pool, repo):
+def _execute_smart_batch(
+    body: CrawlerSearchRequest,
+    service,
+    hotspot_service,
+    hotspot_provider,
+    hot_pool,
+    repo,
+):
     """Hotspot-first discovery; OneAPI is only a capped fallback after free sources."""
     hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
     if (
@@ -2355,7 +2808,11 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
     hotspot_response: CrawlerBatchResponse | None = None
     hotspot_error: str | None = None
     hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
-    if hotspot_provider.capabilities().enabled and hotspot_status and hotspot_status.running:
+    if (
+        hotspot_provider.capabilities().enabled
+        and hotspot_status
+        and hotspot_status.running
+    ):
         try:
             hotspot_batch = hotspot_service.execute(
                 keyword=body.keyword,
@@ -2370,7 +2827,11 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
         except ValueError as exc:
             hotspot_error = str(exc)
     else:
-        hotspot_error = hotspot_status.message if hotspot_status is not None else "热点宝专用浏览器未连接。"
+        hotspot_error = (
+            hotspot_status.message
+            if hotspot_status is not None
+            else "热点宝专用浏览器未连接。"
+        )
 
     hotspot_count = (
         sum(run.relevant_count for run in hotspot_response.platform_runs)
@@ -2378,7 +2839,8 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
         else 0
     )
     if hotspot_response is not None and (
-        free_count + hotspot_count >= body.target_main_count or not body.allow_paid_fallback
+        free_count + hotspot_count >= body.target_main_count
+        or not body.allow_paid_fallback
     ):
         runs = [run for run in [free_run] if run is not None]
         runs.extend(hotspot_response.platform_runs)
@@ -2391,7 +2853,9 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
             count_per_platform=body.target_main_count,
             provider="douyin_local_browser",
             mode="smart",
-            status="succeeded" if candidate_count >= body.target_main_count else "partial",
+            status="succeeded"
+            if candidate_count >= body.target_main_count
+            else "partial",
             force_refresh=body.force_refresh,
             created_at=hotspot_response.created_at,
             finished_at=hotspot_response.finished_at,
@@ -2413,7 +2877,11 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
     if not body.allow_paid_fallback:
         runs = [run for run in [free_run] if run is not None]
         return CrawlerBatchResponse(
-            batch_id=(free_result.request_id if free_result else f"hotspot-{int(now.timestamp())}"),
+            batch_id=(
+                free_result.request_id
+                if free_result
+                else f"hotspot-{int(now.timestamp())}"
+            ),
             keyword=body.keyword.strip(),
             published_window_days=0,
             count_per_platform=body.target_main_count,
@@ -2448,7 +2916,11 @@ def _execute_smart_batch(body: CrawlerSearchRequest, service, hotspot_service, h
     except ValueError as exc:
         runs = [free_run] if free_run else []
         return CrawlerBatchResponse(
-            batch_id=(free_result.request_id if free_result else f"smart-{int(now.timestamp())}"),
+            batch_id=(
+                free_result.request_id
+                if free_result
+                else f"smart-{int(now.timestamp())}"
+            ),
             keyword=body.keyword.strip(),
             published_window_days=body.published_window_days,
             count_per_platform=body.count_per_platform,
@@ -2635,8 +3107,7 @@ def delete_crawler_batch(
 
 
 @router.post("/recrawls/due", response_model=CrawlerDueRecrawlResponse)
-def execute_due_recrawls(
-):
+def execute_due_recrawls():
     """复采执行入口已关闭。"""
     raise HTTPException(
         status_code=410,
@@ -2653,6 +3124,112 @@ def get_crawler_batch(
     batch = repo.get_search_batch(batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="搜索批次不存在。")
+    return _batch_to_response(batch, repo)
+
+
+@router.post("/batches/{batch_id}/copy-probes", response_model=CrawlerBatchResponse)
+def probe_crawler_batch_copy(
+    batch_id: str,
+    repo=Depends(get_repository),
+    service=Depends(get_candidate_copy_probe_service),
+    douyin_public_service=Depends(get_douyin_public_search_service),
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
+    kuaishou_service=Depends(get_kuaishou_browser_search_service),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
+    bilibili_service=Depends(get_bilibili_browser_search_service),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+):
+    """Find a bounded pool with real copy detections; never treat title text as a pass."""
+    batch = repo.get_search_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="搜索批次不存在。")
+
+    matrix = _copy_search_matrix(batch.keyword, batch.copy_related_terms)
+    executed = batch.copy_search_queries or [batch.keyword.strip()]
+    executed_keys = {normalized_keyword_text(query) for query in executed}
+    if not batch.copy_search_queries:
+        batch = batch.model_copy(update={"copy_search_queries": executed})
+        repo.save_search_batch(batch)
+
+    attempts = 0
+    blocked_platforms: set[Platform] = set()
+    attempts, detected, blocked_platforms = _probe_copy_candidates(
+        batch,
+        repo,
+        service,
+        attempts=attempts,
+        blocked_platforms=blocked_platforms,
+    )
+
+    should_append_copy_search_variants = (
+        batch.monitoring_policy == "free_single_snapshot_v1"
+        or batch.provider == "free_multi_platform"
+    )
+    if should_append_copy_search_variants:
+        # The original keyword has already run.  At most three additional query
+        # rounds are allowed for each browser in this batch, so improving recall
+        # cannot turn into repeated platform browsing.
+        used_variant_rounds = max(0, len(executed_keys) - 1)
+        remaining_rounds = max(
+            0, COPY_SEARCH_MAX_VARIANTS_PER_PLATFORM - used_variant_rounds
+        )
+        for query in matrix:
+            if (
+                normalized_keyword_text(query) in executed_keys
+                or remaining_rounds <= 0
+                or attempts >= COPY_PROBE_MAX_ATTEMPTS
+                or detected >= COPY_PROBE_TARGET_DETECTIONS
+            ):
+                continue
+            batch, _ = _append_copy_search_variant(
+                batch,
+                query,
+                repo=repo,
+                douyin_public_service=douyin_public_service,
+                douyin_public_provider=douyin_public_provider,
+                kuaishou_service=kuaishou_service,
+                kuaishou_provider=kuaishou_provider,
+                bilibili_service=bilibili_service,
+                bilibili_provider=bilibili_provider,
+                blocked_platforms=blocked_platforms,
+            )
+            if normalized_keyword_text(query) not in {
+                normalized_keyword_text(value) for value in batch.copy_search_queries
+            }:
+                continue
+            executed_keys.add(normalized_keyword_text(query))
+            remaining_rounds -= 1
+            attempts, detected, blocked_platforms = _probe_copy_candidates(
+                batch,
+                repo,
+                service,
+                attempts=attempts,
+                blocked_platforms=blocked_platforms,
+            )
+
+    matrix_exhausted = bool(matrix) and all(
+        normalized_keyword_text(query) in executed_keys for query in matrix
+    )
+    if batch.copy_matrix_exhausted != matrix_exhausted:
+        batch = batch.model_copy(update={"copy_matrix_exhausted": matrix_exhausted})
+        repo.save_search_batch(batch)
+    return _batch_to_response(batch, repo)
+
+
+@router.post(
+    "/batches/{batch_id}/copy-probes/recheck-v1-no-text",
+    response_model=CrawlerBatchResponse,
+)
+def recheck_crawler_batch_legacy_no_text_copy(
+    batch_id: str,
+    repo=Depends(get_repository),
+    service=Depends(get_candidate_copy_probe_service),
+):
+    """Recheck saved short-window misses without invoking a browser search."""
+    batch = repo.get_search_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="搜索批次不存在。")
+    _recheck_legacy_no_text_probes(batch, repo, service)
     return _batch_to_response(batch, repo)
 
 
@@ -2770,7 +3347,9 @@ def create_doubao_browser_jobs(
         try:
             jobs.append(service.create_job(candidate))
         except DoubaoBrowserAutomationError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+            raise HTTPException(
+                status_code=exc.status_code, detail=exc.user_message
+            ) from exc
     return CrawlerDoubaoJobListResponse(
         items=[_doubao_job_to_response(job) for job in jobs],
         total=len(jobs),
@@ -2824,7 +3403,9 @@ def update_doubao_browser_job_stage(
             outputs=body.outputs,
         )
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -2869,7 +3450,9 @@ def fail_doubao_browser_job(
             retryable=body.retryable,
         )
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -2884,7 +3467,9 @@ def retry_doubao_browser_job(
     try:
         job = service.requeue_job(task_id)
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -2922,7 +3507,9 @@ def start_doubao_browser_worker():
                 ),
             )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail="未找到 Node.js，无法启动本地执行器。") from exc
+        raise HTTPException(
+            status_code=500, detail="未找到 Node.js，无法启动本地执行器。"
+        ) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"执行器启动失败：{exc}") from exc
     return CrawlerDoubaoWorkerStartResponse(
@@ -2933,9 +3520,9 @@ def start_doubao_browser_worker():
     )
 
 
-def _check_doubao_mobile_prerequisites() -> (
-    tuple[CrawlerDoubaoMobilePrerequisites, list[str], str, str | None]
-):
+def _check_doubao_mobile_prerequisites() -> tuple[
+    CrawlerDoubaoMobilePrerequisites, list[str], str, str | None
+]:
     """逐项检查手机豆包链路本机前置条件（只读检查，不改动本机状态）。"""
     appium_server_url = os.getenv("DOUBAO_MOBILE_APPIUM_URL", "http://127.0.0.1:4723")
     android_package = os.getenv("DOUBAO_ANDROID_PACKAGE", "").strip() or None
@@ -3038,13 +3625,13 @@ def create_doubao_mobile_jobs(
         try:
             job = service.create_job(candidate)
         except DoubaoBrowserAutomationError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+            raise HTTPException(
+                status_code=exc.status_code, detail=exc.user_message
+            ) from exc
         if missing and job.status == TaskStatus.QUEUED:
             job = service.fail_job(
                 job.task_id,
-                error_message=(
-                    "手机豆包执行器缺少前置条件：" + "；".join(missing)
-                ),
+                error_message=("手机豆包执行器缺少前置条件：" + "；".join(missing)),
                 stage="前置条件检查未通过",
                 retryable=True,
             )
@@ -3102,7 +3689,9 @@ def update_doubao_mobile_job_stage(
             outputs=body.outputs,
         )
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -3147,7 +3736,9 @@ def fail_doubao_mobile_job(
             retryable=body.retryable,
         )
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -3162,7 +3753,9 @@ def retry_doubao_mobile_job(
     try:
         job = service.requeue_job(task_id)
     except DoubaoBrowserAutomationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.user_message) from exc
+        raise HTTPException(
+            status_code=exc.status_code, detail=exc.user_message
+        ) from exc
     return _doubao_job_to_response(job)
 
 
@@ -3200,9 +3793,13 @@ def start_doubao_mobile_worker():
                 ),
             )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=500, detail="未找到 Node.js，无法启动安卓执行器。") from exc
+        raise HTTPException(
+            status_code=500, detail="未找到 Node.js，无法启动安卓执行器。"
+        ) from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"安卓执行器启动失败：{exc}") from exc
+        raise HTTPException(
+            status_code=500, detail=f"安卓执行器启动失败：{exc}"
+        ) from exc
     return CrawlerDoubaoWorkerStartResponse(
         started=True,
         command=command,
@@ -3277,7 +3874,9 @@ def _doubao_job_to_response(task) -> CrawlerDoubaoJobResponse:
     )
 
 
-def _latest_candidate_transcription(repo, candidate_id: str) -> TranscriptionTask | None:
+def _latest_candidate_transcription(
+    repo, candidate_id: str
+) -> TranscriptionTask | None:
     """Return the latest authorized media task associated with this candidate."""
     try:
         tasks = [
@@ -3292,7 +3891,9 @@ def _latest_candidate_transcription(repo, candidate_id: str) -> TranscriptionTas
         return None
 
 
-def _candidate_copy_fields(repo, candidate, media_task: TranscriptionTask | None) -> dict:
+def _candidate_copy_fields(
+    repo, candidate, media_task: TranscriptionTask | None
+) -> dict:
     """推导候选的三档文案来源字段。
 
     优先级：手机豆包任务 > 授权 ASR 媒体任务 > 无（前端再决定给原创脚本）。
@@ -3325,7 +3926,10 @@ def _candidate_copy_fields(repo, candidate, media_task: TranscriptionTask | None
             "copy_source": CopySource.AUTHORIZED_ASR_TRANSCRIPT.value,
             "is_original_transcript": succeeded,
             "needs_manual_review": succeeded
-            and any(segment.needs_review and not segment.reviewed for segment in media_task.segments),
+            and any(
+                segment.needs_review and not segment.reviewed
+                for segment in media_task.segments
+            ),
         }
     return {
         "copy_source": None,
@@ -3341,7 +3945,9 @@ def _visible_copy_from_evidence(evidence: str | None) -> str:
     return (evidence or "").split(marker, 1)[1].strip()
 
 
-def _spoken_material_fields(*, evidence: str | None, copy_fields: dict) -> dict[str, str]:
+def _spoken_material_fields(
+    *, evidence: str | None, copy_fields: dict
+) -> dict[str, str]:
     """Never label a title-only video as extractable copy."""
     if copy_fields.get("is_original_transcript") is True:
         return {
@@ -3361,19 +3967,63 @@ def _spoken_material_fields(*, evidence: str | None, copy_fields: dict) -> dict[
 
 
 _SPOKEN_PROBLEM_TERMS = (
-    "故障", "问题", "原因", "导致", "不准", "掉标", "带胶", "困难",
-    "异常", "卡标", "起皱", "漏标", "偏移", "怎么", "为什么", "怎么办",
+    "故障",
+    "问题",
+    "原因",
+    "导致",
+    "不准",
+    "掉标",
+    "带胶",
+    "困难",
+    "异常",
+    "卡标",
+    "起皱",
+    "漏标",
+    "偏移",
+    "怎么",
+    "为什么",
+    "怎么办",
 )
 _SPOKEN_SOLUTION_TERMS = (
-    "解决", "方法", "技巧", "步骤", "调试", "设置", "选型", "选择", "避坑",
-    "注意", "区别", "对比", "如何", "一机多用", "应用", "方案", "案例", "教程",
+    "解决",
+    "方法",
+    "技巧",
+    "步骤",
+    "调试",
+    "设置",
+    "选型",
+    "选择",
+    "避坑",
+    "注意",
+    "区别",
+    "对比",
+    "如何",
+    "一机多用",
+    "应用",
+    "方案",
+    "案例",
+    "教程",
 )
 _SPOKEN_CONTEXT_TERMS = (
-    "瓶", "饮料", "食品", "医药", "化工", "水厂", "产线", "行业", "场景",
-    "包装", "不干胶", "异形",
+    "瓶",
+    "饮料",
+    "食品",
+    "医药",
+    "化工",
+    "水厂",
+    "产线",
+    "行业",
+    "场景",
+    "包装",
+    "不干胶",
+    "异形",
 )
 _SPOKEN_PROMOTION_TERMS = (
-    "源头厂家", "厂家直销", "欢迎咨询", "专业生产", "工厂实拍",
+    "源头厂家",
+    "厂家直销",
+    "欢迎咨询",
+    "专业生产",
+    "工厂实拍",
 )
 
 
@@ -3407,10 +4057,16 @@ def _spoken_seed_quality(
     if any(term in title for term in _SPOKEN_CONTEXT_TERMS):
         score += 1
         reasons.append("包含使用场景")
-    if re.search(r"\d+(?:\.\d+)?(?:瓶|件|个|台|米|毫米|mm|秒|分钟|万|元|%|％|/)", title, re.IGNORECASE):
+    if re.search(
+        r"\d+(?:\.\d+)?(?:瓶|件|个|台|米|毫米|mm|秒|分钟|万|元|%|％|/)",
+        title,
+        re.IGNORECASE,
+    ):
         score += 1
         reasons.append("包含具体参数")
-    if len(normalized_keyword_text(title_without_tags)) >= max(18, len(normalized_keyword) + 10):
+    if len(normalized_keyword_text(title_without_tags)) >= max(
+        18, len(normalized_keyword) + 10
+    ):
         score += 1
         reasons.append("描述较具体")
     if any(term in title for term in _SPOKEN_PROMOTION_TERMS):
@@ -3418,40 +4074,60 @@ def _spoken_seed_quality(
         reasons.append("偏广告展示")
     if (
         normalized_title == normalized_keyword
-        or len(normalized_keyword_text(title_without_tags)) <= len(normalized_keyword) + 2
+        or len(normalized_keyword_text(title_without_tags))
+        <= len(normalized_keyword) + 2
     ):
         score -= 2
         reasons.append("标题信息过少")
 
     if score >= 3:
         status = "writeable"
-        message = "具备口播信息量：" + "、".join(reasons) + "。"
+        message = "标题信息较完整：" + "、".join(reasons) + "。"
     elif score >= 1:
         status = "reference_only"
         message = "信息量一般，只建议作为选题参考：" + "、".join(reasons) + "。"
     else:
         status = "low_information"
-        message = "公开文字不足以支撑原创口播" + ("：" + "、".join(reasons) if reasons else "") + "。"
+        message = (
+            "标题信息不足以支撑原创文案"
+            + ("：" + "、".join(reasons) if reasons else "")
+            + "。"
+        )
     return {"score": score, "status": status, "message": message}
 
 
-def _candidate_audio_fields(task: TranscriptionTask | None) -> dict[str, str]:
-    """Report only audio facts established by an authorized local task."""
+def _candidate_audio_fields(
+    task: TranscriptionTask | None,
+    probe: CandidateCopyProbe | None = None,
+) -> dict[str, str]:
+    """Prefer an authorized transcript, otherwise use the ephemeral copy probe."""
     if task is None or not task.media_type.startswith(("video/", "audio/")):
+        if probe is not None:
+            if probe.status == "detected":
+                return {"status": "speech_detected", "message": probe.message}
+            if probe.status == "no_text":
+                return {"status": "no_clear_speech", "message": probe.message}
+            return {"status": "check_failed", "message": probe.message}
         return {
             "status": "unknown",
-            "message": "尚未检测声音；需上传已获授权的本地视频。",
+            "message": "尚未检测文案。",
         }
     if task.status in {TaskStatus.QUEUED, TaskStatus.SUBMITTED, TaskStatus.RUNNING}:
-        return {"status": "checking", "message": "已提交授权视频，正在检测音轨和人声。"}
+        return {"status": "checking", "message": "已提交授权视频，正在检测文案。"}
     if task.status == TaskStatus.FAILED:
         if "没有可识别的音轨" in (task.error_message or ""):
-            return {"status": "no_audio", "message": "本地检测未发现可识别音轨。"}
-        return {"status": "check_failed", "message": "声音检测未完成，请保留文件后重试。"}
+            return {"status": "no_audio", "message": "本地视频没有可识别音轨。"}
+        return {
+            "status": "check_failed",
+            "message": "文案检测未完成，请保留文件后重试。",
+        }
     transcript_text = "".join(segment.text.strip() for segment in task.segments)
     if transcript_text:
-        return {"status": "speech_detected", "message": "已检测到人声并生成转写稿。"}
-    return {"status": "no_clear_speech", "message": "视频有音轨，但没有识别出清晰口播。"}
+        return {"status": "speech_detected", "message": "检测到文案，已生成转写稿。"}
+    return {
+        "status": "no_clear_speech",
+        "message": "视频有音轨，但没有识别出清晰文案。",
+    }
 
 
 def _candidate_to_response(
@@ -3468,16 +4144,22 @@ def _candidate_to_response(
     relevance_reason: str | None = None,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
-    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(resolved_evidence)
+    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
+        resolved_evidence
+    )
     is_incremental_hotspot = "来源=video_board" in (resolved_evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(resolved_evidence)
-    media_resolution = repo.find_latest_media_resolution_for_candidate(candidate.video_id)
+    media_resolution = repo.find_latest_media_resolution_for_candidate(
+        candidate.video_id
+    )
     resolved_task = (
         repo.get_task(media_resolution.task_id)
         if media_resolution and media_resolution.task_id
         else None
     )
-    resolved_task = resolved_task if isinstance(resolved_task, TranscriptionTask) else None
+    resolved_task = (
+        resolved_task if isinstance(resolved_task, TranscriptionTask) else None
+    )
     local_link_task = _latest_candidate_transcription(repo, candidate.video_id)
     media_task = max(
         (task for task in (resolved_task, local_link_task) if task is not None),
@@ -3488,7 +4170,9 @@ def _candidate_to_response(
     media_status = (
         media_resolution.status.value
         if media_task is not None and media_task is resolved_task and media_resolution
-        else media_task.status.value if media_task else None
+        else media_task.status.value
+        if media_task
+        else None
     )
     copy_fields = _candidate_copy_fields(repo, candidate, media_task)
     spoken_material = _spoken_material_fields(
@@ -3500,7 +4184,10 @@ def _candidate_to_response(
         keyword=keyword or candidate.title,
         evidence=resolved_evidence,
     )
-    audio = _candidate_audio_fields(media_task)
+    audio = _candidate_audio_fields(
+        media_task,
+        repo.get_candidate_copy_probe(candidate.video_id),
+    )
     trend_points: list[CrawlerTrendPoint] = []
     previous_interactions: float | None = None
     previous_at: datetime | None = None
@@ -3550,9 +4237,7 @@ def _candidate_to_response(
         valid_snapshot_count=trend.valid_snapshot_count if trend else None,
         recrawl_count=trend.recrawl_count if trend else None,
         recall_count=trend.recall_count if trend else None,
-        missed_checkpoint_count=(
-            trend.missed_checkpoint_count if trend else None
-        ),
+        missed_checkpoint_count=(trend.missed_checkpoint_count if trend else None),
         sampling_span_hours=trend.sampling_span_hours if trend else None,
         anomaly_status=trend.anomaly_status.value if trend else None,
         platform_rank=platform_rank,
@@ -3593,9 +4278,8 @@ def _candidate_to_response(
         share_count=candidate.share_count,
         collect_count=candidate.collect_count,
         relevance_basis=relevance_basis or ("title_or_hashtag" if keyword else None),
-        relevance_reason=relevance_reason or (
-            keyword_match_reason(keyword) if keyword else None
-        ),
+        relevance_reason=relevance_reason
+        or (keyword_match_reason(keyword) if keyword else None),
         trend_points=trend_points,
     )
 
@@ -3643,12 +4327,27 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
     )
 
 
-def _hotspot_evidence_details(evidence: str | None) -> tuple[list[str], int | None, int | None]:
-    if not evidence or not evidence.startswith("hotspot:"):
+def _hotspot_evidence_details(
+    evidence: str | None,
+) -> tuple[list[str], int | None, int | None]:
+    if not evidence:
+        return [], None, None
+    if evidence.startswith("douyin_public_search:"):
+        duration_match = re.search(r"时长秒=(\d+)", evidence)
+        return (
+            ["抖音官网搜索"],
+            int(duration_match.group(1)) if duration_match else None,
+            None,
+        )
+    if not evidence.startswith("hotspot:"):
         return [], None, None
     header, *_ = evidence.split(";", 1)
     header_parts = header.split(":")
-    labels = [label for label in (header_parts[1].split("|") if len(header_parts) > 1 else []) if label]
+    labels = [
+        label
+        for label in (header_parts[1].split("|") if len(header_parts) > 1 else [])
+        if label
+    ]
     window_match = re.search(r":(\d+)h:", header)
     duration_match = re.search(r"时长秒=(\d+)", evidence)
     return (
@@ -3681,7 +4380,8 @@ def _batch_to_response(
         for run in runs
     ]
     tracking_checkpoints = [
-        item for item in repo.list_sampling_checkpoints()
+        item
+        for item in repo.list_sampling_checkpoints()
         if item.tracking_batch_id == batch.batch_id
     ]
     pending_tracking = [
@@ -3691,13 +4391,17 @@ def _batch_to_response(
         tracking_status = "not_started"
     elif pending_tracking:
         tracking_status = "scheduled"
-    elif tracking_checkpoints and all(item.status == SamplingStatus.OBSERVED for item in tracking_checkpoints):
+    elif tracking_checkpoints and all(
+        item.status == SamplingStatus.OBSERVED for item in tracking_checkpoints
+    ):
         tracking_status = "complete"
-    elif tracking_checkpoints and all(item.status == SamplingStatus.CANCELLED for item in tracking_checkpoints):
+    elif tracking_checkpoints and all(
+        item.status == SamplingStatus.CANCELLED for item in tracking_checkpoints
+    ):
         tracking_status = "cancelled"
     else:
         tracking_status = "partial"
-    return CrawlerBatchResponse(
+    response = CrawlerBatchResponse(
         batch_id=batch.batch_id,
         keyword=batch.keyword,
         published_window_days=batch.published_window_days,
@@ -3723,6 +4427,143 @@ def _batch_to_response(
         tracking_status=tracking_status,
         next_tracking_at=min((item.due_at for item in pending_tracking), default=None),
     )
+    if not include_candidates:
+        return response.model_copy(
+            update={
+                "copy_queries_executed": (
+                    len(batch.copy_search_queries) or int(bool(response.platform_runs))
+                ),
+                "copy_matrix_exhausted": batch.copy_matrix_exhausted,
+            }
+        )
+    return _with_copy_pool_metadata(response, batch=batch, repo=repo)
+
+
+def _copy_pool_sort_key(candidate: CrawlerCandidateResult) -> tuple[Any, ...]:
+    return (
+        -candidate.spoken_seed_score,
+        -(candidate.plays or 0),
+        -(candidate.likes or 0),
+        candidate.platform_rank if candidate.platform_rank is not None else 10_000,
+        candidate.video_id,
+    )
+
+
+def _copy_exclusion_reason(
+    candidate: CrawlerCandidateResult,
+    *,
+    probe_attempt_count: int,
+    matrix_exhausted: bool,
+) -> str:
+    if candidate.audio_status == "no_audio":
+        return "没有可识别的音轨。"
+    if candidate.audio_status == "no_clear_speech":
+        message = candidate.audio_message or ""
+        if "未识别" in message or "没有" in message:
+            return message
+        return "抽样范围内未识别到清晰文案。"
+    if candidate.audio_status == "check_failed":
+        return candidate.audio_message or "文案检测失败，需手动确认。"
+    if candidate.audio_status == "checking":
+        return "授权转写仍在进行，暂不能作为可用文案素材。"
+    if candidate.audio_status == "speech_detected":
+        return "已收满8条优先素材和4条备用素材。"
+    if probe_attempt_count >= COPY_PROBE_MAX_ATTEMPTS:
+        return f"本次文案检测最多检查{COPY_PROBE_MAX_ATTEMPTS}条，尚未检测到此条。"
+    if matrix_exhausted:
+        return "本次检索词已用完，尚未检测到此条。"
+    return "本轮优先检测已结束，尚未检测到此条。"
+
+
+def _with_copy_pool_metadata(
+    response: CrawlerBatchResponse,
+    *,
+    batch: SearchBatch,
+    repo,
+) -> CrawlerBatchResponse:
+    """Decorate an existing response; persistence remains the probe result itself."""
+    best_by_id: dict[str, CrawlerCandidateResult] = {}
+    for run in response.platform_runs:
+        for candidate in run.candidates:
+            current = best_by_id.get(candidate.video_id)
+            if current is None or _copy_pool_sort_key(candidate) < _copy_pool_sort_key(
+                current
+            ):
+                best_by_id[candidate.video_id] = candidate
+
+    probe_attempt_count = sum(
+        1
+        for candidate_id in best_by_id
+        if (
+            (probe := repo.get_candidate_copy_probe(candidate_id)) is not None
+            and _is_supported_copy_probe(probe)
+        )
+    )
+    recheckable_count = sum(
+        1
+        for candidate_id in best_by_id
+        if _should_widen_legacy_no_text_probe(
+            repo.get_candidate_copy_probe(candidate_id)
+        )
+    )
+    detected = sorted(
+        (
+            candidate
+            for candidate in best_by_id.values()
+            if candidate.audio_status == "speech_detected"
+        ),
+        key=_copy_pool_sort_key,
+    )
+    primary_ids = {
+        candidate.video_id for candidate in detected[:COPY_POOL_PRIMARY_TARGET]
+    }
+    reserve_ids = {
+        candidate.video_id
+        for candidate in detected[COPY_POOL_PRIMARY_TARGET:COPY_PROBE_TARGET_DETECTIONS]
+    }
+
+    runs: list[CrawlerPlatformRunResponse] = []
+    for run in response.platform_runs:
+        candidates: list[CrawlerCandidateResult] = []
+        for candidate in run.candidates:
+            if candidate.video_id in primary_ids:
+                candidates.append(
+                    candidate.model_copy(update={"copy_pool_status": "primary"})
+                )
+                continue
+            if candidate.video_id in reserve_ids:
+                candidates.append(
+                    candidate.model_copy(update={"copy_pool_status": "reserve"})
+                )
+                continue
+            candidates.append(
+                candidate.model_copy(
+                    update={
+                        "copy_pool_status": "excluded",
+                        "copy_rejection_reason": _copy_exclusion_reason(
+                            candidate,
+                            probe_attempt_count=probe_attempt_count,
+                            matrix_exhausted=batch.copy_matrix_exhausted,
+                        ),
+                    }
+                )
+            )
+        runs.append(run.model_copy(update={"candidates": candidates}))
+
+    return response.model_copy(
+        update={
+            "platform_runs": runs,
+            "copy_detected_count": len(detected),
+            "copy_primary_count": len(primary_ids),
+            "copy_reserve_count": len(reserve_ids),
+            "copy_probe_attempt_count": probe_attempt_count,
+            "copy_probe_recheckable_count": recheckable_count,
+            "copy_queries_executed": (
+                len(batch.copy_search_queries) or int(bool(response.platform_runs))
+            ),
+            "copy_matrix_exhausted": batch.copy_matrix_exhausted,
+        }
+    )
 
 
 def _interaction_heat(candidate) -> float:
@@ -3736,9 +4577,10 @@ def _interaction_heat(candidate) -> float:
 
 
 def _is_official_hot_candidate(candidate) -> bool:
-    return bool(getattr(candidate, "official_hot", False)) or "official" in str(
-        candidate.evidence or ""
-    ).casefold()
+    return (
+        bool(getattr(candidate, "official_hot", False))
+        or "official" in str(candidate.evidence or "").casefold()
+    )
 
 
 def _passes_main_board_heat_floor(candidate) -> bool:
@@ -3775,11 +4617,7 @@ def _run_to_response(
             candidate = repo.get_candidate(match.video_id)
             if candidate is None:
                 continue
-            if not item_matches_keyword(
-                title=candidate.title,
-                keyword=batch.keyword,
-                evidence=match.evidence or candidate.evidence,
-            ):
+            if not _copy_match_is_relevant(batch, match, candidate):
                 historical_irrelevant_count += 1
                 continue
             visible_matches.append((match, candidate))
@@ -3791,26 +4629,39 @@ def _run_to_response(
         if _passes_main_board_heat_floor(candidate)
     ]
     below_heat_floor_count = strict_relevant_count - len(heat_qualified_matches)
-    qualified_matches = [
+    detected_public_copy_references = [
         (match, candidate)
-        for match, candidate in heat_qualified_matches
-        if _spoken_seed_quality(
+        for match, candidate in visible_matches
+        if (
+            not _passes_main_board_heat_floor(candidate)
+            and _is_direct_public_douyin_copy_reference(match, candidate)
+            and _has_detected_copy_probe(repo, candidate.video_id)
+        )
+    ]
+    qualified_matches = [*heat_qualified_matches]
+    qualified_ids = {candidate.video_id for _, candidate in qualified_matches}
+    for match, candidate in detected_public_copy_references:
+        if candidate.video_id not in qualified_ids:
+            qualified_matches.append((match, candidate))
+            qualified_ids.add(candidate.video_id)
+    low_spoken_value_count = sum(
+        _spoken_seed_quality(
             title=candidate.title,
-            keyword=batch.keyword,
+            keyword=str(getattr(match, "keyword", "") or batch.keyword),
             evidence=match.evidence or candidate.evidence,
         )["status"]
-        == "writeable"
-    ]
-    low_spoken_value_count = len(heat_qualified_matches) - len(qualified_matches)
+        != "writeable"
+        for match, candidate in heat_qualified_matches
+    )
     relevant_count = len(qualified_matches)
     irrelevant_count = max(run.irrelevant_count, historical_irrelevant_count)
     result_state = run.result_state
-    if relevant_count == 0 and low_spoken_value_count:
+    if strict_relevant_count and not relevant_count:
+        result_state = "all_below_heat_floor"
+    elif relevant_count == 0 and low_spoken_value_count:
         result_state = "all_low_spoken_value"
     elif relevant_count == 0 and irrelevant_count:
         result_state = "all_irrelevant"
-    elif strict_relevant_count and not relevant_count:
-        result_state = "all_below_heat_floor"
 
     if include_candidates and qualified_matches:
         is_hotspot_run = run.provider == "douyin_local_browser"
@@ -3830,10 +4681,14 @@ def _run_to_response(
                     item[1].video_id,
                 )
             )
-        trends = [] if is_hotspot_run else repo.list_keyword_trend_results(
-            batch.keyword,
-            limit=batch.requested_count_per_platform,
-            platform=run.platform,
+        trends = (
+            []
+            if is_hotspot_run
+            else repo.list_keyword_trend_results(
+                batch.keyword,
+                limit=batch.requested_count_per_platform,
+                platform=run.platform,
+            )
         )
         trend_by_candidate = {item.candidate_id: item for item in trends}
         visible_ids = {candidate.video_id for _, candidate in qualified_matches}
@@ -3845,18 +4700,24 @@ def _run_to_response(
         }
         for match, candidate in qualified_matches:
             trend = trend_by_candidate.get(candidate.video_id)
-            candidates.append(
-                _candidate_to_response(
-                    candidate,
-                    repo=repo,
-                    trend=trend,
-                    platform_rank=match.platform_rank,
-                    provider_hot_rank=match.platform_rank,
-                    system_rank=system_rank_by_candidate.get(candidate.video_id),
-                    evidence=match.evidence or candidate.evidence,
-                    keyword=batch.keyword,
-                )
+            item = _candidate_to_response(
+                candidate,
+                repo=repo,
+                trend=trend,
+                platform_rank=match.platform_rank,
+                provider_hot_rank=match.platform_rank,
+                system_rank=system_rank_by_candidate.get(candidate.video_id),
+                evidence=match.evidence or candidate.evidence,
+                keyword=str(getattr(match, "keyword", "") or batch.keyword),
             )
+            if not _passes_main_board_heat_floor(
+                candidate
+            ) and _is_direct_public_douyin_copy_reference(match, candidate):
+                warnings = [*item.data_quality_warnings]
+                if COPY_REFERENCE_LOW_HEAT_WARNING not in warnings:
+                    warnings.append(COPY_REFERENCE_LOW_HEAT_WARNING)
+                item = item.model_copy(update={"data_quality_warnings": warnings})
+            candidates.append(item)
     if (
         include_candidates
         and run.provider == "douyin_local_browser"
@@ -3893,9 +4754,7 @@ def _run_to_response(
         irrelevant_count=irrelevant_count,
         duration_filtered_count=run.duration_filtered_count,
         incremental_play_filtered_count=run.incremental_play_filtered_count,
-        relevance_rule_version=(
-            run.relevance_rule_version or RELEVANCE_RULE_VERSION
-        ),
+        relevance_rule_version=(run.relevance_rule_version or RELEVANCE_RULE_VERSION),
         result_state=result_state,
         payload_diagnostic=run.payload_diagnostic,
         cache_hit=run.cache_hit,

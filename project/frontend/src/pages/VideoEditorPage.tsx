@@ -1,5 +1,5 @@
 /** 云端轻量智能剪辑工作台。 */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Alert,
   Button,
@@ -11,7 +11,6 @@ import {
   Input,
   List,
   Modal,
-  Progress,
   Radio,
   Segmented,
   Select,
@@ -32,9 +31,11 @@ import {
   CloudOutlined,
   DownloadOutlined,
   EditOutlined,
-  EyeOutlined,
   FileProtectOutlined,
+  FullscreenOutlined,
   HistoryOutlined,
+  MutedOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
   SettingOutlined,
@@ -55,7 +56,7 @@ import type {
   VideoEditorVisualSpec,
 } from "../api/types";
 
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 const BGM_CATEGORY_OPTIONS = [
   "理性干货",
@@ -118,7 +119,6 @@ const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
 );
 
 type OutputProfile = "720p" | "1080p";
-type CompactSection = "source" | "preview" | "plan";
 type PreviewMode = "original" | "plan" | "output";
 
 interface CloudCapabilities extends VideoCapabilitiesResponse {
@@ -163,6 +163,7 @@ interface CostQuote {
   missing_configuration?: string[];
   blocked_reasons?: string[];
   blocking_reasons?: string[];
+  exclusions?: string[];
 }
 
 interface EditPlanStep {
@@ -213,13 +214,6 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
   },
 };
 
-const PLATFORM_OPTIONS = [
-  { value: "douyin", label: "抖音 · 9:16" },
-  { value: "kuaishou", label: "快手 · 9:16" },
-  { value: "wechat_channels", label: "视频号 · 9:16" },
-  { value: "xiaohongshu", label: "小红书 · 9:16" },
-];
-
 const PROFILE_META: Record<OutputProfile, {
   label: string;
   resolution: string;
@@ -243,6 +237,29 @@ const PROFILE_META: Record<OutputProfile, {
   },
 };
 
+const RESULT_SUMMARY_ITEMS = [
+  {
+    key: "silence_trim",
+    label: "去除明显停顿",
+    reason: "识别并移除较长空白，让内容更紧凑。",
+  },
+  {
+    key: "subtitle",
+    label: "使用已确认字幕",
+    reason: "只使用复核后的字幕，准确匹配画面。",
+  },
+  {
+    key: "title",
+    label: "添加标题",
+    reason: "使用确认后的标题，突出内容重点。",
+  },
+  {
+    key: "background_music",
+    label: "添加授权配乐",
+    reason: "只使用已经确认权利的背景音乐。",
+  },
+];
+
 const STATUS_META: Record<string, { color: string; label: string; progress: number }> = {
   queued: { color: "default", label: "等待分析", progress: 5 },
   analyzing: { color: "processing", label: "云端分析中", progress: 35 },
@@ -256,30 +273,6 @@ const STATUS_META: Record<string, { color: string; label: string; progress: numb
   outcome_unknown: { color: "warning", label: "供应商结果待查", progress: 72 },
   failed: { color: "error", label: "处理失败", progress: 0 },
   interrupted: { color: "warning", label: "任务中断", progress: 0 },
-};
-
-const PROVIDER_STAGE_LABELS: Record<string, string> = {
-  awaiting_confirmation: "等待费用确认",
-  uploading: "上传至私有 OSS",
-  upload_complete: "私有 OSS 上传完成",
-  submitting_transcription: "提交 Fun-ASR 转写",
-  transcribing: "Fun-ASR 转写",
-  sandbox_transcription_complete: "沙箱转写契约已完成",
-  planning: "生成安全剪辑方案",
-  awaiting_review: "等待人工复核",
-  awaiting_human_review: "等待字幕与方案复核",
-  submitting_render: "提交 MPS 渲染",
-  polling_render: "查询 MPS 任务",
-  sandbox_render_complete: "沙箱渲染契约已完成",
-  transcription_query_failed: "Fun-ASR 状态查询失败",
-  render_query_failed: "MPS 状态查询失败",
-  submission_outcome_unknown: "云任务提交结果待查",
-  planning_outcome_unknown: "规划任务结果待查",
-  render_submission_outcome_unknown: "MPS 提交结果待查",
-  local_export_rendering: "本机正在生成可下载成片",
-  local_export_complete: "本机成片已生成",
-  local_export_failed: "本机成片生成失败",
-  completed: "供应商处理完成",
 };
 
 const STEP_KIND_ALIASES: Record<string, string> = {
@@ -353,15 +346,6 @@ const DEFAULT_PLAN: EditPlanStep[] = [
   },
 ];
 
-const STEP_ICON: Record<string, React.ReactNode> = {
-  silence_trim: <ClockCircleOutlined />,
-  resize: <EyeOutlined />,
-  subtitle: <EditOutlined />,
-  title: <FileProtectOutlined />,
-  background_music: <SoundOutlined />,
-  volume_norm: <SoundOutlined />,
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -369,13 +353,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function formatBytes(value?: number | null) {
-  if (!value) return "大小未知";
-  return value >= 1024 * 1024
-    ? `${(value / 1024 / 1024).toFixed(1)} MB`
-    : `${(value / 1024).toFixed(1)} KB`;
 }
 
 function formatCost(value: number) {
@@ -394,14 +371,14 @@ function quoteLines(quote: CostQuote | null): Array<{ key: string; label: string
     return source.map((item, index) => ({
       key: item.code || item.key || item.component || `${item.label || item.name || "cost"}-${index}`,
       label: item.label || item.name || ({
-        asr: "Fun-ASR 转写",
-        speech_recognition: "Fun-ASR 转写",
-        planning: "qwen-flash 规划",
-        edit_planning: "qwen-flash 规划",
-        render: "MPS H.264 渲染",
-        cloud_render: "MPS H.264 渲染",
+        asr: "字幕识别",
+        speech_recognition: "字幕识别",
+        planning: "剪辑方案",
+        edit_planning: "剪辑方案",
+        render: "成片制作",
+        cloud_render: "成片制作",
         brand_title_overlay: "品牌标题排版",
-      }[item.component || ""] || item.provider || "云服务"),
+      }[item.component || ""] || item.provider || "制作服务"),
       amount: asNumber(item.amount_cny ?? item.estimated_cost_cny ?? item.cost_cny),
     }));
   }
@@ -1096,6 +1073,7 @@ function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
 export default function VideoEditorPage() {
   const navigate = useNavigate();
   const previewRef = useRef<HTMLVideoElement | null>(null);
+  const filmstripMouseDraggingRef = useRef(false);
   const pendingLocalDownloadRef = useRef<string | null>(null);
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
@@ -1112,11 +1090,13 @@ export default function VideoEditorPage() {
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [pollingStopped, setPollingStopped] = useState(false);
-  const [compactSection, setCompactSection] = useState<CompactSection>("preview");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("original");
   const [previewTime, setPreviewTime] = useState(0);
   const [planPreviewElapsed, setPlanPreviewElapsed] = useState(0);
   const [previewDuration, setPreviewDuration] = useState(0);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [isPreviewMuted, setIsPreviewMuted] = useState(false);
+  const [timelineFrames, setTimelineFrames] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewItem, setReviewItem] = useState<CloudBatchItem | null>(null);
@@ -1189,19 +1169,6 @@ export default function VideoEditorPage() {
     () => bgmAssets.filter((asset) => asset.content_id_risk !== "registered"),
     [bgmAssets],
   );
-  const recommendedBgm = useMemo(
-    () => currentItem ? recommendReviewBgm(currentItem, bgmAssets) : null,
-    [bgmAssets, currentItem],
-  );
-  const displayedBgmId = reviewBgmId
-    || currentItem?.selected_bgm_id
-    || bgmId
-    || recommendedBgm?.asset_id
-    || null;
-  const displayedBgm = useMemo(
-    () => bgmAssets.find((asset) => asset.asset_id === displayedBgmId) || null,
-    [bgmAssets, displayedBgmId],
-  );
   const selectedReviewBgm = useMemo(
     () => bgmAssets.find((asset) => asset.asset_id === reviewBgmId) || null,
     [bgmAssets, reviewBgmId],
@@ -1246,15 +1213,6 @@ export default function VideoEditorPage() {
     ];
   }, [currentItem, usableBgmAssets.length]);
   const enabledPlanSteps = planSteps.filter((step) => step.enabled);
-  const estimatedRemovedSeconds = planSteps.reduce(
-    (total, step) => total + step.estimated_removed_seconds,
-    0,
-  );
-  const estimatedOutputSourceSeconds = asNumber(
-    currentItem?.edit_plan?.estimated_output_seconds,
-    0,
-  );
-
   const providerMode = batch?.provider_mode || capabilities?.provider_mode || "configuration_required";
   const isSandbox = Boolean(
     batch?.is_mock
@@ -1296,6 +1254,106 @@ export default function VideoEditorPage() {
     && currentItem?.publish_allowed !== false,
   );
   const publishHandoffReady = Boolean(canConfirmOutput && currentItem?.edit_task_id);
+
+  useEffect(() => {
+    const duration = previewDuration || asNumber(currentItem?.edit_plan?.duration_seconds, 0);
+    if (!playableSourceMediaUrl || duration <= 0 || typeof document === "undefined") {
+      setTimelineFrames([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.crossOrigin = "anonymous";
+    video.src = playableSourceMediaUrl;
+
+    const waitForMetadata = () => new Promise<void>((resolve, reject) => {
+      if (video.readyState >= 1) {
+        resolve();
+        return;
+      }
+      const timeout = window.setTimeout(() => reject(new Error("metadata timeout")), 5000);
+      video.addEventListener("loadedmetadata", () => {
+        window.clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      video.addEventListener("error", () => {
+        window.clearTimeout(timeout);
+        reject(new Error("media unavailable"));
+      }, { once: true });
+    });
+
+    const seekTo = (time: number) => new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(resolve, 1200);
+      video.addEventListener("seeked", () => {
+        window.clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      video.currentTime = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.05)));
+    });
+
+    const captureFrames = async () => {
+      try {
+        await waitForMetadata();
+        const canvas = document.createElement("canvas");
+        canvas.width = 72;
+        canvas.height = 82;
+        const context = canvas.getContext("2d");
+        if (!context || !video.videoWidth || !video.videoHeight) return;
+
+        const frameDuration = Number.isFinite(video.duration) ? video.duration : duration;
+        const frameIntervalSeconds = 4;
+        const frameCount = Math.max(1, Math.min(60, Math.ceil(frameDuration / frameIntervalSeconds)));
+        const frames: string[] = [];
+        for (let index = 0; index < frameCount; index += 1) {
+          if (cancelled) return;
+          const time = Math.min(
+            frameDuration - 0.05,
+            index * frameIntervalSeconds + frameIntervalSeconds / 2,
+          );
+          await seekTo(time);
+          const sourceRatio = video.videoWidth / video.videoHeight;
+          const targetRatio = canvas.width / canvas.height;
+          let sourceX = 0;
+          let sourceY = 0;
+          let sourceWidth = video.videoWidth;
+          let sourceHeight = video.videoHeight;
+          if (sourceRatio > targetRatio) {
+            sourceWidth = video.videoHeight * targetRatio;
+            sourceX = (video.videoWidth - sourceWidth) / 2;
+          } else {
+            sourceHeight = video.videoWidth / targetRatio;
+            sourceY = (video.videoHeight - sourceHeight) / 2;
+          }
+          context.drawImage(
+            video,
+            sourceX,
+            sourceY,
+            sourceWidth,
+            sourceHeight,
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          );
+          frames.push(canvas.toDataURL("image/jpeg", 0.78));
+        }
+        if (!cancelled) setTimelineFrames(frames);
+      } catch {
+        if (!cancelled) setTimelineFrames([]);
+      }
+    };
+
+    setTimelineFrames([]);
+    void captureFrames();
+    return () => {
+      cancelled = true;
+      video.removeAttribute("src");
+    };
+  }, [currentItem?.edit_plan?.duration_seconds, playableSourceMediaUrl, previewDuration]);
 
   useEffect(() => {
     if (
@@ -1365,11 +1423,6 @@ export default function VideoEditorPage() {
     setOutputProfile(profile);
     setQuote(null);
     if (shouldRefreshQuote) void loadQuote(profile, false);
-  };
-
-  const changePlatform = (value: string) => {
-    setPlatform(value);
-    setQuote(null);
   };
 
   const selectSource = (sourceId: string) => {
@@ -1469,7 +1522,6 @@ export default function VideoEditorPage() {
       setBatches((items) => [created, ...items.filter((item) => item.batch_id !== created.batch_id)]);
       setQuote(created.cost_quote || quote);
       setQuoteOpen(false);
-      setCompactSection("plan");
       setPreviewMode("plan");
       message.success(
         isSandbox
@@ -1511,21 +1563,6 @@ export default function VideoEditorPage() {
     } finally {
       setReviewLoading(false);
     }
-  };
-
-  const chooseNextBgm = () => {
-    if (!usableBgmAssets.length) {
-      message.warning("配乐库还没有可用音乐");
-      return;
-    }
-    const currentIndex = usableBgmAssets.findIndex(
-      (asset) => asset.asset_id === displayedBgmId,
-    );
-    const next = usableBgmAssets[(currentIndex + 1) % usableBgmAssets.length];
-    setReviewBgmId(next.asset_id);
-    setBgmId(next.asset_id);
-    setBgmEnabled(true);
-    message.success(`已换为《${next.title}》，确认生成时会使用这首`);
   };
 
   const saveReview = async () => {
@@ -1713,10 +1750,10 @@ export default function VideoEditorPage() {
     if (!batch || currentStatus === "idle") {
       return {
         label: isSandbox
-          ? "免费体验剪辑方案"
+          ? "免费预览剪辑方案"
           : configurationBlocked
             ? "查看出片参考与开通说明"
-            : "查看费用并开始分析",
+            : "确认并生成成片",
         disabled: !selectedSourceId,
         icon: <CloudOutlined />,
       };
@@ -1776,9 +1813,6 @@ export default function VideoEditorPage() {
     : normalizeSubtitleSegments(currentItem);
   const visualSpec = resolveVisualSpec(batch?.visual_spec);
   const playbackRate = asNumber(visualSpec.playback_rate, 1.15);
-  const estimatedOutputSeconds = estimatedOutputSourceSeconds > 0
-    ? estimatedOutputSourceSeconds / playbackRate
-    : 0;
   const previewTitle = reviewTitle || currentItem?.selected_title || titleCandidates(currentItem)[0] || "";
   const localPreview = localOverlayPreview(
     previewSegments,
@@ -1859,6 +1893,29 @@ export default function VideoEditorPage() {
     }
   };
 
+  const togglePreviewPlayback = () => {
+    if (previewMode === "plan") {
+      togglePlanPreview();
+      return;
+    }
+    const video = previewRef.current;
+    if (!video) return;
+    if (video.paused) void video.play();
+    else video.pause();
+  };
+
+  const togglePreviewMute = () => {
+    const video = previewRef.current;
+    if (!video) return;
+    video.muted = !video.muted;
+    setIsPreviewMuted(video.muted);
+  };
+
+  const openPreviewFullscreen = () => {
+    const preview = previewRef.current?.parentElement;
+    if (preview?.requestFullscreen) void preview.requestFullscreen();
+  };
+
   const handlePreviewTimeUpdate = () => {
     const video = previewRef.current;
     if (!video) return;
@@ -1895,6 +1952,100 @@ export default function VideoEditorPage() {
     setPlanPreviewElapsed(nextPlanTime * playbackRate);
   };
 
+  const timelineDuration = previewMode === "plan"
+    ? planTimelineDuration
+    : sourceTimelineDuration;
+  const timelineValue = previewMode === "plan"
+    ? planTimelineValue
+    : Math.min(previewTime, timelineDuration);
+  const timelineTickValues = Array.from({ length: 6 }, (_, index) => (
+    timelineDuration * (index / 5)
+  ));
+  const timelinePosition = timelineDuration > 0
+    ? Math.max(0, Math.min(100, (timelineValue / timelineDuration) * 100))
+    : 0;
+  const sourceTimeToTimelineTime = (sourceTime: number) => (
+    previewMode === "plan"
+      ? planTimeFromSourceTime(sourceTime, activeIntervals) / playbackRate
+      : sourceTime
+  );
+  const representativeSubtitle = previewSegments.length
+    ? previewSegments[Math.floor(previewSegments.length / 2)]
+    : null;
+  const timelineMarkerTargets = {
+    pause: sourceTimeToTimelineTime(
+      activeIntervals[0]?.start ?? sourceTimelineDuration * 0.23,
+    ),
+    caption: sourceTimeToTimelineTime(
+      asNumber(representativeSubtitle?.start, sourceTimelineDuration * 0.49),
+    ),
+    title: Math.min(timelineDuration, 0.5),
+  };
+  const timelineMarkerPosition = (target: number) => {
+    if (timelineDuration <= 0) return "8%";
+    return `${Math.max(8, Math.min(92, (target / timelineDuration) * 100))}%`;
+  };
+  const jumpToTimelineMarker = (target: number) => {
+    seekPreviewTimeline(Math.max(0, Math.min(timelineDuration, target)));
+  };
+  const seekPreviewTimeline = (nextTime: number) => {
+    if (previewMode === "plan") {
+      seekPlanPreview(nextTime);
+      return;
+    }
+    const video = previewRef.current;
+    if (!video || timelineDuration <= 0) return;
+    video.pause();
+    video.currentTime = nextTime;
+    setPreviewTime(nextTime);
+  };
+  const seekFromFilmstripPosition = (surface: HTMLDivElement, clientX: number) => {
+    if (timelineDuration <= 0) return;
+    const bounds = surface.getBoundingClientRect();
+    if (bounds.width <= 0) return;
+    const position = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
+    seekPreviewTimeline(position * timelineDuration);
+  };
+  const startFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+  };
+  const continueFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+  };
+  const finishFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const cancelFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const startFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    filmstripMouseDraggingRef.current = true;
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+  };
+  const continueFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!filmstripMouseDraggingRef.current) return;
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+  };
+  const finishFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (!filmstripMouseDraggingRef.current) return;
+    seekFromFilmstripPosition(event.currentTarget, event.clientX);
+    filmstripMouseDraggingRef.current = false;
+  };
+  const cancelFilmstripMouseDrag = () => {
+    filmstripMouseDraggingRef.current = false;
+  };
+
+  const returnToSourceSelection = () => {
+    if (selectedSourceId) selectSource(selectedSourceId);
+  };
+
   const chooseHistory = (selected: CloudBatch) => {
     const selectedItem = selected.items[0] as CloudBatchItem | undefined;
     setBatch(selected);
@@ -1908,7 +2059,6 @@ export default function VideoEditorPage() {
     setReviewSegments(normalizeSubtitleSegments(selectedItem));
     setReviewTitle("");
     setHistoryOpen(false);
-    setCompactSection("plan");
   };
 
   if (loading && !sources.length) {
@@ -1922,136 +2072,67 @@ export default function VideoEditorPage() {
   return (
     <div className="video-editor-cloud-page">
       <header className="video-editor-cloud-header">
-        <div>
-          <Space size={10} align="center">
-            <Title level={3} style={{ margin: 0 }}>轻量智能剪辑</Title>
-            <Tag icon={<CloudOutlined />} color={isSandbox ? "default" : "blue"}>
-              {isSandbox ? "免费体验模式" : providerMode === "aliyun" ? "云端出片模式" : "云端出片待开通"}
-            </Tag>
-          </Space>
-          <Text type="secondary">
-            先免费查看剪辑方案；需要真实字幕和成片时，再开通云端出片。
-          </Text>
-        </div>
-        <Space wrap>
+        <div>{batch ? statusTag(displayStatus) : null}</div>
+        <Space wrap size={8}>
           <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>任务历史</Button>
           <Button icon={<SettingOutlined />} onClick={() => setAdvancedOpen(true)}>高级设置</Button>
-          <Tooltip title="刷新当前任务与云端状态">
+          <Tooltip title="刷新当前任务状态">
             <Button aria-label="刷新工作台" icon={<ReloadOutlined />} onClick={() => void refresh()} />
           </Tooltip>
         </Space>
       </header>
 
-      <Segmented
-        className="video-editor-compact-nav"
-        block
-        value={compactSection}
-        onChange={(value) => setCompactSection(value as CompactSection)}
-        options={[
-          { value: "source", label: "素材与输出" },
-          { value: "preview", label: "预览" },
-          { value: "plan", label: "方案与费用" },
-        ]}
-      />
-
-      <div className="video-editor-cloud-workspace" data-section={compactSection}>
-        <Card
-          className="video-editor-workspace-card video-editor-source-card"
-          title={<Space><Tag>01</Tag><span>素材与输出</span></Space>}
-          styles={{ body: { padding: 16 } }}
-        >
-          <Space direction="vertical" size={16} style={{ width: "100%" }}>
-            <section>
-              <Text strong>单条视频素材</Text>
-              <Select
-                aria-label="选择视频素材"
-                value={selectedSourceId}
-                onChange={selectSource}
-                placeholder="选择系统已有成片"
-                style={{ width: "100%", marginTop: 8 }}
-                options={sources.map((source) => ({
-                  value: source.source_id,
-                  label: `${source.title} · ${formatBytes(source.size_bytes)}`,
-                }))}
-              />
-              <Upload
-                accept="video/mp4,video/quicktime,video/x-m4v"
-                maxCount={1}
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void uploadSource(file as File);
-                  return Upload.LIST_IGNORE;
-                }}
-              >
-                <Button
-                  block
-                  icon={<UploadOutlined />}
-                  loading={uploading}
-                  style={{ marginTop: 8 }}
-                >
-                  上传 MP4 / MOV
-                </Button>
-              </Upload>
-              {selectedSource && (
-                <div className="video-editor-selected-source">
-                  <Text strong ellipsis>{selectedSource.title}</Text>
-                  <Text type="secondary">{formatBytes(selectedSource.size_bytes)} · 仅上传与播放</Text>
-                </div>
-              )}
-            </section>
-
-            <section>
-              <Text strong>发布平台</Text>
-              <Select
-                aria-label="目标发布平台"
-                value={platform}
-                onChange={changePlatform}
-                options={PLATFORM_OPTIONS}
-                style={{ width: "100%", marginTop: 8 }}
-              />
-            </section>
-
-            <section>
-              <Text strong>输出清晰度</Text>
-              <Radio.Group
-                aria-label="输出清晰度"
-                value={outputProfile}
-                onChange={(event) => changeOutputProfile(event.target.value as OutputProfile)}
-                optionType="button"
-                buttonStyle="solid"
-                className="video-editor-profile-options"
-              >
-                <Radio.Button value="720p">
-                  <span>720P</span>
-                  <small>60 秒约 ¥0.048</small>
-                </Radio.Button>
-                <Radio.Button value="1080p">
-                  <span>1080P</span>
-                  <small>60 秒约 ¥0.080</small>
-                </Radio.Button>
-              </Radio.Group>
-              <Text type="secondary" className="video-editor-helper">
-                档位是分辨率、帧率和码率的唯一权威值。
-              </Text>
-            </section>
-
-          </Space>
-          <Alert
-            className="video-editor-local-free"
-            type="info"
-            showIcon
-            message="本机零模型负担"
-            description="生产链路在云端完成；预览直接播放原片，不生成收费低清代理。"
+      <section className="video-editor-context-bar" aria-label="素材与输出设置">
+        <div className="video-editor-context-source">
+          <Text type="secondary">素材</Text>
+          <Select
+            aria-label="选择视频素材"
+            value={selectedSourceId}
+            onChange={selectSource}
+            placeholder="选择视频素材"
+            options={sources.map((source) => ({
+              value: source.source_id,
+              label: source.title,
+            }))}
           />
-        </Card>
+          <Upload
+            accept="video/mp4,video/quicktime,video/x-m4v"
+            maxCount={1}
+            showUploadList={false}
+            beforeUpload={(file) => {
+              void uploadSource(file as File);
+              return Upload.LIST_IGNORE;
+            }}
+          >
+            <Tooltip title="上传 MP4 / MOV">
+              <Button aria-label="上传 MP4 / MOV" icon={<UploadOutlined />} loading={uploading} />
+            </Tooltip>
+          </Upload>
+        </div>
+        <div className="video-editor-context-static">
+          <Text type="secondary">画面</Text>
+          <Text strong>9:16</Text>
+        </div>
+        <div className="video-editor-context-profile">
+          <Text type="secondary">清晰度</Text>
+          <Radio.Group
+            aria-label="输出清晰度"
+            value={outputProfile}
+            onChange={(event) => changeOutputProfile(event.target.value as OutputProfile)}
+            optionType="button"
+            buttonStyle="solid"
+            size="small"
+          >
+            <Radio.Button value="720p">720P</Radio.Button>
+            <Radio.Button value="1080p">1080P</Radio.Button>
+          </Radio.Group>
+        </div>
+      </section>
 
-        <Card
-          className="video-editor-workspace-card video-editor-preview-card"
-          title={<Space><Tag>02</Tag><span>原片与方案预览</span></Space>}
-          extra={statusTag(displayStatus)}
-          styles={{ body: { padding: 14 } }}
-        >
+      <div className="video-editor-cloud-workspace">
+        <section className="video-editor-cinema-panel" aria-label="视频预览">
           <div className="video-editor-preview-toolbar">
+            <Text strong>预览</Text>
             <Segmented
               value={previewMode}
               onChange={(value) => setPreviewMode(value as PreviewMode)}
@@ -2061,11 +2142,6 @@ export default function VideoEditorPage() {
                 { value: "output", label: "成片", disabled: !playableResultMediaUrl },
               ]}
             />
-            {currentItem?.provider_stage && (
-              <Text type="secondary">
-                {PROVIDER_STAGE_LABELS[currentItem.provider_stage] || currentItem.provider_stage}
-              </Text>
-            )}
           </div>
 
           <div className="video-editor-preview-stage">
@@ -2076,7 +2152,6 @@ export default function VideoEditorPage() {
                 <video
                   key={`${previewMode}-${playableResultMediaUrl || selectedSource.media_url}`}
                   ref={previewRef}
-                  controls={previewMode !== "plan"}
                   preload="metadata"
                   src={previewMode === "output" && playableResultMediaUrl ? playableResultMediaUrl : selectedSource.media_url}
                   className={previewMode === "plan" ? "video-editor-plan-video" : ""}
@@ -2092,6 +2167,9 @@ export default function VideoEditorPage() {
                       : 1;
                   }}
                   onTimeUpdate={handlePreviewTimeUpdate}
+                  onPlay={() => setIsPreviewPlaying(true)}
+                  onPause={() => setIsPreviewPlaying(false)}
+                  onEnded={() => setIsPreviewPlaying(false)}
                   onClick={previewMode === "plan" ? togglePlanPreview : undefined}
                 />
                 {previewMode === "plan" && titleEnabled && overlayPreview.title.lines.length > 0 && titlePreviewTime <= overlayPreview.title.end && (
@@ -2123,298 +2201,244 @@ export default function VideoEditorPage() {
           </div>
 
           <div className="video-editor-preview-footer">
-            {previewMode === "plan" && (
-              <div className="video-editor-preview-timeline">
-                <Slider
-                  ariaLabelForHandle="方案预览进度"
-                  min={0}
-                  max={Math.max(planTimelineDuration, 0.1)}
-                  step={0.05}
-                  value={planTimelineValue}
-                  tooltip={{
-                    formatter: (value) => formatTimelineTime(asNumber(value)),
-                  }}
-                  onChange={seekPlanPreview}
-                />
-                <div>
-                  <Text>
-                    {formatTimelineTime(planTimelineValue)}
-                    {" / "}
-                    {formatTimelineTime(planTimelineDuration)}
-                  </Text>
-                  <Text type="secondary">可拖动查看剪后时间</Text>
-                </div>
-              </div>
-            )}
-            <Space wrap>
-              {previewMode === "plan" && (
-                <Button size="small" icon={<PlayCircleOutlined />} onClick={togglePlanPreview}>
-                  播放方案预览
-                </Button>
-              )}
-              <Tag icon={<PlayCircleOutlined />}>
-                {previewMode === "plan"
-                  ? `按正式方案 ${playbackRate.toFixed(2)}× 预览`
-                  : previewMode === "output"
-                    ? "正式成片"
-                    : "原始素材"}
-              </Tag>
-              {!playableResultMediaUrl && playableSourceMediaUrl && (
-                <Tooltip title="原片可直接下载；不含字幕、剪辑或配乐">
-                  <Button size="small" icon={<DownloadOutlined />} onClick={downloadSourceVideo}>
-                    下载原片
-                  </Button>
-                </Tooltip>
-              )}
-              {currentStatus === "awaiting_subtitle_review" ? (
-                <Button
-                  size="small"
-                  icon={<EditOutlined />}
-                  disabled={!currentItem}
-                  onClick={() => {
-                    if (currentItem) void openReview(currentItem);
-                  }}
-                >
-                  去审核并生成成片
-                </Button>
-              ) : (
-                <Tooltip
-                  title={
-                    playableResultMediaUrl && !isSandbox
-                      ? "下载已生成的正式成片"
-                      : currentStatus === "outcome_unknown" && !isSandbox
-                        ? "复用现有字幕和方案，在本机免费生成 MP4"
-                        : "真实成片生成后可下载"
-                  }
-                >
-                  <span>
-                    <Button
-                      size="small"
-                      icon={
-                        currentStatus === "outcome_unknown" && !playableResultMediaUrl
-                          ? <DownloadOutlined />
-                          : <DownloadOutlined />
-                      }
-                      disabled={
-                        isSandbox
-                        || (
-                          !playableResultMediaUrl
-                          && currentStatus !== "outcome_unknown"
-                        )
-                      }
-                      onClick={downloadFinishedVideo}
-                    >
-                      {currentStatus === "outcome_unknown" && !playableResultMediaUrl
-                        ? "本机免费生成并下载"
-                        : "下载成片"}
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-              {estimatedRemovedSeconds > 0 && (
-                <Text>预计删减 {estimatedRemovedSeconds.toFixed(1)} 秒</Text>
-              )}
-              {estimatedOutputSeconds > 0 && (
-                <Text>剪后约 {estimatedOutputSeconds.toFixed(1)} 秒</Text>
-              )}
-              {currentItem?.subtitle_preview_source === "cached_asr" && (
-                <Tag color="blue">字幕预览已复用同一素材的识别结果</Tag>
-              )}
-              {currentItem?.subtitle_preview_source === "script_estimate" && (
-                <Tooltip title="仅用于失败或等待状态下预览排版；正式出片仍使用识别并复核后的时间戳。">
-                  <Tag color="gold">字幕预览来自原始文案</Tag>
-                </Tooltip>
-              )}
-            </Space>
-            {currentItem && (
-              <Progress
-                percent={STATUS_META[displayStatus]?.progress || currentItem.analysis?.progress || 0}
-                size="small"
-                status={["failed", "interrupted"].includes(currentStatus) ? "exception" : undefined}
-                showInfo={false}
+            <div className="video-editor-transport">
+              <Button
+                type="text"
+                aria-label={isPreviewPlaying ? "暂停预览" : "播放预览"}
+                icon={isPreviewPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+                onClick={togglePreviewPlayback}
               />
-            )}
+              <Text className="video-editor-timeline-time">
+                {formatTimelineTime(timelineValue)} / {formatTimelineTime(timelineDuration)}
+              </Text>
+              <Slider
+                className="video-editor-transport-slider"
+                ariaLabelForHandle="视频播放进度"
+                min={0}
+                max={Math.max(timelineDuration, 0.1)}
+                step={0.05}
+                value={timelineValue}
+                tooltip={{ formatter: (value) => formatTimelineTime(asNumber(value)) }}
+                onChange={seekPreviewTimeline}
+              />
+              <Tooltip title={isPreviewMuted ? "开启声音" : "静音"}>
+                <Button
+                  type="text"
+                  aria-label={isPreviewMuted ? "开启声音" : "静音"}
+                  icon={isPreviewMuted ? <MutedOutlined /> : <SoundOutlined />}
+                  onClick={togglePreviewMute}
+                />
+              </Tooltip>
+              <Tooltip title="全屏预览">
+                <Button
+                  type="text"
+                  aria-label="全屏预览"
+                  icon={<FullscreenOutlined />}
+                  onClick={openPreviewFullscreen}
+                />
+              </Tooltip>
+              {!playableResultMediaUrl && playableSourceMediaUrl && (
+                <Tooltip title="下载当前原片">
+                  <Button type="text" aria-label="下载原片" icon={<DownloadOutlined />} onClick={downloadSourceVideo} />
+                </Tooltip>
+              )}
+            </div>
+            <div className="video-editor-timeline-ruler" aria-hidden="true">
+              {timelineTickValues.map((time, index) => (
+                <span key={`${index}-${time}`}>{formatTimelineTime(time)}</span>
+              ))}
+            </div>
+            <div
+              className="video-editor-filmstrip"
+              aria-label="可拖动的视频画面缩略时间轴"
+              data-testid="filmstrip-surface"
+              onPointerDown={startFilmstripDrag}
+              onPointerMove={continueFilmstripDrag}
+              onPointerUp={finishFilmstripDrag}
+              onPointerCancel={cancelFilmstripDrag}
+              onMouseDown={startFilmstripMouseDrag}
+              onMouseMove={continueFilmstripMouseDrag}
+              onMouseUp={finishFilmstripMouseDrag}
+              onMouseLeave={cancelFilmstripMouseDrag}
+              onDragStart={(event) => event.preventDefault()}
+            >
+              <div className="video-editor-filmstrip-content">
+                  {timelineFrames.length ? (
+                    <div
+                      className="video-editor-filmstrip-frames"
+                      style={{ gridTemplateColumns: `repeat(${timelineFrames.length}, minmax(0, 1fr))` }}
+                    >
+                      {timelineFrames.map((frame, index) => (
+                        <img
+                          alt=""
+                          aria-hidden="true"
+                          data-testid="timeline-frame"
+                          draggable={false}
+                          key={`${selectedSourceId}-${index}`}
+                          src={frame}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="video-editor-filmstrip-loading">
+                      <Spin size="small" />
+                      <span>正在读取原片画面</span>
+                    </div>
+                  )}
+                  <span
+                    className="video-editor-timeline-playhead"
+                    aria-hidden="true"
+                    style={{ left: `${timelinePosition}%` }}
+                  />
+                  <Slider
+                    className="video-editor-filmstrip-slider"
+                    ariaLabelForHandle="视频预览进度"
+                    min={0}
+                    max={Math.max(timelineDuration, 0.1)}
+                    step={0.05}
+                    value={timelineValue}
+                    tooltip={{ formatter: (value) => formatTimelineTime(asNumber(value)) }}
+                    onChange={seekPreviewTimeline}
+                  />
+              </div>
+            </div>
+            <div className="video-editor-timeline-markers" aria-label="剪辑时间线标记">
+              <Tooltip title={`点击跳到明显停顿处 · ${formatTimelineTime(timelineMarkerTargets.pause)}`}>
+                <Button
+                  type="text"
+                  className="is-pause"
+                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.pause) }}
+                  aria-label={`跳到停顿标记 ${formatTimelineTime(timelineMarkerTargets.pause)}`}
+                  icon={<ClockCircleOutlined />}
+                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.pause)}
+                >
+                  停顿 · {formatTimelineTime(timelineMarkerTargets.pause)}
+                </Button>
+              </Tooltip>
+              <Tooltip title={`点击跳到字幕位置 · ${formatTimelineTime(timelineMarkerTargets.caption)}`}>
+                <Button
+                  type="text"
+                  className="is-caption"
+                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.caption) }}
+                  aria-label={`跳到字幕标记 ${formatTimelineTime(timelineMarkerTargets.caption)}`}
+                  icon={<EditOutlined />}
+                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.caption)}
+                >
+                  字幕 · {formatTimelineTime(timelineMarkerTargets.caption)}
+                </Button>
+              </Tooltip>
+              <Tooltip title={`点击跳到标题出现位置 · ${formatTimelineTime(timelineMarkerTargets.title)}`}>
+                <Button
+                  type="text"
+                  className="is-title"
+                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.title) }}
+                  aria-label={`跳到标题标记 ${formatTimelineTime(timelineMarkerTargets.title)}`}
+                  icon={<FileProtectOutlined />}
+                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.title)}
+                >
+                  标题 · {formatTimelineTime(timelineMarkerTargets.title)}
+                </Button>
+              </Tooltip>
+            </div>
           </div>
-        </Card>
+        </section>
 
-        <Card
-          className="video-editor-workspace-card video-editor-plan-card"
-          title={<Space><Tag>03</Tag><span>粗剪方案与出片参考</span></Space>}
-          extra={<Text type="secondary">安全粗剪</Text>}
-          styles={{ body: { padding: 16 } }}
-        >
-          <div className="video-editor-plan-body">
-            <div className="video-editor-plan-scroll">
-              {isSandbox && (
+        <aside className="video-editor-result-panel" aria-label="本次成片内容与费用">
+          <div className="video-editor-result-scroll">
+            {isSandbox && (
               <Alert
                 data-testid="provider-alert"
                 type="info"
                 showIcon
                 message="免费体验：不调用真实云服务"
-                description="先查看操作流程和方案预览；不会调用真实识别、生成成片或发布。"
               />
-              )}
-              {configurationBlocked && (
+            )}
+            {configurationBlocked && (
               <Alert
                 data-testid="provider-alert"
                 type="warning"
                 showIcon
                 message="云端出片尚未开通"
-                description="可先使用免费体验查看流程；需要真实字幕和成片时，再一次性开通云端服务。"
+                description="可先查看剪辑方案；开通后才会生成真实字幕和成片。"
               />
-              )}
-              {pollingStopped && (
+            )}
+            {pollingStopped && (
               <Alert
                 type="warning"
                 showIcon
                 message="自动查询已停止"
-                description="网络查询失败后没有连续重试；请手动刷新确认供应商原任务状态。"
+                description="请手动刷新，确认原任务的最新状态。"
               />
-              )}
-              {currentStatus === "outcome_unknown" && (
+            )}
+            {currentStatus === "outcome_unknown" && (
               <Alert
                 type="warning"
                 showIcon
                 message="付费提交结果未知"
-                description="旧任务不会自动重提。可重新获取报价，确认后按已校对的字幕生成一条新成片。"
+                description="旧任务不会自动重提，请先确认任务结果。"
               />
-              )}
-              {isLocalExport && currentStatus !== "rendering" && (
-              <Alert
-                type="success"
-                showIcon
-                message="本机成片已生成，本次新增费用 ¥0"
-                description="已复用同一素材审核过的字幕、标题和配乐方案，没有再次调用 Fun-ASR、qwen 或 MPS。"
-              />
-              )}
+            )}
 
-              <div className="video-editor-plan-heading">
-                <div>
-                  <Text strong>可解释建议</Text>
-                  <Paragraph type="secondary">
-                    只处理可靠空白和长停顿；正式出片与此预览使用同一组保留片段。
-                  </Paragraph>
-                </div>
-              </div>
-
-              <div className="video-editor-plan-list">
-                {planSteps.map((step) => (
-                  <div className="video-editor-plan-item" key={step.id}>
-                    <div className="video-editor-plan-icon">{STEP_ICON[step.kind] || <CheckCircleOutlined />}</div>
-                    <div className="video-editor-plan-copy">
-                      <Space size={6} wrap>
-                        <Text strong>{step.label}</Text>
-                        {step.estimated_removed_seconds > 0 && (
-                          <Tag>约 -{step.estimated_removed_seconds.toFixed(1)} 秒</Tag>
-                        )}
-                      </Space>
-                      <Text type="secondary">{step.reason}</Text>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="video-editor-bgm-card">
-              <div className="video-editor-bgm-header">
-                <Space size={8}>
-                  <SoundOutlined />
-                  <Text strong>{displayedBgm ? "AI 已匹配配乐" : "AI 自动配乐"}</Text>
-                </Space>
-                {displayedBgm && (
-                  <Tag color="purple">
-                    {displayedBgm.voiceover_category || displayedBgm.mood}
-                  </Tag>
-                )}
-              </div>
-              {displayedBgm ? (
-                <>
-                  <div className="video-editor-bgm-result">
-                    <div>
-                      <Text strong>{displayedBgm.title}</Text>
-                      <Text type="secondary">
-                        {displayedBgm.energy || "克制"} · {Math.round(displayedBgm.duration_seconds)} 秒
-                      </Text>
-                    </div>
-                    <Text type="secondary">
-                      {currentItem?.selected_bgm_id === displayedBgm.asset_id && currentItem.bgm_reason
-                        ? currentItem.bgm_reason
-                        : `根据文案语气匹配“${displayedBgm.voiceover_category || displayedBgm.mood}”，将以低音量铺底。`}
-                    </Text>
-                  </div>
-                  <audio
-                    controls
-                    preload="metadata"
-                    src={displayedBgm.media_url}
-                    aria-label={`试听 AI 配乐：${displayedBgm.title}`}
-                  />
-                  <div className="video-editor-bgm-actions">
-                    <Button size="small" icon={<ReloadOutlined />} onClick={chooseNextBgm}>
-                      换一首
-                    </Button>
-                    <Text type="secondary">确认生成前仍可调整</Text>
-                  </div>
-                </>
-              ) : (
-                <Text type="secondary">
-                  分析文案后会自动匹配并直接提供试听；没有合适音乐时保持原声。
-                </Text>
-              )}
-              </div>
-
-              {isLocalExport ? (
-              <div className="video-editor-cost-card">
-                <div className="video-editor-cost-header">
-                  <div>
-                    <Text strong>本次导出费用</Text>
-                    <Text type="secondary">复用已有审核结果</Text>
-                  </div>
-                  <Text className="video-editor-cost-total" data-testid="cost-total">
-                    ¥0
-                  </Text>
-                </div>
-                <Text type="secondary">
-                  由本机 FFmpeg 生成可下载 MP4；旧云报价仅保留在任务历史中，不会自动扣费或重提。
-                </Text>
-                <Tag color="green">真实 MP4 已生成</Tag>
-              </div>
-              ) : (
-              <div className="video-editor-cost-card">
-              <div className="video-editor-cost-header">
-                <div>
-                  <Text strong>{isSandbox ? "云端出片参考费用" : "预计费用上限"}</Text>
-                  <Text type="secondary">{PROFILE_META[outputProfile].label}</Text>
-                </div>
-                <Text className="video-editor-cost-total" data-testid="cost-total">
-                  {formatCost(costUpperBound)}
-                </Text>
-              </div>
-              {quoteBreakdown.length ? (
-                <div className="video-editor-cost-lines">
-                  {quoteBreakdown.map((line) => (
-                    <div key={line.key}>
-                      <Text type="secondary">{line.label}</Text>
-                      <Text>{formatCost(line.amount)}</Text>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Text type="secondary">
-                  {isSandbox
-                    ? "开通云端出片后，会先给出 15 分钟有效的正式报价。"
-                    : "60 秒官方单价示例；点击主按钮获取 15 分钟有效的正式报价。"}
-                </Text>
-              )}
-              <Space size={6} wrap>
-                {quote?.quote_id && <Tag>{quoteExpired ? "报价已过期" : "报价有效 15 分钟"}</Tag>}
-                {quote?.pricing_version || quote?.price_version
-                  ? <Tag>价格版本 {quote.pricing_version || quote.price_version}</Tag>
-                  : null}
-                {isSandbox && <Tag>免费体验不收费</Tag>}
-              </Space>
-              </div>
-              )}
+            <div className="video-editor-result-heading">
+              <Title level={4}>本次成片包含</Title>
+              <Text type="secondary">以下处理为默认成片内容，无需重复选择。</Text>
             </div>
 
+            <div className="video-editor-result-list">
+              {RESULT_SUMMARY_ITEMS.map((item) => (
+                <div className="video-editor-result-item" key={item.key}>
+                  <CheckCircleOutlined />
+                  <div>
+                    <Text strong>{item.label}</Text>
+                    <Text type="secondary">{item.reason}</Text>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="video-editor-result-actions">
+            <div className="video-editor-cost-header">
+              <div>
+                <Text>{isLocalExport ? "本次下载新增费用" : isSandbox ? "参考费用" : "预计费用"}</Text>
+                <Text type="secondary">画面 9:16 · {outputProfile === "720p" ? "720P" : "1080P"}</Text>
+              </div>
+              <Text className="video-editor-cost-total" data-testid="cost-total">
+                {isLocalExport ? "¥0" : formatCost(costUpperBound)}
+              </Text>
+            </div>
+            {isLocalExport && quote && (
+              <div className="video-editor-prior-quote" data-testid="prior-cloud-quote">
+                <Text type="secondary">此前云端处理报价{quoteExpired ? "（已过期）" : ""}</Text>
+                <Text strong>{formatCost(costUpperBound)}</Text>
+              </div>
+            )}
+            {quote?.quote_id && !isLocalExport && (
+              <Text type="secondary">{quoteExpired ? "报价已过期，请重新确认" : "确认后才会开始计费制作"}</Text>
+            )}
+            {quote && quoteBreakdown.length > 0 && (
+              <details className="video-editor-cost-details">
+                <summary>{isLocalExport ? "查看原云端报价明细" : "查看费用明细"}</summary>
+                <div>
+                  {quoteBreakdown.map((line) => (
+                    <p key={line.key}>
+                      <Text type="secondary">{line.label}</Text>
+                      <Text>{formatCost(line.amount)}</Text>
+                    </p>
+                  ))}
+                </div>
+                <Text type="secondary">
+                  {quote.exclusions?.length
+                    ? `未包含：${quote.exclusions.join("、")}。`
+                    : "实际扣费以云服务商最终账单为准。"}
+                </Text>
+              </details>
+            )}
+            {playableResultMediaUrl && primaryAction.label !== "下载成片" && (
+              <Button icon={<DownloadOutlined />} onClick={downloadFinishedVideo}>
+                下载成片
+              </Button>
+            )}
             <div className="video-editor-primary-zone">
               <Button
                 data-testid="primary-action"
@@ -2429,15 +2453,14 @@ export default function VideoEditorPage() {
                 {primaryAction.label}
               </Button>
               <Text type="secondary">
-                {!batch
-                  ? isSandbox
-                    ? "免费体验不调用真实识别或出片；开通云端后才会显示实际费用。"
-                    : "免费预检不会调用付费 API；确认报价后才允许分析。"
-                  : STATUS_META[displayStatus]?.label || displayStatus}
+                {batch ? STATUS_META[displayStatus]?.label || displayStatus : "确认费用后才会开始制作"}
               </Text>
             </div>
+            <Button type="link" onClick={returnToSourceSelection} disabled={!selectedSourceId}>
+              返回选择素材
+            </Button>
           </div>
-        </Card>
+        </aside>
       </div>
 
       <Modal
@@ -2904,27 +2927,21 @@ export default function VideoEditorPage() {
       </Drawer>
 
       <style>{`
-        .video-editor-cloud-page{display:flex;flex-direction:column;gap:14px;width:100%;min-width:0}
-        .video-editor-cloud-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
-        .video-editor-compact-nav{display:none}
-        .video-editor-cloud-workspace{display:grid;grid-template-columns:minmax(252px,.78fr) minmax(340px,1.22fr) minmax(310px,.9fr);gap:14px;height:clamp(480px,calc(100dvh - 260px),760px);min-height:0}
-        .video-editor-workspace-card{height:100%;overflow:hidden;border-color:var(--border-default);box-shadow:var(--shadow-sm)}
-        .video-editor-workspace-card>.ant-card-head{min-height:50px;padding-inline:16px}
-        .video-editor-workspace-card>.ant-card-body{height:calc(100% - 51px);overflow:auto}
-        .video-editor-source-card>.ant-card-body{display:flex;flex-direction:column;justify-content:space-between;gap:14px}
-        .video-editor-selected-source{display:flex;flex-direction:column;gap:2px;margin-top:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--gray-50)}
-        .video-editor-profile-options{display:flex;width:100%;margin-top:8px}
-        .video-editor-profile-options .ant-radio-button-wrapper{display:flex;flex:1;height:auto;min-height:52px;align-items:flex-start;justify-content:center;padding:7px 8px;line-height:1.3}
-        .video-editor-profile-options .ant-radio-button-wrapper span:not(.ant-radio-button){display:flex;flex-direction:column;align-items:center;gap:3px}
-        .video-editor-profile-options small{font-size:11px;font-weight:400;white-space:nowrap}
-        .video-editor-helper{display:block;margin-top:6px;font-size:12px}
-        .video-editor-local-free{margin-top:auto}
-        .video-editor-preview-card>.ant-card-body{display:flex;flex-direction:column;min-height:0}
-        .video-editor-preview-toolbar,.video-editor-preview-footer,.video-editor-cost-header,.video-editor-modal-total{display:flex;align-items:center;justify-content:space-between;gap:12px}
-        .video-editor-preview-toolbar{flex-wrap:wrap}
-        .video-editor-preview-stage{display:flex;flex:1;min-height:0;align-items:center;justify-content:center;margin:12px 0;padding:16px;border-radius:var(--radius-md);background:linear-gradient(145deg,#0f172a,#18223a)}
+        .video-editor-cloud-page{display:flex;flex-direction:column;gap:12px;width:100%;min-width:0}
+        .video-editor-cloud-header{display:flex;min-height:36px;align-items:center;justify-content:space-between;gap:16px}
+        .video-editor-context-bar{display:flex;min-height:58px;align-items:center;gap:0;overflow:hidden;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-card);box-shadow:var(--shadow-sm)}
+        .video-editor-context-source,.video-editor-context-static,.video-editor-context-profile{display:flex;align-items:center;gap:10px;padding:10px 16px}
+        .video-editor-context-source{min-width:0;flex:1}
+        .video-editor-context-source>.ant-select{min-width:220px;max-width:560px;flex:1}
+        .video-editor-context-static,.video-editor-context-profile{flex:none;border-left:1px solid var(--border-default)}
+        .video-editor-context-bar .ant-typography-secondary{white-space:nowrap}
+        .video-editor-cloud-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(300px,340px);gap:14px;height:clamp(620px,calc(100dvh - 210px),820px);min-height:0}
+        .video-editor-cinema-panel{display:flex;min-width:0;min-height:0;flex-direction:column;overflow:hidden;border:1px solid #202737;border-radius:var(--radius-md);background:#111827;box-shadow:var(--shadow-sm)}
+        .video-editor-preview-toolbar,.video-editor-cost-header,.video-editor-modal-total{display:flex;align-items:center;justify-content:space-between;gap:12px}
+        .video-editor-preview-toolbar{min-height:52px;flex:none;padding:10px 16px;border-bottom:1px solid var(--border-default);background:var(--bg-card)}
+        .video-editor-preview-stage{display:flex;min-height:0;flex:1;align-items:center;justify-content:center;padding:20px;background:#101827}
         .video-editor-preview-stage .ant-empty-description{color:#d1d5db}
-        .video-editor-phone-preview{position:relative;width:auto;height:100%;max-width:100%;max-height:570px;aspect-ratio:9/16;overflow:hidden;container-type:inline-size;border:1px solid rgba(255,255,255,.28);border-radius:20px;background:#030712;box-shadow:0 18px 42px rgba(0,0,0,.34)}
+        .video-editor-phone-preview{position:relative;width:auto;height:100%;max-width:100%;max-height:540px;aspect-ratio:9/16;overflow:hidden;container-type:inline-size;border:1px solid rgba(255,255,255,.22);border-radius:18px;background:#030712;box-shadow:0 18px 42px rgba(0,0,0,.34)}
         .video-editor-phone-preview video{width:100%;height:100%;object-fit:contain;background:#030712}
         .video-editor-phone-preview video.video-editor-plan-video{object-fit:contain}
         @font-face{font-family:"VideoInsight Title Serif";src:url("/api/v1/video-editor/brand-title-font") format("opentype");font-display:swap;font-style:normal;font-weight:900}
@@ -2934,47 +2951,73 @@ export default function VideoEditorPage() {
         .video-editor-overlay-line{display:block}
         .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.5) * 1em);line-height:0;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,120ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
         @keyframes video-editor-emphasis-pop{0%{transform:scale(.94)}70%{transform:scale(1.05)}100%{transform:scale(1)}}
-        .video-editor-preview-footer{flex-direction:column;align-items:stretch}
-        .video-editor-preview-timeline{display:flex;flex-direction:column;gap:2px}
-        .video-editor-preview-timeline>.ant-slider{margin:4px 6px}
-        .video-editor-preview-timeline>div{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
-        .video-editor-plan-card>.ant-card-body{overflow:hidden}
-        .video-editor-plan-body{display:grid;grid-template-rows:minmax(0,1fr) auto;height:100%;min-height:0;gap:10px}
-        .video-editor-plan-scroll{display:flex;min-height:0;flex-direction:column;gap:12px;overflow-y:auto;overscroll-behavior:contain;padding-right:4px}
-        .video-editor-plan-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
-        .video-editor-plan-heading .ant-typography{margin-bottom:0}
-        .video-editor-plan-list{display:flex;min-height:120px;max-height:220px;flex:none;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
-        .video-editor-plan-item{display:grid;grid-template-columns:30px minmax(0,1fr);align-items:start;gap:8px;padding:10px;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--bg-card)}
-        .video-editor-plan-icon{display:flex;width:30px;height:30px;align-items:center;justify-content:center;border-radius:8px;background:var(--primary-50);color:var(--primary-600)}
-        .video-editor-plan-copy{display:flex;min-width:0;flex-direction:column;gap:3px}
-        .video-editor-plan-copy>.ant-typography{font-size:12px;line-height:1.45}
-        .video-editor-cost-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--primary-200);border-radius:var(--radius-md);background:var(--primary-50)}
-        .video-editor-bgm-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-muted)}
-        .video-editor-bgm-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
-        .video-editor-bgm-result{display:flex;flex-direction:column;gap:4px}
-        .video-editor-bgm-result>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
-        .video-editor-bgm-card audio{display:block;width:100%;height:34px}
-        .video-editor-bgm-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}
+        .video-editor-preview-footer{display:flex;flex:none;flex-direction:column;gap:4px;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
+        .video-editor-preview-footer .ant-typography,.video-editor-preview-footer .ant-btn{color:#f8fafc}
+        .video-editor-timeline-time{font-variant-numeric:tabular-nums}
+        .video-editor-transport{display:flex;min-width:0;align-items:center;gap:8px}
+        .video-editor-transport>.ant-btn{flex:none;width:26px;height:26px;padding:0}
+        .video-editor-transport-slider{min-width:80px;flex:1;margin:0 4px!important}
+        .video-editor-transport-slider .ant-slider-rail{background:rgba(255,255,255,.22)}
+        .video-editor-transport-slider .ant-slider-track{background:#8b5cf6}
+        .video-editor-transport-slider .ant-slider-handle:after{box-shadow:0 0 0 2px #8b5cf6}
+        .video-editor-timeline-ruler{display:grid;grid-template-columns:repeat(6,1fr);padding:0 2px;color:#94a3b8;font-size:11px;font-variant-numeric:tabular-nums}
+        .video-editor-timeline-ruler span{text-align:center}
+        .video-editor-timeline-ruler span:first-child{text-align:left}
+        .video-editor-timeline-ruler span:last-child{text-align:right}
+        .video-editor-filmstrip{position:relative;height:62px;flex:none;overflow:hidden;touch-action:none;cursor:ew-resize;border:1px solid rgba(255,255,255,.28);border-radius:7px;background:#090e18;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+        .video-editor-filmstrip-content{position:relative;width:100%;height:100%;overflow:hidden}
+        .video-editor-filmstrip-frames{display:grid;height:100%;pointer-events:none;user-select:none}
+        .video-editor-filmstrip-frames img{display:block;width:100%;height:100%;-webkit-user-drag:none;user-select:none;object-fit:cover;border-right:1px solid rgba(255,255,255,.16)}
+        .video-editor-filmstrip-frames img:last-child{border-right:0}
+        .video-editor-filmstrip-loading{display:flex;height:100%;align-items:center;justify-content:center;gap:8px;color:#94a3b8;font-size:12px}
+        .video-editor-timeline-playhead{position:absolute;z-index:2;top:0;bottom:0;width:2px;transform:translateX(-1px);background:#8b5cf6;box-shadow:0 0 0 1px rgba(139,92,246,.2),0 0 9px rgba(139,92,246,.8);pointer-events:none}
+        .video-editor-filmstrip-slider{position:absolute;z-index:3;inset:0;margin:0!important;padding:0!important;pointer-events:none}
+        .video-editor-filmstrip-slider .ant-slider-rail,.video-editor-filmstrip-slider .ant-slider-track{height:100%;background:transparent!important}
+        .video-editor-filmstrip-slider .ant-slider-handle{opacity:1}
+        .video-editor-filmstrip-slider .ant-slider-handle:after{width:12px;height:12px;inset:-1px;background:#8b5cf6;box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.42)}
+        .video-editor-timeline-markers{position:relative;height:38px;color:#cbd5e1;font-size:11px}
+        .video-editor-timeline-markers>button{position:absolute;top:0;display:flex;height:auto;flex-direction:column;align-items:center;gap:2px;padding:0 6px;transform:translateX(-50%);color:#cbd5e1!important}
+        .video-editor-timeline-markers .anticon{display:flex;width:21px;height:21px;align-items:center;justify-content:center;border-radius:6px;background:rgba(124,58,237,.2);color:#c4b5fd}
+        .video-editor-timeline-markers .is-caption .anticon{background:rgba(14,165,233,.19);color:#7dd3fc}
+        .video-editor-timeline-markers .is-title .anticon{background:rgba(245,158,11,.18);color:#fcd34d}
+        .video-editor-result-panel{display:flex;min-height:0;flex-direction:column;overflow:hidden;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-card);box-shadow:var(--shadow-sm)}
+        .video-editor-result-scroll{display:flex;min-height:0;flex:1;flex-direction:column;gap:14px;overflow-y:auto;padding:24px 22px}
+        .video-editor-result-heading{display:flex;flex-direction:column;gap:4px}
+        .video-editor-result-heading .ant-typography{margin:0}
+        .video-editor-result-list{display:flex;flex-direction:column}
+        .video-editor-result-item{display:grid;grid-template-columns:26px minmax(0,1fr);gap:12px;padding:17px 0;border-bottom:1px solid var(--border-default)}
+        .video-editor-result-item:last-child{border-bottom:0}
+        .video-editor-result-item>.anticon{display:flex;width:24px;height:24px;align-items:center;justify-content:center;border-radius:50%;background:var(--primary-600);color:white}
+        .video-editor-result-item>div{display:flex;min-width:0;flex-direction:column;gap:4px}
+        .video-editor-result-item .ant-typography-secondary{font-size:13px;line-height:1.55}
+        .video-editor-result-actions{display:flex;flex:none;flex-direction:column;gap:10px;padding:18px 22px;border-top:1px solid var(--border-default);background:var(--bg-card)}
         .video-editor-cost-header>div{display:flex;flex-direction:column}
-        .video-editor-cost-total{font-size:25px;font-weight:700;color:var(--primary-700)}
-        .video-editor-cost-lines{display:flex;flex-direction:column;gap:4px}
-        .video-editor-cost-lines>div{display:flex;align-items:center;justify-content:space-between;gap:10px}
-        .video-editor-primary-zone{display:flex;flex-direction:column;gap:6px;padding-top:10px;border-top:1px solid var(--border-default);background:var(--bg-card);text-align:center}
+        .video-editor-cost-total{font-size:27px;font-weight:700;color:var(--primary-700)}
+        .video-editor-prior-quote{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;background:var(--surface-muted)}
+        .video-editor-cost-details{font-size:12px}
+        .video-editor-cost-details summary{cursor:pointer;color:var(--primary-600);user-select:none}
+        .video-editor-cost-details>div{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+        .video-editor-cost-details p{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0}
+        .video-editor-primary-zone{display:flex;flex-direction:column;gap:6px;text-align:center}
         .video-editor-primary-zone>.ant-typography{font-size:12px}
         .video-editor-modal-total{padding:12px;border-radius:var(--radius-sm);background:var(--primary-50)}
         @media(max-width:1180px){
-          .video-editor-compact-nav{display:flex}
-          .video-editor-cloud-workspace{display:block;height:auto;min-height:640px}
-          .video-editor-workspace-card{display:none;height:640px}
-          .video-editor-cloud-workspace[data-section="source"] .video-editor-source-card,
-          .video-editor-cloud-workspace[data-section="preview"] .video-editor-preview-card,
-          .video-editor-cloud-workspace[data-section="plan"] .video-editor-plan-card{display:block}
+          .video-editor-cloud-workspace{grid-template-columns:minmax(0,1fr) 300px}
+          .video-editor-context-source>.ant-select{min-width:180px}
+        }
+        @media(max-width:960px){
+          .video-editor-cloud-workspace{grid-template-columns:1fr;height:auto}
+          .video-editor-cinema-panel{min-height:660px}
+          .video-editor-result-panel{min-height:560px}
         }
         @media(max-width:720px){
           .video-editor-cloud-header{flex-direction:column}
-          .video-editor-cloud-workspace,.video-editor-workspace-card{min-height:600px;height:auto}
-          .video-editor-preview-card{height:660px}
-          .video-editor-phone-preview{max-height:500px}
+          .video-editor-context-bar{align-items:stretch;flex-direction:column}
+          .video-editor-context-static,.video-editor-context-profile{border-top:1px solid var(--border-default);border-left:0}
+          .video-editor-context-source>.ant-select{min-width:0}
+          .video-editor-cinema-panel{min-height:620px}
+          .video-editor-phone-preview{max-height:430px}
+          .video-editor-preview-footer{padding-inline:12px}
         }
       `}</style>
     </div>

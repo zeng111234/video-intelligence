@@ -62,7 +62,7 @@ _MAX_VISUAL_ASSET_BYTES = 10 * 1024 * 1024
 _VISUAL_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 _GENERIC_AVATAR_TITLE = re.compile(r"^数字人视频\d*$")
 _LOCAL_PREVIEW_EXPORT_STYLE_VERSION = (
-    "business_talking_head_v8-speed-1.15-caption-clock-v1"
+    "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
 )
 _LOCAL_PREVIEW_PLAYBACK_RATE = 1.15
 
@@ -611,6 +611,8 @@ class VideoEditorWorkflowService:
         for metadata_path in directory.glob("bgm-*.json"):
             try:
                 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                if metadata.get("retired"):
+                    continue
                 media_path = directory / metadata["stored_name"]
                 if not media_path.is_file():
                     continue
@@ -1529,7 +1531,9 @@ class VideoEditorWorkflowService:
         try:
             quote = create_cost_quote(
                 input_duration_seconds=duration_seconds,
-                output_duration_seconds=duration_seconds,
+                # The recommended smart opening adds at most 1.4 seconds to the
+                # first render. Quote it up front instead of hiding the cost.
+                output_duration_seconds=duration_seconds + 1.4,
                 output_profile=output_profile,
                 price_version=configuration.price_version,
                 ttl_seconds=configuration.quote_ttl_seconds,
@@ -1929,6 +1933,10 @@ class VideoEditorWorkflowService:
             3,
         )
         labels = {
+            "smart_opening": (
+                "AI 智能开场",
+                "从已审核文案提取短钩子，自动匹配克制的开场动画和音效。",
+            ),
             "trim_silence": (
                 "安全粗剪长停顿",
                 "只处理可靠无语音间隔；两端保留口型缓冲，正式成片按同一方案拼接。",
@@ -2244,6 +2252,19 @@ class VideoEditorWorkflowService:
             or cached.get("enabled_plan_step_ids")
             or ["vertical_fit", "subtitles", "title"]
         )
+        from src.services.video_editor_cloud import build_smart_opening
+
+        transcript = "".join(str(segment.get("text") or "") for segment in segments)
+        existing_opening = edit_plan.get("smart_opening") or {}
+        opening = build_smart_opening(
+            transcript,
+            [title],
+            preferred_style=existing_opening.get("style_id"),
+        )
+        if opening is not None:
+            edit_plan["smart_opening"] = opening.model_dump(mode="json")
+            if "smart_opening" not in enabled_steps:
+                enabled_steps.insert(0, "smart_opening")
         selected_bgm_id = (
             item.selected_bgm_id
             or str(cached.get("selected_bgm_id") or "").strip()
@@ -2288,6 +2309,12 @@ class VideoEditorWorkflowService:
                     ensure_ascii=False,
                 ),
                 "edit_plan_json": json.dumps(edit_plan, ensure_ascii=False),
+                "smart_opening_json": json.dumps(
+                    edit_plan.get("smart_opening")
+                    if "smart_opening" in enabled_steps
+                    else {},
+                    ensure_ascii=False,
+                ),
                 "bgm_id": selected_bgm_id or "",
             },
         )
@@ -2309,6 +2336,7 @@ class VideoEditorWorkflowService:
                         "reused_approved_subtitles": True,
                         "playback_rate": _LOCAL_PREVIEW_PLAYBACK_RATE,
                         "style_version": _LOCAL_PREVIEW_EXPORT_STYLE_VERSION,
+                        "smart_opening": edit_plan.get("smart_opening"),
                     },
                 },
                 "publish_allowed": False,
@@ -2328,6 +2356,204 @@ class VideoEditorWorkflowService:
             .replace(":", r"\:")
             .replace("'", r"\'")
         )
+
+    @staticmethod
+    def _render_smart_opening_clip(
+        opening: dict[str, Any],
+        *,
+        output_profile: str,
+        fps: int,
+        output_path: Path,
+        temp_dir: Path,
+    ) -> float:
+        """Render one short, full-frame opening from the approved template set."""
+
+        try:
+            from PIL import Image, ImageDraw, ImageFilter, ImageFont
+        except ImportError as exc:
+            raise VideoEditorWorkflowError(
+                "缺少开场动画排版组件 Pillow，暂不能生成开场。"
+            ) from exc
+        from src.services.video_editor_cloud import (
+            BRAND_TITLE_FONT_PATH,
+            SmartOpening,
+            visual_style_spec,
+        )
+
+        approved = SmartOpening.model_validate(opening)
+        spec = visual_style_spec(output_profile)
+        width = int(spec["canvas"]["width"])
+        height = int(spec["canvas"]["height"])
+        duration = float(approved.duration_seconds)
+        frame_count = max(2, round(duration * fps))
+        frames_dir = temp_dir / "opening-frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+
+        base = Image.new("RGB", (width, height), "#070A12")
+        base_draw = ImageDraw.Draw(base)
+        for y in range(height):
+            ratio = y / max(1, height - 1)
+            base_draw.line(
+                (0, y, width, y),
+                fill=(7 + round(7 * ratio), 10 + round(9 * ratio), 18 + round(14 * ratio)),
+            )
+        grid_gap = max(48, round(width * 0.09))
+        grid_color = (69, 83, 112)
+        for x in range(0, width, grid_gap):
+            base_draw.line((x, 0, x, height), fill=grid_color, width=1)
+        for y in range(0, height, grid_gap):
+            base_draw.line((0, y, width, y), fill=grid_color, width=1)
+        vignette = Image.new("L", (width, height), 0)
+        vignette_draw = ImageDraw.Draw(vignette)
+        vignette_draw.ellipse(
+            (-round(width * 0.35), round(height * 0.18), round(width * 1.35), round(height * 0.82)),
+            fill=210,
+        )
+        vignette = vignette.filter(ImageFilter.GaussianBlur(round(width * 0.18)))
+        light = Image.new("RGB", (width, height), "#17213A")
+        base = Image.composite(light, base, vignette)
+
+        font_size = round(width * (0.105 if len(approved.hook_text) <= 8 else 0.082))
+        font = ImageFont.truetype(str(BRAND_TITLE_FONT_PATH), font_size)
+        chars_per_line = 7 if len(approved.hook_text) > 9 else 8
+        lines = [
+            approved.hook_text[index : index + chars_per_line]
+            for index in range(0, len(approved.hook_text), chars_per_line)
+        ][:2]
+        line_gap = round(font_size * 0.22)
+        text_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        text_draw = ImageDraw.Draw(text_layer)
+        boxes = [text_draw.textbbox((0, 0), line, font=font, stroke_width=max(1, width // 360)) for line in lines]
+        block_height = sum(box[3] - box[1] for box in boxes) + line_gap * max(0, len(lines) - 1)
+        y = round(height * 0.46 - block_height / 2)
+        number_pattern = re.compile(r"\d+(?:\.\d+)?(?:%|％|元|块|折)?")
+        for line, box in zip(lines, boxes, strict=False):
+            line_width = box[2] - box[0]
+            x = round((width - line_width) / 2)
+            text_draw.text(
+                (x, y),
+                line,
+                font=font,
+                fill="#F8FAFC",
+                stroke_width=max(1, width // 360),
+                stroke_fill=(0, 0, 0, 150),
+            )
+            if approved.style_id == "number_focus":
+                match = number_pattern.search(line)
+                if match:
+                    prefix_width = text_draw.textlength(line[: match.start()], font=font)
+                    text_draw.text(
+                        (x + prefix_width, y),
+                        match.group(),
+                        font=font,
+                        fill="#FFE16A",
+                        stroke_width=max(1, width // 360),
+                        stroke_fill=(0, 0, 0, 150),
+                    )
+            y += box[3] - box[1] + line_gap
+
+        for frame_index in range(frame_count):
+            progress = frame_index / max(1, frame_count - 1)
+            eased = 1 - (1 - min(progress / 0.72, 1)) ** 3
+            fade_out = 1 if progress < 0.82 else max(0, (1 - progress) / 0.18)
+            animated = text_layer
+            if approved.style_id == "story_unfold":
+                bounce = 1 + 0.06 * (1 - eased) * (1 if progress < 0.45 else -0.35)
+                reveal = max(0.08, eased)
+                resized = animated.resize(
+                    (width, max(1, round(height * reveal * bounce))),
+                    Image.Resampling.LANCZOS,
+                )
+                stage = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                stage.alpha_composite(resized, (0, round((height - resized.height) / 2)))
+                animated = stage
+            else:
+                start_scale = 1.42 if approved.style_id == "number_focus" else 1.28
+                scale = start_scale - (start_scale - 1) * eased
+                scaled = animated.resize(
+                    (round(width * scale), round(height * scale)),
+                    Image.Resampling.LANCZOS,
+                )
+                stage = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                shift_x = round(width * 0.08 * max(0, (progress - 0.82) / 0.18))
+                stage.alpha_composite(
+                    scaled,
+                    (round((width - scaled.width) / 2) + shift_x, round((height - scaled.height) / 2)),
+                )
+                blur = round((1 - eased) * (12 if approved.style_id == "number_focus" else 8))
+                animated = stage.filter(ImageFilter.GaussianBlur(blur)) if blur else stage
+            if approved.style_id == "number_focus":
+                glow = animated.filter(ImageFilter.GaussianBlur(max(2, width // 120)))
+                glow.putalpha(glow.getchannel("A").point(lambda value: round(value * 0.32)))
+                frame = base.convert("RGBA")
+                frame.alpha_composite(glow)
+            else:
+                frame = base.convert("RGBA")
+            if fade_out < 1:
+                animated = animated.copy()
+                animated.putalpha(animated.getchannel("A").point(lambda value: round(value * fade_out)))
+            frame.alpha_composite(animated)
+            frame.convert("RGB").save(
+                frames_dir / f"{frame_index:04d}.jpg",
+                quality=90,
+                optimize=True,
+            )
+
+        sound_filter = {
+            "soft_whoosh": (
+                f"anoisesrc=color=pink:sample_rate=48000:duration={duration:.3f}:amplitude=0.05,"
+                "highpass=f=420,lowpass=f=4200,afade=t=in:st=0:d=0.06,"
+                f"afade=t=out:st=0.55:d={max(0.2, duration - 0.55):.3f}"
+            ),
+            "soft_page_turn": (
+                f"anoisesrc=color=white:sample_rate=48000:duration={duration:.3f}:amplitude=0.025,"
+                "lowpass=f=2600,afade=t=in:st=0:d=0.04,"
+                f"afade=t=out:st=0.32:d={max(0.2, duration - 0.32):.3f}"
+            ),
+            "soft_chime": (
+                "sine=frequency=880:sample_rate=48000:duration=0.34,volume=0.045,"
+                "afade=t=out:st=0.08:d=0.26,"
+                f"apad=whole_dur={duration:.3f}"
+            ),
+        }[approved.sound_effect_id]
+        command = [
+            "ffmpeg", "-nostdin", "-y", "-v", "error",
+            "-framerate", str(fps), "-start_number", "0",
+            "-i", str(frames_dir / "%04d.jpg"),
+            "-f", "lavfi", "-i", sound_filter,
+            "-t", f"{duration:.3f}", "-c:v", "libx264", "-preset", "veryfast",
+            "-pix_fmt", "yuv420p", "-r", str(fps),
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            str(output_path),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
+        if result.returncode != 0 or not output_path.is_file() or not output_path.stat().st_size:
+            detail = (result.stderr or "开场动画没有生成文件。").strip()
+            raise VideoEditorWorkflowError(f"智能开场生成失败：{detail[-500:]}")
+        return duration
+
+    @staticmethod
+    def _prepend_opening_clip(
+        opening_path: Path,
+        body_path: Path,
+        output_path: Path,
+        *,
+        bitrate: str,
+    ) -> None:
+        command = [
+            "ffmpeg", "-nostdin", "-y", "-v", "error",
+            "-i", str(opening_path), "-i", str(body_path),
+            "-filter_complex",
+            "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[vout][aout]",
+            "-map", "[vout]", "-map", "[aout]", "-c:v", "libx264",
+            "-preset", "veryfast", "-b:v", bitrate, "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+            output_path.as_posix(),
+        ]
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15 * 60, check=False)
+        if result.returncode != 0 or not output_path.is_file() or not output_path.stat().st_size:
+            detail = (result.stderr or "开场与正片拼接失败。").strip()
+            raise VideoEditorWorkflowError(f"智能开场拼接失败：{detail[-500:]}")
 
     def _run_local_preview_export(self, task_id: str) -> None:
         task = self._get_workflow_task(task_id, "local_preview_export")
@@ -2369,6 +2595,9 @@ class VideoEditorWorkflowService:
                 for segment in segments
             ]
             edit_plan = json.loads(task.outputs.get("edit_plan_json") or "{}")
+            smart_opening = json.loads(
+                task.outputs.get("smart_opening_json") or "{}"
+            )
             rendered_spoken_ranges = [
                 {
                     "start": round(
@@ -2409,6 +2638,7 @@ class VideoEditorWorkflowService:
             width = int(canvas["width"])
             height = int(canvas["height"])
             fps = task.edit_config.output_fps
+            body_path = temp_dir / "body.mp4" if smart_opening else output_path
             subtitle_filter = self._ffmpeg_filter_path(ass_path)
             filter_parts = [
                 (
@@ -2490,7 +2720,7 @@ class VideoEditorWorkflowService:
                     "-movflags",
                     "+faststart",
                     "-shortest",
-                    str(output_path),
+                    str(body_path),
                 ]
             )
             task = self._update(
@@ -2508,12 +2738,34 @@ class VideoEditorWorkflowService:
             )
             if (
                 result.returncode != 0
-                or not output_path.is_file()
-                or output_path.stat().st_size == 0
+                or not body_path.is_file()
+                or body_path.stat().st_size == 0
             ):
                 detail = (result.stderr or "本机编码没有生成文件。").strip()
                 raise VideoEditorWorkflowError(
                     f"本机成片生成失败：{detail[-600:]}"
+                )
+            opening_duration = 0.0
+            if smart_opening:
+                task = self._update(
+                    task,
+                    status=TaskStatus.RUNNING,
+                    progress=72,
+                    stage="正在生成智能开场并保持音画同步",
+                )
+                opening_path = temp_dir / "opening.mp4"
+                opening_duration = self._render_smart_opening_clip(
+                    smart_opening,
+                    output_profile=profile,
+                    fps=fps,
+                    output_path=opening_path,
+                    temp_dir=temp_dir,
+                )
+                self._prepend_opening_clip(
+                    opening_path,
+                    body_path,
+                    output_path,
+                    bitrate=task.edit_config.output_bitrate,
                 )
             output_media = self._probe_media(output_path)
             if (
@@ -2521,7 +2773,10 @@ class VideoEditorWorkflowService:
                 or output_media["height"] != height
             ):
                 raise VideoEditorWorkflowError("本机成片分辨率校验失败。")
-            expected_duration = float(media["duration_seconds"]) / playback_rate
+            expected_duration = (
+                float(media["duration_seconds"]) / playback_rate
+                + opening_duration
+            )
             if abs(float(output_media["duration_seconds"]) - expected_duration) > 1:
                 raise VideoEditorWorkflowError("本机成片语速与时长校验失败。")
 
@@ -2647,6 +2902,7 @@ class VideoEditorWorkflowService:
         caption_groups: object = None,
         caption_emphasis: object = None,
         spoken_ranges: object = None,
+        time_offset_seconds: float = 0,
     ) -> bytes:
         from src.services.video_editor_cloud import build_business_talking_head_ass
 
@@ -2657,6 +2913,7 @@ class VideoEditorWorkflowService:
             caption_groups=caption_groups,
             caption_emphasis=caption_emphasis,
             spoken_ranges=spoken_ranges,
+            time_offset_seconds=time_offset_seconds,
         )
 
     @staticmethod
@@ -2684,6 +2941,7 @@ class VideoEditorWorkflowService:
         selected_title: str,
         selected_bgm_id: str | None,
         confirmed: bool,
+        smart_opening_enabled: bool = True,
     ) -> dict[str, Any]:
         from src.services.video_editor_cloud import (
             CloudAsset,
@@ -2736,6 +2994,14 @@ class VideoEditorWorkflowService:
         # arbitrary render parameters remain impossible.
         if selected_bgm_id:
             allowed_steps.add(EditStepKind.BGM)
+        if smart_opening_enabled and plan.smart_opening is not None:
+            allowed_steps.add(EditStepKind.SMART_OPENING)
+            if EditStepKind.SMART_OPENING not in selected_steps:
+                selected_steps.insert(0, EditStepKind.SMART_OPENING)
+        else:
+            selected_steps = [
+                step for step in selected_steps if step != EditStepKind.SMART_OPENING
+            ]
         if any(step not in allowed_steps for step in selected_steps):
             raise VideoEditorWorkflowError("不能启用服务端方案之外的剪辑步骤。")
         trim_enabled = EditStepKind.TRIM_SILENCE in selected_steps
@@ -2886,15 +3152,42 @@ class VideoEditorWorkflowService:
         temp_title: Path | None = None
         temp_merge_config: Path | None = None
         temp_bgm_mix: Path | None = None
+        temp_opening_dir: Path | None = None
+        opening_asset = None
+        opening_duration = 0.0
         merge_config_asset = None
         bgm_asset = None
         try:
+            if (
+                EditStepKind.SMART_OPENING in selected_steps
+                and reviewed_plan.smart_opening is not None
+            ):
+                temp_opening_dir = Path(
+                    tempfile.mkdtemp(prefix=f"{batch.batch_id}-opening-")
+                )
+                temp_opening = temp_opening_dir / "opening.mp4"
+                opening_duration = self._render_smart_opening_clip(
+                    reviewed_plan.smart_opening.model_dump(mode="json"),
+                    output_profile=batch.output_profile,
+                    fps=batch.output_fps,
+                    output_path=temp_opening,
+                    temp_dir=temp_opening_dir,
+                )
+                opening_asset = providers.object_store.upload(
+                    temp_opening,
+                    (
+                        f"video-editor-input/{batch.batch_id}/opening/"
+                        f"{reviewed_plan.smart_opening.style_id}.mp4"
+                    ),
+                    media_type="video/mp4",
+                )
             subtitle_bytes = self._review_ass_bytes(
                 render_segments,
                 output_profile=batch.output_profile,
                 caption_groups=reviewed_plan.caption_groups,
                 caption_emphasis=reviewed_plan.caption_emphasis,
                 spoken_ranges=render_spoken_ranges,
+                time_offset_seconds=opening_duration,
             )
             if subtitle_bytes and EditStepKind.SUBTITLES in selected_steps:
                 handle = tempfile.NamedTemporaryFile(
@@ -2999,6 +3292,8 @@ class VideoEditorWorkflowService:
                 title=title,
                 bgm_asset=bgm_asset,
                 bgm_volume=batch.bgm_volume,
+                opening_asset=opening_asset,
+                opening_duration_seconds=opening_duration,
                 idempotency_key=render_key,
             )
             snapshot = providers.render.submit(render_request)
@@ -3096,6 +3391,8 @@ class VideoEditorWorkflowService:
                 temp_merge_config.unlink(missing_ok=True)
             if temp_bgm_mix is not None:
                 temp_bgm_mix.unlink(missing_ok=True)
+            if temp_opening_dir is not None:
+                shutil.rmtree(temp_opening_dir, ignore_errors=True)
 
     def continue_batch_item(self, batch_id: str, item_id: str) -> dict[str, Any]:
         batch = self._require_batch(batch_id)

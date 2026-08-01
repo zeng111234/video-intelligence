@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -265,10 +266,14 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert task.outputs["workflow"] == "local_preview_export"
     assert (
         task.outputs["style_version"]
-        == "business_talking_head_v8-speed-1.15-caption-clock-v1"
+        == "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
     )
     assert task.outputs["playback_rate"] == "1.15"
     assert "最近广州有一家烧烤店" in task.outputs["subtitle_segments_json"]
+    assert "smart_opening" in item["enabled_plan_step_ids"]
+    opening = json.loads(task.outputs["smart_opening_json"])
+    assert opening["style_id"] == "number_focus"
+    assert opening["hook_text"] == "49元变小店长吃烧烤还能赚钱"[:14]
     assert submitted == [task.task_id]
 
 
@@ -627,6 +632,52 @@ def test_bgm_recommendation_prefers_ai_voiceover_category(
     assert selected is not None
     assert selected["asset_id"] == knowledge["asset_id"]
     assert "理性干货" in reason
+
+
+def test_retired_bgm_is_hidden_but_stays_resolvable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_probe_bgm_duration", lambda _: 120.0)
+    retired = service.upload_bgm(
+        file_name="old-library.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"old",
+        mood="旧音乐",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        voiceover_category="通用口播",
+        energy="克制",
+    )
+    active = service.upload_bgm(
+        file_name="new-library.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"new",
+        mood="新音乐",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        voiceover_category="通用口播",
+        energy="克制",
+    )
+    metadata_path = service._bgm_directory() / f"{retired['asset_id']}.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["retired"] = True
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    listed_ids = {item["asset_id"] for item in service.list_bgm_assets()}
+
+    assert active["asset_id"] in listed_ids
+    assert retired["asset_id"] not in listed_ids
+    assert service.resolve_bgm_asset(retired["asset_id"])["asset_id"] == retired["asset_id"]
 
 
 def test_bgm_recommendation_does_not_auto_select_content_id_registered_track(

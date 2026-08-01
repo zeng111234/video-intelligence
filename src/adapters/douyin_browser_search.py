@@ -26,6 +26,10 @@ from urllib.request import urlopen
 from pydantic import HttpUrl
 
 from src.adapters.licensed import LicensedProviderError
+from src.adapters.browser_window import (
+    minimize_browser_window,
+    restart_browser_for_login,
+)
 from src.models import (
     Platform,
     ProviderCapability,
@@ -51,6 +55,8 @@ _HOTSPOT_MAX_ROWS_PER_LIST = 50
 _HOTSPOT_MAX_SCROLL_ROUNDS = 8
 _HOTSPOT_MAX_RESULT_LIMIT = 100
 _HOTSPOT_CUSTOMER_RESULT_LIMIT = 3
+_PUBLIC_SEARCH_MAX_RESULT_LIMIT = 30
+_PUBLIC_SEARCH_MAX_SCROLL_ROUNDS = 5
 _MIN_QUALIFYING_LIKES = 100
 _MIN_QUALIFYING_LIKES_PER_DAY = 1.0
 _HOTSPOT_PAGE_SETTLE_RANGE_MS = (3_500, 5_500)
@@ -76,6 +82,16 @@ _HOTSPOT_ENTRY_URL = (
     "active_tab=hotspot_video&date_window=168&sub_type=1001"
 )
 _HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v5_three_boards"
+_PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v2_login_wall_stop"
+_PUBLIC_SEARCH_LOGIN_MARKERS = (
+    "安全验证",
+    "扫码登录",
+    "请完成验证",
+    "登录后查看更多",
+    "登录后即可搜索更多精彩视频",
+    "请先登录后继续",
+)
+_PUBLIC_SEARCH_RATE_LIMIT_MARKERS = ("访问频繁", "操作频繁", "请求过于频繁")
 
 
 @dataclass(frozen=True)
@@ -201,7 +217,10 @@ class LocalDouyinBrowserSearchProvider:
 
     def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
+        if status.running and visible:
+            restart_browser_for_login(self.debug_port)
         if status.running and not visible:
+            self._minimize_browser_for_background()
             return status
         capability = self.capabilities()
         if not capability.enabled:
@@ -258,6 +277,8 @@ class LocalDouyinBrowserSearchProvider:
             time.sleep(delay_seconds)
             status = self.session_status()
             if status.running:
+                if not visible:
+                    self._minimize_browser_for_background()
                 return status
         return BrowserSessionStatus(
             True,
@@ -295,6 +316,7 @@ class LocalDouyinBrowserSearchProvider:
         if not status.running:
             raise LicensedProviderError(status.message, kind=ProviderErrorKind.AUTHORIZATION)
 
+        self._minimize_browser_for_background()
         window_hours = self._resolve_hotspot_window_hours(hotspot_window_hours)
         observed_at = self.clock()
         raw_rows, collection_errors = self._collect_hotspot_rows(
@@ -333,6 +355,88 @@ class LocalDouyinBrowserSearchProvider:
             errors=[*collection_errors, *warnings],
         )
 
+    def search_public(
+        self,
+        platform: Platform,
+        keyword: str,
+        published_after: datetime | None,
+        limit: int,
+        idempotency_key: str,
+        hotspot_window_hours: int | None = None,
+    ) -> ProviderSearchPage:
+        """Read a limited set of already-rendered Douyin public search cards.
+
+        This is deliberately separate from ``search``: Hotspot ranking and
+        ordinary Douyin search are two visible sources with different quality
+        signals.  The public source never reads network responses or tries to
+        bypass a login, verification, or rate-limit page.
+        """
+        del hotspot_window_hours
+        capability = self.capabilities()
+        if not capability.enabled:
+            raise LicensedProviderError(
+                "本机浏览器采集尚未就绪。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+        if platform != Platform.DOUYIN:
+            raise LicensedProviderError(
+                "抖音官网搜索当前只支持抖音。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        if not 1 <= limit <= _PUBLIC_SEARCH_MAX_RESULT_LIMIT:
+            raise LicensedProviderError(
+                "抖音官网搜索每次最多保留 30 条候选。",
+                kind=ProviderErrorKind.VALIDATION,
+            )
+        status = self.session_status()
+        if not status.running:
+            raise LicensedProviderError(
+                status.message,
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+
+        self._minimize_browser_for_background()
+        observed_at = self.clock()
+        raw_rows, collection_errors = self._collect_public_search_rows(
+            keyword,
+            target_limit=limit,
+        )
+        (
+            items,
+            warnings,
+            filter_counts,
+            published_filtered_count,
+        ) = self._to_public_search_items(
+            raw_rows,
+            keyword=keyword,
+            observed_at=observed_at,
+            published_after=published_after,
+            limit=limit,
+        )
+        diagnostic = None
+        if not raw_rows:
+            diagnostic = "抖音官网搜索未返回可读取的视频；可能没有公开结果、需要人工登录或出现安全限制。"
+        elif not items:
+            diagnostic = "抖音官网搜索已读取候选，但没有通过关键词、时长或可核验时间范围的基础筛选。"
+        elif published_filtered_count:
+            diagnostic = f"已按可见发布时间排除 {published_filtered_count} 条超出时间范围的候选。"
+        return ProviderSearchPage(
+            platform=Platform.DOUYIN,
+            provider=self.provider_name,
+            items=items,
+            observed_at=observed_at,
+            request_id=f"browser-public-{idempotency_key[:16]}",
+            api_call_count=0,
+            billable_units=0,
+            has_more=len(raw_rows) > len(items),
+            raw_item_count=len(raw_rows),
+            parsed_item_count=len(items),
+            payload_diagnostic=diagnostic,
+            duration_filtered_count=filter_counts["duration"],
+            relevance_filtered_count=filter_counts["relevance"],
+            errors=[*collection_errors, *warnings],
+        )
+
     def refresh_metrics(
         self,
         platform: Platform,
@@ -363,6 +467,49 @@ class LocalDouyinBrowserSearchProvider:
             estimated_cost=0,
         )
 
+    def _minimize_browser_for_background(self) -> None:
+        """Keep ordinary collection in the dedicated browser out of the foreground."""
+        minimize_browser_window(self.debug_port)
+
+    @staticmethod
+    def _reuse_or_create_collection_page(
+        context,
+        *,
+        preferred_url_fragments: tuple[str, ...],
+    ) -> tuple[Any, bool]:
+        """Prefer an existing dedicated Douyin tab without disturbing login pages."""
+        try:
+            pages = list(context.pages)
+        except (AttributeError, TypeError):
+            pages = []
+        reusable_pages: list[tuple[Any, str]] = []
+        for page in reversed(pages):
+            try:
+                if page.is_closed():
+                    continue
+            except AttributeError:
+                pass
+            except Exception:
+                continue
+            url = str(getattr(page, "url", "") or "")
+            normalized_url = url.casefold()
+            if any(marker in normalized_url for marker in ("open.douyin.com", "oauth", "passport", "login")):
+                continue
+            reusable_pages.append((page, normalized_url))
+
+        for fragment in preferred_url_fragments:
+            normalized_fragment = fragment.casefold()
+            for page, url in reusable_pages:
+                if normalized_fragment in url:
+                    return page, False
+        for page, url in reusable_pages:
+            if "douyin.com" in url:
+                return page, False
+        for page, url in reusable_pages:
+            if url in {"", "about:blank"}:
+                return page, False
+        return context.new_page(), True
+
     def _collect_hotspot_rows(
         self,
         keyword: str,
@@ -388,7 +535,10 @@ class LocalDouyinBrowserSearchProvider:
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.connect_over_cdp(endpoint)
                     context = browser.contexts[0]
-                    page = context.new_page()
+                    page, created_page = self._reuse_or_create_collection_page(
+                        context,
+                        preferred_url_fragments=("douhot.douyin.com",),
+                    )
                     try:
                         page.set_default_timeout(int(self.timeout_seconds * 1000))
                         rows: list[dict[str, Any]] = []
@@ -524,9 +674,9 @@ class LocalDouyinBrowserSearchProvider:
                         if has_enough_qualifying_rows():
                             return rows, errors
 
-                        # 3) Search leaderboard is consulted for visibility, while the
-                        # rendered public Douyin search result supplies the actual
-                        # exact-keyword video cards (Hotspot search can be fuzzy).
+                        # 3) Keep Hotspot search-board rows in this provider.  The
+                        # public Douyin website is collected by ``search_public`` so
+                        # callers can label and schedule it as a separate source.
                         try:
                             ensure_visible_page(
                                 "https://douhot.douyin.com/square/hotspot?"
@@ -545,33 +695,6 @@ class LocalDouyinBrowserSearchProvider:
                                     "source_kind": "search_board",
                                 })
                                 rows.append(row)
-                            ensure_visible_page(
-                                "https://www.douyin.com/search/"
-                                + quote(keyword, safe="") + "?type=video"
-                            )
-                            if not self._apply_public_search_week_filter(page):
-                                errors.append(
-                                    ProviderSearchError(
-                                        kind=ProviderErrorKind.VALIDATION,
-                                        message=(
-                                            "抖音公开搜索页没有显示“一周内”筛选；"
-                                            "最终候选仍会按可核验发布时间严格限制为一周。"
-                                        ),
-                                        retryable=False,
-                                    )
-                                )
-                            # Douyin virtualises its result list.  Reading the DOM once
-                            # only sees the first rendered card, which made the search
-                            # source look like it had a single result.  Collect every
-                            # rendered viewport before applying the quality gate.
-                            for row in self._collect_douyin_search_rows(page):
-                                row.update({
-                                    "window_hours": window_hours,
-                                    "list_type": 3001,
-                                    "list_label": "抖音搜索",
-                                    "source_kind": "douyin_search",
-                                })
-                                rows.append(row)
                         except LicensedProviderError:
                             raise
                         except PlaywrightError as exc:
@@ -583,7 +706,8 @@ class LocalDouyinBrowserSearchProvider:
 
                         return rows, errors
                     finally:
-                        page.close()
+                        if created_page:
+                            page.close()
             except LicensedProviderError:
                 raise
             except (PlaywrightError, OSError, ConnectionError) as exc:
@@ -595,6 +719,96 @@ class LocalDouyinBrowserSearchProvider:
             kind=ProviderErrorKind.CONNECTION,
             retryable=False,
         ) from last_error
+
+    def _collect_public_search_rows(
+        self,
+        keyword: str,
+        *,
+        target_limit: int,
+    ) -> tuple[list[dict[str, Any]], list[ProviderSearchError]]:
+        """Collect only rendered cards from the public Douyin search result page."""
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        endpoint = f"http://127.0.0.1:{self.debug_port}"
+        last_error: Exception | None = None
+        target_limit = max(1, min(target_limit, _PUBLIC_SEARCH_MAX_RESULT_LIMIT))
+        for attempt in range(2):
+            try:
+                with sync_playwright() as playwright:
+                    browser = playwright.chromium.connect_over_cdp(endpoint)
+                    context = browser.contexts[0]
+                    page, created_page = self._reuse_or_create_collection_page(
+                        context,
+                        preferred_url_fragments=("www.douyin.com/search/",),
+                    )
+                    try:
+                        page.set_default_timeout(int(self.timeout_seconds * 1000))
+                        response = page.goto(
+                            self._public_search_url(keyword),
+                            wait_until="domcontentloaded",
+                        )
+                        if response is not None and response.status in {403, 412, 429}:
+                            raise LicensedProviderError(
+                                f"抖音官网搜索返回 {response.status}，已停止采集并进入安全暂停。",
+                                kind=ProviderErrorKind.RATE_LIMIT,
+                            )
+                        page.wait_for_timeout(
+                            self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                        )
+                        self._raise_for_public_search_block(page)
+                        errors: list[ProviderSearchError] = []
+                        if not self._apply_public_search_week_filter(page):
+                            errors.append(
+                                ProviderSearchError(
+                                    kind=ProviderErrorKind.VALIDATION,
+                                    message=(
+                                        "抖音官网搜索页没有显示“一周内”筛选；"
+                                        "系统会仅按页面可见发布时间排除可确认的超期内容。"
+                                    ),
+                                    retryable=False,
+                                )
+                            )
+                        page.wait_for_timeout(600)
+                        self._raise_for_public_search_block(page)
+                        rows = self._collect_public_douyin_search_rows(
+                            page,
+                            target_limit=target_limit,
+                        )
+                        self._raise_for_public_search_block(page)
+                        return rows, errors
+                    finally:
+                        if created_page:
+                            page.close()
+            except LicensedProviderError:
+                raise
+            except (PlaywrightError, OSError, ConnectionError, IndexError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    continue
+        raise LicensedProviderError(
+            "连接本机 Chrome 失败，已自动重试一次。",
+            kind=ProviderErrorKind.CONNECTION,
+            retryable=False,
+        ) from last_error
+
+    @staticmethod
+    def _public_search_url(keyword: str) -> str:
+        return "https://www.douyin.com/search/" + quote(keyword.strip(), safe="") + "?type=video"
+
+    @staticmethod
+    def _raise_for_public_search_block(page) -> None:
+        body_text = page.locator("body").inner_text(timeout=3_000)
+        if any(marker in body_text for marker in _PUBLIC_SEARCH_LOGIN_MARKERS):
+            raise LicensedProviderError(
+                "抖音官网搜索要求登录或安全验证，后台检索已停止。请在“账号连接”中打开专用浏览器，完成人工登录或验证后再检测文案。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+            )
+        if any(marker in body_text for marker in _PUBLIC_SEARCH_RATE_LIMIT_MARKERS):
+            raise LicensedProviderError(
+                "抖音官网搜索提示访问频繁，已停止采集并进入安全暂停。",
+                kind=ProviderErrorKind.RATE_LIMIT,
+            )
 
     @staticmethod
     def _apply_public_search_week_filter(page) -> bool:
@@ -862,23 +1076,89 @@ class LocalDouyinBrowserSearchProvider:
             }"""
         )
 
+    @staticmethod
+    def _extract_public_douyin_search_rows(page) -> list[dict[str, Any]]:
+        """Extract card text and links only; never read requests or React internals."""
+        return page.locator("body").evaluate(
+            """() => {
+              const toSeconds = value => {
+                const match = String(value || '').match(/^(\\d{1,2}):(\\d{2})$/);
+                return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+              };
+              const number = value => {
+                const text = String(value ?? '').replace(/[,，\\s]/g, '');
+                const unit = text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1;
+                const matched = text.match(/^([0-9]+(?:\\.[0-9]+)?)[万亿]?$/);
+                return matched ? Math.round(Number(matched[1]) * unit) : null;
+              };
+              const isPublishedText = value => /^(刚刚|昨天|前天|\\d+分钟前|\\d+小时前|\\d+天前|\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2})$/.test(value);
+              const isCount = value => /^\\d+(?:\\.\\d+)?[万亿]?$/.test(value);
+              const results = [], seen = new Set();
+              for (const link of document.querySelectorAll("a[href*='/video/']")) {
+                const href = link.href || '';
+                const matched = href.match(/\\/video\\/(\\d{10,})/);
+                if (!matched || seen.has(matched[1])) continue;
+                const card = link.closest('[class*=feed], [class*=Feed], [class*=card], [class*=Card], li, article') || link;
+                const lines = String(card.innerText || link.innerText || '')
+                  .split('\\n').map(value => value.trim()).filter(Boolean);
+                const durationText = lines.find(value => /^\\d{1,2}:\\d{2}$/.test(value));
+                const publishedText = lines.find(isPublishedText) || '';
+                const likesText = lines.find(value => value !== durationText && value !== publishedText && isCount(value));
+                const title = lines
+                  .filter(value => value !== durationText && !value.startsWith('@') && !isCount(value) && !isPublishedText(value))
+                  .sort((left, right) => right.length - left.length)[0] || '';
+                if (!title) continue;
+                seen.add(matched[1]);
+                results.push({
+                  item_id: matched[1], href, title,
+                  author_name: (lines.find(value => value.startsWith('@')) || '').replace(/^@/, ''),
+                  duration: toSeconds(durationText),
+                  likes: number(likesText),
+                  published_text: publishedText,
+                });
+              }
+              return results;
+            }"""
+        )
+
     def _collect_douyin_search_rows(self, page) -> list[dict[str, Any]]:
         """Collect the dynamically rendered viewports of a Douyin search result page."""
         return self._collect_scrolled_rows(page, self._extract_douyin_search_rows)
 
-    def _collect_scrolled_rows(self, page, extractor) -> list[dict[str, Any]]:
+    def _collect_public_douyin_search_rows(
+        self,
+        page,
+        *,
+        target_limit: int,
+    ) -> list[dict[str, Any]]:
+        """Collect a bounded number of public-search viewports from rendered DOM cards."""
+        return self._collect_scrolled_rows(
+            page,
+            self._extract_public_douyin_search_rows,
+            target_limit=target_limit,
+            max_scroll_rounds=_PUBLIC_SEARCH_MAX_SCROLL_ROUNDS,
+        )
+
+    def _collect_scrolled_rows(
+        self,
+        page,
+        extractor,
+        *,
+        target_limit: int = _HOTSPOT_MAX_ROWS_PER_LIST,
+        max_scroll_rounds: int = _HOTSPOT_MAX_SCROLL_ROUNDS,
+    ) -> list[dict[str, Any]]:
         """Accumulate virtualised cards while only reading the rendered page."""
         rows_by_id: dict[str, dict[str, Any]] = {}
         stagnant_rounds = 0
         previous_count = -1
-        for _ in range(_HOTSPOT_MAX_SCROLL_ROUNDS):
+        for _ in range(max_scroll_rounds):
             for row in extractor(page):
                 item_id = str(row.get("item_id") or "")
                 if item_id:
                     rows_by_id[item_id] = row
 
             current_count = len(rows_by_id)
-            if current_count >= _HOTSPOT_MAX_ROWS_PER_LIST:
+            if current_count >= target_limit:
                 break
             stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
             if stagnant_rounds >= 2:
@@ -959,6 +1239,138 @@ class LocalDouyinBrowserSearchProvider:
         if daily_likes < _MIN_QUALIFYING_LIKES_PER_DAY:
             return None
         return round(daily_likes, 4), basis
+
+    @staticmethod
+    def _to_public_search_items(
+        rows: list[dict[str, Any]],
+        *,
+        keyword: str,
+        observed_at: datetime,
+        published_after: datetime | None,
+        limit: int,
+    ) -> tuple[
+        list[ProviderSearchItem],
+        list[ProviderSearchError],
+        dict[str, int],
+        int,
+    ]:
+        """Apply only basic relevance, video, and visible-time checks to public cards."""
+        items: list[ProviderSearchItem] = []
+        errors: list[ProviderSearchError] = []
+        filter_counts = {"duration": 0, "relevance": 0}
+        published_filtered_count = 0
+        seen: set[str] = set()
+        normalized_published_after = published_after
+        if normalized_published_after is not None:
+            if normalized_published_after.tzinfo is None:
+                normalized_published_after = normalized_published_after.replace(
+                    tzinfo=observed_at.tzinfo
+                )
+            else:
+                normalized_published_after = normalized_published_after.astimezone(
+                    observed_at.tzinfo
+                )
+
+        for index, row in enumerate(rows):
+            href = str(row.get("href") or "")
+            item_id = str(row.get("item_id") or "")
+            match = _VIDEO_ID_RE.search(href)
+            if not item_id and not match:
+                continue
+            item_id = item_id or match.group(1)
+            if item_id in seen:
+                continue
+            title = " ".join(
+                part.strip()
+                for part in (
+                    str(row.get("title") or ""),
+                    str(row.get("text") or ""),
+                    str(row.get("aria") or ""),
+                )
+                if part.strip()
+            )[:200]
+            if not title:
+                errors.append(
+                    ProviderSearchError(
+                        kind=ProviderErrorKind.VALIDATION,
+                        message="公开搜索作品链接缺少可读标题，已跳过。",
+                        item_index=index,
+                    )
+                )
+                continue
+            duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
+            if duration_seconds is None or duration_seconds <= 0:
+                filter_counts["duration"] += 1
+                continue
+            if not title_matches_keyword(title=title, keyword=keyword):
+                filter_counts["relevance"] += 1
+                continue
+            published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
+                row.get("published_text"), observed_at
+            )
+            if (
+                normalized_published_after is not None
+                and published_at is not None
+                and published_at < normalized_published_after
+            ):
+                published_filtered_count += 1
+                continue
+            seen.add(item_id)
+            items.append(
+                LocalDouyinBrowserSearchProvider._to_public_provider_item(
+                    row=row,
+                    item_id=item_id,
+                    title=title,
+                    duration_seconds=duration_seconds,
+                    observed_at=observed_at,
+                    published_at=published_at,
+                    keyword=keyword,
+                    provider_rank=len(items) + 1,
+                )
+            )
+            if len(items) >= limit:
+                break
+        return items, errors, filter_counts, published_filtered_count
+
+    @staticmethod
+    def _to_public_provider_item(
+        *,
+        row: dict[str, Any],
+        item_id: str,
+        title: str,
+        duration_seconds: int,
+        observed_at: datetime,
+        published_at: datetime | None,
+        keyword: str,
+        provider_rank: int,
+    ) -> ProviderSearchItem:
+        warnings: list[str] = []
+        if published_at is None:
+            published_at = observed_at
+            warnings.append("公开搜索页未显示可核验发布时间，已保留但需要人工确认。")
+        return ProviderSearchItem(
+            platform=Platform.DOUYIN,
+            platform_item_id=item_id,
+            title=title,
+            author_id=f"douyin-public-{item_id}",
+            author_name=str(row.get("author_name") or "抖音作者待补充"),
+            published_at=published_at,
+            source_url=HttpUrl(f"https://www.douyin.com/video/{item_id}"),
+            provider_rank=provider_rank,
+            metrics=VideoMetricSnapshot(
+                item_id=item_id,
+                sampled_at=observed_at,
+                likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
+                confidence=0.55,
+            ),
+            evidence=(
+                f"douyin_public_search:关键词={keyword};来源=browser_rendered;"
+                f"发布时间={row.get('published_text') or '未返回'};"
+                f"点赞数={row.get('likes') if row.get('likes') is not None else '未返回'};"
+                f"时长秒={duration_seconds}"
+            ),
+            data_quality_warnings=warnings,
+        )
 
     @staticmethod
     def _to_items(
@@ -1228,3 +1640,60 @@ class LocalDouyinBrowserSearchProvider:
             if path.exists():
                 return path
         return None
+
+
+class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
+    """A separately attributable, render-only adapter for Douyin public search."""
+
+    # Keep login-wall empty responses from the first adapter revision out of
+    # the normal 10-minute cache after the user completes manual login.
+    provider_name = "douyin_public_browser_v2"
+    adapter_version = _PUBLIC_SEARCH_ADAPTER_VERSION
+
+    def capabilities(self) -> ProviderCapability:
+        missing = self._missing_prerequisites()
+        return ProviderCapability(
+            provider_name=self.provider_name,
+            display_name="本机 Chrome 抖音官网搜索",
+            mode=ProviderMode.LOCAL_BROWSER,
+            enabled=not missing,
+            supported_platforms=[Platform.DOUYIN] if not missing else [],
+            max_page_size=_PUBLIC_SEARCH_MAX_RESULT_LIMIT,
+            supports_published_after=True,
+            supports_metric_refresh=False,
+            supports_usage=True,
+            permission_status="local_browser_public_search",
+            credential_alias="local-dedicated-browser-profile",
+            missing_configuration=missing,
+        )
+
+    def session_status(self) -> BrowserSessionStatus:
+        status = super().session_status()
+        if status.running and status.phase in {"browser_open", "ready"}:
+            return BrowserSessionStatus(
+                True,
+                True,
+                False,
+                True,
+                "ready",
+                "抖音官网搜索浏览器已就绪；将只读取已渲染的视频搜索结果。",
+            )
+        return status
+
+    def search(
+        self,
+        platform: Platform,
+        keyword: str,
+        published_after: datetime | None,
+        limit: int,
+        idempotency_key: str,
+        hotspot_window_hours: int | None = None,
+    ) -> ProviderSearchPage:
+        return self.search_public(
+            platform=platform,
+            keyword=keyword,
+            published_after=published_after,
+            limit=limit,
+            idempotency_key=idempotency_key,
+            hotspot_window_hours=hotspot_window_hours,
+        )

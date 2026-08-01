@@ -150,10 +150,11 @@ export function searchCandidates(
   limit = 10,
   platforms: string[] = [],
   category?: string,
+  page = 1,
 ): Promise<CandidateListResponse> {
   return request("/candidates/search", {
     method: "POST",
-    body: JSON.stringify({ keyword, limit, platforms, category }),
+    body: JSON.stringify({ keyword, limit, platforms, category, page }),
   });
 }
 
@@ -799,6 +800,18 @@ export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
 
 export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> {
   return request(`/crawler/batches/${batchId}`);
+}
+
+export function probeCrawlerBatchCopy(batchId: string): Promise<CrawlerBatchResponse> {
+  return request(`/crawler/batches/${batchId}/copy-probes`, { method: "POST" });
+}
+
+export function recheckCrawlerBatchLegacyNoText(
+  batchId: string,
+): Promise<CrawlerBatchResponse> {
+  return request(`/crawler/batches/${batchId}/copy-probes/recheck-v1-no-text`, {
+    method: "POST",
+  });
 }
 
 export function deleteCrawlerBatch(batchId: string): Promise<{ batch_id: string; deleted: boolean }> {

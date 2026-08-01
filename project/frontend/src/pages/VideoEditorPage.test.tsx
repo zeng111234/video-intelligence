@@ -305,20 +305,20 @@ describe("VideoEditorPage cloud-light workflow", () => {
   it("keeps one source and one primary action, then sends the confirmed quote once", async () => {
     const view = renderPage();
 
-    expect(await screen.findByText("轻量智能剪辑")).toBeTruthy();
+    expect(await screen.findByText("本次成片包含")).toBeTruthy();
     expect(screen.getByText("免费体验：不调用真实云服务")).toBeTruthy();
     expect(screen.queryByText(/large-v3-turbo|批量多选/)).toBeNull();
     expect(view.container.querySelectorAll(".ant-btn-primary")).toHaveLength(1);
 
     const primary = screen.getByTestId("primary-action") as HTMLButtonElement;
-    expect(primary.textContent).toContain("免费体验剪辑方案");
+    expect(primary.textContent).toContain("免费预览剪辑方案");
     expect(primary.disabled).toBe(false);
     expect(screen.queryByText("权利确认")).toBeNull();
     fireEvent.click(primary);
 
     const dialog = await screen.findByRole("dialog", { name: "免费体验剪辑方案" });
-    expect(within(dialog).getByText("Fun-ASR 转写")).toBeTruthy();
-    expect(within(dialog).getByText("MPS H.264 渲染")).toBeTruthy();
+    expect(within(dialog).getByText("字幕识别")).toBeTruthy();
+    expect(within(dialog).getByText("成片制作")).toBeTruthy();
     fireEvent.click(within(dialog).getByRole("button", { name: "开始免费体验" }));
 
     await waitFor(() => {
@@ -342,7 +342,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
       .mockResolvedValueOnce(quote("1080p"));
     renderPage();
 
-    await screen.findByText("轻量智能剪辑");
+    await screen.findByText("本次成片包含");
     fireEvent.click(screen.getByTestId("primary-action"));
     const dialog = await screen.findByRole("dialog", { name: "免费体验剪辑方案" });
     fireEvent.click(within(dialog).getByRole("button", { name: "暂不体验" }));
@@ -398,15 +398,13 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const primary = await screen.findByTestId("primary-action");
     expect(primary.textContent).toContain("审核字幕、粗剪和配乐");
-    expect(screen.getByRole("button", { name: /去审核并生成成片$/ })).toBeTruthy();
     const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     fireEvent.click(screen.getByRole("button", { name: /下载原片$/ }));
     expect(downloadClick).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText("方案预览"));
-    const timeline = await screen.findByRole("slider", { name: "方案预览进度" });
+    const timeline = await screen.findByRole("slider", { name: "视频预览进度" });
     expect(timeline.getAttribute("aria-valuemin")).toBe("0");
     expect(Number(timeline.getAttribute("aria-valuemax"))).toBeCloseTo(58 / 1.15, 4);
-    expect(screen.getByText("可拖动查看剪后时间")).toBeTruthy();
     const previewSubtitle = await waitFor(() => {
       const overlay = document.querySelector(".video-editor-subtitle-overlay");
       expect(overlay).toBeTruthy();
@@ -416,6 +414,14 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(
       previewSubtitle?.querySelectorAll(".video-editor-overlay-line"),
     ).toHaveLength(1);
+    const pauseMarker = screen.getByRole("button", { name: /跳到停顿标记/ });
+    expect(pauseMarker.textContent).toMatch(/停顿 · \d+:\d{2}/);
+    expect(screen.getByRole("button", { name: /跳到字幕标记/ }).textContent).toMatch(/字幕 · \d+:\d{2}/);
+    expect(screen.getByRole("button", { name: /跳到标题标记/ }).textContent).toContain("标题 · 0:00");
+    fireEvent.click(pauseMarker);
+    expect(Number(timeline.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "向前浏览时间轴" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "向后浏览时间轴" })).toBeNull();
     fireEvent.click(primary);
     const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
     expect(within(drawer).getByText("这是一段待人工确认的字幕")).toBeTruthy();
@@ -480,19 +486,17 @@ describe("VideoEditorPage cloud-light workflow", () => {
     const primary = await screen.findByTestId("primary-action");
     expect(primary.textContent).toContain("本机免费生成并下载");
     expect((primary as HTMLButtonElement).disabled).toBe(false);
-    const generateDownload = screen.getAllByRole(
-      "button",
-      { name: /本机免费生成并下载$/ },
-    )[0];
-    expect((generateDownload as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(generateDownload);
+    fireEvent.click(primary);
 
     await waitFor(() => {
       expect(createVideoEditorLocalExport).toHaveBeenCalledWith(
         "batch-cloud-1",
         "item-1",
       );
+      expect(screen.getByText("本次下载新增费用")).toBeTruthy();
     });
+    expect(screen.getByTestId("prior-cloud-quote").textContent).toContain("¥0.048");
+    expect(screen.queryByText("¥0 只表示当前下载不会重复计费，不代表此前云端处理免费。")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "确认预计费用" })).toBeNull();
     expect(preflightVideoEditor).not.toHaveBeenCalled();
     expect(createVideoEditorBatch).not.toHaveBeenCalled();
@@ -537,8 +541,6 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const primary = await screen.findByTestId("primary-action");
     await waitFor(() => expect(primary.textContent).toContain("审核字幕、粗剪和配乐"));
-    expect(screen.getByText("AI 已匹配配乐")).toBeTruthy();
-    expect(screen.getByLabelText("试听 AI 配乐：Sci-Fi Score")).toBeTruthy();
     expect(screen.queryByText("光厂 0 首")).toBeNull();
     expect(screen.queryByRole("button", { name: /关闭建议/ })).toBeNull();
     fireEvent.click(primary);
@@ -547,7 +549,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const audio = await screen.findByLabelText("试听背景音乐：Sci-Fi Score");
     expect(audio.getAttribute("src")).toBe(bgm.media_url);
-    expect(screen.getAllByText("根据内容判断：自动选择科技氛围配乐。")).toHaveLength(2);
+    expect(screen.getByText("根据内容判断：自动选择科技氛围配乐。")).toBeTruthy();
     expect(screen.getByText("来源：Pixabay")).toBeTruthy();
   });
 

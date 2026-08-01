@@ -117,6 +117,7 @@ def fetch_authorized_video(
     require_extension: bool = True,
     fallback_name: str = "provider-video.mp4",
     request_headers: Mapping[str, str] | None = None,
+    range_bytes: int | None = None,
 ) -> DirectVideo:
     """Read an authorized public direct video URL without persisting the URL."""
 
@@ -146,6 +147,8 @@ def fetch_authorized_video(
                 value = request_headers.get(key)
                 if isinstance(value, str) and value.strip():
                     headers[key] = value.strip()
+        if range_bytes is not None:
+            headers["Range"] = f"bytes=0-{max(1, range_bytes) - 1}"
         request = Request(
             normalized_url,
             headers=headers,

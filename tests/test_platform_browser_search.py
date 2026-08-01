@@ -36,6 +36,99 @@ class _TextPage:
         return self.text
 
 
+class _CollectionPage:
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.closed = False
+        self.listeners: list[tuple[str, object]] = []
+
+    def on(self, event: str, callback) -> None:
+        self.listeners.append((event, callback))
+
+    def remove_listener(self, event: str, callback) -> None:
+        self.listeners.remove((event, callback))
+
+    def set_default_timeout(self, _timeout: int) -> None:
+        pass
+
+    def goto(self, url: str, *, wait_until: str):
+        self.url = url
+        assert wait_until == "domcontentloaded"
+        return None
+
+    def wait_for_timeout(self, _timeout: int) -> None:
+        pass
+
+    def evaluate(self, _script: str) -> None:
+        pass
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _CollectionContext:
+    def __init__(self, pages: list[_CollectionPage], fallback_page: _CollectionPage) -> None:
+        self.pages = pages
+        self.fallback_page = fallback_page
+        self.new_page_calls = 0
+
+    def new_page(self) -> _CollectionPage:
+        self.new_page_calls += 1
+        self.pages.append(self.fallback_page)
+        return self.fallback_page
+
+
+class _CollectionBrowser:
+    def __init__(self, context: _CollectionContext) -> None:
+        self.contexts = [context]
+
+
+class _CollectionPlaywright:
+    def __init__(self, browser: _CollectionBrowser) -> None:
+        self.chromium = self
+        self.browser = browser
+
+    def connect_over_cdp(self, _endpoint: str) -> _CollectionBrowser:
+        return self.browser
+
+
+class _CollectionPlaywrightManager:
+    def __init__(self, browser: _CollectionBrowser) -> None:
+        self.playwright = _CollectionPlaywright(browser)
+
+    def __enter__(self) -> _CollectionPlaywright:
+        return self.playwright
+
+    def __exit__(self, *_args) -> None:
+        pass
+
+
+def _collect_with_fake_browser(
+    provider: LocalPlatformBrowserSearchProvider,
+    browser: _CollectionBrowser,
+    monkeypatch,
+) -> list[dict[str, object]]:
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(browser),
+    )
+    monkeypatch.setattr(provider, "_apply_platform_filters", lambda _page: None)
+    monkeypatch.setattr(provider, "_raise_for_visible_block", lambda _page: None)
+    monkeypatch.setattr(provider, "_raise_for_login_gate", lambda _page: None)
+    monkeypatch.setattr(
+        provider,
+        "_rendered_rows",
+        lambda _page: [
+            {
+                "item_id": "BVREUSE0001",
+                "title": "贴标机使用方法",
+                "source_url": "https://www.bilibili.com/video/BVREUSE0001",
+            }
+        ],
+    )
+    return provider._collect_rows("贴标机", target=1)
+
+
 def test_optional_login_prompt_does_not_block_public_search_attempt():
     provider = _provider(Platform.BILIBILI)
     page = _TextPage("登录后可查看更多推荐内容 扫码登录")
@@ -59,6 +152,12 @@ def test_login_button_opens_visible_platform_window_even_when_session_is_running
     ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
     monkeypatch.setattr(provider, "session_status", lambda: ready)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr("src.adapters.platform_browser_search.restart_browser_for_login", lambda _port: True)
+    minimized: list[int] = []
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda port: minimized.append(port) or True,
+    )
     monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
     monkeypatch.setattr(
         "src.adapters.platform_browser_search.subprocess.Popen",
@@ -73,6 +172,51 @@ def test_login_button_opens_visible_platform_window_even_when_session_is_running
     assert "--new-window" in launched[0]
     assert "--window-position=80,80" in launched[0]
     assert "--start-minimized" not in launched[0]
+    assert minimized == []
+
+
+def test_login_button_restarts_hidden_platform_window_for_login(tmp_path, monkeypatch):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.KUAISHOU, enabled=True, profile_dir=tmp_path / "profile", debug_port=29989
+    )
+    ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
+    launched: list[list[str]] = []
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr("src.adapters.platform_browser_search.restart_browser_for_login", lambda _port: True)
+    monkeypatch.setattr("src.adapters.platform_browser_search.subprocess.Popen", lambda args, **kwargs: launched.append(args))
+    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+
+    provider.open_login_browser()
+
+    assert len(launched) == 1
+    assert "--new-window" in launched[0]
+
+
+def test_automatic_platform_start_minimizes_existing_window(tmp_path, monkeypatch):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.KUAISHOU,
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29990,
+    )
+    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
+    minimized: list[int] = []
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda port: minimized.append(port) or True,
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.subprocess.Popen",
+        lambda *_args, **_kwargs: pytest.fail("已运行浏览器不应重复启动"),
+    )
+
+    status = provider.start_login_browser()
+
+    assert status is ready
+    assert minimized == [29990]
 
 
 def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
@@ -89,6 +233,11 @@ def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
     monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
     monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    minimized: list[int] = []
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda port: minimized.append(port) or True,
+    )
     monkeypatch.setattr(
         "src.adapters.platform_browser_search.subprocess.Popen",
         lambda args, **kwargs: launched.append(args),
@@ -100,6 +249,42 @@ def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
     assert "--start-minimized" in launched[0]
     assert "--window-position=-32000,-32000" in launched[0]
     assert "--new-window" not in launched[0]
+    assert minimized == [29991]
+
+
+def test_collection_reuses_existing_platform_page_and_keeps_it_open(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    existing = _CollectionPage("https://www.bilibili.com/")
+    fallback = _CollectionPage("about:blank")
+    context = _CollectionContext([existing], fallback)
+    minimized: list[int] = []
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda port: minimized.append(port) or True,
+    )
+
+    rows = _collect_with_fake_browser(provider, _CollectionBrowser(context), monkeypatch)
+
+    assert [row["item_id"] for row in rows] == ["BVREUSE0001"]
+    assert context.new_page_calls == 0
+    assert existing.closed is False
+    assert minimized and set(minimized) == {provider.debug_port}
+
+
+def test_collection_only_closes_the_page_it_created(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    unrelated = _CollectionPage("https://example.com/")
+    fallback = _CollectionPage("about:blank")
+    context = _CollectionContext([unrelated], fallback)
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window", lambda _port: True
+    )
+
+    _collect_with_fake_browser(provider, _CollectionBrowser(context), monkeypatch)
+
+    assert context.new_page_calls == 1
+    assert fallback.closed is True
+    assert unrelated.closed is False
 
 
 def test_hard_verification_stops_public_search_attempt():

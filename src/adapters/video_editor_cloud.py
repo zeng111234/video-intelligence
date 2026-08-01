@@ -42,6 +42,7 @@ from src.services.video_editor_cloud import (
     TimeRange,
     TranscriptSegment,
     build_safe_edit_plan,
+    build_smart_opening,
     kept_ranges_for_plan,
     validated_caption_emphasis,
     validated_caption_groups,
@@ -297,6 +298,10 @@ class SandboxEditPlanProvider(EditPlanProvider):
             spoken_ranges,
             duration_seconds,
             title_candidates=[title] if title else [],
+            smart_opening=build_smart_opening(
+                transcript,
+                [title] if title else [],
+            ),
             explanation="演示方案仅运行确定性安全规则，未调用 qwen-flash。",
             provider_name="sandbox_edit_plan",
             is_mock=True,
@@ -825,9 +830,13 @@ class AliyunEditPlanProvider(EditPlanProvider):
         system = (
             "你是安全轻剪规划器。只返回 JSON，字段仅允许 "
             "title_candidates、explanation、enabled_steps、bgm_category、"
-            "bgm_energy、bgm_keywords、caption_groups、caption_emphasis。"
+            "bgm_energy、bgm_keywords、caption_groups、caption_emphasis、"
+            "opening_style_id。"
             "enabled_steps 只能取 trim_silence、vertical_fit、subtitles、"
-            "title、bgm、audio_mix。不得建议删除、改写或重排有人声内容。"
+            "title、bgm、audio_mix、smart_opening。不得建议删除、改写或重排"
+            "有人声内容。opening_style_id 只能取 suspense_reveal、"
+            "story_unfold、number_focus；数字金额优先 number_focus，故事叙事"
+            "优先 story_unfold，其余悬念钩子使用 suspense_reveal。"
             f"bgm_category 只能取 {'、'.join(BGM_VOICEOVER_CATEGORIES)}；"
             f"bgm_energy 只能取 {'、'.join(BGM_ENERGY_LEVELS)}；"
             "bgm_keywords 最多 6 个短标签。根据整段文案的主题、情绪和语速选择，"
@@ -937,6 +946,11 @@ class AliyunEditPlanProvider(EditPlanProvider):
                     steps.append(step)
         raw_titles = suggestion.get("title_candidates", [])
         titles = raw_titles if isinstance(raw_titles, list) else []
+        smart_opening = build_smart_opening(
+            transcript,
+            [str(item) for item in titles],
+            preferred_style=suggestion.get("opening_style_id"),
+        )
         raw_bgm_category = str(suggestion.get("bgm_category") or "").strip()
         bgm_category = (
             raw_bgm_category
@@ -986,6 +1000,7 @@ class AliyunEditPlanProvider(EditPlanProvider):
             caption_groups=caption_groups,
             caption_group_source=caption_group_source,
             caption_emphasis=caption_emphasis,
+            smart_opening=smart_opening,
             explanation=str(suggestion.get("explanation") or ""),
             enabled_steps=steps,
             provider_name="aliyun_qwen_flash",
@@ -1168,6 +1183,18 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                     },
                 ],
             }
+        if request.opening_asset:
+            opening_url = (
+                request.opening_asset.provider_locator or request.opening_asset.uri
+            )
+            if not opening_url:
+                raise CloudProviderError(
+                    "智能开场未获得可供 MPS 读取的 OSS 地址。",
+                    kind="validation",
+                )
+            output_payload[0]["OpeningList"] = [
+                {"openUrl": opening_url, "Start": "0"}
+            ]
         if request.title_watermark_object_key:
             title_style = visual_style_spec(request.output_profile)["title"]
             output_payload[0]["WaterMarks"] = [
@@ -1186,7 +1213,11 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                     "Dx": str(title_style["safe_left"]),
                     "Dy": str(title_style["safe_top"]),
                     "Timeline": {
-                        "Start": "0",
+                        "Start": (
+                            f"{request.opening_duration_seconds:.3f}"
+                            if request.opening_duration_seconds
+                            else "0"
+                        ),
                         "Duration": str(title_style["visible_seconds"]),
                     },
                 }

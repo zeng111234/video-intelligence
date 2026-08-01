@@ -9,6 +9,7 @@ from pathlib import Path
 from src.models import (
     AvatarTask,
     CandidateMatch,
+    CandidateCopyProbe,
     CopywritingTask,
     DiscoveryResult,
     HeatLevel,
@@ -78,6 +79,7 @@ class SQLiteRepository:
             self._ensure_video_editor_batch_tables()
             self._ensure_provider_safety_tables()
             self._ensure_crawler_history_indexes()
+            self._ensure_candidate_copy_probe_table()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
@@ -87,6 +89,16 @@ class SQLiteRepository:
         self._ensure_video_editor_batch_tables()
         self._ensure_provider_safety_tables()
         self._ensure_crawler_history_indexes()
+        self._ensure_candidate_copy_probe_table()
+
+    def _ensure_candidate_copy_probe_table(self) -> None:
+        self.connection.execute(
+            """CREATE TABLE IF NOT EXISTS candidate_copy_probes (
+                candidate_id TEXT PRIMARY KEY REFERENCES candidates(video_id) ON DELETE CASCADE,
+                payload_json TEXT NOT NULL
+            )"""
+        )
+        self.connection.commit()
 
     def _ensure_crawler_history_indexes(self) -> None:
         """Keep history listing and batch cleanup quick as customer data grows."""
@@ -1040,6 +1052,20 @@ class SQLiteRepository:
             (candidate_id,),
         ).fetchone()
         return RelevanceReview.model_validate_json(row["payload_json"]) if row else None
+
+    def save_candidate_copy_probe(self, probe: CandidateCopyProbe) -> None:
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO candidate_copy_probes(candidate_id, payload_json) VALUES (?, ?)",
+                (probe.candidate_id, probe.model_dump_json()),
+            )
+
+    def get_candidate_copy_probe(self, candidate_id: str) -> CandidateCopyProbe | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM candidate_copy_probes WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()
+        return CandidateCopyProbe.model_validate_json(row["payload_json"]) if row else None
 
     def list_reviews(self) -> list[RelevanceReview]:
         rows = self.connection.execute(

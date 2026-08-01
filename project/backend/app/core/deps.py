@@ -35,9 +35,13 @@ from src.services.doubao_browser import (  # noqa: E402
 )
 from src.services.media_resolution import MediaResolutionService  # noqa: E402
 from src.services.douyin_link_transcription import DouyinLinkTranscriptionService  # noqa: E402
+from src.services.candidate_copy_probe import CandidateCopyProbeService  # noqa: E402
 from src.adapters.douyin_parser import LocalDouyinBrowserParserClient  # noqa: E402
 from src.adapters.platform_link_parser import LocalPlatformLinkParserClient  # noqa: E402
-from src.adapters.douyin_browser_search import LocalDouyinBrowserSearchProvider  # noqa: E402
+from src.adapters.douyin_browser_search import (  # noqa: E402
+    LocalDouyinBrowserSearchProvider,
+    LocalDouyinPublicSearchProvider,
+)
 from src.adapters.platform_browser_search import (  # noqa: E402
     LocalPlatformBrowserSearchProvider,
 )
@@ -161,6 +165,29 @@ def get_hotspot_search_service() -> CommercialSearchService:
         source_service=get_source_service(),
         trend_service=get_keyword_trend_service(),
         provider=get_hotspot_browser_provider(),
+        active_platforms=(Platform.DOUYIN,),
+    )
+
+
+@lru_cache
+def get_douyin_public_browser_provider() -> LocalDouyinPublicSearchProvider:
+    """抖音官网搜索与热点宝共用同一专用 Chrome 和登录态。"""
+    return LocalDouyinPublicSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+    )
+
+
+@lru_cache
+def get_douyin_public_search_service() -> CommercialSearchService:
+    return CommercialSearchService(
+        repository=get_repository(),
+        source_service=get_source_service(),
+        trend_service=get_keyword_trend_service(),
+        provider=get_douyin_public_browser_provider(),
         active_platforms=(Platform.DOUYIN,),
     )
 
@@ -392,6 +419,11 @@ def get_experimental_platform_link_parser() -> LocalPlatformLinkParserClient:
         },
         timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
     )
+
+
+@lru_cache
+def get_candidate_copy_probe_service() -> CandidateCopyProbeService:
+    return CandidateCopyProbeService(get_experimental_platform_link_parser())
 
 
 @lru_cache

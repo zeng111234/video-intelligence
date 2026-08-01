@@ -20,15 +20,25 @@ import {
   Upload,
 } from "antd";
 import {
+  AudioOutlined,
   CheckCircleOutlined,
+  ControlOutlined,
+  FileTextOutlined,
+  LinkOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  RightOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
+  SearchOutlined,
+  SendOutlined,
   SettingOutlined,
+  StarOutlined,
   UploadOutlined,
+  UserOutlined,
   VideoCameraOutlined,
+  WarningOutlined,
 } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -109,9 +119,9 @@ const PLATFORM_LABELS: Record<string, string> = {
 const DEFAULT_PUBLISH_ACCOUNT_NAME = "公司主号";
 
 const SOURCE_OPTIONS = [
-  { label: "关键词找素材", value: "keyword" },
-  { label: "视频链接", value: "share_link" },
-  { label: "已有文案", value: "script" },
+  { label: "关键词找素材", value: "keyword", icon: <SearchOutlined aria-hidden /> },
+  { label: "视频链接", value: "share_link", icon: <LinkOutlined aria-hidden /> },
+  { label: "已有文案", value: "script", icon: <FileTextOutlined aria-hidden /> },
 ];
 
 const SOURCE_BROWSER_PLATFORMS: Array<{ platform: BrowserPlatform; label: string }> = [
@@ -121,9 +131,9 @@ const SOURCE_BROWSER_PLATFORMS: Array<{ platform: BrowserPlatform; label: string
 ];
 
 const WORKSPACE_STEPS = [
-  { title: "01 告诉我想做什么" },
-  { title: "02 确认创作方案" },
-  { title: "03 查看成片并发布" },
+  { title: "01 告诉我想做什么", description: "找素材并选择方向" },
+  { title: "02 确认创作方案", description: "查看方案并确认费用" },
+  { title: "03 查看成片并发布", description: "制作成片并确认发布" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -144,7 +154,7 @@ const STATUS_LABEL: Record<string, string> = {
   outcome_unknown: "结果待核对",
 };
 
-const WORKBENCH_TASK_LIMIT = 3;
+const WORKBENCH_TASK_LIMIT = 2;
 
 const STAGE_LABEL: Record<string, string> = {
   source: "素材与选题",
@@ -401,7 +411,7 @@ export default function PipelinePage() {
   const [actionMessage, setActionMessage] = useState("");
 
   const [sourceMode, setSourceMode] = useState<SourceMode>("keyword");
-  const [creationMode, setCreationMode] = useState<CreationMode>("auto");
+  const [creationMode, setCreationMode] = useState<CreationMode>("manual");
   const [keyword, setKeyword] = useState("");
   const [sourceValue, setSourceValue] = useState("");
   const [candidates, setCandidates] = useState<CrawlerCandidateResult[]>([]);
@@ -1739,6 +1749,30 @@ export default function PipelinePage() {
     return labels[nextAction] || "刷新实时状态";
   }, [candidates.length, completeProfiles.length, creationMode, nextAction, sourceConnectionReady, sourceMode, workspace, workspaceConfiguration.configured]);
 
+  const chooseCreationMode = (nextMode: CreationMode) => {
+    setCreationMode(nextMode);
+    const nextCandidate = nextMode === "auto"
+      ? selectSpokenAutomaticCandidates(candidates)[0]
+      : candidates[0];
+    setSelectedCandidateId(nextCandidate?.video_id || "");
+    setActionError("");
+  };
+
+  const renderPrimaryButton = (inline = false) => (
+    <Button
+      className={`workspace-primary${inline ? " inline" : ""}`}
+      type="primary"
+      size="large"
+      block={!inline}
+      loading={busy}
+      disabled={nextAction === "wait" && busy}
+      onClick={() => void handlePrimaryAction()}
+      icon={primaryLabel === "找素材" ? <SearchOutlined aria-hidden /> : undefined}
+    >
+      {primaryLabel}
+    </Button>
+  );
+
   const showReviewEditor = ["review_transcript", "review_script"].includes(nextAction);
   const needsProfileConfiguration = !workspace && !completeProfiles.length;
   const activeVideo = resultMediaUrl(activeItem);
@@ -1755,44 +1789,26 @@ export default function PipelinePage() {
 
   if (initializing) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-        <section
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 24,
-            padding: "24px 28px",
-            borderRadius: 20,
-            color: "#fff",
-            background: "linear-gradient(120deg, #3d7df7, #7b4ce8 58%, #9b55ee)",
-            boxShadow: "0 18px 45px rgba(82, 71, 188, .18)",
-          }}
-        >
-          <Title level={2} style={{ color: "#fff", margin: 0 }}>智能创作工作台</Title>
-          <Text style={{ color: "rgba(255,255,255,.82)" }}>正在带入你的常用配置</Text>
+      <div className="smart-workspace workspace-loading">
+        <section className="workspace-hero">
+          <Title level={1}>今天想做什么视频？</Title>
+          <Paragraph>输入一个主题、粘贴视频链接，或直接使用已有文案</Paragraph>
         </section>
-        <Card>
-          <Steps current={0} items={WORKSPACE_STEPS} responsive={false} />
+        <Card className="workspace-loading-card">
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Text strong>正在带入你的常用设置</Text>
+            <Text type="secondary">出镜人、音色和发布设置准备好后，就可以直接开始。</Text>
+            <Button type="primary" size="large" block disabled>马上就好</Button>
+          </Space>
         </Card>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, .9fr) minmax(360px, 1.1fr)", gap: 16 }}>
-          <Card title="当前操作">
-            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <Text>页面已经打开，正在准备出镜人、音色和发布设置。</Text>
-              <Button type="primary" size="large" block disabled>马上就好</Button>
-            </Space>
-          </Card>
-          <Card title="预览与实时状态">
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="配置带入后即可开始创作" />
-          </Card>
-        </div>
       </div>
     );
   }
 
   const renderProfileCard = () => (
     <Card
-      title={<Space><SafetyCertificateOutlined /> 当前 IP 配方</Space>}
+      className="workspace-profile-card"
+      title={<Space><SettingOutlined /> {workspace ? "当前 IP 配方" : "默认创作设置"}</Space>}
       extra={!workspace && activeProfile ? (
         <Button type="link" icon={<SettingOutlined />} onClick={() => setSetupOpen(true)}>
           修改设置
@@ -1803,9 +1819,15 @@ export default function PipelinePage() {
         <div className="profile-summary">
           <div className="profile-summary-details" aria-label="当前 IP 信息">
             <Descriptions size="small" column={{ xs: 1, sm: 3 }}>
-              <Descriptions.Item label="出镜人">{profileAvatar?.name || activeProfile.name}</Descriptions.Item>
-              <Descriptions.Item label="音色">{profileVoice?.name || activeProfile.voice_id}</Descriptions.Item>
-              <Descriptions.Item label="发布到">{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</Descriptions.Item>
+              <Descriptions.Item label={<Space size={6}><UserOutlined />出镜人</Space>}>
+                <span className="profile-value-row"><strong>{profileAvatar?.name || activeProfile.name}</strong><RightOutlined aria-hidden /></span>
+              </Descriptions.Item>
+              <Descriptions.Item label={<Space size={6}><AudioOutlined />音色</Space>}>
+                <span className="profile-value-row"><strong>{profileVoice?.name || activeProfile.voice_id}</strong><RightOutlined aria-hidden /></span>
+              </Descriptions.Item>
+              <Descriptions.Item label={<Space size={6}><RocketOutlined />发布到</Space>}>
+                <span className="profile-value-row"><strong>{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</strong><RightOutlined aria-hidden /></span>
+              </Descriptions.Item>
             </Descriptions>
           </div>
           <div className="profile-avatar-preview" aria-label="当前 IP 出镜人预览">
@@ -1829,16 +1851,14 @@ export default function PipelinePage() {
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无完整 IP 配方" />
       )}
-      {completeProfiles.length > 1 && !workspace && (
-        <Button block onClick={openProfileSwitcher}>更换出镜人</Button>
-      )}
     </Card>
   );
 
   const renderWorkbenchTasksCard = () => (
     <Card
-      title="需要处理"
-      extra={<Link to="/production">查看全部任务（{batches.length}）</Link>}
+      className="workspace-tasks-card"
+      title={workspace ? "需要处理" : "继续上次任务"}
+      extra={workspace ? <Link to="/production">查看全部任务（{batches.length}）</Link> : null}
     >
       {visibleWorkbenchBatches.length ? (
         <List
@@ -1874,14 +1894,18 @@ export default function PipelinePage() {
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无需要处理的任务" />
       )}
-      {pendingWorkbenchBatches.length > WORKBENCH_TASK_LIMIT && (
+      {!workspace ? (
+        <div className="workbench-task-footer start">
+          <Link to="/production">查看全部任务（{batches.length}） <RightOutlined aria-hidden /></Link>
+        </div>
+      ) : pendingWorkbenchBatches.length > WORKBENCH_TASK_LIMIT ? (
         <div className="workbench-task-footer">
           <Text type="secondary">
             还有 {pendingWorkbenchBatches.length - WORKBENCH_TASK_LIMIT} 条需要处理
           </Text>
           <Link to="/production">去任务队列</Link>
         </div>
-      )}
+      ) : null}
     </Card>
   );
 
@@ -1889,15 +1913,20 @@ export default function PipelinePage() {
     <div className="smart-workspace">
       <section className="workspace-hero">
         <div>
-          <Title level={2}>智能创作工作台</Title>
+          <Title level={1}>{workspace ? "智能创作" : "今天想做什么视频？"}</Title>
+          <Paragraph>
+            {workspace
+              ? "查看真实进度，完成当前需要你确认的一步。"
+              : "输入一个主题、粘贴视频链接，或直接使用已有文案"}
+          </Paragraph>
         </div>
-        <div className="hero-state" aria-live="polite">
+        {workspace && <div className="hero-state" aria-live="polite">
           <Text type="secondary">当前阶段</Text>
           <strong>{WORKSPACE_STEPS[businessStageIndex(currentStage)].title.replace(/^\d+\s+/, "")}</strong>
-        </div>
+        </div>}
       </section>
 
-      <Card className="stage-overview" variant="borderless">
+      {workspace && <Card className="stage-overview" variant="borderless">
         <Steps
           current={businessStageIndex(currentStage)}
           responsive
@@ -1909,121 +1938,138 @@ export default function PipelinePage() {
               : "wait",
           }))}
         />
-      </Card>
+      </Card>}
 
       {loadError && <Alert type="error" showIcon message="工作台载入失败" description={loadError} />}
       {actionError && <Alert type="error" showIcon closable onClose={() => setActionError("")} message="当前操作未完成" description={actionError} />}
       {actionMessage && <Alert type="success" showIcon closable onClose={() => setActionMessage("")} message={actionMessage} />}
 
-      <div className="workspace-grid">
+      <div className={`workspace-grid${workspace ? "" : " is-start"}`}>
         <div className="workspace-left">
           <Card
-            title={<Space><RocketOutlined /> 当前操作</Space>}
+            className="workspace-action-card"
+            title={workspace ? <Space><RocketOutlined /> 当前操作</Space> : undefined}
             extra={workspace && <Tag color={statusColor(workspace.status)}>{STATUS_LABEL[workspace.status] || workspace.status}</Tag>}
           >
             {!workspace && (
               <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-                {sourceMode === "keyword" && (
-                  <div>
-                    <div className="section-heading">
-                      <Text strong>创作方式</Text>
-                      <Text type="secondary">
-                        {creationMode === "auto" ? "系统替你完成选稿和制作" : "先看素材，再由你选一条"}
-                      </Text>
+                <div className="creation-composer">
+                  <Segmented
+                    className="creation-source-tabs"
+                    block
+                    value={sourceMode}
+                    options={SOURCE_OPTIONS}
+                    onChange={(value) => {
+                      setSourceMode(value as SourceMode);
+                      setActionError("");
+                      setCandidates([]);
+                      setSelectedCandidateId("");
+                      setCrawlerReason(null);
+                    }}
+                  />
+                  {sourceMode === "keyword" ? (
+                    <>
+                      <div className="creation-entry-row">
+                        <Input
+                          size="large"
+                          value={keyword}
+                          placeholder="例如：餐饮老板获客、汽修店避坑"
+                          onChange={(event) => {
+                            setKeyword(event.target.value);
+                            setCandidates([]);
+                            setSelectedCandidateId("");
+                            setCrawlerReason(null);
+                          }}
+                          onPressEnter={() => void handlePrimaryAction()}
+                        />
+                        {!candidates.length && !needsProfileConfiguration && renderPrimaryButton(true)}
+                      </div>
+                      {hotWords.length > 0 && (
+                        <Space wrap size={[4, 4]}>
+                          <Text type="secondary">实时热点词：</Text>
+                          {hotWords.map((item) => (
+                            <Button
+                              key={item.word}
+                              type="link"
+                              size="small"
+                              onClick={() => {
+                                setKeyword(item.word);
+                                setCandidates([]);
+                                setSelectedCandidateId("");
+                                setCrawlerReason(null);
+                              }}
+                            >
+                              {item.word}
+                            </Button>
+                          ))}
+                        </Space>
+                      )}
+                    </>
+                  ) : sourceMode === "share_link" ? (
+                    <div className="creation-entry-row">
+                      <Input
+                        size="large"
+                        value={sourceValue}
+                        placeholder="粘贴已获授权的视频分享链接"
+                        onChange={(event) => setSourceValue(event.target.value)}
+                      />
+                      {!needsProfileConfiguration && renderPrimaryButton(true)}
                     </div>
-                    <Segmented
-                      block
-                      size="large"
-                      value={creationMode}
-                      options={[
-                        { label: "自动创作", value: "auto" },
-                        { label: "手动选择", value: "manual" },
-                      ]}
-                      onChange={(value) => {
-                        const nextMode = value as CreationMode;
-                        setCreationMode(nextMode);
-                        const nextCandidate = nextMode === "auto"
-                          ? selectSpokenAutomaticCandidates(candidates)[0]
-                          : candidates[0];
-                        setSelectedCandidateId(nextCandidate?.video_id || "");
-                        setActionError("");
-                      }}
+                  ) : (
+                    <TextArea
+                      rows={8}
+                      value={sourceValue}
+                      placeholder="粘贴已经确认的口播文案"
+                      onChange={(event) => setSourceValue(event.target.value)}
                     />
-                    <Paragraph type="secondary" style={{ margin: "8px 0 0" }}>
-                      {creationMode === "auto"
-                        ? "最多先转写 4 条；没有有效口播时，再从候补中补足。AI 只根据真实转写改成自然口播，不会根据纯画面猜文案。"
-                        : "搜索完成后展示优先素材和候补参考，你选择 1 条后再进入转写、改写、数字人和剪辑流程。"}
-                    </Paragraph>
-                    {creationMode === "auto" && (
-                      <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
-                        {workspaceConfiguration.bundled_compute
-                          ? "候补转写只在必要时调用，费用已包含在当前服务中。"
-                          : "候补转写只在必要时调用；阿里 ASR 费用暂无法确定，启动预检时会再次核对。"}
+                  )}
+                </div>
+
+                {sourceMode === "keyword" && (
+                  <div className="creation-mode-section">
+                    <div className="creation-mode-cards" role="radiogroup" aria-label="创作方式">
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={creationMode === "manual"}
+                        aria-label="手动选择"
+                        className={`creation-mode-card${creationMode === "manual" ? " selected" : ""}`}
+                        onClick={() => chooseCreationMode("manual")}
+                      >
+                        <span className="creation-mode-icon"><ControlOutlined aria-hidden /></span>
+                        <span className="creation-mode-copy" aria-hidden>
+                          <span className="creation-mode-title"><strong>手动选择</strong><Tag color="purple">推荐</Tag></span>
+                          <small>自己挑选素材，创作方向更可控</small>
+                        </span>
+                        <CheckCircleOutlined className="creation-mode-check" aria-hidden />
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={creationMode === "auto"}
+                        aria-label="自动创作"
+                        className={`creation-mode-card${creationMode === "auto" ? " selected risk" : " risk"}`}
+                        onClick={() => chooseCreationMode("auto")}
+                      >
+                        <span className="creation-mode-icon"><StarOutlined aria-hidden /></span>
+                        <span className="creation-mode-copy" aria-hidden>
+                          <span className="creation-mode-title"><strong>自动创作</strong><Tag color="warning">有风险</Tag></span>
+                          <small>可能选偏素材，文案与成片需要复核</small>
+                        </span>
+                        <CheckCircleOutlined className="creation-mode-check" aria-hidden />
+                      </button>
+                    </div>
+                    {creationMode === "auto" ? (
+                      <div className="creation-mode-risk-note" role="note">
+                        <WarningOutlined aria-hidden />
+                        <span>自动创作可能选偏素材或需要调整文案；费用确认、成片复核和最终发布仍由你决定。</span>
+                      </div>
+                    ) : (
+                      <Paragraph type="secondary" className="creation-mode-note">
+                        推荐先自己挑选素材，确认方向和费用后，再进入改写、数字人和剪辑流程。
                       </Paragraph>
                     )}
                   </div>
-                )}
-                <Segmented
-                  block
-                  value={sourceMode}
-                  options={SOURCE_OPTIONS}
-                  onChange={(value) => {
-                    setSourceMode(value as SourceMode);
-                    setActionError("");
-                    setCandidates([]);
-                    setSelectedCandidateId("");
-                    setCrawlerReason(null);
-                  }}
-                />
-                {sourceMode === "keyword" ? (
-                  <>
-                    <Input
-                      size="large"
-                      value={keyword}
-                      placeholder="例如：餐饮老板获客、汽修店避坑"
-                      onChange={(event) => {
-                        setKeyword(event.target.value);
-                        setCandidates([]);
-                        setSelectedCandidateId("");
-                        setCrawlerReason(null);
-                      }}
-                      onPressEnter={() => void handlePrimaryAction()}
-                    />
-                    {hotWords.length > 0 && (
-                      <Space wrap size={[4, 4]}>
-                        <Text type="secondary">实时热点词：</Text>
-                        {hotWords.map((item) => (
-                          <Button
-                            key={item.word}
-                            type="link"
-                            size="small"
-                            onClick={() => {
-                              setKeyword(item.word);
-                              setCandidates([]);
-                              setSelectedCandidateId("");
-                              setCrawlerReason(null);
-                            }}
-                          >
-                            {item.word}
-                          </Button>
-                        ))}
-                      </Space>
-                    )}
-                  </>
-                ) : sourceMode === "share_link" ? (
-                  <Input
-                    size="large"
-                    value={sourceValue}
-                    placeholder="粘贴已获授权的视频分享链接"
-                    onChange={(event) => setSourceValue(event.target.value)}
-                  />
-                ) : (
-                  <TextArea
-                    rows={8}
-                    value={sourceValue}
-                    placeholder="粘贴已经确认的口播文案"
-                    onChange={(event) => setSourceValue(event.target.value)}
-                  />
                 )}
 
                 {crawlerReason && (
@@ -2453,19 +2499,41 @@ export default function PipelinePage() {
               </div>
             ) : null}
 
-            <Button
-              className="workspace-primary"
-              type="primary"
-              size="large"
-              block
-              loading={busy}
-              disabled={nextAction === "wait" && busy}
-              onClick={() => void handlePrimaryAction()}
-            >
-              {primaryLabel}
-            </Button>
+            {(workspace
+              || needsProfileConfiguration
+              || candidates.length > 0
+              || sourceMode === "script") && renderPrimaryButton()}
 
           </Card>
+
+          {!workspace && (
+            <Card className="stage-overview start-flow" variant="borderless">
+              <div className="start-process" aria-label="智能创作四步流程">
+                <div className="start-process-item current">
+                  <span className="start-process-icon"><SearchOutlined aria-hidden /></span>
+                  <span><strong>找素材</strong><small>正在为你寻找合适素材</small></span>
+                </div>
+                <RightOutlined className="start-process-arrow" aria-hidden />
+                <div className="start-process-item">
+                  <span className="start-process-icon"><FileTextOutlined aria-hidden /></span>
+                  <span><strong>确认文案和费用</strong><small>查看方案并确认费用</small></span>
+                </div>
+                <RightOutlined className="start-process-arrow" aria-hidden />
+                <div className="start-process-item">
+                  <span className="start-process-icon"><VideoCameraOutlined aria-hidden /></span>
+                  <span><strong>制作成片</strong><small>系统完成数字人和剪辑</small></span>
+                </div>
+                <RightOutlined className="start-process-arrow" aria-hidden />
+                <div className="start-process-item">
+                  <span className="start-process-icon"><SendOutlined aria-hidden /></span>
+                  <span><strong>确认发布</strong><small>复核成片后由你确认发布</small></span>
+                </div>
+              </div>
+              <Text type="secondary" className="cost-confirmation-note">
+                预计费用将在确认方案时显示，确认后才会开始付费制作
+              </Text>
+            </Card>
+          )}
 
           {workspace ? renderWorkbenchTasksCard() : renderProfileCard()}
 
@@ -2473,6 +2541,7 @@ export default function PipelinePage() {
 
         <div className="workspace-right">
           <Card
+            className="workspace-preview-card"
             title={<Space><VideoCameraOutlined /> 预览与实时状态</Space>}
             extra={workspace && <Text code>{workspace.batch.batch_id}</Text>}
           >
@@ -2944,27 +3013,35 @@ export default function PipelinePage() {
 
       <style>{`
         .smart-workspace {
-          --workspace-purple: #6f49e8;
-          --workspace-blue: #3d7df7;
+          --workspace-purple: #6c43e8;
+          --workspace-blue: #4b73e8;
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          gap: 22px;
+          width: 100%;
+          max-width: 1180px;
+          margin: 0 auto;
           min-width: 0;
         }
         .workspace-hero {
           display: flex;
-          align-items: center;
+          align-items: flex-start;
           justify-content: space-between;
           gap: 24px;
-          padding: 24px 28px;
-          border-radius: 20px;
-          color: #fff;
-          background:
-            radial-gradient(circle at 85% 20%, rgba(255,255,255,.22), transparent 32%),
-            linear-gradient(120deg, #3d7df7, #7b4ce8 58%, #9b55ee);
-          box-shadow: 0 18px 45px rgba(82, 71, 188, .18);
+          padding: 4px 0 2px;
         }
-        .workspace-hero h2 { color: #fff; margin: 0; }
+        .workspace-hero h1 {
+          margin: 0;
+          color: #121a2d;
+          font-size: clamp(34px, 3.2vw, 46px);
+          line-height: 1.18;
+          letter-spacing: .035em;
+        }
+        .workspace-hero p {
+          margin: 10px 0 0;
+          color: #6f788c;
+          font-size: 16px;
+        }
         .hero-state {
           min-width: 170px;
           display: flex;
@@ -2972,18 +3049,246 @@ export default function PipelinePage() {
           align-items: flex-end;
           gap: 4px;
         }
-        .hero-state .ant-typography { color: rgba(255,255,255,.78); }
-        .hero-state strong { font-size: 20px; }
-        .stage-overview { overflow: hidden; }
+        .hero-state strong { color: #1f2937; font-size: 18px; }
+        .stage-overview {
+          overflow: hidden;
+          border: 1px solid #e5e7ef;
+          box-shadow: none;
+        }
         .stage-overview .ant-steps-item-process .ant-steps-item-icon {
           background: var(--workspace-purple);
           border-color: var(--workspace-purple);
+        }
+        .start-flow .ant-card-body {
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+          padding: 24px 28px 20px;
+        }
+        .start-process {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr) 22px minmax(0, 1fr) 22px minmax(0, 1fr);
+          align-items: center;
+          gap: 8px;
+        }
+        .start-process-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          min-width: 0;
+        }
+        .start-process-item > span:last-child {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          min-width: 0;
+        }
+        .start-process-item strong { color: #263047; font-size: 15px; }
+        .start-process-item small { color: #81899a; font-size: 12px; line-height: 1.4; }
+        .start-process-icon {
+          flex: 0 0 44px;
+          width: 44px;
+          height: 44px;
+          display: grid;
+          place-items: center;
+          border: 1px solid #e3e5ec;
+          border-radius: 50%;
+          color: #737b8e;
+          background: #f8f9fc;
+          font-size: 19px;
+        }
+        .start-process-item.current .start-process-icon {
+          border-color: #c9baf5;
+          color: var(--workspace-purple);
+          background: #f3efff;
+        }
+        .start-process-arrow {
+          justify-self: center;
+          color: #b3b8c5;
+        }
+        .cost-confirmation-note {
+          align-self: center;
+          text-align: center;
         }
         .workspace-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 16px;
           align-items: start;
+        }
+        .workspace-grid.is-start {
+          grid-template-columns: minmax(0, 1.05fr) minmax(340px, .95fr);
+          gap: 18px;
+        }
+        .workspace-grid.is-start .workspace-left,
+        .workspace-grid.is-start .workspace-right {
+          display: contents;
+        }
+        .workspace-grid.is-start .workspace-action-card {
+          grid-column: 1 / -1;
+          grid-row: 1;
+        }
+        .workspace-grid.is-start .start-flow {
+          grid-column: 1 / -1;
+          grid-row: 2;
+        }
+        .workspace-grid.is-start .workspace-tasks-card {
+          grid-column: 1;
+          grid-row: 3;
+        }
+        .workspace-grid.is-start .workspace-profile-card {
+          grid-column: 2;
+          grid-row: 3;
+        }
+        .workspace-grid.is-start .workspace-preview-card {
+          display: none;
+        }
+        .workspace-action-card,
+        .workspace-profile-card,
+        .workspace-tasks-card,
+        .workspace-loading-card {
+          border: 1px solid #e4e6ee;
+          border-radius: 14px;
+          box-shadow: none;
+        }
+        .workspace-grid.is-start .workspace-action-card {
+          border-color: #d8cff6;
+          background: rgba(255, 255, 255, .94);
+        }
+        .workspace-grid.is-start .workspace-action-card > .ant-card-body {
+          padding: 28px;
+        }
+        .creation-composer {
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+          padding: 2px;
+        }
+        .creation-source-tabs {
+          padding: 0 0 12px;
+          border-bottom: 1px solid #e8eaf0;
+          background: transparent;
+        }
+        .creation-source-tabs .ant-segmented-item {
+          color: #445066;
+          font-weight: 600;
+        }
+        .creation-source-tabs .ant-segmented-item-selected {
+          color: var(--workspace-purple);
+          box-shadow: inset 0 -2px 0 var(--workspace-purple);
+          background: transparent;
+        }
+        .creation-entry-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 148px;
+          align-items: center;
+          gap: 14px;
+        }
+        .creation-entry-row .ant-input {
+          min-height: 56px;
+          font-size: 16px;
+        }
+        .creation-mode-section {
+          padding: 2px;
+        }
+        .creation-mode-cards {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+        .creation-mode-card {
+          position: relative;
+          display: flex;
+          align-items: center;
+          gap: 13px;
+          min-height: 88px;
+          padding: 16px 42px 16px 17px;
+          border: 1px solid #e0e3eb;
+          border-radius: 14px;
+          background: #fff;
+          color: #2a3040;
+          text-align: left;
+          cursor: pointer;
+          transition: border-color .18s ease, background .18s ease, box-shadow .18s ease;
+        }
+        .creation-mode-card:hover { border-color: #c9bcf3; }
+        .creation-mode-card:focus-visible {
+          outline: 3px solid rgba(108, 67, 232, .16);
+          outline-offset: 2px;
+        }
+        .creation-mode-card.selected {
+          border-color: #bdaaf4;
+          background: #faf8ff;
+          box-shadow: 0 0 0 1px rgba(108, 67, 232, .05);
+        }
+        .creation-mode-icon {
+          flex: 0 0 44px;
+          width: 44px;
+          height: 44px;
+          display: grid;
+          place-items: center;
+          border-radius: 12px;
+          color: #687286;
+          background: #f2f4f8;
+          font-size: 20px;
+        }
+        .creation-mode-card.selected .creation-mode-icon {
+          color: var(--workspace-purple);
+          background: #eee8ff;
+        }
+        .creation-mode-card.risk .creation-mode-icon {
+          color: #9a6700;
+          background: #fff7e0;
+        }
+        .creation-mode-card.risk.selected {
+          border-color: #e8b84d;
+          background: #fffaf0;
+          box-shadow: 0 0 0 1px rgba(196, 134, 0, .06);
+        }
+        .creation-mode-card.risk.selected .creation-mode-check {
+          color: #b77900;
+        }
+        .creation-mode-copy {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          min-width: 0;
+        }
+        .creation-mode-title {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          color: #242a39;
+          font-size: 15px;
+        }
+        .creation-mode-copy small {
+          color: #7e8697;
+          font-size: 12px;
+          line-height: 1.4;
+        }
+        .creation-mode-check {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          color: transparent;
+        }
+        .creation-mode-card.selected .creation-mode-check { color: var(--workspace-purple); }
+        .creation-mode-note.ant-typography {
+          margin: 10px 2px 0;
+          font-size: 13px;
+        }
+        .creation-mode-risk-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          margin: 10px 2px 0;
+          color: #8a5a00;
+          font-size: 13px;
+          line-height: 1.55;
+        }
+        .creation-mode-risk-note .anticon {
+          margin-top: 3px;
+          color: #c47f00;
         }
         .workspace-left,
         .workspace-right {
@@ -3158,9 +3463,8 @@ export default function PipelinePage() {
           gap: 14px;
         }
         .profile-summary-details {
-          padding: 12px 14px;
-          border-radius: 12px;
-          background: #f8f6ff;
+          padding: 4px 0;
+          background: transparent;
         }
         .profile-summary-details .ant-descriptions-item {
           padding-bottom: 0;
@@ -3171,6 +3475,32 @@ export default function PipelinePage() {
         .profile-summary-details .ant-descriptions-item-content {
           color: #252938;
           font-weight: 600;
+        }
+        .profile-value-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          width: 100%;
+        }
+        .profile-value-row .anticon {
+          color: #a3a9b7;
+          font-size: 12px;
+        }
+        .workspace-grid.is-start .profile-avatar-preview {
+          display: none;
+        }
+        .workspace-grid.is-start .profile-summary-details .ant-descriptions-row {
+          display: flex;
+          flex-direction: column;
+        }
+        .workspace-grid.is-start .profile-summary-details .ant-descriptions-item {
+          width: 100%;
+          padding: 13px 0;
+          border-bottom: 1px solid #edf0f4;
+        }
+        .workspace-grid.is-start .profile-summary-details .ant-descriptions-item:last-child {
+          border-bottom: 0;
         }
         .profile-avatar-preview,
         .profile-picker-media {
@@ -3303,8 +3633,18 @@ export default function PipelinePage() {
           margin-top: 16px;
           border: 0;
           font-weight: 700;
-          background: linear-gradient(90deg, var(--workspace-blue), #8051eb);
-          box-shadow: 0 10px 24px rgba(90, 72, 213, .22);
+          background: var(--workspace-purple);
+          box-shadow: none;
+        }
+        .workspace-primary.inline {
+          width: 148px;
+          height: 56px;
+          margin-top: 0;
+          border-radius: 12px;
+          font-size: 15px;
+          font-weight: 650;
+          letter-spacing: .02em;
+          box-shadow: 0 6px 14px rgba(108, 67, 232, .16);
         }
         .video-frame {
           overflow: hidden;
@@ -3343,6 +3683,7 @@ export default function PipelinePage() {
         .workbench-task-list .ant-list-item {
           gap: 10px;
           align-items: center;
+          padding: 14px 0;
         }
         .workbench-task-list .ant-list-item-meta {
           min-width: 0;
@@ -3363,14 +3704,59 @@ export default function PipelinePage() {
           padding-top: 12px;
           border-top: 1px solid #f0f0f0;
         }
+        .workbench-task-footer.start {
+          justify-content: center;
+          margin-top: 2px;
+          padding-top: 14px;
+        }
+        .workbench-task-footer.start a {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
         @media (max-width: 1100px) {
           .workspace-grid { grid-template-columns: 1fr; }
+          .workspace-grid.is-start { grid-template-columns: 1fr; }
+          .workspace-grid.is-start .workspace-tasks-card,
+          .workspace-grid.is-start .workspace-profile-card {
+            grid-column: 1;
+          }
+          .workspace-grid.is-start .workspace-tasks-card { grid-row: 3; }
+          .workspace-grid.is-start .workspace-profile-card { grid-row: 4; }
+          .start-process {
+            grid-template-columns: minmax(0, 1fr) 22px minmax(0, 1fr);
+            row-gap: 16px;
+          }
+          .start-process > :nth-child(1) { grid-area: 1 / 1; }
+          .start-process > :nth-child(2) { grid-area: 1 / 2; }
+          .start-process > :nth-child(3) { grid-area: 1 / 3; }
+          .start-process > :nth-child(4) { display: none; }
+          .start-process > :nth-child(5) { grid-area: 2 / 1; }
+          .start-process > :nth-child(6) { grid-area: 2 / 2; }
+          .start-process > :nth-child(7) { grid-area: 2 / 3; }
         }
         @media (max-width: 768px) {
-          .workspace-hero { align-items: flex-start; padding: 20px; }
+          .workspace-hero { align-items: flex-start; padding: 0; }
           .hero-state { min-width: 0; align-items: flex-start; }
           .workspace-hero { flex-direction: column; }
-          .stage-overview .ant-steps-item-title { font-size: 12px; }
+          .workspace-hero h1 { font-size: 32px; }
+          .creation-entry-row { grid-template-columns: 1fr; }
+          .creation-mode-cards { grid-template-columns: 1fr; }
+          .workspace-primary.inline { width: 100%; }
+          .start-process { grid-template-columns: 1fr; gap: 10px; }
+          .start-process > :nth-child(1),
+          .start-process > :nth-child(2),
+          .start-process > :nth-child(3),
+          .start-process > :nth-child(4),
+          .start-process > :nth-child(5),
+          .start-process > :nth-child(6),
+          .start-process > :nth-child(7) { grid-area: auto; }
+          .start-process > :nth-child(4) { display: block; }
+          .start-process-arrow {
+            justify-self: start;
+            margin-left: 22px;
+            transform: rotate(90deg);
+          }
           .status-summary { grid-template-columns: 1fr; }
           .section-heading { flex-direction: column; }
           .profile-picker-grid { grid-template-columns: 1fr; }

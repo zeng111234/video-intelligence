@@ -185,6 +185,14 @@ class TestCandidatesSearch:
         )
         assert resp.status_code == 422  # Pydantic validation: le=100
 
+    def test_search_respects_page(self, client: TestClient):
+        first = client.post("/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 1})
+        second = client.post("/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 2})
+        assert first.status_code == 200
+        assert second.status_code == 200
+        if first.json()["total"] > 1:
+            assert first.json()["items"][0]["video_id"] != second.json()["items"][0]["video_id"]
+
     def test_search_limit_zero(self, client: TestClient):
         resp = client.post(
             "/api/v1/candidates/search", json={"keyword": "", "limit": 0}
@@ -1912,7 +1920,7 @@ class TestErrorHandling:
         """参数校验失败应返回统一错误格式。"""
         resp = client.post(
             "/api/v1/candidates/search",
-            json={"keyword": "", "limit": 999},
+            json={"keyword": "", "limit": 0},
         )
         assert resp.status_code == 422
         data = resp.json()

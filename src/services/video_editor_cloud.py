@@ -46,6 +46,8 @@ BGM_VOICEOVER_CATEGORIES = (
 )
 BGM_ENERGY_LEVELS = ("克制", "平稳", "有推动感")
 CAPTION_EMPHASIS_KINDS = ("number", "benefit", "warning", "keyword")
+OPENING_STYLE_IDS = ("suspense_reveal", "story_unfold", "number_focus")
+OPENING_SOUND_EFFECT_IDS = ("soft_whoosh", "soft_page_turn", "soft_chime")
 MIN_SILENCE_SECONDS = 1.5
 SILENCE_EDGE_PADDING_SECONDS = 0.45
 HEAD_TAIL_SILENCE_SECONDS = 0.8
@@ -693,6 +695,68 @@ class CaptionEmphasis(BaseModel):
         return self
 
 
+class SmartOpening(BaseModel):
+    """A short opening hook chosen from approved motion templates."""
+
+    model_config = ConfigDict(frozen=True)
+
+    style_id: str = Field(pattern="^(suspense_reveal|story_unfold|number_focus)$")
+    hook_text: str = Field(min_length=2, max_length=28)
+    duration_seconds: float = Field(default=1.4, ge=1.2, le=1.8)
+    sound_effect_id: str = Field(
+        pattern="^(soft_whoosh|soft_page_turn|soft_chime)$"
+    )
+    intensity: str = Field(default="medium", pattern="^(low|medium)$")
+    reason: str = Field(default="", max_length=120)
+
+
+def build_smart_opening(
+    transcript: str,
+    title_candidates: Sequence[str],
+    *,
+    preferred_style: object = None,
+) -> SmartOpening | None:
+    """Derive safe opening text and style without arbitrary effect parameters."""
+
+    clean_transcript = re.sub(r"\s+", "", transcript or "")
+    candidates = [
+        re.sub(r"[\s，。！？、,.!?；;：:]+", "", str(item))
+        for item in title_candidates
+    ]
+    hook_text = next((item for item in candidates if len(item) >= 2), "")
+    if not hook_text:
+        hook_text = clean_transcript[:14].strip("，。！？、,.!?；;：: ")
+    if len(hook_text) > 14:
+        hook_text = hook_text[:14].rstrip("，。！？、,.!?；;：:")
+    if len(hook_text) < 2:
+        return None
+
+    requested = str(preferred_style or "").strip()
+    if requested not in OPENING_STYLE_IDS:
+        requested = ""
+    source = f"{hook_text}{clean_transcript[:120]}"
+    if re.search(r"\d|%|％|元|块|折|第[一二三四五六七八九十]", source):
+        style_id = "number_focus"
+    elif re.search(r"故事|序章|帷幕|后来|曾经|经历|开始|准则|信号", source):
+        style_id = "story_unfold"
+    else:
+        style_id = requested or "suspense_reveal"
+
+    sound_effect_id = {
+        "suspense_reveal": "soft_whoosh",
+        "story_unfold": "soft_page_turn",
+        "number_focus": "soft_chime",
+    }[style_id]
+    return SmartOpening(
+        style_id=style_id,
+        hook_text=hook_text,
+        duration_seconds=1.4,
+        sound_effect_id=sound_effect_id,
+        intensity="medium",
+        reason="根据已审核文案自动选择克制的开场钩子，不改写人声内容。",
+    )
+
+
 def validated_caption_groups(
     raw_groups: object,
     segments: Sequence[Mapping[str, Any]],
@@ -1061,6 +1125,7 @@ def build_business_talking_head_ass(
     caption_groups: object = None,
     caption_emphasis: object = None,
     spoken_ranges: object = None,
+    time_offset_seconds: float = 0,
 ) -> bytes:
     """Create one approved ASS overlay for the title and manually reviewed captions."""
 
@@ -1097,8 +1162,8 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     if title_preview["lines"]:
         visible_seconds = float(title_style["visible_seconds"])
         lines.append(
-            "Dialogue: 0,0:00:00.00,"
-            f"{_ass_timestamp(visible_seconds)},Title,,0,0,0,,"
+            f"Dialogue: 0,{_ass_timestamp(time_offset_seconds)},"
+            f"{_ass_timestamp(time_offset_seconds + visible_seconds)},Title,,0,0,0,,"
             f"{_wrap_ass_lines(title_preview['lines'])}"
         )
         title_height = len(title_preview["lines"]) * round(title_style["font_size"] * 1.22)
@@ -1108,14 +1173,14 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
             f"{accent_style['height']} l 0 {accent_style['height']}"
         )
         lines.append(
-            "Dialogue: 0,0:00:00.00,"
-            f"{_ass_timestamp(visible_seconds)},Accent,,0,0,0,,"
+            f"Dialogue: 0,{_ass_timestamp(time_offset_seconds)},"
+            f"{_ass_timestamp(time_offset_seconds + visible_seconds)},Accent,,0,0,0,,"
             f"{{\\pos({title_style['safe_left']},{accent_y})\\p1}}{accent_path}"
         )
     for cue in overlay_preview["cues"]:
         lines.append(
-            f"Dialogue: 0,{_ass_timestamp(float(cue['start']))},"
-            f"{_ass_timestamp(float(cue['end']))},Caption,,0,0,0,,"
+            f"Dialogue: 0,{_ass_timestamp(float(cue['start']) + time_offset_seconds)},"
+            f"{_ass_timestamp(float(cue['end']) + time_offset_seconds)},Caption,,0,0,0,,"
             f"{_ass_caption_text(cue, emphasis_colour='&H006AE1FF&')}"
         )
     return (header + "\n".join(lines) + "\n").encode("utf-8-sig")
@@ -1144,6 +1209,7 @@ class ProviderJobStatus(StrEnum):
 
 
 class EditStepKind(StrEnum):
+    SMART_OPENING = "smart_opening"
     TRIM_SILENCE = "trim_silence"
     VERTICAL_FIT = "vertical_fit"
     SUBTITLES = "subtitles"
@@ -1188,6 +1254,7 @@ class EditPlan(BaseModel):
     caption_groups: list[CaptionGroup] = Field(default_factory=list, max_length=400)
     caption_group_source: str = "deterministic_fallback"
     caption_emphasis: list[CaptionEmphasis] = Field(default_factory=list, max_length=140)
+    smart_opening: SmartOpening | None = None
     explanation: str = ""
     warnings: list[str] = Field(default_factory=list)
     provider_name: str = "deterministic_rules"
@@ -1352,6 +1419,8 @@ class RenderRequest(BaseModel):
     title: str = ""
     bgm_asset: CloudAsset | None = None
     bgm_volume: float = Field(default=0.2, ge=0, le=1)
+    opening_asset: CloudAsset | None = None
+    opening_duration_seconds: float = Field(default=0, ge=0, le=2)
     idempotency_key: str = Field(min_length=1)
 
 
@@ -1743,6 +1812,7 @@ def build_safe_edit_plan(
     caption_groups: Sequence[CaptionGroup | Mapping[str, Any]] | None = None,
     caption_group_source: str = "deterministic_fallback",
     caption_emphasis: Sequence[CaptionEmphasis | Mapping[str, Any]] | None = None,
+    smart_opening: SmartOpening | Mapping[str, Any] | None = None,
     explanation: str = "",
     enabled_steps: Sequence[EditStepKind | str] | None = None,
     provider_name: str = "deterministic_rules",
@@ -1783,6 +1853,7 @@ def build_safe_edit_plan(
 
     requested_steps = (
         [
+            EditStepKind.SMART_OPENING,
             EditStepKind.TRIM_SILENCE,
             EditStepKind.VERTICAL_FIT,
             EditStepKind.SUBTITLES,
@@ -1800,6 +1871,14 @@ def build_safe_edit_plan(
         ]
     elif EditStepKind.TRIM_SILENCE not in unique_steps:
         unique_steps.insert(0, EditStepKind.TRIM_SILENCE)
+
+    opening = SmartOpening.model_validate(smart_opening) if smart_opening else None
+    if opening is None:
+        unique_steps = [
+            step for step in unique_steps if step != EditStepKind.SMART_OPENING
+        ]
+    elif EditStepKind.SMART_OPENING not in unique_steps:
+        unique_steps.insert(0, EditStepKind.SMART_OPENING)
 
     titles = [
         str(item).strip() for item in (title_candidates or []) if str(item).strip()
@@ -1826,6 +1905,7 @@ def build_safe_edit_plan(
         caption_groups=list(caption_groups or []),
         caption_group_source=caption_group_source,
         caption_emphasis=list(caption_emphasis or []),
+        smart_opening=opening,
         explanation=explanation.strip(),
         warnings=warnings,
         provider_name=provider_name,

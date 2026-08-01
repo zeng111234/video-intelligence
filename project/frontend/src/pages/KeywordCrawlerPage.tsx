@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Collapse,
   Descriptions,
   Drawer,
   Input,
@@ -30,11 +31,13 @@ import {
   deleteCrawlerBatch,
   generateOriginalScript,
   getCrawlerBatch,
+  probeCrawlerBatchCopy,
   getCrawlerCapabilities,
   getCrawlerHotWords,
   importXiaohongshuManualMaterials,
   listCrawlerBatches,
   previewCrawlerCandidateMedia,
+  recheckCrawlerBatchLegacyNoText,
   startCrawlerBrowserDiscovery,
 } from "../api/client";
 import type {
@@ -168,6 +171,7 @@ export default function KeywordCrawlerPage() {
   const [selectedBatch, setSelectedBatch] = useState<CrawlerBatchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [probingCopy, setProbingCopy] = useState(false);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
   const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
   const [mediaPreview, setMediaPreview] = useState<CrawlerCandidateMediaPreviewResponse | null>(null);
@@ -313,11 +317,42 @@ export default function KeywordCrawlerPage() {
       setSelectedBatch(batch);
       setKeyword("");
       upsertBatch(batch);
-      toast.success("已找到近期候选；选一条即可进入原创文案或后续创作");
+      try {
+        setProbingCopy(true);
+        const checked = await probeCrawlerBatchCopy(batch.batch_id);
+        setSelectedBatch(checked);
+        upsertBatch(checked);
+        toast.success("已完成前10秒文案筛选；优先看“检测到文案”");
+      } catch (probeError) {
+        toast.warning(`已找到候选，但文案检测未完成：${(probeError as Error).message}`);
+      } finally {
+        setProbingCopy(false);
+      }
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleProbeCopy = async (batch: CrawlerBatchResponse) => {
+    const isLegacyRecheck = (batch.copy_probe_recheckable_count ?? 0) > 0;
+    setProbingCopy(true);
+    try {
+      const checked = isLegacyRecheck
+        ? await recheckCrawlerBatchLegacyNoText(batch.batch_id)
+        : await probeCrawlerBatchCopy(batch.batch_id);
+      setSelectedBatch(checked);
+      upsertBatch(checked);
+      toast.success(
+        isLegacyRecheck
+          ? "已复查旧的未识别候选；没有重新搜索平台"
+          : "已完成前10秒文案筛选",
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setProbingCopy(false);
     }
   };
 
@@ -343,7 +378,9 @@ export default function KeywordCrawlerPage() {
         };
       });
       toast.success(started.ready_to_crawl
-        ? `${started.platform_label}已连接`
+        ? platform === "douyin"
+          ? "抖音登录浏览器已打开；官网补充搜索会在实际检索时核验登录状态"
+          : `${started.platform_label}浏览器已打开`
         : `${started.platform_label}登录窗口已打开，请在窗口中扫码或完成验证`);
     } catch (err) {
       toast.error((err as Error).message);
@@ -516,7 +553,7 @@ export default function KeywordCrawlerPage() {
         title="你想做什么内容？"
         extra={(
           <Button icon={<LinkOutlined />} onClick={() => setConnectionDrawerOpen(true)}>
-            {capabilities ? `账号连接（${readyBrowserCount}/3）` : "账号连接"}
+            {capabilities ? `浏览器状态（${readyBrowserCount}/3）` : "浏览器状态"}
           </Button>
         )}
       >
@@ -566,7 +603,7 @@ export default function KeywordCrawlerPage() {
           </Tooltip>
         </Space>
         <Text type="secondary" style={{ display: "block", marginTop: 12 }}>
-          点“找素材”后浏览器会自动搜索热点宝、快手和B站；小红书不会被打开、浏览或抓取。快手保留近30天，B站选择“最多播放、最近一周”，每个平台最多保留30条。
+          点“找素材”后浏览器会自动搜索热点宝、快手和B站；文案不足时会顺序补查抖音官网公开搜索。小红书不会被打开、浏览或抓取。抖音要求登录或验证时会立即停下并提示你处理。
         </Text>
       </Card>
 
@@ -590,21 +627,24 @@ export default function KeywordCrawlerPage() {
       </Card>
 
       <Drawer
-        title="账号连接"
+        title="素材浏览器"
         open={connectionDrawerOpen}
         onClose={() => setConnectionDrawerOpen(false)}
         width={420}
       >
         <Paragraph type="secondary">
-          平时直接点“找素材”即可。只有平台提示未登录时，才需要在这里连接一次；登录状态会保留在本机。
+          平时直接点“找素材”即可。这里的状态只表示专用浏览器是否已启动；抖音官网补充搜索会在实际检索时再核验登录。若提示登录或验证，点“打开浏览器”后在可见窗口中处理即可。
         </Paragraph>
         <Space direction="vertical" size={12} style={{ width: "100%" }}>
           {browserConnections.map((connection) => {
             const ready = Boolean(connection.ready_to_crawl);
             const waitingLogin = Boolean(connection.running && connection.login_required);
-            const status = ready ? "已连接" : waitingLogin ? "等待登录" : "未连接";
-            const color = ready ? "success" : waitingLogin ? "warning" : "default";
             const platform = connection.platform as BrowserPlatform | undefined;
+            const isDouyinHotspot = platform === "douyin";
+            const status = ready
+              ? isDouyinHotspot ? "热点宝就绪" : "浏览器就绪"
+              : waitingLogin ? "等待登录" : "未连接";
+            const color = ready ? "success" : waitingLogin ? "warning" : "default";
             return (
               <Card
                 key={connection.platform || connection.provider_name}
@@ -614,7 +654,9 @@ export default function KeywordCrawlerPage() {
               >
                 <Paragraph type="secondary" style={{ marginBottom: 12 }}>
                   {ready
-                    ? "已可找素材。"
+                    ? isDouyinHotspot
+                      ? "热点宝浏览器已就绪。抖音官网补充搜索会在文案不足时再核验登录；若要求登录或验证，会立即暂停并提示你处理。"
+                      : "公开搜索浏览器已就绪，可找素材。"
                     : connection.enabled
                       ? "点击连接会打开可见登录窗口，扫码或完成验证后再回来找素材。"
                       : connection.message}
@@ -631,7 +673,7 @@ export default function KeywordCrawlerPage() {
             );
           })}
           {!browserConnections.length && (
-            <Alert type="info" showIcon message="正在读取账号连接状态" />
+            <Alert type="info" showIcon message="正在读取浏览器状态" />
           )}
         </Space>
       </Drawer>
@@ -643,6 +685,8 @@ export default function KeywordCrawlerPage() {
           onSendToWorkspace={handleSendCandidateToWorkspace}
           onGenerateOriginalScript={handleGenerateOriginalScript}
           originalScriptLoadingId={originalScriptLoadingId}
+          onProbeCopy={handleProbeCopy}
+          copyProbeLoading={probingCopy}
         />
       )}
 
@@ -750,34 +794,49 @@ function BatchDetail({
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
+  onProbeCopy,
+  copyProbeLoading,
 }: {
   batch: CrawlerBatchResponse;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
+  onProbeCopy: (batch: CrawlerBatchResponse) => void;
+  copyProbeLoading: boolean;
 }) {
   const isHotspotBatch = batch.provider === "douyin_local_browser" || batch.monitoring_policy === "hotspot_single_snapshot_v1";
   const isFreeMultiPlatformBatch = batch.monitoring_policy === "free_single_snapshot_v1";
   const isSingleSnapshotBatch = isHotspotBatch || isFreeMultiPlatformBatch;
+  const recheckableCount = batch.copy_probe_recheckable_count ?? 0;
+  const hasFinishedCopyProbe = (batch.copy_probe_attempt_count ?? 0) > 0;
+  const showCopyProbeAction = !isFreeMultiPlatformBatch || !hasFinishedCopyProbe || recheckableCount > 0;
+  const copyProbeActionLabel = recheckableCount > 0
+    ? `复查未识别候选（前10秒）`
+    : "检测文案（前10秒）";
 
   return (
     <Card title={`本次素材：${batch.keyword}`} extra={<Tag color={STATUS_COLOR[batch.status]}>{statusLabel(batch.status)}</Tag>}>
       <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginBottom: 16 }}>
         {!isSingleSnapshotBatch && <Descriptions.Item label="批次ID">{batch.batch_id}</Descriptions.Item>}
-        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : isFreeMultiPlatformBatch ? "平台规则" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : isFreeMultiPlatformBatch ? "热点宝不限 · 小红书仅人工素材 · B站近一周 · 快手近30天" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : batch.published_window_days === 3 ? "近 3 天（历史）" : batch.published_window_days === 30 ? "近 30 天（历史）" : batch.published_window_days === 180 ? "近半年（历史）" : batch.published_window_days === 300 ? "近 10 个月（历史）" : "近 7 天（历史）"}</Descriptions.Item>
+        <Descriptions.Item label={isHotspotBatch ? "搜索范围" : isFreeMultiPlatformBatch ? "平台规则" : "发布时间"}>{isHotspotBatch ? "视频榜、话题榜、抖音搜索" : isFreeMultiPlatformBatch ? "热点宝不限 · 文案不足时补查抖音官网 · 小红书仅人工素材 · B站近一周 · 快手近30天" : batch.published_window_days === 0 ? "不限" : batch.published_window_days === 1 ? "近 24 小时（历史）" : batch.published_window_days === 3 ? "近 3 天（历史）" : batch.published_window_days === 30 ? "近 30 天（历史）" : batch.published_window_days === 180 ? "近半年（历史）" : batch.published_window_days === 300 ? "近 10 个月（历史）" : "近 7 天（历史）"}</Descriptions.Item>
         <Descriptions.Item label={isSingleSnapshotBatch ? "本次候选目标" : "每平台"}>{batch.count_per_platform} 条</Descriptions.Item>
         {!isSingleSnapshotBatch && <Descriptions.Item label="本批费用">¥{batch.total_estimated_cost_cny.toFixed(2)}</Descriptions.Item>}
         {batch.mode === "smart" && <Descriptions.Item label="免费来源候选">{batch.free_candidate_count || 0} 条</Descriptions.Item>}
         {batch.mode === "smart" && <Descriptions.Item label="付费接口">{batch.paid_fallback_used ? "已使用" : "未调用 OneAPI"}</Descriptions.Item>}
+        {isFreeMultiPlatformBatch && batch.copy_detected_count != null && <Descriptions.Item label="检测到文案">{batch.copy_detected_count} 条（目标 8+4）</Descriptions.Item>}
       </Descriptions>
       <Space style={{ marginBottom: 12 }} wrap>
-        <Text type="secondary">先看素材状态：只有“已有授权转写”或“有可见文案参考”可送入创作；其余只能据选题生成原创口播。</Text>
+        <Text type="secondary">先看“检测到文案”。系统最多检查36条，目标收集8条优先素材和4条备用；检测以开头短片段为准，新检测最多前10秒，不保存文字。</Text>
+        {showCopyProbeAction && (
+          <Button size="small" loading={copyProbeLoading} onClick={() => void onProbeCopy(batch)}>
+            {copyProbeActionLabel}
+          </Button>
+        )}
       </Space>
       {isFreeMultiPlatformBatch ? (
         <UnifiedPlatformResults
-          runs={batch.platform_runs}
-          batchId={batch.batch_id}
+          batch={batch}
           onResolveMedia={onResolveMedia}
           onSendToWorkspace={onSendToWorkspace}
           onGenerateOriginalScript={onGenerateOriginalScript}
@@ -803,6 +862,12 @@ function BatchDetail({
 }
 
 function emptyRunSummary(run: CrawlerPlatformRun) {
+  if (run.error) {
+    if (run.provider.startsWith("douyin_public_browser")) {
+      return `抖音官网搜索已暂停：${run.error}。`;
+    }
+    return `${run.platform_label}本次没有完成：${run.error}`;
+  }
   if (run.raw_item_count > 0 && run.parsed_item_count === 0) {
     return `${run.platform_label}发现 ${run.raw_item_count} 条页面结果，但当时没有解析出可校验的标题和发布时间，未进入候选榜。`;
   }
@@ -811,7 +876,7 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
       run.out_of_window_count ? `时间不符 ${run.out_of_window_count}` : "",
       run.irrelevant_count ? `关键词不符 ${run.irrelevant_count}` : "",
       run.below_heat_floor_count ? `热度不足 ${run.below_heat_floor_count}` : "",
-      run.low_spoken_value_count ? `口播信息不足 ${run.low_spoken_value_count}` : "",
+      run.low_spoken_value_count ? `标题信息不足 ${run.low_spoken_value_count}` : "",
       run.invalid_count ? `字段无效 ${run.invalid_count}` : "",
       run.duplicate_count ? `重复 ${run.duplicate_count}` : "",
     ].filter(Boolean);
@@ -821,28 +886,45 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
 }
 
 function UnifiedPlatformResults({
-  runs,
-  batchId,
+  batch,
   onResolveMedia,
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
 }: {
-  runs: CrawlerPlatformRun[];
-  batchId: string;
+  batch: CrawlerBatchResponse;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
 }) {
+  const runs = batch.platform_runs;
+  const batchId = batch.batch_id;
   const candidates = runs.flatMap((run) => run.candidates);
   const emptyRuns = runs.filter((run) => run.candidates.length === 0);
+  const hasCopyPool = candidates.some((item) => item.copy_pool_status != null);
+  const primaryCandidates = hasCopyPool ? candidates.filter((item) => item.copy_pool_status === "primary") : candidates;
+  const reserveCandidates = hasCopyPool ? candidates.filter((item) => item.copy_pool_status === "reserve") : [];
+  const excludedCandidates = hasCopyPool ? candidates.filter((item) => item.copy_pool_status === "excluded" || item.copy_pool_status == null) : [];
+  const detectedCount = batch.copy_detected_count ?? primaryCandidates.length + reserveCandidates.length;
+  const displayedCount = primaryCandidates.length + reserveCandidates.length;
+
+  const renderCandidate = (item: CrawlerCandidateResult) => (
+    <CandidateListItem
+      item={item}
+      batchId={batchId}
+      onResolveMedia={onResolveMedia}
+      onSendToWorkspace={onSendToWorkspace}
+      onGenerateOriginalScript={onGenerateOriginalScript}
+      originalScriptLoading={originalScriptLoadingId === item.video_id}
+    />
+  );
 
   return (
     <Card
       size="small"
-      title={`多平台候选榜（${candidates.length}）`}
-      extra={<Text type="secondary">最多选择 30 条</Text>}
+      title={hasCopyPool ? `检测到文案候选（${detectedCount}）` : `多平台候选榜（${candidates.length}）`}
+      extra={<Text type="secondary">{hasCopyPool ? `优先 ${primaryCandidates.length} · 备用 ${reserveCandidates.length}` : "最多选择 30 条"}</Text>}
     >
       <Space wrap size={[6, 6]} style={{ marginBottom: emptyRuns.length ? 10 : 4 }}>
         {runs.map((run) => {
@@ -855,7 +937,7 @@ function UnifiedPlatformResults({
           return (
             <Tooltip
               key={run.run_id}
-              title={visibleCount > 0 ? `已加入统一候选榜 ${visibleCount} 条。` : emptyRunSummary(run)}
+              title={visibleCount > 0 ? `${run.platform_label}提供 ${visibleCount} 条本次检测候选。` : emptyRunSummary(run)}
             >
               <Tag color={visibleCount > 0 ? "success" : run.raw_item_count > 0 ? "warning" : "default"}>
                 {label}
@@ -873,19 +955,48 @@ function UnifiedPlatformResults({
           description={emptyRuns.map(emptyRunSummary).join(" ")}
         />
       )}
-      {candidates.length > 0 ? (
-        <List
-          dataSource={candidates}
-          renderItem={(item) => (
-            <CandidateListItem
-              item={item}
-              batchId={batchId}
-              onResolveMedia={onResolveMedia}
-              onSendToWorkspace={onSendToWorkspace}
-              onGenerateOriginalScript={onGenerateOriginalScript}
-              originalScriptLoading={originalScriptLoadingId === item.video_id}
+      {hasCopyPool ? (
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Alert
+            type={detectedCount > 0 ? "success" : "warning"}
+            showIcon
+            message={detectedCount > 0 ? `已检测到 ${detectedCount} 条可识别文案` : "本次未检测到可识别文案"}
+            description={`目标是8条优先素材和4条备用；当前优先展示 ${displayedCount} 条检测到文案的素材。检测以开头短片段为准，新检测最多前10秒，不会提取或保存原视频文字。${batch.copy_probe_attempt_count != null ? ` 已检测 ${batch.copy_probe_attempt_count} 条候选。` : ""}${batch.copy_queries_executed != null ? ` 已使用 ${batch.copy_queries_executed} 组搜索词。` : ""}${batch.copy_matrix_exhausted ? " 预设搜索词已用完，结果仍可能少于目标数。" : ""}`}
+          />
+          <Card size="small" title={<Tag color="success">优先素材（{primaryCandidates.length}）</Tag>}>
+            {primaryCandidates.length > 0 ? (
+              <List dataSource={primaryCandidates} renderItem={renderCandidate} />
+            ) : (
+              <Alert
+                type="warning"
+                showIcon
+                message="还没有可优先使用的文案素材"
+                description="可展开下方其余候选查看原因，或换一个更具体的关键词后再找。"
+              />
+            )}
+          </Card>
+          {reserveCandidates.length > 0 && (
+            <Card size="small" title={<Tag color="gold">备用素材（{reserveCandidates.length}）</Tag>}>
+              <List dataSource={reserveCandidates} renderItem={renderCandidate} />
+            </Card>
+          )}
+          {excludedCandidates.length > 0 && (
+            <Collapse
+              size="small"
+              items={[
+                {
+                  key: "other-candidates",
+                  label: `其余候选（${excludedCandidates.length}）`,
+                  children: <List dataSource={excludedCandidates} renderItem={renderCandidate} />,
+                },
+              ]}
             />
           )}
+        </Space>
+      ) : candidates.length > 0 ? (
+        <List
+          dataSource={candidates}
+          renderItem={renderCandidate}
         />
       ) : (
         <Alert
@@ -937,7 +1048,7 @@ function PlatformRunDetail({
         <Descriptions size="small" column={{ xs: 1, md: 4 }}>
           <Descriptions.Item label="主榜候选">{run.relevant_count ?? run.returned_count}/{run.requested_count}</Descriptions.Item>
           <Descriptions.Item label="原始 / 解析">{run.raw_item_count} / {run.parsed_item_count}</Descriptions.Item>
-          <Descriptions.Item label="过滤">{`关键词不相关 ${run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 口播信息不足 ${run.low_spoken_value_count ?? 0} · 无效 ${run.invalid_count} · 重复 ${run.duplicate_count}`}</Descriptions.Item>
+          <Descriptions.Item label="过滤">{`关键词不相关 ${run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 标题信息不足 ${run.low_spoken_value_count ?? 0} · 无效 ${run.invalid_count} · 重复 ${run.duplicate_count}`}</Descriptions.Item>
           <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
           <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
           <Descriptions.Item label="估算费用">{formatCurrency(run.billable_units)}</Descriptions.Item>
@@ -1071,10 +1182,10 @@ function HotspotCandidateTable({
             作者：{item.author_name || "未返回"}
           </Text>
           <Text type="success" ellipsis={{ tooltip: item.spoken_seed_message }} style={{ width: "100%" }}>
-            值得写{item.spoken_seed_score != null ? `（${item.spoken_seed_score}分）` : ""}：{item.spoken_seed_message}
+            标题信息{item.spoken_seed_score != null ? `（${item.spoken_seed_score}分）` : ""}：{item.spoken_seed_message}
           </Text>
           <Text type={topicOnly ? "warning" : "secondary"} ellipsis={{ tooltip: item.audio_message }} style={{ width: "100%" }}>
-            {item.audio_message || "声音未检测；需上传授权视频。"}
+            {item.audio_message || "尚未检测文案。"}
           </Text>
         </Space>
         );
@@ -1134,7 +1245,7 @@ function HotspotCandidateTable({
             size="small"
             href={`/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`}
           >
-            上传检测声音
+            上传视频转写
           </Button>
           <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : undefined}>
             <span>
@@ -1194,8 +1305,8 @@ function HotspotCandidateTable({
               {detail.quality_source && <Descriptions.Item label="计算方式">{detail.quality_source}</Descriptions.Item>}
               <Descriptions.Item label="时长">{detail.duration_seconds ? `${formatNumber(detail.duration_seconds)} 秒` : "未返回"}</Descriptions.Item>
               <Descriptions.Item label="素材状态">{detail.spoken_material_message || "仅有标题和互动数据，只能用于选题参考。"}</Descriptions.Item>
-              <Descriptions.Item label="口播价值">{detail.spoken_seed_message || "公开文字不足以支撑原创口播。"}</Descriptions.Item>
-              <Descriptions.Item label="声音状态">{detail.audio_message || "尚未检测声音；需上传已获授权的本地视频。"}</Descriptions.Item>
+              <Descriptions.Item label="标题信息">{detail.spoken_seed_message || "公开文字不足以支撑原创文案。"}</Descriptions.Item>
+              <Descriptions.Item label="文案状态">{detail.audio_message || "尚未检测文案。"}</Descriptions.Item>
               {detail.source_url && <Descriptions.Item label="原视频"><a href={detail.source_url} target="_blank" rel="noreferrer">打开原视频</a></Descriptions.Item>}
               {detail.evidence?.includes(";") && <Descriptions.Item label="榜单指标">{hotspotEvidenceSummary(detail.evidence)}</Descriptions.Item>}
             </Descriptions>
@@ -1221,7 +1332,7 @@ function HotspotCandidateTable({
                 按这个话题写原创
               </Button>
               <Button href={`/transcription?candidate=${encodeURIComponent(detail.video_id)}&title=${encodeURIComponent(detail.title)}`}>
-                上传视频检测声音
+                上传视频转写
               </Button>
               <Button href={detail.source_url || undefined} target="_blank" disabled={!detail.source_url}>
                 原视频
@@ -1250,6 +1361,7 @@ function CandidateListItem({
   originalScriptLoading: boolean;
 }) {
   const isHotspotLeaderboard = item.evidence?.startsWith("hotspot:") ?? false;
+  const isDouyinPublicSearch = item.evidence?.startsWith("douyin_public_search:") ?? false;
   const hotspotLabel = hotspotWindowLabel(item.hotspot_window_hours);
   const metrics = metricEntries(item, isHotspotLeaderboard);
   const displayedReasons = item.reasons.filter(
@@ -1268,20 +1380,29 @@ function CandidateListItem({
     : "已有可核验的文字素材，请先核对原意再继续创作。");
   const seedStatus = item.spoken_seed_status || "low_information";
   const seedTag = seedStatus === "writeable"
-    ? { color: "success", label: `值得写${item.spoken_seed_score != null ? ` · ${item.spoken_seed_score}分` : ""}` }
+    ? { color: "success", label: `标题信息较完整${item.spoken_seed_score != null ? ` · ${item.spoken_seed_score}分` : ""}` }
     : seedStatus === "reference_only"
       ? { color: "gold", label: "仅作选题" }
       : { color: "default", label: "信息不足" };
   const audioStatus = item.audio_status || "unknown";
   const audioTag = audioStatus === "speech_detected"
-    ? { color: "success", label: "已检测到人声" }
+    ? { color: "success", label: "检测到文案" }
     : audioStatus === "no_audio"
       ? { color: "error", label: "没有音轨" }
       : audioStatus === "no_clear_speech"
-        ? { color: "warning", label: "未识别出口播" }
+        ? { color: "warning", label: "疑似无文案" }
         : audioStatus === "checking"
-          ? { color: "processing", label: "声音检测中" }
-          : { color: "default", label: "声音未检测" };
+          ? { color: "processing", label: "文案检测中" }
+          : audioStatus === "check_failed"
+            ? { color: "error", label: "检测失败" }
+            : { color: "default", label: "待检测文案" };
+  const copyPoolTag = item.copy_pool_status === "primary"
+    ? { color: "success", label: "优先素材" }
+    : item.copy_pool_status === "reserve"
+      ? { color: "gold", label: "备用素材" }
+      : item.copy_pool_status === "excluded"
+        ? { color: "default", label: "未入选" }
+        : null;
   const materialTag = materialStatus === "transcript_ready"
     ? { color: "success", label: "已有授权转写" }
     : materialStatus === "text_reference"
@@ -1323,7 +1444,7 @@ function CandidateListItem({
             size="small"
             href={`/transcription?candidate=${encodeURIComponent(item.video_id)}&title=${encodeURIComponent(item.title)}`}
           >
-            上传视频检测声音
+            上传视频转写
           </Button>
         ) : null,
       ]}
@@ -1337,10 +1458,12 @@ function CandidateListItem({
               {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
               {isHotspotLeaderboard && <Tag color="magenta">浏览器爆款榜</Tag>}
               {isHotspotLeaderboard && item.hotspot_list_labels && item.hotspot_list_labels.length > 0 && <Tag color="purple">{item.hotspot_list_labels.join(" / ")}</Tag>}
+              {isDouyinPublicSearch && <Tag color="cyan">抖音官网搜索</Tag>}
               {item.relevance_basis && (
                 <Tag color="green">{item.relevance_reason || "标题/话题命中"}</Tag>
               )}
               {item.media_resolution_status && <Tag>{statusLabel(item.media_resolution_status)}</Tag>}
+              {copyPoolTag && <Tag color={copyPoolTag.color}>{copyPoolTag.label}</Tag>}
               <Tag color={materialTag.color}>{materialTag.label}</Tag>
               <Tag color={seedTag.color}>{seedTag.label}</Tag>
               <Tag color={audioTag.color}>{audioTag.label}</Tag>
@@ -1349,11 +1472,14 @@ function CandidateListItem({
         description={
           <Space direction="vertical" size={2}>
             <Text type="secondary">
-              作者：{item.author_name}{isHotspotLeaderboard ? `；${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : ""}
+              作者：{item.author_name}{isHotspotLeaderboard ? `；${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : isDouyinPublicSearch && item.duration_seconds != null ? `；时长：${formatNumber(item.duration_seconds)} 秒` : ""}
             </Text>
             <Text type={isTopicOnly ? "warning" : "secondary"}>{materialMessage}</Text>
             <Text type={seedStatus === "writeable" ? "success" : "secondary"}>{item.spoken_seed_message}</Text>
-            <Text type="secondary">{item.audio_message || "尚未检测声音；需上传已获授权的本地视频。"}</Text>
+            <Text type="secondary">{item.audio_message || "尚未检测文案。"}</Text>
+            {item.copy_pool_status === "excluded" && item.copy_rejection_reason && (
+              <Text type="secondary">未入选原因：{item.copy_rejection_reason}</Text>
+            )}
             {metrics.length > 0 && (
               <Text type="secondary">
                 {metrics.map(([label, value]) => `${label}：${formatNumber(value)}`).join("；")}

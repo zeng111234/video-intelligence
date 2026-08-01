@@ -604,8 +604,25 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    expect(await screen.findByText("智能创作工作台")).toBeTruthy();
+    expect(await screen.findByText("今天想做什么视频？")).toBeTruthy();
     expect(screen.getByRole("button", { name: /开始创作|找素材/ })).toBeTruthy();
+  });
+
+  it("recommends manual selection by default and explains automatic risk", async () => {
+    renderPage();
+
+    const manual = await screen.findByRole("radio", { name: "手动选择" });
+    const automatic = screen.getByRole("radio", { name: "自动创作" });
+
+    expect(manual.getAttribute("aria-checked")).toBe("true");
+    expect(automatic.getAttribute("aria-checked")).toBe("false");
+    expect(manual.textContent).toContain("推荐");
+    expect(automatic.textContent).toContain("有风险");
+    expect(manual.compareDocumentPosition(automatic) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const startProcess = screen.getByLabelText("智能创作四步流程");
+    expect(startProcess.querySelectorAll(".start-process-item")).toHaveLength(4);
+    expect(screen.getByText("制作成片")).toBeTruthy();
+    expect(screen.getByText("确认发布")).toBeTruthy();
   });
 
   it("places the current IP image below its profile details", async () => {
@@ -634,8 +651,8 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    expect(screen.getByText("智能创作工作台")).toBeTruthy();
-    expect(screen.getByText("正在带入你的常用配置")).toBeTruthy();
+    expect(screen.getByText("今天想做什么视频？")).toBeTruthy();
+    expect(screen.getByText("正在带入你的常用设置")).toBeTruthy();
     expect(screen.getByRole("button", { name: "马上就好" })).toBeTruthy();
     expect(screen.queryByText("正在载入智能创作工作台…")).toBeNull();
   });
@@ -957,6 +974,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
+    fireEvent.click(screen.getByRole("radio", { name: "自动创作" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findAllByText("口播候选 4 条＋候补 2 条")).toHaveLength(2);
@@ -1003,6 +1021,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
+    fireEvent.click(screen.getByRole("radio", { name: "自动创作" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findAllByText("口播候选 1 条")).toHaveLength(2);
@@ -1621,13 +1640,12 @@ describe("PipelinePage customer workspace", () => {
 
     const page = renderPage();
 
-    expect(await screen.findByText("需要处理")).toBeTruthy();
+    expect(await screen.findByText("继续上次任务")).toBeTruthy();
     expect(screen.getByText("单条创作 · 机器人也失业，如今到底谁输谁赢？")).toBeTruthy();
     expect(screen.queryByText(/石杨兵/)).toBeNull();
-    expect(page.container.querySelectorAll(".workbench-task-item")).toHaveLength(3);
+    expect(page.container.querySelectorAll(".workbench-task-item")).toHaveLength(2);
     expect(screen.queryByText("单条创作 · 执行中的任务")).toBeNull();
     expect(screen.queryByText("单条创作 · 已完成任务")).toBeNull();
-    expect(screen.getByText("还有 1 条需要处理")).toBeTruthy();
     expect(screen.getByRole("button", {
       name: "确认发布：单条创作 · 机器人也失业，如今到底谁输谁赢？",
     })).toBeTruthy();

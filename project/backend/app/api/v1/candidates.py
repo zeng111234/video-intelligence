@@ -25,7 +25,7 @@ def search_candidates(
     service=Depends(get_candidate_service),
 ):
     """搜索视频候选。"""
-    logger.info(f"候选搜索请求: keyword='{body.keyword}', limit={body.limit}")
+    logger.info(f"候选搜索请求: keyword='{body.keyword}', page={body.page}, limit={body.limit}")
     try:
         platforms = []
         for value in body.platforms:
@@ -55,7 +55,8 @@ def search_candidates(
             or candidate.category == body.category
         ]
         total = len(candidates)
-        candidates = candidates[: body.limit]
+        start = (body.page - 1) * body.limit
+        candidates = candidates[start : start + body.limit]
         items = [
             CandidateItem(
                 video_id=c.video_id,

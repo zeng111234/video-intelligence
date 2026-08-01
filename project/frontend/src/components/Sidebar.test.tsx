@@ -51,4 +51,30 @@ describe("Sidebar", () => {
 
     expect(screen.getByTestId("location").textContent).toBe("/pipeline?batch=batch-1&run=run-1");
   });
+
+  it("keeps publishing as the last advanced tool and hides the logo when collapsed", () => {
+    const { container, rerender } = render(
+      <MemoryRouter initialEntries={["/pipeline"]}>
+        <Sidebar />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /高级工具/ }));
+
+    const navigation = screen.getByRole("navigation");
+    const publishButton = screen.getByRole("button", { name: /发布中心/ });
+    const editorButton = screen.getByRole("button", { name: /剪辑成片/ });
+    expect(navigation.contains(publishButton)).toBe(true);
+    expect(editorButton.compareDocumentPosition(publishButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(container.querySelector(".vi-sidebar-bottom")).toBeNull();
+
+    rerender(
+      <MemoryRouter initialEntries={["/pipeline"]}>
+        <Sidebar collapsed />
+      </MemoryRouter>,
+    );
+
+    expect(container.querySelector(".vi-logo-icon")).toBeNull();
+    expect(screen.getByRole("button", { name: "展开侧边栏" })).toBeTruthy();
+  });
 });

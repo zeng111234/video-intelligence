@@ -9,6 +9,7 @@ from src.models import (
     AvatarJobSnapshot,
     AvatarSubmitRequest,
     CandidateMatch,
+    CandidateCopyProbe,
     DiscoveryResult,
     HotWordRecord,
     KeywordTrendResult,
@@ -116,6 +117,10 @@ class CandidateRepository(Protocol):
     def save_review(self, review: RelevanceReview) -> None: ...
 
     def get_review(self, candidate_id: str) -> RelevanceReview | None: ...
+
+    def save_candidate_copy_probe(self, probe: CandidateCopyProbe) -> None: ...
+
+    def get_candidate_copy_probe(self, candidate_id: str) -> CandidateCopyProbe | None: ...
 
     def list_reviews(self) -> list[RelevanceReview]: ...
 

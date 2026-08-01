@@ -42,7 +42,7 @@ describe("CandidatesPage", () => {
       })),
     });
     vi.mocked(searchCandidates).mockResolvedValue({
-      total: 6,
+      total: 40,
       category_options: [
         { value: "关键词/租房", count: 5 },
         { value: "关键词/企业获客", count: 1 },
@@ -68,13 +68,18 @@ describe("CandidatesPage", () => {
     });
   });
 
-  it("shows full result metadata and keeps transcription behind the approval flow", async () => {
+  it("uses fixed-size pagination without a heat-status column and keeps transcription behind the approval flow", async () => {
     renderPage();
 
-    expect(await screen.findByText("共 6 条结果")).toBeTruthy();
-    expect(screen.getByText("官方榜单")).toBeTruthy();
-    expect(screen.getByText("模型：普通")).toBeTruthy();
+    expect(await screen.findByText("共 40 条结果")).toBeTruthy();
+    expect(vi.mocked(searchCandidates)).toHaveBeenCalledWith("", 10, [], undefined, 1);
+    expect(screen.queryByText("这是本地候选库检索")).toBeNull();
+    expect(screen.queryByText("热度状态")).toBeNull();
+    expect(screen.queryByText(/条\/页/)).toBeNull();
     expect(screen.getByText("发布时间未知", { exact: false })).toBeTruthy();
+
+    fireEvent.click(screen.getByTitle("2"));
+    expect(vi.mocked(searchCandidates)).toHaveBeenLastCalledWith("", 10, [], undefined, 2);
     expect(screen.getByText(/采样于/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "文案转写" }));

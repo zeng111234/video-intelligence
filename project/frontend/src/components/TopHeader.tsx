@@ -168,7 +168,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
   return (
     <>
-      <header className="vi-top-header">
+      <header className={`vi-top-header${location.pathname === "/pipeline" ? " pipeline-header" : ""}`}>
         {/* 左侧：页面标题 */}
         <div className="vi-header-left">
           {/* 移动端菜单按钮 */}
@@ -208,6 +208,17 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           z-index: 50;
           box-shadow: var(--shadow-sm);
           flex-shrink: 0;
+        }
+
+        .vi-top-header.pipeline-header {
+          height: 84px;
+          border-bottom-color: transparent;
+          background: var(--bg-body);
+          box-shadow: none;
+        }
+
+        .vi-top-header.pipeline-header .vi-page-title {
+          visibility: hidden;
         }
 
         .vi-header-left {
