@@ -158,7 +158,7 @@ def test_batch_response_only_promotes_detected_copy_to_primary_or_reserve() -> N
     assert "未识别到清晰文案" in (by_id["BVcopy14"].copy_rejection_reason or "")
 
 
-def test_low_heat_public_douyin_reference_needs_detected_copy_before_visible() -> None:
+def test_low_heat_public_douyin_reference_stays_visible_before_copy_detection() -> None:
     candidate = _low_heat_public_douyin_candidate()
     repo = MockRepository(candidates=[candidate], tasks=[])
     batch = SearchBatch(
@@ -204,8 +204,10 @@ def test_low_heat_public_douyin_reference_needs_detected_copy_before_visible() -
     ] == [candidate.video_id]
 
     unprobed = crawler._batch_to_response(batch, repo)
-    assert unprobed.platform_runs[0].candidates == []
-    assert unprobed.platform_runs[0].result_state == "all_below_heat_floor"
+    visible_before_detection = unprobed.platform_runs[0].candidates
+    assert [item.video_id for item in visible_before_detection] == [candidate.video_id]
+    assert unprobed.platform_runs[0].result_state != "all_below_heat_floor"
+    assert visible_before_detection[0].heat_score == 6.0
 
     repo.save_candidate_copy_probe(
         CandidateCopyProbe(
@@ -216,7 +218,9 @@ def test_low_heat_public_douyin_reference_needs_detected_copy_before_visible() -
         )
     )
     no_text = crawler._batch_to_response(batch, repo)
-    assert no_text.platform_runs[0].candidates == []
+    assert [item.video_id for item in no_text.platform_runs[0].candidates] == [
+        candidate.video_id
+    ]
     assert no_text.copy_detected_count == 0
 
     repo.save_candidate_copy_probe(
@@ -231,8 +235,60 @@ def test_low_heat_public_douyin_reference_needs_detected_copy_before_visible() -
     visible = detected.platform_runs[0].candidates
     assert [item.video_id for item in visible] == [candidate.video_id]
     assert visible[0].copy_pool_status == "primary"
-    assert crawler.COPY_REFERENCE_LOW_HEAT_WARNING in visible[0].data_quality_warnings
     assert detected.copy_detected_count == 1
+
+
+def test_platform_search_candidate_keeps_nonliteral_label_and_table_fields() -> None:
+    candidate = _candidate(99).model_copy(
+        update={
+            "title": "包装线设备运行演示",
+            "duration_seconds": 31,
+            "evidence": "bilibili:browser_search_response;time=platform;时长秒=31",
+        }
+    )
+    repo = MockRepository(candidates=[candidate], tasks=[])
+    batch = SearchBatch(
+        keyword="贴标机",
+        requested_count_per_platform=10,
+        provider="free_multi_platform",
+        mode=ProviderMode.PUBLIC_WEB,
+        platforms=[Platform.BILIBILI],
+    )
+    run = PlatformSearchRun(
+        batch_id=batch.batch_id,
+        platform=Platform.BILIBILI,
+        provider="bilibili_local_browser",
+        mode=ProviderMode.LOCAL_BROWSER,
+        status=PlatformRunStatus.SUCCEEDED,
+        requested_count=10,
+        returned_count=1,
+        idempotency_key="platform-search-label-run",
+        request_fingerprint="platform-search-label-run",
+        started_at=NOW,
+        finished_at=NOW,
+    )
+    repo.save_search_batch(batch)
+    repo.save_platform_search_run(run)
+    repo.save_candidate_match(
+        CandidateMatch(
+            request_id=run.run_id,
+            video_id=candidate.video_id,
+            keyword=batch.keyword,
+            cohort_key="bilibili:贴标机",
+            platform=Platform.BILIBILI,
+            platform_rank=1,
+            observed_at=NOW,
+            evidence=candidate.evidence,
+        )
+    )
+
+    visible = crawler._batch_to_response(batch, repo).platform_runs[0].candidates[0]
+
+    assert visible.relevance_basis == "platform_search"
+    assert "未直接命中“贴标机”" in (visible.relevance_reason or "")
+    assert visible.duration_seconds == 31
+    assert visible.published_at_reliable is True
+    assert visible.heat_score == 100.0
 
 
 def test_legacy_short_no_text_probe_is_widened_once_without_rechecking_detection() -> (

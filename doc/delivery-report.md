@@ -50,7 +50,7 @@
 #### 配置文件
 - ✅ Streamlit配置：`.streamlit/config.toml`
 - ✅ 环境变量：`.streamlit/secrets.toml`
-- ✅ 启动脚本：`打开短视频系统.cmd`
+- ✅ 唯一用户启动入口：`start.bat`
 
 ### 4. 文档交付
 

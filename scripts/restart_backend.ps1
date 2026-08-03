@@ -1,4 +1,4 @@
-# === UTF-8 encoding ===
+﻿# === UTF-8 encoding ===
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -32,13 +32,23 @@ if ($finalCheck) {
 
 Write-Host "[SUCCESS] Port 2001 is now free"
 
-# Start backend
-$projectRoot = "C:\Users\zeng\Desktop\video"
+# Start backend from this script's repository, regardless of user name or drive.
+$projectRoot = Split-Path -Parent $PSScriptRoot
 $env:PYTHONPATH = $projectRoot
 $backendDir = Join-Path $projectRoot "project\backend"
+$pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
+
+if (-not (Test-Path -LiteralPath $pythonCommand)) {
+    $setupScript = Join-Path $projectRoot "scripts\setup_windows.ps1"
+    & $setupScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[ERROR] 运行环境安装失败，后端未启动。"
+        exit 1
+    }
+}
 
 Write-Host "[INFO] Starting FastAPI backend..."
-Start-Process -FilePath "python" `
+Start-Process -FilePath $pythonCommand `
     -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "2001") `
     -WorkingDirectory $backendDir `
     -WindowStyle Hidden

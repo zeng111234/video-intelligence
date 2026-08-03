@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   Alert,
   Button,
-  Card,
-  Col,
   Divider,
+  Drawer,
   Empty,
   Input,
   Modal,
   Radio,
-  Row,
   Select,
   Space,
   Spin,
@@ -21,17 +20,23 @@ import {
 } from "antd";
 import {
   CheckCircleOutlined,
+  CalendarOutlined,
   ClockCircleOutlined,
   DeleteOutlined,
+  EyeOutlined,
+  LeftOutlined,
+  MoreOutlined,
   ReloadOutlined,
   RocketOutlined,
+  SearchOutlined,
   SendOutlined,
-  SettingOutlined,
   TagOutlined,
   UploadOutlined,
   UserAddOutlined,
+  VideoCameraOutlined,
 } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
+import { SiBilibili, SiKuaishou, SiTiktok, SiWechat, SiXiaohongshu } from "react-icons/si";
 import {
   connectPublishAccount,
   createPublishAccount,
@@ -39,6 +44,7 @@ import {
   deletePublishAccount,
   deletePublishTask,
   deletePublishTasks,
+  generatePublishMetadata,
   getPublishAccountStatus,
   importEditedVideoToPublish,
   listPublishAccounts,
@@ -65,14 +71,30 @@ const { Title, Text } = Typography;
 const { TextArea } = Input;
 
 type PageStep = "configure" | "publish";
-const DEFAULT_ACCOUNT_NAME = "公司主号";
+type PublishStage = "select" | "review";
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   kuaishou: "快手",
   xiaohongshu: "小红书",
   wechat_channels: "视频号",
-  bilibili: "Bilibili",
+  bilibili: "B站",
+};
+
+const PLATFORM_ICONS: Record<string, ReactNode> = {
+  douyin: <SiTiktok />,
+  kuaishou: <SiKuaishou />,
+  wechat_channels: <SiWechat />,
+  xiaohongshu: <SiXiaohongshu />,
+  bilibili: <SiBilibili />,
+};
+
+const PLATFORM_TONES: Record<string, string> = {
+  douyin: "#111827",
+  kuaishou: "#ff5c35",
+  wechat_channels: "#07c160",
+  xiaohongshu: "#ff2442",
+  bilibili: "#00aeec",
 };
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -106,7 +128,40 @@ function accountStatusMeta(status: string) {
   return { label: "尚未登录", color: "default" };
 }
 
+function publishAssetTitle(asset: PublishAsset) {
+  return asset.recommended_title?.trim() || asset.name.replace(/\.(mp4|mov|m4v)$/i, "");
+}
+
+function formatAssetSize(sizeBytes: number) {
+  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return "大小未知";
+  const megabytes = sizeBytes / 1024 / 1024;
+  return megabytes >= 1024 ? `${(megabytes / 1024).toFixed(1)} GB` : `${megabytes.toFixed(megabytes >= 100 ? 0 : 1)} MB`;
+}
+
+function formatAssetTime(updatedAt?: number) {
+  if (!updatedAt) return "时间未知";
+  const date = new Date(updatedAt * 1000);
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  if (sameDay) return `今天 ${date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+  return date.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function formatDuration(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--:--";
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.floor(seconds % 60);
+  return `${minutes}:${String(rest).padStart(2, "0")}`;
+}
+
+function publishAssetMediaUrl(asset: PublishAsset) {
+  return asset.media_url || `/api/v1/publish/assets/media?name=${encodeURIComponent(asset.name)}`;
+}
+
 function platformHint(platform: PublishPlatformCapability) {
+  if (platform.platform === "xiaohongshu") {
+    return "系统在本机官方创作端准备视频和文案；请你检查后手动点击发布。";
+  }
   if (platform.mode === "local_browser") return platform.manual_only
     ? "在本机打开官方创作者窗口；只有核验成功的账号才可创建任务。"
     : "系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。";
@@ -118,6 +173,11 @@ export default function PublishPage() {
   const toast = useToast();
   const [searchParams] = useSearchParams();
   const [pageStep, setPageStep] = useState<PageStep>("configure");
+  const [publishStage, setPublishStage] = useState<PublishStage>("select");
+  const [assetSearch, setAssetSearch] = useState("");
+  const [assetSort, setAssetSort] = useState<"recent" | "name">("recent");
+  const [taskDrawerOpen, setTaskDrawerOpen] = useState(false);
+  const [selectedVideoMeta, setSelectedVideoMeta] = useState({ duration: 0, width: 0, height: 0 });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -126,6 +186,7 @@ export default function PublishPage() {
   const [accountNames, setAccountNames] = useState<Record<string, string>>({});
   const [selectedAccountIds, setSelectedAccountIds] = useState<Record<string, string>>({});
   const [availablePlatforms, setAvailablePlatforms] = useState<PublishPlatformCapability[]>([]);
+  const [selectedConfigPlatform, setSelectedConfigPlatform] = useState("douyin");
   const [assets, setAssets] = useState<PublishAsset[]>([]);
   const [tasks, setTasks] = useState<PublishResponse[]>([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
@@ -135,6 +196,9 @@ export default function PublishPage() {
   const [description, setDescription] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [metadataLoading, setMetadataLoading] = useState(false);
+  const [metadataGenerated, setMetadataGenerated] = useState(false);
+  const [metadataConfirmOpen, setMetadataConfirmOpen] = useState(false);
   const [nativeMusicHint, setNativeMusicHint] = useState("");
   const [preflight, setPreflight] = useState<PublishPreflightResponse | null>(null);
   const [manualTask, setManualTask] = useState<PublishResponse | null>(null);
@@ -146,6 +210,36 @@ export default function PublishPage() {
     () => accounts.filter((account) => account.status === "ready"),
     [accounts],
   );
+
+  const readyPlatformCount = useMemo(
+    () => new Set(readyAccounts.map((account) => account.platform)).size,
+    [readyAccounts],
+  );
+
+  const activeConfigPlatform = useMemo(
+    () => availablePlatforms.find((platform) => platform.platform === selectedConfigPlatform) || availablePlatforms[0],
+    [availablePlatforms, selectedConfigPlatform],
+  );
+
+  const activePlatformAccounts = useMemo(
+    () => accounts.filter((account) => account.platform === activeConfigPlatform?.platform),
+    [accounts, activeConfigPlatform],
+  );
+
+  const selectedAsset = useMemo(
+    () => assets.find((asset) => asset.path === videoPath) || null,
+    [assets, videoPath],
+  );
+
+  const filteredAssets = useMemo(() => {
+    const keyword = assetSearch.trim().toLowerCase();
+    const filtered = keyword
+      ? assets.filter((asset) => publishAssetTitle(asset).toLowerCase().includes(keyword) || asset.name.toLowerCase().includes(keyword))
+      : [...assets];
+    return filtered.sort((left, right) => assetSort === "name"
+      ? publishAssetTitle(left).localeCompare(publishAssetTitle(right), "zh-CN")
+      : (right.updated_at || 0) - (left.updated_at || 0));
+  }, [assetSearch, assetSort, assets]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -161,7 +255,16 @@ export default function PublishPage() {
         return result;
       }, {});
       setAvailablePlatforms(platformData.platforms);
-      setAssets(assetData.items);
+      setSelectedConfigPlatform((current) => (
+        platformData.platforms.some((platform) => platform.platform === current)
+          ? current
+          : platformData.platforms[0]?.platform || current
+      ));
+      setAssets((current) => [
+        ...assetData.items,
+        ...current.filter((asset) => !assetData.items.some((item) => item.path === asset.path)),
+      ]);
+      setVideoPath((current) => current || assetData.items[0]?.path || "");
       const loadedTasks = batchData.items.flatMap((batch) => batch.tasks);
       setTasks(loadedTasks);
       setSelectedTaskIds((current) => current.filter((taskId) => loadedTasks.some((task) => task.task_id === taskId)));
@@ -184,6 +287,7 @@ export default function PublishPage() {
       .then((asset) => {
         setAssets((current) => [asset, ...current.filter((item) => item.path !== asset.path)]);
         setVideoPath(asset.path);
+        setMetadataGenerated(false);
         if (asset.recommended_title) setTitle((current) => current || asset.recommended_title || "");
         setNativeMusicHint(asset.recommended_music_hint || "");
         setPageStep("publish");
@@ -262,7 +366,7 @@ export default function PublishPage() {
   }, [activeTaskKey]);
 
   const addAndConnectAccount = async (platform: string) => {
-    const normalizedName = (accountNames[platform] ?? DEFAULT_ACCOUNT_NAME).trim();
+    const normalizedName = (accountNames[platform] ?? "").trim();
     if (!normalizedName) {
       toast.error("请给账号起个名称，例如“公司主号”");
       return;
@@ -273,7 +377,7 @@ export default function PublishPage() {
       created = await createPublishAccount({ platform, name: normalizedName });
       const connected = await connectPublishAccount(created.account_id);
       setAccounts((current) => [...current, connected]);
-      setAccountNames((current) => ({ ...current, [platform]: DEFAULT_ACCOUNT_NAME }));
+      setAccountNames((current) => ({ ...current, [platform]: "" }));
       toast.success(`${platformLabel(platform)}登录窗口已打开，完成登录后系统会自动核验`);
     } catch (error) {
       if (created) {
@@ -321,20 +425,36 @@ export default function PublishPage() {
     setTagInput("");
   };
 
-  const togglePlatform = (platform: PublishPlatformCapability) => {
-    const selected = platforms.includes(platform.platform);
-    if (platform.requires_account && !readyAccounts.some((account) => account.platform === platform.platform)) {
-      setPageStep("configure");
-      toast.error(`请先连接并核验一个${platformLabel(platform.platform)}账号`);
+  const generateMetadataForSelectedVideo = useCallback(async () => {
+    if (!selectedAsset) {
+      toast.warning("请先选择成片");
       return;
     }
-    if (!platform.enabled && !platform.manual_fallback) {
-      toast.error(`${platformLabel(platform.platform)}暂不可用`);
+    const sourceText = selectedAsset.source_text?.trim() || "";
+    if (!sourceText) {
+      toast.warning("这条成片没有可用口播稿，请在下方手动填写发布内容");
       return;
     }
-    setPlatforms((current) => selected ? current.filter((item) => item !== platform.platform) : [...current, platform.platform]);
-    setPreflight(null);
-  };
+    setMetadataLoading(true);
+    try {
+      const result = await generatePublishMetadata({
+        source_text: sourceText,
+        platforms,
+        source_task_id: selectedAsset.source_task_id || undefined,
+      });
+      setTitle(result.title.slice(0, 100));
+      setDescription(result.description.slice(0, 1000));
+      setTags(result.tags.map(String).filter(Boolean).slice(0, 8));
+      setPreflight(null);
+      setMetadataGenerated(true);
+      setMetadataConfirmOpen(false);
+      toast.success("已生成发布信息，请确认后发布");
+    } catch (error) {
+      toast.error((error as Error).message || "生成发布信息失败");
+    } finally {
+      setMetadataLoading(false);
+    }
+  }, [platforms, selectedAsset, toast]);
 
   const confirmCreateBatch = async (currentAccountIds: Record<string, string>) => {
     setSubmitting(true);
@@ -352,7 +472,9 @@ export default function PublishPage() {
       });
       setTasks((current) => [...batch.tasks, ...current]);
       setPreflight(null);
-      toast.success("发布任务已创建；系统会自动选抖音配乐并填写发布页");
+      toast.success(platforms.includes("xiaohongshu")
+        ? "发布准备已创建；小红书会准备视频和文案，请在官方创作端检查后手动点击发布。"
+        : "发布任务已创建；系统会自动选抖音配乐并填写发布页");
     } catch (error) {
       toast.error((error as Error).message || "创建发布任务失败");
     } finally {
@@ -375,6 +497,8 @@ export default function PublishPage() {
       setAccounts(currentAccounts);
       const currentAccountIds = Object.fromEntries(platforms.map((platform) => [platform, selectedAccountIds[platform]]).filter(([, accountId]) => Boolean(accountId))) as Record<string, string>;
       const unavailable = platforms.find((platform) => {
+        const capability = availablePlatforms.find((item) => item.platform === platform);
+        if (capability && !capability.requires_account) return false;
         const account = currentAccounts.find((item) => item.account_id === currentAccountIds[platform]);
         return !account || account.status !== "ready" || account.platform !== platform;
       });
@@ -405,7 +529,9 @@ export default function PublishPage() {
       }
       Modal.confirm({
         title: "确认创建发布任务？",
-        content: `系统会上传视频、填写文案、自动选择抖音官方推荐配乐并提交发布。你只需在官方窗口完成登录、验证码或风控验证；结果不明确时系统会停止，不会重复发布。`,
+        content: platforms.includes("xiaohongshu")
+          ? "系统会上传视频并填写文案。小红书只会准备官方创作端，请你检查后手动点击发布；登录、验证码或风控验证也由你处理。结果不明确时系统会停止，不会重复发布。"
+          : "系统会上传视频、填写文案、自动选择抖音官方推荐配乐并提交发布。你只需在官方窗口完成登录、验证码或风控验证；结果不明确时系统会停止，不会重复发布。",
         okText: "确认并开始",
         cancelText: "返回修改",
         onOk: () => confirmCreateBatch(currentAccountIds),
@@ -511,133 +637,809 @@ export default function PublishPage() {
     },
   ];
 
-  const selectedPlatforms = availablePlatforms.filter((platform) => platforms.includes(platform.platform));
+  const activePlatformReadyAccounts = activePlatformAccounts.filter((account) => account.status === "ready");
+  const accountPlatformCount = availablePlatforms.filter((platform) => platform.requires_account).length;
+  const canContinueFromConfiguration = Boolean(
+    activeConfigPlatform && (!activeConfigPlatform.requires_account || activePlatformReadyAccounts.length),
+  );
 
-  return <div>
-    <div style={{ marginBottom: 20 }}>
-      <Title level={4} style={{ margin: 0 }}><RocketOutlined /> 发布中心</Title>
-      <Text type="secondary">先登录账号，再选择成片。系统负责上传、配乐、填写和提交；你只处理登录与验证码。</Text>
+  const continueWithActivePlatform = () => {
+    if (!activeConfigPlatform || !canContinueFromConfiguration) return;
+    const readyAccount = activePlatformReadyAccounts[0];
+    setPlatforms([activeConfigPlatform.platform]);
+    if (readyAccount) {
+      setSelectedAccountIds((current) => ({ ...current, [activeConfigPlatform.platform]: readyAccount.account_id }));
+    }
+    setPageStep("publish");
+    setPublishStage("select");
+  };
+
+  const chooseAsset = (asset: PublishAsset) => {
+    setVideoPath(asset.path);
+    setNativeMusicHint(asset.recommended_music_hint || "");
+    setMetadataGenerated(false);
+    setPreflight(null);
+    setSelectedVideoMeta({ duration: 0, width: 0, height: 0 });
+  };
+
+  const selectedAccountSummary = platforms.map((platform) => {
+    const capability = availablePlatforms.find((item) => item.platform === platform);
+    const account = accounts.find((item) => item.account_id === selectedAccountIds[platform]);
+    return {
+      platform,
+      accountName: capability?.requires_account === false ? "无需登录" : account?.name || "待选择账号",
+      ready: capability?.requires_account === false || account?.status === "ready",
+    };
+  });
+
+  return <div className="publish-page">
+    {pageStep === "configure" && <><div className="publish-page-heading">
+      <div>
+        <Title level={3} style={{ margin: 0 }}>发布中心</Title>
+        <Text type="secondary">连接发布账号，选择成片，确认后再提交到平台。</Text>
+      </div>
+      <div className="publish-connection-summary">
+        <span className="publish-connection-dot" />
+        已连接 {readyPlatformCount} / {accountPlatformCount} 个需登录平台
+      </div>
     </div>
 
-    <Card size="small" style={{ marginBottom: 16 }}>
-      <Space wrap>
-        <Button type={pageStep === "configure" ? "primary" : "default"} icon={<SettingOutlined />} onClick={() => setPageStep("configure")}>配置平台</Button>
-        <Button type={pageStep === "publish" ? "primary" : "default"} icon={<SendOutlined />} onClick={() => setPageStep("publish")}>选择发布</Button>
-        <Divider type="vertical" />
-        <Text type="secondary">已核验账号：{readyAccounts.length} 个</Text>
-      </Space>
-    </Card>
+    <div className="publish-steps" aria-label="发布步骤">
+      <button className={pageStep === "configure" ? "active" : "complete"} onClick={() => setPageStep("configure")}>
+        <span>1</span><b>配置账号</b>
+      </button>
+      <div className="publish-step-line" />
+      <button onClick={() => setPageStep("publish")}>
+        <span>2</span><b>选择成片</b>
+      </button>
+    </div></>}
 
     {pageStep === "configure" ? <Spin spinning={loading}>
-      <Alert
-        showIcon
-        type="info"
-        message="普通运营不需要填写 Key、Secret 或回调地址"
-        description="每个平台各自使用独立本机浏览器档案。系统不会读取 Cookie；必须在官方创作者窗口扫码并完成核验。"
-        style={{ marginBottom: 16 }}
-      />
-      <Row gutter={[16, 16]}>
-        {availablePlatforms.map((platform) => <Col xs={24} md={12} key={platform.platform}>
-          <Card
-            title={<Space><Text strong>{platformLabel(platform.platform)}</Text><Tag color={platform.mode === "local_browser" ? "blue" : "gold"}>{platform.mode === "local_browser" ? "本机扫码" : "人工辅助"}</Tag></Space>}
-            extra={platform.mode === "local_browser" && readyAccounts.some((account) => account.platform === platform.platform) ? <Tag color="success">已核验</Tag> : undefined}
-          >
-            <Space direction="vertical" size={12} style={{ width: "100%" }}>
-              <Text type="secondary">{platformHint(platform)}</Text>
-              {platform.mode === "local_browser" ? <>
-                <Space.Compact style={{ width: "100%" }}>
-                  <Input aria-label={`${platformLabel(platform.platform)}账号名称`} value={accountNames[platform.platform] ?? DEFAULT_ACCOUNT_NAME} placeholder="例如：公司主号" onChange={(event) => setAccountNames((current) => ({ ...current, [platform.platform]: event.target.value }))} onPressEnter={() => void addAndConnectAccount(platform.platform)} />
-                  <Button type="primary" icon={<UserAddOutlined />} loading={addingAccount} onClick={() => void addAndConnectAccount(platform.platform)}>添加并扫码</Button>
-                </Space.Compact>
-                {accounts.filter((account) => account.platform === platform.platform).length === 0 ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`还没有${platformLabel(platform.platform)}账号`} /> : accounts.filter((account) => account.platform === platform.platform).map((account) => {
+      <section className="publish-account-workspace">
+        <aside className="publish-platform-sidebar">
+          <div className="publish-platform-sidebar-title">发布平台</div>
+          <nav aria-label="发布平台列表">
+            {availablePlatforms.map((platform) => {
+              const platformAccounts = accounts.filter((account) => account.platform === platform.platform);
+              const readyCount = platformAccounts.filter((account) => account.status === "ready").length;
+              const waitingCount = platformAccounts.filter((account) => account.status === "browser_open").length;
+              const isActive = activeConfigPlatform?.platform === platform.platform;
+              const statusText = !platform.requires_account
+                ? "人工发布"
+                : readyCount
+                  ? `已登录 ${readyCount}`
+                  : waitingCount
+                    ? "等待登录"
+                    : "未登录";
+              return <button
+                key={platform.platform}
+                type="button"
+                className={`publish-platform-item${isActive ? " active" : ""}`}
+                onClick={() => setSelectedConfigPlatform(platform.platform)}
+              >
+                <span className="publish-platform-icon" style={{ color: PLATFORM_TONES[platform.platform] }}>
+                  {PLATFORM_ICONS[platform.platform] || <SendOutlined />}
+                </span>
+                <span className="publish-platform-name">{platformLabel(platform.platform)}</span>
+                <span className={`publish-platform-status${readyCount ? " ready" : waitingCount ? " waiting" : ""}`}>{statusText}</span>
+              </button>;
+            })}
+          </nav>
+          <div className="publish-platform-sidebar-note">各平台账号独立保存，只在本机官方窗口登录。</div>
+        </aside>
+
+        <main className="publish-platform-detail">
+          {!activeConfigPlatform ? <Empty description="暂无可配置的发布平台" /> : <>
+            <header className="publish-platform-detail-header">
+              <div className="publish-platform-heading-line">
+                <span className="publish-platform-large-icon" style={{ color: PLATFORM_TONES[activeConfigPlatform.platform] }}>
+                  {PLATFORM_ICONS[activeConfigPlatform.platform] || <SendOutlined />}
+                </span>
+                <div>
+                  <Title level={4} style={{ margin: 0 }}>{platformLabel(activeConfigPlatform.platform)}账号</Title>
+                  <Text type="secondary">{platformHint(activeConfigPlatform)}</Text>
+                </div>
+              </div>
+              <Tag color={activeConfigPlatform.requires_account ? "blue" : "gold"}>
+                {activeConfigPlatform.requires_account ? "官方窗口登录" : "人工发布"}
+              </Tag>
+            </header>
+
+            {activeConfigPlatform.requires_account ? <>
+              <div className="publish-add-account-row">
+                <Input
+                  aria-label={`${platformLabel(activeConfigPlatform.platform)}账号名称`}
+                  value={accountNames[activeConfigPlatform.platform] ?? ""}
+                  placeholder="例如：公司主号"
+                  onChange={(event) => setAccountNames((current) => ({ ...current, [activeConfigPlatform.platform]: event.target.value }))}
+                  onPressEnter={() => void addAndConnectAccount(activeConfigPlatform.platform)}
+                />
+                <Button type="primary" icon={<UserAddOutlined />} loading={addingAccount} onClick={() => void addAndConnectAccount(activeConfigPlatform.platform)}>添加并扫码</Button>
+              </div>
+
+              <div className="publish-account-list-heading">
+                <Text strong>已添加账号</Text>
+                <Text type="secondary">{activePlatformAccounts.length} 个</Text>
+              </div>
+
+              {activePlatformAccounts.length === 0 ? <div className="publish-account-empty">
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={`还没有${platformLabel(activeConfigPlatform.platform)}账号`} />
+              </div> : <div className="publish-account-list">
+                {activePlatformAccounts.map((account) => {
                   const status = accountStatusMeta(account.status);
-                  return <Card size="small" key={account.account_id} title={account.name} extra={<Tag color={status.color}>{status.label}</Tag>}>
-                    <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{account.message}</Text>
-                      <Space wrap>
-                        {account.status === "ready" ? <Button size="small" type="primary" icon={<CheckCircleOutlined />} onClick={() => { setSelectedAccountIds((current) => ({ ...current, [account.platform]: account.account_id })); setPageStep("publish"); }}>用这个账号发布</Button> : <Button size="small" type="primary" loading={connecting === account.account_id} onClick={() => connectAccount(account.account_id)}>打开浏览器登录</Button>}
-                        <Button size="small" danger icon={<DeleteOutlined />} onClick={() => removeAccount(account)}>移除</Button>
-                      </Space>
-                    </Space>
-                  </Card>;
+                  return <div className="publish-account-row" key={account.account_id}>
+                    <div className="publish-account-avatar" style={{ color: PLATFORM_TONES[account.platform] }}>
+                      {PLATFORM_ICONS[account.platform] || <SendOutlined />}
+                    </div>
+                    <div className="publish-account-copy">
+                      <Text strong>{account.name}</Text>
+                      <Text type="secondary">{account.message || "等待账号状态更新"}</Text>
+                    </div>
+                    <Tag color={status.color}>{status.label}</Tag>
+                    {account.status === "ready" ? <Button
+                      type="link"
+                      icon={<CheckCircleOutlined />}
+                      onClick={() => {
+                        setSelectedAccountIds((current) => ({ ...current, [account.platform]: account.account_id }));
+                        setPlatforms([account.platform]);
+                        setPageStep("publish");
+                      }}
+                    >用于发布</Button> : <Button type="link" loading={connecting === account.account_id} onClick={() => void connectAccount(account.account_id)}>打开浏览器登录</Button>}
+                    <Button type="text" danger aria-label={`移除${account.name}`} icon={<MoreOutlined />} onClick={() => removeAccount(account)} />
+                  </div>;
                 })}
-              </> : <>
-                <Alert type="success" showIcon message="无需额外配置" description="选择成片后，系统会生成可复制的标题、描述和话题，并提示你在官方平台完成最后发布。" />
-                <Button onClick={() => { setPlatforms((current) => current.includes(platform.platform) ? current : [...current, platform.platform]); setPageStep("publish"); }}>选择此平台发布</Button>
-              </>}
-            </Space>
-          </Card>
-        </Col>)}
-      </Row>
-    </Spin> : <Row gutter={[20, 20]}>
-      <Col xs={24} xl={13}>
-        <Card title={<Space><SendOutlined /> 选择发布</Space>}>
-          <Spin spinning={loading || submitting}>
-            <Space direction="vertical" size={18} style={{ width: "100%" }}>
+              </div>}
+            </> : <div className="publish-manual-platform">
+              <CheckCircleOutlined />
               <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>1. 选择平台</Text>
-                <Row gutter={[10, 10]}>{availablePlatforms.map((platform) => {
-                  const selected = platforms.includes(platform.platform);
-                  const unavailable = !platform.enabled && !platform.manual_fallback;
-                  return <Col xs={24} sm={12} key={platform.platform}><Card size="small" style={{ borderColor: selected ? "#1677ff" : undefined }}>
-                    <Space direction="vertical" size={6} style={{ width: "100%" }}>
-                      <Space><Text strong>{platformLabel(platform.platform)}</Text><Tag color={platform.mode === "local_browser" ? "blue" : "gold"}>{platform.mode === "local_browser" ? "本机扫码" : "人工辅助"}</Tag></Space>
-                      <Text type="secondary" style={{ fontSize: 12 }}>{platformHint(platform)}</Text>
-                      <Button block type={selected ? "primary" : "default"} disabled={unavailable} onClick={() => togglePlatform(platform)}>{selected ? "已选择" : platform.requires_account && !readyAccounts.some((account) => account.platform === platform.platform) ? "先连接账号" : "选择"}</Button>
-                    </Space>
-                  </Card></Col>;
-                })}</Row>
+                <Text strong>无需登录账号</Text>
+                <Text type="secondary">系统会准备成片、标题、描述和话题。最后一步由你在该平台官方页面完成，并回填实际结果。</Text>
               </div>
+            </div>}
 
-              {platforms.map((platform) => <div key={platform}>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>{platformLabel(platform)}发布账号</Text>
-                <Select aria-label={`${platformLabel(platform)}发布账号`} style={{ width: "100%" }} value={selectedAccountIds[platform] || undefined} placeholder={`选择已核验的${platformLabel(platform)}账号`} options={readyAccounts.filter((item) => item.platform === platform).map((item) => ({ value: item.account_id, label: `${item.name} · 已核验` }))} onChange={(accountId) => setSelectedAccountIds((current) => ({ ...current, [platform]: accountId }))} />
-                {!readyAccounts.some((account) => account.platform === platform) && <Alert type="warning" showIcon message={`还没有可用的${platformLabel(platform)}账号`} action={<Button size="small" onClick={() => setPageStep("configure")}>去配置</Button>} style={{ marginTop: 8 }} />}
+            <footer className="publish-platform-detail-footer">
+              <Text type="secondary">
+                {canContinueFromConfiguration ? "当前平台已可继续" : `请先完成${platformLabel(activeConfigPlatform.platform)}账号登录`}
+              </Text>
+              <Button type="primary" disabled={!canContinueFromConfiguration} onClick={continueWithActivePlatform}>去选择成片</Button>
+            </footer>
+          </>}
+        </main>
+      </section>
+    </Spin> : <Spin spinning={loading || submitting}>
+      {publishStage === "select" ? <section className="publish-selection-shell">
+        <header className="publish-destination-bar">
+          <div className="publish-destination-main">
+            {selectedAccountSummary.map((item) => <span className="publish-destination-item" key={item.platform}>
+              <span className="publish-destination-icon" style={{ color: PLATFORM_TONES[item.platform] }}>
+                {PLATFORM_ICONS[item.platform] || <SendOutlined />}
+              </span>
+              <span>发布到</span>
+              <strong>{platformLabel(item.platform)} · {item.accountName}</strong>
+              <span className={item.ready ? "publish-ready" : "publish-not-ready"}>
+                <i />{item.ready ? "已连接" : "需配置"}
+              </span>
+            </span>)}
+          </div>
+          <div className="publish-destination-actions">
+            <Button type="text" icon={<ClockCircleOutlined />} onClick={() => setTaskDrawerOpen(true)}>任务记录 <Tag color="purple">{tasks.length}</Tag></Button>
+            <Button type="link" onClick={() => setPageStep("configure")}>更换账号</Button>
+          </div>
+        </header>
+
+        <div className="publish-selection-heading">
+          <div>
+            <Title level={3}>选择成片</Title>
+            <Text type="secondary">从已经完成的视频中选择一条</Text>
+          </div>
+          <Upload accept=".mp4,.mov,.m4v" showUploadList={false} customRequest={async (options) => {
+            try {
+              const asset = await uploadPublishAsset(options.file as File);
+              setAssets((current) => [asset, ...current]);
+              chooseAsset(asset);
+              options.onSuccess?.(asset);
+              toast.success("成片已上传");
+            } catch (error) {
+              options.onError?.(error as Error);
+              toast.error((error as Error).message || "上传失败");
+            }
+          }}><Button icon={<UploadOutlined />}>上传成片</Button></Upload>
+        </div>
+
+        <div className="publish-selection-grid">
+          <section className="publish-asset-panel" aria-label="已完成成片">
+            <div className="publish-asset-toolbar">
+              <Input allowClear prefix={<SearchOutlined />} value={assetSearch} placeholder="搜索视频标题" onChange={(event) => setAssetSearch(event.target.value)} />
+              <Select aria-label="成片排序" value={assetSort} onChange={setAssetSort} options={[{ label: "最近完成", value: "recent" }, { label: "按名称", value: "name" }]} />
+              <Button aria-label="刷新成片" icon={<ReloadOutlined />} onClick={loadData} />
+            </div>
+            <div className="publish-asset-list">
+              {filteredAssets.length ? filteredAssets.map((asset) => {
+                const selected = asset.path === videoPath;
+                return <button type="button" className={`publish-asset-row${selected ? " selected" : ""}`} key={asset.path} onClick={() => chooseAsset(asset)}>
+                  <video className="publish-asset-thumb" src={publishAssetMediaUrl(asset)} muted preload="metadata" />
+                  <span className="publish-asset-copy">
+                    <strong>{publishAssetTitle(asset)}</strong>
+                    <span><VideoCameraOutlined /> {formatAssetSize(asset.size_bytes)} <b>9:16</b></span>
+                  </span>
+                  <span className="publish-asset-updated">{formatAssetTime(asset.updated_at)}</span>
+                  {selected && <CheckCircleOutlined className="publish-asset-selected-icon" />}
+                </button>;
+              }) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={assetSearch ? "没有匹配的成片" : "还没有可发布的成片"} />}
+            </div>
+          </section>
+
+          <aside className="publish-preview-panel" aria-label="已选择的视频">
+            <Text strong className="publish-preview-title">已选择的视频</Text>
+            {selectedAsset ? <>
+              <div className="publish-preview-frame">
+                <video
+                  key={selectedAsset.path}
+                  controls
+                  preload="metadata"
+                  src={publishAssetMediaUrl(selectedAsset)}
+                  onLoadedMetadata={(event) => {
+                    const video = event.currentTarget;
+                    setSelectedVideoMeta({ duration: video.duration, width: video.videoWidth, height: video.videoHeight });
+                  }}
+                />
+              </div>
+              <Title level={4} className="publish-preview-name">{publishAssetTitle(selectedAsset)}</Title>
+              <div className="publish-preview-meta">
+                <span><ClockCircleOutlined /><b>{formatDuration(selectedVideoMeta.duration)}</b><small>时长</small></span>
+                <span><VideoCameraOutlined /><b>{selectedVideoMeta.height ? `${selectedVideoMeta.height}P` : "视频"}</b><small>分辨率</small></span>
+                <span><CalendarOutlined /><b>{formatAssetTime(selectedAsset.updated_at)}</b><small>创建时间</small></span>
+              </div>
+              <Button icon={<EyeOutlined />} onClick={() => document.querySelector<HTMLVideoElement>(".publish-preview-frame video")?.play()}>播放预览</Button>
+            </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请先从左侧选择一条成片" />}
+          </aside>
+        </div>
+
+        <footer className="publish-selection-footer">
+          <Text>已选择 <b>{selectedAsset ? 1 : 0}</b> 条成片</Text>
+          <Button type="primary" size="large" disabled={!selectedAsset} onClick={() => setPublishStage("review")}>下一步：检查发布内容</Button>
+        </footer>
+      </section> : <section className="publish-review-shell">
+        <header className="publish-review-heading">
+          <div>
+            <Button type="text" icon={<LeftOutlined />} onClick={() => setPublishStage("select")}>返回选择成片</Button>
+            <Title level={3}>检查发布内容</Title>
+            <Text type="secondary">确认标题、描述和话题后再开始发布</Text>
+          </div>
+          <Button icon={<ClockCircleOutlined />} onClick={() => setTaskDrawerOpen(true)}>任务记录 {tasks.length}</Button>
+        </header>
+
+        <div className="publish-review-grid">
+          <main className="publish-review-form">
+            <div className="publish-review-asset">
+              {selectedAsset && <video src={publishAssetMediaUrl(selectedAsset)} muted preload="metadata" />}
+              <div><Text type="secondary">本次成片</Text><Text strong>{selectedAsset ? publishAssetTitle(selectedAsset) : "尚未选择"}</Text></div>
+              <Button type="link" onClick={() => setPublishStage("select")}>重新选择</Button>
+            </div>
+
+            <div className="publish-review-section">
+              <div className="publish-review-section-heading">
+                <div><Text strong>发布文案</Text><Text type="secondary">可以手动填写，也可以根据口播稿生成</Text></div>
+                <Button loading={metadataLoading} disabled={!selectedAsset?.source_text?.trim()} onClick={() => setMetadataConfirmOpen(true)}>{metadataGenerated ? "重新生成" : "生成发布信息"}</Button>
+              </div>
+              <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                <Input aria-label="发布标题" placeholder="输入发布标题" value={title} onChange={(event) => { setTitle(event.target.value); setPreflight(null); }} maxLength={100} showCount />
+                <TextArea aria-label="发布描述" placeholder="输入发布描述（可选）" rows={5} value={description} onChange={(event) => { setDescription(event.target.value); setPreflight(null); }} maxLength={1000} showCount />
+                <Space.Compact style={{ width: "100%" }}><Input aria-label="添加话题标签" prefix={<TagOutlined />} placeholder="输入话题，按回车添加" value={tagInput} onChange={(event) => setTagInput(event.target.value)} onPressEnter={addTag} /><Button onClick={addTag}>添加</Button></Space.Compact>
+                <div>{tags.map((tag) => <Tag key={tag} closable color="purple" onClose={() => setTags((current) => current.filter((item) => item !== tag))}>#{tag}</Tag>)}</div>
+              </Space>
+            </div>
+
+            {platforms.includes("douyin") && <Alert type="success" showIcon message="抖音原生配乐会自动匹配" description={`当前方向：${nativeMusicHint || inferDouyinMusicHint(title, description)}。只有登录或验证码需要你接手。`} />}
+            {preflight && <Alert type={preflight.blocked ? "warning" : "success"} showIcon message={preflight.blocked ? "请先处理以下问题" : "发布前检查通过"} description={<Space direction="vertical" size={4}>{preflight.issues.length > 0 && <Text>{preflight.issues.join("；")}</Text>}{preflight.platforms.filter((item) => item.issue).map((item) => <Text key={item.platform}>{platformLabel(item.platform)}：{item.issue}</Text>)}</Space>} />}
+          </main>
+
+          <aside className="publish-review-summary">
+            <Text strong className="publish-review-summary-title">发布确认</Text>
+            <div className="publish-review-destinations">
+              {selectedAccountSummary.map((item) => <div key={item.platform}>
+                <span style={{ color: PLATFORM_TONES[item.platform] }}>{PLATFORM_ICONS[item.platform] || <SendOutlined />}</span>
+                <div><Text strong>{platformLabel(item.platform)}</Text><Text type="secondary">{item.accountName}</Text></div>
+                <Tag color={item.ready ? "success" : "warning"}>{item.ready ? "已连接" : "需配置"}</Tag>
               </div>)}
+            </div>
+            <Divider />
+            <Text type="secondary">确认后系统才会创建发布任务；需要验证码或平台结果不明确时会暂停并提醒你。</Text>
+            <Button type="primary" size="large" icon={<RocketOutlined />} loading={submitting} onClick={startPublishing}>确认并开始发布</Button>
+          </aside>
+        </div>
+      </section>}
+    </Spin>}
 
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>2. 选择成片</Text>
-                <Space.Compact style={{ width: "100%" }}>
-                  <Select showSearch allowClear style={{ width: "100%" }} placeholder="选择已上传成片，或直接上传新文件" value={videoPath || undefined} options={assets.map((asset) => ({ label: asset.name, value: asset.path }))} onChange={(value) => { const asset = assets.find((item) => item.path === value); setVideoPath(value || ""); setNativeMusicHint(asset?.recommended_music_hint || ""); setPreflight(null); }} />
-                  <Upload accept=".mp4,.mov,.m4v" showUploadList={false} customRequest={async (options) => {
-                    try { const asset = await uploadPublishAsset(options.file as File); setAssets((current) => [asset, ...current]); setVideoPath(asset.path); options.onSuccess?.(asset); toast.success("成片已上传"); }
-                    catch (error) { options.onError?.(error as Error); toast.error((error as Error).message || "上传失败"); }
-                  }}><Button icon={<UploadOutlined />}>上传</Button></Upload>
-                </Space.Compact>
-              </div>
+    <Modal
+      title="生成发布信息？"
+      open={metadataConfirmOpen}
+      onCancel={() => setMetadataConfirmOpen(false)}
+      onOk={() => void generateMetadataForSelectedVideo()}
+      confirmLoading={metadataLoading}
+      okText="生成"
+      cancelText="取消"
+    >
+      系统将根据这条成片对应的口播稿生成标题、描述和话题，会调用一次 AI 文案服务。费用按实际模型计费，暂无法准确估算。
+    </Modal>
 
-              <div>
-                <Text strong style={{ display: "block", marginBottom: 8 }}>3. 填写内容</Text>
-                <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                  <Input aria-label="发布标题" placeholder="输入发布标题" value={title} onChange={(event) => { setTitle(event.target.value); setPreflight(null); }} maxLength={100} showCount />
-                  <TextArea aria-label="发布描述" placeholder="输入发布描述（可选）" rows={4} value={description} onChange={(event) => { setDescription(event.target.value); setPreflight(null); }} maxLength={1000} showCount />
-                  <Space.Compact style={{ width: "100%" }}><Input aria-label="添加话题标签" prefix={<TagOutlined />} placeholder="输入标签，按回车添加" value={tagInput} onChange={(event) => setTagInput(event.target.value)} onPressEnter={addTag} /><Button onClick={addTag}>添加</Button></Space.Compact>
-                  <div>{tags.map((tag) => <Tag key={tag} closable color="blue" onClose={() => setTags((current) => current.filter((item) => item !== tag))}>#{tag}</Tag>)}</div>
-                </Space>
-              </div>
+    <Drawer
+      title={<Space><ClockCircleOutlined />任务记录<Tag color="purple">{tasks.length}</Tag></Space>}
+      width={920}
+      open={taskDrawerOpen}
+      onClose={() => setTaskDrawerOpen(false)}
+      extra={<Space><Button danger icon={<DeleteOutlined />} disabled={!selectedTaskIds.length} onClick={() => confirmDeleteTasks(selectedTaskIds)}>删除{selectedTaskIds.length ? ` ${selectedTaskIds.length} 条` : ""}</Button><Button icon={<ReloadOutlined />} onClick={loadData}>刷新</Button></Space>}
+    >
+      {loading ? <SkeletonCard rows={5} /> : tasks.length ? <Table rowKey="task_id" columns={columns} dataSource={tasks} rowSelection={{ selectedRowKeys: selectedTaskIds, onChange: (keys) => setSelectedTaskIds(keys.map(String)), getCheckboxProps: (task) => ({ disabled: !canDeleteTask(task) }) }} pagination={{ pageSize: 8, showSizeChanger: false }} size="middle" scroll={{ x: 760 }} /> : <Empty description="还没有发布任务" />}
+    </Drawer>
 
-              {platforms.includes("douyin") && <Alert
-                type="success"
-                showIcon
-                message="抖音原生配乐由系统自动选择"
-                description={`系统会根据文案方向“${nativeMusicHint || inferDouyinMusicHint(title, description)}”使用抖音官方推荐音乐；你不用自己打开音乐库。遇到登录或验证码时才需要你处理。`}
-              />}
-
-              {preflight && <Alert type={preflight.blocked ? "warning" : "success"} showIcon message={preflight.blocked ? "请先处理以下问题" : "发布前检查通过"} description={<Space direction="vertical" size={4}>{preflight.issues.length > 0 && <Text>{preflight.issues.join("；")}</Text>}{preflight.platforms.filter((item) => item.issue).map((item) => <Text key={item.platform}>{platformLabel(item.platform)}：{item.issue}</Text>)}</Space>} />}
-              <Divider style={{ margin: "2px 0" }} />
-              <Button type="primary" icon={<RocketOutlined />} loading={submitting} onClick={startPublishing}>开始发布</Button>
-            </Space>
-          </Spin>
-        </Card>
-      </Col>
-
-      <Col xs={24} xl={11}>
-        <Card title={<Space><ClockCircleOutlined /> 发布任务 <Tag color="blue">{tasks.length}</Tag></Space>} extra={<Space><Button size="small" danger icon={<DeleteOutlined />} disabled={!selectedTaskIds.length} onClick={() => confirmDeleteTasks(selectedTaskIds)}>批量删除{selectedTaskIds.length ? `（${selectedTaskIds.length}）` : ""}</Button><Button size="small" onClick={loadData}>刷新</Button></Space>}>
-          <Alert type="info" showIcon message="单任务顺序处理" description={selectedPlatforms.length ? `已选择：${selectedPlatforms.map((platform) => platformLabel(platform.platform)).join("、")}。确认当前任务后，系统会自动上传、配乐、填写和提交；只在登录、验证码或结果不明确时请你接手。` : "选择平台和成片后，任务会显示在这里。"} style={{ marginBottom: 16 }} />
-          {loading ? <SkeletonCard rows={4} /> : tasks.length ? <Table rowKey="task_id" columns={columns} dataSource={tasks} rowSelection={{ selectedRowKeys: selectedTaskIds, onChange: (keys) => setSelectedTaskIds(keys.map(String)), getCheckboxProps: (task) => ({ disabled: !canDeleteTask(task) }) }} pagination={{ pageSize: 8 }} size="middle" /> : <Empty description="还没有发布任务" />}
-        </Card>
-      </Col>
-    </Row>}
+    <style>{`
+      .publish-page {
+        width: 100%;
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      .publish-page-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 22px;
+      }
+      .publish-page-heading .ant-typography-secondary {
+        display: block;
+        margin-top: 6px;
+      }
+      .publish-connection-summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 12px;
+        border: 1px solid #e3e7ef;
+        border-radius: 8px;
+        color: var(--text-secondary, #64748b);
+        background: #fff;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      .publish-connection-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #22c55e;
+        box-shadow: 0 0 0 4px #dcfce7;
+      }
+      .publish-steps {
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        width: min(460px, 100%);
+        margin: 0 0 22px;
+      }
+      .publish-steps button {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 0;
+        border: 0;
+        color: #94a3b8;
+        background: transparent;
+        cursor: pointer;
+      }
+      .publish-steps button span {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border: 1px solid #d8dee9;
+        border-radius: 50%;
+        font-size: 13px;
+        font-weight: 700;
+        background: #fff;
+      }
+      .publish-steps button.active,
+      .publish-steps button.complete { color: var(--primary-600, #7c3aed); }
+      .publish-steps button.active span,
+      .publish-steps button.complete span {
+        border-color: var(--primary-600, #7c3aed);
+        color: #fff;
+        background: var(--primary-600, #7c3aed);
+      }
+      .publish-step-line {
+        flex: 1;
+        height: 1px;
+        margin: 0 18px;
+        background: #e5e7eb;
+      }
+      .publish-account-workspace {
+        display: grid;
+        grid-template-columns: 252px minmax(0, 1fr);
+        min-height: max(520px, calc(100vh - 250px));
+        overflow: hidden;
+        border: 1px solid #e3e7ef;
+        border-radius: 14px;
+        background: #fff;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, .04);
+      }
+      .publish-platform-sidebar {
+        display: flex;
+        flex-direction: column;
+        padding: 20px 14px;
+        border-right: 1px solid #e9edf3;
+        background: #fafbfc;
+      }
+      .publish-platform-sidebar-title {
+        padding: 0 12px 10px;
+        color: #94a3b8;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: .08em;
+      }
+      .publish-platform-sidebar nav { display: grid; gap: 5px; }
+      .publish-platform-item {
+        display: grid;
+        grid-template-columns: 28px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        min-height: 48px;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        color: var(--text-primary, #172033);
+        background: transparent;
+        text-align: left;
+        cursor: pointer;
+      }
+      .publish-platform-item:hover { background: #f3f4f7; }
+      .publish-platform-item.active {
+        border-color: #d7c8ff;
+        background: #f4f0ff;
+      }
+      .publish-platform-icon {
+        display: grid;
+        place-items: center;
+        font-size: 19px;
+      }
+      .publish-platform-name { font-weight: 650; }
+      .publish-platform-status {
+        color: #94a3b8;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .publish-platform-status.ready { color: #059669; }
+      .publish-platform-status.waiting { color: #d97706; }
+      .publish-platform-sidebar-note {
+        margin-top: auto;
+        padding: 16px 12px 2px;
+        border-top: 1px solid #e8ebf1;
+        color: #94a3b8;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .publish-platform-detail {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        padding: 28px 32px 22px;
+      }
+      .publish-platform-detail-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        padding-bottom: 22px;
+        border-bottom: 1px solid #eef0f4;
+      }
+      .publish-platform-heading-line {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .publish-platform-large-icon {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 44px;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        background: #fff;
+        font-size: 23px;
+      }
+      .publish-platform-heading-line .ant-typography-secondary {
+        display: block;
+        margin-top: 4px;
+        line-height: 1.55;
+      }
+      .publish-add-account-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        margin-top: 22px;
+      }
+      .publish-manual-platform {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        margin-top: 16px;
+        padding: 12px 14px;
+        border: 1px solid #ddd2ff;
+        border-radius: 9px;
+        color: #6842b8;
+        background: #faf8ff;
+        font-size: 13px;
+      }
+      .publish-account-list-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 24px 0 10px;
+      }
+      .publish-account-empty {
+        display: grid;
+        min-height: 150px;
+        place-items: center;
+        border: 1px dashed #dfe4ec;
+        border-radius: 10px;
+        background: #fcfcfd;
+      }
+      .publish-account-list {
+        overflow: hidden;
+        border: 1px solid #e6e9ef;
+        border-radius: 10px;
+      }
+      .publish-account-row {
+        display: grid;
+        grid-template-columns: 38px minmax(160px, 1fr) auto auto 34px;
+        align-items: center;
+        gap: 12px;
+        min-height: 72px;
+        padding: 12px 14px;
+      }
+      .publish-account-row + .publish-account-row { border-top: 1px solid #edf0f4; }
+      .publish-account-avatar {
+        display: grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: #f3f4f6;
+        font-size: 18px;
+      }
+      .publish-account-copy { min-width: 0; }
+      .publish-account-copy .ant-typography {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .publish-account-copy .ant-typography-secondary { margin-top: 3px; font-size: 12px; }
+      .publish-manual-platform {
+        margin-top: 24px;
+        padding: 18px;
+        border-color: #e4dcff;
+        color: var(--primary-600, #7c3aed);
+        background: #faf8ff;
+      }
+      .publish-manual-platform .ant-typography { display: block; }
+      .publish-manual-platform .ant-typography-secondary { margin-top: 5px; line-height: 1.65; }
+      .publish-platform-detail-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-top: auto;
+        padding-top: 24px;
+      }
+      .publish-platform-detail-footer .ant-btn { min-width: 132px; }
+      .publish-selection-shell,
+      .publish-review-shell {
+        min-height: calc(100vh - 132px);
+      }
+      .publish-destination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        min-height: 52px;
+        padding: 8px 14px;
+        border: 1px solid #e3e7ef;
+        border-radius: 10px;
+        background: #fff;
+      }
+      .publish-destination-main,
+      .publish-destination-item,
+      .publish-destination-actions {
+        display: flex;
+        align-items: center;
+      }
+      .publish-destination-main { min-width: 0; gap: 14px; }
+      .publish-destination-item { gap: 8px; min-width: 0; color: #64748b; }
+      .publish-destination-item strong { color: #172033; white-space: nowrap; }
+      .publish-destination-icon { display: grid; place-items: center; width: 26px; height: 26px; font-size: 18px; }
+      .publish-ready,
+      .publish-not-ready { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+      .publish-ready { color: #059669; }
+      .publish-not-ready { color: #d97706; }
+      .publish-ready i,
+      .publish-not-ready i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .publish-destination-actions { gap: 4px; }
+      .publish-selection-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 20px 0 14px;
+      }
+      .publish-selection-heading > div { display: flex; align-items: baseline; gap: 16px; }
+      .publish-selection-heading .ant-typography { margin: 0; }
+      .publish-selection-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(330px, 1fr);
+        gap: 18px;
+      }
+      .publish-asset-panel,
+      .publish-preview-panel,
+      .publish-review-form,
+      .publish-review-summary {
+        overflow: hidden;
+        border: 1px solid #e2e6ed;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 8px 28px rgba(15, 23, 42, .035);
+      }
+      .publish-asset-toolbar {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 132px 40px;
+        gap: 10px;
+        padding: 14px;
+        border-bottom: 1px solid #e8ebf0;
+      }
+      .publish-asset-list {
+        min-height: 470px;
+        max-height: calc(100vh - 350px);
+        overflow-y: auto;
+      }
+      .publish-asset-list > .ant-empty { margin: 120px 0; }
+      .publish-asset-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 70px minmax(0, 1fr) 92px 24px;
+        align-items: center;
+        gap: 14px;
+        width: 100%;
+        min-height: 92px;
+        padding: 10px 16px;
+        border: 0;
+        border-bottom: 1px solid #edf0f4;
+        color: #172033;
+        background: #fff;
+        text-align: left;
+        cursor: pointer;
+        transition: background .16s ease, box-shadow .16s ease;
+      }
+      .publish-asset-row:hover { background: #faf9ff; }
+      .publish-asset-row.selected {
+        background: #f7f3ff;
+        box-shadow: inset 3px 0 0 #7c3aed;
+      }
+      .publish-asset-thumb {
+        width: 58px;
+        height: 72px;
+        border-radius: 6px;
+        object-fit: cover;
+        background: #111827;
+      }
+      .publish-asset-copy { display: block; min-width: 0; }
+      .publish-asset-copy strong {
+        display: block;
+        overflow: hidden;
+        margin-bottom: 9px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 15px;
+      }
+      .publish-asset-copy > span { display: flex; align-items: center; gap: 7px; color: #94a3b8; font-size: 12px; }
+      .publish-asset-copy b { font-weight: 500; }
+      .publish-asset-updated { color: #64748b; font-size: 13px; text-align: right; }
+      .publish-asset-selected-icon { color: #7c3aed; font-size: 20px; }
+      .publish-preview-panel {
+        display: flex;
+        min-height: 540px;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px 24px;
+      }
+      .publish-preview-title { align-self: stretch; margin-bottom: 14px; font-size: 15px; }
+      .publish-preview-frame {
+        display: grid;
+        width: min(100%, 255px);
+        aspect-ratio: 9 / 16;
+        place-items: center;
+        overflow: hidden;
+        border-radius: 10px;
+        background: #111827;
+        box-shadow: 0 12px 26px rgba(15, 23, 42, .16);
+      }
+      .publish-preview-frame video { width: 100%; height: 100%; object-fit: contain; background: #111827; }
+      .publish-preview-name { width: 100%; margin: 14px 0 10px !important; text-align: center; }
+      .publish-preview-meta { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin-bottom: 12px; }
+      .publish-preview-meta > span { display: grid; grid-template-columns: 18px 1fr; gap: 2px 5px; padding: 0 8px; border-right: 1px solid #edf0f4; }
+      .publish-preview-meta > span:last-child { border-right: 0; }
+      .publish-preview-meta .anticon { grid-row: 1 / 3; align-self: center; color: #64748b; }
+      .publish-preview-meta b { overflow: hidden; color: #334155; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .publish-preview-meta small { color: #94a3b8; font-size: 11px; }
+      .publish-selection-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-top: 14px;
+        padding: 14px 2px 0;
+      }
+      .publish-selection-footer b { color: #7c3aed; }
+      .publish-selection-footer .ant-btn { min-width: 214px; }
+      .publish-review-heading {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 16px;
+      }
+      .publish-review-heading .ant-btn-text { margin: 0 0 8px -12px; }
+      .publish-review-heading .ant-typography { display: block; margin: 0; }
+      .publish-review-grid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 18px; }
+      .publish-review-form { padding: 20px; }
+      .publish-review-asset { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 12px; border: 1px solid #ececf1; border-radius: 9px; background: #fafafa; }
+      .publish-review-asset video { width: 48px; height: 62px; border-radius: 5px; object-fit: cover; background: #111827; }
+      .publish-review-asset .ant-typography { display: block; }
+      .publish-review-section { margin-top: 20px; }
+      .publish-review-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+      .publish-review-section-heading .ant-typography { display: block; }
+      .publish-review-section-heading .ant-typography-secondary { margin-top: 3px; font-size: 12px; }
+      .publish-review-form > .ant-alert { margin-top: 16px; }
+      .publish-review-summary { align-self: start; padding: 20px; }
+      .publish-review-summary-title { display: block; margin-bottom: 14px; font-size: 16px; }
+      .publish-review-destinations { display: grid; gap: 8px; }
+      .publish-review-destinations > div { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px; border: 1px solid #ececf1; border-radius: 8px; }
+      .publish-review-destinations .ant-typography { display: block; }
+      .publish-review-destinations .ant-typography-secondary { font-size: 12px; }
+      .publish-review-summary > .ant-typography-secondary { display: block; line-height: 1.7; }
+      .publish-review-summary > .ant-btn { width: 100%; margin-top: 18px; }
+      @media (max-width: 900px) {
+        .publish-page-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
+        .publish-account-workspace { grid-template-columns: 1fr; }
+        .publish-platform-sidebar { border-right: 0; border-bottom: 1px solid #e9edf3; }
+        .publish-platform-sidebar nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .publish-platform-sidebar-note { display: none; }
+        .publish-platform-detail { min-height: 430px; padding: 22px 18px; }
+        .publish-destination-bar { align-items: flex-start; flex-direction: column; }
+        .publish-destination-main { align-items: flex-start; flex-direction: column; }
+        .publish-selection-grid,
+        .publish-review-grid { grid-template-columns: 1fr; }
+        .publish-asset-list { max-height: none; }
+        .publish-preview-panel { min-height: 0; }
+      }
+      @media (max-width: 620px) {
+        .publish-platform-sidebar nav { grid-template-columns: 1fr; }
+        .publish-platform-detail-header { align-items: flex-start; flex-direction: column; }
+        .publish-add-account-row { grid-template-columns: 1fr; }
+        .publish-account-row { grid-template-columns: 36px minmax(0, 1fr) auto; }
+        .publish-account-row > .ant-tag { grid-column: 2; }
+        .publish-account-row > .ant-btn-link { grid-column: 2; justify-self: start; padding-left: 0; }
+        .publish-account-row > .ant-btn-text { grid-column: 3; grid-row: 1; }
+        .publish-selection-heading { align-items: flex-start; flex-direction: column; }
+        .publish-selection-heading > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+        .publish-asset-toolbar { grid-template-columns: 1fr 112px; }
+        .publish-asset-toolbar > .ant-btn { display: none; }
+        .publish-asset-row { grid-template-columns: 58px minmax(0, 1fr) 22px; gap: 10px; padding: 9px 10px; }
+        .publish-asset-updated { display: none; }
+        .publish-selection-footer { align-items: stretch; flex-direction: column; }
+        .publish-selection-footer .ant-btn { width: 100%; }
+        .publish-review-asset { grid-template-columns: 48px minmax(0, 1fr); }
+        .publish-review-asset .ant-btn { grid-column: 2; justify-self: start; padding-left: 0; }
+      }
+    `}</style>
 
     <Modal title={manualTask ? `回填 ${platformLabel(manualTask.platform)} 发布结果` : "回填发布结果"} open={Boolean(manualTask)} okText="保存结果" cancelText="取消" onOk={submitManualResult} onCancel={() => setManualTask(null)}>
       <Space direction="vertical" style={{ width: "100%" }} size={12}>

@@ -12,7 +12,7 @@
 
 ### 错误现象
 ```
-param: C:\Users\zeng\Desktop\video\scripts\start_all_services.ps1:9
+param: <仓库根目录>\scripts\start_all_services.ps1:9
 Line |
    9 |  param(
      |  ~~~~~
@@ -33,7 +33,7 @@ Line |
 - [x] PowerShell版本兼容性：Windows PowerShell 5.1.19041.6456
 
 ### 2.2 环境因素检查
-- [x] PowerShell 7 (pwsh.exe) 可用：`C:\Users\zeng\AppData\Local\PowerShell\7\pwsh.exe`
+- [x] PowerShell 7 (`pwsh.exe`) 可从当前系统 `PATH` 使用
 - [x] Windows PowerShell 5.1 兼容性：版本5.1.19041.6456
 - [x] 脚本执行权限设置：使用 `-ExecutionPolicy Bypass`
 - [x] 系统区域设置和编码：中文Windows系统

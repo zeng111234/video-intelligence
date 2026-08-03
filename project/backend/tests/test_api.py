@@ -55,6 +55,7 @@ from src.services.publisher import PublishService  # noqa: E402
 from src.services.publish_accounts import PublishAccountError  # noqa: E402
 from src.services import HeatService, KeywordTrendService, SourceService  # noqa: E402
 from src.services.commercial_search import CommercialSearchService  # noqa: E402
+from src.services.transcription import TranscriptionService  # noqa: E402
 
 PUBLISH_DOUYIN_CONNECTION_KEYS = (
     "PUBLISH_DOUYIN_ACCESS_TOKEN",
@@ -71,6 +72,47 @@ PUBLISH_DOUYIN_CONNECTION_KEYS = (
 @pytest.fixture()
 def client():
     return TestClient(app)
+
+
+@pytest.fixture()
+def isolated_transcription_dependencies():
+    """Keep mock transcription API cases out of the user's SQLite history."""
+    repository = MockRepository(candidates=[], tasks=[])
+    service = TranscriptionService(repository)
+    repository_dependency = backend_deps.get_repository
+    service_dependency = backend_deps.get_transcription_service
+    previous_repository = app.dependency_overrides.get(repository_dependency)
+    previous_service = app.dependency_overrides.get(service_dependency)
+    app.dependency_overrides[repository_dependency] = lambda: repository
+    app.dependency_overrides[service_dependency] = lambda: service
+    try:
+        yield
+    finally:
+        if previous_repository is None:
+            app.dependency_overrides.pop(repository_dependency, None)
+        else:
+            app.dependency_overrides[repository_dependency] = previous_repository
+        if previous_service is None:
+            app.dependency_overrides.pop(service_dependency, None)
+        else:
+            app.dependency_overrides[service_dependency] = previous_service
+
+
+@pytest.fixture()
+def isolated_copywriting_dependencies():
+    """Keep mock copywriting API cases out of the user's SQLite history."""
+    repository = MockRepository(candidates=[], tasks=[])
+    service = CopywritingService(repository, SandboxCopywritingEngine())
+    service_dependency = backend_deps.get_copywriting_service
+    previous_service = app.dependency_overrides.get(service_dependency)
+    app.dependency_overrides[service_dependency] = lambda: service
+    try:
+        yield
+    finally:
+        if previous_service is None:
+            app.dependency_overrides.pop(service_dependency, None)
+        else:
+            app.dependency_overrides[service_dependency] = previous_service
 
 
 @pytest.fixture()
@@ -205,6 +247,7 @@ class TestCandidatesSearch:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("isolated_transcription_dependencies")
 class TestTranscriptions:
     def test_create_mock_task(self, client: TestClient):
         resp = client.post(
@@ -272,7 +315,11 @@ class TestTranscriptions:
 
         list_resp = client.get("/api/v1/transcriptions")
         assert list_resp.status_code == 200
-        assert any(item["task_id"] == task_id for item in list_resp.json())
+        assert all(item["task_id"] != task_id for item in list_resp.json())
+
+        test_list_resp = client.get("/api/v1/transcriptions?include_mock=true")
+        assert test_list_resp.status_code == 200
+        assert any(item["task_id"] == task_id for item in test_list_resp.json())
 
         export_resp = client.get(f"/api/v1/transcriptions/{task_id}/export?format=srt")
         assert export_resp.status_code == 200
@@ -444,6 +491,7 @@ class TestPipelines:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("isolated_transcription_dependencies")
 class TestTasks:
     def test_list_tasks(self, client: TestClient):
         resp = client.get("/api/v1/tasks")
@@ -597,14 +645,83 @@ class TestCrawlerBatches:
                     billable_units=0,
                 )
 
+        class FakeBilibiliPublicMetricsProvider:
+            """Read-only public-detail double; avoids network traffic in API tests."""
+
+            provider_name = "bilibili_public_search"
+
+            def __init__(self) -> None:
+                self.refresh_calls: list[list[str]] = []
+
+            def capabilities(self):
+                return ProviderCapability(
+                    provider_name=self.provider_name,
+                    display_name="B站公开详情（测试）",
+                    mode=ProviderMode.PUBLIC_WEB,
+                    supported_platforms=[Platform.BILIBILI],
+                    max_page_size=10,
+                    enabled=True,
+                    supports_metric_refresh=True,
+                    permission_status="public_metadata_only",
+                )
+
+            def refresh_metrics(self, platform, platform_item_ids, idempotency_key):
+                assert platform == Platform.BILIBILI
+                assert idempotency_key
+                assert len(platform_item_ids) <= 10
+                self.refresh_calls.append(list(platform_item_ids))
+                now = __import__("datetime").datetime.now().astimezone()
+                items = [
+                    ProviderSearchItem(
+                        platform=Platform.BILIBILI,
+                        platform_item_id=item_id,
+                        source_url=f"https://www.bilibili.com/video/{item_id}",
+                        title=f"公开详情 {item_id}",
+                        author_id="detail-author",
+                        author_name="详情作者",
+                        published_at=now,
+                        duration_seconds=60 + index,
+                        metrics=VideoMetricSnapshot(
+                            item_id=item_id,
+                            sampled_at=now,
+                            plays=10_000 + index,
+                            likes=100 + index,
+                            comments=20 + index,
+                            shares=30 + index,
+                            favorites=40 + index,
+                            confidence=0.85,
+                        ),
+                        provider_rank=index + 1,
+                        evidence="bilibili_public_detail:test",
+                    )
+                    for index, item_id in enumerate(platform_item_ids)
+                ]
+                return ProviderSearchPage(
+                    platform=Platform.BILIBILI,
+                    provider=self.provider_name,
+                    items=items,
+                    observed_at=now,
+                    request_id="fake-bilibili-public-detail",
+                    api_call_count=1,
+                    billable_units=0,
+                )
+
         class FakeBrowserProvider:
-            def __init__(self, platform: Platform) -> None:
+            def __init__(
+                self,
+                platform: Platform,
+                *,
+                xiaohongshu_login_profile: bool = False,
+            ) -> None:
                 self.platform = platform
                 self.provider_name = f"{platform.value}_local_browser"
                 self.browser_channel = "chrome"
                 self.adapter_version = "test"
+                self.xiaohongshu_login_profile = xiaohongshu_login_profile
                 self.running = False
                 self.start_calls = 0
+                self.public_start_calls = 0
+                self.visible_open_calls = 0
 
             def capabilities(self):
                 return ProviderCapability(
@@ -614,10 +731,29 @@ class TestCrawlerBatches:
                     supported_platforms=[self.platform],
                     max_page_size=30,
                     enabled=True,
-                    permission_status="local_browser_login_required",
+                    permission_status=(
+                        "manual_login_optional"
+                        if self.xiaohongshu_login_profile
+                        else "local_browser_login_required"
+                    ),
                 )
 
             def session_status(self):
+                if self.xiaohongshu_login_profile:
+                    return SimpleNamespace(
+                        enabled=True,
+                        running=self.running,
+                        login_required=True,
+                        ready_to_crawl=False,
+                        phase=(
+                            "login_browser_open" if self.running else "optional_login"
+                        ),
+                        message=(
+                            "小红书登录浏览器已打开；可选择扫码登录。"
+                            if self.running
+                            else "小红书当前未登录；可按需点击打开小红书登录。"
+                        ),
+                    )
                 return SimpleNamespace(
                     enabled=True,
                     running=self.running,
@@ -631,8 +767,28 @@ class TestCrawlerBatches:
                     ),
                 )
 
+            def open_login_browser(self):
+                if (
+                    self.platform == Platform.XIAOHONGSHU
+                    and not self.xiaohongshu_login_profile
+                ):
+                    pytest.fail("小红书匿名公开搜索不能调用 open_login_browser")
+                self.visible_open_calls += 1
+                self.running = True
+                return self.session_status()
+
             def start_login_browser(self):
+                if (
+                    self.platform == Platform.XIAOHONGSHU
+                    and not self.xiaohongshu_login_profile
+                ):
+                    pytest.fail("小红书未登录公开搜索不能调用 start_login_browser")
                 self.start_calls += 1
+                self.running = True
+                return self.session_status()
+
+            def start_public_browser(self):
+                self.public_start_calls += 1
                 self.running = True
                 return self.session_status()
 
@@ -652,7 +808,9 @@ class TestCrawlerBatches:
                         platform=self.platform,
                         platform_item_id=f"{self.platform.value}-test-{index}",
                         source_url=(
-                            f"https://example.com/{self.platform.value}/test-{index}"
+                            f"https://www.xiaohongshu.com/explore/{self.platform.value}-test-{index}"
+                            if self.platform == Platform.XIAOHONGSHU
+                            else f"https://example.com/{self.platform.value}/test-{index}"
                         ),
                         title=f"{keyword} {self.platform.value}公开内容 {index + 1}",
                         author_id="test-author",
@@ -715,6 +873,7 @@ class TestCrawlerBatches:
             active_platforms=(Platform.DOUYIN,),
         )
         bilibili_provider = FakeBilibiliProvider()
+        bilibili_metrics_provider = FakeBilibiliPublicMetricsProvider()
         bilibili_service = CommercialSearchService(
             repository,
             SourceService(repository, HeatService()),
@@ -723,12 +882,25 @@ class TestCrawlerBatches:
             active_platforms=(Platform.BILIBILI,),
         )
         xiaohongshu_provider = FakeBrowserProvider(Platform.XIAOHONGSHU)
+        xiaohongshu_login_provider = FakeBrowserProvider(
+            Platform.XIAOHONGSHU,
+            xiaohongshu_login_profile=True,
+        )
         xiaohongshu_service = CommercialSearchService(
             repository,
             SourceService(repository, HeatService()),
             KeywordTrendService(repository),
             xiaohongshu_provider,
             active_platforms=(Platform.XIAOHONGSHU,),
+        )
+        douyin_public_provider = FakeBrowserProvider(Platform.DOUYIN)
+        douyin_public_provider.provider_name = "douyin_public_browser_v2"
+        douyin_public_service = CommercialSearchService(
+            repository,
+            SourceService(repository, HeatService()),
+            KeywordTrendService(repository),
+            douyin_public_provider,
+            active_platforms=(Platform.DOUYIN,),
         )
         kuaishou_provider = FakeBrowserProvider(Platform.KUAISHOU)
         kuaishou_service = CommercialSearchService(
@@ -759,9 +931,21 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_bilibili_browser_search_service] = (
             lambda: bilibili_service
         )
+        app.dependency_overrides[backend_deps.get_bilibili_public_metrics_provider] = (
+            lambda: bilibili_metrics_provider
+        )
         app.dependency_overrides[backend_deps.get_xiaohongshu_browser_provider] = (
             lambda: xiaohongshu_provider
         )
+        app.dependency_overrides[
+            backend_deps.get_xiaohongshu_login_browser_provider
+        ] = lambda: xiaohongshu_login_provider
+        app.dependency_overrides[backend_deps.get_douyin_public_browser_provider] = (
+            lambda: douyin_public_provider
+        )
+        app.dependency_overrides[
+            backend_deps.get_douyin_public_search_service
+        ] = lambda: douyin_public_service
         app.dependency_overrides[
             backend_deps.get_xiaohongshu_browser_search_service
         ] = lambda: xiaohongshu_service
@@ -783,7 +967,11 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_official_hot_words_adapter] = lambda: (
             FakeOfficialAdapter("douyin_hot_words")
         )
-        yield
+        yield SimpleNamespace(
+            xiaohongshu_provider=xiaohongshu_provider,
+            xiaohongshu_login_provider=xiaohongshu_login_provider,
+            bilibili_metrics_provider=bilibili_metrics_provider,
+        )
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
             backend_deps.get_licensed_search_provider,
@@ -802,7 +990,23 @@ class TestCrawlerBatches:
             None,
         )
         app.dependency_overrides.pop(
+            backend_deps.get_bilibili_public_metrics_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
             backend_deps.get_xiaohongshu_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_xiaohongshu_login_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_douyin_public_browser_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_douyin_public_search_service,
             None,
         )
         app.dependency_overrides.pop(
@@ -834,7 +1038,7 @@ class TestCrawlerBatches:
             None,
         )
 
-    def test_capabilities(self, client: TestClient):
+    def test_capabilities(self, client: TestClient, crawler_sandbox):
         resp = client.get("/api/v1/crawler/capabilities")
         assert resp.status_code == 200
         data = resp.json()
@@ -845,14 +1049,26 @@ class TestCrawlerBatches:
         assert data["paused_platforms"] == ["xiaohongshu", "wechat_channels"]
         assert data["official_hot_billboard"]["enabled"] is False
         assert data["official_hot_words"]["provider_name"] == "douyin_hot_words"
+        assert data["hotspot_browser"] is None
         assert [item["platform"] for item in data["platform_browsers"]] == [
+            "douyin",
             "xiaohongshu",
             "kuaishou",
             "bilibili",
         ]
+        xiaohongshu = next(
+            item
+            for item in data["platform_browsers"]
+            if item["platform"] == "xiaohongshu"
+        )
+        assert xiaohongshu["running"] is False
+        assert xiaohongshu["login_required"] is True
+        assert xiaohongshu["phase"] == "optional_login"
+        assert "可按需点击打开小红书登录" in xiaohongshu["message"]
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
 
     def test_browser_discovery_capabilities_include_prerequisites(
-        self, client: TestClient
+        self, client: TestClient, crawler_sandbox
     ):
         resp = client.get("/api/v1/crawler/browser-discovery/capabilities")
 
@@ -861,11 +1077,39 @@ class TestCrawlerBatches:
         assert isinstance(data["missing_configuration"], list)
         assert data["browser_channel"] in {"chrome", "msedge"}
 
+        douyin_resp = client.get(
+            "/api/v1/crawler/browser-discovery/douyin/capabilities"
+        )
+        assert douyin_resp.status_code == 200
+        assert douyin_resp.json()["platform"] == "douyin"
+        douyin_start = client.post("/api/v1/crawler/browser-discovery/douyin/start")
+        assert douyin_start.status_code == 200
+        assert douyin_start.json()["provider_name"] == "douyin_public_browser_v2"
+
         xiaohongshu_resp = client.get(
             "/api/v1/crawler/browser-discovery/xiaohongshu/capabilities"
         )
         assert xiaohongshu_resp.status_code == 200
         assert xiaohongshu_resp.json()["platform"] == "xiaohongshu"
+        assert xiaohongshu_resp.json()["phase"] == "optional_login"
+        xiaohongshu_start = client.post(
+            "/api/v1/crawler/browser-discovery/xiaohongshu/start"
+        )
+        assert xiaohongshu_start.status_code == 200
+        assert xiaohongshu_start.json()["running"] is True
+        assert xiaohongshu_start.json()["phase"] == "login_browser_open"
+        assert crawler_sandbox.xiaohongshu_login_provider.visible_open_calls == 1
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
+
+        refreshed = client.get("/api/v1/crawler/capabilities")
+        assert refreshed.status_code == 200
+        refreshed_xiaohongshu = next(
+            item
+            for item in refreshed.json()["platform_browsers"]
+            if item["platform"] == "xiaohongshu"
+        )
+        assert refreshed_xiaohongshu["running"] is True
+        assert refreshed_xiaohongshu["phase"] == "login_browser_open"
 
         bilibili_resp = client.get(
             "/api/v1/crawler/browser-discovery/bilibili/capabilities"
@@ -885,7 +1129,7 @@ class TestCrawlerBatches:
                 return SimpleNamespace(
                     enabled=True,
                     missing_configuration=[],
-                    provider_name="douyin_local_browser",
+                    provider_name="douyin_public_browser_v2",
                 )
 
             def session_status(self):
@@ -913,19 +1157,118 @@ class TestCrawlerBatches:
                 raise AssertionError("手动登录入口不应使用后台启动")
 
         provider = VisibleBrowserProvider()
-        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
+        app.dependency_overrides[backend_deps.get_douyin_public_browser_provider] = (
             lambda: provider
         )
         try:
             response = client.post("/api/v1/crawler/browser-discovery/start")
         finally:
             app.dependency_overrides.pop(
-                backend_deps.get_hotspot_browser_provider, None
+                backend_deps.get_douyin_public_browser_provider, None
             )
 
         assert response.status_code == 200
         assert response.json()["message"] == "登录窗口已显示"
+        assert response.json()["provider_name"] == "douyin_public_browser_v2"
         assert provider.visible_open_calls == 1
+
+    def test_browser_login_endpoint_returns_actionable_local_error(
+        self, client: TestClient
+    ):
+        class FailingBrowserProvider:
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            def capabilities(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    missing_configuration=[],
+                    provider_name="douyin_public_browser_v2",
+                )
+
+            def session_status(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    running=False,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="browser_closed",
+                    message="尚未打开",
+                )
+
+            def open_login_browser(self):
+                raise OSError("simulated local browser launch failure")
+
+        app.dependency_overrides[backend_deps.get_douyin_public_browser_provider] = (
+            FailingBrowserProvider
+        )
+        try:
+            response = client.post("/api/v1/crawler/browser-discovery/start")
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_douyin_public_browser_provider, None
+            )
+
+        assert response.status_code == 503
+        assert response.json()["message"] == (
+            "无法打开本机登录浏览器，请关闭该专用浏览器后重试；仍失败请重启后端。"
+        )
+
+    def test_browser_login_endpoint_keeps_newly_running_browser_after_launch_race(
+        self, client: TestClient
+    ):
+        class LaunchRaceBrowserProvider:
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            def __init__(self):
+                self.status_calls = 0
+
+            def capabilities(self):
+                return SimpleNamespace(
+                    enabled=True,
+                    missing_configuration=[],
+                    provider_name="douyin_public_browser_v2",
+                )
+
+            def session_status(self):
+                self.status_calls += 1
+                if self.status_calls == 1:
+                    return SimpleNamespace(
+                        enabled=True,
+                        running=False,
+                        login_required=True,
+                        ready_to_crawl=False,
+                        phase="browser_closed",
+                        message="尚未打开",
+                    )
+                return SimpleNamespace(
+                    enabled=True,
+                    running=True,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="waiting_login",
+                    message="抖音官网正在等待扫码登录。",
+                )
+
+            def open_login_browser(self):
+                raise RuntimeError("simulated post-launch status race")
+
+        provider = LaunchRaceBrowserProvider()
+        app.dependency_overrides[backend_deps.get_douyin_public_browser_provider] = (
+            lambda: provider
+        )
+        try:
+            response = client.post("/api/v1/crawler/browser-discovery/start")
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_douyin_public_browser_provider, None
+            )
+
+        assert response.status_code == 200
+        assert response.json()["running"] is True
+        assert response.json()["message"] == "抖音官网正在等待扫码登录。"
+        assert response.json()["started"] is True
 
     def test_recrawl_is_disabled(self, client: TestClient):
         rejected = client.post(
@@ -950,6 +1293,7 @@ class TestCrawlerBatches:
             "/api/v1/crawler/preview",
             json={
                 "keyword": "二手车",
+                "published_window_days": 3,
                 "count_per_platform": 2,
                 "force_refresh": False,
             },
@@ -957,19 +1301,22 @@ class TestCrawlerBatches:
         assert resp.status_code == 200
         data = resp.json()
         assert [item["platform"] for item in data["platforms"]] == [
-            "douyin_hotspot",
+            "douyin",
             "xiaohongshu",
             "kuaishou",
             "bilibili",
         ]
-        assert data["ranking_mode"] == "platform_specific_hot_sort"
-        assert data["published_window_days"] == 0
+        assert data["ranking_mode"] == "platform_default_search_then_table_sort"
+        assert data["published_window_days"] == 3
         assert [item["platform_label"] for item in data["platforms"]] == [
-            "抖音热点宝五类爆款榜（本机授权，可选）",
-            "小红书浏览器搜索（最多点赞、视频、一周内）",
-            "快手浏览器搜索（近30天）",
-            "B站浏览器搜索（最多播放、最近一周）",
+            "抖音官网搜索（最多30条）",
+            "小红书未登录公开搜索（最多15条）",
+            "快手浏览器搜索（平台默认综合排序）",
+            "B站浏览器搜索（平台默认综合排序）",
         ]
+        assert data["provider_name"] == "抖音官网搜索 + 小红书未登录公开搜索 + 快手/B站浏览器"
+        assert data["hotspot_ready"] is False
+        assert data["hotspot_time_strategy"] == "douyin_official_search_only"
         assert data["cache_ttl_minutes"] == 10
         assert data["sampling_offsets_hours"] == [0]
         assert data["max_api_calls_per_platform"] == 0
@@ -977,6 +1324,58 @@ class TestCrawlerBatches:
         assert "estimated_total_cost_cny" in data
         assert all("estimated_api_calls" in item for item in data["platforms"])
         assert all("estimated_cost_cny" in item for item in data["platforms"])
+
+    def test_free_multi_platform_never_resolves_hotspot_dependencies(
+        self, client: TestClient
+    ):
+        def unexpected_hotspot_dependency():
+            raise AssertionError("常规找素材不应解析热点宝依赖")
+
+        app.dependency_overrides[
+            backend_deps.get_hotspot_browser_provider
+        ] = unexpected_hotspot_dependency
+        app.dependency_overrides[
+            backend_deps.get_hotspot_search_service
+        ] = unexpected_hotspot_dependency
+        try:
+            capabilities = client.get("/api/v1/crawler/capabilities")
+            preview = client.post(
+                "/api/v1/crawler/preview",
+                json={
+                    "keyword": "贴标机",
+                    "platforms": ["douyin"],
+                    "count_per_platform": 2,
+                },
+            )
+            created = client.post(
+                "/api/v1/crawler/batches",
+                json={
+                    "keyword": "贴标机",
+                    "platforms": ["douyin"],
+                    "count_per_platform": 2,
+                },
+            )
+        finally:
+            app.dependency_overrides.pop(
+                backend_deps.get_hotspot_browser_provider,
+                None,
+            )
+            app.dependency_overrides.pop(
+                backend_deps.get_hotspot_search_service,
+                None,
+            )
+
+        assert capabilities.status_code == 200
+        assert capabilities.json()["hotspot_browser"] is None
+        assert preview.status_code == 200
+        assert preview.json()["hotspot_ready"] is False
+        assert created.status_code == 200
+        created_data = created.json()
+        assert created_data["platforms"] == ["douyin"]
+        assert [run["platform"] for run in created_data["platform_runs"]] == [
+            "douyin"
+        ]
+        assert created_data["hotspot_window_hours"] is None
 
     def test_create_and_read_persistent_batch(self, client: TestClient):
         keyword = f"露营{uuid4().hex[:6]}"
@@ -992,12 +1391,13 @@ class TestCrawlerBatches:
         assert create_resp.status_code == 200
         created = create_resp.json()
         assert created["status"] in {"succeeded", "partial", "failed"}
+        assert created["published_window_days"] == 1
         assert {run["platform"] for run in created["platform_runs"]} == {
+            "douyin",
             "xiaohongshu",
             "kuaishou",
             "bilibili",
         }
-
         batch_id = created["batch_id"]
         detail_resp = client.get(f"/api/v1/crawler/batches/{batch_id}")
         assert detail_resp.status_code == 200
@@ -1013,18 +1413,104 @@ class TestCrawlerBatches:
         assert "system_rank" in first_candidate
         assert "component_scores" in first_candidate
         assert "data_quality_warnings" in first_candidate
-        assert first_candidate["relevance_basis"] == "title_or_hashtag"
-        assert "标题/话题包含" in first_candidate["relevance_reason"]
+        assert first_candidate["relevance_basis"] in {
+            "title_or_hashtag",
+            "platform_search",
+        }
+        assert first_candidate["relevance_reason"]
+        assert "duration_seconds" in first_candidate
+        assert "published_at_reliable" in first_candidate
+        assert "heat_score" in first_candidate
         assert len(first_candidate["trend_points"]) == 1
         assert first_candidate["trend_points"][0]["effective_interactions"] >= 0
         first_run = detail["platform_runs"][0]
         assert first_run["relevant_count"] == first_run["returned_count"]
         assert "irrelevant_count" in first_run
-        assert first_run["relevance_rule_version"] == "title_or_hashtag_strict_v1"
+        assert first_run["relevance_rule_version"] == "platform_search_broad_recall_v1"
 
         list_resp = client.get("/api/v1/crawler/batches")
         assert list_resp.status_code == 200
         assert any(item["batch_id"] == batch_id for item in list_resp.json()["items"])
+
+    def test_bilibili_public_detail_enrichment_is_limited_to_top_ten(
+        self,
+        client: TestClient,
+        crawler_sandbox,
+    ):
+        response = client.post(
+            "/api/v1/crawler/batches",
+            json={
+                "keyword": "贴标机",
+                "platforms": ["bilibili"],
+                "count_per_platform": 12,
+                "force_refresh": True,
+            },
+        )
+
+        assert response.status_code == 200
+        run = response.json()["platform_runs"][0]
+        assert run["platform"] == "bilibili"
+        assert len(run["candidates"]) == 12
+        assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls) == 1
+        assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls[0]) == 10
+        assert "B站公开详情已补全前 10 条：成功 10 条" in run["payload_diagnostic"]
+
+        enriched = [item for item in run["candidates"] if item["likes"] is not None]
+        not_enriched = [item for item in run["candidates"] if item["likes"] is None]
+        assert len(enriched) == 10
+        assert len(not_enriched) == 2
+        assert all(item["comments"] is not None for item in enriched)
+        assert all(item["shares"] is not None for item in enriched)
+        assert all(item["favorites"] is not None for item in enriched)
+        assert all(item["duration_seconds"] is not None for item in enriched)
+
+    def test_xiaohongshu_uses_public_start_and_caps_execution_at_15(
+        self, client: TestClient, crawler_sandbox
+    ):
+        resp = client.post(
+            "/api/v1/crawler/batches",
+            json={
+                "keyword": "贴标机",
+                "platforms": ["xiaohongshu"],
+                "count_per_platform": 30,
+                "force_refresh": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["platforms"] == ["xiaohongshu"]
+        assert len(data["platform_runs"]) == 1
+        assert data["platform_runs"][0]["platform"] == "xiaohongshu"
+        assert data["platform_runs"][0]["requested_count"] == 15
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
+        assert crawler_sandbox.xiaohongshu_login_provider.visible_open_calls == 0
+
+    def test_xiaohongshu_cache_does_not_restart_public_browser(
+        self,
+        client: TestClient,
+        crawler_sandbox,
+    ):
+        payload = {
+            "keyword": "缓存贴标机",
+            "platforms": ["xiaohongshu"],
+            "count_per_platform": 15,
+        }
+        first = client.post(
+            "/api/v1/crawler/batches",
+            json={**payload, "force_refresh": True},
+        )
+        assert first.status_code == 200
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
+        assert crawler_sandbox.xiaohongshu_provider.start_calls == 0
+
+        crawler_sandbox.xiaohongshu_provider.running = False
+        cached = client.post("/api/v1/crawler/batches", json=payload)
+
+        assert cached.status_code == 200
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
+        assert crawler_sandbox.xiaohongshu_provider.start_calls == 0
+        assert cached.json()["platform_runs"][0]["cache_hit"] is True
 
     def test_hotwords_endpoint_returns_cached_suggestions(self, client: TestClient):
         now = __import__("datetime").datetime.now().astimezone()
@@ -1065,8 +1551,12 @@ class TestCrawlerBatches:
             def execute_due_recrawls(self):
                 return []
 
-            def monitor(self, **kwargs):
+            def sync_billboard(self, *, limit: int):
+                assert limit == 50
+
+            def search_hot_pool(self, **kwargs):
                 assert kwargs["keyword"] == "数字人"
+                assert kwargs["limit"] == 10
                 return SimpleNamespace(
                     matched=[candidate],
                     trends=[],
@@ -1219,6 +1709,7 @@ class TestOpenAPI:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("isolated_transcription_dependencies")
 class TestGetTaskById:
     def test_get_existing_task(self, client: TestClient):
         """创建转写任务后，可通过 task_id 查询。"""
@@ -1269,7 +1760,10 @@ class TestGetTaskById:
 
 
 class TestCopywriting:
-    pytestmark = pytest.mark.usefixtures("copywriting_sandbox")
+    pytestmark = pytest.mark.usefixtures(
+        "copywriting_sandbox",
+        "isolated_copywriting_dependencies",
+    )
 
     def test_capabilities(self, client: TestClient):
         resp = client.get("/api/v1/copywriting/capabilities")
@@ -1431,28 +1925,39 @@ class TestCopywritingProductionConfig:
         )
         monkeypatch.setattr(backend_deps, "COPYWRITING_API_KEY", "")
         monkeypatch.setattr(backend_deps, "COPYWRITING_MODEL", "deepseek-v4-flash")
-
-        resp = client.get("/api/v1/copywriting/capabilities")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["enabled"] is False
-        assert data["mode"] == "disabled"
-        assert "COPYWRITING_API_KEY" in data["missing_configuration"]
-
-        create_resp = client.post(
-            "/api/v1/copywriting/generate",
-            json={"content_brief": "未配置 Key 测试"},
+        service_dependency = backend_deps.get_copywriting_service
+        previous_service = app.dependency_overrides.get(service_dependency)
+        app.dependency_overrides[service_dependency] = lambda: CopywritingService(
+            MockRepository(candidates=[], tasks=[]),
+            backend_deps.get_copywriting_engine(),
         )
-        assert create_resp.status_code == 200
-        task = create_resp.json()
-        assert task["status"] == "succeeded"
-        assert task["result_text"] == "未配置 Key 测试"
-        assert task["compliance_status"] == "best_effort"
-        assert task["error_message"] is None
-        assert task["is_mock"] is False
 
-        backend_deps.get_copywriting_engine.cache_clear()
-        backend_deps.get_copywriting_service.cache_clear()
+        try:
+            resp = client.get("/api/v1/copywriting/capabilities")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["enabled"] is False
+            assert data["mode"] == "disabled"
+            assert "COPYWRITING_API_KEY" in data["missing_configuration"]
+
+            create_resp = client.post(
+                "/api/v1/copywriting/generate",
+                json={"content_brief": "未配置 Key 测试"},
+            )
+            assert create_resp.status_code == 200
+            task = create_resp.json()
+            assert task["status"] == "succeeded"
+            assert task["result_text"] == "未配置 Key 测试"
+            assert task["compliance_status"] == "best_effort"
+            assert task["error_message"] is None
+            assert task["is_mock"] is False
+        finally:
+            if previous_service is None:
+                app.dependency_overrides.pop(service_dependency, None)
+            else:
+                app.dependency_overrides[service_dependency] = previous_service
+            backend_deps.get_copywriting_engine.cache_clear()
+            backend_deps.get_copywriting_service.cache_clear()
 
 
 # ---------------------------------------------------------------------------

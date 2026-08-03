@@ -109,5 +109,6 @@ export function getNavigationItem(path: string) {
 }
 
 export function getPageTitle(path: string) {
+  if (path === "/avatar") return "数字人口播生成";
   return getNavigationItem(path)?.label || LEGACY_PAGE_TITLES[path] || "页面";
 }

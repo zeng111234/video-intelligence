@@ -139,9 +139,74 @@ def test_optional_login_prompt_does_not_block_public_search_attempt():
         provider._raise_for_login_gate(page)
 
 
-def test_login_button_opens_visible_platform_window_even_when_session_is_running(
+def test_xiaohongshu_public_profile_rejects_visible_and_login_profile_starts(tmp_path):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29992,
+    )
+
+    with pytest.raises(LicensedProviderError, match="未登录公开搜索"):
+        provider.open_login_browser()
+    with pytest.raises(LicensedProviderError, match="未登录公开搜索"):
+        provider.start_login_browser()
+
+
+def test_xiaohongshu_explicit_login_profile_is_visible_and_separate(
     tmp_path, monkeypatch
 ):
+    public_profile = tmp_path / "public-profile"
+    login_profile = tmp_path / "login-profile"
+    public = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=public_profile,
+        debug_port=29992,
+    )
+    login = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=login_profile,
+        debug_port=29993,
+        allow_xiaohongshu_login=True,
+    )
+    launched: list[list[str]] = []
+    closed = BrowserSessionStatus(
+        True,
+        False,
+        True,
+        False,
+        "optional_login",
+        "小红书当前未登录",
+    )
+    monkeypatch.setattr(login, "session_status", lambda: closed)
+    monkeypatch.setattr(login, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(login, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.subprocess.Popen",
+        lambda args, **_kwargs: launched.append(args),
+    )
+    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+
+    login.open_login_browser()
+
+    assert public.anonymous_only is True
+    assert login.anonymous_only is False
+    assert login.is_xiaohongshu_login_profile is True
+    assert public.profile_dir != login.profile_dir
+    assert public.debug_port != login.debug_port
+    assert login.capabilities().permission_status == "manual_login_optional"
+    assert "--new-window" in launched[0]
+    assert "--incognito" not in launched[0]
+    assert f"--user-data-dir={login_profile}" in launched[0]
+    with pytest.raises(LicensedProviderError, match="只用于人工登录"):
+        login.start_public_browser()
+    with pytest.raises(LicensedProviderError, match="只用于人工登录"):
+        login.search(Platform.XIAOHONGSHU, "贴标机", None, 1, "login-profile-test")
+
+
+def test_xiaohongshu_public_start_stays_minimized_and_incognito(tmp_path, monkeypatch):
     provider = LocalPlatformBrowserSearchProvider(
         platform=Platform.XIAOHONGSHU,
         enabled=True,
@@ -149,49 +214,42 @@ def test_login_button_opens_visible_platform_window_even_when_session_is_running
         debug_port=29992,
     )
     launched: list[list[str]] = []
-    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
-    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    closed = BrowserSessionStatus(True, False, False, False, "browser_closed", "未打开")
+    monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr("src.adapters.platform_browser_search.restart_browser_for_login", lambda _port: True)
-    minimized: list[int] = []
-    monkeypatch.setattr(
-        "src.adapters.platform_browser_search.minimize_browser_window",
-        lambda port: minimized.append(port) or True,
-    )
     monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
     monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+    monkeypatch.setattr(
         "src.adapters.platform_browser_search.subprocess.Popen",
-        lambda args, **kwargs: launched.append(args),
+        lambda args, **_kwargs: launched.append(args),
     )
     monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
 
-    status = provider.open_login_browser()
+    provider.start_public_browser()
 
-    assert status.ready_to_crawl is True
-    assert len(launched) == 1
-    assert "--new-window" in launched[0]
-    assert "--window-position=80,80" in launched[0]
-    assert "--start-minimized" not in launched[0]
-    assert minimized == []
+    assert "--incognito" in launched[0]
+    assert "--start-minimized" in launched[0]
+    assert "--new-window" not in launched[0]
 
 
-def test_login_button_restarts_hidden_platform_window_for_login(tmp_path, monkeypatch):
+def test_login_button_reveals_waiting_platform_window_for_login(tmp_path, monkeypatch):
     provider = LocalPlatformBrowserSearchProvider(
         platform=Platform.KUAISHOU, enabled=True, profile_dir=tmp_path / "profile", debug_port=29989
     )
     ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
-    launched: list[list[str]] = []
     monkeypatch.setattr(provider, "session_status", lambda: ready)
-    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
-    monkeypatch.setattr("src.adapters.platform_browser_search.restart_browser_for_login", lambda _port: True)
-    monkeypatch.setattr("src.adapters.platform_browser_search.subprocess.Popen", lambda args, **kwargs: launched.append(args))
-    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+    revealed: list[int] = []
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.reveal_browser_window",
+        lambda port: revealed.append(port) or True,
+    )
 
     provider.open_login_browser()
 
-    assert len(launched) == 1
-    assert "--new-window" in launched[0]
+    assert revealed == [29989]
 
 
 def test_automatic_platform_start_minimizes_existing_window(tmp_path, monkeypatch):
@@ -305,9 +363,10 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
                         "display_title": "餐饮获客的三个新方法",
                         "user": {"user_id": "xhs-user-1", "nickname": "餐饮老板说"},
                         "interact_info": {
-                            "liked_count": "1.2万",
-                            "comment_count": "88",
-                            "collected_count": "320",
+                        "liked_count": "1.2万",
+                        "comment_count": "88",
+                        "collected_count": "320",
+                        "share_count": "16",
                         },
                         "time": 1785380400000,
                     },
@@ -330,9 +389,46 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
     assert item.author_name == "餐饮老板说"
     assert item.metrics.likes == 12000
     assert item.metrics.comments == 88
+    assert item.metrics.shares == 16
     assert item.metrics.favorites == 320
     assert str(item.source_url) == "https://www.xiaohongshu.com/explore/xhs-note-1"
     assert "time=platform" in (item.evidence or "")
+
+
+def test_xiaohongshu_public_metric_aliases_keep_explicit_zero_values():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-note-zero",
+                    "noteCard": {
+                        "display_title": "互动数据为零的公开笔记",
+                        "user": {"id": "xhs-user-zero", "nick_name": "零互动作者"},
+                        "interactInfo": {
+                            "likedCount": 0,
+                            "commentCount": 0,
+                            "shareCount": 0,
+                            "collectCount": 0,
+                        },
+                    },
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+    items = provider._to_items(
+        rows,
+        observed_at=datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
+        limit=30,
+    )
+
+    assert len(items) == 1
+    assert items[0].metrics.likes == 0
+    assert items[0].metrics.comments == 0
+    assert items[0].metrics.shares == 0
+    assert items[0].metrics.favorites == 0
 
 
 def test_kuaishou_graphql_response_keeps_recent_keyword_matches():
@@ -352,6 +448,8 @@ def test_kuaishou_graphql_response_keeps_recent_keyword_matches():
                             "likeCount": "5200",
                             "commentCount": "136",
                             "shareCount": "92",
+                            "collectCount": "73",
+                            "durationMs": 9200,
                         },
                     },
                     {
@@ -383,6 +481,8 @@ def test_kuaishou_graphql_response_keeps_recent_keyword_matches():
     assert item.metrics.likes == 5200
     assert item.metrics.comments == 136
     assert item.metrics.shares == 92
+    assert item.metrics.favorites == 73
+    assert item.duration_seconds == 9
     assert str(item.source_url) == "https://www.kuaishou.com/short-video/ks-video-1"
 
 
@@ -452,12 +552,22 @@ def test_bilibili_search_response_normalizes_visible_video_metadata():
     assert item.title == "餐饮获客爆火文案拆解"
     assert item.author_name == "经营有道"
     assert item.metrics.plays == 123000
-    assert item.metrics.comments == 456
+    assert item.metrics.comments is None
     assert item.metrics.favorites == 789
     assert str(item.source_url) == "https://www.bilibili.com/video/BV1TEST2026"
 
 
-def test_xiaohongshu_missing_publish_time_trusts_selected_week_filter():
+@pytest.mark.parametrize("key", ["duration_ms", "durationMs"])
+def test_millisecond_duration_keys_always_use_millisecond_units(key):
+    assert LocalPlatformBrowserSearchProvider._first_duration_seconds(
+        {key: 9500}, "duration", key
+    ) == 9
+    assert LocalPlatformBrowserSearchProvider._first_duration_seconds(
+        {"duration": 9500}, "duration"
+    ) == 9500
+
+
+def test_xiaohongshu_missing_publish_time_keeps_platform_search_order_warning():
     provider = _provider(Platform.XIAOHONGSHU)
     observed_at = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
     items = provider._to_items(
@@ -476,8 +586,8 @@ def test_xiaohongshu_missing_publish_time_trusts_selected_week_filter():
 
     assert len(items) == 1
     assert items[0].published_at == observed_at
-    assert "time=platform_filter" in (items[0].evidence or "")
-    assert any("已选择“一周内”" in warning for warning in items[0].data_quality_warnings)
+    assert "time=search_order_fallback" in (items[0].evidence or "")
+    assert any("未返回可靠发布时间" in warning for warning in items[0].data_quality_warnings)
 
 
 def test_rendered_card_date_keeps_spaces_before_trailing_like_count():
@@ -514,6 +624,41 @@ def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
     )
 
     assert captured["target"] == 90
+
+
+def test_xiaohongshu_anonymous_search_has_a_tight_public_budget(monkeypatch):
+    provider = _provider(Platform.XIAOHONGSHU)
+    captured: dict[str, int] = {}
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_rows",
+        lambda _keyword, *, target: captured.update(target=target) or [],
+    )
+
+    provider.search(
+        Platform.XIAOHONGSHU,
+        "餐饮获客",
+        None,
+        15,
+        "xhs-tight-pool",
+    )
+
+    assert provider.capabilities().permission_status == "public_browser_anonymous_only"
+    assert provider.capabilities().max_page_size == 15
+    assert captured["target"] == 20
+    with pytest.raises(LicensedProviderError, match="最多保留 15 条"):
+        provider.search(
+            Platform.XIAOHONGSHU,
+            "餐饮获客",
+            None,
+            16,
+            "xhs-over-limit",
+        )
 
 
 def test_browser_provider_keeps_parsed_rows_for_shared_relevance_filtering():

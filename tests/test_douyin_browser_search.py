@@ -22,6 +22,9 @@ def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
                 "duration": 15,
                 "plays": 1201,
                 "likes": 120,
+                "comments": 12,
+                "shares": 3,
+                "favorites": 5,
                 "list_type": 1001,
                 "list_label": "视频总榜",
                 "window_hours": 168,
@@ -47,8 +50,93 @@ def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
     assert items[0].platform_item_id == "7538955201693994298"
     assert str(items[0].source_url) == "https://www.douyin.com/video/7538955201693994298"
     assert items[0].metrics.plays == 1201
+    assert items[0].metrics.comments == 12
+    assert items[0].metrics.shares == 3
+    assert items[0].metrics.favorites == 5
     assert "新增播放量=1201" in items[0].evidence
     assert "日均点赞=" in items[0].evidence
+
+
+def test_public_search_metrics_preserve_zero_and_missing_values():
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    rows = [
+        {
+            "item_id": "7538955201693994391",
+            "href": "https://www.douyin.com/video/7538955201693994391",
+            "title": "抖音公开搜索的完整互动指标",
+            "duration": 18,
+            "plays": 0,
+            "likes": 0,
+            "comments": 0,
+            "shares": 0,
+            "favorites": 0,
+            "published_text": "2026-08-02",
+        },
+        {
+            "item_id": "7538955201693994392",
+            "href": "https://www.douyin.com/video/7538955201693994392",
+            "title": "抖音公开搜索未返回互动指标",
+            "duration": 20,
+            "published_text": "2026-08-02",
+        },
+    ]
+
+    items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
+        rows,
+        keyword="抖音公开搜索",
+        observed_at=observed_at,
+        published_after=None,
+        limit=2,
+    )
+
+    assert errors == []
+    assert (
+        items[0].metrics.plays,
+        items[0].metrics.likes,
+        items[0].metrics.comments,
+        items[0].metrics.shares,
+        items[0].metrics.favorites,
+    ) == (0, 0, 0, 0, 0)
+    assert (
+        items[1].metrics.plays,
+        items[1].metrics.likes,
+        items[1].metrics.comments,
+        items[1].metrics.shares,
+        items[1].metrics.favorites,
+    ) == (None, None, None, None, None)
+
+
+@pytest.mark.parametrize(
+    "extractor",
+    [
+        LocalDouyinBrowserSearchProvider._extract_douyin_search_rows,
+        LocalDouyinBrowserSearchProvider._extract_public_douyin_search_rows,
+    ],
+)
+def test_rendered_douyin_search_extractors_read_complete_react_statistics(extractor):
+    scripts: list[str] = []
+
+    class Body:
+        def evaluate(self, script):
+            scripts.append(script)
+            return []
+
+    class Page:
+        def locator(self, selector):
+            assert selector == "body"
+            return Body()
+
+    assert extractor(Page()) == []
+    script = scripts[0]
+    for statistic in (
+        "play_count",
+        "digg_count",
+        "comment_count",
+        "share_count",
+        "collect_count",
+    ):
+        assert statistic in script
+    assert "value !== undefined && value !== null && value !== ''" in script
 
 
 def test_browser_provider_reports_login_requirement_without_running_session(tmp_path):
@@ -116,7 +204,7 @@ def test_browser_provider_checks_the_configured_browser_channel(tmp_path, monkey
     assert capability.missing_configuration == ["Microsoft Edge"]
 
 
-def test_login_button_opens_visible_hotspot_window_even_when_session_is_running(
+def test_login_button_reveals_existing_browser_when_session_is_running(
     tmp_path, monkeypatch
 ):
     provider = LocalDouyinBrowserSearchProvider(
@@ -124,42 +212,34 @@ def test_login_button_opens_visible_hotspot_window_even_when_session_is_running(
         profile_dir=tmp_path / "profile",
         debug_port=29994,
     )
-    launched: list[list[str]] = []
+    revealed: list[int] = []
     ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
     monkeypatch.setattr(provider, "session_status", lambda: ready)
-    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr("src.adapters.douyin_browser_search.restart_browser_for_login", lambda _port: True)
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
     monkeypatch.setattr(
-        "src.adapters.douyin_browser_search.subprocess.Popen",
-        lambda args, **kwargs: launched.append(args),
+        "src.adapters.douyin_browser_search.reveal_browser_window",
+        revealed.append,
     )
-    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
 
     status = provider.open_login_browser()
 
     assert status.ready_to_crawl is True
-    assert len(launched) == 1
-    assert "--new-window" in launched[0]
-    assert "--window-position=80,80" in launched[0]
-    assert "--start-minimized" not in launched[0]
+    assert revealed == [29994]
 
 
-def test_login_button_restarts_hidden_hotspot_window_for_login(tmp_path, monkeypatch):
+def test_login_button_reveals_existing_waiting_login_window(tmp_path, monkeypatch):
     provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile", debug_port=29990)
     ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
-    launched: list[list[str]] = []
+    revealed: list[int] = []
     monkeypatch.setattr(provider, "session_status", lambda: ready)
-    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
-    monkeypatch.setattr("src.adapters.douyin_browser_search.restart_browser_for_login", lambda _port: True)
-    monkeypatch.setattr("src.adapters.douyin_browser_search.subprocess.Popen", lambda args, **kwargs: launched.append(args))
-    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.reveal_browser_window",
+        revealed.append,
+    )
 
-    provider.open_login_browser()
+    status = provider.open_login_browser()
 
-    assert len(launched) == 1
-    assert "--new-window" in launched[0]
+    assert status.login_required is True
+    assert revealed == [29990]
 
 
 def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
@@ -186,6 +266,99 @@ def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
     assert "--start-minimized" in launched[0]
     assert "--window-position=-32000,-32000" in launched[0]
     assert "--new-window" not in launched[0]
+
+
+def test_public_douyin_login_browser_opens_official_site_not_hotspot(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29992,
+    )
+    launched: list[list[str]] = []
+    closed = BrowserSessionStatus(
+        True, False, True, False, "browser_closed", "未打开"
+    )
+    monkeypatch.setattr(provider, "session_status", lambda: closed)
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.subprocess.Popen",
+        lambda args, **kwargs: launched.append(args),
+    )
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None
+    )
+
+    provider.open_login_browser()
+
+    assert launched[0][-1] == "https://www.douyin.com/"
+    assert "douhot.douyin.com" not in launched[0][-1]
+
+
+@pytest.mark.parametrize(
+    ("phase", "running"),
+    [
+        ("browser_closed", False),
+        ("waiting_login", True),
+    ],
+)
+def test_public_douyin_status_never_uses_hotspot_wording(
+    tmp_path, monkeypatch, phase, running
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29987,
+    )
+    raw_status = BrowserSessionStatus(
+        True,
+        running,
+        True,
+        False,
+        phase,
+        "热点宝专用浏览器状态。",
+    )
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "session_status",
+        lambda _provider: raw_status,
+    )
+
+    status = provider.session_status()
+
+    assert "热点宝" not in status.message
+    assert "抖音官网" in status.message
+
+
+def test_running_public_douyin_browser_is_ready_for_one_search_attempt(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+    )
+    raw_status = BrowserSessionStatus(
+        True,
+        True,
+        True,
+        False,
+        "browser_open",
+        "Chrome 已打开。",
+    )
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "session_status",
+        lambda _provider: raw_status,
+    )
+
+    status = provider.session_status()
+
+    assert status.running is True
+    assert status.login_required is False
+    assert status.ready_to_crawl is True
+    assert status.phase == "ready"
+    assert "实际搜索时会核验登录或安全验证" in status.message
 
 
 def test_hotspot_keyword_is_typed_gradually_before_search():
@@ -245,7 +418,7 @@ def test_hotspot_browser_action_delay_uses_fresh_random_range(monkeypatch):
     assert requested_bounds == [(450, 850)]
 
 
-def test_hotspot_filters_image_posts_low_incremental_plays_and_irrelevant_rows():
+def test_hotspot_keeps_readable_cards_for_table_side_filtering():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     rows = [
         {
@@ -286,12 +459,19 @@ def test_hotspot_filters_image_posts_low_incremental_plays_and_irrelevant_rows()
 
     assert errors == []
     assert low_incremental_items == []
-    assert [item.platform_item_id for item in items] == ["7538955201693994298"]
-    assert filtered == {"duration": 1, "incremental_plays": 0, "relevance": 1, "quality": 1}
+    assert [item.platform_item_id for item in items] == [
+        "7538955201693994298",
+        "7538955201693994299",
+        "7538955201693994300",
+        "7538955201693994301",
+    ]
+    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
     assert "视频总榜|高点赞率" in items[0].evidence
+    assert items[1].duration_seconds is None
+    assert "热点宝未返回视频时长。" in items[1].data_quality_warnings
 
 
-def test_hotspot_keeps_related_low_incremental_rows_when_main_list_is_empty():
+def test_hotspot_keeps_low_interaction_rows_in_the_main_result_table():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     rows = [
         {
@@ -320,10 +500,13 @@ def test_hotspot_keeps_related_low_incremental_rows_when_main_list_is_empty():
         rows, "租房", observed_at, 100
     )
 
-    assert items == []
+    assert [item.platform_item_id for item in items] == [
+        "7538955201693994300",
+        "7538955201693994302",
+    ]
     assert errors == []
     assert filtered["incremental_plays"] == 0
-    assert filtered["quality"] == 2
+    assert filtered["quality"] == 0
     assert low_incremental_items == []
 
 
@@ -417,7 +600,7 @@ def test_douyin_search_collects_multiple_rendered_viewports(tmp_path, monkeypatc
     assert len([call for call in calls if call[0] == "scroll"]) == 4
 
 
-def test_quality_gate_requires_both_total_likes_and_daily_velocity():
+def test_quality_signals_are_retained_without_hiding_lower_quality_rows():
     observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
     rows = [
         {
@@ -456,8 +639,12 @@ def test_quality_gate_requires_both_total_likes_and_daily_velocity():
         rows, "餐饮获客", observed_at, 3
     )
 
-    assert [item.platform_item_id for item in items] == ["7538955201693994314"]
-    assert filtered["quality"] == 2
+    assert [item.platform_item_id for item in items] == [
+        "7538955201693994314",
+        "7538955201693994313",
+        "7538955201693994312",
+    ]
+    assert filtered["quality"] == 0
     assert "质量口径=作品累计点赞/发布天数" in items[0].evidence
 
 
@@ -528,7 +715,7 @@ def test_hotspot_uses_visible_publication_time_when_available():
     assert items[0].data_quality_warnings == []
 
 
-def test_search_candidate_without_publication_time_is_rejected_from_customer_results():
+def test_search_candidate_without_publication_time_is_retained_and_marked_unreliable():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(
         [{
@@ -543,7 +730,10 @@ def test_search_candidate_without_publication_time_is_rejected_from_customer_res
         10,
     )
 
-    assert items == []
+    assert len(items) == 1
+    assert items[0].published_at == observed_at
+    assert items[0].published_at_reliable is False
+    assert "未取得有效发布时间" in items[0].data_quality_warnings[0]
 
 
 @pytest.mark.parametrize("window_hours", [1, 24, 72, 168])
@@ -610,7 +800,7 @@ def test_hotspot_search_rejects_an_unsupported_statistical_window(tmp_path):
         provider._resolve_hotspot_window_hours(2)
 
 
-def test_hotspot_search_exposes_low_incremental_items_only_when_main_list_is_empty(
+def test_hotspot_search_keeps_low_incremental_items_in_the_main_result_table(
     tmp_path, monkeypatch
 ):
     provider = LocalDouyinBrowserSearchProvider(
@@ -656,8 +846,8 @@ def test_hotspot_search_exposes_low_incremental_items_only_when_main_list_is_emp
         hotspot_window_hours=1,
     )
 
-    assert page.items == []
-    assert [item.metrics.plays for item in page.low_incremental_items] == [800]
+    assert [item.metrics.plays for item in page.items] == [800]
+    assert page.low_incremental_items == []
 
 
 def test_automatic_start_minimizes_an_already_running_browser(tmp_path, monkeypatch):
@@ -835,11 +1025,12 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
     assert [item.platform_item_id for item in page.items] == [
         "7538955201693994321",
         "7538955201693994322",
+        "7538955201693994323",
     ]
     assert page.items[0].metrics.likes == 2
     assert page.items[0].evidence.startswith("douyin_public_search:")
     assert page.items[1].data_quality_warnings
-    assert "排除 1 条" in (page.payload_diagnostic or "")
+    assert page.payload_diagnostic is None
     assert minimized_ports == [29986]
 
 

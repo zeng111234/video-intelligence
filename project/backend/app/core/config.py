@@ -269,6 +269,8 @@ DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
 DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
     "DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT", 19222
 )
+# 旧的小红书账号资料目录配置保留给已部署环境读取，但当前公开搜索不会
+# 使用它，避免复用任何历史登录态或 Cookie。
 XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
     "XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED", False
 )
@@ -280,6 +282,36 @@ XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
 )
 XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
     "XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT", 19223
+)
+
+# 小红书只允许使用全新的隔离资料目录进行未登录公开搜索。这里的默认值
+# 不读取或继承上面的旧账号配置；浏览器只会在用户点击“找素材”时启动。
+XIAOHONGSHU_PUBLIC_SEARCH_ENABLED: bool = _env_flag(
+    "XIAOHONGSHU_PUBLIC_SEARCH_ENABLED", True
+)
+XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR: Path = Path(
+    _env(
+        "XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR",
+        str(PROJECT_ROOT / "data" / "browser_profiles" / "xiaohongshu_public"),
+    )
+)
+XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT: int = _env_int(
+    "XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT", 19226
+)
+
+# 可选的人工登录窗口与公开搜索严格分离。它只由用户主动点击连接入口时
+# 打开，绝不被“找素材”的匿名搜索复用。
+XIAOHONGSHU_LOGIN_BROWSER_ENABLED: bool = _env_flag(
+    "XIAOHONGSHU_LOGIN_BROWSER_ENABLED", True
+)
+XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR: Path = Path(
+    _env(
+        "XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR",
+        str(PROJECT_ROOT / "data" / "browser_profiles" / "xiaohongshu_login"),
+    )
+)
+XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT: int = _env_int(
+    "XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT", 19227
 )
 KUAISHOU_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
     "KUAISHOU_BROWSER_DISCOVERY_ENABLED", True

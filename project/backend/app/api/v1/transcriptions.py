@@ -375,14 +375,16 @@ def retry_cloud_transcription(
 @router.get("", response_model=list[TranscriptionResponse])
 def list_transcriptions(
     limit: int = 50,
+    include_mock: bool = False,
     service=Depends(get_transcription_service),
 ):
-    """从 SQLite 加载转写历史。"""
+    """从 SQLite 加载转写历史；默认不混入演示任务。"""
     safe_limit = max(1, min(limit, 100))
     tasks = [
         task
         for task in service.repository.list_tasks()
         if getattr(task, "kind", None) == TaskKind.TRANSCRIPTION
+        and (include_mock or not getattr(task, "is_mock", False))
     ][:safe_limit]
     return [_to_response(task, service) for task in tasks]
 

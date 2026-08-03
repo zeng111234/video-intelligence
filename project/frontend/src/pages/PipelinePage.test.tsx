@@ -33,6 +33,7 @@ import {
   saveProductionWorkspaceConfiguration,
   startCrawlerBrowserDiscovery,
   startProductionBatch,
+  trainCloudAvatar,
   trainCloudVoice,
 } from "../api/client";
 import type {
@@ -79,6 +80,7 @@ vi.mock("../api/client", async () => {
     saveProductionWorkspaceConfiguration: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
     startProductionBatch: vi.fn(),
+    trainCloudAvatar: vi.fn(),
     trainCloudVoice: vi.fn(),
     uploadAvatarAsset: vi.fn(),
   };
@@ -371,6 +373,21 @@ describe("PipelinePage customer workspace", () => {
           supports_cover: false,
           missing_configuration: [],
         },
+        {
+          platform: "bilibili",
+          enabled: false,
+          display_name: "哔哩哔哩",
+          mode: "manual",
+          provider_name: "sandbox_bilibili",
+          requires_account: false,
+          setup_required: false,
+          manual_only: true,
+          manual_fallback: true,
+          supports_scheduled: false,
+          supports_tags: true,
+          supports_cover: false,
+          missing_configuration: [],
+        },
       ],
     });
     vi.mocked(listPublishAccounts).mockResolvedValue([]);
@@ -457,6 +474,13 @@ describe("PipelinePage customer workspace", () => {
       default_publish_platforms: ["douyin"],
       bundled_compute: true,
     });
+    vi.mocked(saveProductionWorkspaceConfiguration).mockResolvedValue({
+      configured: true,
+      rights_holder: "测试商家",
+      default_profile_id: profile.profile_id,
+      default_publish_platforms: ["douyin"],
+      bundled_compute: true,
+    });
   });
 
   afterEach(() => {
@@ -497,23 +521,26 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    expect(await screen.findByText("开工前准备")).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "抖音" })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "小红书" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("checkbox", { name: "小红书" }));
-    fireEvent.change(screen.getByPlaceholderText("公司名称或本人姓名"), { target: { value: "测试商家" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
+    expect(await screen.findByRole("dialog", { name: "创作设置" })).toBeTruthy();
+    expect(await screen.findByText("4 个平台可用")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "抖音" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "小红书" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "B站" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "哔哩哔哩" })).toBeNull();
+    expect(screen.queryByPlaceholderText("公司名称或本人姓名")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "小红书" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并开始创作" }));
 
     await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalledWith(
       expect.objectContaining({
-        rightsHolder: "测试商家",
+        rightsHolder: "老板口播 IP",
         agreementAccepted: true,
         defaultPublishPlatforms: ["douyin", "xiaohongshu"],
       }),
     ));
   });
 
-  it("requires selected publishing accounts to be scanned and verified in the workspace", async () => {
+  it("keeps publishing login separate and does not block video creation", async () => {
     vi.mocked(listPublishPlatforms).mockResolvedValue({
       platforms: [{
         platform: "douyin",
@@ -534,27 +561,51 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    const settingsButton = (await screen.findByText("修改设置")).closest("button");
-    fireEvent.click(settingsButton!);
-    expect(await screen.findByText("未登录")).toBeTruthy();
+    fireEvent.click((await screen.findByText("修改设置")).closest("button")!);
+    expect(await screen.findByText("1 个待登录")).toBeTruthy();
+    expect(screen.getByText("未登录不影响制作，确认发布前完成即可")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
-    expect(await screen.findByText(/请先完成发布账号扫码核验：抖音/)).toBeTruthy();
-    expect(saveProductionWorkspaceConfiguration).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "保存并开始创作" }));
+    await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalled());
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "添加并扫码" }));
+  it("manages each publishing login in a separate dialog", async () => {
+    vi.mocked(listPublishPlatforms).mockResolvedValue({
+      platforms: [{
+        platform: "douyin",
+        enabled: true,
+        display_name: "抖音本机扫码发布",
+        mode: "local_browser",
+        provider_name: "douyin_local_browser",
+        requires_account: true,
+        setup_required: true,
+        manual_only: false,
+        manual_fallback: true,
+        supports_scheduled: false,
+        supports_tags: true,
+        supports_cover: false,
+        missing_configuration: [],
+      }],
+    });
+
+    renderPage();
+
+    fireEvent.click((await screen.findByText("修改设置")).closest("button")!);
+    expect(await screen.findByRole("dialog", { name: "创作设置" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /管理发布账号/ }));
+    expect(await screen.findByText("每个发布网站都要单独登录。现在可以先制作视频，确认发布前再补齐未登录账号。")).toBeTruthy();
+    expect(screen.getByText("未登录")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "登录抖音" }));
     await waitFor(() => expect(createPublishAccount).toHaveBeenCalledWith({
       platform: "douyin",
       name: "公司主号",
     }));
     expect(connectPublishAccount).toHaveBeenCalledWith("pubacc-douyin");
 
-    fireEvent.click(await screen.findByRole("button", { name: "我已登录，检查状态" }));
+    fireEvent.click(await screen.findByRole("button", { name: "检查抖音登录" }));
     await waitFor(() => expect(getPublishAccountStatus).toHaveBeenCalledWith("pubacc-douyin"));
-    expect(await screen.findByText("已核验可发布")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "保存设置并进入工作台" }));
-    await waitFor(() => expect(saveProductionWorkspaceConfiguration).toHaveBeenCalled());
+    expect((await screen.findAllByText("已登录")).length).toBeGreaterThan(0);
   });
 
   it("keeps the workspace behind setup until the material browser is connected", async () => {
@@ -572,14 +623,17 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage();
 
-    expect(screen.queryByText("开工前准备")).toBeNull();
+    expect(screen.queryByText("创作设置")).toBeNull();
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
-    expect(await screen.findByText("先连接至少一个素材平台")).toBeTruthy();
+    expect(await screen.findByText("等待连接")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "保存并开始创作" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /管理素材网站/ }));
+    expect(await screen.findByText("素材网站只用于找素材，与发布账号相互独立。以后增加新网站也会集中在这里管理。")).toBeTruthy();
+    expect(screen.getByText("先连接至少一个素材网站")).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录抖音热点宝" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录快手" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录小红书" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录B站" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "登录小红书" })).toBeNull();
-    expect((screen.getByRole("button", { name: "保存设置并进入工作台" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "登录快手" }));
     await waitFor(() => expect(startCrawlerBrowserDiscovery).toHaveBeenCalledWith("kuaishou"));
@@ -596,7 +650,7 @@ describe("PipelinePage customer workspace", () => {
       message: "素材浏览器已连接。",
     });
     fireEvent.click(screen.getByRole("button", { name: "我已登录，刷新状态" }));
-    await waitFor(() => expect(screen.getByText("三个素材平台都已连接")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("所有素材网站都已可用")).toBeTruthy());
   });
 
   it("shows the workspace without waiting for the material browser status check", async () => {
@@ -641,9 +695,21 @@ describe("PipelinePage customer workspace", () => {
     expect(settingsButton).toBeTruthy();
     fireEvent.click(settingsButton!);
 
-    expect(await screen.findByRole("dialog", { name: "开工前准备" })).toBeTruthy();
-    expect(screen.getByDisplayValue("测试商家")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "换一个" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "创作设置" })).toBeTruthy();
+    expect(screen.queryByDisplayValue("测试商家")).toBeNull();
+    expect(screen.getByRole("button", { name: "更换" })).toBeTruthy();
+  });
+
+  it("opens the creation settings from each arrow row", async () => {
+    renderPage();
+
+    const personRow = await screen.findByRole("button", { name: "修改出镜人设置：企业主形象" });
+    expect(screen.getByRole("button", { name: "修改音色设置：企业主音色" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "修改发布网站设置：抖音" })).toBeTruthy();
+
+    fireEvent.click(personRow);
+
+    expect(await screen.findByRole("dialog", { name: "创作设置" })).toBeTruthy();
   });
 
   it("shows the workspace frame instead of a blank spinner while core settings load", () => {
@@ -663,10 +729,10 @@ describe("PipelinePage customer workspace", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
-    expect(await screen.findByRole("button", { name: "换一个" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "更换" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "新增出镜人" })).toBeTruthy();
 
-    const setupDialog = screen.getByRole("dialog", { name: "开工前准备" });
+    const setupDialog = screen.getByRole("dialog", { name: "创作设置" });
     const closeButton = setupDialog.querySelector<HTMLButtonElement>(".ant-modal-close");
     expect(closeButton).toBeTruthy();
     fireEvent.click(closeButton!);
@@ -681,8 +747,12 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
     fireEvent.click(await screen.findByRole("button", { name: "新增出镜人" }));
     expect(await screen.findByRole("button", { name: "保存并使用这个出镜人" })).toBeTruthy();
+    expect(screen.getByText("出镜人名称")).toBeTruthy();
+    expect(screen.getByText("保存后会用这个名称显示在创作设置里。")).toBeTruthy();
     expect(screen.getByRole("button", { name: "选择形象：企业主形象" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "选择形象：大树1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "上传人脸素材" })).toBeTruthy();
+    expect(screen.getByText("上传人脸训练视频")).toBeTruthy();
     expect(screen.getAllByAltText("企业主形象 形象预览").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("大树1 形象预览").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("形象选择列表")).toBeTruthy();
@@ -695,26 +765,55 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.queryByText("短视频一键优化")).toBeNull();
   });
 
-  it("switches from every ready avatar and voice, not only from saved profiles", async () => {
+  it("keeps the person name synced with avatar choices until it is edited", async () => {
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
 
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
-    fireEvent.click(await screen.findByRole("button", { name: "换一个" }));
+    fireEvent.click(await screen.findByRole("button", { name: "新增出镜人" }));
+    const nameInput = screen.getByRole("textbox", { name: "出镜人名称" }) as HTMLInputElement;
 
-    expect(await screen.findByText("选择出镜人和声音")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "选择形象：企业主形象" })).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "选择形象：企业主形象" }));
+    expect(nameInput.value).toBe("企业主形象");
+
     fireEvent.click(screen.getByRole("button", { name: "选择形象：大树1" }));
-    fireEvent.click(screen.getByRole("button", { name: "使用这个出镜组合" }));
-
-    await waitFor(() => expect(createProductionProfile).toHaveBeenCalledWith(expect.objectContaining({
-      avatar_id: "avatar-dashu",
-      voice_id: "voice-dashu",
-    })));
+    expect(nameInput.value).toBe("大树1");
   });
 
-  it("reuses an already saved combination even when it is not in the ready-profile list", async () => {
+  it("uploads an authorized face-training video from the add-person form", async () => {
+    vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+    vi.mocked(trainCloudAvatar).mockResolvedValue({
+      asset_id: "avatar-training",
+      kind: "avatar",
+      name: "老板本人形象",
+      preview_url: "/api/v1/avatar/assets/avatar-training/media",
+      authorized: true,
+      preview_type: "video",
+      status: "training",
+      status_message: "公司云端正在训练形象。",
+      source_type: "cloud",
+    });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "新增出镜人" }));
+    const uploadFaceButton = await screen.findByRole("button", { name: "上传人脸素材" });
+    expect(uploadFaceButton.hasAttribute("disabled")).toBe(false);
+
+    const fileInput = uploadFaceButton.closest(".ant-upload-wrapper")?.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(fileInput).toBeTruthy();
+    expect(fileInput?.getAttribute("accept")).toContain("video/mp4");
+    const file = new File(["face"], "老板本人形象.mp4", { type: "video/mp4" });
+    fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    await waitFor(() => expect(trainCloudAvatar).toHaveBeenCalledWith({ file, name: "老板本人形象" }));
+    expect(await screen.findByText("公司云端正在训练形象。")).toBeTruthy();
+    expect(screen.getByText("正在准备的形象：老板本人形象。完成后即可选择。")).toBeTruthy();
+  });
+
+  it("keeps switching an existing person separate from creating a new person", async () => {
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
     vi.mocked(listProductionProfiles).mockResolvedValue({
       items: [
@@ -732,12 +831,30 @@ describe("PipelinePage customer workspace", () => {
     renderPage();
 
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
-    fireEvent.click(await screen.findByRole("button", { name: "换一个" }));
-    fireEvent.click(await screen.findByRole("button", { name: "选择形象：大树1" }));
-    fireEvent.click(screen.getByRole("button", { name: "使用这个出镜组合" }));
+    fireEvent.click(await screen.findByRole("button", { name: "更换" }));
 
-    await waitFor(() => expect(screen.getByText("已切换到这个出镜人和声音。")).toBeTruthy());
+    expect(await screen.findByText("选择已有出镜人")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "当前出镜人：老板口播 IP" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "当前出镜人：老板口播 IP" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByPlaceholderText("出镜人名称")).toBeNull();
+    expect(screen.queryByLabelText("形象选择列表")).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存并使用这个出镜人" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "切换到出镜人：大树1" }));
+
+    await waitFor(() => expect(screen.getByText("已切换到“大树1”。")).toBeTruthy());
     expect(createProductionProfile).not.toHaveBeenCalled();
+  });
+
+  it("explains when there is no other saved person to switch to", async () => {
+    vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
+    fireEvent.click(await screen.findByRole("button", { name: "更换" }));
+
+    expect(await screen.findByText("还没有其他已保存的出镜人。如需创建新的，请返回点击“新增出镜人”。")).toBeTruthy();
   });
 
   it("saves a new person without asking the customer for an editing template", async () => {
@@ -747,11 +864,14 @@ describe("PipelinePage customer workspace", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "开始创作" }));
     fireEvent.click(await screen.findByRole("button", { name: "新增出镜人" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "出镜人名称" }), { target: { value: "店长本人" } });
     fireEvent.click(await screen.findByRole("button", { name: "选择形象：企业主形象" }));
+    expect((screen.getByRole("textbox", { name: "出镜人名称" }) as HTMLInputElement).value).toBe("店长本人");
     fireEvent.click(screen.getByRole("button", { name: "保存并使用这个出镜人" }));
 
     await waitFor(() => expect(createProductionProfile).toHaveBeenCalledTimes(1));
     const payload = vi.mocked(createProductionProfile).mock.calls[0][0];
+    expect(payload.name).toBe("店长本人");
     expect(payload.avatar_id).toBe("avatar-ready");
     expect(payload.voice_id).toBe("voice-ready");
     expect("edit_template_id" in payload).toBe(false);

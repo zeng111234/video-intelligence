@@ -104,7 +104,8 @@ class LocalBrowserAutoPublisher:
             "enabled": True,
             "requires_account": True,
             "setup_required": True,
-            "manual_only": False,
+            # 小红书当前仅支持在官方页面准备内容，最终发布必须由操作者点击。
+            "manual_only": self._platform == PublishPlatform.XIAOHONGSHU,
             "manual_fallback": True,
             "supports_scheduled": False,
             "supports_tags": True,
@@ -131,7 +132,15 @@ class LocalBrowserAutoPublisher:
         base_outputs = {"account_id": account.account_id, "account_name": account.name}
         if not prepared:
             return self._action_required_task(video, target, now, detail, base_outputs)
-        if not (target.auto_publish_authorized or account.auto_publish_authorized):
+        if (
+            self._platform == PublishPlatform.XIAOHONGSHU
+            or not (target.auto_publish_authorized or account.auto_publish_authorized)
+        ):
+            final_action = (
+                "请在小红书官方页面检查封面、可见范围和文案后手动点击发布。"
+                if self._platform == PublishPlatform.XIAOHONGSHU
+                else "请在官方页面检查封面、可见范围和文案后手动点击最终发布；或为该账号开启“授权自动发布”。"
+            )
             return PublishTask(
                 task_id=f"publish-{uuid4().hex[:10]}",
                 title=f"{self._spec.display_name}待确认 · {target.title[:20]}",
@@ -144,7 +153,7 @@ class LocalBrowserAutoPublisher:
                 publish_status=PublishStatus.MANUAL_READY,
                 provider_name=f"{self._platform.value}_local_browser",
                 stage="已在官方页面选择视频并填写内容，等待最终发布确认",
-                action_required="请在官方页面检查封面、可见范围和文案后手动点击最终发布；或为该账号开启“授权自动发布”。",
+                action_required=final_action,
                 is_mock=False,
                 outputs={**base_outputs, "final_publish_requires_user": "true"},
             )

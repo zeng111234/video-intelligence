@@ -16,7 +16,6 @@ import {
   Progress,
   Radio,
   Row,
-  Slider,
   Space,
   Tag,
   Typography,
@@ -26,11 +25,13 @@ import {
   AudioOutlined,
   CameraOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   ExclamationCircleOutlined,
   PlayCircleOutlined,
-  ReloadOutlined,
+  RightOutlined,
   RocketOutlined,
   StopOutlined,
   UploadOutlined,
@@ -132,6 +133,7 @@ export default function AvatarPage() {
   const [visualUploading, setVisualUploading] = useState<"product" | "background" | null>(null);
   const [productShowcaseSubmitting, setProductShowcaseSubmitting] = useState(false);
   const [productShowcaseJob, setProductShowcaseJob] = useState<VideoEditorJob | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const currentTaskRef = useRef<HTMLDivElement>(null);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
@@ -156,6 +158,10 @@ export default function AvatarPage() {
   const activeJob = useMemo(
     () => jobs.find((item) => item.task_id === activeJobId) || jobs[0] || null,
     [activeJobId, jobs],
+  );
+  const recentJobs = useMemo(
+    () => jobs.filter((item) => item.task_id !== activeJob?.task_id).slice(0, 5),
+    [activeJob?.task_id, jobs],
   );
   const selectedAvatar = useMemo(
     () => avatars.find((item) => item.asset_id === avatarId) || null,
@@ -234,7 +240,7 @@ export default function AvatarPage() {
       ? "生成服务尚未就绪"
       : capability?.mode === "sandbox"
         ? "创建演示任务（不生成真实成片）"
-        : "提交数字人口播任务";
+        : "生成数字人视频";
 
   const refresh = useCallback(async () => {
     const [nextCapability, nextAssets] = await Promise.all([
@@ -701,19 +707,10 @@ export default function AvatarPage() {
   }, [handleRecordVoice, recording]);
 
   return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={4} style={{ margin: 0 }}>
-          <UserOutlined /> 数字人口播生成
-        </Title>
-        <Text type="secondary">
-          选择形象和声音，输入口播文案后生成数字人成片。
-        </Text>
-      </div>
-
+    <div className="avatar-studio-page">
       {capability && (serviceUnavailable || capability.mode === "sandbox") && (
         <Alert
-          style={{ marginBottom: 16 }}
+          className="avatar-capability-alert"
           type={serviceUnavailable ? "warning" : "info"}
           showIcon
           message={
@@ -725,100 +722,74 @@ export default function AvatarPage() {
         />
       )}
 
-      {/* 生成配置与任务 */}
-      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title={<Space><RocketOutlined /> 生成配置</Space>} loading={loading}>
-            <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      <Row gutter={[28, 24]} align="stretch" className="avatar-studio-layout">
+        <Col xs={24} lg={16} className="avatar-composer-column">
+          <section className="avatar-composer" aria-label="生成配置">
+            <div className="avatar-composer-heading">
+              <Title level={2}>生成配置</Title>
+              <Text type="secondary">选好形象和声音，再输入口播文案。</Text>
+            </div>
+
+            <div className="avatar-form-stack">
+              <Row gutter={[16, 16]}>
+                <Col xs={24} sm={12}>
+                  <Text strong className="avatar-field-label">形象</Text>
+                  <Button
+                    block
+                    onClick={() => setAvatarLibraryOpen(true)}
+                    disabled={!avatars.length && !canAddAvatarMaterial}
+                    data-testid="avatar-library-trigger"
+                    className="avatar-choice-button"
+                  >
+                    <span className="avatar-choice-content">
+                      <UserOutlined />
+                      <Text strong ellipsis>{selectedAvatar?.name || "未选择"}</Text>
+                      {selectedAvatar && !isReadyAsset(selectedAvatar) && (
+                        <Tag color={selectedAvatar.status === "training" ? "processing" : "error"}>
+                          {selectedAvatar.status === "training" ? "训练中" : "未就绪"}
+                        </Tag>
+                      )}
+                      <DownOutlined />
+                    </span>
+                  </Button>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Text strong className="avatar-field-label">声音</Text>
+                  <Button
+                    block
+                    onClick={() => setVoiceLibraryOpen(true)}
+                    disabled={!voices.length && !canAddVoiceMaterial}
+                    data-testid="voice-library-trigger"
+                    className="avatar-choice-button"
+                  >
+                    <span className="avatar-choice-content">
+                      <AudioOutlined />
+                      <Text strong ellipsis>{selectedVoice?.name || "未选择"}</Text>
+                      {selectedVoice && !isReadyAsset(selectedVoice) && (
+                        <Tag color={selectedVoice.status === "training" ? "processing" : "warning"}>
+                          {selectedVoice.status === "training" ? "训练中" : "未就绪"}
+                        </Tag>
+                      )}
+                      <DownOutlined />
+                    </span>
+                  </Button>
+                </Col>
+              </Row>
+
               <div>
-                <Text strong>素材</Text>
-                <Row gutter={[8, 8]} style={{ marginTop: 8 }}>
-                  <Col xs={24} sm={12}>
-                    <Button
-                      block
-                      onClick={() => setAvatarLibraryOpen(true)}
-                      disabled={!avatars.length && !canAddAvatarMaterial}
-                      data-testid="avatar-library-trigger"
-                      style={{ height: 40, paddingInline: 10 }}
-                    >
-                      <span style={{ width: "100%", display: "flex", alignItems: "center", gap: 7 }}>
-                        <UserOutlined />
-                        <Text type="secondary">形象</Text>
-                        <Text strong ellipsis style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                          {selectedAvatar?.name || "未选择"}
-                        </Text>
-                        {selectedAvatar && (
-                          <Tag
-                            color={isReadyAsset(selectedAvatar) ? "success" : selectedAvatar.status === "training" ? "processing" : "error"}
-                            style={{ marginInlineEnd: 0 }}
-                          >
-                            {isReadyAsset(selectedAvatar) ? "可用" : selectedAvatar.status === "training" ? "训练中" : selectedAvatar.status === "failed" ? "失败" : "未就绪"}
-                          </Tag>
-                        )}
-                        <Text type="secondary">更换</Text>
-                      </span>
-                    </Button>
-                  </Col>
-                  <Col xs={24} sm={12}>
-                    <Button
-                      block
-                      onClick={() => setVoiceLibraryOpen(true)}
-                      disabled={!voices.length && !canAddVoiceMaterial}
-                      data-testid="voice-library-trigger"
-                      style={{ height: 40, paddingInline: 10 }}
-                    >
-                      <span style={{ width: "100%", display: "flex", alignItems: "center", gap: 7 }}>
-                        <AudioOutlined />
-                        <Text type="secondary">声音</Text>
-                        <Text strong ellipsis style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-                          {selectedVoice?.name || "未选择"}
-                        </Text>
-                        {selectedVoice && (
-                          <Tag
-                            color={
-                              isReadyAsset(selectedVoice)
-                                ? "success"
-                                : selectedVoice.status === "training"
-                                  ? "processing"
-                                  : selectedVoice.status === "failed"
-                                    ? "error"
-                                    : "warning"
-                            }
-                            style={{ marginInlineEnd: 0 }}
-                          >
-                            {isReadyAsset(selectedVoice)
-                              ? "可用"
-                              : selectedVoice.status === "training"
-                                ? "训练中"
-                                : selectedVoice.status === "pending_configuration"
-                                  ? "待训练"
-                                  : selectedVoice.status === "failed"
-                                    ? "失败"
-                                    : "未就绪"}
-                          </Tag>
-                        )}
-                        <Text type="secondary">更换</Text>
-                      </span>
-                    </Button>
-                  </Col>
-                </Row>
-              </div>
-              <div>
-                <Text strong>视频名称（选填）</Text>
+                <Text strong className="avatar-field-label">视频名称（选填）</Text>
                 <Input
                   value={videoName}
                   onChange={(event) => setVideoName(event.target.value)}
-                  maxLength={100}
-                  placeholder={keywordFromQuery ? `留空自动命名为“${keywordFromQuery}1”` : "留空自动命名为“数字人视频1”"}
-                  style={{ marginTop: 8 }}
+                  maxLength={50}
+                  showCount
+                  placeholder="给视频取个名字，方便管理"
+                  className="avatar-name-input"
                 />
-                <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
-                  重名时系统会自动追加序号。
-                </Text>
               </div>
 
               <div>
-                <Text strong>口播文案</Text>
+                <Text strong className="avatar-field-label">口播文案</Text>
                 <TextArea
                   rows={6}
                   value={scriptText}
@@ -826,16 +797,16 @@ export default function AvatarPage() {
                   maxLength={capability?.max_script_chars || 240}
                   showCount
                   placeholder="输入数字人要说的内容，数字人会按文案自然播完。"
-                  style={{ marginTop: 8 }}
+                  className="avatar-script-input"
                 />
                 {sourceTaskId && (
-                  <Text type="secondary" style={{ display: "block", marginTop: 6 }}>
-                    已带入人工确认后的 LLM 口播稿，来源任务：{sourceTaskId}
+                  <Text type="secondary" className="avatar-inline-note">
+                    已带入人工确认后的口播稿，来源任务：{sourceTaskId}
                   </Text>
                 )}
                 {selectedRecordedProfile && (
                   <Alert
-                    style={{ marginTop: 8 }}
+                    className="avatar-inline-note"
                     type="info"
                     showIcon
                     message="录音驱动模式"
@@ -844,222 +815,207 @@ export default function AvatarPage() {
                 )}
               </div>
 
-              <div>
-                <Text strong>输出规格</Text>
-                <Input value="1080x1920 · 9:16" disabled style={{ marginTop: 8 }} />
+              <div className="avatar-output-settings">
+                <div className="avatar-fixed-output">
+                  <Text type="secondary">固定输出</Text>
+                  <Text strong>9:16 · 1080P</Text>
+                </div>
+                <div className="avatar-speech-rate">
+                  <Text strong>语速</Text>
+                  <Radio.Group
+                    value={speechRate}
+                    onChange={(event) => setSpeechRate(event.target.value)}
+                    optionType="button"
+                    buttonStyle="solid"
+                    size="small"
+                    options={[
+                      { label: "0.8x", value: 0.8 },
+                      { label: "0.9x", value: 0.9 },
+                      { label: "1.0x", value: 1 },
+                      { label: "1.1x", value: 1.1 },
+                      { label: "1.2x", value: 1.2 },
+                    ]}
+                  />
+                </div>
+                <Button
+                  type="primary"
+                  icon={<RocketOutlined />}
+                  loading={submitting}
+                  disabled={
+                    serviceUnavailable ||
+                    selectedProfileUnavailable ||
+                    !selectedAvatarReady ||
+                    !selectedVoiceReady
+                  }
+                  onClick={handleSubmit}
+                  className="avatar-primary-action"
+                >
+                  {submitButtonText}
+                </Button>
               </div>
-
-              <div>
-                <Text strong>语速：{speechRate.toFixed(1)}x</Text>
-                <Slider
-                  value={speechRate}
-                  onChange={setSpeechRate}
-                  min={0.8}
-                  max={1.2}
-                  step={0.1}
-                />
-              </div>
-
-              <Button
-                type="primary"
-                icon={<RocketOutlined />}
-                size="large"
-                block
-                loading={submitting}
-                disabled={
-                  serviceUnavailable ||
-                  selectedProfileUnavailable ||
-                  !selectedAvatarReady ||
-                  !selectedVoiceReady
-                }
-                onClick={handleSubmit}
-              >
-                {submitButtonText}
-              </Button>
-            </Space>
-          </Card>
+            </div>
+          </section>
         </Col>
 
-        <Col xs={24} lg={12}>
-          <div ref={currentTaskRef}>
-            <Card
-              size="small"
-              title={<Space><PlayCircleOutlined /> 当前任务</Space>}
-              extra={<Button type="text" size="small" icon={<ReloadOutlined />} onClick={refresh}>刷新</Button>}
-              style={{ marginBottom: 16 }}
-            >
-            {activeJob ? (
-              <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-                  <Space size={8} wrap style={{ flex: "1 1 180px", minWidth: 0 }}>
-                    <Tag color={statusColor(activeJob.status)}>
-                      {statusLabel(activeJob.status)}
-                    </Tag>
+        <Col xs={24} lg={8} className="avatar-task-column">
+          <Card className="avatar-task-rail" loading={loading}>
+            <div ref={currentTaskRef} className="avatar-current-task">
+              <div className="avatar-task-heading">
+                <Title level={4}>当前任务</Title>
+              </div>
+              {activeJob ? (
+                <Space direction="vertical" size={14} style={{ width: "100%" }}>
+                  <Space size={10} wrap>
+                    <Tag color={statusColor(activeJob.status)}>{statusLabel(activeJob.status)}</Tag>
                     {activeJob.is_mock && <Tag color="blue">演示</Tag>}
-                    <Text strong ellipsis style={{ maxWidth: 180 }}>{activeJob.title}</Text>
+                    <Text strong ellipsis className="avatar-task-title">{activeJob.title}</Text>
                   </Space>
+                  <Text type="secondary"><ClockCircleOutlined /> {new Date(activeJob.created_at).toLocaleString()}</Text>
+                  <div className="avatar-task-meta">
+                    <Text type="secondary">形象</Text><Text>{activeJob.avatar_name}</Text>
+                    <Text type="secondary">声音</Text><Text>{activeJob.voice_name}</Text>
+                  </div>
                   {activeJob.result_url && (
-                    <Space size={0} wrap>
-                      <Button
-                        type="link"
-                        size="small"
-                        icon={<PlayCircleOutlined />}
-                        onClick={() => void handlePlayJob(activeJob)}
-                      >
-                        播放
-                      </Button>
-                      <Button type="link" size="small" icon={<DownloadOutlined />} onClick={() => handleDownload(activeJob)}>
-                        下载
-                      </Button>
+                    <Space size={0} wrap className="avatar-task-actions">
+                      <Button type="link" icon={<PlayCircleOutlined />} onClick={() => void handlePlayJob(activeJob)}>播放</Button>
+                      <Button type="link" icon={<DownloadOutlined />} onClick={() => handleDownload(activeJob)}>下载</Button>
                       {!activeJob.is_mock && activeJob.status === "succeeded" && (
-                        <Button type="link" size="small" onClick={() => openProductShowcase(activeJob)}>
-                          产品讲解
-                        </Button>
+                        <Button type="link" onClick={() => openProductShowcase(activeJob)}>产品讲解</Button>
                       )}
                     </Space>
                   )}
-                </div>
-                {!TERMINAL_STATUSES.has(activeJob.status) && (
-                  <>
-                    <Progress
-                      percent={activeJob.progress}
-                      size="small"
-                      status={activeJob.status === "failed" ? "exception" : "active"}
+                  {!TERMINAL_STATUSES.has(activeJob.status) && (
+                    <>
+                      <Progress percent={activeJob.progress} size="small" status={activeJob.status === "failed" ? "exception" : "active"} />
+                      <Text type="secondary">{activeJob.stage}</Text>
+                    </>
+                  )}
+                  {activeJob.error_message && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      icon={<ExclamationCircleOutlined />}
+                      message={activeJob.error_message}
+                      action={activeJob.can_retry_video_submit ? <Button size="small" onClick={() => handleRetryVideo(activeJob)}>仅重试视频</Button> : undefined}
                     />
-                    <Text type="secondary">{activeJob.stage}</Text>
-                  </>
-                )}
-                {activeJob.error_message && (
-                  <Alert
-                    type="error"
-                    showIcon
-                    icon={<ExclamationCircleOutlined />}
-                    message={activeJob.error_message}
-                    action={
-                      activeJob.can_retry_video_submit ? (
-                        <Button
-                          size="small"
-                          onClick={() => handleRetryVideo(activeJob)}
-                        >
-                          仅重试视频
-                        </Button>
-                      ) : undefined
-                    }
-                  />
-                )}
-                {activeJob.status === "succeeded" && !activeJob.result_url && (
-                  <Text type="secondary">任务已完成，成片暂不可下载。</Text>
-                )}
-              </Space>
-            ) : (
-              <Empty description="暂无真实任务" />
-            )}
-            </Card>
-          </div>
+                  )}
+                  {activeJob.status === "succeeded" && !activeJob.result_url && (
+                    <Text type="secondary">任务已完成，成片暂不可下载。</Text>
+                  )}
+                </Space>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有任务，完成左侧内容即可开始" />
+              )}
+            </div>
 
-          <Card title={capability?.mode === "sandbox" ? "演示任务历史" : "真实任务历史"}>
-            {jobs.length ? (
-              <List
-                dataSource={jobs}
-                renderItem={(item) => (
-                  <List.Item
-                    style={{
-                      display: "block",
-                      cursor: "pointer",
-                      borderRadius: 8,
-                      padding: 12,
-                      background: activeJobId === item.task_id ? "#f5f0ff" : undefined,
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`查看${item.title}任务进度`}
-                    onClick={() => void handleViewJob(item.task_id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        void handleViewJob(item.task_id);
-                      }
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "flex-start", flexWrap: "wrap", gap: 8, width: "100%" }}>
-                      <List.Item.Meta
-                        style={{ flex: "1 1 200px", minWidth: 0, marginBottom: 0 }}
-                        avatar={<CheckCircleOutlined style={{ color: item.status === "succeeded" ? "#10b981" : "#64748b" }} />}
-                        title={
-                          <Space wrap>
-                            <Text strong>{item.title}</Text>
-                            <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
-                            {item.is_mock && <Tag>演示</Tag>}
-                          </Space>
-                        }
-                        description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
-                      />
-                      <Space size={0} wrap>
-                        {item.result_url && (
-                          <Button
-                            type="link"
-                            icon={<PlayCircleOutlined />}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handlePlayJob(item);
-                            }}
-                          >
-                            播放
-                          </Button>
-                        )}
-                        {item.result_url && (
-                          <Button
-                            type="link"
-                            icon={<DownloadOutlined />}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              void handleDownload(item);
-                            }}
-                          >
-                            下载
-                          </Button>
-                        )}
-                        {!item.is_mock && item.status === "succeeded" && item.result_url && (
-                          <Button
-                            type="link"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              openProductShowcase(item);
-                            }}
-                          >
-                            产品讲解
-                          </Button>
-                        )}
-                        <span onClick={(event) => event.stopPropagation()}>
-                          <Popconfirm
-                            title="删除这条数字人任务？"
-                            description="只删除任务记录，不会删除已下载到本地的成片。"
-                            okText="删除"
-                            okButtonProps={{ danger: true }}
-                            cancelText="取消"
-                            onConfirm={() => handleDeleteJob(item.task_id)}
-                          >
-                            <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
-                          </Popconfirm>
+            <div className="avatar-history-section">
+              <div className="avatar-history-summary">
+                <Title level={4}>历史任务</Title>
+                <div className="avatar-history-link">
+                  <Text>{jobs.length}条</Text>
+                  <Button type="link" onClick={() => setHistoryOpen(true)} disabled={!jobs.length}>
+                    查看全部 <RightOutlined />
+                  </Button>
+                </div>
+              </div>
+
+              {recentJobs.length > 0 && (
+                <div className="avatar-recent-jobs" aria-label="最近历史任务">
+                  {recentJobs.map((item) => (
+                    <button
+                      type="button"
+                      key={item.task_id}
+                      className="avatar-recent-job"
+                      aria-label={`查看历史任务：${item.title}`}
+                      onClick={() => void handleViewJob(item.task_id)}
+                    >
+                      <span className="avatar-recent-job-main">
+                        <span className="avatar-recent-job-title">{item.title}</span>
+                        <span className="avatar-recent-job-meta">
+                          {new Date(item.created_at).toLocaleDateString()} · {item.avatar_name}
                         </span>
-                      </Space>
-                    </div>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Empty description="提交任务后会显示真实历史记录" />
-            )}
+                      </span>
+                      <span className="avatar-recent-job-status">
+                        <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
+                        <RightOutlined />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </Card>
         </Col>
       </Row>
+
+      <Modal
+        title={capability?.mode === "sandbox" ? "演示任务历史" : "历史任务"}
+        open={historyOpen}
+        onCancel={() => setHistoryOpen(false)}
+        width={720}
+        footer={null}
+        destroyOnHidden
+        className="avatar-history-modal"
+      >
+        {jobs.length ? (
+          <List
+            dataSource={jobs}
+            pagination={jobs.length > 6 ? {
+              pageSize: 6,
+              size: "small",
+              showSizeChanger: false,
+              hideOnSinglePage: true,
+              showLessItems: true,
+            } : false}
+            renderItem={(item) => (
+              <List.Item
+                className={activeJobId === item.task_id ? "avatar-history-item is-active" : "avatar-history-item"}
+                role="button"
+                tabIndex={0}
+                aria-label={`查看${item.title}任务进度`}
+                onClick={() => {
+                  void handleViewJob(item.task_id);
+                  setHistoryOpen(false);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    void handleViewJob(item.task_id);
+                    setHistoryOpen(false);
+                  }
+                }}
+              >
+                <div className="avatar-history-item-content">
+                  <List.Item.Meta
+                    avatar={<CheckCircleOutlined style={{ color: item.status === "succeeded" ? "#10b981" : "#64748b" }} />}
+                    title={<Space wrap><Text strong>{item.title}</Text><Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>{item.is_mock && <Tag>演示</Tag>}</Space>}
+                    description={`${new Date(item.created_at).toLocaleString()} · ${item.avatar_name} · ${item.voice_name}`}
+                  />
+                  <Space size={0} wrap>
+                    {item.result_url && <Button type="link" icon={<PlayCircleOutlined />} onClick={(event) => { event.stopPropagation(); void handlePlayJob(item); }}>播放</Button>}
+                    {item.result_url && <Button type="link" icon={<DownloadOutlined />} onClick={(event) => { event.stopPropagation(); void handleDownload(item); }}>下载</Button>}
+                    {!item.is_mock && item.status === "succeeded" && item.result_url && <Button type="link" onClick={(event) => { event.stopPropagation(); openProductShowcase(item); }}>产品讲解</Button>}
+                    <span onClick={(event) => event.stopPropagation()}>
+                      <Popconfirm title="删除这条数字人任务？" description="只删除任务记录，不会删除已下载到本地的成片。" okText="删除" okButtonProps={{ danger: true }} cancelText="取消" onConfirm={() => handleDeleteJob(item.task_id)}>
+                        <Button type="link" danger icon={<DeleteOutlined />}>删除</Button>
+                      </Popconfirm>
+                    </span>
+                  </Space>
+                </div>
+              </List.Item>
+            )}
+          />
+        ) : (
+          <Empty description="提交任务后会显示真实历史记录" />
+        )}
+      </Modal>
 
       <Modal
         title="选择 / 添加形象"
         open={avatarLibraryOpen}
         onCancel={() => setAvatarLibraryOpen(false)}
         width={860}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <Button type="primary" onClick={() => setAvatarLibraryOpen(false)}>
             完成
@@ -1199,7 +1155,7 @@ export default function AvatarPage() {
         open={voiceLibraryOpen}
         onCancel={handleCloseVoiceLibrary}
         width={760}
-        destroyOnClose
+        destroyOnHidden
         footer={
           <Button type="primary" onClick={handleCloseVoiceLibrary}>
             完成
@@ -1347,7 +1303,7 @@ export default function AvatarPage() {
         open={productShowcaseOpen}
         onCancel={() => setProductShowcaseOpen(false)}
         width={620}
-        destroyOnClose
+        destroyOnHidden
         footer={
           productShowcaseJob?.status === "succeeded"
             ? <Button type="primary" onClick={() => setProductShowcaseOpen(false)}>完成</Button>
@@ -1451,7 +1407,7 @@ export default function AvatarPage() {
         title="拍摄本人形象"
         open={cameraOpen}
         onCancel={closeCamera}
-        destroyOnClose
+        destroyOnHidden
         footer={[
           <Button key="cancel" onClick={closeCamera}>取消</Button>,
           <Button key="take-photo" type="primary" icon={<CameraOutlined />} onClick={handleTakePhoto} disabled={!cameraStream}>
@@ -1475,7 +1431,7 @@ export default function AvatarPage() {
           <Button key="close" type="primary" onClick={closePlayback}>关闭</Button>,
         ] : null}
         width={460}
-        destroyOnClose
+        destroyOnHidden
       >
         {playbackLoading ? (
           <Progress percent={60} status="active" showInfo={false} />
@@ -1485,6 +1441,434 @@ export default function AvatarPage() {
           <Empty description="成片暂时不可播放" />
         )}
       </Modal>
+
+      <style>{`
+        .avatar-studio-page {
+          width: 100%;
+          max-width: 1360px;
+          margin: 0 auto;
+        }
+
+        .avatar-capability-alert {
+          margin-bottom: 16px;
+        }
+
+        .avatar-studio-layout > .ant-col {
+          display: flex;
+        }
+
+        .avatar-composer {
+          width: 100%;
+          padding: 10px 24px 20px 26px;
+        }
+
+        .avatar-composer-heading {
+          display: flex;
+          align-items: baseline;
+          gap: 12px;
+          margin-bottom: 26px;
+        }
+
+        .avatar-composer-heading .ant-typography {
+          margin: 0;
+        }
+
+        .avatar-composer-heading h2.ant-typography {
+          color: var(--text-primary);
+          font-size: 18px;
+          line-height: 1.4;
+          font-weight: 650;
+          letter-spacing: 0;
+        }
+
+        .avatar-composer-heading .ant-typography-secondary {
+          font-size: 13px;
+        }
+
+        .avatar-form-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+        }
+
+        .avatar-field-label {
+          display: block;
+          margin-bottom: 9px;
+          color: var(--text-primary);
+          font-size: 15px;
+        }
+
+        .avatar-choice-button {
+          height: 48px;
+          padding-inline: 16px;
+          border-radius: 8px;
+          border-color: var(--border-default);
+          box-shadow: none;
+        }
+
+        .avatar-choice-button:hover:not(:disabled),
+        .avatar-choice-button:focus-visible:not(:disabled) {
+          border-color: var(--primary-500);
+          color: var(--text-primary);
+        }
+
+        .avatar-choice-content {
+          display: grid;
+          width: 100%;
+          grid-template-columns: auto minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 12px;
+          text-align: left;
+        }
+
+        .avatar-choice-content > .ant-typography {
+          min-width: 0;
+        }
+
+        .avatar-choice-content .ant-tag {
+          margin-inline-end: 0;
+        }
+
+        .avatar-name-input,
+        .avatar-name-input.ant-input-affix-wrapper {
+          min-height: 44px;
+          border-radius: 8px;
+        }
+
+        .avatar-script-input {
+          min-height: 164px !important;
+          padding: 12px 14px;
+          border-radius: 8px;
+          line-height: 1.65;
+          resize: vertical;
+        }
+
+        .avatar-inline-note {
+          display: block;
+          margin-top: 8px;
+        }
+
+        .avatar-output-settings {
+          display: flex;
+          min-height: 48px;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 10px 12px;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          background: #fff;
+        }
+
+        .avatar-fixed-output,
+        .avatar-speech-rate {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          white-space: nowrap;
+        }
+
+        .avatar-fixed-output .ant-typography,
+        .avatar-speech-rate > .ant-typography {
+          margin: 0;
+          font-size: 13px;
+        }
+
+        .avatar-speech-rate .ant-radio-button-wrapper {
+          padding-inline: 8px;
+        }
+
+        .avatar-primary-action {
+          flex: 0 0 190px;
+          height: 40px;
+          border: none;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 600;
+          background: #6d28d9;
+          box-shadow: none;
+        }
+
+        .avatar-primary-action:hover:not(:disabled),
+        .avatar-primary-action:focus-visible:not(:disabled) {
+          background: #5b21b6;
+        }
+
+        .avatar-task-rail {
+          width: 100%;
+          min-height: 0;
+          align-self: flex-start;
+          border-color: var(--border-default);
+          border-radius: 10px;
+          box-shadow: none;
+        }
+
+        .avatar-task-rail > .ant-card-body {
+          padding: 24px;
+        }
+
+        .avatar-task-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding-bottom: 16px;
+          margin-bottom: 18px;
+          border-bottom: 1px solid var(--border-default);
+        }
+
+        .avatar-task-heading h4.ant-typography,
+        .avatar-history-summary h4.ant-typography {
+          margin: 0;
+          color: var(--text-primary);
+          font-size: 20px;
+          line-height: 1.35;
+        }
+
+        .avatar-task-title {
+          max-width: 200px;
+          font-size: 15px;
+        }
+
+        .avatar-task-meta {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+          align-items: center;
+          gap: 8px 10px;
+        }
+
+        .avatar-task-actions {
+          margin-left: -12px;
+        }
+
+        .avatar-history-section {
+          padding-top: 24px;
+          margin-top: 24px;
+          border-top: 1px solid var(--border-default);
+        }
+
+        .avatar-history-summary {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+        }
+
+        .avatar-history-link {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          white-space: nowrap;
+        }
+
+        .avatar-recent-jobs {
+          display: grid;
+          gap: 10px;
+          margin-top: 16px;
+        }
+
+        .avatar-recent-job {
+          display: flex;
+          width: 100%;
+          min-height: 64px;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 11px 12px;
+          color: var(--text-primary);
+          text-align: left;
+          background: #f8fafc;
+          border: 1px solid var(--border-default);
+          border-radius: 8px;
+          cursor: pointer;
+          transition: border-color 160ms ease, background-color 160ms ease;
+        }
+
+        .avatar-recent-job:nth-child(n + 4) {
+          display: none;
+        }
+
+        .avatar-recent-job:hover,
+        .avatar-recent-job:focus-visible {
+          background: #faf7ff;
+          border-color: #c4b5fd;
+          outline: none;
+        }
+
+        .avatar-recent-job-main {
+          display: grid;
+          min-width: 0;
+          gap: 4px;
+        }
+
+        .avatar-recent-job-title {
+          overflow: hidden;
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 1.4;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .avatar-recent-job-meta {
+          overflow: hidden;
+          color: var(--text-secondary);
+          font-size: 12px;
+          line-height: 1.4;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .avatar-recent-job-status {
+          display: flex;
+          flex: 0 0 auto;
+          align-items: center;
+          gap: 4px;
+          color: var(--text-tertiary);
+          font-size: 11px;
+        }
+
+        .avatar-recent-job-status .ant-tag {
+          margin-inline-end: 0;
+        }
+
+        .avatar-history-item {
+          display: block !important;
+          padding: 14px 12px !important;
+          border-radius: 8px;
+          cursor: pointer;
+        }
+
+        .avatar-history-item.is-active {
+          background: #f5f0ff;
+        }
+
+        .avatar-history-item-content {
+          display: flex;
+          width: 100%;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .avatar-history-item-content .ant-list-item-meta {
+          flex: 1 1 280px;
+          min-width: 0;
+          margin-bottom: 0;
+        }
+
+        .avatar-history-modal .ant-modal-body {
+          max-height: min(620px, calc(100vh - 180px));
+          overflow-y: auto;
+          overscroll-behavior: contain;
+        }
+
+        .avatar-history-modal .ant-list-pagination {
+          margin-block: 18px 4px;
+          text-align: center;
+        }
+
+        @media (max-width: 1199px) {
+          .avatar-composer {
+            padding-inline: 4px;
+          }
+
+          .avatar-task-rail > .ant-card-body {
+            padding: 22px;
+          }
+        }
+
+        @media (max-width: 991px) {
+          .avatar-studio-layout > .ant-col {
+            display: block;
+          }
+
+          .avatar-task-rail {
+            min-height: 0;
+          }
+        }
+
+        @media (min-width: 992px) {
+          .avatar-composer-column {
+            flex: 0 0 64%;
+            max-width: 64%;
+          }
+
+          .avatar-task-column {
+            flex: 0 0 36%;
+            max-width: 36%;
+          }
+        }
+
+        @media (min-width: 992px) and (min-height: 1000px) {
+          .avatar-composer-heading {
+            margin-bottom: 30px;
+          }
+
+          .avatar-form-stack {
+            gap: 26px;
+          }
+
+          .avatar-script-input {
+            min-height: 320px !important;
+          }
+
+          .avatar-recent-job:nth-child(n + 4) {
+            display: flex;
+          }
+        }
+
+        @media (max-width: 576px) {
+          .avatar-composer {
+            padding: 8px 0 0;
+          }
+
+          .avatar-composer-heading {
+            display: block;
+            margin-bottom: 22px;
+          }
+
+          .avatar-composer-heading h2.ant-typography {
+            margin-bottom: 4px;
+            font-size: 18px;
+          }
+
+          .avatar-primary-action {
+            width: 100%;
+            flex-basis: auto;
+          }
+
+          .avatar-output-settings {
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 10px;
+          }
+
+          .avatar-speech-rate {
+            width: 100%;
+            justify-content: space-between;
+          }
+
+          .avatar-speech-rate .ant-radio-group {
+            display: flex;
+            flex: 1;
+          }
+
+          .avatar-speech-rate .ant-radio-button-wrapper {
+            flex: 1;
+            padding-inline: 6px;
+            text-align: center;
+          }
+
+          .avatar-task-rail > .ant-card-body {
+            padding: 20px 16px;
+          }
+
+          .avatar-task-meta {
+            grid-template-columns: auto minmax(0, 1fr);
+          }
+        }
+      `}</style>
     </div>
   );
 }

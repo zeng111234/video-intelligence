@@ -1,6 +1,6 @@
 # Video Editor Design QA
 
-- source visual truth path: `C:\Users\zeng\.codex\generated_images\019fa69b-c7d4-7de3-9421-8d01f3991581\call_JUgUOCkSsFcX7X9CxDBqux2Q.png`
+- source visual truth: 原开发机本地生成图（未作为运行依赖）
 - implementation screenshots: `data/design-qa/video-editor-v2-final.png`, `data/design-qa/video-editor-v2-subtitle.png`, `data/design-qa/video-editor-v2-subtitle-light.png`, `data/design-qa/video-editor-v2-1440.png`, `data/design-qa/video-editor-v2-1024.png`, `data/design-audit/title-redesign/06-final-strict-portrait.png`, and `data/design-audit/title-redesign/08-final-strict-caption.png`
 - comparison evidence: `data/design-qa/video-editor-v2-final-comparison.png`, `data/design-qa/video-editor-v2-subtitle-comparison.png`, `data/design-qa/video-editor-v2-subtitle-light-comparison.png`, and `data/design-audit/title-redesign/07-reference-vs-final-portrait.png`
 - desktop viewport: 1440 × 900 CSS px, density 1; narrow viewport: 1024 × 900 CSS px, density 1
@@ -35,9 +35,78 @@ The selected reference and browser preview were combined into the two comparison
 
 final result: passed
 
+---
+
+# Avatar Compact Task Rail Follow-up
+
+- source visual truth: user browser annotation on `/avatar` at 1355 × 906 CSS px, identifying the forced full-height task rail as excessive blank space
+- matched before-state capture: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\12-right-rail-before-1355.png`
+- browser-rendered implementation screenshot: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\12-right-rail-compact-final.png`
+- normalized full-view comparison evidence: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\13-right-rail-compact-comparison.png`
+- source and implementation pixels: 1355 × 906 each; CSS viewport: 1355 × 906; device scale factor: 1; in-app capture surface scale: 0.70
+- state: light theme, `/avatar`, expanded navigation, completed current task, nine history records, resting focus state
+
+## Findings and comparison history
+
+- Pass 1 P2: the task rail used `min-height: calc(100vh - 170px)`, stretching 349 px of useful content into an approximately 846 px column and leaving a large empty lower region. Removed the forced viewport height, aligned the card to the top of its flex column, reduced the body padding to 24 px, and reduced the current/history gap from 54 px plus 36 px padding to 24 px plus 24 px padding.
+- Pass 2: the final card measures approximately 351 × 349 CSS px while the surrounding column remains 846 px tall. The card now ends immediately after the history summary, so no actionable P0/P1/P2 layout mismatch remains.
+
+## Required fidelity surfaces
+
+- Fonts and typography: unchanged; task titles, metadata, and links retain their existing hierarchy and readable weights.
+- Spacing and layout rhythm: the right card now follows its content height; the current/history divider remains clear without the previous oversized blank region.
+- Colors and visual tokens: unchanged; existing neutral borders, purple links, and green completion state remain consistent.
+- Image quality and asset fidelity: no imagery or icon assets were changed.
+- Copy and content: current-task data, actions, nine-record count, and “查看全部” remain intact.
+
+## Browser and automated verification
+
+- Measured the final rail at 351 × 349 CSS px with computed `min-height: 0px` and 24 px card padding.
+- Opened and closed “查看全部”; the nine history records remained available and the dialog closed normally.
+- Browser console contained zero errors; only existing React Router future-flag warnings were present.
+- Avatar page tests passed 9/9; TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+final result: passed
+
+---
+
+# Creation Settings Compact Modal Pass
+
+- approved source visual: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-f9154788-fb8b-417b-8bb9-088c25e38362.png`
+- final implementation screenshot: `C:\Users\zeng\Desktop\video\design-qa-pipeline-settings-final.png`
+- narrow responsive screenshot: `C:\Users\zeng\Desktop\video\design-qa-pipeline-settings-768.png`
+- source and desktop implementation pixels: 1536 × 1024
+- checked desktop viewport: 1536 × 1024 CSS px, density 1
+- checked narrow viewport: 768 × 900 CSS px, density 1
+- state: `/pipeline`, compact creation settings open, one publish platform selected, real material-source and profile state loaded
+
+## Full-view and focused comparison
+
+The approved source and the live browser capture were inspected together at the same desktop size. The implementation keeps the selected centered modal, three compact business sections, restrained borders, one purple primary action, and separate material/publishing management without restoring the removed ownership field.
+
+Focused checks covered the material-source summary, publish-platform chips and login status, profile actions, footer actions, and the single-column narrow layout. The live counts and avatar intentionally come from the current workspace instead of copying mock values from the generated reference.
+
+## Findings and comparison history
+
+- Pass 1 P2: the modal sat too high, card padding was tight, the footer action was short, material sites used generic symbols, and the profile voice could truncate. Centered the modal, increased card/footer rhythm, used the matching React brand icon set, and changed the profile block to a compact two-row layout.
+- Pass 2: no actionable P0/P1/P2 visual differences remain. The shorter modal height, real platform counts, and real avatar are intentional truthful-data differences.
+- Narrow check: the two-column desktop content becomes one column; controls remain reachable without a separate horizontal-scrolling interaction.
+
+## Interaction and product verification
+
+- Verified material-source management opens as its own dialog and reports the actual connection state.
+- Verified publishing-account management lists each platform independently, with login actions only where supported and manual-login copy for manual publishing.
+- Verified an unlogged publishing account does not block saving the creation settings; login is deferred until publication confirmation.
+- Verified `更换` and `新增出镜人` remain distinct actions.
+- Browser console reported zero errors.
+- No login, crawler, paid generation, upload, download, or publication action was submitted.
+
+final result: passed
+
 # Smart Workspace Option 3 Fidelity Pass 3
 
-- source visual truth path: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-aeb3bdad-40f5-450e-9240-d8383aa2513f.png`
+- source visual truth: 原开发机本地生成图（未作为运行依赖）
 - implementation screenshot path: `work/visual-redesign/implementation-option-3-pass-3.png`
 - full comparison board: `work/visual-redesign/comparison-option-3-pass-3.png`
 - focused comparison board: `work/visual-redesign/comparison-option-3-focused-pass-3.png`
@@ -72,7 +141,7 @@ final result: passed
 
 # Smart Workspace Option 3 Design QA
 
-- source visual truth path: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-aeb3bdad-40f5-450e-9240-d8383aa2513f.png`
+- source visual truth: 原开发机本地生成图（未作为运行依赖）
 - implementation screenshot path: `work/visual-redesign/implementation-option-3-pass-2.png`
 - responsive evidence: `work/visual-redesign/implementation-option-3-1024.png`
 - source pixels: 1487 × 1058
@@ -118,7 +187,7 @@ final result: passed
 
 # Smart Workspace Manual-First Safety Pass
 
-- user screenshot: `C:\Users\zeng\AppData\Local\Temp\codex-clipboard-0257bc7d-3207-4b16-af31-6bc4f9def22a.png`
+- user screenshot: 原开发机本地临时截图（未作为运行依赖）
 - implementation screenshot: `work/visual-redesign/manual-recommended-risk-pass.png`
 - combined comparison: `work/visual-redesign/manual-recommended-risk-comparison.png`
 - viewport: 1434 × 1020 CSS px
@@ -220,7 +289,7 @@ final result: passed
 
 # Video Editor Cinema Workspace Pass
 
-- approved reference: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-a5531df5-9005-40ed-8443-f92dd6b588b8.png`
+- approved reference: 原开发机本地生成图（未作为运行依赖）
 - implementation screenshot: `work/visual-redesign/video-editor-cinema-implementation.png`
 - full comparison: `work/visual-redesign/video-editor-cinema-comparison.png`
 - focused comparison: `work/visual-redesign/video-editor-cinema-focused-comparison.png`
@@ -265,7 +334,7 @@ final result: passed
 # Video Editor Filmstrip Timeline Fidelity Pass
 
 - annotated before state: browser comment on `.video-editor-preview-footer` at 1355 × 906
-- approved reference: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-a5531df5-9005-40ed-8443-f92dd6b588b8.png`
+- approved reference: 原开发机本地生成图（未作为运行依赖）
 - final implementation screenshot: `work/visual-redesign/video-editor-timeline-final.png`
 - final comparison: `work/visual-redesign/video-editor-timeline-final-comparison.png`
 - checked viewport: 1355 × 906 CSS px
@@ -399,5 +468,334 @@ final result: passed
 - TypeScript check passed.
 - Video editor targeted tests passed 8/8.
 - Production build passed.
+
+final result: passed
+
+---
+
+# Avatar Option 3 Design QA
+
+- source visual truth path: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\03-selected-concept.png`
+- normalized source: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\03-selected-concept-normalized.png`
+- browser-rendered implementation screenshot: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\10-implementation-final.png`
+- narrow responsive screenshot: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\11-responsive-768.png`
+- full-view comparison evidence: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\07-comparison-final.png`
+- focused comparison evidence: `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\08-comparison-left-focus.png` and `C:\Users\zeng\Desktop\video\outputs\product-design-audit\avatar-2026-08-03\09-comparison-right-focus.png`
+- source pixels: 1487 × 1058; normalized source pixels: 1440 × 1024
+- implementation pixels: 1440 × 1024; CSS viewport: 1440 × 1024; device scale factor: 1; in-app capture surface scale: 0.67
+- narrow CSS viewport: 768 × 900; document width: 762; no horizontal overflow
+- state: light theme, `/avatar`, collapsed navigation, real completed current task, nine real history records, default advanced settings collapsed
+
+## Full-view comparison evidence
+
+The source and implementation were normalized into one 2880 × 1024 comparison board. The browser view keeps the approved composition: restrained collapsed navigation, an unboxed creation form on the left, a task rail on the right, side-by-side avatar/voice selectors, optional title, large script field, collapsed advanced row, and one prominent purple result action. The later compact-rail follow-up intentionally replaces the original full-height rail at the user's request.
+
+## Focused comparison evidence
+
+The left focused board verifies field order, textarea height, label rhythm, advanced summary, CTA size, and gradient treatment. The right focused board verifies the current-task hierarchy, status/date/profile metadata, result actions, divider, and compact history summary. No additional imagery comparison is needed because the approved screen contains no visible photography, illustration, logo art, or product image.
+
+## Required fidelity surfaces
+
+- Fonts and typography: retained the product's Chinese system-font stack; heading, field label, helper, metadata, and action weights follow the approved hierarchy. The capture surface used a 0.67 display scale, so judgment used the normalized full and focused boards plus live CSS measurements instead of treating raster antialiasing as a font mismatch.
+- Spacing and layout rhythm: the desktop grid is 64%/36%, the right rail begins at the approved horizontal position, form controls share consistent heights and radii, and vertical gaps align the advanced row and CTA with the source.
+- Colors and tokens: retained the existing navy shell, neutral canvas, muted secondary copy, green success state, and purple action/link accent; the CTA now uses the approved restrained purple gradient.
+- Image quality and asset fidelity: the screen uses the existing product chrome and Ant Design icon library. No placeholder image, emoji, custom SVG, CSS illustration, or fabricated avatar preview was introduced.
+- Copy and content: all static copy follows the selected mock in plain Chinese. Avatar, voice, current job, and history count remain truthful live values rather than copied mock data.
+- Accessibility and behavior: selectors and history entries remain semantic buttons, the advanced section exposes `aria-expanded`, history stays keyboard reachable, and the 768 px layout has no horizontal overflow.
+
+## Findings and comparison history
+
+- Pass 1 P2: the first implementation kept the creation column too wide and the task rail too narrow. Changed the desktop split to 64%/36%, narrowed the form surface, increased the selected mock's vertical rhythm, and matched the taller task rail.
+- Pass 2 P2: the current-task refresh affordance and focused history-button outline were visible in the comparison although the approved resting state did not show them. Removed the redundant refresh control (the task already polls automatically), blurred the temporary test focus before capture, and added the approved CTA gradient.
+- Pass 3: the final normalized full and focused comparisons contain no actionable P0/P1/P2 differences. The live avatar/voice names differ from the generated mock by design because the interface displays the current workspace data.
+
+## Browser and automated verification
+
+- Opened and closed “更多设置”; confirmed output specification and speech-rate controls remain available without cluttering the default page.
+- Opened and closed “查看全部”; confirmed all nine existing history tasks remain available in the modal.
+- Checked the 768 × 900 responsive state; document width remains below viewport width and the task rail stacks below the composer.
+- Final browser console contained zero page errors.
+- Avatar page tests passed 9/9; TypeScript check and production build passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+final result: passed
+
+---
+
+# Avatar Recent History Rail Follow-up
+
+- source visual truth: user browser annotation on `/avatar` at 1355 × 906 CSS px, identifying the empty lower half of the right task column as visually unbalanced
+- intended implementation: retain the compact current-task summary and use four real recent history records to give the right rail useful visual weight
+- state: light theme, `/avatar`, completed current task, nine history records
+
+## Implemented change
+
+- Kept the current task summary compact instead of stretching an empty card to viewport height.
+- Expanded the history section with up to four recent real tasks, excluding the currently selected task.
+- Each recent task shows its real title, date, avatar name, and status; selecting it reuses the existing current-task detail flow.
+- Kept “查看全部” as the route to the complete history modal.
+
+## Automated verification
+
+- Avatar page tests passed 9/9.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A same-viewport rendered screenshot, click verification, and console check could not be captured for this follow-up. Browser-rendered evidence is therefore missing.
+
+final result: blocked
+
+---
+
+# Publish Center Option 1 Redesign
+
+## Comparison target
+
+- source visual truth: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-13c4ada7-4721-42a1-87c7-854bfb80f1ce.png`
+- implementation screenshot: `C:\Users\zeng\Desktop\video\audit\publish-page\08-publish-option1-final.png`
+- combined comparison evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\09-option1-final-comparison.png`
+- responsive evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\10-publish-option1-768.png`
+- source pixels: 1487 × 1058
+- implementation capture pixels: 1475 × 1053 from a 1481 × 1058 CSS viewport override
+- normalization: the implementation capture was bicubic-normalized to 1487 × 1058 only for the combined comparison; both halves use the same final pixel dimensions and 1x browser density
+- state: light theme, `/publish`, configure-account step, Douyin selected, two real local account records shown as not yet verified
+
+## Full-view comparison evidence
+
+- The implementation preserves the selected option's core master-detail composition: five platforms remain visible together on the left, while only the selected platform's login and account controls appear on the right.
+- The tall workspace, left-aligned two-step progress indicator, selected lavender platform state, quiet bordered surface, bottom-aligned next action, and compact top summary follow the source hierarchy.
+- The wider application sidebar in the implementation is the user's current live navigation state; the source mock used its collapsed state. This is an intentional shell-state difference, not a publish-workspace mismatch.
+- Real platform capabilities and account states replace mock data: Xiaohongshu is truthfully marked as manual publishing and the connection summary counts four automatic platforms rather than presenting a false five-account requirement.
+
+## Focused region comparison evidence
+
+- A separate crop was not needed because the combined 2974 × 1058 original-resolution comparison keeps the platform list, add-account row, security note, account rows, status tags, and next action legible together.
+- Brand marks use the installed `react-icons` library; no placeholder image, emoji, custom SVG, CSS art, or handcrafted logo substitutes were introduced.
+
+## Required fidelity surfaces
+
+- fonts and typography: existing product font stack and Ant Design type scale are retained; headings, helper copy, account names, statuses, and secondary text have distinct readable weights without oversized display text.
+- spacing and layout rhythm: the former repeated card grid is replaced by one bounded workspace; row heights, dividers, padding, and bottom action alignment create one continuous scan path and match the source's tall desktop composition.
+- colors and visual tokens: existing purple primary tokens, neutral borders, lavender selected state, blue official-login tag, green connection state, and muted secondary text preserve semantic contrast.
+- image quality and asset fidelity: platform marks render as vector icons from the installed icon package and remain crisp at desktop and 768 px widths.
+- copy and content: login, local browser storage, manual publishing, and verification states reflect the real platform capabilities; no login or successful publication is implied.
+- responsiveness and accessibility: at 768 × 900, the page has no horizontal overflow (`scrollWidth 762`, `clientWidth 762`), the platform selector becomes a two-column grid, controls retain labels, and platform items remain semantic buttons.
+
+## Comparison history
+
+- Pass 1 evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\05-publish-option1-implemented.png`.
+  - [P2] The workspace ended too early and left a large unstructured blank region below compared with the tall reference surface.
+  - [P2] The step indicator was centered while the reference anchored it to the left edge of the content flow.
+  - [P3] The fifth platform used the longer `Bilibili` label instead of the established compact `B站` label.
+- Fixes made:
+  - changed the workspace minimum height to `max(520px, calc(100vh - 250px))`;
+  - left-aligned the step indicator;
+  - changed the platform label to `B站`;
+  - changed the connection summary into the reference-style quiet status pill and aligned the security note to the purple information treatment.
+- Post-fix evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\08-publish-option1-final.png` and the normalized combined comparison above.
+- Post-fix result: no actionable P0, P1, or P2 mismatch remains. The implementation is intentionally slightly denser than the mock because the user's stated goal was to remove the former bloated layout.
+
+## Interaction and runtime verification
+
+- Switched from Douyin to Bilibili and verified the heading, account input, account list, and disabled next action updated to that platform without exposing other platform details.
+- Switched to Xiaohongshu and verified `无需登录账号` appears and `去选择成片` is enabled without requiring a fake account.
+- Checked the browser console: no application errors; only existing React Router future-flag warnings were present.
+- Publish page tests passed 9/9, TypeScript check passed, and the production build passed. The build continues to report the existing Ant Design chunk-size advisory.
+- No login window, upload, publish submission, account deletion, or other external side effect was triggered.
+
+## Findings
+
+- No actionable P0, P1, or P2 findings remain.
+- [P3] The expanded application sidebar makes the live content region narrower than the collapsed-sidebar source mock. This preserves the user's current shell state and can be revisited separately if the global sidebar behavior changes.
+
+final result: passed
+
+---
+
+# Avatar History Pagination Follow-up
+
+- source visual truth: user browser annotation on `/avatar` questioning whether “查看全部” would become bloated as history grows
+- intended implementation: bounded 720 px history modal, at most six records per page, pagination for additional records, and a viewport-aware scroll ceiling
+- state: light theme, `/avatar`, nine history records
+
+## Implemented change
+
+- The full-history list now shows at most six tasks per page instead of rendering every record at once.
+- The modal width is limited to 720 px and its body height is capped at the smaller of 620 px or the available viewport height.
+- Page-size switching is intentionally hidden to keep the flow simple; additional records are reached with compact pagination.
+
+## Automated verification
+
+- Added a seven-record test proving that page one renders six task rows and exposes page two.
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime again failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered modal screenshot, live pagination click, and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Avatar Compact Composer Follow-up
+
+- source visual truth: user browser annotation on the `/avatar` generation form at 1355 × 906 CSS px, describing the left composer as visually heavy and disproportionate
+- intended implementation: remove the duplicated page title, tighten the form rhythm, reduce control heights, and make the primary action prominent without spanning the entire wide column
+- state: light theme, `/avatar`, default form with advanced settings collapsed
+
+## Implemented change
+
+- Replaced the repeated 28 px “数字人口播生成” heading with an 18 px “生成配置” section heading and short inline guidance.
+- Reduced the heading gap from 58 px to 26 px and form section gaps from 38 px to 24 px.
+- Reduced choice controls from 56 px to 48 px, the name field from 48 px to 44 px, and the script field minimum height from 210 px to 164 px.
+- Reduced the advanced-settings row from 56 px to 48 px.
+- Reduced the main action from a 58 px full-width bar to a 50 px, 320 px maximum-width right-aligned action; it remains full width on small screens.
+
+## Automated verification
+
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered same-viewport screenshot, interaction check, and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Avatar Direct Speech Rate Follow-up
+
+- source visual truth: user browser annotation on the expanded advanced panel at 1355 × 906 CSS px, noting that the output specification was locked and only speech rate was adjustable
+- intended implementation: remove the unnecessary disclosure layer, expose the single editable setting directly, and present the fixed output only as information
+- state: light theme, `/avatar`, default generation form
+
+## Implemented change
+
+- Removed the “更多设置” disclosure button and the disabled output-specification input.
+- Added a compact always-visible settings row with the informational label “固定输出 9:16 · 1080P”.
+- Replaced the speech-rate slider with direct 0.8x–1.2x choices so the only available decision is immediately understandable.
+- Kept the row responsive: rate choices share the available width on small screens.
+
+## Automated verification
+
+- Added assertions that “更多设置” is absent, fixed output is visible, 1.0x is selected by default, and 1.1x can be selected.
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered same-viewport screenshot, live rate-selection check, and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Avatar Integrated Primary Action Follow-up
+
+- source visual truth: user browser annotation on the isolated purple “生成数字人视频” button at 1355 × 906 CSS px, describing it as visually abrupt
+- intended implementation: integrate the primary action into the existing output-and-rate row, retain clear hierarchy, and remove advertising-like elevation
+- state: light theme, `/avatar`, default generation form with 1.1x selected in the reference
+
+## Implemented change
+
+- Moved “生成数字人视频” into the same bottom action row as fixed output and speech rate.
+- Reduced the button to a 190 px desktop width and 40 px height so it reads as the row's final action instead of a detached banner.
+- Replaced the gradient and floating shadow with a stable solid purple; retained a darker hover/focus state.
+- Preserved full-width behavior on small screens where the settings row stacks vertically.
+
+## Automated verification
+
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered same-viewport screenshot, hover/focus check, and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Avatar Column Height Rebalance Follow-up
+
+- source visual truth: user feedback on the current `/avatar` screen that the right task rail extended visibly below the newly compacted composer
+- intended implementation: shorten only the preview content that caused the mismatch, without re-expanding the form or hiding complete history
+- state: light theme, `/avatar`, completed current task with multiple history records
+
+## Implemented change
+
+- Reduced the right-rail recent-history preview from four records to three.
+- Kept the complete history count, paginated “查看全部” modal, and current-task selection behavior unchanged.
+- This removes approximately one compact task-row of excess height while preserving useful context in the rail.
+
+## Automated verification
+
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered same-viewport height measurement and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Avatar Tall-Screen Fill Follow-up
+
+- source visual truth: `C:\Users\zeng\AppData\Local\Temp\codex-clipboard-0328eb20-0b59-444b-8170-ffa9f79ff915.png`, showing both columns ending early in a tall desktop viewport and leaving a large shared blank area below
+- intended implementation: let useful content grow with available screen height while keeping the existing compact layout on ordinary desktop screens
+- state: light theme, `/avatar`, completed current task with multiple history records
+
+## Implemented change
+
+- Kept the compact default layout for ordinary desktop screens: a 164 px script field and three recent-history rows.
+- Added a tall-desktop breakpoint at 1000 px viewport height: the script field grows to 320 px and the right rail reveals two additional real recent tasks.
+- Preserved the complete paginated history modal and did not add filler cards, decorative empty states, or oversized controls merely to occupy space.
+
+## Automated verification
+
+- Avatar page tests passed 10/10.
+- TypeScript check, production build, and diff whitespace check passed.
+- No upload, download, paid generation, retry, product packaging, or publication action was submitted.
+
+## Browser blocker
+
+- The in-app browser runtime failed twice with `Cannot redefine property: process`, including one clean reconnect attempt.
+- Per the project retry rule, no further reconnect loop was attempted.
+- A rendered tall-viewport screenshot, height comparison, interaction check, and console check could not be captured for this follow-up.
+
+final result: blocked
+
+---
+
+# Latest Design QA Result — Publish Center
+
+- current build: Publish Center Option 1 Redesign
+- full report: see `# Publish Center Option 1 Redesign` above
+- combined visual evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\09-option1-final-comparison.png`
+- responsive evidence: `C:\Users\zeng\Desktop\video\audit\publish-page\10-publish-option1-768.png`
+- result: no actionable P0, P1, or P2 visual findings remain after the documented comparison iteration
 
 final result: passed

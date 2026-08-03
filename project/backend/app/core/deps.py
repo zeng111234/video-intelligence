@@ -45,6 +45,9 @@ from src.adapters.douyin_browser_search import (  # noqa: E402
 from src.adapters.platform_browser_search import (  # noqa: E402
     LocalPlatformBrowserSearchProvider,
 )
+from src.adapters.bilibili_public_search import (  # noqa: E402
+    BilibiliPublicSearchProvider,
+)
 from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.production import ProductionService  # noqa: E402
 from src.services.feedback import FeedbackService  # noqa: E402
@@ -93,8 +96,12 @@ from project.backend.app.core.config import (  # noqa: E402
     DOUYIN_BROWSER_DISCOVERY_ENABLED,
     DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
     DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
-    XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
-    XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
+    XIAOHONGSHU_PUBLIC_SEARCH_ENABLED,
+    XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR,
+    XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT,
+    XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
+    XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
+    XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT,
     KUAISHOU_BROWSER_DISCOVERY_ENABLED,
     KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR,
     KUAISHOU_BROWSER_DISCOVERY_DEBUG_PORT,
@@ -171,7 +178,7 @@ def get_hotspot_search_service() -> CommercialSearchService:
 
 @lru_cache
 def get_douyin_public_browser_provider() -> LocalDouyinPublicSearchProvider:
-    """抖音官网搜索与热点宝共用同一专用 Chrome 和登录态。"""
+    """抖音官网搜索使用专用 Chrome；常规找素材不调用热点宝。"""
     return LocalDouyinPublicSearchProvider(
         enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
         profile_dir=DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
@@ -196,13 +203,27 @@ def get_douyin_public_search_service() -> CommercialSearchService:
 def get_xiaohongshu_browser_provider() -> LocalPlatformBrowserSearchProvider:
     return LocalPlatformBrowserSearchProvider(
         platform=Platform.XIAOHONGSHU,
-        # 小红书账号已出现第三方自动化预警。即使旧环境变量仍为 true，也不能
-        # 重新启用登录态浏览；只允许人工导入已观察到的素材。
-        enabled=False,
-        profile_dir=XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR,
+        # 必须是新的未登录资料目录；不读取旧账号 profile 或 Cookie。
+        enabled=XIAOHONGSHU_PUBLIC_SEARCH_ENABLED,
+        profile_dir=XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR,
         browser_channel=DOUYIN_BROWSER_CHANNEL,
-        debug_port=XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT,
+        debug_port=XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT,
         timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+        anonymous_only=True,
+    )
+
+
+@lru_cache
+def get_xiaohongshu_login_browser_provider() -> LocalPlatformBrowserSearchProvider:
+    """Optional visible login window; never used by anonymous material search."""
+    return LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
+        profile_dir=XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT,
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
+        allow_xiaohongshu_login=True,
     )
 
 
@@ -260,6 +281,14 @@ def get_bilibili_browser_search_service() -> CommercialSearchService:
         trend_service=get_keyword_trend_service(),
         provider=get_bilibili_browser_provider(),
         active_platforms=(Platform.BILIBILI,),
+    )
+
+
+@lru_cache
+def get_bilibili_public_metrics_provider() -> BilibiliPublicSearchProvider:
+    """只读取 B 站公开详情，用于补全当前搜索结果中缺失的互动字段。"""
+    return BilibiliPublicSearchProvider(
+        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
     )
 
 

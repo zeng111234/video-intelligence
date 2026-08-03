@@ -28,7 +28,7 @@ from pydantic import HttpUrl
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.browser_window import (
     minimize_browser_window,
-    restart_browser_for_login,
+    reveal_browser_window,
 )
 from src.models import (
     Platform,
@@ -81,8 +81,9 @@ _HOTSPOT_ENTRY_URL = (
     "https://douhot.douyin.com/square/hotspot?"
     "active_tab=hotspot_video&date_window=168&sub_type=1001"
 )
-_HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v5_three_boards"
-_PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v2_login_wall_stop"
+_PUBLIC_DOUYIN_ENTRY_URL = "https://www.douyin.com/"
+_HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v6_broad_recall"
+_PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v3_broad_recall"
 _PUBLIC_SEARCH_LOGIN_MARKERS = (
     "安全验证",
     "扫码登录",
@@ -110,6 +111,7 @@ class LocalDouyinBrowserSearchProvider:
     # 保留既有来源标识，历史批次与缓存键无需迁移；evidence 区分热点宝记录。
     provider_name = "douyin_local_browser"
     adapter_version = _HOTSPOT_ADAPTER_VERSION
+    browser_entry_url = _HOTSPOT_ENTRY_URL
 
     def __init__(
         self,
@@ -218,7 +220,12 @@ class LocalDouyinBrowserSearchProvider:
     def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
         if status.running and visible:
-            restart_browser_for_login(self.debug_port)
+            # Reusing the existing dedicated profile avoids killing Chrome and
+            # immediately reopening it on the same port/profile, which can
+            # race with Chrome's profile lock.  Login remains a user action in
+            # the visible dedicated window.
+            reveal_browser_window(self.debug_port)
+            return status
         if status.running and not visible:
             self._minimize_browser_for_background()
             return status
@@ -264,7 +271,7 @@ class LocalDouyinBrowserSearchProvider:
             browser_args.extend(
                 ["--start-minimized", "--window-position=-32000,-32000", "--window-size=900,700"]
             )
-        browser_args.append(_HOTSPOT_ENTRY_URL)
+        browser_args.append(self.browser_entry_url)
         subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
             browser_args,
             stdout=subprocess.DEVNULL,
@@ -330,10 +337,7 @@ class LocalDouyinBrowserSearchProvider:
         )
         diagnostic = None
         if raw_rows and not items:
-            diagnostic = (
-                "已读取到相关素材，但没有同时达到点赞不少于 100、"
-                "日均点赞不少于 1 的固定质量线。"
-            )
+            diagnostic = "已读取到页面结果，但其中没有可读标题或可用视频链接。"
         if not raw_rows:
             diagnostic = "热点宝未返回可识别视频；可能没有结果、未登录或需要人工验证。"
         return ProviderSearchPage(
@@ -417,9 +421,7 @@ class LocalDouyinBrowserSearchProvider:
         if not raw_rows:
             diagnostic = "抖音官网搜索未返回可读取的视频；可能没有公开结果、需要人工登录或出现安全限制。"
         elif not items:
-            diagnostic = "抖音官网搜索已读取候选，但没有通过关键词、时长或可核验时间范围的基础筛选。"
-        elif published_filtered_count:
-            diagnostic = f"已按可见发布时间排除 {published_filtered_count} 条超出时间范围的候选。"
+            diagnostic = "抖音官网搜索已读取候选，但其中没有可读标题或可用视频链接。"
         return ProviderSearchPage(
             platform=Platform.DOUYIN,
             provider=self.provider_name,
@@ -757,19 +759,10 @@ class LocalDouyinBrowserSearchProvider:
                             self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
                         )
                         self._raise_for_public_search_block(page)
+                        # Keep the platform's default result order. Time is a
+                        # table-side filter, so broad recall must not silently
+                        # reduce the source page to a one-week subset.
                         errors: list[ProviderSearchError] = []
-                        if not self._apply_public_search_week_filter(page):
-                            errors.append(
-                                ProviderSearchError(
-                                    kind=ProviderErrorKind.VALIDATION,
-                                    message=(
-                                        "抖音官网搜索页没有显示“一周内”筛选；"
-                                        "系统会仅按页面可见发布时间排除可确认的超期内容。"
-                                    ),
-                                    retryable=False,
-                                )
-                            )
-                        page.wait_for_timeout(600)
                         self._raise_for_public_search_block(page)
                         rows = self._collect_public_douyin_search_rows(
                             page,
@@ -1035,6 +1028,13 @@ class LocalDouyinBrowserSearchProvider:
                 const matched = text.match(/^([0-9]+(?:\\.[0-9]+)?)[万亿]?$/);
                 return matched ? Math.round(Number(matched[1]) * unit) : null;
               };
+              const firstPresent = (...values) => values.find(
+                value => value !== undefined && value !== null && value !== ''
+              );
+              const metric = (video, ...names) => number(firstPresent(
+                ...names.map(name => video?.statistics?.[name]),
+                ...names.map(name => video?.[name]),
+              ));
               const renderedVideo = node => {
                 const key = Object.keys(node).find(k => k.startsWith('__reactFiber'));
                 let fiber = key ? node[key] : null;
@@ -1068,7 +1068,11 @@ class LocalDouyinBrowserSearchProvider:
                   title: resolvedTitle,
                   author_name: String(video?.author?.nickname || video?.author_name || (lines.find(x => x.startsWith('@')) || '').replace(/^@/, '')),
                   duration: rawDuration && rawDuration > 1000 ? Math.round(rawDuration / 1000) : rawDuration || toSeconds(durationText),
-                  likes: number(video?.statistics?.digg_count || video?.digg_count || video?.like_count) ?? number(likesText),
+                  plays: metric(video, 'play_count', 'playCount', 'play_cnt', 'view_count', 'viewCount'),
+                  likes: metric(video, 'digg_count', 'diggCount', 'like_count', 'likeCount', 'likes') ?? number(likesText),
+                  comments: metric(video, 'comment_count', 'commentCount', 'comments'),
+                  shares: metric(video, 'share_count', 'shareCount', 'shares'),
+                  favorites: metric(video, 'collect_count', 'collectCount', 'favorite_count', 'favoriteCount', 'favorited_count', 'favoritedCount', 'favorites'),
                   published_text: String(video?.create_time || video?.createTime || publishedText || ''),
                 });
               }
@@ -1078,7 +1082,7 @@ class LocalDouyinBrowserSearchProvider:
 
     @staticmethod
     def _extract_public_douyin_search_rows(page) -> list[dict[str, Any]]:
-        """Extract card text and links only; never read requests or React internals."""
+        """Extract existing rendered card text and React card data; never read requests."""
         return page.locator("body").evaluate(
             """() => {
               const toSeconds = value => {
@@ -1091,6 +1095,23 @@ class LocalDouyinBrowserSearchProvider:
                 const matched = text.match(/^([0-9]+(?:\\.[0-9]+)?)[万亿]?$/);
                 return matched ? Math.round(Number(matched[1]) * unit) : null;
               };
+              const firstPresent = (...values) => values.find(
+                value => value !== undefined && value !== null && value !== ''
+              );
+              const metric = (video, ...names) => number(firstPresent(
+                ...names.map(name => video?.statistics?.[name]),
+                ...names.map(name => video?.[name]),
+              ));
+              const renderedVideo = node => {
+                const key = Object.keys(node).find(key => key.startsWith('__reactFiber'));
+                let fiber = key ? node[key] : null;
+                for (let depth = 0; fiber && depth < 35; depth += 1, fiber = fiber.return) {
+                  const props = fiber.memoizedProps || fiber.pendingProps || {};
+                  const value = props.awemeInfo || props.itemData || props.aweme || props.record;
+                  if (value && (value.aweme_id || value.awemeId || value.id)) return value;
+                }
+                return null;
+              };
               const isPublishedText = value => /^(刚刚|昨天|前天|\\d+分钟前|\\d+小时前|\\d+天前|\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2})$/.test(value);
               const isCount = value => /^\\d+(?:\\.\\d+)?[万亿]?$/.test(value);
               const results = [], seen = new Set();
@@ -1099,6 +1120,7 @@ class LocalDouyinBrowserSearchProvider:
                 const matched = href.match(/\\/video\\/(\\d{10,})/);
                 if (!matched || seen.has(matched[1])) continue;
                 const card = link.closest('[class*=feed], [class*=Feed], [class*=card], [class*=Card], li, article') || link;
+                const video = renderedVideo(card) || renderedVideo(link);
                 const lines = String(card.innerText || link.innerText || '')
                   .split('\\n').map(value => value.trim()).filter(Boolean);
                 const durationText = lines.find(value => /^\\d{1,2}:\\d{2}$/.test(value));
@@ -1113,7 +1135,11 @@ class LocalDouyinBrowserSearchProvider:
                   item_id: matched[1], href, title,
                   author_name: (lines.find(value => value.startsWith('@')) || '').replace(/^@/, ''),
                   duration: toSeconds(durationText),
-                  likes: number(likesText),
+                  plays: metric(video, 'play_count', 'playCount', 'play_cnt', 'view_count', 'viewCount'),
+                  likes: metric(video, 'digg_count', 'diggCount', 'like_count', 'likeCount', 'likes') ?? number(likesText),
+                  comments: metric(video, 'comment_count', 'commentCount', 'comments'),
+                  shares: metric(video, 'share_count', 'shareCount', 'shares'),
+                  favorites: metric(video, 'collect_count', 'collectCount', 'favorite_count', 'favoriteCount', 'favorited_count', 'favoritedCount', 'favorites'),
                   published_text: publishedText,
                 });
               }
@@ -1188,7 +1214,7 @@ class LocalDouyinBrowserSearchProvider:
             current["list_labels"].add(str(row.get("list_label") or ""))
             current["source_kinds"].add(str(row.get("source_kind") or ""))
             current["topic_exact"] = bool(current.get("topic_exact")) or bool(row.get("topic_exact"))
-            for field in ("score", "plays", "likes", "fans", "duration", "comments", "shares"):
+            for field in ("score", "plays", "likes", "fans", "duration", "comments", "shares", "favorites"):
                 value = row.get(field)
                 if value is not None and (current.get(field) is None or value > current[field]):
                     current[field] = value
@@ -1254,22 +1280,13 @@ class LocalDouyinBrowserSearchProvider:
         dict[str, int],
         int,
     ]:
-        """Apply only basic relevance, video, and visible-time checks to public cards."""
+        """Keep every readable public-search video card for result-table filtering."""
         items: list[ProviderSearchItem] = []
         errors: list[ProviderSearchError] = []
         filter_counts = {"duration": 0, "relevance": 0}
         published_filtered_count = 0
         seen: set[str] = set()
-        normalized_published_after = published_after
-        if normalized_published_after is not None:
-            if normalized_published_after.tzinfo is None:
-                normalized_published_after = normalized_published_after.replace(
-                    tzinfo=observed_at.tzinfo
-                )
-            else:
-                normalized_published_after = normalized_published_after.astimezone(
-                    observed_at.tzinfo
-                )
+        del published_after
 
         for index, row in enumerate(rows):
             href = str(row.get("href") or "")
@@ -1299,22 +1316,9 @@ class LocalDouyinBrowserSearchProvider:
                 )
                 continue
             duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
-            if duration_seconds is None or duration_seconds <= 0:
-                filter_counts["duration"] += 1
-                continue
-            if not title_matches_keyword(title=title, keyword=keyword):
-                filter_counts["relevance"] += 1
-                continue
             published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
                 row.get("published_text"), observed_at
             )
-            if (
-                normalized_published_after is not None
-                and published_at is not None
-                and published_at < normalized_published_after
-            ):
-                published_filtered_count += 1
-                continue
             seen.add(item_id)
             items.append(
                 LocalDouyinBrowserSearchProvider._to_public_provider_item(
@@ -1338,7 +1342,7 @@ class LocalDouyinBrowserSearchProvider:
         row: dict[str, Any],
         item_id: str,
         title: str,
-        duration_seconds: int,
+        duration_seconds: int | None,
         observed_at: datetime,
         published_at: datetime | None,
         keyword: str,
@@ -1348,6 +1352,9 @@ class LocalDouyinBrowserSearchProvider:
         if published_at is None:
             published_at = observed_at
             warnings.append("公开搜索页未显示可核验发布时间，已保留但需要人工确认。")
+        if duration_seconds is None or duration_seconds <= 0:
+            duration_seconds = None
+            warnings.append("公开搜索页未返回视频时长。")
         return ProviderSearchItem(
             platform=Platform.DOUYIN,
             platform_item_id=item_id,
@@ -1355,19 +1362,25 @@ class LocalDouyinBrowserSearchProvider:
             author_id=f"douyin-public-{item_id}",
             author_name=str(row.get("author_name") or "抖音作者待补充"),
             published_at=published_at,
+            duration_seconds=duration_seconds,
             source_url=HttpUrl(f"https://www.douyin.com/video/{item_id}"),
             provider_rank=provider_rank,
             metrics=VideoMetricSnapshot(
                 item_id=item_id,
                 sampled_at=observed_at,
+                plays=LocalDouyinBrowserSearchProvider._as_int(row.get("plays")),
                 likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
+                comments=LocalDouyinBrowserSearchProvider._as_int(row.get("comments")),
+                shares=LocalDouyinBrowserSearchProvider._as_int(row.get("shares")),
+                favorites=LocalDouyinBrowserSearchProvider._as_int(row.get("favorites")),
                 confidence=0.55,
             ),
             evidence=(
                 f"douyin_public_search:关键词={keyword};来源=browser_rendered;"
                 f"发布时间={row.get('published_text') or '未返回'};"
+                f"time={'platform' if row.get('published_text') else 'unknown'};"
                 f"点赞数={row.get('likes') if row.get('likes') is not None else '未返回'};"
-                f"时长秒={duration_seconds}"
+                f"时长秒={duration_seconds if duration_seconds is not None else '未返回'}"
             ),
             data_quality_warnings=warnings,
         )
@@ -1398,7 +1411,6 @@ class LocalDouyinBrowserSearchProvider:
             rows,
             key=lambda row: (
                 LocalDouyinBrowserSearchProvider._source_priority(row),
-                -((LocalDouyinBrowserSearchProvider._quality_details(row, observed_at) or (0.0, ""))[0]),
                 -(LocalDouyinBrowserSearchProvider._as_int(row.get("likes")) or 0),
                 -(LocalDouyinBrowserSearchProvider._as_int(row.get("score")) or 0),
                 str(row.get("item_id") or ""),
@@ -1432,43 +1444,9 @@ class LocalDouyinBrowserSearchProvider:
                 )
                 continue
             duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
-            if duration_seconds is None or duration_seconds <= 0:
-                filter_counts["duration"] += 1
-                continue
-            topic_exact = bool(row.get("topic_exact"))
-            if not topic_exact and not title_matches_keyword(title=title, keyword=keyword):
-                filter_counts["relevance"] += 1
-                continue
             quality = LocalDouyinBrowserSearchProvider._quality_details(row, observed_at)
-            if quality is None:
-                filter_counts["quality"] += 1
-                continue
             seen.add(item_id)
             incremental_plays = LocalDouyinBrowserSearchProvider._as_int(row.get("plays"))
-            source_kinds = row.get("source_kinds") or [row.get("source_kind")]
-            list_type = LocalDouyinBrowserSearchProvider._as_int(row.get("list_type"))
-            is_non_video_source = (
-                bool({"topic_board", "search_board", "douyin_search"}.intersection(source_kinds))
-                or list_type in (*_HOTSPOT_TOPIC_LIST_TYPES, *_HOTSPOT_SEARCH_LIST_TYPES)
-            )
-            if not is_non_video_source and (incremental_plays is None or incremental_plays <= 1000):
-                filter_counts["incremental_plays"] += 1
-                if incremental_plays is not None and len(low_incremental_items) < limit:
-                    low_incremental_items.append(
-                        LocalDouyinBrowserSearchProvider._to_provider_item(
-                            row=row,
-                            item_id=item_id,
-                            title=title,
-                            duration_seconds=duration_seconds,
-                            incremental_plays=incremental_plays,
-                            observed_at=observed_at,
-                            keyword=keyword,
-                            provider_rank=len(low_incremental_items) + 1,
-                            likes_per_day=quality[0],
-                            quality_basis=quality[1],
-                        )
-                    )
-                continue
             items.append(
                 LocalDouyinBrowserSearchProvider._to_provider_item(
                     row=row,
@@ -1479,8 +1457,8 @@ class LocalDouyinBrowserSearchProvider:
                     observed_at=observed_at,
                     keyword=keyword,
                     provider_rank=len(items) + 1,
-                    likes_per_day=quality[0],
-                    quality_basis=quality[1],
+                    likes_per_day=quality[0] if quality else None,
+                    quality_basis=quality[1] if quality else None,
                 )
             )
             if len(items) >= limit:
@@ -1493,13 +1471,13 @@ class LocalDouyinBrowserSearchProvider:
         row: dict[str, Any],
         item_id: str,
         title: str,
-        duration_seconds: int,
+        duration_seconds: int | None,
         incremental_plays: int | None,
         observed_at: datetime,
         keyword: str,
         provider_rank: int,
-        likes_per_day: float,
-        quality_basis: str,
+        likes_per_day: float | None,
+        quality_basis: str | None,
     ) -> ProviderSearchItem:
         list_labels = list(row.get("list_labels") or [row.get("list_label", "")])
         source_kinds = list(row.get("source_kinds") or [row.get("source_kind", "")])
@@ -1511,6 +1489,11 @@ class LocalDouyinBrowserSearchProvider:
         if published_at is None:
             published_at = observed_at
             warnings.append("未取得有效发布时间，页面展示为采样时间。")
+        if duration_seconds is None or duration_seconds <= 0:
+            duration_seconds = None
+            warnings.append("热点宝未返回视频时长。")
+        if likes_per_day is None:
+            warnings.append("互动数据不足，综合热度只能按已返回字段计算。")
         return ProviderSearchItem(
             platform=Platform.DOUYIN,
             platform_item_id=item_id,
@@ -1518,6 +1501,7 @@ class LocalDouyinBrowserSearchProvider:
             author_id=f"hotspot-{item_id}",
             author_name=str(row.get("author_name") or "热点宝作者待补充"),
             published_at=published_at,
+            duration_seconds=duration_seconds,
             source_url=HttpUrl(f"https://www.douyin.com/video/{item_id}"),
             provider_rank=provider_rank,
             metrics=VideoMetricSnapshot(
@@ -1527,14 +1511,16 @@ class LocalDouyinBrowserSearchProvider:
                 likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
                 comments=LocalDouyinBrowserSearchProvider._as_int(row.get("comments")),
                 shares=LocalDouyinBrowserSearchProvider._as_int(row.get("shares")),
+                favorites=LocalDouyinBrowserSearchProvider._as_int(row.get("favorites")),
                 confidence=(0.8 if row.get("topic_exact") or "video_board" in source_kinds else 0.6),
             ),
             evidence=(
                 f"hotspot:{'|'.join(list_labels) or '爆款榜'}:"
                 f"{row.get('window_hours', '?')}h:关键词={keyword};"
                 f"来源={'|'.join(source_kinds) or 'browser_visible'};"
-                f"日均点赞={likes_per_day};"
-                f"质量口径={quality_basis};"
+                f"time={'platform' if row.get('published_text') else 'unknown'};"
+                f"日均点赞={likes_per_day if likes_per_day is not None else '未返回'};"
+                f"质量口径={quality_basis or '未返回'};"
                 f"严格话题={1 if row.get('topic_exact') else 0};"
                 f"话题={row.get('topic_name') or '未返回'};"
                 f"热度={row.get('score') if row.get('score') is not None else '未返回'};"
@@ -1542,7 +1528,7 @@ class LocalDouyinBrowserSearchProvider:
                 f"{'新增点赞量' if is_video_board else '点赞数'}={row.get('likes') if row.get('likes') is not None else '未返回'};"
                 f"点赞率={row.get('like_rate') if row.get('like_rate') is not None else '未返回'};"
                 f"粉丝={row.get('fans') if row.get('fans') is not None else '未返回'};"
-                f"时长秒={duration_seconds}"
+                f"时长秒={duration_seconds if duration_seconds is not None else '未返回'}"
             ),
             data_quality_warnings=warnings,
         )
@@ -1649,6 +1635,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
     # the normal 10-minute cache after the user completes manual login.
     provider_name = "douyin_public_browser_v2"
     adapter_version = _PUBLIC_SEARCH_ADAPTER_VERSION
+    browser_entry_url = _PUBLIC_DOUYIN_ENTRY_URL
 
     def capabilities(self) -> ProviderCapability:
         missing = self._missing_prerequisites()
@@ -1668,7 +1655,41 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
         )
 
     def session_status(self) -> BrowserSessionStatus:
-        status = super().session_status()
+        return self._public_session_status(super().session_status())
+
+    def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
+        """Keep the official-search login response free of legacy Hotspot wording."""
+        return self._public_session_status(super()._start_browser(visible=visible))
+
+    @staticmethod
+    def _public_session_status(status: BrowserSessionStatus) -> BrowserSessionStatus:
+        if status.phase == "browser_closed":
+            return BrowserSessionStatus(
+                status.enabled,
+                False,
+                True,
+                False,
+                status.phase,
+                "抖音官网登录浏览器尚未打开；点击“打开抖音登录”后在可见窗口扫码或完成验证。",
+            )
+        if status.phase == "waiting_login":
+            return BrowserSessionStatus(
+                status.enabled,
+                status.running,
+                True,
+                False,
+                status.phase,
+                "抖音官网正在等待扫码登录；请在可见窗口完成登录或安全验证。",
+            )
+        if status.phase == "starting":
+            return BrowserSessionStatus(
+                status.enabled,
+                status.running,
+                True,
+                False,
+                status.phase,
+                "抖音官网登录窗口正在打开；请稍候在可见窗口扫码或完成验证。",
+            )
         if status.running and status.phase in {"browser_open", "ready"}:
             return BrowserSessionStatus(
                 True,
@@ -1676,7 +1697,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
                 False,
                 True,
                 "ready",
-                "抖音官网搜索浏览器已就绪；将只读取已渲染的视频搜索结果。",
+                "抖音官网搜索浏览器已启动；实际搜索时会核验登录或安全验证。",
             )
         return status
 

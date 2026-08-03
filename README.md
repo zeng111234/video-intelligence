@@ -31,21 +31,22 @@
 
 ### 环境要求
 
-- **Python 3.12+**
-- **Node.js 18+**
-- **FFmpeg**（视频处理必需）
-- **npm** 或 **yarn**
+- **Python 3.12+**（缺少时由 `start.bat` 自动安装，并创建项目专用 `.venv`）
+- **Node.js 18+**（缺少时由 `start.bat` 自动安装）
+- **Chrome 或 Edge**（热点发现浏览器功能需要）
+- **FFmpeg**（仅本地视频处理功能需要；不影响系统启动）
 
-一键启动会检查 FastAPI、Playwright 等后端依赖；缺少时会自动安装一次。关键词爬虫的“热点宝”发现功能还需要本机安装 Google Chrome 或 Microsoft Edge，且不会自动下载或启动 Playwright 自带浏览器。
+项目不依赖固定用户名、盘符或安装目录。首次安装会把 Python 包放进仓库内的 `.venv`，前端依赖严格按 `package-lock.json` 安装，不会污染朋友电脑上的其他 Python 项目。关键词爬虫的“热点宝”发现功能使用本机 Chrome/Edge，不会额外下载 Playwright 自带浏览器。
 
 ### 一键启动（推荐）
 
 #### Windows 用户
 ```bash
-# 双击运行 start.bat 文件
-# 或者在命令行执行：
-start.bat
+# 直接双击 start.bat
+# 首次运行会自动安装项目依赖，以后仍使用这一个入口。
 ```
+
+`start.bat` 会先检测 Python、Node.js 和项目依赖，缺少时通过 Windows 应用安装程序自动安装，然后启动前后端并打开页面。如果电脑连 Windows 应用安装程序都没有，才会停止并给出唯一的安装地址。自动安装失败后不会循环重试。`.env` 不随项目分发：首次启动只会从 `.env.example` 创建一份无密钥的本机配置，需要云服务时再填写朋友自己的账号配置。
 
 #### PowerShell 用户
 ```powershell

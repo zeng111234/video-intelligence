@@ -688,7 +688,7 @@ export interface CrawlerSearchRequest {
   hotspot_window_hours?: 1 | 24 | 72 | 168;
   count_per_platform: number;
   force_refresh: boolean;
-  /** smart 使用热点宝、平台浏览器和 B站公开搜索，不接 OneAPI。 */
+  /** smart 使用已选平台的公开搜索，不接 OneAPI。 */
   mode?: "official_hot" | "smart";
   /** 用户明确给出的相关赛道词；不会由系统自动扩词。 */
   related_terms?: string[];
@@ -701,6 +701,8 @@ export interface CrawlerSearchRequest {
   allow_paid_fallback?: boolean;
   /** 热点宝所选统计周期五榜最终保留上限（不会扩大 OneAPI 单次上限）。 */
   hotspot_result_limit?: number;
+  /** 本次需要检索的平台；未传时保持旧版全部平台行为。 */
+  platforms?: Array<"douyin" | "xiaohongshu" | "kuaishou" | "bilibili">;
 }
 
 export interface CrawlerPlatformPreview {
@@ -726,7 +728,7 @@ export interface CrawlerSafetyStatus {
   message: string;
 }
 
-export interface CrawlerPreviewResponse extends CrawlerSearchRequest {
+export interface CrawlerPreviewResponse extends Omit<CrawlerSearchRequest, "platforms"> {
   provider_mode: string;
   provider_name: string;
   ranking_mode: string;
@@ -769,6 +771,8 @@ export interface CrawlerCandidateResult {
   platform_label: string;
   source_url: string | null;
   published_at: string | null;
+  /** 发布时间是否由平台返回；false 表示只用于展示，不能参与按时间筛选。 */
+  published_at_reliable?: boolean | null;
   trend_score: number | null;
   trend_level: string | null;
   display_tier: "exploding" | "hot" | "potential" | "observing" | "ordinary";
@@ -792,6 +796,8 @@ export interface CrawlerCandidateResult {
   comments: number | null;
   shares: number | null;
   favorites: number | null;
+  /** 统一互动热度：点赞 + 3×评论 + 4×分享 + 4×收藏。 */
+  heat_score?: number | null;
   /** 热点宝的 play_cnt，语义由 hotspot_window_hours 决定。 */
   new_plays?: number | null;
   /** 热点宝的 like_cnt，语义由 hotspot_window_hours 决定。 */
@@ -955,6 +961,8 @@ export interface CrawlerPlatformRun {
 export interface CrawlerBatchResponse {
   batch_id: string;
   keyword: string;
+  /** 本批提交时实际选择的平台；历史批次可能没有该字段。 */
+  platforms?: string[];
   published_window_days: number;
   hotspot_window_hours?: number | null;
   count_per_platform: number;
@@ -1182,10 +1190,13 @@ export interface PublishBatchListResponse {
 export interface PublishAsset {
   name: string;
   path: string;
+  media_url?: string | null;
   size_bytes: number;
   updated_at?: number;
   recommended_title?: string | null;
   recommended_music_hint?: string | null;
+  source_text?: string | null;
+  source_task_id?: string | null;
 }
 
 export interface XiaohongshuManualMaterialInput {

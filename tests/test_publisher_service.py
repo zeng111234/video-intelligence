@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -349,6 +350,32 @@ def test_douyin_uses_local_browser_publisher_even_when_old_official_mode_exists(
     assert publisher.capabilities()["setup_required"] is True
 
 
+def test_xiaohongshu_uses_local_browser_publisher_with_a_separate_account():
+    publisher = build_publisher(PublishPlatform.XIAOHONGSHU)
+
+    assert isinstance(publisher, LocalBrowserAutoPublisher)
+    assert publisher.capabilities()["mode"] == "local_browser"
+    assert publisher.capabilities()["requires_account"] is True
+    assert publisher.capabilities()["manual_only"] is True
+
+
+def test_preflight_requires_a_connected_account_for_every_local_browser_platform(tmp_path):
+    video = tmp_path / "xiaohongshu.mp4"
+    video.write_bytes(b"video")
+    service = PublishService(
+        MockRepository(),
+        {"xiaohongshu": LocalBrowserAutoPublisher(PublishPlatform.XIAOHONGSHU)},
+    )
+
+    result = service.preflight(
+        video_path=str(video),
+        targets=[PublishTarget(platform=PublishPlatform.XIAOHONGSHU, title="小红书测试")],
+    )
+
+    assert result["blocked"] is True
+    assert result["platforms"][0]["issue"] == "请先选择已扫码连接的发布账号。"
+
+
 def test_douyin_publisher_navigates_from_home_to_upload_page():
     assert DouyinBrowserPublisher._is_upload_page(
         "https://creator.douyin.com/creator-micro/content/upload"
@@ -660,10 +687,10 @@ def test_douyin_publisher_selects_large_file_by_local_cdp_path(tmp_path):
     )
 
 
-def test_local_browser_auto_publisher_is_explicit_and_does_not_hide_challenges():
+def test_xiaohongshu_browser_publisher_requires_manual_final_click_and_does_not_hide_challenges():
     publisher = LocalBrowserAutoPublisher(PublishPlatform.XIAOHONGSHU)
 
-    assert publisher.capabilities()["manual_only"] is False
+    assert publisher.capabilities()["manual_only"] is True
     assert publisher._requires_user("请完成短信验证码和安全验证")
     assert not publisher._requires_user("正常的发布表单")
 
@@ -680,7 +707,7 @@ def test_local_browser_auto_publisher_formats_tags_without_private_api():
     assert publisher._content(target) == "描述\n#品牌 #活动"
 
 
-def test_local_browser_allows_one_task_authorization_without_persisting_account_permission(
+def test_xiaohongshu_keeps_final_publish_manual_even_with_task_authorization(
     tmp_path,
     monkeypatch,
 ):
@@ -707,7 +734,7 @@ def test_local_browser_allows_one_task_authorization_without_persisting_account_
     monkeypatch.setattr(
         publisher,
         "_submit_and_verify",
-        lambda *args: (True, "平台页面已确认", True),
+        lambda *args: pytest.fail("小红书不能自动点击最终发布"),
     )
     target = PublishTarget(
         platform=PublishPlatform.XIAOHONGSHU,
@@ -719,9 +746,48 @@ def test_local_browser_allows_one_task_authorization_without_persisting_account_
 
     task = publisher.publish(str(video), target)
 
-    assert task.status == TaskStatus.SUCCEEDED
-    assert task.outputs["final_publish_clicked"] == "true"
+    assert task.status == TaskStatus.PAUSED
+    assert task.publish_status == PublishStatus.MANUAL_READY
+    assert task.outputs["final_publish_requires_user"] == "true"
+    assert "手动点击发布" in str(task.action_required)
     assert account.auto_publish_authorized is False
+
+
+def test_publish_worker_executes_xiaohongshu_preparation_instead_of_forcing_a_manual_package():
+    queued = PublishTask(
+        task_id="xhs-queued",
+        title="小红书发布",
+        status=TaskStatus.QUEUED,
+        publish_status=PublishStatus.PENDING,
+        progress=0,
+        created_at=datetime.now().astimezone(),
+        updated_at=datetime.now().astimezone(),
+        video_path="C:/example/video.mp4",
+        target=PublishTarget(
+            platform=PublishPlatform.XIAOHONGSHU,
+            account_id="xhs-account",
+            title="小红书测试",
+        ),
+        provider_name="xiaohongshu_local_browser",
+        stage="等待本机发布队列",
+    )
+
+    class FakePublishService:
+        def __init__(self) -> None:
+            self.executed: list[str] = []
+
+        def list_tasks(self) -> list[PublishTask]:
+            return [queued]
+
+        def execute_queued_task(self, task_id: str) -> PublishTask:
+            self.executed.append(task_id)
+            return queued
+
+    service = FakePublishService()
+    result = PublishWorker(service).tick_once()
+
+    assert result is queued
+    assert service.executed == ["xhs-queued"]
 
 
 def test_publish_worker_claims_only_one_queued_task(tmp_path):

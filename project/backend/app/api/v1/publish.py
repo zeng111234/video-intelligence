@@ -10,11 +10,11 @@ from html import escape
 from pathlib import Path
 from shutil import copy2, copyfileobj
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from project.backend.app.core import config as backend_config
@@ -26,6 +26,21 @@ from src.services.publish_accounts import PublishAccountError, publish_account_m
 router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
 
 PUBLISH_ASSET_DIR = PROJECT_ROOT / "data" / "publish_assets"
+
+
+def _edit_asset_copy_source(task: Any, repository: Any) -> tuple[str | None, str | None]:
+    """Return the confirmed script behind a system-generated edit when available."""
+    source_text = str(getattr(task, "subtitle_text", "") or "").strip()
+    source_task_id = str(getattr(task, "source_task_id", "") or "").strip() or None
+    avatar_task_id = str(getattr(task, "source_avatar_task_id", "") or "").strip()
+    if not source_text and avatar_task_id:
+        from src.models import AvatarTask
+
+        avatar_task = repository.get_task(avatar_task_id)
+        if isinstance(avatar_task, AvatarTask):
+            source_text = avatar_task.script_text.strip()
+            source_task_id = avatar_task.source_task_id or source_task_id or avatar_task.task_id
+    return source_text[:12_000] or None, source_task_id
 
 PUBLISH_CONFIG_FIELDS: dict[str, dict[str, str]] = {
     "douyin": {
@@ -794,7 +809,7 @@ def delete_publish_account(account_id: str):
 
 
 @router.get("/assets")
-def list_assets():
+def list_assets(repository=Depends(get_repository)):
     """列出已上传到本机的待发布成片。"""
     PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     items = []
@@ -804,15 +819,46 @@ def list_assets():
         if not path.is_file():
             continue
         stat = path.stat()
-        items.append(
-            {
-                "name": path.name,
-                "path": str(path),
-                "size_bytes": stat.st_size,
-                "updated_at": stat.st_mtime,
-            }
-        )
+        item: dict[str, Any] = {
+            "name": path.name,
+            "path": str(path),
+            "media_url": f"/api/v1/publish/assets/media?name={quote(path.name)}",
+            "size_bytes": stat.st_size,
+            "updated_at": stat.st_mtime,
+        }
+        if path.stem.startswith("ai-edit-"):
+            from src.models import VideoEditTask
+
+            task = repository.get_task(path.stem.removeprefix("ai-edit-"))
+            if isinstance(task, VideoEditTask):
+                source_text, source_task_id = _edit_asset_copy_source(task, repository)
+                item.update(
+                    {
+                        "recommended_title": task.outputs.get("publish_title") or None,
+                        "source_text": source_text,
+                        "source_task_id": source_task_id,
+                    }
+                )
+        items.append(item)
     return {"items": items, "total": len(items)}
+
+
+@router.get("/assets/media")
+def get_asset_media(name: str = Query(..., min_length=1)):
+    """安全预览待发布成片，只允许读取发布素材目录内的文件。"""
+    filename = Path(name).name
+    if filename != name:
+        raise HTTPException(status_code=400, detail="成片名称无效。")
+    path = (PUBLISH_ASSET_DIR / filename).resolve()
+    asset_root = PUBLISH_ASSET_DIR.resolve()
+    if path.parent != asset_root or not path.is_file():
+        raise HTTPException(status_code=404, detail="成片不存在。")
+    media_types = {
+        ".mp4": "video/mp4",
+        ".mov": "video/quicktime",
+        ".m4v": "video/x-m4v",
+    }
+    return FileResponse(path, media_type=media_types.get(path.suffix.lower(), "video/mp4"))
 
 
 @router.post("/assets/upload")
@@ -843,6 +889,7 @@ def upload_asset(
     return {
         "name": target.name,
         "path": str(target),
+        "media_url": f"/api/v1/publish/assets/media?name={quote(target.name)}",
         "size_bytes": target.stat().st_size,
     }
 
@@ -903,13 +950,17 @@ def import_edited_asset(
                 ]
                 music_hint = " ".join(part for part in hint_parts if part)[:80]
     stat = target.stat()
+    source_text, source_task_id = _edit_asset_copy_source(task, repository)
     return {
         "name": target.name,
         "path": str(target),
+        "media_url": f"/api/v1/publish/assets/media?name={quote(target.name)}",
         "size_bytes": stat.st_size,
         "updated_at": stat.st_mtime,
         "recommended_title": task.outputs.get("publish_title") or None,
         "recommended_music_hint": music_hint or None,
+        "source_text": source_text,
+        "source_task_id": source_task_id,
     }
 
 

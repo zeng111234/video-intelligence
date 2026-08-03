@@ -178,11 +178,10 @@ def build_publisher(platform: PublishPlatform):
         from src.adapters.publishers.douyin_browser import DouyinBrowserPublisher
 
         return DouyinBrowserPublisher()
-    if platform == PublishPlatform.XIAOHONGSHU:
-        return ManualPackagePublisher(platform)
     if platform in {
         PublishPlatform.KUAISHOU,
         PublishPlatform.WECHAT_CHANNELS,
+        PublishPlatform.XIAOHONGSHU,
         PublishPlatform.BILIBILI,
     }:
         return LocalBrowserAutoPublisher(platform)

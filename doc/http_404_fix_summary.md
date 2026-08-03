@@ -148,7 +148,7 @@ def create_error_context(error, request_url=None, request_method=None,
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.12.3, pytest-8.4.2, pluggy-1.6.0
-rootdir: C:\Users\zeng\Desktop\video
+rootdir: <仓库根目录>
 configfile: pytest.ini
 plugins: anyio-4.13.0, cov-7.1.0
 collected 307 items

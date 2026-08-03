@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RUNTIME_ROOTS = (
+    PROJECT_ROOT / "scripts",
+    PROJECT_ROOT / "src",
+    PROJECT_ROOT / "project" / "backend" / "app",
+    PROJECT_ROOT / "project" / "frontend" / "src",
+)
+RUNTIME_ENTRYPOINTS = (
+    PROJECT_ROOT / "start.bat",
+    PROJECT_ROOT / "project" / "backend" / "start.ps1",
+    PROJECT_ROOT / "project" / "frontend" / "start.ps1",
+)
+
+
+def _runtime_files() -> list[Path]:
+    files = list(RUNTIME_ENTRYPOINTS)
+    for root in RUNTIME_ROOTS:
+        files.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix.casefold()
+            in {".py", ".ps1", ".bat", ".cmd", ".js", ".mjs", ".ts", ".tsx"}
+        )
+    return files
+
+
+def test_runtime_does_not_contain_hardcoded_windows_user_profile() -> None:
+    offenders: list[str] = []
+    user_profile = re.compile(r"[a-z]:[\\/]+users[\\/]+[^\\/]+", re.IGNORECASE)
+
+    for path in _runtime_files():
+        if user_profile.search(path.read_text(encoding="utf-8-sig", errors="ignore")):
+            offenders.append(str(path.relative_to(PROJECT_ROOT)))
+
+    assert offenders == []
+
+
+def test_windows_setup_uses_project_local_and_locked_dependencies() -> None:
+    setup = (PROJECT_ROOT / "scripts" / "setup_windows.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    startup = (PROJECT_ROOT / "scripts" / "start_all_services.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert '".venv"' in setup
+    assert " ci --no-audit --no-fund" in setup
+    assert "package-lock.json" in setup
+    assert 'PackageId "Python.Python.3.12"' in setup
+    assert 'PackageId "OpenJS.NodeJS.LTS"' in setup
+    assert "--disable-interactivity" in setup
+    assert '".venv\\Scripts\\python.exe"' in startup
+    assert 'StartCommand = "python"' not in startup

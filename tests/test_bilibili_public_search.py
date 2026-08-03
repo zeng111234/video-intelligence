@@ -5,13 +5,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import httpx
+import pytest
 
 from src.adapters.bilibili_public_search import BilibiliPublicSearchProvider
+from src.adapters.licensed import LicensedProviderError
 from src.models import Platform
 
 
 def _response(payload: dict) -> httpx.Response:
-    request = httpx.Request("GET", "https://api.bilibili.com/x/web-interface/search/type")
+    request = httpx.Request(
+        "GET", "https://api.bilibili.com/x/web-interface/search/type"
+    )
     return httpx.Response(200, json=payload, request=request)
 
 
@@ -23,7 +27,7 @@ def test_search_keeps_recent_items_and_normalizes_public_metrics(monkeypatch):
             "result": [
                 {
                     "bvid": "BV1recent",
-                    "title": "<em class=\"keyword\">餐饮获客</em>的新方法",
+                    "title": '<em class="keyword">餐饮获客</em>的新方法',
                     "author": "测试作者",
                     "pubdate": int(now.timestamp()),
                     "play": "1.2万",
@@ -58,7 +62,8 @@ def test_search_keeps_recent_items_and_normalizes_public_metrics(monkeypatch):
     assert item.title == "餐饮获客的新方法"
     assert item.metrics.plays == 12000
     assert item.metrics.favorites == 23
-    assert item.metrics.comments == 8
+    # ``video_review`` is B 站弹幕数，不应被展示为评论数。
+    assert item.metrics.comments is None
     assert any("点赞" in warning for warning in item.data_quality_warnings)
 
 
@@ -83,3 +88,122 @@ def test_search_retries_one_time_after_connection_failure(monkeypatch):
 
     assert calls == 2
     assert result.items == []
+
+
+def test_refresh_metrics_reads_public_detail_and_keeps_zero_values(monkeypatch):
+    now = datetime.now(timezone.utc)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_get(url, *args, **kwargs):
+        calls.append((url, kwargs["params"]))
+        return _response(
+            {
+                "code": 0,
+                "data": {
+                    "title": "公开详情视频",
+                    "pubdate": int(now.timestamp()),
+                    "duration": 97,
+                    "owner": {"mid": 42, "name": "B站作者"},
+                    "stat": {
+                        "view": 0,
+                        "like": 0,
+                        "reply": 0,
+                        "share": 0,
+                        "favorite": 0,
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    provider = BilibiliPublicSearchProvider()
+    result = provider.refresh_metrics(
+        platform=Platform.BILIBILI,
+        platform_item_ids=["BV1detail"],
+        idempotency_key="test-detail-refresh",
+    )
+
+    assert provider.capabilities().supports_metric_refresh is True
+    assert calls == [
+        ("https://api.bilibili.com/x/web-interface/view", {"bvid": "BV1detail"})
+    ]
+    assert result.api_call_count == 1
+    assert result.billable_units == 0
+    assert result.raw_item_count == 1
+    assert result.parsed_item_count == 1
+    assert result.errors == []
+    item = result.items[0]
+    assert item.platform_item_id == "BV1detail"
+    assert item.title == "公开详情视频"
+    assert item.author_id == "42"
+    assert item.author_name == "B站作者"
+    assert item.duration_seconds == 97
+    assert (
+        item.published_at
+        == datetime.fromtimestamp(int(now.timestamp()), tz=timezone.utc).astimezone()
+    )
+    assert str(item.source_url) == "https://www.bilibili.com/video/BV1detail"
+    assert item.metrics.plays == 0
+    assert item.metrics.likes == 0
+    assert item.metrics.comments == 0
+    assert item.metrics.shares == 0
+    assert item.metrics.favorites == 0
+
+
+def test_refresh_metrics_retries_one_item_once_and_records_its_error(monkeypatch):
+    calls: dict[str, int] = {"BV1good": 0, "BV1bad": 0}
+    now = datetime.now(timezone.utc)
+
+    def fake_get(url, *args, **kwargs):
+        del url, args
+        bvid = kwargs["params"]["bvid"]
+        calls[bvid] += 1
+        if bvid == "BV1bad":
+            raise httpx.ConnectError("temporary connection failure")
+        return _response(
+            {
+                "code": 0,
+                "data": {
+                    "title": "可刷新作品",
+                    "pubdate": int(now.timestamp()),
+                    "duration": 61,
+                    "owner": {"mid": 7, "name": "作者"},
+                    "stat": {
+                        "view": 100,
+                        "like": 9,
+                        "reply": 2,
+                        "share": 1,
+                        "favorite": 3,
+                    },
+                },
+            }
+        )
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    result = BilibiliPublicSearchProvider().refresh_metrics(
+        platform=Platform.BILIBILI,
+        platform_item_ids=["BV1good", "BV1bad"],
+        idempotency_key="test-detail-retry",
+    )
+
+    assert calls == {"BV1good": 1, "BV1bad": 2}
+    assert [item.platform_item_id for item in result.items] == ["BV1good"]
+    assert len(result.errors) == 1
+    assert result.errors[0].item_index == 1
+    assert result.errors[0].kind.value == "connection"
+    assert result.errors[0].retryable is False
+
+
+def test_refresh_metrics_rejects_more_than_ten_items(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda *args, **kwargs: pytest.fail("超过上限时不应发起详情请求"),
+    )
+
+    with pytest.raises(LicensedProviderError, match="最多查询 10 条"):
+        BilibiliPublicSearchProvider().refresh_metrics(
+            platform=Platform.BILIBILI,
+            platform_item_ids=[f"BV1{index}" for index in range(11)],
+            idempotency_key="test-max-detail-refresh",
+        )

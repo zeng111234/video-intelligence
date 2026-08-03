@@ -1,4 +1,4 @@
-# Video Intelligence System - Service Startup Script
+﻿# Video Intelligence System - Service Startup Script
 # Version: 2.0.5
 # Date: 2026-07-20
 
@@ -14,6 +14,7 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $serviceLogDirectory = Join-Path $projectRoot "data\logs\services"
+$pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
 # Service configuration
 $services = @(
@@ -21,7 +22,7 @@ $services = @(
         Name = "FastAPI Backend"
         Port = 2001
         HealthUrl = "http://localhost:2001/health"
-        StartCommand = "python"
+        StartCommand = $pythonCommand
         StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
@@ -159,99 +160,14 @@ function Stop-ExistingServices {
 }
 
 function Install-Dependencies {
-    Write-Log "Checking and installing dependencies..." "INFO"
-    
-    # Check Python
-    Write-Log "Checking Python environment..." "INFO"
-    try {
-        $pythonVersion = python --version 2>&1
-        Write-Log "Python environment OK: $pythonVersion" "SUCCESS"
-    } catch {
-        Write-Log "Python not installed or not in PATH" "ERROR"
+    Write-Log "正在检查项目运行环境..." "INFO"
+    $setupScript = Join-Path $projectRoot "scripts\setup_windows.ps1"
+    & $setupScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "运行环境尚未准备好。请按上面的提示处理后重新运行 start.bat。" "ERROR"
         return $false
     }
-    
-    # Check Node.js
-    Write-Log "Checking Node.js environment..." "INFO"
-    try {
-        $nodeVersion = node --version 2>&1
-        Write-Log "Node.js environment OK: $nodeVersion" "SUCCESS"
-    } catch {
-        Write-Log "Node.js not installed or not in PATH" "ERROR"
-        return $false
-    }
-    
-    # Check FFmpeg (optional)
-    Write-Log "Checking FFmpeg environment..." "INFO"
-    try {
-        $ffmpegVersion = ffmpeg -version 2>&1 | Select-Object -First 1
-        Write-Log "FFmpeg environment OK: $ffmpegVersion" "SUCCESS"
-    } catch {
-        Write-Log "FFmpeg not installed, video processing may be limited" "WARN"
-    }
-    
-    # Install backend dependencies (incremental check). FastAPI/Uvicorn alone
-    # are insufficient: crawler browser discovery also needs Playwright.
-    Write-Log "Checking backend dependencies..." "INFO"
-    $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba; import playwright.sync_api" 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Log "Backend dependencies already installed" "SUCCESS"
-    } else {
-        Write-Log "Backend dependencies incomplete; installing project/backend/requirements.txt once..." "WARN"
-        Push-Location (Join-Path $projectRoot "project\backend")
-        python -m pip install -r requirements.txt -q
-        if ($LASTEXITCODE -eq 0) {
-            $backendCheck = python -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba; import playwright.sync_api" 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                Write-Log "Backend dependency verification failed. Run: python -m pip install -r project/backend/requirements.txt" "ERROR"
-                Pop-Location
-                return $false
-            }
-            Write-Log "Backend dependencies installed and verified" "SUCCESS"
-        } else {
-            Write-Log "Backend dependencies installation failed. Run: python -m pip install -r project/backend/requirements.txt" "ERROR"
-            Pop-Location
-            return $false
-        }
-        Pop-Location
-    }
-
-    # Browser discovery uses an installed branded browser channel. It does not
-    # require downloading Playwright's bundled Chromium binary.
-    $browserPaths = @(
-        "C:\Program Files\Google\Chrome\Application\chrome.exe",
-        "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        "C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-    )
-    if ($env:LOCALAPPDATA) {
-        $browserPaths += Join-Path $env:LOCALAPPDATA "Google\Chrome\Application\chrome.exe"
-    }
-    if ($browserPaths | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1) {
-        Write-Log "Chrome/Edge browser detected for crawler discovery" "SUCCESS"
-    } else {
-        Write-Log "Chrome/Edge was not found. Crawler discovery will explain the required browser in the page." "WARN"
-    }
-    
-    # Install frontend dependencies (incremental check)
-    $nodeModulesPath = Join-Path $projectRoot "project\frontend\node_modules"
-    if (Test-Path $nodeModulesPath) {
-        Write-Log "Frontend dependencies already installed" "SUCCESS"
-    } else {
-        Write-Log "Installing frontend dependencies..." "INFO"
-        Push-Location (Join-Path $projectRoot "project\frontend")
-        npm install --silent
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Frontend dependencies installed" "SUCCESS"
-        } else {
-            Write-Log "Frontend dependencies installation failed" "ERROR"
-            Pop-Location
-            return $false
-        }
-        Pop-Location
-    }
-    
-    return $true
+    return Test-Path -LiteralPath $pythonCommand
 }
 
 function Start-Services {

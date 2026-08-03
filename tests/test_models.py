@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from src.models import VideoMetricSnapshot
+from src.models import ProviderMode, SearchBatch, VideoMetricSnapshot
 
 
 def test_missing_metrics_remain_none() -> None:
@@ -31,3 +31,9 @@ def test_negative_metric_is_rejected() -> None:
             likes=-1,
             confidence=0.7,
         )
+
+
+def test_search_batch_accepts_single_character_keyword() -> None:
+    batch = SearchBatch(keyword="机", provider="test", mode=ProviderMode.PUBLIC_WEB)
+
+    assert batch.keyword == "机"

@@ -96,7 +96,7 @@ class PublishService:
             issue = None
             if mode == "local_browser" and not target.account_id:
                 can_create_task = False
-                issue = "请先选择已扫码连接的抖音账号。"
+                issue = "请先选择已扫码连接的发布账号。"
             if not can_create_task:
                 issue = issue or "未配置官方发布权限，也没有启用人工兜底。"
 

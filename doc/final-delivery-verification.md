@@ -91,7 +91,7 @@ ok
 ### 5. 部署配置验证
 
 #### 启动脚本
-- ✅ `打开短视频系统.cmd` - 主启动脚本
+- ✅ `start.bat` - 唯一用户启动入口
 - ✅ `scripts/launch_app.ps1` - Streamlit启动脚本
 - ✅ `scripts/start_all_services.ps1` - 全服务启动脚本（新增）
 

@@ -3,6 +3,9 @@ import sys
 import os
 import subprocess
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKEND_DIR = os.path.join(PROJECT_ROOT, "project", "backend")
+
 def try_bind(port):
     """Try to create a socket with SO_REUSEADDR and start uvicorn"""
     try:
@@ -22,14 +25,14 @@ def try_bind(port):
 port = 2001
 if try_bind(port):
     print('Port is available, starting uvicorn...')
-    os.environ['PYTHONPATH'] = r'C:\Users\zeng\Desktop\video'
-    os.chdir(r'C:\Users\zeng\Desktop\video\project\backend')
+    os.environ['PYTHONPATH'] = PROJECT_ROOT
+    os.chdir(BACKEND_DIR)
     subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app', 
                    '--host', '0.0.0.0', '--port', str(port)])
 else:
     print('Port still occupied. Trying to start on port 2001 anyway...')
     # The zombie socket might allow a new bind with SO_REUSEADDR
-    os.environ['PYTHONPATH'] = r'C:\Users\zeng\Desktop\video'
-    os.chdir(r'C:\Users\zeng\Desktop\video\project\backend')
+    os.environ['PYTHONPATH'] = PROJECT_ROOT
+    os.chdir(BACKEND_DIR)
     subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app', 
                    '--host', '0.0.0.0', '--port', str(port)])

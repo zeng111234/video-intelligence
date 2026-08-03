@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -47,6 +48,63 @@ class EligibilityStatus(StrEnum):
     PENDING_REVIEW = "pending_review"
     APPROVED = "approved"
     REJECTED = "rejected"
+
+
+_DURATION_SECONDS_EVIDENCE_RE = re.compile(r"时长秒=(\d+)")
+_UNRELIABLE_PUBLISHED_AT_EVIDENCE_MARKERS = (
+    "time=search_order_fallback",
+    "time=platform_filter",
+    "发布时间=未返回",
+)
+_UNRELIABLE_PUBLISHED_AT_WARNING_MARKERS = (
+    "未取得有效发布时间",
+    "未返回可靠发布时间",
+    "未显示可核验发布时间",
+    "未返回精确发布时间",
+    "页面展示为采样时间",
+)
+
+
+def duration_seconds_from_evidence(evidence: str | None) -> int | None:
+    """Extract a visible-card duration from legacy crawler evidence when present."""
+
+    match = _DURATION_SECONDS_EVIDENCE_RE.search(evidence or "")
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if value > 0 else None
+
+
+def _with_duration_from_evidence(values: Any) -> Any:
+    """Backfill only legacy evidence that predates ``duration_seconds``."""
+
+    if not isinstance(values, dict) or values.get("duration_seconds") is not None:
+        return values
+    duration_seconds = duration_seconds_from_evidence(values.get("evidence"))
+    if duration_seconds is None:
+        return values
+    return {**values, "duration_seconds": duration_seconds}
+
+
+def published_at_is_reliable(
+    evidence: str | None,
+    data_quality_warnings: list[str],
+) -> bool:
+    """Whether ``published_at`` came from a platform-visible timestamp.
+
+    Some browser sources intentionally use the observation time as a placeholder.
+    The source-specific evidence/warnings already record that fact, so keep it
+    derived instead of persisting another mutable column.
+    """
+
+    evidence_text = evidence or ""
+    if any(marker in evidence_text for marker in _UNRELIABLE_PUBLISHED_AT_EVIDENCE_MARKERS):
+        return False
+    return not any(
+        marker in warning
+        for warning in data_quality_warnings
+        for marker in _UNRELIABLE_PUBLISHED_AT_WARNING_MARKERS
+    )
 
 
 class KeywordTrendLevel(StrEnum):
@@ -317,6 +375,7 @@ class VideoCandidate(BaseModel):
     platform: Platform
     category: str
     published_at: datetime
+    duration_seconds: int | None = Field(default=None, gt=0)
     source_url: HttpUrl | None = None
     source_type: DataSource
     rights_status: str = "metadata_only"
@@ -335,6 +394,18 @@ class VideoCandidate(BaseModel):
     collect_count: int | None = Field(default=None, ge=0)
     metrics: VideoMetricSnapshot
     heat: HeatResult
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_duration_seconds_from_evidence(cls, values: Any) -> Any:
+        return _with_duration_from_evidence(values)
+
+    @property
+    def published_at_reliable(self) -> bool:
+        return published_at_is_reliable(
+            self.evidence,
+            self.data_quality_warnings,
+        )
 
 
 class CandidateCopyProbe(BaseModel):
@@ -414,11 +485,24 @@ class ProviderSearchItem(BaseModel):
     author_id: str = Field(min_length=1)
     author_name: str = Field(min_length=1)
     published_at: datetime
+    duration_seconds: int | None = Field(default=None, gt=0)
     source_url: HttpUrl | None = None
     provider_rank: int = Field(ge=1, le=100)
     metrics: VideoMetricSnapshot
     evidence: str | None = None
     data_quality_warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_duration_seconds_from_evidence(cls, values: Any) -> Any:
+        return _with_duration_from_evidence(values)
+
+    @property
+    def published_at_reliable(self) -> bool:
+        return published_at_is_reliable(
+            self.evidence,
+            self.data_quality_warnings,
+        )
 
 
 class ProviderSearchPage(BaseModel):
@@ -596,6 +680,7 @@ class NormalizedCandidate(BaseModel):
     platform: Platform = Platform.DOUYIN
     category: str = "B2B/AI企业服务获客数字人口播"
     published_at: datetime
+    duration_seconds: int | None = Field(default=None, gt=0)
     source_url: HttpUrl | None = None
     source_type: DataSource
     metrics: VideoMetricSnapshot
@@ -610,6 +695,18 @@ class NormalizedCandidate(BaseModel):
     official_rank: int | None = Field(default=None, ge=1)
     official_hot_value: float | None = Field(default=None, ge=0)
     data_quality_warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_duration_seconds_from_evidence(cls, values: Any) -> Any:
+        return _with_duration_from_evidence(values)
+
+    @property
+    def published_at_reliable(self) -> bool:
+        return published_at_is_reliable(
+            self.evidence,
+            self.data_quality_warnings,
+        )
 
 
 class ImportErrorDetail(BaseModel):
@@ -694,7 +791,7 @@ class DiscoveryResult(BaseModel):
 
 class SearchBatch(BaseModel):
     batch_id: str = Field(default_factory=lambda: f"batch-{uuid4().hex[:12]}")
-    keyword: str = Field(min_length=2, max_length=50)
+    keyword: str = Field(min_length=1, max_length=50)
     # 0 表示不限发布时间；30 天供快手近期召回，历史批次仍兼容 180/300 天。
     published_window_days: int = Field(default=0)
     # 热点宝的榜单统计周期，和发布时间筛选分开保存。

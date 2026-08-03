@@ -15,6 +15,8 @@ def minimize_browser_window(debug_port: int) -> bool:
             ["netstat", "-ano", "-p", "tcp"],
             capture_output=True,
             text=True,
+            encoding="mbcs",
+            errors="replace",
             check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -22,7 +24,7 @@ def minimize_browser_window(debug_port: int) -> bool:
         pid = next(
             (
                 int(line.split()[-1])
-                for line in listing.stdout.splitlines()
+                for line in (listing.stdout or "").splitlines()
                 if endpoint in line and "LISTENING" in line.upper() and line.split()[-1].isdigit()
             ),
             None,
@@ -46,7 +48,7 @@ def minimize_browser_window(debug_port: int) -> bool:
             return False
         user32.ShowWindow(windows[0], 6)  # SW_MINIMIZE
         return True
-    except (AttributeError, OSError, ValueError):
+    except (AttributeError, OSError, TypeError, ValueError):
         return False
 
 
@@ -59,6 +61,8 @@ def reveal_browser_window(debug_port: int) -> bool:
             ["netstat", "-ano", "-p", "tcp"],
             capture_output=True,
             text=True,
+            encoding="mbcs",
+            errors="replace",
             check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -66,7 +70,7 @@ def reveal_browser_window(debug_port: int) -> bool:
         pid = next(
             (
                 int(line.split()[-1])
-                for line in listing.stdout.splitlines()
+                for line in (listing.stdout or "").splitlines()
                 if endpoint in line and "LISTENING" in line.upper() and line.split()[-1].isdigit()
             ),
             None,
@@ -94,38 +98,5 @@ def reveal_browser_window(debug_port: int) -> bool:
         user32.SetWindowPos(hwnd, -2, 80, 80, 1100, 800, 0x0040)  # then normal z-order
         user32.SetForegroundWindow(hwnd)
         return True
-    except (OSError, ValueError):
-        return False
-
-
-def restart_browser_for_login(debug_port: int) -> bool:
-    """Close only the hidden dedicated browser so its profile can reopen visibly."""
-    try:
-        listing = subprocess.run(
-            ["netstat", "-ano", "-p", "tcp"],
-            capture_output=True,
-            text=True,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        endpoint = f"127.0.0.1:{debug_port}"
-        pid = next(
-            (
-                line.split()[-1]
-                for line in listing.stdout.splitlines()
-                if endpoint in line and "LISTENING" in line.upper() and line.split()[-1].isdigit()
-            ),
-            None,
-        )
-        if pid is None:
-            return False
-        completed = subprocess.run(
-            ["taskkill", "/PID", pid, "/T", "/F"],
-            capture_output=True,
-            text=True,
-            check=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        return completed.returncode == 0
-    except OSError:
+    except (AttributeError, OSError, TypeError, ValueError):
         return False

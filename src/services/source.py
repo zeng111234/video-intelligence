@@ -111,6 +111,7 @@ class SourceService:
             platform=item.platform,
             category=item.category,
             published_at=item.published_at,
+            duration_seconds=item.duration_seconds,
             source_url=item.source_url,
             source_type=item.source_type,
             rights_status=item.rights_status,

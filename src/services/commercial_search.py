@@ -40,7 +40,7 @@ MONTHLY_HARD_LIMIT_COST_CNY = 10.0
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
-RELEVANCE_RULE_VERSION = "title_or_hashtag_intent_v2"
+RELEVANCE_RULE_VERSION = "platform_search_broad_recall_v1"
 _BUSINESS_INTENT_SUFFIXES = (
     "获客",
     "引流",
@@ -886,10 +886,17 @@ class CommercialSearchService:
                     )
                 )
                 continue
-            if not item_matches_keyword(title=item.title, keyword=keyword, evidence=item.evidence):
-                counts["irrelevant_count"] += 1
-                continue
+            direct_keyword_match = item_matches_keyword(
+                title=item.title,
+                keyword=keyword,
+                evidence=item.evidence,
+            )
             seen.add(item.platform_item_id)
+            warnings = list(item.data_quality_warnings)
+            if not direct_keyword_match:
+                warnings.append(
+                    f"标题未直接命中“{keyword}”；这是平台搜索返回的候选，请人工判断相关性。"
+                )
             normalized.append(
                 NormalizedCandidate(
                     platform_item_id=item.platform_item_id,
@@ -899,6 +906,7 @@ class CommercialSearchService:
                     platform=platform,
                     category=f"关键词/{keyword}",
                     published_at=item.published_at,
+                    duration_seconds=item.duration_seconds,
                     source_url=item.source_url,
                     source_type=source_type,
                     metrics=item.metrics,
@@ -913,7 +921,7 @@ class CommercialSearchService:
                         if provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:") and item.metrics.plays is not None
                         else None
                     ),
-                    data_quality_warnings=item.data_quality_warnings,
+                    data_quality_warnings=warnings,
                 )
             )
             if len(normalized) >= limit:
@@ -1168,8 +1176,8 @@ class CommercialSearchService:
         hotspot_window_hours: int | None = None,
     ) -> str:
         normalized = keyword.strip()
-        if not 2 <= len(normalized) <= 50:
-            raise ValueError("关键词长度必须为 2 到 50 个字符。")
+        if not 1 <= len(normalized) <= 50:
+            raise ValueError("关键词长度必须为 1 到 50 个字符。")
         if published_window_days not in RECRAWL_OFFSETS_BY_WINDOW:
             raise ValueError(
                 "召回时间范围只支持不限、近 24 小时、近 3 天、近 7 天、近 30 天、近半年或近 10 个月。"
@@ -1190,7 +1198,7 @@ class CommercialSearchService:
         count: int,
     ) -> str:
         payload = (
-            f"{provider}|{platform.value}|{RANKING_MODE}|{keyword.casefold()}|"
+            f"{provider}|{platform.value}|{RANKING_MODE}|{RELEVANCE_RULE_VERSION}|{keyword.casefold()}|"
             f"{published_window_days}|{hotspot_window_hours or '-'}|{count}"
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()

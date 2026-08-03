@@ -441,7 +441,7 @@ def test_empty_provider_response_is_recorded_as_provider_empty() -> None:
     assert provider.search_calls == [Platform.DOUYIN]
 
 
-def test_strict_keyword_relevance_keeps_title_or_hashtag_matches_only() -> None:
+def test_platform_search_keeps_readable_nonliteral_candidates_for_table_filtering() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -509,17 +509,24 @@ def test_strict_keyword_relevance_keeps_title_or_hashtag_matches_only() -> None:
     batch = _douyin_only_service(repository, provider, now).execute(keyword="带货")
     run = repository.list_platform_search_runs(batch.batch_id)[0]
 
-    assert run.returned_count == 1
-    assert run.irrelevant_count == 2
+    assert run.returned_count == 3
+    assert run.irrelevant_count == 0
     assert run.result_state == "no_hot"
-    assert [candidate.video_id for candidate in repository.list_candidates()] == [
-        "douyin-title-match"
+    candidates = repository.list_candidates()
+    assert [candidate.video_id for candidate in candidates] == [
+        "douyin-title-match",
+        "douyin-author-only",
+        "douyin-unrelated",
     ]
-    assert len(repository.list_candidate_matches(run.run_id)) == 1
-    assert [item.offset_hours for item in repository.list_sampling_checkpoints("带货")] == [2]
+    assert any(
+        "标题未直接命中“带货”" in warning
+        for warning in candidates[1].data_quality_warnings
+    )
+    assert len(repository.list_candidate_matches(run.run_id)) == 3
+    assert len(repository.list_sampling_checkpoints("带货")) == 3
 
 
-def test_relevance_filter_scans_beyond_first_page_limit_before_truncating() -> None:
+def test_platform_search_respects_result_limit_without_title_based_skips() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -578,11 +585,14 @@ def test_relevance_filter_scans_beyond_first_page_limit_before_truncating() -> N
     run = repository.list_platform_search_runs(batch.batch_id)[0]
 
     assert run.returned_count == 5
-    assert run.irrelevant_count == 30
+    assert run.irrelevant_count == 0
     assert len(repository.list_candidate_matches(run.run_id)) == 5
+    assert [candidate.video_id for candidate in repository.list_candidates()] == [
+        f"douyin-noise-{index}" for index in range(5)
+    ]
 
 
-def test_all_strictly_irrelevant_results_are_reported_without_importing() -> None:
+def test_all_nonliteral_platform_results_are_imported_with_a_review_warning() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -618,11 +628,16 @@ def test_all_strictly_irrelevant_results_are_reported_without_importing() -> Non
     batch = _douyin_only_service(repository, provider, now).execute(keyword="带货")
     run = repository.list_platform_search_runs(batch.batch_id)[0]
 
-    assert run.result_state == "all_irrelevant"
-    assert run.returned_count == 0
-    assert run.irrelevant_count == 1
-    assert repository.list_candidates() == []
-    assert repository.list_sampling_checkpoints("带货") == []
+    assert run.result_state == "no_hot"
+    assert run.returned_count == 1
+    assert run.irrelevant_count == 0
+    candidates = repository.list_candidates()
+    assert [candidate.video_id for candidate in candidates] == ["douyin-author-only"]
+    assert any(
+        "标题未直接命中“带货”" in warning
+        for warning in candidates[0].data_quality_warnings
+    )
+    assert len(repository.list_sampling_checkpoints("带货")) == 1
 
 
 def test_strict_keyword_relevance_normalizes_spacing_and_punctuation() -> None:

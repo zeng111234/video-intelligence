@@ -132,7 +132,10 @@ def test_media_resolution_cost_counts_against_shared_monthly_budget(
 ) -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureMediaProvider()
-    candidate = _candidate(platform=Platform.XIAOHONGSHU, platform_item_id="xhs-1")
+    candidate = _candidate(
+        platform=Platform.WECHAT_CHANNELS,
+        platform_item_id="wechat-1",
+    )
     repository.save_candidate(candidate)
     monkeypatch.setattr(
         "src.services.media_resolution.fetch_authorized_video",
@@ -149,9 +152,9 @@ def test_media_resolution_cost_counts_against_shared_monthly_budget(
     )
 
     assert resolved.attempt.status == MediaResolutionStatus.SUCCEEDED
-    assert resolved.attempt.billable_units == pytest.approx(0.12)
+    assert resolved.attempt.billable_units == pytest.approx(0.15)
     assert repository.monthly_platform_query_cost(NOW.replace(day=1)) == pytest.approx(
-        0.12
+        0.15
     )
 
 
@@ -212,37 +215,30 @@ def test_unknown_media_resolution_blocks_later_attempt() -> None:
     assert "结果未知" in (preview.block_reason or "")
 
 
-def test_non_transcribable_provider_media_is_recorded_and_blocks_repeat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_xiaohongshu_public_material_never_resolves_media_or_starts_transcription() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureMediaProvider()
     candidate = _candidate(platform=Platform.XIAOHONGSHU, platform_item_id="xhs-2")
-    repository.save_candidate(candidate)
-    monkeypatch.setattr(
-        "src.services.media_resolution.fetch_authorized_video",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            VideoSourceError("该地址返回的不是可识别的视频文件，请改为上传 MP4/MOV。")
-        ),
+    candidate = candidate.model_copy(
+        update={"source_url": HttpUrl("https://cdn.example.com/xhs-source.mp4")}
     )
+    repository.save_candidate(candidate)
     service = _service(repository, provider)
 
-    with pytest.raises(MediaResolutionError):
+    preview = service.preview(candidate)
+
+    assert preview.resolvable is False
+    assert "未登录公开搜索" in (preview.block_reason or "")
+    assert provider.calls == []
+
+    with pytest.raises(MediaResolutionError, match="未登录公开搜索"):
         service.resolve_video(candidate, idempotency_key="idem-media-not-video")
 
     latest = repository.find_latest_media_resolution_for_candidate(candidate.video_id)
-    assert latest is not None
-    assert latest.api_call_count == 1
-    assert latest.billable_units == pytest.approx(0.12)
-    assert latest.provider_request_id == "provider-media-1"
+    assert latest is None
     assert repository.monthly_platform_query_cost(NOW.replace(day=1)) == pytest.approx(
-        0.12
+        0.0
     )
-
-    preview = service.preview(candidate)
-    assert preview.resolvable is False
-    assert "手动补直链或上传" in (preview.block_reason or "")
-    assert len(provider.calls) == 1
 
 
 def test_oversized_provider_media_blocks_repeat(

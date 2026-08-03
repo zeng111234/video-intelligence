@@ -3,6 +3,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   Col,
   Drawer,
   Empty,
@@ -56,6 +57,7 @@ import type {
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
+import "./TranscriptionPage.css";
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -102,6 +104,67 @@ function formatTime(value: string | null) {
   return value ? new Date(value).toLocaleString("zh-CN") : "-";
 }
 
+function sourceLabel(sourceKind: string) {
+  if (sourceKind.includes("douyin")) return "抖音素材";
+  if (sourceKind.includes("kuaishou")) return "快手素材";
+  if (sourceKind.includes("bilibili")) return "B站素材";
+  if (sourceKind.includes("xiaohongshu") || sourceKind.includes("xhs")) return "小红书素材";
+  if (sourceKind === "manual_text") return "人工转写";
+  return "上传视频";
+}
+
+function looksLikeReadableTitle(value: string) {
+  const baseName = value.replace(/\.[a-z0-9]+$/i, "").trim();
+  const opaqueFileName = /^[A-Za-z0-9_-]+$/.test(baseName) && (
+    baseName.length > 28
+    || /^(input|output|uuu_?\d*|douyin-\d+|kuaishou-target-[\w-]+)$/i.test(baseName)
+  );
+  return /[\u4e00-\u9fff]/.test(baseName) || (/[a-z]/i.test(baseName) && !opaqueFileName);
+}
+
+function transcriptTopic(task: TranscriptionResponse) {
+  const transcript = task.segments
+    .slice(0, 8)
+    .map((segment) => segment.text.trim())
+    .filter(Boolean)
+    .join(" ");
+  if (!transcript) return "";
+
+  if (/贴标机/.test(transcript)) {
+    const machine = transcript.match(/(?:平面|立式|全自动|半自动|自动)?贴标机/)?.[0] || "贴标机";
+    return `${machine} · 操作说明`;
+  }
+  if (/(餐饮|烧烤店)/.test(transcript) && /(共享|会员|店长)/.test(transcript)) return "餐饮门店 · 共享会员模式";
+  if (/机器人/.test(transcript) && /(工人|工厂|失业)/.test(transcript)) return "工业机器人 · 替代人工";
+  if (/(键盘|手感)/.test(transcript) && /(游戏|手游)/.test(transcript)) return "手游操作 · 键位与手感";
+  if (/发作品/.test(transcript) && /播放量/.test(transcript)) return "短视频运营 · 提升播放量";
+
+  const firstSentence = transcript.split(/[。！？!?]/)[0] || "";
+  const opening = firstSentence
+    .trim()
+    .replace(/^大家好[，,、]?/, "")
+    .replace(/^(咱们|我们)来(看一下|聊一聊|说一说|讲一讲)/, "")
+    .replace(/^今天(来)?(聊一聊|说一说|讲一讲)/, "")
+    .trim();
+
+  if (!opening || opening.length < 8) return "";
+  return `主题 · ${opening.length > 18 ? `${opening.slice(0, 18)}…` : opening}`;
+}
+
+function formatTranscriptionName(task: TranscriptionResponse) {
+  const topic = transcriptTopic(task);
+  if (topic) return topic;
+
+  const candidate = task.title?.trim() || task.media_name?.trim() || "";
+  if (candidate && looksLikeReadableTitle(candidate)) return candidate;
+
+  const createdAt = task.created_at ? new Date(task.created_at) : null;
+  const timeLabel = createdAt && !Number.isNaN(createdAt.getTime())
+    ? `${createdAt.getMonth() + 1}月${createdAt.getDate()}日 ${String(createdAt.getHours()).padStart(2, "0")}:${String(createdAt.getMinutes()).padStart(2, "0")}`
+    : "未记录时间";
+  return `${sourceLabel(task.source_kind)} · ${timeLabel}`;
+}
+
 function normalizeSegments(segments: TranscriptSegment[]) {
   return segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false }));
 }
@@ -133,6 +196,9 @@ export default function TranscriptionPage() {
   const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [createTab, setCreateTab] = useState("url");
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
+  const [fileUploadConfirmed, setFileUploadConfirmed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -140,9 +206,11 @@ export default function TranscriptionPage() {
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
+  const entryFromQuery = searchParams.get("entry")?.trim() || "";
   const shareTextFromQuery = searchParams.get("share_text")?.trim() || "";
   const urlFromQuery = searchParams.get("url")?.trim() || "";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
+  const isUploadEntry = entryFromQuery === "upload";
 
   const filteredTasks = useMemo(() => {
     const normalized = searchText.trim().toLowerCase();
@@ -170,7 +238,7 @@ export default function TranscriptionPage() {
     try {
       const items = await listTranscriptions();
       setTasks(items);
-      const targetId = taskFromQuery || selectedTaskId;
+      const targetId = isUploadEntry ? "" : (taskFromQuery || selectedTaskId);
       if (targetId) {
         const task = items.find((item) => item.task_id === targetId) || await getTranscription(targetId);
         applyTask(task, false);
@@ -180,7 +248,7 @@ export default function TranscriptionPage() {
     } finally {
       setLoading(false);
     }
-  }, [applyTask, selectedTaskId, taskFromQuery, toast]);
+  }, [applyTask, isUploadEntry, selectedTaskId, taskFromQuery, toast]);
 
   const handleDeleteTranscription = async (task: TranscriptionResponse) => {
     setDeletingTaskId(task.task_id);
@@ -221,10 +289,20 @@ export default function TranscriptionPage() {
   }, [refresh]);
 
   useEffect(() => {
+    if (isUploadEntry) {
+      setSelected(null);
+      setSelectedTaskId(null);
+      setSegments([]);
+      setCreateTab("file");
+      setPendingUploadFile(null);
+      setFileUploadConfirmed(false);
+      setCreateOpen(true);
+      return;
+    }
     if (shareTextFromQuery) setShareText(shareTextFromQuery);
     if (urlFromQuery) setVideoUrl(urlFromQuery);
     if (candidateFromQuery || shareTextFromQuery || urlFromQuery) setCreateOpen(true);
-  }, [candidateFromQuery, setVideoUrl, shareTextFromQuery, urlFromQuery]);
+  }, [candidateFromQuery, isUploadEntry, setSelectedTaskId, setVideoUrl, shareTextFromQuery, urlFromQuery]);
 
   useEffect(() => {
     getCrawlerLinkTranscriptionCapabilities().then(setLinkCapabilities).catch(() => setLinkCapabilities(null));
@@ -278,6 +356,9 @@ export default function TranscriptionPage() {
     setSelected(null);
     setSelectedTaskId(null);
     setSegments([]);
+    setCreateTab("url");
+    setPendingUploadFile(null);
+    setFileUploadConfirmed(false);
     setCreateOpen(true);
   };
 
@@ -302,11 +383,25 @@ export default function TranscriptionPage() {
     }
   };
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async () => {
+    if (!pendingUploadFile) {
+      toast.warning("请先选择 MP4 或 MOV 文件");
+      return;
+    }
+    if (!rightsHolder.trim()) {
+      toast.warning("请填写权利主体");
+      return;
+    }
+    if (!fileUploadConfirmed) {
+      toast.warning("请先确认处理权和本次云端转写费用");
+      return;
+    }
     setSubmitting(true);
     try {
-      const created = await uploadAndTranscribe(file, "fun-asr", rightsHolder, "zh", candidateFromQuery);
+      const created = await uploadAndTranscribe(pendingUploadFile, "fun-asr", rightsHolder.trim(), "zh", candidateFromQuery);
       toast.success("文件已上传并创建转写任务");
+      setPendingUploadFile(null);
+      setFileUploadConfirmed(false);
       setCreateOpen(false);
       applyTask(created, false);
       await refresh();
@@ -483,8 +578,7 @@ export default function TranscriptionPage() {
         {selected ? (
           <Space direction="vertical" style={{ width: "100%" }} size={16}>
             <Space wrap>
-              <Text strong>{selected.media_name}</Text>
-              <Text code>{selected.task_id}</Text>
+              <Text strong>{formatTranscriptionName(selected)}</Text>
               <Tag>{selected.is_mock ? "演示数据" : (selected.model_name || "识别模型未记录")}</Tag>
               {selected.provider_name && <Tag color="blue">公司云端</Tag>}
               {selected.estimated_cost_cny != null && <Tag>预计 ¥{selected.estimated_cost_cny.toFixed(4)}</Tag>}
@@ -508,42 +602,69 @@ export default function TranscriptionPage() {
             {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
             <Space direction="vertical" style={{ width: "100%" }} size={16}>
               {segments.length > 0 ? (
-                <>
-                  <Card size="small" title={selected.is_mock ? "演示结果" : selected.provider_name === "aliyun_fun_asr" ? "云端识别结果" : "AI质检结果"}>
-                    <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                      <Alert
-                        type={selected.is_mock ? "info" : selected.provider_name === "aliyun_fun_asr" ? "warning" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
-                        showIcon
-                        message={selected.is_mock
-                          ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
-                          : selected.llm_review_count > 0
-                            ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
-                            : selected.provider_name === "aliyun_fun_asr"
-                              ? `阿里云已返回 ${segments.length} 个时间轴片段。系统未做二次识别或自动改写，请人工复核后再继续。`
-                              : selected.uncertain_segment_count > 0
-                                ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
-                                : "AI 已完成自动质检并生成成稿。"}
-                      />
-                      {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
-                      <Table rowKey={(_, index) => String(index)} columns={segmentColumns} dataSource={segments} pagination={false} size="small" scroll={{ x: 720 }} />
-                      <Card size="small" title={selected.provider_name === "aliyun_fun_asr" ? "识别稿预览" : "AI修订口播稿预览"}><Paragraph style={{ whiteSpace: "pre-wrap", margin: 0 }}>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph></Card>
-                    </Space>
-                  </Card>
-                </>
+                <section className="transcription-review-panel">
+                  <div className="transcription-review-heading">
+                    <Title level={5}>
+                      {selected.is_mock ? "演示结果" : selected.provider_name === "aliyun_fun_asr" ? "云端识别结果" : "AI质检结果"}
+                    </Title>
+                    <Text type="secondary">共 {segments.length} 段</Text>
+                  </div>
+                  <div className="transcription-review-notice">
+                    <Alert
+                      type={selected.is_mock ? "info" : selected.provider_name === "aliyun_fun_asr" ? "warning" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
+                      showIcon
+                      message={selected.is_mock
+                        ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
+                        : selected.llm_review_count > 0
+                          ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
+                          : selected.provider_name === "aliyun_fun_asr"
+                            ? `阿里云已返回 ${segments.length} 个时间轴片段。系统未做二次识别或自动改写，请人工复核后再继续。`
+                            : selected.uncertain_segment_count > 0
+                              ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
+                              : "AI 已完成自动质检并生成成稿。"}
+                    />
+                    {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
+                  </div>
+                  <Tabs
+                    className="transcription-review-tabs"
+                    items={[
+                      {
+                        key: "timeline",
+                        label: `时间轴（${segments.length}）`,
+                        children: (
+                          <Table
+                            rowKey={(_, index) => String(index)}
+                            columns={segmentColumns}
+                            dataSource={segments}
+                            pagination={false}
+                            size="small"
+                            scroll={{ x: 720, y: 300 }}
+                          />
+                        ),
+                      },
+                      {
+                        key: "transcript",
+                        label: "完整文稿",
+                        children: (
+                          <div className="transcription-fulltext-scroll">
+                            <Paragraph>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph>
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
+                </section>
               ) : <Empty description="该任务暂无可校对片段" />}
 
-              <Card size="small" title="下一步：AI 文案改写">
-                <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="确认后会带入 AI 文案改写；系统不会自动改写、不会自动制作数字人视频。"
-                  />
-                  <Button type="primary" onClick={handleSendToAiCopy} disabled={selected.status !== "succeeded" || segments.length === 0}>
-                    确认并带到 AI 文案
-                  </Button>
-                </Space>
-              </Card>
+              <div className="transcription-next-step">
+                <div>
+                  <Text strong>下一步：AI 文案改写</Text>
+                  <Text type="secondary">确认转写内容后再继续，不会自动改写。</Text>
+                </div>
+                <Button type="primary" onClick={handleSendToAiCopy} disabled={selected.status !== "succeeded" || segments.length === 0}>
+                  确认并带到 AI 文案
+                </Button>
+              </div>
             </Space>
           </Space>
         ) : (
@@ -566,10 +687,12 @@ export default function TranscriptionPage() {
             description="确认有权后，可用本机浏览器解析单条平台分享链接；不会批量下载、绕过验证或自动调用付费回退。也可以上传文件或填写授权直链。"
           />
           <Space wrap>
-            <Tag color="blue">公司阿里云 Fun-ASR · 单条上限 ¥0.20</Tag>
+            <Tag color="blue">公司阿里云 Fun-ASR · 单条最多 ¥0.20</Tag>
             <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" style={{ width: 300 }} />
           </Space>
           <Tabs
+            activeKey={createTab}
+            onChange={setCreateTab}
             items={[
               {
                 key: "url",
@@ -615,19 +738,53 @@ export default function TranscriptionPage() {
                 key: "file",
                 label: <span><UploadOutlined /> 上传文件</span>,
                 children: (
-                  <Upload.Dragger
-                    accept=".mp4,.mov"
-                    beforeUpload={(file) => {
-                      handleFileUpload(file);
-                      return false;
-                    }}
-                    multiple={false}
-                    showUploadList={false}
-                    disabled={submitting}
-                  >
-                    <p><UploadOutlined style={{ fontSize: 28 }} /></p>
-                    <p>点击或拖拽 MP4/MOV 文件上传</p>
-                  </Upload.Dragger>
+                  <Space direction="vertical" style={{ width: "100%" }} size={16}>
+                    {candidateFromQuery && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        message={`待处理候选：${candidateTitleFromQuery || candidateFromQuery}`}
+                        description="上传后会自动关联到这条候选素材。"
+                      />
+                    )}
+                    <Upload.Dragger
+                      accept=".mp4,.mov"
+                      beforeUpload={(file) => {
+                        setPendingUploadFile(file);
+                        setFileUploadConfirmed(false);
+                        return false;
+                      }}
+                      multiple={false}
+                      showUploadList={false}
+                      disabled={submitting}
+                    >
+                      <p><UploadOutlined style={{ fontSize: 28 }} /></p>
+                      <p>选择 MP4/MOV 文件</p>
+                      <p className="ant-upload-hint">选择后先确认处理权和费用，再开始转写。</p>
+                    </Upload.Dragger>
+                    {pendingUploadFile && (
+                      <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={`已选择：${pendingUploadFile.name}`}
+                          description="文件已暂存，尚未上传或创建转写任务。"
+                          action={<Button type="link" onClick={() => { setPendingUploadFile(null); setFileUploadConfirmed(false); }}>移除</Button>}
+                        />
+                        <Checkbox checked={fileUploadConfirmed} onChange={(event) => setFileUploadConfirmed(event.target.checked)}>
+                          我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 ¥0.20。
+                        </Checkbox>
+                        <Button
+                          type="primary"
+                          loading={submitting}
+                          disabled={!fileUploadConfirmed || !rightsHolder.trim()}
+                          onClick={handleFileUpload}
+                        >
+                          确认权利并开始云端转写
+                        </Button>
+                      </Space>
+                    )}
+                  </Space>
                 ),
               },
             ]}
@@ -657,7 +814,7 @@ export default function TranscriptionPage() {
         )}
       >
         <Space direction="vertical" style={{ width: "100%" }} size={16}>
-          <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="搜索媒体或任务 ID" />
+          <Input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="搜索视频名称、来源或任务 ID" />
           <Select
             value={filterStatus}
             onChange={setFilterStatus}
@@ -691,11 +848,10 @@ export default function TranscriptionPage() {
                 ]}
               >
                 <List.Item.Meta
-                  title={<Space wrap><Text strong>{item.media_name}</Text><Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag></Space>}
+                  title={<Space wrap><Text strong>{formatTranscriptionName(item)}</Text><Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag></Space>}
                   description={
                     <Space direction="vertical" size={4}>
-                      <Text code>{item.task_id}</Text>
-                      <Text type="secondary">{formatTime(item.created_at)} · {item.progress}%</Text>
+                      <Text type="secondary">创建于 {formatTime(item.created_at)} · {item.progress}%</Text>
                       <Progress percent={item.progress} size="small" status={item.status === "failed" ? "exception" : item.status === "succeeded" ? "success" : "active"} />
                     </Space>
                   }

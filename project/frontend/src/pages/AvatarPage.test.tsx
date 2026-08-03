@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Modal } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AvatarPage from "./AvatarPage";
 import { ToastProvider } from "../components/Toast";
+import type { AvatarJob } from "../api/types";
 import {
   createAvatarJob,
   getAvatarCapabilities,
@@ -42,9 +44,43 @@ function renderPage() {
   );
 }
 
+function makeAvatarJob(index: number): AvatarJob {
+  const succeeded = index % 2 === 0;
+  return {
+    task_id: `avatar-job-${index}`,
+    status: succeeded ? "succeeded" : "failed",
+    progress: succeeded ? 100 : 40,
+    stage: succeeded ? "结果已保存" : "生成失败",
+    title: `数字人视频${index}`,
+    video_name: `数字人视频${index}`,
+    script_text: "测试文案",
+    avatar_id: "avatar-1",
+    avatar_name: "形象一",
+    voice_id: "voice-1",
+    voice_name: "通用女声",
+    profile_id: "default",
+    speech_rate: 1,
+    aspect_ratio: "9:16",
+    resolution: "1080x1920",
+    provider_name: "shuying_legacy_cloud",
+    provider_job_id: `provider-job-${index}`,
+    estimated_cost_cny: null,
+    estimated_seconds: null,
+    actual_seconds: null,
+    result_url: succeeded ? `/avatar-result-${index}.mp4` : null,
+    error_kind: succeeded ? null : "provider_error",
+    error_message: succeeded ? null : "生成失败",
+    is_mock: false,
+    created_at: `2026-07-${String(20 + index).padStart(2, "0")}T00:00:00Z`,
+    updated_at: `2026-07-${String(20 + index).padStart(2, "0")}T00:00:00Z`,
+  };
+}
+
 describe("AvatarPage avatar library", () => {
   afterEach(() => {
+    Modal.destroyAll();
     cleanup();
+    document.body.innerHTML = "";
   });
 
   beforeEach(() => {
@@ -158,10 +194,16 @@ describe("AvatarPage avatar library", () => {
     expect(within(view.container).queryByText("公司数影云数字人 已可用")).toBeNull();
     expect(within(view.container).queryByText("素材选择")).toBeNull();
 
-    const generationCard = within(view.container).getByText("生成配置").closest(".ant-card");
-    expect(generationCard).toBeTruthy();
-    expect(within(generationCard as HTMLElement).getByTestId("avatar-library-trigger")).toBeTruthy();
-    expect(within(generationCard as HTMLElement).getByTestId("voice-library-trigger")).toBeTruthy();
+    const generationRegion = within(view.container).getByRole("region", { name: "生成配置" });
+    expect(within(generationRegion).getByTestId("avatar-library-trigger")).toBeTruthy();
+    expect(within(generationRegion).getByTestId("voice-library-trigger")).toBeTruthy();
+    expect(within(generationRegion).queryByRole("button", { name: /更多设置/ })).toBeNull();
+    expect(within(generationRegion).getByText("固定输出")).toBeTruthy();
+    expect(within(generationRegion).getByText("9:16 · 1080P")).toBeTruthy();
+    expect((within(generationRegion).getByRole("radio", { name: "1.0x" }) as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(within(generationRegion).getByRole("radio", { name: "1.1x" }));
+    expect((within(generationRegion).getByRole("radio", { name: "1.1x" }) as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(within(view.container).getByTestId("avatar-library-trigger"));
 
@@ -322,7 +364,7 @@ describe("AvatarPage avatar library", () => {
       { target: { value: "测试数字人口播文案" } },
     );
     fireEvent.click(
-      within(view.container).getByRole("button", { name: /提交数字人口播任务/ }),
+      within(view.container).getByRole("button", { name: /生成数字人视频/ }),
     );
 
     await waitFor(() => expect(createAvatarJob).toHaveBeenCalledTimes(1));
@@ -373,7 +415,7 @@ describe("AvatarPage avatar library", () => {
       { target: { value: "测试数字人口播文案" } },
     );
     fireEvent.click(
-      within(view.container).getByRole("button", { name: /提交数字人口播任务/ }),
+      within(view.container).getByRole("button", { name: /生成数字人视频/ }),
     );
 
     expect(
@@ -433,6 +475,19 @@ describe("AvatarPage avatar library", () => {
     expect(within(currentTaskCard as HTMLElement).queryByText("shuying_legacy_cloud")).toBeNull();
     expect(within(currentTaskCard as HTMLElement).queryByText("结果已保存")).toBeNull();
     expect(within(currentTaskCard as HTMLElement).queryByRole("progressbar")).toBeNull();
+  });
+
+  it("paginates the full history instead of rendering an unbounded list", async () => {
+    vi.mocked(listAvatarJobs).mockResolvedValueOnce(
+      Array.from({ length: 7 }, (_, index) => makeAvatarJob(index + 1)),
+    );
+    const view = renderPage();
+
+    fireEvent.click(await within(view.container).findByRole("button", { name: /查看全部/ }));
+    const dialog = await screen.findByRole("dialog", { name: "历史任务" });
+
+    expect(within(dialog).getAllByRole("button", { name: /任务进度/ })).toHaveLength(6);
+    expect(within(dialog).getByTitle("2")).toBeTruthy();
   });
 
   it("opens product packaging only from a completed real avatar", async () => {

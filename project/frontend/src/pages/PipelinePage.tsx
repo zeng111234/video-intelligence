@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Descriptions,
   Empty,
   Input,
@@ -41,6 +40,7 @@ import {
   WarningOutlined,
 } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SiBilibili, SiKuaishou, SiTiktok, SiXiaohongshu } from "react-icons/si";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   confirmPublishTaskAuto,
@@ -74,6 +74,7 @@ import {
   saveProductionWorkspaceConfiguration,
   startCrawlerBrowserDiscovery,
   startProductionBatch,
+  trainCloudAvatar,
   trainCloudVoice,
   uploadAvatarAsset,
 } from "../api/client";
@@ -112,7 +113,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   kuaishou: "快手",
   xiaohongshu: "小红书",
-  bilibili: "哔哩哔哩",
+  bilibili: "B站",
   wechat_channels: "视频号",
 };
 
@@ -127,8 +128,25 @@ const SOURCE_OPTIONS = [
 const SOURCE_BROWSER_PLATFORMS: Array<{ platform: BrowserPlatform; label: string }> = [
   { platform: "douyin", label: "抖音热点宝" },
   { platform: "kuaishou", label: "快手" },
+  { platform: "xiaohongshu", label: "小红书" },
   { platform: "bilibili", label: "B站" },
 ];
+
+function sourcePlatformIcon(platform: BrowserPlatform) {
+  if (platform === "douyin") return <SiTiktok aria-hidden />;
+  if (platform === "kuaishou") return <SiKuaishou aria-hidden />;
+  if (platform === "xiaohongshu") return <SiXiaohongshu aria-hidden />;
+  return <SiBilibili aria-hidden />;
+}
+
+function sourcePlatformReady(status: CrawlerBrowserDiscoveryCapabilities) {
+  return Boolean(
+    status.enabled && (
+      status.ready_to_crawl
+      || (status.platform === "xiaohongshu" && status.phase === "optional_login")
+    ),
+  );
+}
 
 const WORKSPACE_STEPS = [
   { title: "01 告诉我想做什么", description: "找素材并选择方向" },
@@ -403,6 +421,7 @@ export default function PipelinePage() {
   const operationKeys = useRef(new Map<string, string>());
   const reviewContextRef = useRef("");
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
+  const profileNameManuallyEditedRef = useRef(false);
 
   const [initializing, setInitializing] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -434,9 +453,12 @@ export default function PipelinePage() {
   const [browserDiscoveries, setBrowserDiscoveries] = useState<CrawlerBrowserDiscoveryCapabilities[]>([]);
   const [startingBrowserPlatform, setStartingBrowserPlatform] = useState<BrowserPlatform | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
+  const [sourceManagerOpen, setSourceManagerOpen] = useState(false);
+  const [publishAccountManagerOpen, setPublishAccountManagerOpen] = useState(false);
   const [setupRightsHolder, setSetupRightsHolder] = useState("");
   const [profileCreateOpen, setProfileCreateOpen] = useState(false);
   const [profileEditorMode, setProfileEditorMode] = useState<"add" | "switch">("add");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [voiceUploadOpen, setVoiceUploadOpen] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState("");
@@ -489,11 +511,15 @@ export default function PipelinePage() {
     () => candidates.filter((candidate) => !candidateSpokenUse(candidate).usable).length,
     [candidates],
   );
-  const readySourceCount = browserDiscoveries.filter(
-    (item) => item.enabled && item.ready_to_crawl,
-  ).length;
+  const readySourceCount = browserDiscoveries.filter(sourcePlatformReady).length;
   const sourceConnectionReady = readySourceCount > 0;
   const allSourceConnectionsReady = readySourceCount === SOURCE_BROWSER_PLATFORMS.length;
+  const selectedPublishAccountSummary = useMemo(() => {
+    const ready = publishPlatforms.filter((platform) => (
+      accounts.some((account) => account.platform === platform && account.status === "ready")
+    )).length;
+    return { ready, pending: publishPlatforms.length - ready };
+  }, [accounts, publishPlatforms]);
   const waitingPublishAccountKey = useMemo(
     () => accounts
       .filter((account) => account.status === "browser_open")
@@ -505,8 +531,16 @@ export default function PipelinePage() {
     avatarCapability?.enabled
     && (avatarCapability.provider_name === "local_avatar" || avatarCapability.supports_voice_sample_upload),
   );
+  const avatarMaterialUploadAvailable = Boolean(
+    avatarCapability?.enabled
+    && (avatarCapability.provider_name === "local_avatar" || avatarCapability.supports_cloud_avatar_training),
+  );
   const usableAvatarAssets = useMemo(
     () => assets.filter((asset) => asset.kind === "avatar" && asset.authorized && asset.status === "ready"),
+    [assets],
+  );
+  const pendingAvatarAssets = useMemo(
+    () => assets.filter((asset) => asset.kind === "avatar" && asset.authorized && asset.status !== "ready"),
     [assets],
   );
   const usableVoiceAssets = useMemo(
@@ -892,19 +926,6 @@ export default function PipelinePage() {
       setActionError("请填写出镜人名称，并选择形象和声音。");
       return;
     }
-    // 已保存的组合即使暂时未进入“可制作”列表，也仍然可以被重新选中；
-    // 否则再次点击会以相同名称新建而触发后端的重名错误。
-    const matchingProfile = profiles.find(
-      (profile) => profile.avatar_id === avatarId && profile.voice_id === voiceId,
-    );
-    if (profileEditorMode === "switch" && matchingProfile) {
-      setProfileId(matchingProfile.profile_id);
-      localStorage.setItem(PROFILE_STORAGE_KEY, matchingProfile.profile_id);
-      setProfileCreateOpen(false);
-      setSetupOpen(true);
-      setActionMessage("已切换到这个出镜人和声音。");
-      return;
-    }
     setBusy(true);
     try {
       const requestedName = profileName.trim();
@@ -944,7 +965,8 @@ export default function PipelinePage() {
 
   const openProfileCreator = () => {
     setProfileEditorMode("add");
-    setProfileName("新的短视频 IP");
+    profileNameManuallyEditedRef.current = false;
+    setProfileName("新出镜人");
     setAvatarId("");
     setVoiceId(selectedProfile?.voice_id || "");
     setVoicePreviewError("");
@@ -954,24 +976,55 @@ export default function PipelinePage() {
   };
 
   const openProfileSwitcher = () => {
-    const currentAvatarId = selectedProfile?.avatar_id || usableAvatarAssets[0]?.asset_id || "";
-    const currentAvatar = usableAvatarAssets.find((asset) => asset.asset_id === currentAvatarId);
-    const matchingVoiceId = usableVoiceAssets.find((asset) => asset.name === currentAvatar?.name)?.asset_id;
     setProfileEditorMode("switch");
-    setProfileName(currentAvatar?.name || selectedProfile?.name || "新的出镜人");
-    setAvatarId(currentAvatarId);
-    setVoiceId(matchingVoiceId || selectedProfile?.voice_id || usableVoiceAssets[0]?.asset_id || "");
     setVoicePreviewError("");
     setVoiceUploadOpen(false);
     setSetupOpen(false);
     setProfileCreateOpen(true);
   };
 
+  const switchToSavedProfile = (profile: ProductionProfile) => {
+    setProfileId(profile.profile_id);
+    localStorage.setItem(PROFILE_STORAGE_KEY, profile.profile_id);
+    setProfileCreateOpen(false);
+    setSetupOpen(true);
+    setActionMessage(`已切换到“${profile.name}”。`);
+  };
+
   const selectProfileAvatar = (asset: AvatarAsset) => {
     setAvatarId(asset.asset_id);
-    if (profileEditorMode === "switch") setProfileName(asset.name);
+    if (!profileNameManuallyEditedRef.current) setProfileName(asset.name);
     const matchingVoice = usableVoiceAssets.find((voice) => voice.name === asset.name);
     if (matchingVoice) setVoiceId(matchingVoice.asset_id);
+  };
+
+  const uploadAvatarMaterial = async (file: File) => {
+    const supportsLocalUpload = avatarCapability?.provider_name === "local_avatar";
+    if (!supportsLocalUpload && !avatarCapability?.supports_cloud_avatar_training) {
+      setActionError("当前数字人服务暂未开放新增形象。");
+      return false;
+    }
+    setUploadingAvatar(true);
+    setActionError("");
+    try {
+      const name = file.name.replace(/\.[^.]+$/, "") || "新出镜人形象";
+      const asset = supportsLocalUpload
+        ? await uploadAvatarAsset({ kind: "avatar", file, name })
+        : await trainCloudAvatar({ file, name });
+      setAssets((current) => [asset, ...current.filter((item) => item.asset_id !== asset.asset_id)]);
+      if (asset.status === "ready") {
+        setAvatarId(asset.asset_id);
+        if (!profileNameManuallyEditedRef.current) setProfileName(asset.name);
+        setActionMessage("人脸素材已上传并自动选中。");
+      } else {
+        setActionMessage(asset.status_message || "人脸素材已提交训练，完成后会出现在形象列表中。");
+      }
+    } catch (error) {
+      setActionError((error as Error).message || "人脸素材上传失败，请保留当前内容后重试。");
+    } finally {
+      setUploadingAvatar(false);
+    }
+    return false;
   };
 
   const uploadVoiceSample = async (file: File) => {
@@ -1027,42 +1080,36 @@ export default function PipelinePage() {
   };
 
   const saveWorkspaceSetup = async () => {
-    if (!setupRightsHolder.trim()) {
-      setActionError("请填写公司名称或本人姓名。");
-      return;
-    }
     if (!publishPlatforms.length) {
       setActionError("请至少选择一个发布平台。");
       return;
     }
-    const accountsNotReady = publishPlatforms.filter((platform) => {
-      const capability = platforms.find((item) => item.platform === platform);
-      return capability?.requires_account
-        && !accounts.some((account) => account.platform === platform && account.status === "ready");
-    });
-    if (accountsNotReady.length) {
-      setActionError(
-        `请先完成发布账号扫码核验：${accountsNotReady.map((platform) => PLATFORM_LABELS[platform] || platform).join("、")}。`,
-      );
-      return;
-    }
     if (!sourceConnectionReady) {
-      setActionError("请先登录至少一个素材平台，完成后点击“我已登录，刷新状态”。");
+      setActionError("请先连接至少一个素材网站；发布账号可以在成片确认发布前再登录。");
       return;
     }
+    const rightsHolder = workspaceConfiguration.rights_holder?.trim()
+      || setupRightsHolder.trim()
+      || selectedProfile?.name.trim()
+      || "当前操作人";
     setBusy(true);
     setActionError("");
     try {
       const configuration = await saveProductionWorkspaceConfiguration({
-        rightsHolder: setupRightsHolder.trim(),
+        rightsHolder,
         agreementAccepted: true,
         defaultProfileId: profileId || null,
         defaultPublishPlatforms: publishPlatforms.length ? publishPlatforms : ["douyin"],
       });
       setWorkspaceConfiguration(configuration);
+      setSetupRightsHolder(configuration.rights_holder || rightsHolder);
       setPublishPlatforms(configuration.default_publish_platforms || ["douyin"]);
       setSetupOpen(false);
-      setActionMessage("开工前设置已完成。现在只要输入关键词，其他交给我。 ");
+      setActionMessage(
+        selectedPublishAccountSummary.pending
+          ? "创作设置已保存。未登录的发布网站不会影响制作，确认发布前再完成登录即可。"
+          : "创作设置已保存，现在可以开始本次创作。",
+      );
     } catch (error) {
       setActionError((error as Error).message || "基础设置保存失败");
     } finally {
@@ -1075,11 +1122,11 @@ export default function PipelinePage() {
     setActionError("");
     try {
       const statuses = await loadSourceConnections();
-      const readyCount = statuses.filter((item) => item.enabled && item.ready_to_crawl).length;
+      const readyCount = statuses.filter(sourcePlatformReady).length;
       if (readyCount > 0) {
-        setActionMessage(`已连接 ${readyCount}/4 个素材平台，可以进入工作台。`);
+        setActionMessage(`已有 ${readyCount}/${SOURCE_BROWSER_PLATFORMS.length} 个素材平台可用，可以进入工作台。`);
       } else {
-        setActionError("四个平台都还没有准备好，请完成登录后再检查一次。");
+        setActionError("素材平台都还没有准备好，请完成登录或检查浏览器后再试一次。");
       }
     } catch (error) {
       setActionError((error as Error).message || "暂时无法检查素材平台，请稍后再试。");
@@ -1818,17 +1865,36 @@ export default function PipelinePage() {
       {activeProfile ? (
         <div className="profile-summary">
           <div className="profile-summary-details" aria-label="当前 IP 信息">
-            <Descriptions size="small" column={{ xs: 1, sm: 3 }}>
-              <Descriptions.Item label={<Space size={6}><UserOutlined />出镜人</Space>}>
-                <span className="profile-value-row"><strong>{profileAvatar?.name || activeProfile.name}</strong><RightOutlined aria-hidden /></span>
-              </Descriptions.Item>
-              <Descriptions.Item label={<Space size={6}><AudioOutlined />音色</Space>}>
-                <span className="profile-value-row"><strong>{profileVoice?.name || activeProfile.voice_id}</strong><RightOutlined aria-hidden /></span>
-              </Descriptions.Item>
-              <Descriptions.Item label={<Space size={6}><RocketOutlined />发布到</Space>}>
-                <span className="profile-value-row"><strong>{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</strong><RightOutlined aria-hidden /></span>
-              </Descriptions.Item>
-            </Descriptions>
+            <button
+              type="button"
+              className="profile-setting-row"
+              aria-label={`修改出镜人设置：${profileAvatar?.name || activeProfile.name}`}
+              onClick={() => setSetupOpen(true)}
+            >
+              <span className="profile-setting-label"><UserOutlined />出镜人</span>
+              <strong>{profileAvatar?.name || activeProfile.name}</strong>
+              <RightOutlined aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="profile-setting-row"
+              aria-label={`修改音色设置：${profileVoice?.name || activeProfile.voice_id}`}
+              onClick={() => setSetupOpen(true)}
+            >
+              <span className="profile-setting-label"><AudioOutlined />音色</span>
+              <strong>{profileVoice?.name || activeProfile.voice_id}</strong>
+              <RightOutlined aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="profile-setting-row"
+              aria-label={`修改发布网站设置：${publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}`}
+              onClick={() => setSetupOpen(true)}
+            >
+              <span className="profile-setting-label"><RocketOutlined />发布到</span>
+              <strong>{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</strong>
+              <RightOutlined aria-hidden />
+            </button>
           </div>
           <div className="profile-avatar-preview" aria-label="当前 IP 出镜人预览">
             {profileAvatar?.preview_url ? (
@@ -2652,167 +2718,298 @@ export default function PipelinePage() {
       </div>
 
       <Modal
-        title="开工前准备"
+        title={(
+          <span className="creation-settings-title">
+            <strong>创作设置</strong>
+            <small aria-hidden>确认后即可开始本次创作</small>
+          </span>
+        )}
+        aria-label="创作设置"
+        className="creation-settings-modal"
+        width={820}
+        centered
         open={setupOpen}
         onCancel={() => setSetupOpen(false)}
-        footer={null}
+        footer={(
+          <div className="creation-settings-footer">
+            <Button type="text" size="large" onClick={() => setSetupOpen(false)}>取消</Button>
+            <Button
+              type="primary"
+              size="large"
+              loading={busy}
+              disabled={!sourceConnectionReady}
+              onClick={() => void saveWorkspaceSetup()}
+            >
+              保存并开始创作
+            </Button>
+          </div>
+        )}
+        destroyOnHidden
+      >
+        <div className="creation-settings-body">
+          <section className="settings-summary-card source-settings-summary" aria-label="素材网站摘要">
+            <Text strong>素材网站</Text>
+            <div className="source-summary-row">
+              <div className="source-platform-icons" aria-label="已配置素材网站">
+                {SOURCE_BROWSER_PLATFORMS.map(({ platform, label }) => (
+                  <span key={platform} className={`source-platform-icon source-platform-icon-${platform}`} title={label}>
+                    {sourcePlatformIcon(platform)}
+                  </span>
+                ))}
+              </div>
+              <Text>{readySourceCount} 个平台可用</Text>
+              <span className={`source-health ${sourceConnectionReady ? "ready" : "waiting"}`}>
+                <i />
+                {allSourceConnectionsReady ? "全部正常" : sourceConnectionReady ? `${readySourceCount} 个正常` : "等待连接"}
+              </span>
+              <Button
+                type="link"
+                className="settings-manage-link"
+                aria-label="管理素材网站"
+                onClick={() => {
+                  setSetupOpen(false);
+                  setSourceManagerOpen(true);
+                }}
+              >
+                管理素材网站 <RightOutlined />
+              </Button>
+            </div>
+          </section>
+
+          <div className="creation-settings-grid">
+            <section className="settings-summary-card publish-settings-summary" aria-label="发布网站设置">
+              <Text strong>发布网站</Text>
+              <div className="publish-platform-chips" role="group" aria-label="选择发布网站">
+                {platforms.map((platform) => {
+                  const selectable = platform.enabled || platform.manual_fallback || platform.manual_only;
+                  const selected = publishPlatforms.includes(platform.platform);
+                  return (
+                    <button
+                      key={platform.platform}
+                      type="button"
+                      className={`publish-platform-chip${selected ? " selected" : ""}`}
+                      aria-pressed={selected}
+                      disabled={!selectable}
+                      onClick={() => setPublishPlatforms((current) => (
+                        selected
+                          ? current.filter((item) => item !== platform.platform)
+                          : [...current, platform.platform]
+                      ))}
+                    >
+                      {PLATFORM_LABELS[platform.platform] || platform.display_name}
+                      {selected && <CheckCircleOutlined aria-hidden />}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="publish-account-summary">
+                <Text>已选 {publishPlatforms.length} 个平台</Text>
+                <span aria-hidden>·</span>
+                <Text className="summary-ready">{selectedPublishAccountSummary.ready} 个已登录</Text>
+                <span aria-hidden>·</span>
+                <Text className="summary-waiting">{selectedPublishAccountSummary.pending} 个待登录</Text>
+                <Button
+                  type="link"
+                  className="settings-manage-link"
+                  aria-label="管理发布账号"
+                  onClick={() => {
+                    setSetupOpen(false);
+                    setPublishAccountManagerOpen(true);
+                  }}
+                >
+                  管理发布账号 <RightOutlined />
+                </Button>
+              </div>
+              <Text type="secondary" className="publish-login-note">
+                未登录不影响制作，确认发布前完成即可
+              </Text>
+            </section>
+
+            {selectedProfile && (
+              <section className="settings-summary-card profile-settings-summary" aria-label="出镜设置">
+                <Text strong>出镜设置</Text>
+                <div className="setup-profile-card">
+                  <span className="setup-profile-avatar">
+                    {profileAvatar?.preview_url ? (
+                      profileAvatar.preview_type === "video" ? (
+                        <video src={profileAvatar.preview_url} muted aria-label={`${profileAvatar.name} 出镜预览`} />
+                      ) : (
+                        <img src={profileAvatar.preview_url} alt={`${profileAvatar.name} 出镜预览`} />
+                      )
+                    ) : <UserOutlined aria-hidden />}
+                  </span>
+                  <span className="setup-profile-copy">
+                    <strong>{profileAvatar?.name || selectedProfile.name}</strong>
+                    <small>声音：{profileVoice?.name || selectedProfile.name}</small>
+                  </span>
+                  <Button aria-label="更换" onClick={openProfileSwitcher}>更换</Button>
+                </div>
+                <Button type="link" className="add-profile-link" aria-label="新增出镜人" onClick={openProfileCreator}>
+                  新增出镜人 <RightOutlined />
+                </Button>
+              </section>
+            )}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="管理素材网站"
+        aria-label="管理素材网站"
+        className="settings-manager-modal"
+        width={620}
+        open={sourceManagerOpen}
+        onCancel={() => {
+          setSourceManagerOpen(false);
+          setSetupOpen(true);
+        }}
+        footer={(
+          <Button
+            type="primary"
+            onClick={() => {
+              setSourceManagerOpen(false);
+              setSetupOpen(true);
+            }}
+          >
+            完成
+          </Button>
+        )}
         destroyOnHidden
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Text type="secondary">一次配好素材来源、默认配方和授权，进入后不会做到一半才被打断。</Text>
+          <Text type="secondary">素材网站只用于找素材，与发布账号相互独立。以后增加新网站也会集中在这里管理。</Text>
           <Alert
             type={allSourceConnectionsReady ? "success" : sourceConnectionReady ? "info" : "warning"}
             showIcon
             message={
               allSourceConnectionsReady
-                ? "三个素材平台都已连接"
+                ? "所有素材网站都已可用"
                 : sourceConnectionReady
-                  ? `已连接 ${readySourceCount}/3 个平台`
-                  : "先连接至少一个素材平台"
-            }
-            description={
-              allSourceConnectionsReady
-                ? "抖音热点宝、快手和B站都可以开始找素材。"
-                : "可以先使用已连接的平台，其他平台登录后再刷新状态。"
+                  ? `已有 ${readySourceCount}/${SOURCE_BROWSER_PLATFORMS.length} 个素材网站可用`
+                  : "先连接至少一个素材网站"
             }
           />
-          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <div className="settings-manager-list">
             {browserDiscoveries.map((connection) => {
               const platform = connection.platform as BrowserPlatform;
-              const ready = Boolean(connection.enabled && connection.ready_to_crawl);
+              const ready = sourcePlatformReady(connection);
+              const xiaohongshuOptionalLogin = platform === "xiaohongshu" && connection.phase === "optional_login";
+              const actionLabel = xiaohongshuOptionalLogin
+                ? "打开小红书登录"
+                : ready
+                  ? `打开${connection.platform_label}`
+                  : `登录${connection.platform_label}`;
               return (
-                <Card
-                  key={platform}
-                  size="small"
-                  title={connection.platform_label}
-                  extra={<Tag color={ready ? "success" : "default"}>{ready ? "已连接" : "未连接"}</Tag>}
-                >
-                  <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                    <Text type="secondary">
-                      {ready
-                        ? "已可找素材。"
-                        : connection.enabled
-                          ? "点下面的登录按钮会打开可见窗口，扫码或完成验证后回来刷新状态。"
-                          : connection.message}
-                    </Text>
+                <div className="settings-manager-row" key={platform}>
+                  <span>
+                    <strong>{connection.platform_label}</strong>
+                    <small>{ready ? "已可用于找素材" : connection.message}</small>
+                  </span>
+                  <Tag color={ready ? "success" : "warning"}>{xiaohongshuOptionalLogin ? "公开搜索可用" : ready ? "已连接" : "未连接"}</Tag>
                     <Button
-                      type={ready ? "default" : "primary"}
-                      loading={startingBrowserPlatform === platform}
-                      disabled={!connection.enabled || (busy && startingBrowserPlatform !== platform)}
-                      onClick={() => void startSourceConnection(platform)}
-                    >
-                      {ready ? "打开浏览器" : `登录${connection.platform_label}`}
-                    </Button>
-                  </Space>
-                </Card>
+                      type={ready && !xiaohongshuOptionalLogin ? "default" : "primary"}
+                      aria-label={actionLabel}
+                    loading={startingBrowserPlatform === platform}
+                    disabled={!connection.enabled || (busy && startingBrowserPlatform !== platform)}
+                    onClick={() => void startSourceConnection(platform)}
+                  >
+                    {xiaohongshuOptionalLogin ? "打开登录页" : ready ? "打开网站" : `登录${connection.platform_label}`}
+                  </Button>
+                </div>
               );
             })}
-            {!browserDiscoveries.length && <Text type="secondary">正在读取三个素材平台的连接状态…</Text>}
-            <Button loading={busy && startingBrowserPlatform === null} onClick={() => void refreshSourceConnections()}>
-              我已登录，刷新状态
-            </Button>
-          </Space>
-          <Input
-            value={setupRightsHolder}
-            onChange={(event) => setSetupRightsHolder(event.target.value)}
-            placeholder="公司名称或本人姓名"
-            autoFocus
-          />
-          <div>
-            <Text strong>发布到哪些平台？</Text>
-            <Checkbox.Group
-              value={publishPlatforms}
-              onChange={(values) => setPublishPlatforms(values.map(String))}
-              style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 10 }}
-            >
-              {platforms.map((platform) => {
-                const selectable = platform.enabled || platform.manual_fallback || platform.manual_only;
-                return (
-                  <Checkbox key={platform.platform} value={platform.platform} disabled={!selectable}>
-                    {PLATFORM_LABELS[platform.platform] || platform.display_name}
-                  </Checkbox>
-                );
-              })}
-            </Checkbox.Group>
-            <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
-              可以多选。每个平台需要单独登录一次发布账号，登录状态只保留在本机。
-            </Text>
-            <Space direction="vertical" size={8} style={{ width: "100%", marginTop: 12 }}>
-              {publishPlatforms.map((platform) => {
-                const capability = platforms.find((item) => item.platform === platform);
-                const readyAccount = accounts.find(
-                  (account) => account.platform === platform && account.status === "ready",
-                );
-                const knownAccount = readyAccount || accounts.find((account) => account.platform === platform);
-                const requiresAccount = Boolean(capability?.requires_account);
-                const statusLabel = !requiresAccount
-                  ? "无需登录"
-                  : readyAccount
-                    ? "已核验可发布"
-                    : knownAccount?.status === "browser_open"
-                      ? "等待扫码"
-                      : "未登录";
-                const statusColor = !requiresAccount || readyAccount
-                  ? "success"
-                  : knownAccount?.status === "browser_open"
-                    ? "processing"
-                    : "warning";
-                return (
-                  <Card key={platform} size="small">
-                    <Space direction="vertical" size={8} style={{ width: "100%" }}>
-                      <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
-                        <Space>
-                          <Text strong>{PLATFORM_LABELS[platform] || capability?.display_name || platform}</Text>
-                          <Tag color={statusColor}>{statusLabel}</Tag>
-                        </Space>
-                        {requiresAccount && !readyAccount && (
-                          <Button
-                            type="primary"
-                            loading={publishAccountAction === platform}
-                            disabled={Boolean(publishAccountAction && publishAccountAction !== platform)}
-                            onClick={() => void connectPublishAccountFromSetup(platform)}
-                          >
-                            {knownAccount ? "打开扫码登录" : "添加并扫码"}
-                          </Button>
-                        )}
-                      </Space>
-                      {readyAccount && (
-                        <Text type="secondary">{readyAccount.name} · 已可用于发布成片</Text>
-                      )}
-                      {requiresAccount && !readyAccount && knownAccount && (
-                        <Space wrap>
-                          <Text type="secondary">{knownAccount.message}</Text>
-                          {knownAccount.status === "browser_open" && (
-                            <Button
-                              type="link"
-                              size="small"
-                              loading={publishAccountAction === platform}
-                              onClick={() => void refreshPublishAccount(knownAccount.account_id, platform)}
-                            >
-                              我已登录，检查状态
-                            </Button>
-                          )}
-                        </Space>
-                      )}
-                    </Space>
-                  </Card>
-                );
-              })}
-            </Space>
+            {!browserDiscoveries.length && <Text type="secondary">正在读取素材网站连接状态…</Text>}
           </div>
-          {selectedProfile && (
-            <div className="setup-profile-line">
-              <span>本次出镜人</span>
-              <strong>{profileAvatar?.name || selectedProfile.name}</strong>
-              <Space size={0}>
-                <Button type="link" onClick={openProfileSwitcher}>换一个</Button>
-                <Button type="link" onClick={openProfileCreator}>新增出镜人</Button>
-              </Space>
-            </div>
-          )}
-          <Button type="primary" size="large" block loading={busy} disabled={!sourceConnectionReady} onClick={() => void saveWorkspaceSetup()}>
-            保存设置并进入工作台
+          <Button loading={busy && startingBrowserPlatform === null} onClick={() => void refreshSourceConnections()}>
+            我已登录，刷新状态
           </Button>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="管理发布账号"
+        aria-label="管理发布账号"
+        className="settings-manager-modal"
+        width={660}
+        open={publishAccountManagerOpen}
+        onCancel={() => {
+          setPublishAccountManagerOpen(false);
+          setSetupOpen(true);
+        }}
+        footer={(
+          <Button
+            type="primary"
+            onClick={() => {
+              setPublishAccountManagerOpen(false);
+              setSetupOpen(true);
+            }}
+          >
+            完成
+          </Button>
+        )}
+        destroyOnHidden
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Text type="secondary">每个发布网站都要单独登录。现在可以先制作视频，确认发布前再补齐未登录账号。</Text>
+          <div className="settings-manager-list">
+            {platforms.map((capability) => {
+              const platform = capability.platform;
+              const readyAccount = accounts.find(
+                (account) => account.platform === platform && account.status === "ready",
+              );
+              const knownAccount = readyAccount || accounts.find((account) => account.platform === platform);
+              const selected = publishPlatforms.includes(platform);
+              const statusLabel = readyAccount
+                ? "已登录"
+                : knownAccount?.status === "browser_open"
+                  ? "等待扫码"
+                  : capability.requires_account
+                    ? "未登录"
+                    : "发布时手动登录";
+              const statusColor = readyAccount
+                ? "success"
+                : knownAccount?.status === "browser_open"
+                  ? "processing"
+                  : "warning";
+              return (
+                <div className="settings-manager-row" key={platform}>
+                  <span>
+                    <strong>
+                      {PLATFORM_LABELS[platform] || capability.display_name}
+                      {selected && <em>本次已选</em>}
+                    </strong>
+                    <small>{readyAccount?.name || knownAccount?.message || "尚未保存发布账号"}</small>
+                  </span>
+                  <Tag color={statusColor}>{statusLabel}</Tag>
+                  {capability.requires_account ? (
+                    readyAccount ? (
+                      <Button aria-label={`${PLATFORM_LABELS[platform] || capability.display_name}已登录`} disabled>已登录</Button>
+                    ) : knownAccount?.status === "browser_open" ? (
+                      <Button
+                        aria-label={`检查${PLATFORM_LABELS[platform] || capability.display_name}登录`}
+                        loading={publishAccountAction === platform}
+                        onClick={() => void refreshPublishAccount(knownAccount.account_id, platform)}
+                      >
+                        检查登录
+                      </Button>
+                    ) : (
+                      <Button
+                        type="primary"
+                        aria-label={`登录${PLATFORM_LABELS[platform] || capability.display_name}`}
+                        loading={publishAccountAction === platform}
+                        disabled={Boolean(publishAccountAction && publishAccountAction !== platform)}
+                        onClick={() => void connectPublishAccountFromSetup(platform)}
+                      >
+                        登录
+                      </Button>
+                    )
+                  ) : (
+                    <Button aria-label={`${PLATFORM_LABELS[platform] || capability.display_name}手动发布`} disabled>手动发布</Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </Space>
       </Modal>
 
@@ -2856,8 +3053,8 @@ export default function PipelinePage() {
       </Modal>
 
       <Modal
-        title={profileEditorMode === "switch" ? "选择出镜人和声音" : "新增出镜人"}
-        aria-label={profileEditorMode === "switch" ? "选择出镜人和声音" : "新增出镜人"}
+        title={profileEditorMode === "switch" ? "选择已有出镜人" : "新增出镜人"}
+        aria-label={profileEditorMode === "switch" ? "选择已有出镜人" : "新增出镜人"}
         open={profileCreateOpen}
         onCancel={() => {
           setProfileCreateOpen(false);
@@ -2866,15 +3063,101 @@ export default function PipelinePage() {
         footer={null}
         destroyOnHidden
       >
+        {profileEditorMode === "switch" ? (
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Text type="secondary">
+              这里仅显示已经保存并可直接使用的出镜人。点击其他出镜人即可切换。
+            </Text>
+            {completeProfiles.length ? (
+              <div className="profile-picker-grid" aria-label="已有出镜人列表">
+                {completeProfiles.map((profile) => {
+                  const avatar = assets.find((asset) => asset.asset_id === profile.avatar_id);
+                  const voice = assets.find((asset) => asset.asset_id === profile.voice_id);
+                  const isCurrent = profile.profile_id === selectedProfile?.profile_id;
+                  return (
+                    <button
+                      type="button"
+                      key={profile.profile_id}
+                      className={`profile-picker-card${isCurrent ? " selected" : ""}`}
+                      aria-label={`${isCurrent ? "当前出镜人" : "切换到出镜人"}：${profile.name}`}
+                      disabled={isCurrent}
+                      onClick={() => switchToSavedProfile(profile)}
+                    >
+                      <span className="profile-picker-media">
+                        {avatar?.preview_url ? (
+                          avatar.preview_type === "video" ? (
+                            <video src={avatar.preview_url} muted playsInline preload="metadata" />
+                          ) : (
+                            <img src={avatar.preview_url} alt="" />
+                          )
+                        ) : (
+                          <SafetyCertificateOutlined />
+                        )}
+                      </span>
+                      <span>
+                        <strong>{profile.name}</strong>
+                        <small>声音：{voice?.name || "已保存声音"}</small>
+                        <small>{isCurrent ? "当前使用" : "点击切换"}</small>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可切换的出镜人" />
+            )}
+            {completeProfiles.length <= 1 && (
+              <Text type="secondary">还没有其他已保存的出镜人。如需创建新的，请返回点击“新增出镜人”。</Text>
+            )}
+          </Space>
+        ) : (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Text type="secondary">
-            {profileEditorMode === "switch"
-              ? "可直接换形象或声音；切换形象时会优先带入同名声音，仍可手动调整。"
-              : "选择形象和声音即可，系统会自动完成通用智能优化。"}
+            选择形象和声音即可，系统会自动完成通用智能优化。
           </Text>
-          <Input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="出镜人名称" />
+          <div className="profile-name-field">
+            <Text strong>出镜人名称</Text>
+            <Input
+              aria-label="出镜人名称"
+              value={profileName}
+              onChange={(event) => {
+                profileNameManuallyEditedRef.current = true;
+                setProfileName(event.target.value);
+              }}
+              placeholder="例如：大树、店长本人"
+            />
+            <Text type="secondary">保存后会用这个名称显示在创作设置里。</Text>
+          </div>
           <div>
-            <Text strong>选择形象</Text>
+            <div className="profile-avatar-section-heading">
+              <span>
+                <Text strong>选择形象</Text>
+                <Text type="secondary">
+                  {avatarCapability?.provider_name === "local_avatar"
+                    ? "可上传本人或已获授权的人脸照片"
+                    : "可上传本人或已获授权的正脸训练视频"}
+                </Text>
+              </span>
+              <Upload
+                accept={avatarCapability?.provider_name === "local_avatar"
+                  ? "image/png,image/jpeg,image/webp"
+                  : "video/mp4,video/quicktime,.mp4,.mov"}
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void uploadAvatarMaterial(file);
+                  return false;
+                }}
+              >
+                <Button
+                  aria-label="上传人脸素材"
+                  icon={<UploadOutlined />}
+                  loading={uploadingAvatar}
+                  disabled={!avatarMaterialUploadAvailable}
+                >
+                  {avatarCapability?.provider_name === "local_avatar" ? "上传人脸照片" : "上传人脸训练视频"}
+                </Button>
+              </Upload>
+            </div>
             {usableAvatarAssets.length ? (
               <div className="profile-avatar-grid" aria-label="形象选择列表">
                 {usableAvatarAssets.map((asset) => (
@@ -2910,6 +3193,14 @@ export default function PipelinePage() {
               </div>
             ) : (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无可用形象" />
+            )}
+            {pendingAvatarAssets.length > 0 && (
+              <Text type="secondary" className="pending-avatar-note">
+                正在准备的形象：{pendingAvatarAssets.map((asset) => asset.name).join("、")}。完成后即可选择。
+              </Text>
+            )}
+            {!avatarMaterialUploadAvailable && (
+              <Text type="danger" className="pending-avatar-note">当前数字人服务暂未开放新增形象。</Text>
             )}
           </div>
           <Space.Compact block>
@@ -3006,9 +3297,10 @@ export default function PipelinePage() {
             </div>
           )}
           <Button type="primary" size="large" block loading={busy} onClick={() => void saveProfile()}>
-            {profileEditorMode === "switch" ? "使用这个出镜组合" : "保存并使用这个出镜人"}
+            保存并使用这个出镜人
           </Button>
         </Space>
+        )}
       </Modal>
 
       <style>{`
@@ -3463,43 +3755,60 @@ export default function PipelinePage() {
           gap: 14px;
         }
         .profile-summary-details {
-          padding: 4px 0;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
           background: transparent;
         }
-        .profile-summary-details .ant-descriptions-item {
-          padding-bottom: 0;
-        }
-        .profile-summary-details .ant-descriptions-item-label {
-          color: #777e8d;
-        }
-        .profile-summary-details .ant-descriptions-item-content {
-          color: #252938;
-          font-weight: 600;
-        }
-        .profile-value-row {
-          display: flex;
+        .profile-setting-row {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
           align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          width: 100%;
+          gap: 8px;
+          min-width: 0;
+          padding: 8px;
+          border: 0;
+          border-radius: 8px;
+          background: transparent;
+          color: #252938;
+          font: inherit;
+          text-align: left;
+          cursor: pointer;
         }
-        .profile-value-row .anticon {
+        .profile-setting-row:hover { background: #f7f5ff; }
+        .profile-setting-row:focus-visible {
+          outline: 3px solid rgba(108, 67, 232, .18);
+          outline-offset: 2px;
+        }
+        .profile-setting-label {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          color: #777e8d;
+          font-weight: 400;
+        }
+        .profile-setting-row strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .profile-setting-row > .anticon {
           color: #a3a9b7;
           font-size: 12px;
         }
         .workspace-grid.is-start .profile-avatar-preview {
           display: none;
         }
-        .workspace-grid.is-start .profile-summary-details .ant-descriptions-row {
-          display: flex;
-          flex-direction: column;
+        .workspace-grid.is-start .profile-summary-details {
+          grid-template-columns: 1fr;
+          gap: 0;
         }
-        .workspace-grid.is-start .profile-summary-details .ant-descriptions-item {
-          width: 100%;
+        .workspace-grid.is-start .profile-setting-row {
           padding: 13px 0;
+          border-radius: 0;
           border-bottom: 1px solid #edf0f4;
         }
-        .workspace-grid.is-start .profile-summary-details .ant-descriptions-item:last-child {
+        .workspace-grid.is-start .profile-setting-row:last-child {
           border-bottom: 0;
         }
         .profile-avatar-preview,
@@ -3531,15 +3840,267 @@ export default function PipelinePage() {
         }
         .profile-picker-media img,
         .profile-picker-media video { width: 100%; height: 100%; object-fit: cover; }
-        .setup-profile-line {
+        .creation-settings-modal .ant-modal-content {
+          padding: 32px 34px 28px;
+          overflow: hidden;
+          border-radius: 18px;
+          box-shadow: 0 26px 70px rgba(24, 29, 45, .22);
+        }
+        .creation-settings-modal .ant-modal-close {
+          top: 28px;
+          inset-inline-end: 28px;
+        }
+        .creation-settings-modal .ant-modal-header { margin-bottom: 24px; }
+        .creation-settings-modal .ant-modal-body { padding: 0; }
+        .creation-settings-modal .ant-modal-footer {
+          margin-top: 26px;
+          padding-top: 0;
+          border-top: 0;
+        }
+        .creation-settings-title {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .creation-settings-title strong {
+          color: #182035;
+          font-size: 24px;
+          line-height: 1.35;
+        }
+        .creation-settings-title small {
+          color: #8b93a7;
+          font-size: 14px;
+          font-weight: 400;
+        }
+        .creation-settings-body {
+          display: flex;
+          flex-direction: column;
+          gap: 18px;
+        }
+        .settings-summary-card {
+          padding: 20px;
+          border: 1px solid #e6e8ef;
+          border-radius: 14px;
+          background: #fff;
+        }
+        .settings-summary-card > .ant-typography:first-child {
+          color: #252b3a;
+          font-size: 16px;
+        }
+        .source-summary-row {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          margin-top: 14px;
+        }
+        .source-platform-icons {
+          display: flex;
+          align-items: center;
+          padding-right: 4px;
+        }
+        .source-platform-icon {
+          display: grid;
+          place-items: center;
+          width: 34px;
+          height: 34px;
+          margin-right: -4px;
+          border: 3px solid #fff;
+          border-radius: 50%;
+          color: #fff;
+          font-size: 14px;
+        }
+        .source-platform-icon-douyin { background: #171a22; }
+        .source-platform-icon-kuaishou { background: #ff7a2f; }
+        .source-platform-icon-bilibili { background: #ec4899; }
+        .source-platform-icon-xiaohongshu { background: #f02f46; }
+        .source-health {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          color: #5f6677;
+        }
+        .source-health i {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          background: #f59e0b;
+        }
+        .source-health.ready i { background: #18b87b; }
+        .settings-manage-link {
+          height: auto;
+          margin-left: auto;
+          padding: 0;
+          font-weight: 600;
+        }
+        .creation-settings-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1.55fr) minmax(230px, .75fr);
+          gap: 18px;
+          align-items: stretch;
+        }
+        .publish-settings-summary,
+        .profile-settings-summary {
+          min-height: 230px;
+        }
+        .publish-platform-chips {
+          display: grid;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 18px;
+        }
+        .publish-platform-chip {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          min-width: 0;
+          min-height: 40px;
+          padding: 0 8px;
+          border: 1px solid #e1e4eb;
+          border-radius: 10px;
+          background: #fff;
+          color: #343a49;
+          font: inherit;
+          white-space: nowrap;
+          cursor: pointer;
+        }
+        .publish-platform-chip:hover { border-color: #b6a4f5; }
+        .publish-platform-chip.selected {
+          border-color: #5f2eea;
+          background: #5f2eea;
+          color: #fff;
+          box-shadow: 0 5px 12px rgba(95, 46, 234, .18);
+        }
+        .publish-platform-chip:focus-visible {
+          outline: 3px solid rgba(95, 46, 234, .18);
+          outline-offset: 2px;
+        }
+        .publish-platform-chip:disabled { opacity: .45; cursor: not-allowed; }
+        .publish-account-summary {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 32px;
+        }
+        .publish-account-summary .summary-ready { color: #149b68; }
+        .publish-account-summary .summary-waiting { color: #d98316; }
+        .publish-login-note {
+          display: block;
+          margin-top: 12px;
+          font-size: 13px;
+        }
+        .profile-settings-summary {
+          display: flex;
+          flex-direction: column;
+        }
+        .setup-profile-card {
+          display: grid;
+          grid-template-columns: 68px minmax(0, 1fr);
+          align-items: center;
+          gap: 12px;
+          margin-top: 18px;
+        }
+        .setup-profile-avatar {
+          display: grid;
+          place-items: center;
+          width: 68px;
+          height: 68px;
+          overflow: hidden;
+          border-radius: 50%;
+          background: #f0ecff;
+          color: #6c43e8;
+          font-size: 24px;
+        }
+        .setup-profile-avatar img,
+        .setup-profile-avatar video {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        .setup-profile-copy {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          min-width: 0;
+        }
+        .setup-profile-copy strong,
+        .setup-profile-copy small {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .setup-profile-copy small { color: #8a92a5; }
+        .setup-profile-card > .ant-btn {
+          grid-column: 2;
+          justify-self: start;
+          min-width: 76px;
+          margin-top: -4px;
+        }
+        .add-profile-link {
+          align-self: flex-start;
+          width: 100%;
+          height: auto;
+          margin-top: auto;
+          padding: 16px 0 0;
+          border-top: 1px solid #eceef3;
+          text-align: left;
+        }
+        .creation-settings-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+        }
+        .creation-settings-footer .ant-btn { min-width: 92px; height: 48px; }
+        .creation-settings-footer .ant-btn-primary {
+          min-width: 238px;
+          background: #5f2eea;
+          box-shadow: none;
+        }
+        .settings-manager-modal .ant-modal-content { border-radius: 16px; }
+        .settings-manager-list {
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          border: 1px solid #e6e8ef;
+          border-radius: 12px;
+        }
+        .settings-manager-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto minmax(104px, auto);
+          align-items: center;
+          gap: 14px;
+          padding: 14px 16px;
+          border-bottom: 1px solid #edf0f4;
+        }
+        .settings-manager-row:last-child { border-bottom: 0; }
+        .settings-manager-row > span:first-child {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          min-width: 0;
+        }
+        .settings-manager-row strong {
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 10px 12px;
-          border-radius: 10px;
-          background: #f7f4ff;
         }
-        .setup-profile-line .ant-btn { margin-left: auto; }
+        .settings-manager-row strong em {
+          padding: 2px 6px;
+          border-radius: 999px;
+          background: #f0ebff;
+          color: #6c43e8;
+          font-size: 11px;
+          font-style: normal;
+          font-weight: 500;
+        }
+        .settings-manager-row small {
+          overflow: hidden;
+          color: #8a92a5;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .settings-manager-row > .ant-btn { min-width: 104px; }
         .profile-picker-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
         .profile-picker-card {
           display: flex;
@@ -3555,10 +4116,21 @@ export default function PipelinePage() {
           cursor: pointer;
         }
         .profile-picker-card.selected { border-color: #7652e8; background: #f7f3ff; }
+        .profile-picker-card:disabled { opacity: 1; cursor: default; }
         .profile-picker-card:focus-visible { outline: 3px solid rgba(111,73,232,.2); }
         .profile-picker-card span:last-child { display: flex; flex-direction: column; min-width: 0; }
         .profile-picker-card small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7b8190; }
-        .profile-picker-media { flex: 0 0 64px; width: 64px; height: 64px; border-radius: 10px; }
+        .profile-picker-media {
+          display: grid;
+          place-items: center;
+          flex: 0 0 64px;
+          width: 64px;
+          height: 64px;
+          overflow: hidden;
+          border-radius: 10px;
+          background: #f1f3f8;
+          color: #7652e8;
+        }
         .profile-avatar-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
@@ -3568,6 +4140,30 @@ export default function PipelinePage() {
           padding-right: 4px;
           overflow-y: auto;
         }
+        .profile-avatar-section-heading {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 16px;
+        }
+        .profile-avatar-section-heading > span {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .profile-avatar-section-heading .ant-typography-secondary,
+        .pending-avatar-note {
+          display: block;
+          margin-top: 8px;
+          font-size: 12px;
+        }
+        .profile-avatar-section-heading .ant-typography-secondary { margin-top: 0; }
+        .profile-name-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .profile-name-field .ant-typography-secondary { font-size: 12px; }
         .profile-avatar-card {
           display: flex;
           flex-direction: column;
@@ -3761,6 +4357,15 @@ export default function PipelinePage() {
           .section-heading { flex-direction: column; }
           .profile-picker-grid { grid-template-columns: 1fr; }
           .profile-avatar-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .creation-settings-grid { grid-template-columns: 1fr; }
+          .source-summary-row { flex-wrap: wrap; }
+          .source-summary-row .settings-manage-link { margin-left: 0; }
+          .publish-account-summary .settings-manage-link { width: 100%; margin-left: 0; text-align: left; }
+          .publish-settings-summary,
+          .profile-settings-summary { min-height: 0; }
+          .creation-settings-footer .ant-btn-primary { min-width: 0; flex: 1; }
+          .settings-manager-row { grid-template-columns: minmax(0, 1fr) auto; }
+          .settings-manager-row > .ant-btn { grid-column: 1 / -1; width: 100%; }
         }
       `}</style>
     </div>

@@ -28,7 +28,7 @@ from pydantic import HttpUrl
 
 from src.adapters.browser_window import (
     minimize_browser_window,
-    restart_browser_for_login,
+    reveal_browser_window,
 )
 from src.adapters.douyin_browser_search import BrowserSessionStatus
 from src.adapters.licensed import LicensedProviderError
@@ -83,7 +83,7 @@ _SPECS = {
         platform=Platform.BILIBILI,
         label="B站",
         home_url="https://www.bilibili.com/",
-        search_url="https://search.bilibili.com/all?keyword={keyword}&order=click",
+        search_url="https://search.bilibili.com/all?keyword={keyword}",
         page_host="bilibili.com",
         link_selector="a[href*='/video/BV']",
         item_id_pattern=re.compile(r"/video/(BV[a-zA-Z0-9]+)"),
@@ -95,7 +95,11 @@ _ACCESS_MARKERS = ("访问频繁", "操作频繁", "请求过于频繁", "网络
 _HARD_VERIFICATION_MARKERS = ("请通过验证", "请完成验证", "安全验证")
 _MAX_SCROLL_ROUNDS = 18
 _RAW_TARGET_FLOOR = 90
-_ADAPTER_VERSION = "visible_browser_network_v1"
+_MAX_RESULT_LIMIT = 100
+_XIAOHONGSHU_PUBLIC_RESULT_LIMIT = 15
+_XIAOHONGSHU_PUBLIC_RAW_TARGET_LIMIT = 20
+_XIAOHONGSHU_PUBLIC_MAX_SCROLL_ROUNDS = 3
+_ADAPTER_VERSION = "visible_browser_network_v2_broad_recall"
 
 
 class LocalPlatformBrowserSearchProvider:
@@ -113,15 +117,25 @@ class LocalPlatformBrowserSearchProvider:
         browser_channel: str = "chrome",
         debug_port: int,
         timeout_seconds: float = 35.0,
+        anonymous_only: bool = False,
+        allow_xiaohongshu_login: bool = False,
         clock=None,
     ) -> None:
         if platform not in _SPECS:
             raise ValueError(f"不支持的本机浏览器平台：{platform.value}")
         self.platform = platform
         self.spec = _SPECS[platform]
-        # 小红书已切换为人工素材模式。把限制放在适配器内部，避免其他调用方
-        # 通过旧环境变量或直接构造实例重新启用浏览器自动化。
-        self.enabled = enabled and platform != Platform.XIAOHONGSHU
+        # 小红书默认只能使用全新、隔离的未登录公开资料目录。只有专门的
+        # 人工登录依赖显式声明 allow_xiaohongshu_login，才能打开可见登录窗口。
+        self.anonymous_only = anonymous_only or (
+            platform == Platform.XIAOHONGSHU and not allow_xiaohongshu_login
+        )
+        self.is_xiaohongshu_login_profile = bool(
+            platform == Platform.XIAOHONGSHU
+            and allow_xiaohongshu_login
+            and not self.anonymous_only
+        )
+        self.enabled = bool(enabled)
         self.profile_dir = profile_dir
         self.browser_channel = browser_channel
         self.debug_port = debug_port
@@ -133,16 +147,44 @@ class LocalPlatformBrowserSearchProvider:
         missing = self._missing_prerequisites()
         return ProviderCapability(
             provider_name=self.provider_name,
-            display_name=f"本机 Chrome {self.spec.label}搜索",
+            display_name=(
+                f"本机 Chrome {self.spec.label}未登录公开搜索"
+                if self.anonymous_only
+                else (
+                    "本机 Chrome 小红书可选登录"
+                    if self.is_xiaohongshu_login_profile
+                    else f"本机 Chrome {self.spec.label}搜索"
+                )
+            ),
             mode=ProviderMode.LOCAL_BROWSER,
             enabled=not missing,
             supported_platforms=[self.platform] if not missing else [],
-            max_page_size=30,
+            max_page_size=(
+                _XIAOHONGSHU_PUBLIC_RESULT_LIMIT
+                if self.anonymous_only
+                else _MAX_RESULT_LIMIT
+            ),
             supports_published_after=True,
             supports_metric_refresh=False,
             supports_usage=False,
-            permission_status="public_browser_optional_login",
-            credential_alias=f"local-{self.platform.value}-browser-profile",
+            permission_status=(
+                "public_browser_anonymous_only"
+                if self.anonymous_only
+                else (
+                    "manual_login_optional"
+                    if self.is_xiaohongshu_login_profile
+                    else "public_browser_optional_login"
+                )
+            ),
+            credential_alias=(
+                f"isolated-{self.platform.value}-public-browser-profile"
+                if self.anonymous_only
+                else (
+                    "isolated-xiaohongshu-login-browser-profile"
+                    if self.is_xiaohongshu_login_profile
+                    else f"local-{self.platform.value}-browser-profile"
+                )
+            ),
             missing_configuration=missing,
         )
 
@@ -152,12 +194,12 @@ class LocalPlatformBrowserSearchProvider:
             return BrowserSessionStatus(
                 False,
                 False,
-                True,
+                False if self.anonymous_only else True,
                 False,
                 "disabled",
                 (
-                    "小红书安全模式已开启：不会自动打开、浏览或读取小红书账号。"
-                    if self.platform == Platform.XIAOHONGSHU
+                    "小红书可选登录浏览器已关闭；找素材仍只使用未登录公开搜索。"
+                    if self.is_xiaohongshu_login_profile
                     else f"{self.spec.label}浏览器搜索已关闭。"
                 ),
             )
@@ -165,10 +207,14 @@ class LocalPlatformBrowserSearchProvider:
             return BrowserSessionStatus(
                 True,
                 False,
-                True,
+                False if self.anonymous_only else True,
                 False,
                 "dependency_missing",
-                f"{self.spec.label}浏览器尚未就绪：{'；'.join(missing)}。",
+                (
+                    f"小红书可选登录浏览器尚未就绪：{'；'.join(missing)}。"
+                    if self.is_xiaohongshu_login_profile
+                    else f"{self.spec.label}浏览器尚未就绪：{'；'.join(missing)}。"
+                ),
             )
         try:
             with urlopen(self._debug_url(), timeout=0.6) as response:  # noqa: S310 - localhost only
@@ -179,10 +225,21 @@ class LocalPlatformBrowserSearchProvider:
             return BrowserSessionStatus(
                 True,
                 False,
-                True,
+                False if self.anonymous_only else True,
                 False,
-                "browser_closed",
-                f"{self.spec.label}浏览器尚未打开；开始找素材时会自动打开。",
+                "optional_login"
+                if self.is_xiaohongshu_login_profile
+                else "browser_closed",
+                (
+                    f"{self.spec.label}未登录公开浏览器尚未打开；开始找素材时会使用隔离会话启动。"
+                    if self.anonymous_only
+                    else (
+                        "小红书当前未登录；需要时可点击“打开小红书登录”打开独立登录浏览器。"
+                        "找素材不会使用该登录资料目录。"
+                        if self.is_xiaohongshu_login_profile
+                        else f"{self.spec.label}浏览器尚未打开；开始找素材时会自动打开。"
+                    )
+                ),
             )
 
         product = str(payload.get("Browser") or "Chrome")
@@ -196,10 +253,27 @@ class LocalPlatformBrowserSearchProvider:
             return BrowserSessionStatus(
                 True,
                 True,
-                True,
-                False,
-                "browser_open",
-                f"{product} 已打开，正在进入{self.spec.label}公开页面。",
+                False if self.anonymous_only else True,
+                True if self.anonymous_only else False,
+                (
+                    "ready"
+                    if self.anonymous_only
+                    else (
+                        "login_browser_open"
+                        if self.is_xiaohongshu_login_profile
+                        else "browser_open"
+                    )
+                ),
+                (
+                    f"{product} 已打开；将使用隔离的未登录会话进入{self.spec.label}公开搜索页。"
+                    if self.anonymous_only
+                    else (
+                        "小红书登录浏览器已打开；可选择扫码登录或直接关闭。"
+                        "找素材仍使用独立未登录公开浏览器。"
+                        if self.is_xiaohongshu_login_profile
+                        else f"{product} 已打开，正在进入{self.spec.label}公开页面。"
+                    )
+                ),
             )
         login_required = self._visible_login_required()
         if login_required is True:
@@ -208,8 +282,17 @@ class LocalPlatformBrowserSearchProvider:
                 True,
                 True,
                 False,
-                "waiting_login",
-                f"请在专用 Chrome 窗口完成{self.spec.label}扫码登录或人工验证。",
+                "blocked_verification" if self.anonymous_only else "waiting_login",
+                (
+                    f"{self.spec.label}要求安全验证，未登录公开搜索已停止。"
+                    if self.anonymous_only
+                    else (
+                        "小红书登录浏览器已打开；如需登录，请在该窗口完成扫码或人工验证。"
+                        "找素材仍不会复用这个登录资料目录。"
+                        if self.is_xiaohongshu_login_profile
+                        else f"请在专用 Chrome 窗口完成{self.spec.label}扫码登录或人工验证。"
+                    )
+                ),
             )
         if login_required is None:
             return BrowserSessionStatus(
@@ -217,8 +300,15 @@ class LocalPlatformBrowserSearchProvider:
                 True,
                 False,
                 True,
-                "ready",
-                f"{self.spec.label}公开页面已打开；将直接尝试读取公开搜索结果。",
+                "login_browser_open"
+                if self.is_xiaohongshu_login_profile
+                else "ready",
+                (
+                    "小红书登录浏览器已打开；当前未见登录拦截。"
+                    "找素材仍使用独立未登录公开浏览器。"
+                    if self.is_xiaohongshu_login_profile
+                    else f"{self.spec.label}公开页面已打开；将直接尝试读取公开搜索结果。"
+                ),
             )
         return BrowserSessionStatus(
             True,
@@ -226,21 +316,67 @@ class LocalPlatformBrowserSearchProvider:
             False,
             True,
             "ready",
-            f"{self.spec.label}公开浏览器已就绪；只读取搜索页已加载的作品元数据。",
+            (
+                f"{self.spec.label}未登录公开浏览器已就绪；只读取搜索页已加载的作品元数据。"
+                if self.anonymous_only
+                else (
+                    "小红书登录浏览器已打开；当前未见登录拦截。"
+                    "找素材仍使用独立未登录公开浏览器。"
+                    if self.is_xiaohongshu_login_profile
+                    else f"{self.spec.label}公开浏览器已就绪；只读取搜索页已加载的作品元数据。"
+                )
+            ),
         )
 
     def open_login_browser(self) -> BrowserSessionStatus:
         """Show a user-facing window for QR login or manual verification."""
+        if self.anonymous_only:
+            raise LicensedProviderError(
+                f"{self.spec.label}只允许隔离的未登录公开搜索，不能打开登录或扫码窗口。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
         return self._start_browser(visible=True)
 
     def start_login_browser(self) -> BrowserSessionStatus:
         """Start the dedicated profile without interrupting background work."""
+        if self.anonymous_only:
+            raise LicensedProviderError(
+                f"{self.spec.label}只允许隔离的未登录公开搜索，不能启动登录资料目录。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
+        if self.is_xiaohongshu_login_profile:
+            # 这个 profile 的唯一职责是由操作者在可见窗口中登录；不允许
+            # 任意调用方把它作为后台采集窗口启动。
+            return self.open_login_browser()
+        return self._start_browser(visible=False)
+
+    def start_public_browser(self) -> BrowserSessionStatus:
+        """Start a background public-only browser; it never opens a login flow."""
+        if self.is_xiaohongshu_login_profile:
+            raise LicensedProviderError(
+                "小红书登录资料目录只用于人工登录，不能用于公开素材搜索。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
+        if not self.anonymous_only:
+            return self.start_login_browser()
         return self._start_browser(visible=False)
 
     def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
+        if self.anonymous_only and visible:
+            raise LicensedProviderError(
+                f"{self.spec.label}未登录公开搜索不允许打开可见登录窗口。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
         status = self.session_status()
         if status.running and visible:
-            restart_browser_for_login(self.debug_port)
+            # Preserve the existing dedicated profile instead of killing and
+            # immediately reopening Chrome on the same profile/port.
+            reveal_browser_window(self.debug_port)
+            return status
         if status.running and not visible:
             minimize_browser_window(self.debug_port)
             return status
@@ -264,6 +400,8 @@ class LocalPlatformBrowserSearchProvider:
             "--no-first-run",
             "--no-default-browser-check",
         ]
+        if self.anonymous_only:
+            browser_args.append("--incognito")
         if visible:
             browser_args.extend(
                 ["--new-window", "--window-position=80,80", "--window-size=1100,800"]
@@ -300,7 +438,11 @@ class LocalPlatformBrowserSearchProvider:
             (
                 f"{self.spec.label}登录窗口正在打开，请在可见窗口中扫码或完成人工验证。"
                 if visible
-                else f"{self.spec.label}公开浏览器正在后台启动；系统随后会自动开始搜索。"
+                else (
+                    f"{self.spec.label}未登录公开浏览器正在后台启动；系统随后会自动开始搜索。"
+                    if self.anonymous_only
+                    else f"{self.spec.label}公开浏览器正在后台启动；系统随后会自动开始搜索。"
+                )
             ),
         )
 
@@ -319,9 +461,20 @@ class LocalPlatformBrowserSearchProvider:
                 f"{self.spec.label}适配器不能搜索其他平台。",
                 kind=ProviderErrorKind.VALIDATION,
             )
-        if not 1 <= limit <= 30:
+        if self.is_xiaohongshu_login_profile:
             raise LicensedProviderError(
-                f"{self.spec.label}每次最多保留 30 条候选。",
+                "小红书登录资料目录只用于人工登录，不能用于素材搜索。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
+        max_result_limit = (
+            _XIAOHONGSHU_PUBLIC_RESULT_LIMIT
+            if self.anonymous_only
+            else _MAX_RESULT_LIMIT
+        )
+        if not 1 <= limit <= max_result_limit:
+            raise LicensedProviderError(
+                f"{self.spec.label}每次最多保留 {max_result_limit} 条候选。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         status = self.session_status()
@@ -333,7 +486,12 @@ class LocalPlatformBrowserSearchProvider:
             )
 
         observed_at = self.clock()
-        raw_rows = self._collect_rows(keyword, target=max(_RAW_TARGET_FLOOR, limit + 10))
+        raw_target = (
+            min(_XIAOHONGSHU_PUBLIC_RAW_TARGET_LIMIT, limit + 5)
+            if self.anonymous_only
+            else max(_RAW_TARGET_FLOOR, limit + 10)
+        )
+        raw_rows = self._collect_rows(keyword, target=raw_target)
         parsed_items = self._to_items(
             raw_rows,
             observed_at=observed_at,
@@ -352,7 +510,7 @@ class LocalPlatformBrowserSearchProvider:
             parsed_item_count=len(parsed_items),
             payload_diagnostic=(
                 f"使用{self.spec.label}专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
-                "发现数量是页面搜索结果，系统会再按关键词、发布时间和字段完整性筛选。"
+                "发现数量是页面搜索结果；系统只去重和校验链接，不会因互动、时长或标题未直接命中而丢弃候选。"
             ),
         )
 
@@ -426,7 +584,12 @@ class LocalPlatformBrowserSearchProvider:
                 self._raise_for_visible_block(page)
                 stagnant_rounds = 0
                 previous_count = -1
-                for _ in range(_MAX_SCROLL_ROUNDS):
+                max_scroll_rounds = (
+                    _XIAOHONGSHU_PUBLIC_MAX_SCROLL_ROUNDS
+                    if self.anonymous_only
+                    else _MAX_SCROLL_ROUNDS
+                )
+                for _ in range(max_scroll_rounds):
                     for row in self._rendered_rows(page):
                         item_id = str(row.get("item_id") or "")
                         if item_id:
@@ -472,74 +635,13 @@ class LocalPlatformBrowserSearchProvider:
 
     def _apply_platform_filters(self, page) -> None:
         """Use the visible platform controls before reading result metadata."""
-        if self.platform == Platform.XIAOHONGSHU:
-            for group, option in (
-                ("排序依据", "最多点赞"),
-                ("笔记类型", "视频"),
-                ("发布时间", "一周内"),
-            ):
-                panel = page.locator(".filter-panel")
-                if not panel.count() or not panel.is_visible():
-                    filter_control = page.locator("div.filter")
-                    if not filter_control.count():
-                        raise LicensedProviderError(
-                            "小红书页面没有显示筛选按钮，已停止本次搜索。",
-                            kind=ProviderErrorKind.VALIDATION,
-                            retryable=False,
-                        )
-                    for attempt in range(2):
-                        filter_control.first.click(force=True)
-                        page.wait_for_timeout(500)
-                        panel = page.locator(".filter-panel")
-                        if panel.count() and panel.is_visible():
-                            break
-                        if attempt == 0:
-                            # Xiaohongshu sometimes renders results before the
-                            # filter component has finished hydrating.
-                            page.wait_for_timeout(6500)
-                    else:
-                        raise LicensedProviderError(
-                            "小红书筛选按钮尚未就绪，已停止本次搜索。",
-                            kind=ProviderErrorKind.CONNECTION,
-                            retryable=False,
-                        )
-                selected = page.evaluate(
-                    """({group, option}) => {
-                        const sections = [...document.querySelectorAll(
-                            ".filter-panel .filters"
-                        )];
-                        const section = sections.find((element) =>
-                            (element.querySelector(":scope > span")?.textContent || "")
-                                .trim() === group
-                        );
-                        const tag = section && [...section.querySelectorAll(".tags")]
-                            .find((element) => (element.innerText || "").trim() === option);
-                        if (!tag) return false;
-                        tag.click();
-                        return true;
-                    }""",
-                    {"group": group, "option": option},
-                )
-                if not selected:
-                    raise LicensedProviderError(
-                        f"小红书页面没有找到“{group} / {option}”筛选项，已停止本次搜索。",
-                        kind=ProviderErrorKind.VALIDATION,
-                        retryable=False,
-                    )
-                page.wait_for_timeout(500)
+        if self.anonymous_only:
+            # 不操作小红书的点赞、笔记类型或发布时间筛选；完整公开搜索结果
+            # 交由本地素材表再排序筛选，减少页面交互和误导性的预筛选。
             return
 
-        if self.platform == Platform.BILIBILI:
-            for option in ("最多播放", "更多筛选", "最近一周"):
-                target = page.get_by_text(option, exact=True)
-                if not target.count():
-                    raise LicensedProviderError(
-                        f"B站页面没有找到“{option}”筛选项，已停止本次搜索。",
-                        kind=ProviderErrorKind.VALIDATION,
-                        retryable=False,
-                    )
-                target.first.click(force=True)
-                page.wait_for_timeout(500)
+        # 快手和 B 站保留平台默认综合搜索顺序。发布时间、时长和互动指标
+        # 都由本系统的结果表筛选，不在平台页面预先淘汰候选。
 
     def _raise_for_visible_block(self, page) -> None:
         body_text = page.locator("body").inner_text(timeout=3000)
@@ -647,6 +749,8 @@ class LocalPlatformBrowserSearchProvider:
             metrics = (
                 card.get("interact_info")
                 if isinstance(card.get("interact_info"), dict)
+                else card.get("interactInfo")
+                if isinstance(card.get("interactInfo"), dict)
                 else {}
             )
             published_at = LocalPlatformBrowserSearchProvider._timestamp_from_mapping(card)
@@ -661,14 +765,29 @@ class LocalPlatformBrowserSearchProvider:
                     "author_name": LocalPlatformBrowserSearchProvider._clean_text(
                         user.get("nickname") or user.get("nick_name")
                     ),
-                    "likes": LocalPlatformBrowserSearchProvider._as_count(
-                        metrics.get("liked_count") or metrics.get("likedCount")
+                    "likes": LocalPlatformBrowserSearchProvider._first_count(
+                        metrics,
+                        "liked_count",
+                        "likedCount",
+                        "like_count",
+                        "likeCount",
+                        "likes",
                     ),
-                    "comments": LocalPlatformBrowserSearchProvider._as_count(
-                        metrics.get("comment_count") or metrics.get("commentCount")
+                    "comments": LocalPlatformBrowserSearchProvider._first_count(
+                        metrics, "comment_count", "commentCount", "comments"
                     ),
-                    "favorites": LocalPlatformBrowserSearchProvider._as_count(
-                        metrics.get("collected_count") or metrics.get("collectedCount")
+                    "shares": LocalPlatformBrowserSearchProvider._first_count(
+                        metrics, "share_count", "shareCount", "shares"
+                    ),
+                    "favorites": LocalPlatformBrowserSearchProvider._first_count(
+                        metrics,
+                        "collected_count",
+                        "collectedCount",
+                        "collect_count",
+                        "collectCount",
+                        "favorite_count",
+                        "favoriteCount",
+                        "favorites",
                     ),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
@@ -723,16 +842,41 @@ class LocalPlatformBrowserSearchProvider:
                         or photo.get("userName")
                     ),
                     "plays": LocalPlatformBrowserSearchProvider._first_count(
-                        photo, "viewCount", "playCount", "views"
+                        photo,
+                        "viewCount",
+                        "view_count",
+                        "playCount",
+                        "play_count",
+                        "views",
                     ),
                     "likes": LocalPlatformBrowserSearchProvider._first_count(
-                        photo, "likeCount", "realLikeCount", "likes"
+                        photo,
+                        "likeCount",
+                        "like_count",
+                        "realLikeCount",
+                        "real_like_count",
+                        "likedCount",
+                        "liked_count",
+                        "likes",
                     ),
                     "comments": LocalPlatformBrowserSearchProvider._first_count(
-                        photo, "commentCount", "comments"
+                        photo, "commentCount", "comment_count", "comments"
                     ),
                     "shares": LocalPlatformBrowserSearchProvider._first_count(
-                        photo, "shareCount", "shares"
+                        photo, "shareCount", "share_count", "shares"
+                    ),
+                    "favorites": LocalPlatformBrowserSearchProvider._first_count(
+                        photo,
+                        "collectCount",
+                        "collect_count",
+                        "collectedCount",
+                        "collected_count",
+                        "favoriteCount",
+                        "favorite_count",
+                        "favorites",
+                    ),
+                    "duration_seconds": LocalPlatformBrowserSearchProvider._first_duration_seconds(
+                        photo, "duration", "durationSeconds", "duration_ms", "durationMs"
                     ),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
@@ -768,14 +912,34 @@ class LocalPlatformBrowserSearchProvider:
                     "author_name": LocalPlatformBrowserSearchProvider._clean_text(
                         entry.get("author")
                     ),
-                    "plays": LocalPlatformBrowserSearchProvider._as_count(
-                        entry.get("play")
+                    "plays": LocalPlatformBrowserSearchProvider._first_count(
+                        entry,
+                        "play",
+                        "play_count",
+                        "playCount",
+                        "view",
+                        "view_count",
+                        "viewCount",
+                        "views",
                     ),
-                    "comments": LocalPlatformBrowserSearchProvider._as_count(
-                        entry.get("video_review")
+                    "likes": LocalPlatformBrowserSearchProvider._first_count(
+                        entry,
+                        "like",
+                        "like_count",
+                        "likeCount",
+                        "liked_count",
+                        "likedCount",
+                        "likes",
                     ),
-                    "favorites": LocalPlatformBrowserSearchProvider._as_count(
-                        entry.get("favorites")
+                    "favorites": LocalPlatformBrowserSearchProvider._first_count(
+                        entry,
+                        "favorites",
+                        "favorite",
+                        "favorite_count",
+                        "favoriteCount",
+                    ),
+                    "duration_seconds": LocalPlatformBrowserSearchProvider._first_duration_seconds(
+                        entry, "duration", "durationSeconds", "duration_ms", "durationMs"
                     ),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
@@ -819,14 +983,12 @@ class LocalPlatformBrowserSearchProvider:
             author_id = self._clean_text(row.get("author_id")) or f"{self.platform.value}-{item_id}"
             warnings: list[str] = []
             if not time_confident:
-                if self.platform == Platform.XIAOHONGSHU:
-                    warnings.append(
-                        "小红书已选择“一周内”；搜索卡片未返回精确发布时间。"
-                    )
-                else:
-                    warnings.append("搜索结果未返回可靠发布时间；按平台搜索顺序作为近期候选。")
+                warnings.append("搜索结果未返回可靠发布时间；按平台搜索顺序作为近期候选。")
             if author_name == f"{self.spec.label}作者":
                 warnings.append("搜索卡片未返回作者名。")
+            duration_seconds = self._duration_seconds(row.get("duration_seconds"))
+            if duration_seconds is None:
+                warnings.append("搜索结果未返回视频时长。")
             items.append(
                 ProviderSearchItem(
                     platform=self.platform,
@@ -835,6 +997,7 @@ class LocalPlatformBrowserSearchProvider:
                     author_id=author_id,
                     author_name=author_name,
                     published_at=published_at,
+                    duration_seconds=duration_seconds,
                     source_url=HttpUrl(str(row.get("source_url"))),
                     provider_rank=len(items) + 1,
                     metrics=VideoMetricSnapshot(
@@ -849,7 +1012,8 @@ class LocalPlatformBrowserSearchProvider:
                     ),
                     evidence=(
                         f"{self.platform.value}:{row.get('evidence')};"
-                        f"time={'platform' if time_confident else 'platform_filter' if self.platform == Platform.XIAOHONGSHU else 'search_order_fallback'}"
+                        f"time={'platform' if time_confident else 'search_order_fallback'};"
+                        f"时长秒={duration_seconds if duration_seconds is not None else '未返回'}"
                     ),
                     data_quality_warnings=warnings,
                 )
@@ -885,18 +1049,15 @@ class LocalPlatformBrowserSearchProvider:
 
     def _missing_prerequisites(self) -> list[str]:
         if not self.enabled:
-            return [
-                "小红书安全模式（仅支持人工导入）"
-                if self.platform == Platform.XIAOHONGSHU
-                else f"{self.spec.label}浏览器发现开关"
-            ]
+            return [f"{self.spec.label}浏览器发现开关"]
         missing: list[str] = []
-        try:
-            playwright_spec = importlib.util.find_spec("playwright.sync_api")
-        except ModuleNotFoundError:
-            playwright_spec = None
-        if playwright_spec is None:
-            missing.append("Playwright Python 依赖")
+        if not self.is_xiaohongshu_login_profile:
+            try:
+                playwright_spec = importlib.util.find_spec("playwright.sync_api")
+            except ModuleNotFoundError:
+                playwright_spec = None
+            if playwright_spec is None:
+                missing.append("Playwright Python 依赖")
         if self._browser_executable() is None:
             missing.append(
                 "Microsoft Edge" if self.browser_channel == "msedge" else "Google Chrome"
@@ -1040,8 +1201,40 @@ class LocalPlatformBrowserSearchProvider:
         return None
 
     @staticmethod
+    def _first_duration_seconds(mapping: dict[str, Any], *keys: str) -> int | None:
+        for key in keys:
+            duration = LocalPlatformBrowserSearchProvider._duration_seconds(
+                mapping.get(key), milliseconds=key in {"duration_ms", "durationMs"}
+            )
+            if duration is not None:
+                return duration
+        return None
+
+    @staticmethod
+    def _duration_seconds(value: Any, *, milliseconds: bool = False) -> int | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if re.fullmatch(r"\d{1,3}:\d{2}(?::\d{2})?", text):
+            parts = [int(part) for part in text.split(":")]
+            if len(parts) == 2:
+                return parts[0] * 60 + parts[1]
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        try:
+            seconds = int(float(text))
+        except (TypeError, ValueError):
+            return None
+        if seconds <= 0:
+            return None
+        return seconds // 1000 if milliseconds else seconds
+
+    @staticmethod
     def _as_count(value: Any) -> int | None:
-        raw = str(value or "").replace(",", "").strip().casefold()
+        if value is None:
+            return None
+        raw = str(value).replace(",", "").strip().casefold()
         if not raw:
             return None
         multiplier = 1

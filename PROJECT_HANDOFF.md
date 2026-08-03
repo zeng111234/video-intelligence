@@ -39,7 +39,7 @@
 - 页面从公司 PHP 内部 API 读取真实能力、已授权形象和音色；服务、文案长度、三项授权和权利主体全部满足后才启用“开始生成”。提交后持久化不可变文案快照、幂等键、供应商状态、费用、耗时和结果元数据。
 - GET 类连接失败最多自动重试一次；付费 POST 不自动重发。提交响应丢失时保存 `outcome_unknown` 并按原幂等键核对，避免重复计费。
 - 成功视频经内部鉴权结果接口下载，先检查大小、MIME、MP4 `ftyp` 和 FFprobe 视频流，再原子保存到 `data/avatar_results/`；生成物不进入 Git。
-- 公司系统位于 `C:/Users/zeng/Desktop/shuziren/shuying-original-digital-human-complete-20260718/`，已新增 `/internal/v1/avatar/*`、独立 Bearer 服务令牌、MySQL 幂等任务表和旧私有网关 adapter；不复用会员 JWT、积分或旧编译前端。
+- 公司数字人系统是仓库外部依赖，实际位置由部署方自行确定；该系统已新增 `/internal/v1/avatar/*`、独立 Bearer 服务令牌、MySQL 幂等任务表和旧私有网关 adapter，不复用会员 JWT、积分或旧编译前端。
 - Docker 已降级为可选兼容部署；原生 PHP 7.4/Apache/MySQL 是支持路径。当前机器没有 PHP CLI，Docker daemon 启动后仍不可用，因此 PHP 运行时和真实供应商端到端尚未在本机验收。
 - 页面明确区分“转写校对完成”和“拥有改编/合成/发布权”，真实接入前仍需供应商授权、肖像与声音授权、文案版权与事实审核，以及目标平台 AI 内容标识与广告规则确认。
 
@@ -232,7 +232,7 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Windows 也可以直接双击仓库根目录的 `打开短视频系统.cmd`。该启动文件会检查依赖、后台启动 Streamlit、等待健康检查通过并打开默认浏览器。
+Windows 直接双击仓库根目录的 `start.bat`。它会检查并安装项目依赖、启动 React/FastAPI 服务、等待健康检查通过并打开默认浏览器。
 
 默认地址：`http://127.0.0.1:8501/`。CSV、手工导入与本地转写不需要平台密钥；抖音关键词搜索需配置应用凭证。
 

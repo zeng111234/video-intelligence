@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import {
   Alert,
   Button,
@@ -12,7 +12,6 @@ import {
   Popconfirm,
   Row,
   Segmented,
-  Select,
   Space,
   Spin,
   Tag,
@@ -26,12 +25,10 @@ import {
   FileTextOutlined,
   HistoryOutlined,
   ReloadOutlined,
-  SendOutlined,
 } from "@ant-design/icons";
 import {
   clearCopywritingHistory,
   generateCopywriting,
-  generatePublishMetadata,
   deleteTask,
   getCopywritingCapabilities,
   getCopywritingTask,
@@ -43,7 +40,6 @@ import type {
   CopywritingDetailResponse,
   CopywritingResponse,
   CopywritingSummaryResponse,
-  PublishMetadataResponse,
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
@@ -84,7 +80,6 @@ function highlightedCopy(text: string, terms: string[]) {
 
 export default function AiCopyPage() {
   const toast = useToast();
-  const navigate = useNavigate();
   const location = useLocation();
   const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
   const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
@@ -103,8 +98,6 @@ export default function AiCopyPage() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [lastResponse, setLastResponse] = useState<CopywritingResponse | null>(null);
   const [variants, setVariants] = useState<string[]>([]);
-  const [publishMetadata, setPublishMetadata] = useState<PublishMetadataResponse | null>(null);
-  const [metadataLoading, setMetadataLoading] = useState(false);
   const handledHandoffKeyRef = useRef<string | null>(null);
 
   const inputReady = mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
@@ -133,7 +126,6 @@ export default function AiCopyPage() {
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
-    setPublishMetadata(null);
     const label = typeof handoff?.sourceLabel === "string" ? handoff.sourceLabel : "转写稿";
     toast.success(`已带入「${label}」，确认内容后再开始改写`);
   }, [location.key, location.state, setMode, setSourceText, toast]);
@@ -157,7 +149,6 @@ export default function AiCopyPage() {
         setTaskId(null);
         setLastResponse(null);
         setVariants([]);
-        setPublishMetadata(null);
       }
       toast.success("文案历史已删除");
       await refreshHistory();
@@ -176,7 +167,6 @@ export default function AiCopyPage() {
       setTaskId(null);
       setLastResponse(null);
       setVariants([]);
-      setPublishMetadata(null);
       toast.success(`已删除 ${result.deleted_count} 条文案历史`);
     } catch (err) {
       toast.error((err as Error).message || "清空文案历史失败");
@@ -212,7 +202,6 @@ export default function AiCopyPage() {
         ? [resp.result_text]
         : [];
     setVariants(resultVariants.slice(0, 1));
-    setPublishMetadata(null);
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -227,7 +216,6 @@ export default function AiCopyPage() {
     setLoading(true);
     setVariants([]);
     setLastResponse(null);
-    setPublishMetadata(null);
     try {
       const common = {
         style_prompt: mode === "rewrite" ? TRANSCRIPT_DEDUP_REWRITE_PROMPT : "",
@@ -304,7 +292,6 @@ export default function AiCopyPage() {
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
-    setPublishMetadata(null);
   };
 
   const handleClearDraft = () => {
@@ -316,7 +303,6 @@ export default function AiCopyPage() {
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
-    setPublishMetadata(null);
     toast.success("本机草稿已清空");
   };
 
@@ -324,53 +310,8 @@ export default function AiCopyPage() {
     navigator.clipboard.writeText(text).then(() => toast.success("已复制到剪贴板"));
   }, [toast]);
 
-  const tokenUsage = lastResponse?.token_usage ?? {};
   const activeText = variants[0] || "";
   const attentionTerms = lastResponse?.attention_terms ?? [];
-  const isBestEffort = lastResponse?.compliance_status === "best_effort";
-  const resultNoticeMessage = isBestEffort
-    ? attentionTerms.length > 0
-      ? "已使用最终优化版，并高亮其他主体名称"
-      : "已使用自动优化后的最终版本"
-    : attentionTerms.length > 0
-      ? "已高亮可能属于其他主体的名称"
-      : "自动去重和风险处理已通过";
-
-  const handleGeneratePublishMetadata = useCallback(async () => {
-    if (!activeText.trim()) {
-      toast.warning("请先生成文案");
-      return;
-    }
-    setMetadataLoading(true);
-    try {
-      const result = await generatePublishMetadata({
-        source_text: activeText,
-        platforms: ["douyin", "kuaishou", "wechat_channels", "xiaohongshu", "bilibili"],
-        source_task_id: taskId || undefined,
-      });
-      setPublishMetadata(result);
-      if (result.is_mock) toast.warning("当前为演示结果，请配置真实模型后再用于正式发布");
-      else toast.success("已生成发布标题、描述和话题，请检查后带入发布");
-    } catch (err) {
-      toast.error((err as Error).message || "生成发布信息失败");
-    } finally {
-      setMetadataLoading(false);
-    }
-  }, [activeText, taskId, toast]);
-
-  const handleSendToPublish = useCallback(() => {
-    if (!publishMetadata?.title.trim() || !publishMetadata.description.trim()) {
-      toast.warning("请先检查并补齐发布标题和描述");
-      return;
-    }
-    window.sessionStorage.setItem("publish_ai_draft", JSON.stringify({
-      title: publishMetadata.title.trim(),
-      description: publishMetadata.description.trim(),
-      tags: publishMetadata.tags,
-      source_task_id: publishMetadata.task_id,
-    }));
-    navigate("/publish?from_ai_copy=1");
-  }, [navigate, publishMetadata, toast]);
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
@@ -379,7 +320,6 @@ export default function AiCopyPage() {
           <Title level={4} style={{ margin: 0 }}>
             <EditOutlined /> AI 文案去重改写
           </Title>
-          <Text type="secondary">把已确认的转写稿改成新的自然口播表达，也支持从需求直接生成文案</Text>
         </Col>
         <Col>
           <Space wrap>
@@ -447,19 +387,8 @@ export default function AiCopyPage() {
                     maxLength={5000}
                     style={{ resize: "none" }}
                   />
-                  <Alert
-                    type="info"
-                    showIcon
-                    message="系统会检测与原文的表达重复；过于相似时会自动重新组织表达，不会覆盖原始转写稿。"
-                  />
                 </>
               )}
-
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                {mode === "rewrite"
-                  ? "请先确认转写内容准确；点击后才会调用 AI 去重改写。"
-                  : "系统会根据内容自动判断适合的受众，并保留原文可核实的事实。"}
-              </Text>
 
               <Button
                 type="primary"
@@ -481,8 +410,6 @@ export default function AiCopyPage() {
             title={
               <Space wrap>
                 <EditOutlined /> {mode === "rewrite" ? "去重改写结果" : "生成结果"}
-                {taskId && <Tag color="blue">任务 {taskId}</Tag>}
-                {lastResponse?.model_name && <Tag>{lastResponse.model_name}</Tag>}
               </Space>
             }
             extra={variants.length > 0 && (
@@ -504,51 +431,6 @@ export default function AiCopyPage() {
                   </div>
                   <Space wrap>
                     <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制文案</Button>
-                  </Space>
-                  <Card
-                    size="small"
-                    title="发布标题、描述和话题"
-                    extra={<Button type="primary" loading={metadataLoading} onClick={handleGeneratePublishMetadata}>{publishMetadata ? "重新生成" : "AI 生成发布信息"}</Button>}
-                    style={{ background: "#faf7ff" }}
-                  >
-                    {publishMetadata ? (
-                      <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                        <Text strong>主题（发布标题）</Text>
-                        <Input aria-label="AI 发布标题" value={publishMetadata.title} maxLength={100} showCount onChange={(event) => setPublishMetadata((current) => current ? { ...current, title: event.target.value } : current)} />
-                        <Text strong>描述</Text>
-                        <TextArea aria-label="AI 发布描述" value={publishMetadata.description} rows={4} maxLength={1000} showCount onChange={(event) => setPublishMetadata((current) => current ? { ...current, description: event.target.value } : current)} />
-                        <Text strong>话题</Text>
-                        <Select aria-label="AI 发布话题" mode="tags" value={publishMetadata.tags} tokenSeparators={[",", "，", " "]} placeholder="输入话题后回车" style={{ width: "100%" }} onChange={(values) => setPublishMetadata((current) => current ? { ...current, tags: values.map((value) => value.replace(/^#/, "")).filter(Boolean).slice(0, 8) } : current)} />
-                        <Space wrap>
-                          <Button type="primary" icon={<SendOutlined />} onClick={handleSendToPublish}>带入多平台发布</Button>
-                          <Text type="secondary" style={{ fontSize: 12 }}>{publishMetadata.model_name} · {publishMetadata.is_mock ? "演示" : "真实模型"}</Text>
-                        </Space>
-                      </Space>
-                    ) : (
-                      <Text type="secondary">基于当前文案生成，生成后可修改并带入多平台发布。</Text>
-                    )}
-                  </Card>
-                  <Alert
-                    type={attentionTerms.length > 0 || isBestEffort ? "warning" : "info"}
-                    showIcon
-                    message={resultNoticeMessage}
-                    description={
-                      <Space direction="vertical" size={2}>
-                        {(lastResponse?.compliance_notes || ["已按自然口播节奏优化表达。"])
-                          .map((note) => <Text key={note}>{note}</Text>)}
-                        {attentionTerms.length > 0 && (
-                          <Space wrap size={[4, 4]}>
-                            {attentionTerms.map((term) => <Tag color="orange" key={term}>{term}</Tag>)}
-                          </Space>
-                        )}
-                        <Text type="secondary">自动处理可以降低表达风险，但不代表平台审核保证。</Text>
-                      </Space>
-                    }
-                  />
-                  <Space wrap size={[16, 8]}>
-                    <Text type="secondary" style={{ fontSize: 12 }}>供应商：{lastResponse?.provider_name || "-"}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>Token：{tokenUsage.total_tokens ?? "-"}</Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>演示：{lastResponse?.is_mock ? "是" : "否"}</Text>
                   </Space>
                 </Space>
               ) : (

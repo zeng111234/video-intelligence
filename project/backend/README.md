@@ -24,14 +24,17 @@ FastAPI REST API 服务，默认端口 2001。复用 `src/services` 层，不依
 ## 启动方式
 
 ```powershell
+# 在仓库根目录准备隔离环境（首次运行）
+.\scripts\setup_windows.ps1
+
 # 设置 PYTHONPATH（后端需要访问 src/ 目录）
-$env:PYTHONPATH = "C:\Users\zeng\Desktop\video"
+$env:PYTHONPATH = (Get-Location).Path
 
 # 安装依赖
-python -m pip install -r requirements.txt
+..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
 # 启动服务
-python -m uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
+..\..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
 ```
 
 ## 默认端口
@@ -41,9 +44,9 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
 ## 测试
 
 ```powershell
-# 设置 PYTHONPATH
-$env:PYTHONPATH = "C:\Users\zeng\Desktop\video"
+# 从仓库根目录设置 PYTHONPATH
+$env:PYTHONPATH = (Get-Location).Path
 
 # 运行后端测试
-python -m pytest tests/ -v
+.\.venv\Scripts\python.exe -m pytest project/backend/tests/ -v
 ```

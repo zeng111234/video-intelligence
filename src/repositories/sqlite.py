@@ -271,6 +271,7 @@ class SQLiteRepository:
                 author_name TEXT NOT NULL,
                 category TEXT NOT NULL,
                 published_at TEXT NOT NULL,
+                duration_seconds INTEGER,
                 source_url TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 rights_status TEXT NOT NULL,
@@ -439,6 +440,7 @@ class SQLiteRepository:
 
     def _ensure_runtime_columns(self) -> None:
         self._ensure_column("search_batches", "hotspot_window_hours", "INTEGER")
+        self._ensure_column("candidates", "duration_seconds", "INTEGER")
         self._ensure_column("candidates", "feed_id", "TEXT")
         self._ensure_column("candidates", "finder_user_name", "TEXT")
         self._ensure_column(
@@ -497,6 +499,7 @@ class SQLiteRepository:
                 author_name TEXT NOT NULL,
                 category TEXT NOT NULL,
                 published_at TEXT NOT NULL,
+                duration_seconds INTEGER,
                 source_url TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 rights_status TEXT NOT NULL,
@@ -655,6 +658,7 @@ class SQLiteRepository:
         )
         self._migrate_keyword_trend_results_platform()
         self._ensure_column("search_batches", "hotspot_window_hours", "INTEGER")
+        self._ensure_column("candidates", "duration_seconds", "INTEGER")
         self._ensure_column("candidates", "cohort_key", "TEXT")
         self._ensure_column(
             "candidates",
@@ -795,17 +799,18 @@ class SQLiteRepository:
                 """
                 INSERT INTO candidates (
                     video_id, platform, platform_item_id, title, author_id, author_name,
-                    category, published_at, source_url, source_type, rights_status,
+                    category, published_at, duration_seconds, source_url, source_type, rights_status,
                     matched_by_json, cohort_key, eligibility_status, evidence,
                     feed_id, finder_user_name, official_hot, official_rank,
                     official_hot_value, data_quality_warnings_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(platform, platform_item_id) DO UPDATE SET
                     title = excluded.title,
                     author_id = excluded.author_id,
                     author_name = excluded.author_name,
                     category = excluded.category,
                     published_at = excluded.published_at,
+                    duration_seconds = COALESCE(excluded.duration_seconds, candidates.duration_seconds),
                     source_url = excluded.source_url,
                     source_type = excluded.source_type,
                     rights_status = excluded.rights_status,
@@ -829,6 +834,7 @@ class SQLiteRepository:
                     candidate.author_name,
                     candidate.category,
                     candidate.published_at.isoformat(),
+                    candidate.duration_seconds,
                     str(candidate.source_url) if candidate.source_url else "",
                     candidate.source_type.value,
                     candidate.rights_status,
@@ -945,6 +951,7 @@ class SQLiteRepository:
             platform=row["platform"],
             category=row["category"],
             published_at=row["published_at"],
+            duration_seconds=row["duration_seconds"],
             source_url=row["source_url"] or None,
             source_type=row["source_type"],
             rights_status=row["rights_status"],

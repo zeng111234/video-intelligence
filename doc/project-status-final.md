@@ -68,7 +68,7 @@
 | React前端 | 1001 | ⚠️ 待启动 | 新前端界面 |
 
 ### 启动方式
-1. **快速启动**：双击`打开短视频系统.cmd`
+1. **快速启动**：双击 `start.bat`
 2. **全服务启动**：运行`scripts/start_all_services.ps1`
 3. **手动启动**：按README.md说明启动
 
@@ -220,7 +220,7 @@
 ### 启动命令
 ```bash
 # 快速启动
-双击 打开短视频系统.cmd
+双击 `start.bat`
 
 # 全服务启动
 powershell scripts/start_all_services.ps1

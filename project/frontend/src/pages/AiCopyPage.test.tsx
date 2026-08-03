@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AiCopyPage from "./AiCopyPage";
 import { ToastProvider } from "../components/Toast";
 import {
-  generatePublishMetadata,
   getCopywritingCapabilities,
   listCopywritingTasks,
   rewriteCopywriting,
@@ -17,7 +16,6 @@ vi.mock("../api/client", () => ({
   clearCopywritingHistory: vi.fn(),
   deleteTask: vi.fn(),
   generateCopywriting: vi.fn(),
-  generatePublishMetadata: vi.fn(),
   getCopywritingCapabilities: vi.fn(),
   getCopywritingTask: vi.fn(),
   listCopywritingTasks: vi.fn(),
@@ -32,7 +30,7 @@ function renderPage() {
   );
 }
 
-describe("AiCopyPage publish metadata", () => {
+describe("AiCopyPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -81,18 +79,9 @@ describe("AiCopyPage publish metadata", () => {
       compliance_retry_used: false,
       error_message: null,
     });
-    vi.mocked(generatePublishMetadata).mockResolvedValue({
-      task_id: "copy-metadata-1",
-      provider_name: "test_llm",
-      model_name: "test-model",
-      is_mock: false,
-      title: "发布标题",
-      description: "发布描述",
-      tags: ["企业服务", "AI"],
-    });
   });
 
-  it("generates editable publish fields beside the selected copy and carries them to publish", async () => {
+  it("keeps publish fields out of the copywriting page", async () => {
     const view = renderPage();
 
     fireEvent.change(
@@ -108,26 +97,10 @@ describe("AiCopyPage publish metadata", () => {
       style_prompt: expect.stringContaining("去重改写"),
     })));
 
-    await within(view.container).findByText("发布标题、描述和话题");
-    fireEvent.click(within(view.container).getByRole("button", { name: "AI 生成发布信息" }));
-
-    await waitFor(() => expect(generatePublishMetadata).toHaveBeenCalledWith({
-      source_text: "已生成的口播文案",
-      platforms: ["douyin", "kuaishou", "wechat_channels", "xiaohongshu", "bilibili"],
-      source_task_id: "copy-source-1",
-    }));
-    expect((within(view.container).getByLabelText("AI 发布标题") as HTMLInputElement).value).toBe("发布标题");
-    expect((within(view.container).getByLabelText("AI 发布描述") as HTMLTextAreaElement).value).toBe("发布描述");
-
-    fireEvent.click(within(view.container).getByRole("button", { name: /带入多平台发布/ }));
-
-    await waitFor(() => expect(window.location.pathname).toBe("/publish"));
-    expect(window.location.search).toBe("?from_ai_copy=1");
-    expect(JSON.parse(window.sessionStorage.getItem("publish_ai_draft") || "{}")).toMatchObject({
-      title: "发布标题",
-      description: "发布描述",
-      tags: ["企业服务", "AI"],
-    });
+    expect(await within(view.container).findByText("已生成的口播文案")).toBeTruthy();
+    expect(within(view.container).queryByText("发布标题、描述和话题")).toBeNull();
+    expect(within(view.container).queryByRole("button", { name: "AI 生成发布信息" })).toBeNull();
+    expect(within(view.container).queryByRole("button", { name: /带入多平台发布/ })).toBeNull();
   });
 
   it("highlights suspected external names without blocking the generated copy", async () => {
@@ -161,7 +134,7 @@ describe("AiCopyPage publish metadata", () => {
       const mark = view.container.querySelector("mark");
       expect(mark?.textContent).toBe("竞品科技");
     });
-    expect(within(view.container).getByText("已高亮可能属于其他主体的名称")).toBeTruthy();
+    expect(within(view.container).queryByText("已高亮可能属于其他主体的名称")).toBeNull();
   });
 
   it("shows the final best-effort version as a usable pipeline result", async () => {
@@ -192,7 +165,7 @@ describe("AiCopyPage publish metadata", () => {
     fireEvent.click(optimizeButton);
 
     expect(await within(view.container).findByText("这是自动优化后的最后版本。")).toBeTruthy();
-    expect(within(view.container).getByText("已使用自动优化后的最终版本")).toBeTruthy();
+    expect(within(view.container).queryByText("已使用自动优化后的最终版本")).toBeNull();
   });
 
   it("accepts a reviewed transcript from transcription without starting a rewrite", async () => {

@@ -21,13 +21,12 @@ from pydantic import BaseModel, Field
 from project.backend.app.core.deps import (
     get_bilibili_browser_provider,
     get_bilibili_browser_search_service,
+    get_bilibili_public_metrics_provider,
     get_commercial_search_service,
     get_candidate_copy_probe_service,
     get_discovery_search_provider,
     get_douyin_public_browser_provider,
     get_douyin_public_search_service,
-    get_hotspot_browser_provider,
-    get_hotspot_search_service,
     get_kuaishou_browser_provider,
     get_kuaishou_browser_search_service,
     get_doubao_browser_service,
@@ -41,6 +40,7 @@ from project.backend.app.core.deps import (
     get_source_service,
     get_transcription_service,
     get_xiaohongshu_browser_provider,
+    get_xiaohongshu_login_browser_provider,
     get_xiaohongshu_browser_search_service,
 )
 from project.backend.app.core import config as backend_config
@@ -93,18 +93,15 @@ PLATFORM_LABELS: dict[str, str] = {
     "wechat_channels": "视频号",
 }
 SMART_FREE_CANDIDATE_THRESHOLD = 3
-# 主榜只展示有足够互动基础的严格相关内容；官方热榜候选不受此门槛限制。
+# 兼容历史批次和文案检测优先级的统计线；不再决定搜索结果是否可见。
 INTERACTION_HEAT_FLOOR = 100.0
 BILIBILI_PLAY_HEAT_FLOOR = 100
-GENERIC_SEARCH_KEYWORDS = {"获客", "引流", "营销", "运营", "带货", "招生", "招聘"}
-FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS = 0
-XIAOHONGSHU_PUBLISHED_WINDOW_DAYS = 7
+XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT = 15
 KUAISHOU_PUBLISHED_WINDOW_DAYS = 30
 BILIBILI_PUBLISHED_WINDOW_DAYS = 7
-# 当热点宝的候选不足时，抖音官网搜索只取近一周、最多 20 条可见卡片；
-# 它和热点宝共用浏览器，会顺序执行，不额外开浏览器或并发刷页面。
-DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS = 7
-DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 20
+# 常规“找素材”只检索抖音官网搜索页，不再启动或补足热点宝。
+DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS = 0
+DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 30
 HOTSPOT_CACHE_TTL_MINUTES = 60
 HOTSPOT_COOLDOWN_MIN_SECONDS = 60 * 60
 # 质量池只收“真实检测到文案”的候选：8 条主素材 + 4 条备用。
@@ -120,9 +117,6 @@ COPY_PROBE_TARGET_DETECTIONS = COPY_POOL_PRIMARY_TARGET + COPY_POOL_RESERVE_TARG
 COPY_SEARCH_MATRIX_LIMIT = 8
 COPY_SEARCH_MAX_VARIANTS_PER_PLATFORM = 3
 COPY_SEARCH_SUFFIXES = ("讲解", "怎么选", "使用方法", "常见问题", "应用案例")
-COPY_REFERENCE_LOW_HEAT_WARNING = (
-    "互动数据不足：已检测到文案，仅作内容参考，不代表热门素材。"
-)
 HOTSPOT_COOLDOWN_MAX_SECONDS = 60 * 60
 HOTSPOT_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 HOTSPOT_LEASE_SECONDS = 10 * 60
@@ -135,6 +129,8 @@ BROWSER_COOLDOWN_SECONDS = 60 * 60
 BROWSER_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 BROWSER_MAX_REAL_RUNS_PER_WINDOW = 4
 BROWSER_RESULT_LIMIT = 15
+# B站公开详情接口逐条读取，当前搜索批次只补全平台排序靠前的少量候选。
+BILIBILI_PUBLIC_METRIC_REFRESH_LIMIT = 10
 _BROWSER_CRAWL_LOCK = threading.Lock()
 HOTSPOT_WINDOW_LABELS = {
     1: "近1小时",
@@ -154,16 +150,31 @@ def _next_hotspot_cooldown_seconds() -> int:
 
 
 def _require_specific_search_keyword(keyword: str) -> None:
-    normalized = normalized_keyword_text(keyword)
-    if normalized in GENERIC_SEARCH_KEYWORDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"“{keyword.strip()}”范围太宽，请补充产品或行业，例如“贴标机{keyword.strip()}”。",
-        )
+    """Retain the call site for old clients; broad platform search accepts any text."""
+    del keyword
+
+
+def _selected_free_platforms(body: "CrawlerSearchRequest") -> tuple[Platform, ...]:
+    selected = tuple(dict.fromkeys(Platform(value) for value in body.platforms))
+    if not selected:
+        raise HTTPException(status_code=400, detail="至少选择一个搜索平台。")
+    return selected
+
+
+def _free_requested_count(body: "CrawlerSearchRequest") -> int:
+    """Prefer the new count field while keeping old callers that sent only target_main_count."""
+    if body.count_per_platform == 30 and body.target_main_count != 30:
+        return body.target_main_count
+    return body.count_per_platform
 
 
 class CrawlerSearchRequest(BaseModel):
-    keyword: str = Field(..., min_length=2, max_length=50, description="搜索关键词")
+    keyword: str = Field(..., min_length=1, max_length=50, description="搜索关键词")
+    platforms: list[Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"]] = Field(
+        default_factory=lambda: ["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+        min_length=1,
+        description="本次要搜索的平台；小红书只使用隔离的未登录公开搜索。",
+    )
     # 热点宝不使用发布时间筛选；其余平台浏览器默认优先保留近 3 天内容。
     published_window_days: int = Field(
         7,
@@ -173,7 +184,7 @@ class CrawlerSearchRequest(BaseModel):
         168,
         description="热点宝榜单统计周期：1/24/72/168 小时；不限制视频发布时间。",
     )
-    count_per_platform: int = Field(30, ge=1, le=30, description="免费来源最多保留数量")
+    count_per_platform: int = Field(30, ge=1, le=100, description="每个平台最多保留数量")
     hotspot_result_limit: int = Field(
         100,
         ge=1,
@@ -194,7 +205,7 @@ class CrawlerSearchRequest(BaseModel):
         False,
         description="复采已关闭，只执行本次搜索",
     )
-    target_main_count: int = Field(30, ge=1, le=30, description="候选目标数量")
+    target_main_count: int = Field(30, ge=1, le=100, description="历史兼容的候选目标数量")
     max_paid_calls: int = Field(0, ge=0, le=0, description="免费模式不允许付费调用")
     allow_paid_fallback: bool = Field(
         False,
@@ -363,6 +374,7 @@ class CrawlerCandidateResult(BaseModel):
     platform_label: str
     source_url: str | None = None
     published_at: datetime | None = None
+    published_at_reliable: bool = False
     trend_score: float | None = None
     trend_level: str | None = None
     display_tier: str = "ordinary"
@@ -384,6 +396,7 @@ class CrawlerCandidateResult(BaseModel):
     plays: int | None = None
     new_plays: int | None = None
     likes: int | None = None
+    heat_score: float | None = None
     new_likes: int | None = None
     likes_per_day: float | None = None
     quality_source: str | None = None
@@ -566,6 +579,7 @@ class CrawlerPlatformRunResponse(BaseModel):
 class CrawlerBatchResponse(BaseModel):
     batch_id: str
     keyword: str
+    platforms: list[str] = Field(default_factory=list)
     published_window_days: int
     hotspot_window_hours: int | None = None
     count_per_platform: int
@@ -682,7 +696,9 @@ def _capability_payload(
     billboard_adapter=None,
     hot_words_adapter=None,
     hotspot_provider=None,
+    douyin_public_provider=None,
     xiaohongshu_provider=None,
+    xiaohongshu_login_provider=None,
     kuaishou_provider=None,
     bilibili_provider=None,
 ) -> CrawlerCapabilitiesResponse:
@@ -697,6 +713,12 @@ def _capability_payload(
     usage = None
     hotspot_capability = (
         hotspot_provider.capabilities() if hotspot_provider is not None else None
+    )
+    # “找素材”的小红书来源始终是匿名公开 profile。账号连接区则只显示
+    # 用户主动打开的独立登录 profile，避免把匿名浏览器的后台状态误写成
+    # 已登录或可扫码状态。
+    xiaohongshu_connection_provider = (
+        xiaohongshu_login_provider or xiaohongshu_provider
     )
     return CrawlerCapabilitiesResponse(
         provider_name=capability.provider_name,
@@ -749,7 +771,11 @@ def _capability_payload(
         ),
         platform_browsers=[
             _browser_capability_payload(
-                xiaohongshu_provider,
+                douyin_public_provider,
+                platform=Platform.DOUYIN,
+            ),
+            _browser_capability_payload(
+                xiaohongshu_connection_provider,
                 platform=Platform.XIAOHONGSHU,
             ),
             _browser_capability_payload(
@@ -762,7 +788,8 @@ def _capability_payload(
             ),
         ]
         if (
-            xiaohongshu_provider is not None
+            douyin_public_provider is not None
+            and xiaohongshu_connection_provider is not None
             and kuaishou_provider is not None
             and bilibili_provider is not None
         )
@@ -776,8 +803,9 @@ def get_capabilities(
     provider=Depends(get_discovery_search_provider),
     billboard_adapter=Depends(get_official_hot_billboard_adapter),
     hot_words_adapter=Depends(get_official_hot_words_adapter),
-    hotspot_provider=Depends(get_hotspot_browser_provider),
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
     xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    xiaohongshu_login_provider=Depends(get_xiaohongshu_login_browser_provider),
     kuaishou_provider=Depends(get_kuaishou_browser_provider),
     bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
@@ -787,8 +815,9 @@ def get_capabilities(
         provider,
         billboard_adapter=billboard_adapter,
         hot_words_adapter=hot_words_adapter,
-        hotspot_provider=hotspot_provider,
+        douyin_public_provider=douyin_public_provider,
         xiaohongshu_provider=xiaohongshu_provider,
+        xiaohongshu_login_provider=xiaohongshu_login_provider,
         kuaishou_provider=kuaishou_provider,
         bilibili_provider=bilibili_provider,
     )
@@ -799,29 +828,44 @@ def get_capabilities(
     response_model=CrawlerBrowserDiscoveryCapabilities,
 )
 def get_browser_discovery_capabilities(
-    provider=Depends(get_hotspot_browser_provider),
+    provider=Depends(get_douyin_public_browser_provider),
 ):
-    """返回专用本机 Chrome 的连接/登录状态，不读取任何 Cookie 内容。"""
-    capability = provider.capabilities()
-    status = getattr(provider, "session_status", lambda: None)()
-    return CrawlerBrowserDiscoveryCapabilities(
-        platform=Platform.DOUYIN.value,
-        platform_label=_platform_label(Platform.DOUYIN.value),
-        enabled=capability.enabled,
-        running=bool(status and status.running),
-        login_required=bool(status and status.login_required),
-        missing_configuration=getattr(capability, "missing_configuration", []),
-        browser_channel=getattr(provider, "browser_channel", "chrome"),
-        ready_to_crawl=bool(status and status.ready_to_crawl),
-        phase=(status.phase if status is not None else "unavailable"),
-        adapter_version=getattr(provider, "adapter_version", "hotspot_fiber_v2"),
-        provider_name=capability.provider_name,
-        message=(
-            status.message
-            if status is not None
-            else "当前发现源不是本机 Chrome；请关闭浏览器发现开关后使用已确认的数据源。"
-        ),
+    """兼容旧客户端：返回抖音官网浏览器状态，不再指向热点宝。"""
+    return _browser_capability_payload(
+        provider,
+        platform=Platform.DOUYIN,
     )
+
+
+def _start_visible_browser_login(provider):
+    """Open only a visible local login window and convert launch failures to API errors."""
+    start = getattr(provider, "open_login_browser", None) or getattr(
+        provider, "start_login_browser", None
+    )
+    if start is None:
+        raise HTTPException(status_code=409, detail="当前来源不支持打开本机登录窗口。")
+    previous_status = None
+    try:
+        previous_status = getattr(provider, "session_status", lambda: None)()
+        return previous_status, start()
+    except LicensedProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        # Chrome may finish opening while its local CDP endpoint is being
+        # checked.  When the dedicated browser is demonstrably running, keep
+        # the usable session instead of reporting a false launch failure.
+        try:
+            current_status = getattr(provider, "session_status", lambda: None)()
+        except Exception:
+            current_status = None
+        if current_status is not None and bool(current_status.running):
+            return previous_status, current_status
+        # Browser launch is local-only.  Do not let an adapter/process error
+        # become an opaque fetch failure in the page.
+        raise HTTPException(
+            status_code=503,
+            detail="无法打开本机登录浏览器，请关闭该专用浏览器后重试；仍失败请重启后端。",
+        ) from exc
 
 
 @router.post(
@@ -829,46 +873,38 @@ def get_browser_discovery_capabilities(
     response_model=CrawlerBrowserDiscoveryStartResponse,
 )
 def start_browser_discovery_login(
-    provider=Depends(get_hotspot_browser_provider),
+    provider=Depends(get_douyin_public_browser_provider),
 ):
-    """打开独立 Chrome 资料目录，让操作者手工登录或处理平台验证。"""
-    start = getattr(provider, "open_login_browser", None) or getattr(
-        provider, "start_login_browser", None
-    )
-    if start is None:
-        raise HTTPException(status_code=409, detail="当前发现源不是本机 Chrome。")
-    try:
-        previous_status = getattr(provider, "session_status", lambda: None)()
-        status = start()
-    except LicensedProviderError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    """兼容旧客户端：打开抖音官网登录窗口，不再指向热点宝。"""
+    previous_status, status = _start_visible_browser_login(provider)
+    capability = provider.capabilities()
     return CrawlerBrowserDiscoveryStartResponse(
         platform=Platform.DOUYIN.value,
         platform_label=_platform_label(Platform.DOUYIN.value),
         enabled=status.enabled,
         running=status.running,
         login_required=status.login_required,
-        missing_configuration=getattr(
-            provider.capabilities(), "missing_configuration", []
-        ),
+        missing_configuration=getattr(capability, "missing_configuration", []),
         browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=status.ready_to_crawl,
         phase=status.phase,
-        adapter_version=getattr(provider, "adapter_version", "hotspot_fiber_v2"),
-        provider_name=provider.capabilities().provider_name,
+        adapter_version=getattr(provider, "adapter_version", "unknown"),
+        provider_name=capability.provider_name,
         message=status.message,
         started=not bool(previous_status and previous_status.running),
     )
 
 
 def _select_platform_browser_provider(
-    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
-    xiaohongshu_provider,
+    platform: Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+    douyin_public_provider,
+    xiaohongshu_login_provider,
     kuaishou_provider,
     bilibili_provider,
 ):
     return {
-        Platform.XIAOHONGSHU.value: xiaohongshu_provider,
+        Platform.DOUYIN.value: douyin_public_provider,
+        Platform.XIAOHONGSHU.value: xiaohongshu_login_provider,
         Platform.KUAISHOU.value: kuaishou_provider,
         Platform.BILIBILI.value: bilibili_provider,
     }[platform]
@@ -879,15 +915,17 @@ def _select_platform_browser_provider(
     response_model=CrawlerBrowserDiscoveryCapabilities,
 )
 def get_platform_browser_discovery_capabilities(
-    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
-    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    platform: Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
+    xiaohongshu_login_provider=Depends(get_xiaohongshu_login_browser_provider),
     kuaishou_provider=Depends(get_kuaishou_browser_provider),
     bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
-    """返回平台独立 Chrome 的登录状态。"""
+    """返回平台独立 Chrome 的连接状态；小红书是可选人工登录窗口。"""
     provider = _select_platform_browser_provider(
         platform,
-        xiaohongshu_provider,
+        douyin_public_provider,
+        xiaohongshu_login_provider,
         kuaishou_provider,
         bilibili_provider,
     )
@@ -902,26 +940,21 @@ def get_platform_browser_discovery_capabilities(
     response_model=CrawlerBrowserDiscoveryStartResponse,
 )
 def start_platform_browser_discovery_login(
-    platform: Literal["xiaohongshu", "kuaishou", "bilibili"],
-    xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
+    platform: Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
+    xiaohongshu_login_provider=Depends(get_xiaohongshu_login_browser_provider),
     kuaishou_provider=Depends(get_kuaishou_browser_provider),
     bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
-    """打开平台独立 Chrome，扫码登录由操作者在可见窗口完成。"""
+    """打开平台独立 Chrome；小红书仅按用户点击打开独立人工登录窗口。"""
     provider = _select_platform_browser_provider(
         platform,
-        xiaohongshu_provider,
+        douyin_public_provider,
+        xiaohongshu_login_provider,
         kuaishou_provider,
         bilibili_provider,
     )
-    previous_status = getattr(provider, "session_status", lambda: None)()
-    try:
-        start = getattr(provider, "open_login_browser", None) or getattr(
-            provider, "start_login_browser"
-        )
-        status = start()
-    except LicensedProviderError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    previous_status, status = _start_visible_browser_login(provider)
     capability = provider.capabilities()
     return CrawlerBrowserDiscoveryStartResponse(
         platform=platform,
@@ -1147,8 +1180,8 @@ def preview_crawler_batch(
     repo=Depends(get_repository),
     provider=Depends(get_discovery_search_provider),
     hot_pool=Depends(get_official_hot_pool_service),
-    hotspot_service=Depends(get_hotspot_search_service),
-    hotspot_provider=Depends(get_hotspot_browser_provider),
+    douyin_public_service=Depends(get_douyin_public_search_service),
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
     bilibili_service=Depends(get_bilibili_browser_search_service),
     bilibili_provider=Depends(get_bilibili_browser_provider),
     xiaohongshu_service=Depends(get_xiaohongshu_browser_search_service),
@@ -1163,13 +1196,12 @@ def preview_crawler_batch(
             body,
             bilibili_service,
             bilibili_provider,
-            hotspot_provider,
-            hotspot_service,
+            douyin_public_service,
+            douyin_public_provider,
             xiaohongshu_service,
             xiaohongshu_provider,
             kuaishou_service,
             kuaishou_provider,
-            repo,
         )
     if body.mode not in (None, "", "official_hot"):
         raise HTTPException(status_code=400, detail=f"不支持的批次模式：{body.mode}")
@@ -1233,10 +1265,11 @@ def create_crawler_batch(
     service=Depends(get_commercial_search_service),
     repo=Depends(get_repository),
     hot_pool=Depends(get_official_hot_pool_service),
-    hotspot_service=Depends(get_hotspot_search_service),
-    hotspot_provider=Depends(get_hotspot_browser_provider),
+    douyin_public_service=Depends(get_douyin_public_search_service),
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
     bilibili_service=Depends(get_bilibili_browser_search_service),
     bilibili_provider=Depends(get_bilibili_browser_provider),
+    bilibili_metrics_provider=Depends(get_bilibili_public_metrics_provider),
     xiaohongshu_service=Depends(get_xiaohongshu_browser_search_service),
     xiaohongshu_provider=Depends(get_xiaohongshu_browser_provider),
     kuaishou_service=Depends(get_kuaishou_browser_search_service),
@@ -1251,8 +1284,9 @@ def create_crawler_batch(
             body,
             bilibili_service,
             bilibili_provider,
-            hotspot_service,
-            hotspot_provider,
+            bilibili_metrics_provider,
+            douyin_public_service,
+            douyin_public_provider,
             xiaohongshu_service,
             xiaohongshu_provider,
             kuaishou_service,
@@ -1530,33 +1564,24 @@ def _preview_free_multi_platform_batch(
     body: CrawlerSearchRequest,
     bilibili_service,
     bilibili_provider,
-    hotspot_provider,
-    hotspot_service,
+    douyin_public_service,
+    douyin_public_provider,
     xiaohongshu_service,
     xiaohongshu_provider,
     kuaishou_service,
     kuaishou_provider,
-    repo,
 ) -> CrawlerPreviewResponse:
     """Describe the free, no-OneAPI path before it runs."""
-    hotspot_capability = hotspot_provider.capabilities()
-    hotspot_status = getattr(hotspot_provider, "session_status", lambda: None)()
-    hotspot_ready = bool(
-        hotspot_capability.enabled and hotspot_status and hotspot_status.ready_to_crawl
-    )
-    crawl_safety = (
-        _hotspot_safety_status(body, hotspot_service, repo) if hotspot_ready else None
-    )
-    hotspot_blocked = bool(
-        crawl_safety
-        and crawl_safety.state in {"safety_pause", "cooldown", "running", "daily_limit"}
-    )
+    selected_platforms = _selected_free_platforms(body)
+    requested_count = _free_requested_count(body)
+    platform_items: list[CrawlerPlatformPreview] = []
 
     def browser_preview(
         service,
         provider,
         platform: Platform,
         published_window_days: int,
+        result_limit: int | None = None,
     ):
         status = getattr(provider, "session_status", lambda: None)()
         ready = bool(
@@ -1565,7 +1590,7 @@ def _preview_free_multi_platform_batch(
         preview = service.preview(
             keyword=body.keyword,
             published_window_days=published_window_days,
-            count=body.target_main_count,
+            count=result_limit if result_limit is not None else requested_count,
             force_refresh=body.force_refresh,
             platforms=(platform,),
             cache_ttl_minutes=10,
@@ -1573,79 +1598,96 @@ def _preview_free_multi_platform_batch(
         )[0]
         return preview, status, ready
 
-    kuaishou_preview, kuaishou_status, kuaishou_ready = browser_preview(
-        kuaishou_service,
-        kuaishou_provider,
-        Platform.KUAISHOU,
-        KUAISHOU_PUBLISHED_WINDOW_DAYS,
-    )
-    bilibili_preview, bilibili_status, bilibili_ready = browser_preview(
-        bilibili_service,
-        bilibili_provider,
-        Platform.BILIBILI,
-        BILIBILI_PUBLISHED_WINDOW_DAYS,
-    )
-    platform_items = [
-        CrawlerPlatformPreview(
-            platform="douyin_hotspot",
-            platform_label="抖音热点宝五类爆款榜（本机授权，可选）",
-            cache_hit=bool(crawl_safety and crawl_safety.state == "cached"),
-            estimated_api_calls=0,
-            platform_unit_price_cny=0.0,
-            estimated_cost_cny=0.0,
-            blocked_reason=(
-                crawl_safety.message
-                if hotspot_blocked and crawl_safety
-                else None
-                if hotspot_ready
-                else (
-                    hotspot_status.message if hotspot_status else "抖音浏览器未连接。"
-                )
-            ),
-        ),
-        CrawlerPlatformPreview(
-            platform=Platform.KUAISHOU.value,
-            platform_label="快手浏览器搜索（近30天）",
-            cache_hit=kuaishou_preview.cache_hit,
-            estimated_api_calls=0,
-            platform_unit_price_cny=0.0,
-            estimated_cost_cny=0.0,
-            blocked_reason=(
-                kuaishou_preview.blocked_reason
-                or (
-                    kuaishou_status.message
-                    if kuaishou_status is not None and not kuaishou_ready
-                    else None
-                )
-            ),
-        ),
-        CrawlerPlatformPreview(
-            platform="bilibili",
-            platform_label="B站浏览器搜索（最多播放、最近一周）",
-            cache_hit=bilibili_preview.cache_hit,
-            estimated_api_calls=0,
-            platform_unit_price_cny=0.0,
-            estimated_cost_cny=0.0,
-            blocked_reason=(
-                bilibili_preview.blocked_reason
-                or (
-                    bilibili_status.message
-                    if bilibili_status is not None and not bilibili_ready
-                    else None
-                )
-            ),
-        ),
-    ]
+    if Platform.DOUYIN in selected_platforms:
+        public_preview, public_status, public_ready = browser_preview(
+            douyin_public_service,
+            douyin_public_provider,
+            Platform.DOUYIN,
+            body.published_window_days,
+        )
+        platform_items.append(
+            CrawlerPlatformPreview(
+                platform=Platform.DOUYIN.value,
+                platform_label="抖音官网搜索（最多30条）",
+                cache_hit=public_preview.cache_hit,
+                estimated_api_calls=0,
+                platform_unit_price_cny=0.0,
+                estimated_cost_cny=0.0,
+                blocked_reason=(
+                    None
+                    if public_ready
+                    else (
+                        public_preview.blocked_reason
+                        or (public_status.message if public_status else None)
+                        or "抖音官网搜索浏览器未连接。"
+                    )
+                ),
+            )
+        )
+
+    if Platform.XIAOHONGSHU in selected_platforms:
+        xiaohongshu_preview, xiaohongshu_status, xiaohongshu_ready = browser_preview(
+            xiaohongshu_service,
+            xiaohongshu_provider,
+            Platform.XIAOHONGSHU,
+            body.published_window_days,
+            min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT),
+        )
+        platform_items.append(
+            CrawlerPlatformPreview(
+                platform=Platform.XIAOHONGSHU.value,
+                platform_label="小红书未登录公开搜索（最多15条）",
+                cache_hit=xiaohongshu_preview.cache_hit,
+                estimated_api_calls=0,
+                platform_unit_price_cny=0.0,
+                estimated_cost_cny=0.0,
+                blocked_reason=(
+                    xiaohongshu_preview.blocked_reason
+                    or (
+                        xiaohongshu_status.message
+                        if xiaohongshu_status is not None and not xiaohongshu_ready
+                        else None
+                    )
+                ),
+            )
+        )
+
+    for platform, service, provider in (
+        (Platform.KUAISHOU, kuaishou_service, kuaishou_provider),
+        (Platform.BILIBILI, bilibili_service, bilibili_provider),
+    ):
+        if platform not in selected_platforms:
+            continue
+        preview, status, ready = browser_preview(
+            service,
+            provider,
+            platform,
+            body.published_window_days,
+        )
+        platform_items.append(
+            CrawlerPlatformPreview(
+                platform=platform.value,
+                platform_label=f"{_platform_label(platform.value)}浏览器搜索（平台默认综合排序）",
+                cache_hit=preview.cache_hit,
+                estimated_api_calls=0,
+                platform_unit_price_cny=0.0,
+                estimated_cost_cny=0.0,
+                blocked_reason=(
+                    preview.blocked_reason
+                    or (status.message if status is not None and not ready else None)
+                ),
+            )
+        )
     return CrawlerPreviewResponse(
         keyword=body.keyword.strip(),
-        published_window_days=FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
-        hotspot_window_hours=body.hotspot_window_hours,
-        count_per_platform=body.target_main_count,
+        published_window_days=body.published_window_days,
+        hotspot_window_hours=None,
+        count_per_platform=requested_count,
         force_refresh=body.force_refresh,
         mode="smart",
         provider_mode=ProviderMode.PUBLIC_WEB.value,
-        provider_name="抖音热点宝 + 快手/B站浏览器（小红书仅人工素材）",
-        ranking_mode="platform_specific_hot_sort",
+        provider_name="抖音官网搜索 + 小红书未登录公开搜索 + 快手/B站浏览器",
+        ranking_mode="platform_default_search_then_table_sort",
         monthly_query_count=0,
         monthly_estimated_cost_cny=0.0,
         monthly_warning_queries=0,
@@ -1659,32 +1701,34 @@ def _preview_free_multi_platform_batch(
         max_api_calls_per_platform=0,
         blocked=all(item.blocked_reason for item in platform_items),
         free_pool_status="ready",
-        free_pool_message="只取近期候选；不调用 OneAPI，也不安排后续付费复采。",
-        paid_fallback_required=False,
-        paid_fallback_blocked_reason="本次固定使用免费来源，不会调用 OneAPI。",
-        trend_tracking_enabled=False,
-        hotspot_ready=hotspot_ready,
-        hotspot_message=(
-            f"抖音热点宝已连接：会先读取{_hotspot_window_label(body.hotspot_window_hours)}五类榜。"
-            if hotspot_ready
-            else (hotspot_status.message if hotspot_status else "抖音热点宝未连接。")
+        free_pool_message=(
+            "只使用抖音官网、小红书未登录公开页、快手和B站搜索结果；"
+            "按本次发布时间条件保留可核验内容，遇到登录或安全验证立即停止；不调用热点宝或 OneAPI。"
         ),
-        hotspot_time_strategy="hotspot_plus_two_recent_platforms",
-        target_main_count=body.target_main_count,
+        paid_fallback_required=False,
+        paid_fallback_blocked_reason="本次固定使用免费来源，不会调用热点宝或 OneAPI。",
+        trend_tracking_enabled=False,
+        hotspot_ready=False,
+        hotspot_message="本次只使用抖音官网搜索，不使用热点宝。",
+        hotspot_time_strategy="douyin_official_search_only",
+        target_main_count=requested_count,
         paid_call_cap=0,
-        hotspot_result_limit=body.hotspot_result_limit,
-        hotspot_list_types=["视频总榜", "低粉爆款", "高完播率", "高涨粉率", "高点赞率"],
-        crawl_safety=crawl_safety,
+        hotspot_result_limit=0,
+        hotspot_list_types=[],
     )
 
 
-def _start_browser_for_search(provider):
-    """Start the visible browser on demand and return its latest status."""
+def _start_browser_for_search(provider, *, public_only: bool = False):
+    """Start a browser on demand without upgrading a public-only source to login."""
     capability = provider.capabilities()
     status = getattr(provider, "session_status", lambda: None)()
     if not capability.enabled or (status is not None and status.running):
         return status
-    start = getattr(provider, "start_login_browser", None)
+    start = getattr(
+        provider,
+        "start_public_browser" if public_only else "start_login_browser",
+        None,
+    )
     if start is None:
         return status
     return start()
@@ -1711,19 +1755,28 @@ def _copy_search_matrix(keyword: str, related_terms: list[str]) -> list[str]:
     return queries
 
 
-def _copy_match_is_relevant(batch: SearchBatch, match, candidate) -> bool:
-    """Keep an expanded query's own relevance evidence instead of dropping it by the base word."""
+def _direct_match_keyword(batch: SearchBatch, match, candidate) -> str | None:
+    """Return the search term that directly appears in a title/topic, if any.
+
+    The broader result table keeps all readable platform-search cards.  This
+    helper is deliberately retained for the narrower copy-probe queue, where
+    an explicit title/topic signal is still required before downloading media.
+    """
     evidence = match.evidence or candidate.evidence
     matched_query = str(getattr(match, "keyword", "") or batch.keyword).strip()
-    return item_matches_keyword(
-        title=candidate.title,
-        keyword=batch.keyword,
-        evidence=evidence,
-    ) or item_matches_keyword(
-        title=candidate.title,
-        keyword=matched_query,
-        evidence=evidence,
-    )
+    for query in dict.fromkeys((matched_query, batch.keyword.strip())):
+        if query and item_matches_keyword(
+            title=candidate.title,
+            keyword=query,
+            evidence=evidence,
+        ):
+            return query
+    return None
+
+
+def _copy_match_is_relevant(batch: SearchBatch, match, candidate) -> bool:
+    """Keep strict relevance for the optional local copy-probe queue."""
+    return _direct_match_keyword(batch, match, candidate) is not None
 
 
 def _is_direct_public_douyin_copy_reference(match, candidate) -> bool:
@@ -2005,80 +2058,82 @@ def _execute_free_multi_platform_batch(
     body: CrawlerSearchRequest,
     bilibili_service,
     bilibili_provider,
-    hotspot_service,
-    hotspot_provider,
+    bilibili_metrics_provider,
+    douyin_public_service,
+    douyin_public_provider,
     xiaohongshu_service,
     xiaohongshu_provider,
     kuaishou_service,
     kuaishou_provider,
     repo,
 ) -> CrawlerBatchResponse:
-    """Keep up to 30 recent candidates per connected platform without paid APIs."""
+    """Collect a bounded, broad-recall set from selected public platforms."""
+    selected_platforms = _selected_free_platforms(body)
+    requested_count = _free_requested_count(body)
     batches: list[SearchBatch] = []
     errors: list[str] = []
-    hotspot_response: CrawlerBatchResponse | None = None
-    browser_statuses = {}
+    browser_statuses: dict[Platform, Any] = {}
+    xiaohongshu_cache_hit = False
+    if Platform.XIAOHONGSHU in selected_platforms:
+        xiaohongshu_cache_hit = xiaohongshu_service.preview(
+            keyword=body.keyword,
+            published_window_days=body.published_window_days,
+            count=min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT),
+            force_refresh=body.force_refresh,
+            platforms=(Platform.XIAOHONGSHU,),
+            cache_ttl_minutes=10,
+            include_monitoring=False,
+        )[0].cache_hit
     for platform, provider in (
-        (Platform.DOUYIN, hotspot_provider),
+        (Platform.XIAOHONGSHU, xiaohongshu_provider),
         (Platform.KUAISHOU, kuaishou_provider),
         (Platform.BILIBILI, bilibili_provider),
     ):
+        if platform not in selected_platforms:
+            continue
+        if platform == Platform.XIAOHONGSHU and xiaohongshu_cache_hit:
+            continue
         try:
-            browser_statuses[platform] = _start_browser_for_search(provider)
+            browser_statuses[platform] = _start_browser_for_search(
+                provider,
+                public_only=platform == Platform.XIAOHONGSHU,
+            )
         except LicensedProviderError as exc:
             browser_statuses[platform] = None
             errors.append(f"{_platform_label(platform.value)}：{exc}")
 
-    hotspot_status = browser_statuses[Platform.DOUYIN]
-    hotspot_ready = bool(
-        hotspot_provider.capabilities().enabled
-        and hotspot_status
-        and hotspot_status.ready_to_crawl
-    )
-    if hotspot_ready:
+    public_status = None
+    if Platform.DOUYIN in selected_platforms:
         try:
-            hotspot_response = _execute_hotspot_single_snapshot_batch(
-                body,
-                hotspot_service,
-                repo,
-                published_window_days=0,
-            )
-        except HTTPException as exc:
-            detail = exc.detail
-            errors.append(
-                detail.get("message", "热点宝暂不可用。")
-                if isinstance(detail, dict)
-                else str(detail)
-            )
-        else:
-            hotspot_batch = repo.get_search_batch(hotspot_response.batch_id)
-            if hotspot_batch is not None:
-                batches.append(hotspot_batch)
-            elif hotspot_response.error:
-                errors.append(hotspot_response.error)
-
+            public_status = _start_browser_for_search(douyin_public_provider)
+        except LicensedProviderError as exc:
+            errors.append(f"抖音官网搜索：{exc}")
     def execute_browser_source(
         service,
         provider,
         platform: Platform,
         published_window_days: int,
-    ) -> None:
-        status = browser_statuses[platform]
+        *,
+        status=None,
+        count: int | None = None,
+        cache_hit: bool = False,
+    ) -> SearchBatch | None:
+        status = browser_statuses.get(platform) if status is None else status
         ready = bool(
             provider.capabilities().enabled and status and status.ready_to_crawl
         )
-        if not ready:
+        if not ready and not cache_hit:
             errors.append(
                 status.message
                 if status is not None
                 else f"{_platform_label(platform.value)}浏览器未连接。"
             )
-            return
+            return None
         try:
             batch = service.execute(
                 keyword=body.keyword,
                 published_window_days=published_window_days,
-                count=body.target_main_count,
+                count=count or requested_count,
                 force_refresh=body.force_refresh,
                 platforms=(platform,),
                 cache_ttl_minutes=10,
@@ -2086,38 +2141,54 @@ def _execute_free_multi_platform_batch(
             )
         except ValueError as exc:
             errors.append(str(exc))
-            return
+            return None
         batches.append(batch)
         if batch.error:
             errors.append(batch.error)
+        return batch
 
-    execute_browser_source(
-        kuaishou_service,
-        kuaishou_provider,
-        Platform.KUAISHOU,
-        KUAISHOU_PUBLISHED_WINDOW_DAYS,
-    )
-    execute_browser_source(
-        bilibili_service,
-        bilibili_provider,
-        Platform.BILIBILI,
-        BILIBILI_PUBLISHED_WINDOW_DAYS,
-    )
+    if Platform.DOUYIN in selected_platforms:
+        execute_browser_source(
+            douyin_public_service,
+            douyin_public_provider,
+            Platform.DOUYIN,
+            body.published_window_days,
+            status=public_status,
+            count=min(requested_count, DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT),
+        )
+    for platform, service, provider in (
+        (Platform.XIAOHONGSHU, xiaohongshu_service, xiaohongshu_provider),
+        (Platform.KUAISHOU, kuaishou_service, kuaishou_provider),
+        (Platform.BILIBILI, bilibili_service, bilibili_provider),
+    ):
+        if platform in selected_platforms:
+            execute_browser_source(
+                service,
+                provider,
+                platform,
+                body.published_window_days,
+                count=(
+                    min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT)
+                    if platform == Platform.XIAOHONGSHU
+                    else None
+                ),
+                cache_hit=(
+                    xiaohongshu_cache_hit
+                    if platform == Platform.XIAOHONGSHU
+                    else False
+                ),
+            )
 
     persisted = [batch for batch in batches if repo.get_search_batch(batch.batch_id)]
     if not persisted:
         failed = SearchBatch(
             keyword=body.keyword.strip(),
-            published_window_days=FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
-            hotspot_window_hours=body.hotspot_window_hours,
-            requested_count_per_platform=body.target_main_count,
+            published_window_days=body.published_window_days,
+            hotspot_window_hours=None,
+            requested_count_per_platform=requested_count,
             provider="free_multi_platform",
             mode=ProviderMode.PUBLIC_WEB,
-            platforms=[
-                Platform.DOUYIN,
-                Platform.KUAISHOU,
-                Platform.BILIBILI,
-            ],
+            platforms=list(selected_platforms),
             status=SearchBatchStatus.FAILED,
             error="；".join(errors) or "免费来源暂时没有返回候选。",
             monitoring_policy="free_single_snapshot_v1",
@@ -2133,7 +2204,7 @@ def _execute_free_multi_platform_batch(
         return _batch_to_response(failed, repo).model_copy(
             update={
                 "free_candidate_count": 0,
-                "paid_fallback_blocked_reason": "本次固定不调用 OneAPI。",
+                "paid_fallback_blocked_reason": "本次固定不调用热点宝或 OneAPI。",
             }
         )
 
@@ -2147,6 +2218,16 @@ def _execute_free_multi_platform_batch(
             all_runs.append(moved)
         repo.delete_search_batch(supplemental.batch_id)
 
+    # 搜索页已经先保留所有结果；B站公开详情再只补全平台排序靠前的十条。
+    # 详情接口未返回的字段保持空，不把弹幕等相近字段伪装成评论。
+    _enrich_bilibili_public_metrics(
+        runs=all_runs,
+        repo=repo,
+        refresh_provider=bilibili_metrics_provider,
+        source_service=getattr(bilibili_service, "source_service", None),
+        batch_id=primary.batch_id,
+    )
+
     total_candidates = sum(
         run.returned_count
         for run in all_runs
@@ -2157,36 +2238,33 @@ def _execute_free_multi_platform_batch(
             PlatformRunStatus.CACHED,
         }
     )
-    successful_sources = sum(
-        run.returned_count > 0
+    successful_platforms = {
+        run.platform
+        for run in all_runs
+        if run.returned_count > 0
         and run.status
         in {
             PlatformRunStatus.SUCCEEDED,
             PlatformRunStatus.PARTIAL,
             PlatformRunStatus.CACHED,
         }
-        for run in all_runs
-    )
+    }
     status = (
         SearchBatchStatus.SUCCEEDED
-        if successful_sources == 3
+        if successful_platforms == set(selected_platforms)
         else SearchBatchStatus.PARTIAL
-        if successful_sources
+        if successful_platforms
         else SearchBatchStatus.FAILED
     )
     combined = primary.model_copy(
         update={
-            "published_window_days": FREE_MULTI_PLATFORM_BATCH_WINDOW_DAYS,
-            "hotspot_window_hours": body.hotspot_window_hours,
-            "requested_count_per_platform": body.target_main_count,
+            "published_window_days": body.published_window_days,
+            "hotspot_window_hours": None,
+            "requested_count_per_platform": requested_count,
             "provider": "free_multi_platform",
             "mode": ProviderMode.PUBLIC_WEB,
             "status": status,
-            "platforms": [
-                Platform.DOUYIN,
-                Platform.KUAISHOU,
-                Platform.BILIBILI,
-            ],
+            "platforms": list(selected_platforms),
             "platform_run_ids": [run.run_id for run in all_runs],
             "finished_at": datetime.now().astimezone(),
             "error": "；".join(dict.fromkeys(errors)) or None,
@@ -2207,10 +2285,176 @@ def _execute_free_multi_platform_batch(
         update={
             "free_candidate_count": total_candidates,
             "paid_fallback_used": False,
-            "paid_fallback_blocked_reason": "本次固定只使用抖音、快手和B站的免费来源；小红书仅支持人工素材，不调用 OneAPI。",
+            "paid_fallback_blocked_reason": "本次固定只使用抖音官网、小红书未登录公开搜索、快手和B站的免费来源；不调用热点宝或 OneAPI。",
             "trend_tracking_enabled": False,
         }
     )
+
+
+def _enrich_bilibili_public_metrics(
+    *,
+    runs: list[Any],
+    repo,
+    refresh_provider,
+    source_service,
+    batch_id: str,
+) -> None:
+    """Safely enrich up to ten fresh Bilibili search results with public detail data.
+
+    A cached search deliberately does not issue fresh detail lookups.  That keeps
+    normal cache reuse quiet while a force-refreshed search can improve its metric
+    coverage.  Failures are recorded on the platform run but never discard the
+    already collected search results.
+    """
+    capability = refresh_provider.capabilities()
+    if not capability.enabled or not capability.supports_metric_refresh:
+        return
+
+    eligible_statuses = {
+        PlatformRunStatus.SUCCEEDED,
+        PlatformRunStatus.PARTIAL,
+    }
+    bilibili_runs = [
+        run
+        for run in runs
+        if run.platform == Platform.BILIBILI
+        and run.status in eligible_statuses
+        and not run.cache_hit
+        and run.returned_count > 0
+    ]
+    if not bilibili_runs:
+        return
+
+    ranked_candidates: list[tuple[int, Any]] = []
+    seen_candidate_ids: set[str] = set()
+    for run in bilibili_runs:
+        for match in repo.list_candidate_matches(run.run_id):
+            if match.platform != Platform.BILIBILI or match.video_id in seen_candidate_ids:
+                continue
+            candidate = repo.get_candidate(match.video_id)
+            if candidate is None:
+                continue
+            platform_item_id = (candidate.platform_item_id or "").strip()
+            if not platform_item_id:
+                continue
+            seen_candidate_ids.add(candidate.video_id)
+            ranked_candidates.append((match.platform_rank, candidate))
+
+    ranked_candidates.sort(key=lambda item: (item[0], item[1].video_id))
+    candidates = [
+        candidate
+        for _rank, candidate in ranked_candidates[:BILIBILI_PUBLIC_METRIC_REFRESH_LIMIT]
+    ]
+    if not candidates:
+        return
+
+    try:
+        detail_page = refresh_provider.refresh_metrics(
+            Platform.BILIBILI,
+            [candidate.platform_item_id or candidate.video_id for candidate in candidates],
+            hashlib.sha256(
+                f"{batch_id}|bilibili-public-detail".encode("utf-8")
+            ).hexdigest(),
+        )
+    except LicensedProviderError:
+        _record_bilibili_metric_refresh_diagnostic(
+            bilibili_runs,
+            repo=repo,
+            message="B站公开详情暂未返回，已保留本次搜索结果和原有字段。",
+        )
+        return
+    except Exception:
+        _record_bilibili_metric_refresh_diagnostic(
+            bilibili_runs,
+            repo=repo,
+            message="B站公开详情补全未完成，已保留本次搜索结果和原有字段。",
+        )
+        return
+
+    detail_by_item_id = {
+        item.platform_item_id: item for item in detail_page.items
+    }
+    updated_count = 0
+    for candidate in candidates:
+        detail = detail_by_item_id.get(candidate.platform_item_id or candidate.video_id)
+        if detail is None:
+            continue
+        repo.save_candidate(_merge_bilibili_public_detail(candidate, detail))
+        updated_count += 1
+
+    recompute = getattr(source_service, "recompute_all", None)
+    if updated_count and callable(recompute):
+        recompute()
+
+    message = (
+        f"B站公开详情已补全前 {len(candidates)} 条：成功 {updated_count} 条"
+    )
+    if detail_page.errors:
+        message += f"；{len(detail_page.errors)} 条未返回完整指标"
+    _record_bilibili_metric_refresh_diagnostic(
+        bilibili_runs,
+        repo=repo,
+        message=message,
+    )
+
+
+def _merge_bilibili_public_detail(candidate, detail):
+    """Merge a detail response without letting an absent detail field erase search data."""
+    previous = candidate.metrics
+    refreshed = detail.metrics
+    metrics = refreshed.model_copy(
+        update={
+            "item_id": candidate.video_id,
+            "plays": refreshed.plays if refreshed.plays is not None else previous.plays,
+            "likes": refreshed.likes if refreshed.likes is not None else previous.likes,
+            "comments": (
+                refreshed.comments
+                if refreshed.comments is not None
+                else previous.comments
+            ),
+            "shares": refreshed.shares if refreshed.shares is not None else previous.shares,
+            "favorites": (
+                refreshed.favorites
+                if refreshed.favorites is not None
+                else previous.favorites
+            ),
+            "followers": (
+                refreshed.followers
+                if refreshed.followers is not None
+                else previous.followers
+            ),
+            "confidence": max(previous.confidence, refreshed.confidence),
+        }
+    )
+    retained_warnings = [
+        warning
+        for warning in candidate.data_quality_warnings
+        if not warning.startswith("B站公开搜索未返回")
+    ]
+    warnings = list(dict.fromkeys([*retained_warnings, *detail.data_quality_warnings]))
+    return candidate.model_copy(
+        update={
+            "title": detail.title or candidate.title,
+            "author_id": detail.author_id or candidate.author_id,
+            "author_name": detail.author_name or candidate.author_name,
+            "published_at": detail.published_at or candidate.published_at,
+            "duration_seconds": detail.duration_seconds or candidate.duration_seconds,
+            "source_url": detail.source_url or candidate.source_url,
+            "evidence": detail.evidence or candidate.evidence,
+            "data_quality_warnings": warnings,
+            "share_count": metrics.shares,
+            "collect_count": metrics.favorites,
+            "metrics": metrics,
+        }
+    )
+
+
+def _record_bilibili_metric_refresh_diagnostic(runs, *, repo, message: str) -> None:
+    for run in runs:
+        diagnostics = [part for part in (run.payload_diagnostic, message) if part]
+        repo.save_platform_search_run(
+            run.model_copy(update={"payload_diagnostic": "；".join(diagnostics)})
+        )
 
 
 def _preview_smart_batch(
@@ -4144,9 +4388,10 @@ def _candidate_to_response(
     relevance_reason: str | None = None,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
-    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
+    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
         resolved_evidence
     )
+    duration_seconds = getattr(candidate, "duration_seconds", None) or evidence_duration_seconds
     is_incremental_hotspot = "来源=video_board" in (resolved_evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(resolved_evidence)
     media_resolution = repo.find_latest_media_resolution_for_candidate(
@@ -4223,6 +4468,9 @@ def _candidate_to_response(
         platform_label=_platform_label(candidate.platform.value),
         source_url=str(candidate.source_url) if candidate.source_url else None,
         published_at=candidate.published_at,
+        published_at_reliable=bool(
+            getattr(candidate, "published_at_reliable", False)
+        ),
         trend_score=trend.score if trend else None,
         trend_level=trend.level.value if trend else None,
         display_tier=trend.display_tier if trend else "ordinary",
@@ -4246,6 +4494,7 @@ def _candidate_to_response(
         plays=candidate.metrics.plays,
         new_plays=candidate.metrics.plays if is_incremental_hotspot else None,
         likes=candidate.metrics.likes,
+        heat_score=_interaction_heat_or_none(candidate),
         new_likes=candidate.metrics.likes if is_incremental_hotspot else None,
         likes_per_day=likes_per_day,
         quality_source=quality_source,
@@ -4285,12 +4534,18 @@ def _candidate_to_response(
 
 
 def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidateResult:
-    hotspot_lists, duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
+    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
         item.evidence
     )
+    duration_seconds = getattr(item, "duration_seconds", None) or evidence_duration_seconds
     is_incremental_hotspot = "来源=video_board" in (item.evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(item.evidence)
     spoken_seed = _spoken_seed_quality(
+        title=item.title,
+        keyword=keyword,
+        evidence=item.evidence,
+    )
+    direct_match = item_matches_keyword(
         title=item.title,
         keyword=keyword,
         evidence=item.evidence,
@@ -4303,11 +4558,13 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         platform_label=_platform_label(item.platform.value),
         source_url=str(item.source_url) if item.source_url else None,
         published_at=item.published_at,
+        published_at_reliable=bool(getattr(item, "published_at_reliable", False)),
         confidence=item.metrics.confidence,
         provider_hot_rank=item.provider_rank,
         plays=item.metrics.plays,
         new_plays=item.metrics.plays if is_incremental_hotspot else None,
         likes=item.metrics.likes,
+        heat_score=_interaction_heat_or_none(item),
         new_likes=item.metrics.likes if is_incremental_hotspot else None,
         likes_per_day=likes_per_day,
         quality_source=quality_source,
@@ -4324,6 +4581,12 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         spoken_seed_score=spoken_seed["score"],
         spoken_seed_status=spoken_seed["status"],
         spoken_seed_message=spoken_seed["message"],
+        relevance_basis="title_or_hashtag" if direct_match else "platform_search",
+        relevance_reason=(
+            keyword_match_reason(keyword)
+            if direct_match
+            else f"平台搜索结果，标题/话题未直接命中“{keyword.strip()}”。"
+        ),
     )
 
 
@@ -4340,7 +4603,8 @@ def _hotspot_evidence_details(
             None,
         )
     if not evidence.startswith("hotspot:"):
-        return [], None, None
+        duration_match = re.search(r"时长秒=(\d+)", evidence)
+        return [], int(duration_match.group(1)) if duration_match else None, None
     header, *_ = evidence.split(";", 1)
     header_parts = header.split(":")
     labels = [
@@ -4404,6 +4668,7 @@ def _batch_to_response(
     response = CrawlerBatchResponse(
         batch_id=batch.batch_id,
         keyword=batch.keyword,
+        platforms=[platform.value for platform in batch.platforms],
         published_window_days=batch.published_window_days,
         hotspot_window_hours=batch.hotspot_window_hours,
         count_per_platform=batch.requested_count_per_platform,
@@ -4576,6 +4841,13 @@ def _interaction_heat(candidate) -> float:
     )
 
 
+def _interaction_heat_or_none(candidate) -> float | None:
+    """Expose a heat score only when the platform returned an interaction field."""
+    metrics = candidate.metrics
+    values = (metrics.likes, metrics.comments, metrics.shares, metrics.favorites)
+    return _interaction_heat(candidate) if any(value is not None for value in values) else None
+
+
 def _is_official_hot_candidate(candidate) -> bool:
     return (
         bool(getattr(candidate, "official_hot", False))
@@ -4605,7 +4877,6 @@ def _run_to_response(
     candidates: list[CrawlerCandidateResult] = []
     low_incremental_candidates: list[CrawlerCandidateResult] = []
     visible_matches: list[tuple[Any, Any]] = []
-    historical_irrelevant_count = 0
     if run.status in {
         PlatformRunStatus.SUCCEEDED,
         PlatformRunStatus.PARTIAL,
@@ -4617,33 +4888,16 @@ def _run_to_response(
             candidate = repo.get_candidate(match.video_id)
             if candidate is None:
                 continue
-            if not _copy_match_is_relevant(batch, match, candidate):
-                historical_irrelevant_count += 1
-                continue
             visible_matches.append((match, candidate))
 
-    strict_relevant_count = len(visible_matches)
-    heat_qualified_matches = [
-        (match, candidate)
+    strict_relevant_count = sum(
+        _direct_match_keyword(batch, match, candidate) is not None
         for match, candidate in visible_matches
-        if _passes_main_board_heat_floor(candidate)
-    ]
-    below_heat_floor_count = strict_relevant_count - len(heat_qualified_matches)
-    detected_public_copy_references = [
-        (match, candidate)
+    )
+    below_heat_floor_count = sum(
+        not _passes_main_board_heat_floor(candidate)
         for match, candidate in visible_matches
-        if (
-            not _passes_main_board_heat_floor(candidate)
-            and _is_direct_public_douyin_copy_reference(match, candidate)
-            and _has_detected_copy_probe(repo, candidate.video_id)
-        )
-    ]
-    qualified_matches = [*heat_qualified_matches]
-    qualified_ids = {candidate.video_id for _, candidate in qualified_matches}
-    for match, candidate in detected_public_copy_references:
-        if candidate.video_id not in qualified_ids:
-            qualified_matches.append((match, candidate))
-            qualified_ids.add(candidate.video_id)
+    )
     low_spoken_value_count = sum(
         _spoken_seed_quality(
             title=candidate.title,
@@ -4651,36 +4905,29 @@ def _run_to_response(
             evidence=match.evidence or candidate.evidence,
         )["status"]
         != "writeable"
-        for match, candidate in heat_qualified_matches
+        for match, candidate in visible_matches
     )
-    relevant_count = len(qualified_matches)
-    irrelevant_count = max(run.irrelevant_count, historical_irrelevant_count)
+    relevant_count = len(visible_matches)
+    irrelevant_count = run.irrelevant_count
     result_state = run.result_state
-    if strict_relevant_count and not relevant_count:
-        result_state = "all_below_heat_floor"
-    elif relevant_count == 0 and low_spoken_value_count:
-        result_state = "all_low_spoken_value"
-    elif relevant_count == 0 and irrelevant_count:
-        result_state = "all_irrelevant"
+    if relevant_count and result_state.startswith("all_"):
+        result_state = "has_results"
 
-    if include_candidates and qualified_matches:
+    if include_candidates and visible_matches:
         is_hotspot_run = run.provider == "douyin_local_browser"
-        if is_hotspot_run:
-            qualified_matches.sort(
-                key=lambda item: (
-                    -(item[1].metrics.plays or 0),
-                    item[0].platform_rank,
-                    item[1].video_id,
-                )
+
+        def default_table_sort_key(item: tuple[Any, Any]) -> tuple[Any, ...]:
+            match, candidate = item
+            heat_score = _interaction_heat_or_none(candidate)
+            return (
+                heat_score is None,
+                -(heat_score or 0.0),
+                -(candidate.metrics.plays or 0),
+                match.platform_rank,
+                candidate.video_id,
             )
-        elif run.platform == Platform.BILIBILI:
-            qualified_matches.sort(
-                key=lambda item: (
-                    -(item[1].metrics.plays or 0),
-                    item[0].platform_rank,
-                    item[1].video_id,
-                )
-            )
+
+        visible_matches.sort(key=default_table_sort_key)
         trends = (
             []
             if is_hotspot_run
@@ -4691,33 +4938,39 @@ def _run_to_response(
             )
         )
         trend_by_candidate = {item.candidate_id: item for item in trends}
-        visible_ids = {candidate.video_id for _, candidate in qualified_matches}
+        visible_ids = {candidate.video_id for _, candidate in visible_matches}
         system_rank_by_candidate = {
             item.candidate_id: index
             for index, item in enumerate(
                 [item for item in trends if item.candidate_id in visible_ids], start=1
             )
         }
-        for match, candidate in qualified_matches:
+        for match, candidate in visible_matches:
+            direct_match_keyword = _direct_match_keyword(batch, match, candidate)
+            matched_keyword = str(
+                getattr(match, "keyword", "") or batch.keyword
+            ).strip()
             trend = trend_by_candidate.get(candidate.video_id)
-            item = _candidate_to_response(
-                candidate,
-                repo=repo,
-                trend=trend,
-                platform_rank=match.platform_rank,
-                provider_hot_rank=match.platform_rank,
-                system_rank=system_rank_by_candidate.get(candidate.video_id),
-                evidence=match.evidence or candidate.evidence,
-                keyword=str(getattr(match, "keyword", "") or batch.keyword),
+            candidates.append(
+                _candidate_to_response(
+                    candidate,
+                    repo=repo,
+                    trend=trend,
+                    platform_rank=match.platform_rank,
+                    provider_hot_rank=match.platform_rank,
+                    system_rank=system_rank_by_candidate.get(candidate.video_id),
+                    evidence=match.evidence or candidate.evidence,
+                    keyword=matched_keyword,
+                    relevance_basis=(
+                        "title_or_hashtag" if direct_match_keyword else "platform_search"
+                    ),
+                    relevance_reason=(
+                        keyword_match_reason(direct_match_keyword)
+                        if direct_match_keyword
+                        else f"平台搜索结果，标题/话题未直接命中“{batch.keyword.strip()}”。"
+                    ),
+                )
             )
-            if not _passes_main_board_heat_floor(
-                candidate
-            ) and _is_direct_public_douyin_copy_reference(match, candidate):
-                warnings = [*item.data_quality_warnings]
-                if COPY_REFERENCE_LOW_HEAT_WARNING not in warnings:
-                    warnings.append(COPY_REFERENCE_LOW_HEAT_WARNING)
-                item = item.model_copy(update={"data_quality_warnings": warnings})
-            candidates.append(item)
     if (
         include_candidates
         and run.provider == "douyin_local_browser"

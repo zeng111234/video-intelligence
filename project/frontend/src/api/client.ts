@@ -730,19 +730,13 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
 export function getCrawlerBrowserDiscoveryCapabilities(
   platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili" = "douyin",
 ): Promise<CrawlerBrowserDiscoveryCapabilities> {
-  const path = platform === "douyin"
-    ? "/crawler/browser-discovery/capabilities"
-    : `/crawler/browser-discovery/${platform}/capabilities`;
-  return request(path);
+  return request(`/crawler/browser-discovery/${platform}/capabilities`);
 }
 
 export function startCrawlerBrowserDiscovery(
   platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili" = "douyin",
 ): Promise<CrawlerBrowserDiscoveryStartResponse> {
-  const path = platform === "douyin"
-    ? "/crawler/browser-discovery/start"
-    : `/crawler/browser-discovery/${platform}/start`;
-  return request(path, { method: "POST" });
+  return request(`/crawler/browser-discovery/${platform}/start`, { method: "POST" });
 }
 
 /** 保存操作者已经看见的素材；服务端不会打开或抓取小红书链接。 */

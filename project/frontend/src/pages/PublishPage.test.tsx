@@ -8,11 +8,14 @@ import { Modal } from "antd";
 import PublishPage from "./PublishPage";
 import { ToastProvider } from "../components/Toast";
 import {
+  connectPublishAccount,
+  createPublishAccount,
   listPublishAccounts,
   listPublishAssets,
   listPublishBatches,
   listPublishPlatforms,
   deletePublishAccount,
+  importEditedVideoToPublish,
   preflightPublish,
 } from "../api/client";
 
@@ -46,6 +49,16 @@ function renderPage() {
   );
 }
 
+const completedAsset = {
+  name: "最终成片.mp4",
+  path: "C:/publish/final.mp4",
+  media_url: "/api/v1/publish/assets/media?name=%E6%9C%80%E7%BB%88%E6%88%90%E7%89%87.mp4",
+  size_bytes: 1024,
+  updated_at: 1_787_000_000,
+  source_text: "这是已经制作完成的最终口播稿。",
+  source_task_id: "copy-final-1",
+};
+
 describe("PublishPage", () => {
   afterEach(() => {
     Modal.destroyAll();
@@ -70,6 +83,9 @@ describe("PublishPage", () => {
       platforms: [
         { platform: "douyin", enabled: true, display_name: "抖音本机扫码发布", mode: "local_browser", provider_name: "douyin_local_browser", requires_account: true, setup_required: true, manual_only: false, manual_fallback: true, supports_scheduled: false, supports_tags: true, supports_cover: false, missing_configuration: [] },
         { platform: "kuaishou", enabled: true, display_name: "快手本机扫码发布", mode: "local_browser", provider_name: "kuaishou_local_browser", requires_account: true, setup_required: true, manual_only: false, manual_fallback: true, supports_scheduled: false, supports_tags: true, supports_cover: false, missing_configuration: [] },
+        { platform: "wechat_channels", enabled: true, display_name: "视频号人工发布", mode: "manual", provider_name: "manual", requires_account: false, setup_required: false, manual_only: true, manual_fallback: true, supports_scheduled: false, supports_tags: true, supports_cover: false, missing_configuration: [] },
+        { platform: "xiaohongshu", enabled: true, display_name: "小红书本机扫码发布", mode: "local_browser", provider_name: "xiaohongshu_local_browser", requires_account: true, setup_required: true, manual_only: true, manual_fallback: true, supports_scheduled: false, supports_tags: true, supports_cover: false, missing_configuration: [] },
+        { platform: "bilibili", enabled: true, display_name: "B站人工发布", mode: "manual", provider_name: "manual", requires_account: false, setup_required: false, manual_only: true, manual_fallback: true, supports_scheduled: false, supports_tags: true, supports_cover: false, missing_configuration: [] },
       ],
     });
     vi.mocked(listPublishAssets).mockResolvedValue({ items: [], total: 0 });
@@ -79,15 +95,55 @@ describe("PublishPage", () => {
     window.history.pushState({}, "", "/publish");
   });
 
-  it("guides a first-time operator to add and scan a Douyin account", async () => {
+  it("keeps account names empty and configures Xiaohongshu like other browser-login platforms", async () => {
     renderPage();
 
-    expect((await screen.findAllByText("添加并扫码")).length).toBeGreaterThan(0);
-    expect(screen.getByText("普通运营不需要填写 Key、Secret 或回调地址")).toBeTruthy();
-    expect(screen.getAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。").length).toBeGreaterThan(0);
-    expect((screen.getByLabelText("快手账号名称") as HTMLInputElement).value).toBe("公司主号");
-    expect(screen.getByText("配置平台")).toBeTruthy();
-    expect(screen.getByText("选择发布")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /添加并扫码/ })).toBeTruthy();
+    expect(screen.queryByText(/无需填写 Key 或 Secret/)).toBeNull();
+    expect(screen.getByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。")).toBeTruthy();
+    expect((screen.getByLabelText("抖音账号名称") as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /快手/ }));
+    expect((screen.getByLabelText("快手账号名称") as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /小红书/ }));
+    expect((screen.getByLabelText("小红书账号名称") as HTMLInputElement).value).toBe("");
+    expect(screen.queryByText("无需登录账号")).toBeNull();
+    expect(screen.getByText("系统在本机官方创作端准备视频和文案；请你检查后手动点击发布。")).toBeTruthy();
+    expect(screen.getByText("配置账号")).toBeTruthy();
+    expect(screen.getByText("选择成片")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /抖音|快手|视频号|小红书|B站/ })).toHaveLength(5);
+  });
+
+  it("clears the account name after a successful add", async () => {
+    vi.mocked(createPublishAccount).mockResolvedValue({
+      account_id: "pubacc-new",
+      platform: "douyin",
+      name: "抖音测试号",
+      status: "needs_login",
+      message: "等待登录",
+      auto_publish_authorized: false,
+      last_verified_at: null,
+      created_at: null,
+      updated_at: null,
+    });
+    vi.mocked(connectPublishAccount).mockResolvedValue({
+      account_id: "pubacc-new",
+      platform: "douyin",
+      name: "抖音测试号",
+      status: "browser_open",
+      message: "登录窗口已打开",
+      auto_publish_authorized: false,
+      last_verified_at: null,
+      created_at: null,
+      updated_at: null,
+    });
+    renderPage();
+
+    const accountName = await screen.findByLabelText("抖音账号名称") as HTMLInputElement;
+    fireEvent.change(accountName, { target: { value: "抖音测试号" } });
+    fireEvent.click(screen.getByRole("button", { name: /添加并扫码/ }));
+
+    await waitFor(() => expect(accountName.value).toBe(""));
+    expect(createPublishAccount).toHaveBeenCalledWith({ platform: "douyin", name: "抖音测试号" });
   });
 
   it("uses one browser-login action for an existing unverified account", async () => {
@@ -119,6 +175,7 @@ describe("PublishPage", () => {
   });
 
   it("blocks publishing when the selected account disappears on the server", async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue({ items: [completedAsset], total: 1 });
     vi.mocked(listPublishAccounts)
       .mockResolvedValueOnce([
         {
@@ -136,41 +193,75 @@ describe("PublishPage", () => {
       .mockResolvedValueOnce([]);
     renderPage();
 
+    fireEvent.click(await screen.findByRole("button", { name: "下一步：检查发布内容" }));
     fireEvent.change(await screen.findByLabelText("发布标题"), { target: { value: "测试发布" } });
-    fireEvent.click(screen.getByText("开始发布"));
+    fireEvent.click(screen.getByText("确认并开始发布"));
 
     await waitFor(() => expect(screen.getByText("还没有抖音账号")).toBeTruthy());
     expect(preflightPublish).not.toHaveBeenCalled();
   });
 
-  it("shows automatic-publish authorization for every automatic platform account", async () => {
+  it("shows only the selected platform details instead of stacking every platform", async () => {
     vi.mocked(listPublishAccounts).mockResolvedValue([
       { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
       { account_id: "pubacc-ks", platform: "kuaishou", name: "快手主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
     ]);
     const view = renderPage();
 
-    await within(view.container).findByText("1. 选择平台");
-    fireEvent.click(within(view.container).getByRole("button", { name: /配置平台/ }));
-    expect((await within(view.container).findAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。")).length).toBe(2);
+    await within(view.container).findByText("从已经完成的视频中选择一条");
+    fireEvent.click(within(view.container).getByRole("button", { name: "更换账号" }));
+    expect((await within(view.container).findAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。")).length).toBe(1);
+    expect(within(view.container).getByText("抖音主号")).toBeTruthy();
+    expect(within(view.container).queryByText("快手主号")).toBeNull();
+    fireEvent.click(within(view.container).getByRole("button", { name: /快手/ }));
+    expect(await within(view.container).findByText("快手主号")).toBeTruthy();
+    expect(within(view.container).queryByText("抖音主号")).toBeNull();
     expect(within(view.container).queryByText("授权自动发布")).toBeNull();
   });
 
-  it("loads completed publish metadata carried from the AI copywriting page", async () => {
+  it("lets a manual platform continue without asking for a login account", async () => {
+    const view = renderPage();
+
+    fireEvent.click(await within(view.container).findByRole("button", { name: /B站/ }));
+    expect(within(view.container).getByText("无需登录账号")).toBeTruthy();
+    fireEvent.click(within(view.container).getByRole("button", { name: "去选择成片" }));
+
+    expect(await within(view.container).findByText("B站 · 无需登录")).toBeTruthy();
+    expect(within(view.container).queryByLabelText("B站发布账号")).toBeNull();
+  });
+
+  it("keeps the next step disabled before a completed video is selected", async () => {
+    const view = renderPage();
+
+    fireEvent.click(await within(view.container).findByRole("button", { name: "2 选择成片" }));
+    const nextButton = await within(view.container).findByRole("button", { name: "下一步：检查发布内容" });
+    expect((nextButton as HTMLButtonElement).disabled).toBe(true);
+    expect(within(view.container).getByText("还没有可发布的成片")).toBeTruthy();
+    expect(within(view.container).queryByLabelText("发布标题")).toBeNull();
+  });
+
+  it("generates publish information after a completed video is selected", async () => {
     vi.mocked(listPublishAccounts).mockResolvedValue([
       { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
     ]);
-    window.sessionStorage.setItem("publish_ai_draft", JSON.stringify({
-      title: "生成的发布标题", description: "生成的发布描述", tags: ["品牌", "活动"],
-    }));
-    window.history.pushState({}, "", "/publish?from_ai_copy=1");
+    vi.mocked(importEditedVideoToPublish).mockResolvedValue({
+      name: "最终成片.mp4",
+      path: "C:/publish/final.mp4",
+      size_bytes: 1024,
+      source_text: "这是已经制作完成的最终口播稿。",
+      source_task_id: "copy-final-1",
+    });
+    window.history.pushState({}, "", "/publish?from_edit_task=edit-final-1");
+    Modal.destroyAll();
     const view = renderPage();
 
-    await waitFor(() => expect((within(view.container).getByLabelText("发布标题") as HTMLInputElement).value).toBe("生成的发布标题"));
-    expect((within(view.container).getByLabelText("发布描述") as HTMLTextAreaElement).value).toBe("生成的发布描述");
-    expect(within(view.container).getByText("#品牌")).toBeTruthy();
-    expect(within(view.container).getByText("#活动")).toBeTruthy();
-    expect(window.sessionStorage.getItem("publish_ai_draft")).toBeNull();
+    const nextButton = await within(view.container).findByRole("button", { name: "下一步：检查发布内容" });
+    await waitFor(() => expect((nextButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(nextButton);
+    const metadataButton = await within(view.container).findByRole("button", { name: "生成发布信息" });
+    expect((metadataButton as HTMLButtonElement).disabled).toBe(false);
+    expect(within(view.container).getByText("发布文案")).toBeTruthy();
+    expect(within(view.container).getByText("确认并开始发布")).toBeTruthy();
   });
 
   it("does not let a queued task be manually marked as published", async () => {
@@ -198,22 +289,25 @@ describe("PublishPage", () => {
 
     renderPage();
 
+    fireEvent.click(await screen.findByRole("button", { name: /任务记录 2/ }));
     expect((await screen.findAllByText("平台结果待确认")).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("button", { name: "回填实际结果" })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "重新准备" })).toBeNull();
   });
 
   it("defaults Douyin publishing to automatic native music without another customer control", async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue({ items: [completedAsset], total: 1 });
     vi.mocked(listPublishAccounts).mockResolvedValue([
       { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
     ]);
     const view = renderPage();
 
+    fireEvent.click(await within(view.container).findByRole("button", { name: "下一步：检查发布内容" }));
     fireEvent.change(await within(view.container).findByLabelText("发布标题"), {
       target: { value: "机器人会取代哪些岗位" },
     });
 
-    expect(within(view.container).getByText("抖音原生配乐由系统自动选择")).toBeTruthy();
+    expect(within(view.container).getByText("抖音原生配乐会自动匹配")).toBeTruthy();
     expect(within(view.container).getByText(/科技未来 克制/)).toBeTruthy();
     expect(within(view.container).queryByRole("button", { name: /选择音乐/ })).toBeNull();
   });
