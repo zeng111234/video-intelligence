@@ -419,6 +419,7 @@ class MockRepository:
         hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
+        request_fingerprint: str | None = None,
     ) -> PlatformSearchRun | None:
         candidates: list[PlatformSearchRun] = []
         for run in self._platform_search_runs.values():
@@ -430,10 +431,16 @@ class MockRepository:
                 and run.status.value in {"succeeded", "partial"}
                 and run.finished_at is not None
                 and run.finished_at >= since
-                and batch.keyword.casefold() == keyword.casefold()
-                and batch.published_window_days == published_window_days
-                and batch.hotspot_window_hours == hotspot_window_hours
-                and batch.requested_count_per_platform == requested_count
+                and (
+                    run.request_fingerprint == request_fingerprint
+                    if request_fingerprint is not None
+                    else (
+                        batch.keyword.casefold() == keyword.casefold()
+                        and batch.published_window_days == published_window_days
+                        and batch.hotspot_window_hours == hotspot_window_hours
+                        and batch.requested_count_per_platform == requested_count
+                    )
+                )
             ):
                 candidates.append(run)
         return max(candidates, key=lambda item: item.finished_at or since, default=None)

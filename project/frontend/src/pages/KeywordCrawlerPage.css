@@ -137,6 +137,11 @@
   align-items: center;
 }
 
+.crawler-platform-filter-note {
+  display: block;
+  line-height: 1.5;
+}
+
 .crawler-current-search {
   display: flex;
   flex-direction: column;

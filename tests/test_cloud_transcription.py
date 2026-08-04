@@ -43,8 +43,9 @@ def fake_probe(args, **kwargs):
 
 
 class FakeCloudRuntime:
-    def __init__(self) -> None:
+    def __init__(self, confidence: float | None = None) -> None:
         self.submissions = 0
+        self.confidence = confidence
 
     def ensure_authorized(self, duration_seconds: float) -> Decimal:
         assert duration_seconds == 8.5
@@ -87,6 +88,7 @@ class FakeCloudRuntime:
                     start=0,
                     end=1.2,
                     text="公司云端识别结果。",
+                    confidence=self.confidence,
                 )
             ],
             duration_seconds=8.5,
@@ -123,13 +125,45 @@ def test_cloud_task_uses_one_provider_submission_and_never_loads_local_model(
 
     completed = service.process_cloud_task(queued.task_id)
     assert completed.status == TaskStatus.SUCCEEDED
-    assert completed.stage == "待人工复核"
+    assert completed.stage == "识别完成"
     assert completed.provider_job_id == "aliyun-job-1"
     assert runtime.submissions == 1
     assert completed.secondary_asr_count == 0
     assert completed.llm_review_count == 0
-    assert completed.segments[0].needs_review is True
+    assert completed.segments[0].confidence is None
+    assert completed.segments[0].needs_review is False
+    assert completed.segments[0].quality_status == "completed"
+    assert completed.uncertain_segment_count == 0
     assert not Path(completed.outputs["source_media_path"]).exists()
+
+
+def test_cloud_task_only_marks_explicit_low_confidence_segments(tmp_path: Path) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime(confidence=0.62)
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    completed = service.process_cloud_task(queued.task_id)
+
+    assert completed.stage == "有 1 段待确认"
+    assert completed.uncertain_segment_count == 1
+    assert completed.segments[0].confidence == 0.62
+    assert completed.segments[0].needs_review is True
+    assert completed.segments[0].quality_status == "pending"
 
 
 def test_cloud_task_with_provider_job_id_only_queries_existing_job(

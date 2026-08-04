@@ -264,6 +264,10 @@ export function saveTranscriptionRevision(params: {
     confidence: number | null;
     needs_review: boolean;
     reviewed: boolean;
+    quality_status?: string;
+    quality_source?: string;
+    quality_note?: string | null;
+    alternatives?: string[];
   }>;
   reviewer: string;
   approve: boolean;

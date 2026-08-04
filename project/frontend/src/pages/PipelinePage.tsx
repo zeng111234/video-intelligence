@@ -23,6 +23,7 @@ import {
   CheckCircleOutlined,
   ControlOutlined,
   FileTextOutlined,
+  GlobalOutlined,
   LinkOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
@@ -126,7 +127,7 @@ const SOURCE_OPTIONS = [
 ];
 
 const SOURCE_BROWSER_PLATFORMS: Array<{ platform: BrowserPlatform; label: string }> = [
-  { platform: "douyin", label: "抖音热点宝" },
+  { platform: "douyin", label: "抖音" },
   { platform: "kuaishou", label: "快手" },
   { platform: "xiaohongshu", label: "小红书" },
   { platform: "bilibili", label: "B站" },
@@ -140,12 +141,7 @@ function sourcePlatformIcon(platform: BrowserPlatform) {
 }
 
 function sourcePlatformReady(status: CrawlerBrowserDiscoveryCapabilities) {
-  return Boolean(
-    status.enabled && (
-      status.ready_to_crawl
-      || (status.platform === "xiaohongshu" && status.phase === "optional_login")
-    ),
-  );
+  return Boolean(status.enabled && status.ready_to_crawl);
 }
 
 const WORKSPACE_STEPS = [
@@ -512,6 +508,15 @@ export default function PipelinePage() {
     [candidates],
   );
   const readySourceCount = browserDiscoveries.filter(sourcePlatformReady).length;
+  const sourcePlatformNames = browserDiscoveries
+    .filter(sourcePlatformReady)
+    .map((connection) => (
+      SOURCE_BROWSER_PLATFORMS.find((item) => item.platform === connection.platform)?.label
+      || connection.platform_label
+      || connection.platform
+    ))
+    .filter(Boolean)
+    .join("、") || "未连接";
   const sourceConnectionReady = readySourceCount > 0;
   const allSourceConnectionsReady = readySourceCount === SOURCE_BROWSER_PLATFORMS.length;
   const selectedPublishAccountSummary = useMemo(() => {
@@ -1839,7 +1844,6 @@ export default function PipelinePage() {
       <div className="smart-workspace workspace-loading">
         <section className="workspace-hero">
           <Title level={1}>今天想做什么视频？</Title>
-          <Paragraph>输入一个主题、粘贴视频链接，或直接使用已有文案</Paragraph>
         </section>
         <Card className="workspace-loading-card">
           <Space direction="vertical" size="middle" style={{ width: "100%" }}>
@@ -1883,6 +1887,16 @@ export default function PipelinePage() {
             >
               <span className="profile-setting-label"><AudioOutlined />音色</span>
               <strong>{profileVoice?.name || activeProfile.voice_id}</strong>
+              <RightOutlined aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="profile-setting-row"
+              aria-label={`修改素材网站设置：${sourcePlatformNames}`}
+              onClick={() => setSetupOpen(true)}
+            >
+              <span className="profile-setting-label"><GlobalOutlined />素材网站</span>
+              <strong>{sourcePlatformNames}</strong>
               <RightOutlined aria-hidden />
             </button>
             <button
@@ -1980,11 +1994,7 @@ export default function PipelinePage() {
       <section className="workspace-hero">
         <div>
           <Title level={1}>{workspace ? "智能创作" : "今天想做什么视频？"}</Title>
-          <Paragraph>
-            {workspace
-              ? "查看真实进度，完成当前需要你确认的一步。"
-              : "输入一个主题、粘贴视频链接，或直接使用已有文案"}
-          </Paragraph>
+          {workspace && <Paragraph>查看真实进度，完成当前需要你确认的一步。</Paragraph>}
         </div>
         {workspace && <div className="hero-state" aria-live="polite">
           <Text type="secondary">当前阶段</Text>
@@ -2893,27 +2903,24 @@ export default function PipelinePage() {
             {browserDiscoveries.map((connection) => {
               const platform = connection.platform as BrowserPlatform;
               const ready = sourcePlatformReady(connection);
-              const xiaohongshuOptionalLogin = platform === "xiaohongshu" && connection.phase === "optional_login";
-              const actionLabel = xiaohongshuOptionalLogin
-                ? "打开小红书登录"
-                : ready
-                  ? `打开${connection.platform_label}`
-                  : `登录${connection.platform_label}`;
+              const actionLabel = ready
+                ? `打开${connection.platform_label}`
+                : `登录${connection.platform_label}`;
               return (
                 <div className="settings-manager-row" key={platform}>
                   <span>
                     <strong>{connection.platform_label}</strong>
                     <small>{ready ? "已可用于找素材" : connection.message}</small>
                   </span>
-                  <Tag color={ready ? "success" : "warning"}>{xiaohongshuOptionalLogin ? "公开搜索可用" : ready ? "已连接" : "未连接"}</Tag>
-                    <Button
-                      type={ready && !xiaohongshuOptionalLogin ? "default" : "primary"}
-                      aria-label={actionLabel}
+                  <Tag color={ready ? "success" : "warning"}>{ready ? "已连接" : "待登录"}</Tag>
+                  <Button
+                    type={ready ? "default" : "primary"}
+                    aria-label={actionLabel}
                     loading={startingBrowserPlatform === platform}
                     disabled={!connection.enabled || (busy && startingBrowserPlatform !== platform)}
                     onClick={() => void startSourceConnection(platform)}
                   >
-                    {xiaohongshuOptionalLogin ? "打开登录页" : ready ? "打开网站" : `登录${connection.platform_label}`}
+                    {ready ? "打开网站" : `登录${connection.platform_label}`}
                   </Button>
                 </div>
               );

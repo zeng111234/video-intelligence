@@ -119,27 +119,54 @@ def _to_response(task, service=None) -> TranscriptionResponse:
         revisions = service.repository.list_transcript_revisions(task.task_id)
         if revisions:
             source_segments = revisions[-1].corrected_segments
-    segments = [
-        {
-            "start": s.start,
-            "end": s.end,
-            "text": s.text,
-            "confidence": s.confidence,
-            "needs_review": s.needs_review,
-            "reviewed": s.reviewed,
-            "quality_status": s.quality_status,
-            "quality_source": s.quality_source,
-            "quality_note": s.quality_note,
-            "alternatives": s.alternatives,
-        }
-        for s in source_segments
-    ]
+    segments = []
+    normalized_legacy_cloud_segments = False
+    for s in source_segments:
+        legacy_cloud_without_confidence = (
+            task.provider_name == "aliyun_fun_asr"
+            and s.confidence is None
+            and s.needs_review
+            and s.quality_status == "pending"
+            and s.quality_note == "阿里云识别结果，等待人工复核。"
+        )
+        normalized_legacy_cloud_segments |= legacy_cloud_without_confidence
+        segments.append(
+            {
+                "start": s.start,
+                "end": s.end,
+                "text": s.text,
+                "confidence": s.confidence,
+                "needs_review": False
+                if legacy_cloud_without_confidence
+                else s.needs_review,
+                "reviewed": s.reviewed,
+                "quality_status": "completed"
+                if legacy_cloud_without_confidence
+                else s.quality_status,
+                "quality_source": s.quality_source,
+                "quality_note": (
+                    "阿里云识别完成，未返回片段置信度。"
+                    if legacy_cloud_without_confidence
+                    else s.quality_note
+                ),
+                "alternatives": s.alternatives,
+            }
+        )
+    response_uncertain_count = sum(
+        1 for segment in segments if segment["needs_review"] and not segment["reviewed"]
+    )
     return TranscriptionResponse(
         task_id=task.task_id,
         title=task.title,
         status=task.status.value,
         progress=task.progress,
-        stage=task.stage,
+        stage=(
+            "识别完成"
+            if normalized_legacy_cloud_segments
+            and response_uncertain_count == 0
+            and task.stage == "待人工复核"
+            else task.stage
+        ),
         media_name=task.media_name,
         model_name=task.model_name,
         provider_name=task.provider_name,
@@ -155,15 +182,15 @@ def _to_response(task, service=None) -> TranscriptionResponse:
         low_confidence_count=(
             task.uncertain_segment_count
             if task.auto_reviewed
-            else sum(
-                1
-                for segment in source_segments
-                if segment.needs_review and not segment.reviewed
-            )
+            else response_uncertain_count
         ),
         is_mock=task.is_mock,
         auto_reviewed=task.auto_reviewed,
-        uncertain_segment_count=task.uncertain_segment_count,
+        uncertain_segment_count=(
+            response_uncertain_count
+            if task.provider_name == "aliyun_fun_asr"
+            else task.uncertain_segment_count
+        ),
         secondary_asr_count=task.secondary_asr_count,
         llm_review_count=task.llm_review_count,
         auto_review_error=task.auto_review_error,

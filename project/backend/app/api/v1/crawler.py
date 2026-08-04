@@ -96,7 +96,6 @@ SMART_FREE_CANDIDATE_THRESHOLD = 3
 # 兼容历史批次和文案检测优先级的统计线；不再决定搜索结果是否可见。
 INTERACTION_HEAT_FLOOR = 100.0
 BILIBILI_PLAY_HEAT_FLOOR = 100
-XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT = 15
 KUAISHOU_PUBLISHED_WINDOW_DAYS = 30
 BILIBILI_PUBLISHED_WINDOW_DAYS = 7
 # 常规“找素材”只检索抖音官网搜索页，不再启动或补足热点宝。
@@ -124,7 +123,7 @@ HOTSPOT_ROLLING_WINDOW_SECONDS = 24 * 60 * 60
 # 安全优先：每个平台每天只允许少量真实浏览器采集；缓存始终优先。
 HOTSPOT_MAX_REAL_RUNS_PER_WINDOW = 4
 HOTSPOT_PROVIDER_KEY = "douyin_hotspot_browser"
-BROWSER_CACHE_TTL_MINUTES = 60
+BROWSER_CACHE_TTL_MINUTES = 10
 BROWSER_COOLDOWN_SECONDS = 60 * 60
 BROWSER_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 BROWSER_MAX_REAL_RUNS_PER_WINDOW = 4
@@ -173,7 +172,7 @@ class CrawlerSearchRequest(BaseModel):
     platforms: list[Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"]] = Field(
         default_factory=lambda: ["douyin", "xiaohongshu", "kuaishou", "bilibili"],
         min_length=1,
-        description="本次要搜索的平台；小红书只使用隔离的未登录公开搜索。",
+        description="本次要搜索的平台；小红书需先在独立登录浏览器中完成登录。",
     )
     # 热点宝的统计周期独立；这里仅是公开素材的发布时间筛选。
     published_window_days: int = Field(
@@ -730,9 +729,7 @@ def _capability_payload(
     hotspot_capability = (
         hotspot_provider.capabilities() if hotspot_provider is not None else None
     )
-    # “找素材”的小红书来源始终是匿名公开 profile。账号连接区则只显示
-    # 用户主动打开的独立登录 profile，避免把匿名浏览器的后台状态误写成
-    # 已登录或可扫码状态。
+    # 小红书找素材与连接状态共用用户主动登录的独立资料目录。
     xiaohongshu_connection_provider = (
         xiaohongshu_login_provider or xiaohongshu_provider
     )
@@ -937,7 +934,7 @@ def get_platform_browser_discovery_capabilities(
     kuaishou_provider=Depends(get_kuaishou_browser_provider),
     bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
-    """返回平台独立 Chrome 的连接状态；小红书是可选人工登录窗口。"""
+    """返回平台独立 Chrome 的连接状态；小红书需先完成人工登录。"""
     provider = _select_platform_browser_provider(
         platform,
         douyin_public_provider,
@@ -962,7 +959,7 @@ def start_platform_browser_discovery_login(
     kuaishou_provider=Depends(get_kuaishou_browser_provider),
     bilibili_provider=Depends(get_bilibili_browser_provider),
 ):
-    """打开平台独立 Chrome；小红书仅按用户点击打开独立人工登录窗口。"""
+    """打开平台独立 Chrome；小红书由用户在窗口中完成登录。"""
     provider = _select_platform_browser_provider(
         platform,
         douyin_public_provider,
@@ -1603,14 +1600,26 @@ def _preview_free_multi_platform_batch(
         ready = bool(
             provider.capabilities().enabled and status and status.ready_to_crawl
         )
+        search_options = (
+            {
+                "kuaishou_sort": body.kuaishou_sort,
+                "kuaishou_duration_bucket": body.kuaishou_duration_bucket,
+            }
+            if platform == Platform.KUAISHOU
+            else {}
+        )
+        effective_published_window_days = (
+            0 if platform == Platform.KUAISHOU else published_window_days
+        )
         preview = service.preview(
             keyword=body.keyword,
-            published_window_days=published_window_days,
+            published_window_days=effective_published_window_days,
             count=result_limit if result_limit is not None else requested_count,
             force_refresh=body.force_refresh,
             platforms=(platform,),
-            cache_ttl_minutes=10,
+            cache_ttl_minutes=BROWSER_CACHE_TTL_MINUTES,
             include_monitoring=False,
+            **search_options,
         )[0]
         return preview, status, ready
 
@@ -1647,12 +1656,12 @@ def _preview_free_multi_platform_batch(
             xiaohongshu_provider,
             Platform.XIAOHONGSHU,
             body.published_window_days,
-            min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT),
+            requested_count,
         )
         platform_items.append(
             CrawlerPlatformPreview(
                 platform=Platform.XIAOHONGSHU.value,
-                platform_label="小红书未登录公开搜索（最多15条）",
+                platform_label="小红书登录搜索",
                 cache_hit=xiaohongshu_preview.cache_hit,
                 estimated_api_calls=0,
                 platform_unit_price_cny=0.0,
@@ -1702,14 +1711,14 @@ def _preview_free_multi_platform_batch(
         force_refresh=body.force_refresh,
         mode="smart",
         provider_mode=ProviderMode.PUBLIC_WEB.value,
-        provider_name="抖音官网搜索 + 小红书未登录公开搜索 + 快手/B站浏览器",
+        provider_name="抖音官网搜索 + 小红书登录搜索 + 快手/B站浏览器",
         ranking_mode="platform_default_search_then_table_sort",
         monthly_query_count=0,
         monthly_estimated_cost_cny=0.0,
         monthly_warning_queries=0,
         monthly_hard_limit_queries=0,
         monthly_hard_limit_cost_cny=0.0,
-        cache_ttl_minutes=10,
+        cache_ttl_minutes=BROWSER_CACHE_TTL_MINUTES,
         platforms=platform_items,
         estimated_total_cost_cny=0.0,
         monitoring_policy="free_single_snapshot_v1",
@@ -1718,7 +1727,7 @@ def _preview_free_multi_platform_batch(
         blocked=all(item.blocked_reason for item in platform_items),
         free_pool_status="ready",
         free_pool_message=(
-            "只使用抖音官网、小红书未登录公开页、快手和B站搜索结果；"
+            "只使用抖音官网、小红书登录搜索、快手和B站搜索结果；"
             "按本次发布时间条件保留可核验内容，遇到登录或安全验证立即停止；不调用热点宝或 OneAPI。"
         ),
         paid_fallback_required=False,
@@ -2089,16 +2098,41 @@ def _execute_free_multi_platform_batch(
     batches: list[SearchBatch] = []
     errors: list[str] = []
     browser_statuses: dict[Platform, Any] = {}
-    xiaohongshu_cache_hit = False
-    if Platform.XIAOHONGSHU in selected_platforms:
-        xiaohongshu_cache_hit = xiaohongshu_service.preview(
+    browser_sources = (
+        (Platform.DOUYIN, douyin_public_service),
+        (Platform.XIAOHONGSHU, xiaohongshu_service),
+        (Platform.KUAISHOU, kuaishou_service),
+        (Platform.BILIBILI, bilibili_service),
+    )
+    browser_cache_hits: dict[Platform, bool] = {}
+    for platform, service in browser_sources:
+        if platform not in selected_platforms:
+            continue
+        result_count = (
+            min(requested_count, DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT)
+            if platform == Platform.DOUYIN
+            else requested_count
+        )
+        search_options = (
+            {
+                "kuaishou_sort": body.kuaishou_sort,
+                "kuaishou_duration_bucket": body.kuaishou_duration_bucket,
+            }
+            if platform == Platform.KUAISHOU
+            else {}
+        )
+        effective_published_window_days = (
+            0 if platform == Platform.KUAISHOU else body.published_window_days
+        )
+        browser_cache_hits[platform] = service.preview(
             keyword=body.keyword,
-            published_window_days=body.published_window_days,
-            count=min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT),
+            published_window_days=effective_published_window_days,
+            count=result_count,
             force_refresh=body.force_refresh,
-            platforms=(Platform.XIAOHONGSHU,),
-            cache_ttl_minutes=10,
+            platforms=(platform,),
+            cache_ttl_minutes=BROWSER_CACHE_TTL_MINUTES,
             include_monitoring=False,
+            **search_options,
         )[0].cache_hit
     for platform, provider in (
         (Platform.XIAOHONGSHU, xiaohongshu_provider),
@@ -2107,19 +2141,22 @@ def _execute_free_multi_platform_batch(
     ):
         if platform not in selected_platforms:
             continue
-        if platform == Platform.XIAOHONGSHU and xiaohongshu_cache_hit:
+        if browser_cache_hits.get(platform, False):
             continue
         try:
             browser_statuses[platform] = _start_browser_for_search(
                 provider,
-                public_only=platform == Platform.XIAOHONGSHU,
+                public_only=False,
             )
         except LicensedProviderError as exc:
             browser_statuses[platform] = None
             errors.append(f"{_platform_label(platform.value)}：{exc}")
 
     public_status = None
-    if Platform.DOUYIN in selected_platforms:
+    if (
+        Platform.DOUYIN in selected_platforms
+        and not browser_cache_hits.get(Platform.DOUYIN, False)
+    ):
         try:
             public_status = _start_browser_for_search(douyin_public_provider)
         except LicensedProviderError as exc:
@@ -2146,6 +2183,11 @@ def _execute_free_multi_platform_batch(
             )
             return None
         try:
+            # 快手公开搜索页没有可验证的发布时间筛选。不要把通用时间条件
+            # 伪装成平台筛选，否则会因卡片时间缺失而错误丢弃候选。
+            effective_published_window_days = (
+                0 if platform == Platform.KUAISHOU else published_window_days
+            )
             search_options = (
                 {
                     "kuaishou_sort": body.kuaishou_sort,
@@ -2156,11 +2198,11 @@ def _execute_free_multi_platform_batch(
             )
             batch = service.execute(
                 keyword=body.keyword,
-                published_window_days=published_window_days,
+                published_window_days=effective_published_window_days,
                 count=count or requested_count,
                 force_refresh=body.force_refresh,
                 platforms=(platform,),
-                cache_ttl_minutes=10,
+                cache_ttl_minutes=BROWSER_CACHE_TTL_MINUTES,
                 schedule_recrawls=False,
                 **search_options,
             )
@@ -2180,6 +2222,7 @@ def _execute_free_multi_platform_batch(
             body.published_window_days,
             status=public_status,
             count=min(requested_count, DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT),
+            cache_hit=browser_cache_hits.get(Platform.DOUYIN, False),
         )
     for platform, service, provider in (
         (Platform.XIAOHONGSHU, xiaohongshu_service, xiaohongshu_provider),
@@ -2192,15 +2235,9 @@ def _execute_free_multi_platform_batch(
                 provider,
                 platform,
                 body.published_window_days,
-                count=(
-                    min(requested_count, XIAOHONGSHU_PUBLIC_SEARCH_RESULT_LIMIT)
-                    if platform == Platform.XIAOHONGSHU
-                    else None
-                ),
+                count=None,
                 cache_hit=(
-                    xiaohongshu_cache_hit
-                    if platform == Platform.XIAOHONGSHU
-                    else False
+                    browser_cache_hits.get(platform, False)
                 ),
             )
 
@@ -2314,7 +2351,7 @@ def _execute_free_multi_platform_batch(
         update={
             "free_candidate_count": total_candidates,
             "paid_fallback_used": False,
-            "paid_fallback_blocked_reason": "本次固定只使用抖音官网、小红书未登录公开搜索、快手和B站的免费来源；不调用热点宝或 OneAPI。",
+            "paid_fallback_blocked_reason": "本次固定只使用抖音官网、小红书登录搜索、快手和B站的免费来源；不调用热点宝或 OneAPI。",
             "trend_tracking_enabled": False,
         }
     )

@@ -704,21 +704,9 @@ class AliyunFunASRProvider(CloudASRProvider):
                 if end <= start or not text:
                     continue
                 speaker_id = sentence.get("speaker_id")
-                segments.append(
-                    TranscriptSegment(
-                        start=start,
-                        end=end,
-                        text=text,
-                        speaker_id=(
-                            int(speaker_id)
-                            if isinstance(speaker_id, (int, str))
-                            and str(speaker_id).lstrip("-").isdigit()
-                            else None
-                        ),
-                    ),
-                )
                 words = sentence.get("words")
                 word_ranges: list[TimeRange] = []
+                word_confidences: list[float] = []
                 if isinstance(words, list):
                     for word in words:
                         if not isinstance(word, Mapping):
@@ -732,6 +720,37 @@ class AliyunFunASRProvider(CloudASRProvider):
                             word_ranges.append(
                                 TimeRange(start=word_start, end=word_end),
                             )
+                        try:
+                            word_confidence = float(word.get("confidence"))
+                        except (TypeError, ValueError):
+                            continue
+                        if 0 <= word_confidence <= 1:
+                            word_confidences.append(word_confidence)
+                try:
+                    sentence_confidence = float(sentence.get("confidence"))
+                except (TypeError, ValueError):
+                    sentence_confidence = None
+                if (
+                    sentence_confidence is not None
+                    and not 0 <= sentence_confidence <= 1
+                ):
+                    sentence_confidence = None
+                if sentence_confidence is None and word_confidences:
+                    sentence_confidence = sum(word_confidences) / len(word_confidences)
+                segments.append(
+                    TranscriptSegment(
+                        start=start,
+                        end=end,
+                        text=text,
+                        speaker_id=(
+                            int(speaker_id)
+                            if isinstance(speaker_id, (int, str))
+                            and str(speaker_id).lstrip("-").isdigit()
+                            else None
+                        ),
+                        confidence=sentence_confidence,
+                    ),
+                )
                 spoken_ranges.extend(
                     word_ranges or [TimeRange(start=start, end=end)],
                 )

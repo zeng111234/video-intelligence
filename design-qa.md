@@ -37,6 +37,97 @@ final result: passed
 
 ---
 
+# AI 文案第 3 版 — 逐段对照复核（2026-08-04）
+
+- source visual truth: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-12054a39-3fe9-4dbc-af2d-bce326dc8ba3.png`
+- implementation screenshot: unavailable because the in-app browser runtime failed during initialization
+- target viewport: desktop light theme, approximately 1536 × 1024, `/ai-copy`, generated rewrite result with one risk term requiring review
+- implementation: `project/frontend/src/pages/AiCopyPage.tsx` and `project/frontend/src/pages/AiCopyPage.css`
+
+## Implemented direction
+
+- Replaced the disconnected left-input/right-empty-card composition with one compact workbench.
+- After generation, the original and rewritten copy are aligned by paragraph in a three-column comparison table.
+- Attention terms and best-effort compliance results become explicit review rows; the user confirms those rows before continuing.
+- The page keeps the two existing creation modes, real history records, local draft recovery, copy/save actions, and the existing handoff to the avatar page.
+- The main action is now outcome-oriented: `确认并继续制作`.
+
+## Automated verification
+
+- AI copy page tests passed 4/4, including risk highlighting, paragraph confirmation, and the final handoff query to `/avatar`.
+- TypeScript checking, production build, and whitespace validation passed.
+- No provider generation, paid request, deletion, upload, avatar creation, or publication action was submitted.
+
+## Visual and runtime blocker
+
+- The in-app browser initialization failed twice with `Cannot redefine property: process`, including the single permitted retry.
+- Per the project retry rule, no further reconnect loop or substitute claim of browser acceptance was made.
+- A rendered implementation screenshot, pixel comparison, responsive check, direct interaction check, and browser console check are therefore unavailable.
+- [P1] The code and automated interaction contract are verified, but the selected visual cannot be accepted as pixel-faithful until the actual page can be captured in the app browser.
+
+final result: blocked
+
+---
+
+# Transcription Option 2 — Transcript-first Review Workspace
+
+- source visual truth path: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-d6016d61-aecb-4d91-8fea-ae01f429f8ff.png`
+- implementation URL: `http://localhost:1001/transcription`
+- implementation screenshot path: unavailable; the in-app Browser could not initialize after the code change
+- intended viewport: 1487 × 1058 CSS px, density 1
+- source pixels: 1487 × 1058
+- implementation pixels: unavailable
+- density normalization: not performed because no browser-rendered implementation screenshot could be captured
+- state: light theme, completed transcription selected, one or more review issues, editable transcript, issue navigator visible
+
+## Full-view comparison evidence
+
+Blocked. The selected source visual opened successfully. The implementation could not be captured because the user's in-app Browser connection failed during initialization with `Cannot redefine property: process`. Per the project retry limit, no reconnect loop was attempted.
+
+## Focused region comparison evidence
+
+Blocked for the same reason. The next visual pass must compare the task bar, the document starting immediately below it, timed document rows, issue navigator, and sticky action bar in a single combined comparison input.
+
+## Implemented product behavior
+
+- Replaced the unbounded timeline/table page with a viewport-bounded review workspace and internal transcript scrolling.
+- Made every transcript segment directly editable and time-addressable.
+- Added a narrow issue navigator, per-segment confirmation, reviewed-count feedback, draft saving, and one primary action to approve the revision and continue to AI copy.
+- Preserved current content when opening the new-transcription dialog so canceling or encountering a failure does not discard the working draft.
+- Removed the entire non-functional media strip after the live annotation confirmed that no cover or playable source is available. The page now starts directly with the timed transcript instead of showing an unavailable-video tile or a slider that looks playable.
+
+## Required fidelity surfaces
+
+- Fonts and typography: code follows the existing product font stack and source hierarchy, but rendered size, wrapping, and optical weight remain blocked pending screenshot evidence.
+- Spacing and layout rhythm: the source's compact header, document-first center, narrow issue rail, and bottom action bar are implemented; exact rendered proportions remain blocked pending screenshot evidence.
+- Colors and visual tokens: existing neutral canvas, restrained lavender selection, warning amber, success green, and single purple primary action are implemented; rendered contrast remains blocked pending screenshot evidence.
+- Image quality and asset fidelity: no fake video, waveform image, placeholder cover, custom SVG, emoji, CSS illustration, or fabricated media asset was introduced. When real media is absent, no media surface is rendered.
+- Copy and content: operational copy is plain Chinese and distinguishes recognition, pending review, draft save, and approved handoff states.
+
+## Automated and interaction verification
+
+- Focused Transcription page tests passed 7/7, including direct editing, per-segment confirmation, approved revision persistence, new-task entry, upload confirmation, cloud-confidence handling, and rewritten-text display.
+- The complete frontend test suite passed, TypeScript checking passed, and the production build passed.
+- No paid transcription, upload, deletion, export, or AI-copy generation was submitted during verification.
+- Browser interactions and console errors could not be checked because rendered Browser access was unavailable.
+
+## Findings
+
+- [P1] Browser-rendered implementation evidence is missing.
+  - Location: `/transcription` full workspace.
+  - Evidence: the source visual is available, but no current implementation screenshot could be captured and combined with it.
+  - Impact: viewport fit, typography, spacing, overflow, and final visual fidelity cannot be truthfully accepted from code and automated tests alone.
+  - Fix: reconnect the user's in-app Browser, capture the completed-task review state at 1487 × 1058, compare both images together, fix any P0/P1/P2 drift, then repeat the capture.
+
+## Comparison history
+
+- Iteration 1: implementation and automated behavior completed; visual comparison blocked before the first rendered pass.
+- Iteration 2: the user's live annotation showed that the placeholder tile and disabled position slider both implied unavailable playback. Removed the complete media strip; focused tests now assert that neither the unavailable-video copy nor a slider is rendered. Post-fix screenshot comparison remains blocked by Browser initialization.
+
+final result: blocked
+
+---
+
 # Avatar Compact Task Rail Follow-up
 
 - source visual truth: user browser annotation on `/avatar` at 1355 × 906 CSS px, identifying the forced full-height task rail as excessive blank space
@@ -844,3 +935,14 @@ final result: passed
 - No account login, upload, paid generation, deletion, publication submission, or final platform click was performed.
 
 final result: passed
+
+---
+
+# Latest Design QA Result — AI 文案第 3 版
+
+- current build: AI 文案逐段对照复核
+- full report: see `# AI 文案第 3 版 — 逐段对照复核（2026-08-04）` above
+- automated result: page tests 4/4, TypeScript check, production build, and whitespace validation passed
+- browser result: blocked after the permitted single reconnect retry; no rendered screenshot or console verification is available
+
+final result: blocked

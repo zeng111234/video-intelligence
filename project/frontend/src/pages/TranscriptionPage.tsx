@@ -2,33 +2,33 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
-  Col,
   Drawer,
+  Dropdown,
   Empty,
   Input,
   List,
   Modal,
   Popconfirm,
   Progress,
-  Row,
   Select,
   Space,
-  Table,
   Tabs,
   Tag,
   Typography,
   Upload,
 } from "antd";
-import type { ColumnsType } from "antd/es/table";
 import {
-  AudioOutlined,
+  CheckCircleFilled,
+  ClockCircleOutlined,
   DeleteOutlined,
   DownloadOutlined,
+  ExclamationCircleFilled,
   FileAddOutlined,
+  FileTextOutlined,
   HistoryOutlined,
   LinkOutlined,
+  MoreOutlined,
   ReloadOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -37,9 +37,6 @@ import {
   createTranscriptionByUrl,
   createCrawlerCandidateLinkTranscription,
   createCrawlerLinkTranscription,
-  fallbackCrawlerLinkTranscription,
-  getCrawlerLinkTranscriptionCapabilities,
-  previewCrawlerLinkTranscription,
   clearTranscriptionHistory,
   deleteTask,
   exportTranscription,
@@ -47,19 +44,18 @@ import {
   listTranscriptions,
   reconnectTranscription,
   retryTranscription,
+  saveTranscriptionRevision,
   uploadAndTranscribe,
 } from "../api/client";
 import type {
   TranscriptSegment,
   TranscriptionResponse,
-  CrawlerLinkTranscriptionCapabilities,
-  CrawlerLinkTranscriptionPreview,
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
 import "./TranscriptionPage.css";
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 
 const DEMO_LOW_CONFIDENCE_ORIGINAL = "先判断你是通勤、户外，还是长时间带妆。";
@@ -169,6 +165,27 @@ function normalizeSegments(segments: TranscriptSegment[]) {
   return segments.map((segment) => ({ ...segment, reviewed: segment.reviewed || false }));
 }
 
+function segmentNeedsAttention(segment: TranscriptSegment) {
+  return !segment.reviewed && (
+    segment.needs_review
+    || (segment.confidence !== null && segment.confidence < 0.75)
+    || ["pending", "uncertain"].includes(segment.quality_status || "")
+  );
+}
+
+function formatSeconds(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "--:--";
+  const safeValue = Math.max(0, Math.round(value));
+  const minutes = Math.floor(safeValue / 60);
+  const seconds = safeValue % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatSegmentRange(segment: TranscriptSegment) {
+  if (segment.start === null || segment.end === null) return "无时间轴";
+  return `${formatSeconds(segment.start)}–${formatSeconds(segment.end)}`;
+}
+
 function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -189,20 +206,20 @@ export default function TranscriptionPage() {
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
   const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
   const [shareText, setShareText] = useState("");
-  const [linkPreview, setLinkPreview] = useState<CrawlerLinkTranscriptionPreview | null>(null);
-  const [linkCapabilities, setLinkCapabilities] = useState<CrawlerLinkTranscriptionCapabilities | null>(null);
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
-  const [rightsHolder, setRightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
+  const [rightsHolder] = usePersistentState("transcription_rights_holder", "本人/公司已授权");
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [createTab, setCreateTab] = useState("url");
+  const [createTab, setCreateTab] = useState("douyin-share");
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null);
   const [fileUploadConfirmed, setFileUploadConfirmed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
+  const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
+  const [revisionDirty, setRevisionDirty] = useState(false);
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
@@ -225,11 +242,22 @@ export default function TranscriptionPage() {
     });
   }, [filterStatus, searchText, tasks]);
 
+  const issueIndexes = useMemo(
+    () => segments
+      .map((segment, index) => segmentNeedsAttention(segment) ? index : -1)
+      .filter((index) => index >= 0),
+    [segments],
+  );
+  const reviewedCount = segments.length - issueIndexes.length;
+
   const applyTask = useCallback((task: TranscriptionResponse, closeHistory = true) => {
     const serverSegments = normalizeSegments(task.segments);
+    const firstIssueIndex = serverSegments.findIndex(segmentNeedsAttention);
     setSelected(task);
     setSelectedTaskId(task.task_id);
     setSegments(serverSegments);
+    setActiveSegmentIndex(firstIssueIndex >= 0 ? firstIssueIndex : 0);
+    setRevisionDirty(false);
     if (closeHistory) setHistoryOpen(false);
   }, [setSelectedTaskId]);
 
@@ -305,36 +333,19 @@ export default function TranscriptionPage() {
   }, [candidateFromQuery, isUploadEntry, setSelectedTaskId, setVideoUrl, shareTextFromQuery, urlFromQuery]);
 
   useEffect(() => {
-    getCrawlerLinkTranscriptionCapabilities().then(setLinkCapabilities).catch(() => setLinkCapabilities(null));
-  }, []);
-
-  useEffect(() => {
     if (!selected || !["queued", "submitted", "running"].includes(selected.status)) return undefined;
     const timer = window.setInterval(() => { void refresh(); }, 5_000);
     return () => window.clearInterval(timer);
   }, [refresh, selected]);
 
-  const handlePreviewShareLink = async () => {
+  const handleShareLinkTranscribe = async () => {
     if (!shareText.trim()) return toast.warning("请粘贴一条平台分享链接");
+    const confirmedRightsHolder = rightsHolder.trim() || "本人/公司已授权";
     setSubmitting(true);
     try {
-      setLinkPreview(await previewCrawlerLinkTranscription(shareText));
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleShareLinkTranscribe = async (fallback = false) => {
-    if (!linkPreview) return;
-    setSubmitting(true);
-    try {
-      const result = fallback
-        ? await fallbackCrawlerLinkTranscription({ shareText, workId: linkPreview.work_id || "", rightsHolder, rightsConfirmed: true, idempotencyKey: `link-${Date.now()}` })
-        : candidateFromQuery
-          ? await createCrawlerCandidateLinkTranscription({ candidateId: candidateFromQuery, rightsHolder, rightsConfirmed: true, modelName: "fun-asr" })
-          : await createCrawlerLinkTranscription({ shareText, rightsHolder, rightsConfirmed: true, modelName: "fun-asr" });
+      const result = candidateFromQuery
+        ? await createCrawlerCandidateLinkTranscription({ candidateId: candidateFromQuery, rightsHolder: confirmedRightsHolder, rightsConfirmed: true, modelName: "fun-asr" })
+        : await createCrawlerLinkTranscription({ shareText, rightsHolder: confirmedRightsHolder, rightsConfirmed: true, modelName: "fun-asr" });
       if (result.status === "fallback_required") {
         toast.warning(result.message);
         return;
@@ -353,10 +364,7 @@ export default function TranscriptionPage() {
   };
 
   const handleNewTask = () => {
-    setSelected(null);
-    setSelectedTaskId(null);
-    setSegments([]);
-    setCreateTab("url");
+    setCreateTab("douyin-share");
     setPendingUploadFile(null);
     setFileUploadConfirmed(false);
     setCreateOpen(true);
@@ -370,7 +378,7 @@ export default function TranscriptionPage() {
     }
     setSubmitting(true);
     try {
-      const created = await createTranscriptionByUrl(url, true, "fun-asr", rightsHolder);
+      const created = await createTranscriptionByUrl(url, true, "fun-asr", rightsHolder.trim() || "本人/公司已授权");
       toast.success("转写任务已创建");
       setVideoUrl("");
       setCreateOpen(false);
@@ -388,17 +396,13 @@ export default function TranscriptionPage() {
       toast.warning("请先选择 MP4 或 MOV 文件");
       return;
     }
-    if (!rightsHolder.trim()) {
-      toast.warning("请填写权利主体");
-      return;
-    }
     if (!fileUploadConfirmed) {
       toast.warning("请先确认处理权和本次云端转写费用");
       return;
     }
     setSubmitting(true);
     try {
-      const created = await uploadAndTranscribe(pendingUploadFile, "fun-asr", rightsHolder.trim(), "zh", candidateFromQuery);
+      const created = await uploadAndTranscribe(pendingUploadFile, "fun-asr", rightsHolder.trim() || "本人/公司已授权", "zh", candidateFromQuery);
       toast.success("文件已上传并创建转写任务");
       setPendingUploadFile(null);
       setFileUploadConfirmed(false);
@@ -449,11 +453,93 @@ export default function TranscriptionPage() {
     }
   };
 
-  const handleSendToAiCopy = () => {
+  const selectSegment = (index: number) => {
+    setActiveSegmentIndex(index);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`transcription-segment-${index}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
+  };
+
+  const updateSegmentText = (index: number, text: string) => {
+    setSegments((items) => items.map((segment, segmentIndex) => (
+      segmentIndex === index ? { ...segment, text } : segment
+    )));
+    setRevisionDirty(true);
+  };
+
+  const markSegmentReviewed = (index: number) => {
+    setSegments((items) => items.map((segment, segmentIndex) => (
+      segmentIndex === index ? { ...segment, reviewed: true } : segment
+    )));
+    setRevisionDirty(true);
+    const nextIssue = issueIndexes.find((issueIndex) => issueIndex > index);
+    if (nextIssue !== undefined) selectSegment(nextIssue);
+  };
+
+  const revisionSegments = () => segments.map((segment) => ({
+    start: segment.start,
+    end: segment.end,
+    text: segment.text.trim(),
+    confidence: segment.confidence,
+    needs_review: segment.needs_review,
+    reviewed: Boolean(segment.reviewed),
+    quality_status: segment.quality_status,
+    quality_source: segment.quality_source,
+    quality_note: segment.quality_note,
+    alternatives: segment.alternatives,
+  }));
+
+  const saveRevision = async (approve: boolean) => {
+    if (!selected) return false;
+    if (segments.some((segment) => !segment.text.trim())) {
+      toast.warning("转写内容不能为空，请先补全再保存");
+      return false;
+    }
+    const nextIssueIndex = segments.findIndex(segmentNeedsAttention);
+    if (approve && nextIssueIndex >= 0) {
+      selectSegment(nextIssueIndex);
+      toast.warning(`还有 ${issueIndexes.length} 处待确认`);
+      return false;
+    }
+    if (selected.is_mock) {
+      if (!approve) toast.warning("演示数据不能保存草稿");
+      return approve;
+    }
+    setSubmitting(true);
+    try {
+      await saveTranscriptionRevision({
+        taskId: selected.task_id,
+        segments: revisionSegments(),
+        reviewer: "本人/公司",
+        approve,
+      });
+      setRevisionDirty(false);
+      toast.success(approve ? "转写已确认" : "草稿已保存");
+      return true;
+    } catch (error) {
+      toast.error((error as Error).message || "保存转写失败");
+      return false;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSaveDraft = async () => {
+    if (await saveRevision(false)) await refresh();
+  };
+
+  const handleSendToAiCopy = async () => {
     const sourceText = segments.map((segment) => displaySegmentText(segment, selected?.is_mock)).join("\n").trim();
     if (!sourceText) {
       toast.warning("当前没有可带入的转写文本");
       return;
+    }
+    if (selected && (!selected.approved_revision_id || revisionDirty)) {
+      const saved = await saveRevision(true);
+      if (!saved) return;
     }
     navigate("/ai-copy", {
       state: {
@@ -463,86 +549,8 @@ export default function TranscriptionPage() {
     });
   };
 
-  const segmentColumns: ColumnsType<TranscriptSegment> = [
-    {
-      title: "时间",
-      width: 150,
-      render: (_, record) => record.start === null || record.end === null
-        ? <Text type="secondary">无时间轴</Text>
-        : <Text code>{record.start.toFixed(1)}s - {record.end.toFixed(1)}s</Text>,
-    },
-    {
-      title: "文本",
-      dataIndex: "text",
-      render: (value: string, record) => {
-        const isDemoRewrite = isDemoLlmRewrite(record, selected?.is_mock);
-        const displayText = displaySegmentText(record, selected?.is_mock);
-        const originalText = record.alternatives?.[0]
-          || (isDemoRewrite ? value : null);
-        return (
-          <Space direction="vertical" size={0}>
-            <Text>{displayText}</Text>
-            {originalText && originalText !== displayText && (
-              <Text type="secondary" style={{ fontSize: 12 }}>原识别：{originalText}</Text>
-            )}
-          </Space>
-        );
-      },
-    },
-    {
-      title: "置信度",
-      dataIndex: "confidence",
-      width: 110,
-      render: (value: number | null) => value === null
-        ? selected?.source_kind === "manual_text" ? "人工导入" : "待人工复核"
-        : `${Math.round(value * 100)}%`,
-    },
-    {
-      title: selected?.is_mock ? "演示结果" : "复核状态",
-      width: 160,
-      render: (_, record) => {
-        if (selected?.is_mock) {
-          const isDemoRewrite = isDemoLlmRewrite(record, true);
-          const isUncertain = record.needs_review || (record.confidence !== null && record.confidence < 0.75);
-          return <Tag color={isDemoRewrite ? "processing" : isUncertain ? "warning" : "success"}>{isDemoRewrite ? "演示：LLM拟修订" : isUncertain ? "演示存疑" : "演示通过"}</Tag>;
-        }
-        const labels: Record<string, { color: string; text: string }> = {
-          accepted: { color: "success", text: "识别通过" },
-          auto_verified: { color: "success", text: "二次确认" },
-          auto_corrected: { color: "processing", text: "AI已修正" },
-          llm_rewritten: { color: "processing", text: "LLM已修订" },
-          uncertain: { color: "warning", text: "AI标记存疑" },
-          pending: { color: "warning", text: "待人工复核" },
-        };
-        const isManualText = selected?.source_kind === "manual_text";
-        const isProcessing = ["queued", "pending", "running"].includes(selected?.status || "");
-        const item = labels[record.quality_status || ""]
-          || (isManualText
-            ? { color: "blue", text: "人工导入" }
-            : isProcessing
-              ? { color: "processing", text: "质检中" }
-              : { color: "error", text: "质检状态异常" });
-        return <Tag color={item.color}>{item.text}</Tag>;
-      },
-    },
-  ];
-
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Row justify="space-between" align="middle" gutter={[16, 12]}>
-        <Col>
-          <Title level={4} style={{ margin: 0 }}>语音转写</Title>
-          <Text type="secondary">使用公司阿里云识别，不占用客户电脑；识别结果需人工复核。</Text>
-        </Col>
-        <Col>
-          <Space wrap>
-            <Button icon={<FileAddOutlined />} onClick={handleNewTask}>新建转写</Button>
-            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>转写历史</Button>
-            <Button icon={<ReloadOutlined />} loading={loading} onClick={refresh}>刷新</Button>
-          </Space>
-        </Col>
-      </Row>
-
+    <div className="transcription-page">
       {candidateFromQuery && (
         <Alert
           type="info"
@@ -554,123 +562,162 @@ export default function TranscriptionPage() {
         />
       )}
 
-      <Card
-        title={<Space><AudioOutlined /> 当前任务工作区</Space>}
-        extra={selected && (
-          <Space wrap>
-            <Tag color={STATUS_COLOR[selected.status]}>{statusLabel(selected.status)}</Tag>
-            {selected.approved_revision_id && <Tag color="success">已确认成稿</Tag>}
-            <Select
-              value="txt"
-              style={{ width: 90 }}
-              options={[
-                { value: "txt", label: "TXT" },
-                { value: "json", label: "JSON" },
-                { value: "srt", label: "SRT" },
-                { value: "ass", label: "ASS" },
-              ]}
-              onSelect={(value) => handleExport(value as "txt" | "json" | "srt" | "ass")}
-            />
-            <Button icon={<DownloadOutlined />} onClick={() => handleExport("txt")}>导出</Button>
-          </Space>
-        )}
-      >
-        {selected ? (
-          <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Space wrap>
-              <Text strong>{formatTranscriptionName(selected)}</Text>
-              <Tag>{selected.is_mock ? "演示数据" : (selected.model_name || "识别模型未记录")}</Tag>
-              {selected.provider_name && <Tag color="blue">公司云端</Tag>}
-              {selected.estimated_cost_cny != null && <Tag>预计 ¥{selected.estimated_cost_cny.toFixed(4)}</Tag>}
-              {selected.source_kind === "manual_text" && <Tag color="blue">人工回填 · 无时间轴</Tag>}
-              {selected.duration_seconds && <Text type="secondary">{Math.round(selected.duration_seconds)} 秒</Text>}
-              {selected.auto_reviewed && <Tag color="success">{selected.llm_review_count > 0 ? `LLM自动修订 ${selected.llm_review_count} 段` : "AI自动质检完成"}</Tag>}
-              {selected.uncertain_segment_count > 0 && <Tag color="warning">AI标记存疑 {selected.uncertain_segment_count} 段</Tag>}
-              <Text type="secondary">{selected.stage}</Text>
+      {selected ? (
+        <section className="transcription-workbench">
+          <header className="transcription-taskbar">
+            <div className="transcription-task-summary">
+              <FileTextOutlined />
+              <Text strong ellipsis={{ tooltip: formatTranscriptionName(selected) }}>
+                {formatTranscriptionName(selected)}
+              </Text>
+              <Tag color={STATUS_COLOR[selected.status]}>
+                {selected.status === "succeeded" ? "识别完成" : statusLabel(selected.status)}
+              </Tag>
+              {issueIndexes.length > 0 ? (
+                <Tag color="warning">{issueIndexes.length}处待确认</Tag>
+              ) : (
+                <Tag color="success">已全部复核</Tag>
+              )}
+            </div>
+            <Space size={8}>
+              <Button icon={<FileAddOutlined />} onClick={handleNewTask}>新建转写</Button>
+              <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>转写历史</Button>
+              <Dropdown
+                trigger={["click"]}
+                menu={{
+                  items: [
+                    { key: "refresh", icon: <ReloadOutlined />, label: "刷新任务" },
+                    { type: "divider" },
+                    { key: "txt", icon: <DownloadOutlined />, label: "导出 TXT" },
+                    { key: "json", icon: <DownloadOutlined />, label: "导出 JSON" },
+                    { key: "srt", icon: <DownloadOutlined />, label: "导出 SRT" },
+                    { key: "ass", icon: <DownloadOutlined />, label: "导出 ASS" },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === "refresh") void refresh();
+                    else void handleExport(key as "txt" | "json" | "srt" | "ass");
+                  },
+                }}
+              >
+                <Button aria-label="更多操作" icon={<MoreOutlined />} />
+              </Dropdown>
             </Space>
-            {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
-            {selected.status === "outcome_unknown" && selected.provider_job_id && (
-              <Button type="primary" loading={submitting} onClick={handleReconnect}>
-                重新连接原任务
-              </Button>
-            )}
-            {selected.status === "failed" && (
-              <Button type="primary" loading={submitting} onClick={handleRetry}>
-                保留素材并重试
-              </Button>
-            )}
-            {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              {segments.length > 0 ? (
-                <section className="transcription-review-panel">
-                  <div className="transcription-review-heading">
-                    <Title level={5}>
-                      {selected.is_mock ? "演示结果" : selected.provider_name === "aliyun_fun_asr" ? "云端识别结果" : "AI质检结果"}
-                    </Title>
-                    <Text type="secondary">共 {segments.length} 段</Text>
-                  </div>
-                  <div className="transcription-review-notice">
-                    <Alert
-                      type={selected.is_mock ? "info" : selected.provider_name === "aliyun_fun_asr" ? "warning" : selected.uncertain_segment_count > 0 ? "warning" : "success"}
-                      showIcon
-                      message={selected.is_mock
-                        ? "这是演示数据：67% 片段展示了 LLM 口播修订效果，未调用真实模型；上传授权真实视频后会自动执行真实修订。"
-                        : selected.llm_review_count > 0
-                          ? `LLM 已自动修订 ${selected.llm_review_count} 段低置信口播文本，高置信片段保持原样。`
-                          : selected.provider_name === "aliyun_fun_asr"
-                            ? `阿里云已返回 ${segments.length} 个时间轴片段。系统未做二次识别或自动改写，请人工复核后再继续。`
-                            : selected.uncertain_segment_count > 0
-                              ? `AI 已自动成稿；其中 ${selected.uncertain_segment_count} 段保留存疑标记。`
-                              : "AI 已完成自动质检并生成成稿。"}
-                    />
-                    {!selected.timing_available && <Alert type="info" showIcon message="人工回填文本没有时间轴，可导出 TXT/JSON；如需字幕请上传授权视频重新转写。" />}
-                  </div>
-                  <Tabs
-                    className="transcription-review-tabs"
-                    items={[
-                      {
-                        key: "timeline",
-                        label: `时间轴（${segments.length}）`,
-                        children: (
-                          <Table
-                            rowKey={(_, index) => String(index)}
-                            columns={segmentColumns}
-                            dataSource={segments}
-                            pagination={false}
-                            size="small"
-                            scroll={{ x: 720, y: 300 }}
-                          />
-                        ),
-                      },
-                      {
-                        key: "transcript",
-                        label: "完整文稿",
-                        children: (
-                          <div className="transcription-fulltext-scroll">
-                            <Paragraph>{segments.map((segment) => displaySegmentText(segment, selected.is_mock)).join("\n")}</Paragraph>
-                          </div>
-                        ),
-                      },
-                    ]}
-                  />
-                </section>
-              ) : <Empty description="该任务暂无可校对片段" />}
+          </header>
 
-              <div className="transcription-next-step">
-                <div>
-                  <Text strong>下一步：AI 文案改写</Text>
-                  <Text type="secondary">确认转写内容后再继续，不会自动改写。</Text>
+          {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
+          {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
+          {selected.status === "outcome_unknown" && selected.provider_job_id && (
+            <div className="transcription-recovery-row">
+              <Text>云端结果暂时无法确认。</Text>
+              <Button type="primary" loading={submitting} onClick={handleReconnect}>重新连接原任务</Button>
+            </div>
+          )}
+          {selected.status === "failed" && (
+            <div className="transcription-recovery-row">
+              <Text>转写失败，素材仍然保留。</Text>
+              <Button type="primary" loading={submitting} onClick={handleRetry}>保留素材并重试</Button>
+            </div>
+          )}
+
+          {segments.length > 0 ? (
+            <div className="transcription-review-layout">
+              <div className="transcription-editor-column">
+                <div className="transcription-document-scroll" aria-label="转写文稿">
+                  {segments.map((segment, index) => {
+                    const needsAttention = segmentNeedsAttention(segment);
+                    const originalText = segment.alternatives?.[0];
+                    return (
+                      <article
+                        id={`transcription-segment-${index}`}
+                        key={`${segment.start}-${index}`}
+                        className={`transcription-document-row${activeSegmentIndex === index ? " is-active" : ""}${needsAttention ? " needs-attention" : ""}`}
+                        onClick={() => setActiveSegmentIndex(index)}
+                      >
+                        <button type="button" className="transcription-time-button" onClick={() => selectSegment(index)}>
+                          {formatSegmentRange(segment)}
+                        </button>
+                        <div className="transcription-segment-editor">
+                          <TextArea
+                            aria-label={`转写片段 ${index + 1}`}
+                            value={displaySegmentText(segment, selected.is_mock)}
+                            onChange={(event) => updateSegmentText(index, event.target.value)}
+                            autoSize={{ minRows: 1, maxRows: 5 }}
+                            variant="borderless"
+                          />
+                          {originalText && originalText !== segment.text && (
+                            <Text type="secondary" className="transcription-original-text">原识别：{originalText}</Text>
+                          )}
+                          {activeSegmentIndex === index && needsAttention && (
+                            <div className="transcription-inline-review">
+                              <Text type="warning">这里需要你确认</Text>
+                              <Button size="small" type="link" icon={<CheckCircleFilled />} onClick={() => markSegmentReviewed(index)}>
+                                确认此段
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
-                <Button type="primary" onClick={handleSendToAiCopy} disabled={selected.status !== "succeeded" || segments.length === 0}>
-                  确认并带到 AI 文案
-                </Button>
               </div>
+
+              <aside className="transcription-issue-rail">
+                <div className="transcription-issue-heading">
+                  <Text strong>待确认</Text>
+                  <Text type="secondary">{issueIndexes.length}处</Text>
+                </div>
+                {issueIndexes.length > 0 ? issueIndexes.map((index) => (
+                  <button
+                    type="button"
+                    key={index}
+                    className={`transcription-issue-link${activeSegmentIndex === index ? " is-active" : ""}`}
+                    onClick={() => selectSegment(index)}
+                  >
+                    <ExclamationCircleFilled className="transcription-issue-dot" />
+                    <ClockCircleOutlined />
+                    <span>{formatSeconds(segments[index].start)}</span>
+                    <span className="transcription-issue-preview">{segments[index].text}</span>
+                  </button>
+                )) : (
+                  <div className="transcription-issue-empty">
+                    <CheckCircleFilled />
+                    <Text>没有待确认内容</Text>
+                  </div>
+                )}
+              </aside>
+            </div>
+          ) : (
+            <Empty description="该任务暂无可复核内容" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+          )}
+
+          <footer className="transcription-actionbar">
+            <Text>已复核 <strong>{reviewedCount}</strong> / {segments.length} 段</Text>
+            <Space>
+              <Button onClick={() => void handleSaveDraft()} loading={submitting} disabled={!revisionDirty || selected.is_mock}>
+                保存草稿
+              </Button>
+              <Button
+                type="primary"
+                loading={submitting}
+                onClick={() => void handleSendToAiCopy()}
+                disabled={selected.status !== "succeeded" || segments.length === 0}
+              >
+                确认并带到 AI 文案
+              </Button>
             </Space>
-          </Space>
-        ) : (
-          <Empty description="新建或从历史选择一个转写任务" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ padding: "40px 0" }} />
-        )}
-      </Card>
+          </footer>
+        </section>
+      ) : (
+        <section className="transcription-empty-state">
+          <Empty description="新建或从历史选择一个转写任务" image={Empty.PRESENTED_IMAGE_SIMPLE}>
+            <Space>
+              <Button type="primary" icon={<FileAddOutlined />} onClick={handleNewTask}>新建转写</Button>
+              <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>转写历史</Button>
+            </Space>
+          </Empty>
+        </section>
+      )}
 
       <Modal
         title="新建转写"
@@ -680,20 +727,20 @@ export default function TranscriptionPage() {
         width={720}
       >
         <Space direction="vertical" style={{ width: "100%" }} size={16}>
-          <Alert
-            type="warning"
-            showIcon
-            message="权利确认边界"
-            description="确认有权后，可用本机浏览器解析单条平台分享链接；不会批量下载、绕过验证或自动调用付费回退。也可以上传文件或填写授权直链。"
-          />
-          <Space wrap>
-            <Tag color="blue">公司阿里云 Fun-ASR · 单条最多 ¥0.20</Tag>
-            <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" style={{ width: 300 }} />
-          </Space>
           <Tabs
             activeKey={createTab}
             onChange={setCreateTab}
             items={[
+              {
+                key: "douyin-share",
+                label: <span><LinkOutlined /> 平台分享链接</span>,
+                children: (
+                  <Space direction="vertical" style={{ width: "100%" }}>
+                    <TextArea value={shareText} onChange={(event) => setShareText(event.target.value)} placeholder="粘贴抖音、小红书、快手或B站分享链接" rows={3} />
+                    <Button type="primary" loading={submitting} onClick={handleShareLinkTranscribe}>开始转写</Button>
+                  </Space>
+                ),
+              },
               {
                 key: "url",
                 label: <span><LinkOutlined /> 授权直链</span>,
@@ -701,36 +748,6 @@ export default function TranscriptionPage() {
                   <Space direction="vertical" style={{ width: "100%" }}>
                     <TextArea value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载" rows={3} />
                     <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>确认权利并创建转写</Button>
-                  </Space>
-                ),
-              },
-              {
-                key: "douyin-share",
-                label: <span><LinkOutlined /> 平台分享链接</span>,
-                children: (
-                  <Space direction="vertical" style={{ width: "100%" }}>
-                    <Alert
-                      type={linkCapabilities?.parser_enabled ? "info" : "warning"}
-                      showIcon
-                      message={linkCapabilities?.parser_enabled ? "链接解析已就绪" : "链接解析器未就绪"}
-                      description="链接解析完成后统一交给公司阿里云识别；客户电脑不会运行本地语音识别。"
-                    />
-                    <TextArea value={shareText} onChange={(event) => { setShareText(event.target.value); setLinkPreview(null); }} placeholder="粘贴抖音、小红书、快手或B站分享链接" rows={3} />
-                    <Button loading={submitting} onClick={handlePreviewShareLink}>识别链接</Button>
-                    {linkPreview && (
-                      <Alert
-                        type={linkPreview.parser_enabled ? "info" : "warning"}
-                        showIcon
-                        message={linkPreview.parser_enabled ? `已识别${linkPreview.platform_label}作品：${linkPreview.work_id || "等待页面返回作品 ID"}` : `${linkPreview.platform_label}链接解析不可用`}
-                        description={
-                          <Space wrap>
-                            <Text>{linkPreview.parser_message || "可开始解析并交给公司云端转写。"}</Text>
-                            <Button type="primary" loading={submitting} disabled={!linkPreview.parser_enabled} onClick={() => handleShareLinkTranscribe(false)}>确认有权并转写</Button>
-                            {linkPreview.oneapi_fallback_available && <Button danger loading={submitting} onClick={() => Modal.confirm({ title: "确认 OneAPI 付费回退", content: `预计 ¥${(linkPreview.oneapi_estimated_cost_cny || 0).toFixed(2)}，确认后才会调用。`, okText: "确认并继续", onOk: () => handleShareLinkTranscribe(true) })}>确认后付费回退</Button>}
-                          </Space>
-                        }
-                      />
-                    )}
                   </Space>
                 ),
               },
@@ -777,7 +794,7 @@ export default function TranscriptionPage() {
                         <Button
                           type="primary"
                           loading={submitting}
-                          disabled={!fileUploadConfirmed || !rightsHolder.trim()}
+                          disabled={!fileUploadConfirmed}
                           onClick={handleFileUpload}
                         >
                           确认权利并开始云端转写
@@ -861,6 +878,6 @@ export default function TranscriptionPage() {
           />
         </Space>
       </Drawer>
-    </Space>
+    </div>
   );
 }

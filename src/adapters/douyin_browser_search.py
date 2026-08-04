@@ -456,7 +456,7 @@ class LocalDouyinBrowserSearchProvider:
             else:
                 manual_review_error.message = (
                     f"{manual_review_error.message}"
-                    "未能定位抖音专用浏览器窗口；请在“账号连接”中点击“打开抖音登录”，"
+                    "未能定位抖音专用浏览器窗口；请在“账号连接”中点击“登录抖音”，"
                     "完成处理后再重新搜索。"
                 )
         (
@@ -2314,7 +2314,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
                 True,
                 False,
                 status.phase,
-                "抖音官网登录浏览器尚未打开；点击“打开抖音登录”后在可见窗口扫码或完成验证。",
+                "抖音官网登录浏览器尚未打开；点击“登录抖音”后在可见窗口扫码或完成验证。",
             )
         if status.phase == "waiting_login":
             return BrowserSessionStatus(

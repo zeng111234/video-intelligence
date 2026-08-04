@@ -284,8 +284,8 @@ XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
     "XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT", 19223
 )
 
-# 小红书只允许使用全新的隔离资料目录进行未登录公开搜索。这里的默认值
-# 不读取或继承上面的旧账号配置；浏览器只会在用户点击“找素材”时启动。
+# 历史兼容配置：当前“找素材”不再使用匿名公开搜索资料目录，改用下方
+# 小红书登录资料目录。保留这些字段仅为兼容旧部署，勿将其用于新流程。
 XIAOHONGSHU_PUBLIC_SEARCH_ENABLED: bool = _env_flag(
     "XIAOHONGSHU_PUBLIC_SEARCH_ENABLED", True
 )
@@ -299,8 +299,8 @@ XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT: int = _env_int(
     "XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT", 19226
 )
 
-# 可选的人工登录窗口与公开搜索严格分离。它只由用户主动点击连接入口时
-# 打开，绝不被“找素材”的匿名搜索复用。
+# 小红书登录窗口和“找素材”共用同一独立资料目录。用户只在可见窗口中
+# 手动扫码或处理验证；后台找素材不会自动执行登录操作。
 XIAOHONGSHU_LOGIN_BROWSER_ENABLED: bool = _env_flag(
     "XIAOHONGSHU_LOGIN_BROWSER_ENABLED", True
 )

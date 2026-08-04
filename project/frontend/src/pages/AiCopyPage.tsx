@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Alert,
   Button,
-  Card,
-  Col,
   Drawer,
-  Empty,
+  Dropdown,
   Input,
   List,
+  Modal,
   Popconfirm,
-  Row,
   Segmented,
   Space,
   Spin,
@@ -18,13 +16,19 @@ import {
   Typography,
 } from "antd";
 import {
+  ArrowRightOutlined,
+  CheckCircleFilled,
   CopyOutlined,
   DeleteOutlined,
   EditOutlined,
+  ExclamationCircleFilled,
   FileAddOutlined,
   FileTextOutlined,
   HistoryOutlined,
+  InfoCircleFilled,
+  MoreOutlined,
   ReloadOutlined,
+  SaveOutlined,
 } from "@ant-design/icons";
 import {
   clearCopywritingHistory,
@@ -43,8 +47,9 @@ import type {
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
+import "./AiCopyPage.css";
 
-const { Title, Text, Paragraph } = Typography;
+const { Text } = Typography;
 const { TextArea } = Input;
 
 type CopyMode = "generate" | "rewrite";
@@ -57,6 +62,13 @@ const TRANSCRIPT_DEDUP_REWRITE_PROMPT = [
 interface CopyHandoffState {
   sourceText?: unknown;
   sourceLabel?: unknown;
+}
+
+interface CopyComparisonRow {
+  id: number;
+  source: string;
+  result: string;
+  needsReview: boolean;
 }
 
 function formatTime(value: string | null) {
@@ -78,9 +90,52 @@ function highlightedCopy(text: string, terms: string[]) {
   ) : part);
 }
 
+function splitCopySegments(text: string) {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return [];
+  const paragraphs = normalized.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean);
+  if (paragraphs.length > 1) return paragraphs;
+
+  const lines = normalized.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+  if (lines.length > 1) return lines;
+
+  const sentences = normalized.match(/[^。！？!?；;]+[。！？!?；;]?/g)?.map((item) => item.trim()).filter(Boolean) ?? [];
+  if (sentences.length <= 4) return sentences.length ? sentences : [normalized];
+
+  const grouped: string[] = [];
+  for (let index = 0; index < sentences.length; index += 2) {
+    grouped.push(sentences.slice(index, index + 2).join(""));
+  }
+  return grouped;
+}
+
+function buildComparisonRows(source: string, result: string, attentionTerms: string[], complianceStatus?: string | null) {
+  const sourceSegments = splitCopySegments(source);
+  const resultSegments = splitCopySegments(result);
+  const rowCount = Math.max(sourceSegments.length, resultSegments.length, result ? 1 : 0);
+  let fallbackReviewAssigned = false;
+
+  return Array.from({ length: rowCount }, (_, index): CopyComparisonRow => {
+    const sourceSegment = sourceSegments[index] ?? "—";
+    const resultSegment = resultSegments[index] ?? "—";
+    const hasAttentionTerm = attentionTerms.some((term) => term.trim().length > 1 && resultSegment.includes(term.trim()));
+    const needsFallbackReview = !hasAttentionTerm
+      && !fallbackReviewAssigned
+      && (complianceStatus === "best_effort" || complianceStatus === "review_required");
+    if (needsFallbackReview) fallbackReviewAssigned = true;
+    return {
+      id: index + 1,
+      source: sourceSegment,
+      result: resultSegment,
+      needsReview: hasAttentionTerm || needsFallbackReview,
+    };
+  });
+}
+
 export default function AiCopyPage() {
   const toast = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
   const [mode, setMode, clearMode] = usePersistentState<CopyMode>("ai_copy_mode", "rewrite");
   const [contentBrief, setContentBrief, clearContentBrief] = usePersistentState("ai_copy_content_brief", "");
   const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
@@ -98,6 +153,10 @@ export default function AiCopyPage() {
   const [taskId, setTaskId] = useState<string | null>(null);
   const [lastResponse, setLastResponse] = useState<CopywritingResponse | null>(null);
   const [variants, setVariants] = useState<string[]>([]);
+  const [sourceLabel, setSourceLabel] = useState("手动输入");
+  const [rowFilter, setRowFilter] = useState<"all" | "review">("all");
+  const [reviewedRowIds, setReviewedRowIds] = useState<number[]>([]);
+  const [reasonRowId, setReasonRowId] = useState<number | null>(null);
   const handledHandoffKeyRef = useRef<string | null>(null);
 
   const inputReady = mode === "generate" ? contentBrief.trim().length > 0 : sourceText.trim().length > 0;
@@ -127,6 +186,7 @@ export default function AiCopyPage() {
     setLastResponse(null);
     setVariants([]);
     const label = typeof handoff?.sourceLabel === "string" ? handoff.sourceLabel : "转写稿";
+    setSourceLabel(label);
     toast.success(`已带入「${label}」，确认内容后再开始改写`);
   }, [location.key, location.state, setMode, setSourceText, toast]);
 
@@ -202,6 +262,8 @@ export default function AiCopyPage() {
         ? [resp.result_text]
         : [];
     setVariants(resultVariants.slice(0, 1));
+    setRowFilter("all");
+    setReasonRowId(null);
   }, []);
 
   const handleSubmit = useCallback(async () => {
@@ -275,6 +337,7 @@ export default function AiCopyPage() {
       setSourceText(detail.source_text);
       setSellingPoints(detail.selling_points);
       setCallToAction(detail.call_to_action);
+      setSourceLabel(item.title || "历史文案");
       applyResult(detail);
       setHistoryOpen(false);
     } catch (err) {
@@ -292,6 +355,10 @@ export default function AiCopyPage() {
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
+    setSourceLabel("手动输入");
+    setRowFilter("all");
+    setReviewedRowIds([]);
+    setReasonRowId(null);
   };
 
   const handleClearDraft = () => {
@@ -303,6 +370,10 @@ export default function AiCopyPage() {
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
+    setSourceLabel("手动输入");
+    setRowFilter("all");
+    setReviewedRowIds([]);
+    setReasonRowId(null);
     toast.success("本机草稿已清空");
   };
 
@@ -312,138 +383,254 @@ export default function AiCopyPage() {
 
   const activeText = variants[0] || "";
   const attentionTerms = lastResponse?.attention_terms ?? [];
+  const sourceDocument = mode === "rewrite"
+    ? sourceText
+    : [contentBrief, sellingPoints, callToAction].map((item) => item.trim()).filter(Boolean).join("\n");
+  const comparisonRows = useMemo(
+    () => buildComparisonRows(sourceDocument, activeText, attentionTerms, lastResponse?.compliance_status),
+    [activeText, attentionTerms, lastResponse?.compliance_status, sourceDocument],
+  );
+  const reviewRows = comparisonRows.filter((row) => row.needsReview);
+  const pendingReviewRows = reviewRows.filter((row) => !reviewedRowIds.includes(row.id));
+  const reviewedCount = comparisonRows.length - pendingReviewRows.length;
+  const visibleRows = rowFilter === "review" ? pendingReviewRows : comparisonRows;
+
+  useEffect(() => {
+    setReviewedRowIds(comparisonRows.filter((row) => !row.needsReview).map((row) => row.id));
+  }, [activeText, taskId]);
+
+  const handleConfirmRow = (rowId: number) => {
+    setReviewedRowIds((current) => current.includes(rowId) ? current : [...current, rowId]);
+    setReasonRowId(null);
+    toast.success("这一段已确认");
+  };
+
+  const handleContinue = () => {
+    if (!activeText || !taskId) return;
+    if (pendingReviewRows.length > 0) {
+      toast.warning(`请先确认剩余 ${pendingReviewRows.length} 处内容`);
+      setRowFilter("review");
+      return;
+    }
+    const params = new URLSearchParams({ sourceTask: taskId, script: activeText });
+    navigate(`/avatar?${params.toString()}`);
+  };
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Row justify="space-between" align="middle" gutter={[16, 12]}>
-        <Col>
-          <Title level={4} style={{ margin: 0 }}>
-            <EditOutlined /> AI 文案去重改写
-          </Title>
-        </Col>
-        <Col>
-          <Space wrap>
-            <Tag color={hasLocalDraft ? "green" : "default"}>本机草稿{hasLocalDraft ? "已保存" : "为空"}</Tag>
-            <Button icon={<FileAddOutlined />} onClick={handleNewCopy}>新建文案</Button>
-            <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>历史记录</Button>
-            <Popconfirm title="清空本机草稿？" okText="清空" cancelText="取消" onConfirm={handleClearDraft}>
-              <Button danger disabled={!hasLocalDraft && variants.length === 0}>清空草稿</Button>
-            </Popconfirm>
-          </Space>
-        </Col>
-      </Row>
+    <div className="ai-copy-page">
+      <header className="ai-copy-toolbar">
+        <Segmented
+          aria-label="文案创作方式"
+          value={mode}
+          onChange={(value) => {
+            setMode(value as CopyMode);
+            setTaskId(null);
+            setLastResponse(null);
+            setVariants([]);
+            setRowFilter("all");
+          }}
+          options={[
+            { label: "转写稿去重改写", value: "rewrite" },
+            { label: "从需求生成", value: "generate" },
+          ]}
+        />
+        <Space size={4} wrap>
+          {activeText ? (
+            <Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={handleSubmit}>重新改写</Button>
+          ) : (
+            <Button type="text" icon={<FileAddOutlined />} onClick={handleNewCopy}>新建文案</Button>
+          )}
+          <Button type="text" icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>历史记录</Button>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [{ key: "clear", label: "清空本机草稿", danger: true, disabled: !hasLocalDraft && variants.length === 0 }],
+              onClick: ({ key }) => {
+                if (key !== "clear") return;
+                Modal.confirm({
+                  title: "清空本机草稿？",
+                  content: "输入内容和当前改写结果会被清空。",
+                  okText: "清空",
+                  okButtonProps: { danger: true },
+                  cancelText: "取消",
+                  onOk: handleClearDraft,
+                });
+              },
+            }}
+          >
+            <Button type="text" aria-label="更多操作" icon={<MoreOutlined />} />
+          </Dropdown>
+        </Space>
+      </header>
 
       {disabledMessage && <Alert type={capabilityError ? "error" : "warning"} message={disabledMessage} showIcon />}
 
-      <Row gutter={[24, 24]} align="top">
-        <Col xs={24} lg={10}>
-          <Card title={<Space><FileTextOutlined /> 文案输入</Space>}>
-            <Space direction="vertical" style={{ width: "100%" }} size={16}>
-              <Segmented
-                block
-                value={mode}
-                onChange={(value) => setMode(value as CopyMode)}
-                options={[
-                  { label: "转写稿去重改写", value: "rewrite" },
-                  { label: "从需求生成", value: "generate" },
-                ]}
-              />
+      <section className={`ai-copy-workbench${activeText ? " has-result" : " is-compose"}`}>
+        <div className="ai-copy-source-context">
+          <Space size={8} wrap>
+            <FileTextOutlined />
+            <Text type="secondary">{mode === "rewrite" ? "来自转写复核" : "来自需求输入"}</Text>
+            <span className="ai-copy-context-separator">·</span>
+            <Text>{sourceLabel}</Text>
+            <span className="ai-copy-context-separator">·</span>
+            <Text type="secondary">{sourceDocument.length}字</Text>
+          </Space>
+          <Tag color={hasLocalDraft ? "green" : "default"}>{hasLocalDraft ? "草稿已保存" : "暂无草稿"}</Tag>
+        </div>
+
+        <Spin spinning={loading} tip={mode === "rewrite" ? "正在整理并改写文案..." : "正在生成口播文案..."}>
+          {lastResponse?.status === "failed" && (
+            <Alert className="ai-copy-result-error" type="error" showIcon message={lastResponse.error_message || "文案生成失败"} />
+          )}
+
+          {!activeText ? (
+            <div className="ai-copy-compose-panel">
+              <div className="ai-copy-compose-heading">
+                <div>
+                  <Text strong>{mode === "rewrite" ? "原稿" : "内容需求"}</Text>
+                  <Text type="secondary">
+                    {mode === "rewrite" ? "确认原文后再开始改写，不会自动生成。" : "只填写确定的信息，其余交给系统整理。"}
+                  </Text>
+                </div>
+              </div>
 
               {mode === "generate" ? (
-                <>
+                <div className="ai-copy-input-stack">
                   <TextArea
+                    aria-label="内容概要"
                     placeholder="内容概要，例如：面向中小企业老板，介绍 AI 短视频获客系统如何降低内容生产成本..."
                     rows={5}
                     value={contentBrief}
-                    onChange={(e) => setContentBrief(e.target.value)}
+                    onChange={(event) => setContentBrief(event.target.value)}
                     showCount
                     maxLength={5000}
-                    style={{ resize: "none" }}
                   />
                   <TextArea
+                    aria-label="核心卖点"
                     placeholder="核心卖点：产品亮点、服务优势或确定可说的事实"
                     rows={3}
                     value={sellingPoints}
-                    onChange={(e) => setSellingPoints(e.target.value)}
+                    onChange={(event) => setSellingPoints(event.target.value)}
                     maxLength={1200}
-                    style={{ resize: "none" }}
                   />
                   <Input
+                    aria-label="行动号召"
                     placeholder="行动号召，例如：私信领取行业案例清单"
                     value={callToAction}
-                    onChange={(e) => setCallToAction(e.target.value)}
+                    onChange={(event) => setCallToAction(event.target.value)}
                     maxLength={120}
                   />
-                </>
+                </div>
               ) : (
-                <>
-                  <TextArea
-                    aria-label="待去重的转写或口播稿"
-                    placeholder="粘贴已确认的转写稿、口播稿或原始文案..."
-                    rows={8}
-                    value={sourceText}
-                    onChange={(e) => setSourceText(e.target.value)}
-                    showCount
-                    maxLength={5000}
-                    style={{ resize: "none" }}
-                  />
-                </>
-              )}
-
-              <Button
-                type="primary"
-                icon={<EditOutlined />}
-                size="large"
-                block
-                loading={loading}
-                onClick={handleSubmit}
-                disabled={!inputReady || !enabled}
-              >
-                {mode === "generate" ? "生成口播文案" : "开始去重改写"}
-              </Button>
-            </Space>
-          </Card>
-        </Col>
-
-        <Col xs={24} lg={14}>
-          <Card
-            title={
-              <Space wrap>
-                <EditOutlined /> {mode === "rewrite" ? "去重改写结果" : "生成结果"}
-              </Space>
-            }
-            extra={variants.length > 0 && (
-              <Button icon={<ReloadOutlined />} size="small" onClick={handleSubmit} loading={loading}>
-                重新生成
-              </Button>
-            )}
-          >
-            <Spin spinning={loading} tip="AI 正在生成文案...">
-              {lastResponse?.status === "failed" && (
-                <Alert type="error" showIcon message={lastResponse.error_message || "文案生成失败"} style={{ marginBottom: 16 }} />
-              )}
-              {activeText ? (
-                <Space direction="vertical" style={{ width: "100%" }} size={16}>
-                  <div style={{ background: "var(--gray-50)", borderRadius: 8, padding: 20, border: "1px solid var(--border-default)" }}>
-                    <Paragraph style={{ fontSize: 15, lineHeight: 1.8, margin: 0, whiteSpace: "pre-wrap" }}>
-                      {highlightedCopy(activeText, attentionTerms)}
-                    </Paragraph>
-                  </div>
-                  <Space wrap>
-                    <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制文案</Button>
-                  </Space>
-                </Space>
-              ) : (
-                <Empty
-                  description={enabled ? "填写输入后点击生成" : "模型未配置，暂不能生成真实文案"}
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  style={{ padding: "32px 0" }}
+                <TextArea
+                  aria-label="待去重的转写或口播稿"
+                  placeholder="粘贴已确认的转写稿、口播稿或原始文案..."
+                  rows={10}
+                  value={sourceText}
+                  onChange={(event) => {
+                    setSourceText(event.target.value);
+                    if (sourceLabel === "手动输入") setSourceLabel("手动输入");
+                  }}
+                  showCount
+                  maxLength={5000}
                 />
               )}
-            </Spin>
-          </Card>
-        </Col>
-      </Row>
+
+              <div className="ai-copy-compose-actions">
+                <Text type="secondary">内容会自动保存在本机</Text>
+                <Button
+                  type="primary"
+                  icon={<EditOutlined />}
+                  size="large"
+                  loading={loading}
+                  onClick={handleSubmit}
+                  disabled={!inputReady || !enabled}
+                >
+                  {mode === "generate" ? "生成口播文案" : "开始去重改写"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="ai-copy-review-panel">
+              <div className="ai-copy-summary-bar">
+                <Space size={10} wrap>
+                  <span className="ai-copy-summary-chip is-success"><CheckCircleFilled /> {comparisonRows.length}段已改写</span>
+                  <span className={`ai-copy-summary-chip${pendingReviewRows.length ? " is-warning" : " is-success"}`}>
+                    {pendingReviewRows.length ? <ExclamationCircleFilled /> : <CheckCircleFilled />}
+                    {pendingReviewRows.length}处需核对
+                  </span>
+                  <span className="ai-copy-summary-chip is-info"><InfoCircleFilled /> 事实信息已保留</span>
+                </Space>
+                <Segmented
+                  aria-label="段落筛选"
+                  size="small"
+                  value={rowFilter}
+                  onChange={(value) => setRowFilter(value as "all" | "review")}
+                  options={[
+                    { label: "全部段落", value: "all" },
+                    { label: `需核对 ${pendingReviewRows.length || ""}`.trim(), value: "review" },
+                  ]}
+                />
+              </div>
+
+              <div className="ai-copy-comparison-table" role="table" aria-label="文案逐段对照">
+                <div className="ai-copy-comparison-head" role="row">
+                  <span>段落</span>
+                  <span>原文</span>
+                  <span>改写后</span>
+                  <span>状态</span>
+                </div>
+                <div className="ai-copy-comparison-body">
+                  {visibleRows.length ? visibleRows.map((row) => {
+                    const isReviewed = reviewedRowIds.includes(row.id);
+                    const isPending = row.needsReview && !isReviewed;
+                    return (
+                      <article key={row.id} className={`ai-copy-comparison-row${isPending ? " needs-review" : ""}`} role="row">
+                        <span className="ai-copy-row-number">{String(row.id).padStart(2, "0")}</span>
+                        <div className="ai-copy-row-source">{row.source}</div>
+                        <div className="ai-copy-row-result">
+                          {highlightedCopy(row.result, attentionTerms)}
+                          {reasonRowId === row.id && (
+                            <div className="ai-copy-review-reason">
+                              {lastResponse?.compliance_notes[0] || "这段包含需要人工确认的名称、数据或效果表述。"}
+                            </div>
+                          )}
+                        </div>
+                        <div className="ai-copy-row-status">
+                          {isPending ? (
+                            <>
+                              <span className="is-warning"><ExclamationCircleFilled /> 需核对</span>
+                              <Button type="link" size="small" onClick={() => setReasonRowId(reasonRowId === row.id ? null : row.id)}>查看原因</Button>
+                              <Button size="small" onClick={() => handleConfirmRow(row.id)}>确认本段</Button>
+                            </>
+                          ) : (
+                            <span className="is-success"><CheckCircleFilled /> {row.needsReview ? "已确认" : "已优化"}</span>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  }) : (
+                    <div className="ai-copy-review-empty">
+                      <CheckCircleFilled /> 没有待确认内容
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <footer className="ai-copy-actionbar">
+                <Text>已核对 <strong>{reviewedCount}</strong> / {comparisonRows.length} 段</Text>
+                <Space wrap>
+                  <Button icon={<CopyOutlined />} onClick={() => handleCopy(activeText)}>复制全文</Button>
+                  <Button icon={<SaveOutlined />} onClick={() => toast.success("草稿已保存在本机")}>保存草稿</Button>
+                  <Button type="primary" icon={<ArrowRightOutlined />} iconPosition="end" onClick={handleContinue}>
+                    确认并继续制作
+                  </Button>
+                </Space>
+              </footer>
+            </div>
+          )}
+        </Spin>
+      </section>
 
       <Drawer
         title="AI 文案历史"
@@ -489,7 +676,7 @@ export default function AiCopyPage() {
                 description={
                   <Space direction="vertical" size={4}>
                     <Text type="secondary">{formatTime(item.created_at)}</Text>
-                    <Text type="secondary">{item.model_name || "未知模型"} · {item.target_length} 字 · {item.result_variants.length || (item.result_text ? 1 : 0)} 版</Text>
+                    <Text type="secondary">{item.target_length} 字 · {item.result_variants.length || (item.result_text ? 1 : 0)} 版</Text>
                   </Space>
                 }
               />
@@ -497,6 +684,6 @@ export default function AiCopyPage() {
           )}
         />
       </Drawer>
-    </Space>
+    </div>
   );
 }

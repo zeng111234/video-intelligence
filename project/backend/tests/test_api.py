@@ -726,6 +726,7 @@ class TestCrawlerBatches:
                 self.start_calls = 0
                 self.public_start_calls = 0
                 self.visible_open_calls = 0
+                self.published_after_values = []
 
             def capabilities(self):
                 return ProviderCapability(
@@ -736,7 +737,7 @@ class TestCrawlerBatches:
                     max_page_size=30,
                     enabled=True,
                     permission_status=(
-                        "manual_login_optional"
+                        "manual_login_required"
                         if self.xiaohongshu_login_profile
                         else "local_browser_login_required"
                     ),
@@ -747,15 +748,14 @@ class TestCrawlerBatches:
                     return SimpleNamespace(
                         enabled=True,
                         running=self.running,
-                        login_required=True,
-                        ready_to_crawl=False,
+                        login_required=not self.running,
+                        ready_to_crawl=self.running,
                         phase=(
-                            "login_browser_open" if self.running else "optional_login"
+                            "ready" if self.running else "waiting_login"
                         ),
                         message=(
-                            "小红书登录浏览器已打开；可选择扫码登录。"
-                            if self.running
-                            else "小红书当前未登录；可按需点击打开小红书登录。"
+                            "小红书已登录，可开始找素材。"
+                            if self.running else "小红书当前未登录，请先完成扫码。"
                         ),
                     )
                 return SimpleNamespace(
@@ -805,7 +805,8 @@ class TestCrawlerBatches:
                 idempotency_key,
                 hotspot_window_hours=None,
             ):
-                del published_after, idempotency_key, hotspot_window_hours
+                self.published_after_values.append(published_after)
+                del idempotency_key, hotspot_window_hours
                 now = __import__("datetime").datetime.now().astimezone()
                 items = [
                     ProviderSearchItem(
@@ -885,11 +886,11 @@ class TestCrawlerBatches:
             bilibili_provider,
             active_platforms=(Platform.BILIBILI,),
         )
-        xiaohongshu_provider = FakeBrowserProvider(Platform.XIAOHONGSHU)
-        xiaohongshu_login_provider = FakeBrowserProvider(
+        xiaohongshu_provider = FakeBrowserProvider(
             Platform.XIAOHONGSHU,
             xiaohongshu_login_profile=True,
         )
+        xiaohongshu_login_provider = xiaohongshu_provider
         xiaohongshu_service = CommercialSearchService(
             repository,
             SourceService(repository, HeatService()),
@@ -975,6 +976,7 @@ class TestCrawlerBatches:
             xiaohongshu_provider=xiaohongshu_provider,
             xiaohongshu_login_provider=xiaohongshu_login_provider,
             bilibili_metrics_provider=bilibili_metrics_provider,
+            kuaishou_provider=kuaishou_provider,
         )
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
@@ -1067,8 +1069,8 @@ class TestCrawlerBatches:
         )
         assert xiaohongshu["running"] is False
         assert xiaohongshu["login_required"] is True
-        assert xiaohongshu["phase"] == "optional_login"
-        assert "可按需点击打开小红书登录" in xiaohongshu["message"]
+        assert xiaohongshu["phase"] == "waiting_login"
+        assert "请先完成扫码" in xiaohongshu["message"]
         assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
 
     def test_browser_discovery_capabilities_include_prerequisites(
@@ -1095,13 +1097,13 @@ class TestCrawlerBatches:
         )
         assert xiaohongshu_resp.status_code == 200
         assert xiaohongshu_resp.json()["platform"] == "xiaohongshu"
-        assert xiaohongshu_resp.json()["phase"] == "optional_login"
+        assert xiaohongshu_resp.json()["phase"] == "waiting_login"
         xiaohongshu_start = client.post(
             "/api/v1/crawler/browser-discovery/xiaohongshu/start"
         )
         assert xiaohongshu_start.status_code == 200
         assert xiaohongshu_start.json()["running"] is True
-        assert xiaohongshu_start.json()["phase"] == "login_browser_open"
+        assert xiaohongshu_start.json()["phase"] == "ready"
         assert crawler_sandbox.xiaohongshu_login_provider.visible_open_calls == 1
         assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
 
@@ -1113,7 +1115,7 @@ class TestCrawlerBatches:
             if item["platform"] == "xiaohongshu"
         )
         assert refreshed_xiaohongshu["running"] is True
-        assert refreshed_xiaohongshu["phase"] == "login_browser_open"
+        assert refreshed_xiaohongshu["phase"] == "ready"
 
         bilibili_resp = client.get(
             "/api/v1/crawler/browser-discovery/bilibili/capabilities"
@@ -1314,11 +1316,11 @@ class TestCrawlerBatches:
         assert data["published_window_days"] == 180
         assert [item["platform_label"] for item in data["platforms"]] == [
             "抖音官网搜索（最多30条）",
-            "小红书未登录公开搜索（最多15条）",
+            "小红书登录搜索",
             "快手浏览器搜索（平台默认综合排序）",
             "B站浏览器搜索（平台默认综合排序）",
         ]
-        assert data["provider_name"] == "抖音官网搜索 + 小红书未登录公开搜索 + 快手/B站浏览器"
+        assert data["provider_name"] == "抖音官网搜索 + 小红书登录搜索 + 快手/B站浏览器"
         assert data["hotspot_ready"] is False
         assert data["hotspot_time_strategy"] == "douyin_official_search_only"
         assert data["cache_ttl_minutes"] == 10
@@ -1381,7 +1383,9 @@ class TestCrawlerBatches:
         ]
         assert created_data["hotspot_window_hours"] is None
 
-    def test_create_and_read_persistent_batch(self, client: TestClient):
+    def test_create_and_read_persistent_batch(
+        self, client: TestClient, crawler_sandbox
+    ):
         keyword = f"露营{uuid4().hex[:6]}"
         create_resp = client.post(
             "/api/v1/crawler/batches",
@@ -1402,6 +1406,7 @@ class TestCrawlerBatches:
             "kuaishou",
             "bilibili",
         }
+        assert crawler_sandbox.kuaishou_provider.published_after_values == [None]
         batch_id = created["batch_id"]
         detail_resp = client.get(f"/api/v1/crawler/batches/{batch_id}")
         assert detail_resp.status_code == 200
@@ -1430,7 +1435,7 @@ class TestCrawlerBatches:
         first_run = detail["platform_runs"][0]
         assert first_run["relevant_count"] == first_run["returned_count"]
         assert "irrelevant_count" in first_run
-        assert first_run["relevance_rule_version"] == "platform_search_broad_recall_v1"
+        assert first_run["relevance_rule_version"] == "platform_search_final_eligible_v3"
 
         list_resp = client.get("/api/v1/crawler/batches")
         assert list_resp.status_code == 200
@@ -1468,7 +1473,7 @@ class TestCrawlerBatches:
         assert all(item["favorites"] is not None for item in enriched)
         assert all(item["duration_seconds"] is not None for item in enriched)
 
-    def test_xiaohongshu_uses_public_start_and_caps_execution_at_15(
+    def test_xiaohongshu_uses_login_profile_and_keeps_requested_count(
         self, client: TestClient, crawler_sandbox
     ):
         resp = client.post(
@@ -1486,11 +1491,12 @@ class TestCrawlerBatches:
         assert data["platforms"] == ["xiaohongshu"]
         assert len(data["platform_runs"]) == 1
         assert data["platform_runs"][0]["platform"] == "xiaohongshu"
-        assert data["platform_runs"][0]["requested_count"] == 15
-        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
+        assert data["platform_runs"][0]["requested_count"] == 30
+        assert crawler_sandbox.xiaohongshu_provider.start_calls == 1
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
         assert crawler_sandbox.xiaohongshu_login_provider.visible_open_calls == 0
 
-    def test_xiaohongshu_cache_does_not_restart_public_browser(
+    def test_xiaohongshu_cache_does_not_restart_login_browser(
         self,
         client: TestClient,
         crawler_sandbox,
@@ -1498,7 +1504,7 @@ class TestCrawlerBatches:
         payload = {
             "keyword": "缓存贴标机",
             "platforms": ["xiaohongshu"],
-            "count_per_platform": 15,
+            "count_per_platform": 30,
             "published_window_days": 180,
         }
         first = client.post(
@@ -1506,15 +1512,62 @@ class TestCrawlerBatches:
             json={**payload, "force_refresh": True},
         )
         assert first.status_code == 200
-        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
-        assert crawler_sandbox.xiaohongshu_provider.start_calls == 0
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
+        assert crawler_sandbox.xiaohongshu_provider.start_calls == 1
 
         crawler_sandbox.xiaohongshu_provider.running = False
         cached = client.post("/api/v1/crawler/batches", json=payload)
 
         assert cached.status_code == 200
-        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 1
-        assert crawler_sandbox.xiaohongshu_provider.start_calls == 0
+        assert crawler_sandbox.xiaohongshu_provider.public_start_calls == 0
+        assert crawler_sandbox.xiaohongshu_provider.start_calls == 1
+        assert cached.json()["platform_runs"][0]["cache_hit"] is True
+
+    @pytest.mark.parametrize(
+        ("platform", "count"),
+        [
+            ("douyin", 30),
+            ("xiaohongshu", 30),
+            ("kuaishou", 30),
+            ("bilibili", 30),
+        ],
+    )
+    def test_cached_free_platform_does_not_call_browser_start_again(
+        self,
+        client: TestClient,
+        crawler_sandbox,
+        monkeypatch,
+        platform: str,
+        count: int,
+    ):
+        del crawler_sandbox
+        original_start = crawler_api._start_browser_for_search
+        start_calls: list[object] = []
+
+        def tracked_start(provider, *, public_only: bool = False):
+            start_calls.append(provider)
+            return original_start(provider, public_only=public_only)
+
+        monkeypatch.setattr(crawler_api, "_start_browser_for_search", tracked_start)
+        payload = {
+            "keyword": f"缓存保护-{platform}",
+            "platforms": [platform],
+            "count_per_platform": count,
+            "published_window_days": 180,
+        }
+
+        first = client.post(
+            "/api/v1/crawler/batches",
+            json={**payload, "force_refresh": True},
+        )
+        assert first.status_code == 200
+        first_start_count = len(start_calls)
+        assert first_start_count == 1
+
+        cached = client.post("/api/v1/crawler/batches", json=payload)
+
+        assert cached.status_code == 200
+        assert len(start_calls) == first_start_count
         assert cached.json()["platform_runs"][0]["cache_hit"] is True
 
     def test_hotwords_endpoint_returns_cached_suggestions(self, client: TestClient):

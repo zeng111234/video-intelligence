@@ -96,9 +96,6 @@ from project.backend.app.core.config import (  # noqa: E402
     DOUYIN_BROWSER_DISCOVERY_ENABLED,
     DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
     DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT,
-    XIAOHONGSHU_PUBLIC_SEARCH_ENABLED,
-    XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR,
-    XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT,
     XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
     XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
     XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT,
@@ -201,21 +198,13 @@ def get_douyin_public_search_service() -> CommercialSearchService:
 
 @lru_cache
 def get_xiaohongshu_browser_provider() -> LocalPlatformBrowserSearchProvider:
-    return LocalPlatformBrowserSearchProvider(
-        platform=Platform.XIAOHONGSHU,
-        # 必须是新的未登录资料目录；不读取旧账号 profile 或 Cookie。
-        enabled=XIAOHONGSHU_PUBLIC_SEARCH_ENABLED,
-        profile_dir=XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR,
-        browser_channel=DOUYIN_BROWSER_CHANNEL,
-        debug_port=XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT,
-        timeout_seconds=DOUYIN_BROWSER_TIMEOUT_SECONDS,
-        anonymous_only=True,
-    )
+    """小红书找素材使用用户主动登录的独立资料目录。"""
+    return get_xiaohongshu_login_browser_provider()
 
 
 @lru_cache
 def get_xiaohongshu_login_browser_provider() -> LocalPlatformBrowserSearchProvider:
-    """Optional visible login window; never used by anonymous material search."""
+    """小红书登录与素材搜索共用的独立资料目录。"""
     return LocalPlatformBrowserSearchProvider(
         platform=Platform.XIAOHONGSHU,
         enabled=XIAOHONGSHU_LOGIN_BROWSER_ENABLED,

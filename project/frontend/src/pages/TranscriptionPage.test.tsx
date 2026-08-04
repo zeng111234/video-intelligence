@@ -7,9 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TranscriptionPage from "./TranscriptionPage";
 import { ToastProvider } from "../components/Toast";
 import {
+  createCrawlerLinkTranscription,
   listComplianceDrafts,
   listTranscriptions,
   listVoiceoverDrafts,
+  saveTranscriptionRevision,
   uploadAndTranscribe,
 } from "../api/client";
 
@@ -31,6 +33,7 @@ vi.mock("../api/client", () => ({
   previewCrawlerLinkTranscription: vi.fn(),
   reconnectTranscription: vi.fn(),
   retryTranscription: vi.fn(),
+  saveTranscriptionRevision: vi.fn(),
   updateVoiceoverDraft: vi.fn(),
   uploadAndTranscribe: vi.fn(),
 }));
@@ -98,6 +101,7 @@ const demoTask = {
 
 describe("TranscriptionPage", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({
@@ -114,37 +118,45 @@ describe("TranscriptionPage", () => {
     vi.mocked(listTranscriptions).mockResolvedValue([autoReviewedTask]);
     vi.mocked(listVoiceoverDrafts).mockResolvedValue([]);
     vi.mocked(listComplianceDrafts).mockResolvedValue([]);
+    vi.mocked(saveTranscriptionRevision).mockResolvedValue({ revision_id: "revision-test" });
   });
 
   afterEach(() => {
     cleanup();
   });
 
-  it("shows an AI-reviewed readonly transcript without customer proofread controls", async () => {
+  it("shows a focused editable transcript and saves confirmed revisions", async () => {
     render(
       <MemoryRouter initialEntries={["/transcription?task=transcript-ai"]}>
         <ToastProvider><TranscriptionPage /></ToastProvider>
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("AI自动质检完成")).toBeTruthy();
-    expect(screen.getByText("AI标记存疑 1 段")).toBeTruthy();
-    expect(screen.getByText("AI质检结果")).toBeTruthy();
-    expect(screen.getByText("AI标记存疑")).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "时间轴（1）" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("tab", { name: "完整文稿" }));
-    expect(document.querySelector(".transcription-fulltext-scroll")).toBeTruthy();
-    expect(screen.queryByText("校对人")).toBeNull();
-    expect(screen.queryByText("确认成稿")).toBeNull();
-    expect(screen.queryByRole("tab", { name: "合规优化" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "生成合规优化稿" })).toBeNull();
-    expect(screen.queryByRole("tab", { name: "数字人口播稿" })).toBeNull();
-    expect(screen.getByText("下一步：AI 文案改写")).toBeTruthy();
+    expect(await screen.findByText("1处待确认")).toBeTruthy();
+    expect(screen.queryByText("原视频当前不可播放")).toBeNull();
+    expect(screen.queryByRole("slider")).toBeNull();
+    const editor = screen.getByRole("textbox", { name: "转写片段 1" });
+    expect((editor as HTMLTextAreaElement).value).toBe("AI 已选择的最佳转写。");
+    fireEvent.change(editor, { target: { value: "人工修正后的转写。" } });
+    fireEvent.click(screen.getByRole("button", { name: /确认此段/ }));
+    expect(screen.getByText("没有待确认内容")).toBeTruthy();
     expect(screen.getByRole("button", { name: "确认并带到 AI 文案" })).toBeTruthy();
-    expect(screen.queryByText("去重口播稿")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "确认并带到 AI 文案" }));
+    await waitFor(() => expect(saveTranscriptionRevision).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: "transcript-ai",
+      approve: true,
+      segments: [expect.objectContaining({ text: "人工修正后的转写。", reviewed: true })],
+    })));
   });
 
-  it("offers one multi-platform share-link entry instead of a Douyin-only tab", async () => {
+  it("opens on the multi-platform link entry and starts transcription in one click", async () => {
+    vi.mocked(createCrawlerLinkTranscription).mockResolvedValue({
+      status: "succeeded",
+      message: "已创建转写任务",
+      work_id: "BV18m421j7jA",
+      oneapi_estimated_cost_cny: null,
+      transcription: autoReviewedTask,
+    });
     render(
       <MemoryRouter initialEntries={["/transcription"]}>
         <ToastProvider><TranscriptionPage /></ToastProvider>
@@ -153,12 +165,24 @@ describe("TranscriptionPage", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /新建转写/ }));
     const platformLinkTab = await screen.findByRole("tab", { name: /平台分享链接/ });
-    fireEvent.click(platformLinkTab);
-    expect(await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接")).toBeTruthy();
+    expect(platformLinkTab.getAttribute("aria-selected")).toBe("true");
+    const linkInput = await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接");
     expect(screen.queryByRole("tab", { name: /抖音分享链接/ })).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
-    expect(screen.getByText(/公司阿里云 Fun-ASR/)).toBeTruthy();
-    expect(screen.queryByText(/large-v3-turbo/)).toBeNull();
+    expect(screen.queryByText("权利确认边界")).toBeNull();
+    expect(screen.queryByText(/公司阿里云 Fun-ASR/)).toBeNull();
+    expect(screen.queryByText("链接解析已就绪")).toBeNull();
+    expect(screen.queryByRole("button", { name: "识别链接" })).toBeNull();
+
+    fireEvent.change(linkInput, { target: { value: "https://www.bilibili.com/video/BV18m421j7jA" } });
+    fireEvent.click(screen.getByRole("button", { name: "开始转写" }));
+
+    await waitFor(() => expect(createCrawlerLinkTranscription).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(createCrawlerLinkTranscription).mock.calls[0][0]).toMatchObject({
+      shareText: "https://www.bilibili.com/video/BV18m421j7jA",
+      rightsConfirmed: true,
+      modelName: "fun-asr",
+    });
   });
 
   it("opens the crawler upload handoff on the file tab, stages the file, and waits for explicit confirmation", async () => {
@@ -206,7 +230,7 @@ describe("TranscriptionPage", () => {
     ]);
   });
 
-  it("shows cloud transcript as review-required without a second ASR claim", async () => {
+  it("does not mark every cloud segment for review when confidence is unavailable", async () => {
     vi.mocked(listTranscriptions).mockResolvedValue([{
       ...autoReviewedTask,
       task_id: "transcript-cloud",
@@ -214,17 +238,17 @@ describe("TranscriptionPage", () => {
       provider_job_id: "aliyun-job-1",
       provider_status: "succeeded",
       model_name: "fun-asr",
-      stage: "待人工复核",
+      stage: "识别完成",
       approved_revision_id: null,
       auto_reviewed: false,
-      uncertain_segment_count: 1,
+      uncertain_segment_count: 0,
       secondary_asr_count: 0,
       llm_review_count: 0,
       segments: [{
         ...autoReviewedTask.segments[0],
         confidence: null,
-        needs_review: true,
-        quality_status: "pending",
+        needs_review: false,
+        quality_status: "completed",
         quality_source: "primary_asr",
       }],
     }]);
@@ -235,9 +259,10 @@ describe("TranscriptionPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("云端识别结果")).toBeTruthy();
-    expect(screen.getAllByText("待人工复核").length).toBeGreaterThan(0);
-    expect(screen.getByText(/系统未做二次识别或自动改写/)).toBeTruthy();
+    expect(await screen.findByText("已全部复核")).toBeTruthy();
+    expect(screen.getByText("没有待确认内容")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "转写片段 1" })).toBeTruthy();
+    expect(screen.queryByText(/待人工复核/)).toBeNull();
   });
 
   it("shows a mock low-confidence LLM rewrite without claiming a real model call", async () => {
@@ -249,12 +274,10 @@ describe("TranscriptionPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("演示通过")).toBeTruthy();
-    expect(screen.getByText("演示：LLM拟修订")).toBeTruthy();
-    expect(screen.getByText("先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。")).toBeTruthy();
+    expect(await screen.findByText("2处待确认")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "转写片段 2" }) as HTMLTextAreaElement).value).toBe("先看看自己主要是日常通勤、户外活动，还是需要长时间带妆。");
     expect(screen.getByText("原识别：先判断你是通勤、户外，还是长时间带妆。")).toBeTruthy();
-    expect(screen.getByText(/这是演示数据：67% 片段展示了 LLM 口播修订效果/)).toBeTruthy();
-    expect(screen.queryByText("待处理")).toBeNull();
+    expect(screen.queryByText(/LLM/)).toBeNull();
   });
 
   it("uses a short theme extracted from the transcript instead of an opaque downloaded filename in history", async () => {
@@ -307,9 +330,9 @@ describe("TranscriptionPage", () => {
       </MemoryRouter>,
     );
 
-    expect(await screen.findByText("LLM自动修订 1 段")).toBeTruthy();
-    expect(screen.getByText("LLM已修订")).toBeTruthy();
+    expect(await screen.findByText("已全部复核")).toBeTruthy();
+    expect((screen.getByRole("textbox", { name: "转写片段 1" }) as HTMLTextAreaElement).value).toBe("今天的优惠是八十块。");
     expect(screen.getByText("原识别：今天优惠八十元")).toBeTruthy();
-    expect(screen.getAllByText(/LLM 已自动修订 1 段低置信口播文本/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/LLM/)).toBeNull();
   });
 });

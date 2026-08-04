@@ -430,11 +430,13 @@ def test_fun_asr_query_retries_once_and_normalizes_downloaded_transcript():
                                     "begin_time": 100,
                                     "end_time": 500,
                                     "text": "你",
+                                    "confidence": 0.8,
                                 },
                                 {
                                     "begin_time": 800,
                                     "end_time": 1800,
                                     "text": "好",
+                                    "confidence": 0.6,
                                 },
                             ],
                         },
@@ -458,6 +460,8 @@ def test_fun_asr_query_retries_once_and_normalizes_downloaded_transcript():
     assert "result_locator" not in snapshot.model_dump(mode="json")
     assert transcript.transcript == "你好，世界。"
     assert transcript.duration_seconds == 4
+    assert transcript.segments[0].confidence == pytest.approx(0.7)
+    assert transcript.segments[1].confidence is None
     assert transcript.spoken_ranges == [
         TimeRange(start=0.1, end=0.5),
         TimeRange(start=0.8, end=1.8),

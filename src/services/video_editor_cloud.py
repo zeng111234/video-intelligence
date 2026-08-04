@@ -1384,6 +1384,7 @@ class TranscriptSegment(BaseModel):
     end: float = Field(gt=0)
     text: str
     speaker_id: int | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
 
     @model_validator(mode="after")
     def _validate_order(self) -> TranscriptSegment:

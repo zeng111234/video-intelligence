@@ -134,6 +134,14 @@ describe("AiCopyPage", () => {
       const mark = view.container.querySelector("mark");
       expect(mark?.textContent).toBe("竞品科技");
     });
+    expect(within(view.container).getByRole("table", { name: "文案逐段对照" })).toBeTruthy();
+    expect(within(view.container).getByText("需核对", { selector: ".ai-copy-row-status span" })).toBeTruthy();
+    fireEvent.click(within(view.container).getByRole("button", { name: "确认本段" }));
+    expect(within(view.container).getByText("已确认", { selector: ".ai-copy-row-status span" })).toBeTruthy();
+    fireEvent.click(within(view.container).getByRole("button", { name: /确认并继续制作/ }));
+    expect(window.location.pathname).toBe("/avatar");
+    expect(new URLSearchParams(window.location.search).get("sourceTask")).toBe("copy-attention-1");
+    expect(new URLSearchParams(window.location.search).get("script")).toBe("竞品科技发布了这款工具。");
     expect(within(view.container).queryByText("已高亮可能属于其他主体的名称")).toBeNull();
   });
 

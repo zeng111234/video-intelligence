@@ -470,20 +470,41 @@ class TranscriptionService:
                     start=item.start,
                     end=item.end,
                     text=item.text,
-                    confidence=None,
-                    needs_review=True,
-                    quality_status="pending",
+                    confidence=item.confidence,
+                    needs_review=(
+                        item.confidence is not None and item.confidence < 0.75
+                    ),
+                    quality_status=(
+                        "pending"
+                        if item.confidence is not None and item.confidence < 0.75
+                        else "accepted"
+                        if item.confidence is not None
+                        else "completed"
+                    ),
                     quality_source="primary_asr",
-                    quality_note="阿里云识别结果，等待人工复核。",
+                    quality_note=(
+                        "阿里云标记为低置信度，请确认该片段。"
+                        if item.confidence is not None and item.confidence < 0.75
+                        else "阿里云识别完成，未返回片段置信度。"
+                        if item.confidence is None
+                        else "阿里云识别完成。"
+                    ),
                 )
                 for item in cloud_transcript.segments
                 if item.text.strip()
             ]
             self._validate_segments(segments)
+            uncertain_segment_count = sum(
+                1 for segment in segments if segment.needs_review
+            )
             completed = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
-                    "stage": "待人工复核",
+                    "stage": (
+                        f"有 {uncertain_segment_count} 段待确认"
+                        if uncertain_segment_count
+                        else "识别完成"
+                    ),
                     "progress": 100,
                     "provider_status": "succeeded",
                     "segments": segments,
@@ -492,7 +513,7 @@ class TranscriptionService:
                     "language": cloud_transcript.language
                     or task.language
                     or "zh",
-                    "uncertain_segment_count": len(segments),
+                    "uncertain_segment_count": uncertain_segment_count,
                     "auto_reviewed": False,
                     "secondary_asr_count": 0,
                     "llm_review_count": 0,

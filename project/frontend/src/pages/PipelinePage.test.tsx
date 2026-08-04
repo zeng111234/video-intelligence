@@ -630,7 +630,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: /管理素材网站/ }));
     expect(await screen.findByText("素材网站只用于找素材，与发布账号相互独立。以后增加新网站也会集中在这里管理。")).toBeTruthy();
     expect(screen.getByText("先连接至少一个素材网站")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "登录抖音热点宝" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "登录抖音" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录快手" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录小红书" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录B站" })).toBeTruthy();

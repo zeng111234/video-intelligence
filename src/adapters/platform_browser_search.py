@@ -167,7 +167,7 @@ class LocalPlatformBrowserSearchProvider:
                 f"本机 Chrome {self.spec.label}未登录公开搜索"
                 if self.anonymous_only
                 else (
-                    "本机 Chrome 小红书可选登录"
+                    "本机 Chrome 小红书登录搜索"
                     if self.is_xiaohongshu_login_profile
                     else f"本机 Chrome {self.spec.label}搜索"
                 )
@@ -187,7 +187,7 @@ class LocalPlatformBrowserSearchProvider:
                 "public_browser_anonymous_only"
                 if self.anonymous_only
                 else (
-                    "manual_login_optional"
+                    "manual_login_required"
                     if self.is_xiaohongshu_login_profile
                     else "public_browser_optional_login"
                 )
@@ -214,7 +214,7 @@ class LocalPlatformBrowserSearchProvider:
                 False,
                 "disabled",
                 (
-                    "小红书可选登录浏览器已关闭；找素材仍只使用未登录公开搜索。"
+                    "小红书尚未登录；请先打开登录窗口完成扫码，再开始找素材。"
                     if self.is_xiaohongshu_login_profile
                     else f"{self.spec.label}浏览器搜索已关闭。"
                 ),
@@ -227,7 +227,7 @@ class LocalPlatformBrowserSearchProvider:
                 False,
                 "dependency_missing",
                 (
-                    f"小红书可选登录浏览器尚未就绪：{'；'.join(missing)}。"
+                    f"小红书登录浏览器尚未就绪：{'；'.join(missing)}。"
                     if self.is_xiaohongshu_login_profile
                     else f"{self.spec.label}浏览器尚未就绪：{'；'.join(missing)}。"
                 ),
@@ -243,15 +243,14 @@ class LocalPlatformBrowserSearchProvider:
                 False,
                 False if self.anonymous_only else True,
                 False,
-                "optional_login"
+                "waiting_login"
                 if self.is_xiaohongshu_login_profile
                 else "browser_closed",
                 (
                     f"{self.spec.label}未登录公开浏览器尚未打开；开始找素材时会使用隔离会话启动。"
                     if self.anonymous_only
                     else (
-                        "小红书当前未登录；需要时可点击“打开小红书登录”打开独立登录浏览器。"
-                        "找素材不会使用该登录资料目录。"
+                        "小红书尚未登录；请点击“登录小红书”并完成扫码后再找素材。"
                         if self.is_xiaohongshu_login_profile
                         else f"{self.spec.label}浏览器尚未打开；开始找素材时会自动打开。"
                     )
@@ -284,8 +283,7 @@ class LocalPlatformBrowserSearchProvider:
                     f"{product} 已打开；将使用隔离的未登录会话进入{self.spec.label}公开搜索页。"
                     if self.anonymous_only
                     else (
-                        "小红书登录浏览器已打开；可选择扫码登录或直接关闭。"
-                        "找素材仍使用独立未登录公开浏览器。"
+                        "小红书登录浏览器已打开，正在检查登录状态。"
                         if self.is_xiaohongshu_login_profile
                         else f"{product} 已打开，正在进入{self.spec.label}公开页面。"
                     )
@@ -303,8 +301,7 @@ class LocalPlatformBrowserSearchProvider:
                     f"{self.spec.label}要求安全验证，未登录公开搜索已停止。"
                     if self.anonymous_only
                     else (
-                        "小红书登录浏览器已打开；如需登录，请在该窗口完成扫码或人工验证。"
-                        "找素材仍不会复用这个登录资料目录。"
+                        "小红书登录浏览器已打开；请在该窗口完成扫码或人工验证。"
                         if self.is_xiaohongshu_login_profile
                         else f"请在专用 Chrome 窗口完成{self.spec.label}扫码登录或人工验证。"
                     )
@@ -318,8 +315,7 @@ class LocalPlatformBrowserSearchProvider:
                 True,
                 "login_browser_open" if self.is_xiaohongshu_login_profile else "ready",
                 (
-                    "小红书登录浏览器已打开；当前未见登录拦截。"
-                    "找素材仍使用独立未登录公开浏览器。"
+                    "小红书登录浏览器已打开；当前未见登录拦截，可开始找素材。"
                     if self.is_xiaohongshu_login_profile
                     else f"{self.spec.label}公开页面已打开；将直接尝试读取公开搜索结果。"
                 ),
@@ -334,8 +330,7 @@ class LocalPlatformBrowserSearchProvider:
                 f"{self.spec.label}未登录公开浏览器已就绪；只读取搜索页已加载的作品元数据。"
                 if self.anonymous_only
                 else (
-                    "小红书登录浏览器已打开；当前未见登录拦截。"
-                    "找素材仍使用独立未登录公开浏览器。"
+                    "小红书已登录，可读取搜索页已加载的作品元数据。"
                     if self.is_xiaohongshu_login_profile
                     else f"{self.spec.label}公开浏览器已就绪；只读取搜索页已加载的作品元数据。"
                 )
@@ -360,10 +355,6 @@ class LocalPlatformBrowserSearchProvider:
                 kind=ProviderErrorKind.AUTHORIZATION,
                 retryable=False,
             )
-        if self.is_xiaohongshu_login_profile:
-            # 这个 profile 的唯一职责是由操作者在可见窗口中登录；不允许
-            # 任意调用方把它作为后台采集窗口启动。
-            return self.open_login_browser()
         return self._start_browser(visible=False)
 
     def start_public_browser(self) -> BrowserSessionStatus:
@@ -479,12 +470,6 @@ class LocalPlatformBrowserSearchProvider:
             raise LicensedProviderError(
                 f"{self.spec.label}适配器不能搜索其他平台。",
                 kind=ProviderErrorKind.VALIDATION,
-            )
-        if self.is_xiaohongshu_login_profile:
-            raise LicensedProviderError(
-                "小红书登录资料目录只用于人工登录，不能用于素材搜索。",
-                kind=ProviderErrorKind.AUTHORIZATION,
-                retryable=False,
             )
         max_result_limit = (
             _XIAOHONGSHU_PUBLIC_RESULT_LIMIT

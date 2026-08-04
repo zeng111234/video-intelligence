@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -56,6 +56,7 @@ import { useNavigate } from "react-router-dom";
 import "./KeywordCrawlerPage.css";
 
 const { Text, Title, Paragraph } = Typography;
+const RECENT_RESULT_REUSE_MINUTES = 10;
 
 const STATUS_COLOR: Record<string, string> = {
   queued: "default",
@@ -75,8 +76,6 @@ type BrowserPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 type MaterialPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 type MaterialCount = 30 | 50 | 100;
 type MaterialSort = "heat" | "newest" | "likes" | "comments" | "plays";
-type KuaishouSort = "platform" | "newest" | "likes";
-type KuaishouDurationBucket = "all" | "under_60" | "between_60_300" | "over_300";
 type PublishedWindowDays = CrawlerSearchRequest["published_window_days"];
 
 interface MaterialDisplaySettings {
@@ -102,19 +101,6 @@ const PUBLISHED_WINDOW_OPTIONS: Array<{ label: string; value: PublishedWindowDay
   { label: "一天内", value: 1 },
   { label: "一周内", value: 7 },
   { label: "半年内", value: 180 },
-];
-
-const KUAISHOU_SORT_OPTIONS: Array<{ label: string; value: KuaishouSort }> = [
-  { label: "平台综合", value: "platform" },
-  { label: "最新发布", value: "newest" },
-  { label: "最多点赞", value: "likes" },
-];
-
-const KUAISHOU_DURATION_OPTIONS: Array<{ label: string; value: KuaishouDurationBucket }> = [
-  { label: "不限", value: "all" },
-  { label: "1分钟以下", value: "under_60" },
-  { label: "1-5分钟", value: "between_60_300" },
-  { label: "5分钟以上", value: "over_300" },
 ];
 
 const HOTSPOT_WINDOW_OPTIONS: Array<{ label: string; value: HotspotWindowHours }> = [
@@ -316,13 +302,12 @@ function hotspotEvidenceSummary(evidence: string) {
 export default function KeywordCrawlerPage() {
   const toast = useToast();
   const navigate = useNavigate();
+  const searchInFlightRef = useRef(false);
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
   const [platforms, setPlatforms] = useState<MaterialPlatform[]>([]);
   const [countPerPlatform, setCountPerPlatform] = useState<MaterialCount>(30);
   const [publishedWindowDays, setPublishedWindowDays] = useState<PublishedWindowDays>(0);
-  const [kuaishouSort, setKuaishouSort] = useState<KuaishouSort>("platform");
-  const [kuaishouDurationBucket, setKuaishouDurationBucket] = useState<KuaishouDurationBucket>("all");
   const [materialSort, setMaterialSort] = useState<MaterialSort>("heat");
   const [batches, setBatches] = useState<CrawlerBatchResponse[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<CrawlerBatchResponse | null>(null);
@@ -359,13 +344,7 @@ export default function KeywordCrawlerPage() {
     target_main_count: countPerPlatform,
     allow_paid_fallback: false,
     platforms,
-    ...(platforms.includes("kuaishou")
-      ? {
-        kuaishou_sort: kuaishouSort,
-        kuaishou_duration_bucket: kuaishouDurationBucket,
-      }
-      : {}),
-  }), [countPerPlatform, keyword, kuaishouDurationBucket, kuaishouSort, platforms, publishedWindowDays]);
+  }), [countPerPlatform, keyword, platforms, publishedWindowDays]);
   const keywordLength = requestPayload.keyword.length;
   const canSearch = keywordLength >= 1 && keywordLength <= 50 && platforms.length > 0;
   const keywordHelp =
@@ -443,6 +422,10 @@ export default function KeywordCrawlerPage() {
   }, [searchProgress]);
 
   const handleSearch = async (keywordOverride?: string) => {
+    if (searchInFlightRef.current) {
+      toast.info("正在找素材，请稍等，不要重复提交。");
+      return;
+    }
     const searchKeyword = (keywordOverride ?? keyword).trim();
     if (searchKeyword.length < 1 || searchKeyword.length > 50) {
       toast.warning("关键词需为 1–50 个字符");
@@ -453,6 +436,7 @@ export default function KeywordCrawlerPage() {
       return;
     }
     const payload: CrawlerSearchRequest = { ...requestPayload, keyword: searchKeyword };
+    searchInFlightRef.current = true;
     setSubmitting(true);
     setSearchElapsedSeconds(0);
     setSearchProgress({ startedAt: Date.now(), platforms: [...platforms] });
@@ -465,6 +449,7 @@ export default function KeywordCrawlerPage() {
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
+      searchInFlightRef.current = false;
       setSubmitting(false);
       setSearchProgress(null);
       setSearchElapsedSeconds(0);
@@ -511,11 +496,9 @@ export default function KeywordCrawlerPage() {
         };
       });
       toast.success(
-        platform === "xiaohongshu"
-          ? "小红书登录页已打开。登录是可选的；找素材仍默认使用未登录公开页。"
-          : started.running || started.ready_to_crawl
-            ? `${started.platform_label}浏览器已打开；登录状态会在实际搜索时核验`
-            : `${started.platform_label}可见浏览器已打开；若页面要求登录或验证，请在窗口中处理`,
+        started.running || started.ready_to_crawl
+          ? `${started.platform_label}官方窗口已打开；完成登录或验证后即可选择找素材`
+          : `${started.platform_label}官方窗口正在打开；请在窗口中处理登录或验证后再选择`,
       );
     } catch (err) {
       toast.error((err as Error).message);
@@ -691,30 +674,35 @@ export default function KeywordCrawlerPage() {
             <div className="crawler-platform-list">
               {PLATFORM_OPTIONS.map((option) => {
                 const connection = browserConnections.find((item) => item.platform === option.value);
-                const ready = Boolean(connection?.running || connection?.ready_to_crawl);
-                const needsAttention = Boolean(connection?.login_required && !ready);
+                const searchReady = Boolean(connection?.running && !connection.login_required && connection.ready_to_crawl);
+                const needsAttention = Boolean(connection?.enabled && !searchReady);
                 const status = !connection
                   ? "状态加载中"
                   : !connection.enabled
                     ? "未启用"
-                    : ready
-                      ? "已就绪"
-                      : "";
+                    : searchReady
+                      ? "可搜索"
+                      : connection.login_required
+                        ? "待登录"
+                        : connection.running
+                          ? "浏览器准备中"
+                          : "未登录";
                 return (
                   <div className="crawler-platform-row" key={option.value}>
                     <Checkbox
                       aria-label={option.label}
                       checked={platforms.includes(option.value)}
+                      disabled={!searchReady}
                       onChange={(event) => setPlatforms((current) => (
                         event.target.checked
                           ? [...current, option.value]
                           : current.filter((item) => item !== option.value)
                       ))}
                     />
-                    <span className={`crawler-platform-status${needsAttention ? " warning" : ready ? " ready" : ""}`} />
+                    <span className={`crawler-platform-status${needsAttention ? " warning" : searchReady ? " ready" : ""}`} />
                     <Text className="crawler-platform-name">{option.label}</Text>
                     <Text type="secondary" className="crawler-platform-state">{status}</Text>
-                    {connection?.enabled && (needsAttention || option.value === "xiaohongshu") && (
+                    {connection?.enabled && !searchReady && (
                       <Button
                         type="link"
                         size="small"
@@ -754,27 +742,10 @@ export default function KeywordCrawlerPage() {
                 ]}
               />
             </div>
-            {platforms.includes("kuaishou") && (
-              <>
-                <div className="crawler-rule-field">
-                  <Text type="secondary">快手排序</Text>
-                  <Select<KuaishouSort>
-                    aria-label="快手排序"
-                    value={kuaishouSort}
-                    onChange={setKuaishouSort}
-                    options={KUAISHOU_SORT_OPTIONS}
-                  />
-                </div>
-                <div className="crawler-rule-field">
-                  <Text type="secondary">快手时长</Text>
-                  <Select<KuaishouDurationBucket>
-                    aria-label="快手时长"
-                    value={kuaishouDurationBucket}
-                    onChange={setKuaishouDurationBucket}
-                    options={KUAISHOU_DURATION_OPTIONS}
-                  />
-                </div>
-              </>
+            {platforms.includes("kuaishou") && publishedWindowDays !== 0 && (
+              <Text type="secondary" className="crawler-platform-filter-note">
+                快手不支持发布时间筛选，将按不限时间搜索。
+              </Text>
             )}
           </section>
 
@@ -1124,6 +1095,7 @@ function UnifiedPlatformResults({
     [runs],
   );
   const emptyRuns = runs.filter((run) => run.candidates.length === 0);
+  const cachedRuns = runs.filter((run) => run.cache_hit);
   const platformShortfalls = runs
     .filter((run) => run.candidates.length > 0)
     .map(crawlShortfallSummary)
@@ -1169,6 +1141,15 @@ function UnifiedPlatformResults({
         </Space>
         <Text type="secondary">已合并去重</Text>
       </div>
+      {cachedRuns.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="刚刚已经搜索过，为避免访问过于频繁，本次没有重新访问平台"
+          description={`${cachedRuns.map((run) => run.platform_label).join("、")}复用了 ${RECENT_RESULT_REUSE_MINUTES} 分钟内的搜索结果；超过 ${RECENT_RESULT_REUSE_MINUTES} 分钟后再搜索会重新获取。`}
+        />
+      )}
       {(emptyRuns.length > 0 || missingSelectedPlatforms.length > 0 || platformShortfalls.length > 0) && (
           <Alert
             type="info"

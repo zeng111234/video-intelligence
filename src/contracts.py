@@ -194,6 +194,7 @@ class CandidateRepository(Protocol):
         hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
+        request_fingerprint: str | None = None,
     ) -> PlatformSearchRun | None: ...
 
     def monthly_platform_query_count(self, since: datetime) -> int: ...

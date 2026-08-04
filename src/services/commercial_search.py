@@ -169,9 +169,15 @@ class CommercialSearchService:
         platforms: tuple[Platform, ...] | None = None,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
         include_monitoring: bool = True,
+        kuaishou_sort: str = "platform",
+        kuaishou_duration_bucket: str = "all",
     ) -> list[PlatformSearchPreview]:
         keyword = self._validate_request(
             keyword, published_window_days, count, hotspot_window_hours
+        )
+        kuaishou_sort, kuaishou_duration_bucket = self._validate_kuaishou_filters(
+            kuaishou_sort,
+            kuaishou_duration_bucket,
         )
         selected_platforms = self._selected_platforms(platforms)
         safe_cache_ttl_minutes = max(1, int(cache_ttl_minutes))
@@ -196,6 +202,8 @@ class CommercialSearchService:
                     count=count,
                     now=now,
                     cache_ttl_minutes=safe_cache_ttl_minutes,
+                    kuaishou_sort=kuaishou_sort,
+                    kuaishou_duration_bucket=kuaishou_duration_bucket,
                 )
             )
             # 首次 + 两次自适应复搜；用户未开启趋势跟踪时只预估首次调用。
@@ -1158,6 +1166,7 @@ class CommercialSearchService:
             hotspot_window_hours=hotspot_window_hours,
             requested_count=count,
             since=now - timedelta(minutes=max(1, cache_ttl_minutes)),
+            request_fingerprint=fingerprint,
         )
         if cached and cached.request_fingerprint == fingerprint:
             return cached

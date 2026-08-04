@@ -279,13 +279,13 @@ def test_xiaohongshu_explicit_login_profile_is_visible_and_separate(
     assert login.is_xiaohongshu_login_profile is True
     assert public.profile_dir != login.profile_dir
     assert public.debug_port != login.debug_port
-    assert login.capabilities().permission_status == "manual_login_optional"
+    assert login.capabilities().permission_status == "manual_login_required"
     assert "--new-window" in launched[0]
     assert "--incognito" not in launched[0]
     assert f"--user-data-dir={login_profile}" in launched[0]
     with pytest.raises(LicensedProviderError, match="只用于人工登录"):
         login.start_public_browser()
-    with pytest.raises(LicensedProviderError, match="只用于人工登录"):
+    with pytest.raises(LicensedProviderError, match="当前未登录"):
         login.search(Platform.XIAOHONGSHU, "贴标机", None, 1, "login-profile-test")
 
 

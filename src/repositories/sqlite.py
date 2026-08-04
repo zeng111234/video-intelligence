@@ -1592,7 +1592,26 @@ class SQLiteRepository:
         hotspot_window_hours: int | None,
         requested_count: int,
         since: datetime,
+        request_fingerprint: str | None = None,
     ) -> PlatformSearchRun | None:
+        if request_fingerprint is not None:
+            row = self.connection.execute(
+                """
+                SELECT run.payload_json
+                FROM platform_search_runs AS run
+                WHERE run.provider = ? AND run.platform = ?
+                  AND run.status IN ('succeeded', 'partial')
+                  AND run.finished_at >= ?
+                  AND json_extract(run.payload_json, '$.request_fingerprint') = ?
+                ORDER BY run.finished_at DESC LIMIT 1
+                """,
+                (provider, platform.value, since.isoformat(), request_fingerprint),
+            ).fetchone()
+            return (
+                PlatformSearchRun.model_validate_json(row["payload_json"])
+                if row
+                else None
+            )
         row = self.connection.execute(
             """
             SELECT run.payload_json
