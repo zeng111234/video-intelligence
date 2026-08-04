@@ -40,7 +40,9 @@ MONTHLY_HARD_LIMIT_COST_CNY = 10.0
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
-RELEVANCE_RULE_VERSION = "platform_search_broad_recall_v1"
+# 规则版本同时是公共搜索缓存键的一部分。升级为“标题/话题直接命中”后，
+# 旧的宽召回结果不能继续作为本次搜索结果复用。
+RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v3"
 _BUSINESS_INTENT_SUFFIXES = (
     "获客",
     "引流",
@@ -252,9 +254,15 @@ class CommercialSearchService:
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
         schedule_recrawls: bool = True,
         tracking_parent_batch_id: str | None = None,
+        kuaishou_sort: str = "platform",
+        kuaishou_duration_bucket: str = "all",
     ) -> SearchBatch:
         keyword = self._validate_request(
             keyword, published_window_days, count, hotspot_window_hours
+        )
+        kuaishou_sort, kuaishou_duration_bucket = self._validate_kuaishou_filters(
+            kuaishou_sort,
+            kuaishou_duration_bucket,
         )
         selected_platforms = self._selected_platforms(platforms)
         safe_cache_ttl_minutes = max(1, int(cache_ttl_minutes))
@@ -266,6 +274,8 @@ class CommercialSearchService:
             published_window_days=published_window_days,
             hotspot_window_hours=hotspot_window_hours,
             requested_count_per_platform=count,
+            kuaishou_sort=kuaishou_sort,
+            kuaishou_duration_bucket=kuaishou_duration_bucket,
             provider=capability.provider_name,
             mode=capability.mode,
             platforms=list(selected_platforms),
@@ -297,6 +307,8 @@ class CommercialSearchService:
                     cache_ttl_minutes=safe_cache_ttl_minutes,
                     schedule_recrawls=schedule_recrawls,
                     tracking_parent_batch_id=tracking_parent_batch_id,
+                    kuaishou_sort=kuaishou_sort,
+                    kuaishou_duration_bucket=kuaishou_duration_bucket,
                 )
             )
 
@@ -488,6 +500,8 @@ class CommercialSearchService:
         cache_ttl_minutes: int,
         schedule_recrawls: bool,
         tracking_parent_batch_id: str | None,
+        kuaishou_sort: str,
+        kuaishou_duration_bucket: str,
     ) -> PlatformSearchRun:
         capability = self.provider.capabilities()
         started_at = self.clock()
@@ -498,6 +512,8 @@ class CommercialSearchService:
             published_window_days,
             hotspot_window_hours,
             count,
+            kuaishou_sort,
+            kuaishou_duration_bucket,
         )
         idempotency_key = hashlib.sha256(
             f"{batch.batch_id}|{fingerprint}".encode("utf-8")
@@ -531,8 +547,10 @@ class CommercialSearchService:
                 published_window_days=published_window_days,
                 hotspot_window_hours=hotspot_window_hours,
                 count=count,
-                    now=started_at,
-                    cache_ttl_minutes=cache_ttl_minutes,
+                kuaishou_sort=kuaishou_sort,
+                kuaishou_duration_bucket=kuaishou_duration_bucket,
+                now=started_at,
+                cache_ttl_minutes=cache_ttl_minutes,
             )
         )
         if cached:
@@ -552,6 +570,8 @@ class CommercialSearchService:
                 relevance_rule_version=cached.relevance_rule_version,
                 result_state=cached.result_state,
                 payload_diagnostic=cached.payload_diagnostic,
+                crawl_stop_reason=cached.crawl_stop_reason,
+                crawl_stop_message=cached.crawl_stop_message,
                 cached_from_run_id=cached.run_id,
                 cache_hit=True,
             )
@@ -616,6 +636,13 @@ class CommercialSearchService:
             }
             if hotspot_window_hours is not None:
                 search_kwargs["hotspot_window_hours"] = hotspot_window_hours
+            if platform == Platform.KUAISHOU and (
+                kuaishou_sort != "platform" or kuaishou_duration_bucket != "all"
+            ):
+                search_kwargs["search_filters"] = {
+                    "kuaishou_sort": kuaishou_sort,
+                    "kuaishou_duration_bucket": kuaishou_duration_bucket,
+                }
             page = self._search_with_retry(
                 **search_kwargs,
             )
@@ -687,6 +714,8 @@ class CommercialSearchService:
                 provider_request_id=page.request_id,
                 billable_units=page.billable_units,
                 payload_diagnostic=page.payload_diagnostic,
+                crawl_stop_reason=page.crawl_stop_reason,
+                crawl_stop_message=page.crawl_stop_message,
             )
             self.repository.save_discovery_result(discovery)
             self._save_matches_and_checkpoints(
@@ -748,6 +777,8 @@ class CommercialSearchService:
                 incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 result_state=result_state,
+                crawl_stop_reason=page.crawl_stop_reason,
+                crawl_stop_message=page.crawl_stop_message,
                 payload_diagnostic=page.payload_diagnostic,
             )
             self.repository.mark_platform_search_request(
@@ -892,6 +923,11 @@ class CommercialSearchService:
                 evidence=item.evidence,
             )
             seen.add(item.platform_item_id)
+            # B站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。即使底层页面
+            # 误回传，也绝不能让未直接命中关键词的结果进入素材库。
+            if platform == Platform.BILIBILI and not direct_keyword_match:
+                counts["irrelevant_count"] += 1
+                continue
             warnings = list(item.data_quality_warnings)
             if not direct_keyword_match:
                 warnings.append(
@@ -1101,6 +1137,8 @@ class CommercialSearchService:
         count: int,
         now: datetime,
         cache_ttl_minutes: int = CACHE_TTL_MINUTES,
+        kuaishou_sort: str = "platform",
+        kuaishou_duration_bucket: str = "all",
     ) -> PlatformSearchRun | None:
         fingerprint = self._fingerprint(
             provider,
@@ -1109,6 +1147,8 @@ class CommercialSearchService:
             published_window_days,
             hotspot_window_hours,
             count,
+            kuaishou_sort,
+            kuaishou_duration_bucket,
         )
         cached = self.repository.find_cached_platform_search_run(
             provider=provider,
@@ -1196,12 +1236,26 @@ class CommercialSearchService:
         published_window_days: int,
         hotspot_window_hours: int | None,
         count: int,
+        kuaishou_sort: str = "platform",
+        kuaishou_duration_bucket: str = "all",
     ) -> str:
         payload = (
             f"{provider}|{platform.value}|{RANKING_MODE}|{RELEVANCE_RULE_VERSION}|{keyword.casefold()}|"
-            f"{published_window_days}|{hotspot_window_hours or '-'}|{count}"
+            f"{published_window_days}|{hotspot_window_hours or '-'}|{count}|"
+            f"{kuaishou_sort}|{kuaishou_duration_bucket}"
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_kuaishou_filters(
+        sort: str,
+        duration_bucket: str,
+    ) -> tuple[str, str]:
+        if sort not in {"platform", "newest", "likes"}:
+            raise ValueError("快手排序只支持综合、最新发布或最多点赞。")
+        if duration_bucket not in {"all", "under_60", "between_60_300", "over_300"}:
+            raise ValueError("快手时长只支持不限、1分钟以下、1到5分钟或5分钟以上。")
+        return sort, duration_bucket
 
     def _endpoint_prices(self) -> dict[Platform, float]:
         raw_prices = getattr(self.provider, "endpoint_prices_cny", {})

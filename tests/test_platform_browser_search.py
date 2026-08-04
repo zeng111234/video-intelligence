@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -37,10 +38,20 @@ class _TextPage:
 
 
 class _CollectionPage:
-    def __init__(self, url: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        response_payloads: dict[int, list[dict[str, object]]] | None = None,
+        body_text: str = "",
+    ) -> None:
         self.url = url
         self.closed = False
         self.listeners: list[tuple[str, object]] = []
+        self.goto_urls: list[str] = []
+        self.response_payloads = response_payloads or {}
+        self.body_text = body_text
+        self.evaluations: list[str] = []
 
     def on(self, event: str, callback) -> None:
         self.listeners.append((event, callback))
@@ -53,21 +64,49 @@ class _CollectionPage:
 
     def goto(self, url: str, *, wait_until: str):
         self.url = url
+        self.goto_urls.append(url)
         assert wait_until == "domcontentloaded"
+        page_number = int(parse_qs(urlparse(url).query).get("page", ["1"])[0])
+        for payload in self.response_payloads.get(page_number, []):
+            response = _CollectionResponse(
+                (
+                    "https://api.bilibili.com/x/web-interface/wbi/search/type?"
+                    f"search_type=video&page={page_number}"
+                ),
+                payload,
+            )
+            for event, callback in list(self.listeners):
+                if event == "response":
+                    callback(response)
         return None
 
     def wait_for_timeout(self, _timeout: int) -> None:
         pass
 
-    def evaluate(self, _script: str) -> None:
-        pass
+    def evaluate(self, script: str) -> None:
+        self.evaluations.append(script)
+
+    def locator(self, selector: str):
+        assert selector == "body"
+        return _TextPage(self.body_text)
 
     def close(self) -> None:
         self.closed = True
 
 
+class _CollectionResponse:
+    def __init__(self, url: str, payload: dict[str, object]) -> None:
+        self.url = url
+        self.payload = payload
+
+    def json(self) -> dict[str, object]:
+        return self.payload
+
+
 class _CollectionContext:
-    def __init__(self, pages: list[_CollectionPage], fallback_page: _CollectionPage) -> None:
+    def __init__(
+        self, pages: list[_CollectionPage], fallback_page: _CollectionPage
+    ) -> None:
         self.pages = pages
         self.fallback_page = fallback_page
         self.new_page_calls = 0
@@ -103,6 +142,48 @@ class _CollectionPlaywrightManager:
         pass
 
 
+class _FilterCandidate:
+    def __init__(self, page: "_FilterPage", label: str) -> None:
+        self.page = page
+        self.label = label
+
+    def is_visible(self, *, timeout: int) -> bool:
+        assert timeout == 1000
+        return True
+
+    def click(self, *, timeout: int) -> None:
+        assert timeout == 1500
+        self.page.selected.append(self.label)
+
+
+class _FilterLocator:
+    def __init__(self, page: "_FilterPage", label: str, present: bool) -> None:
+        self.page = page
+        self.label = label
+        self.present = present
+
+    def count(self) -> int:
+        return 1 if self.present else 0
+
+    def nth(self, index: int) -> _FilterCandidate:
+        assert index == 0
+        return _FilterCandidate(self.page, self.label)
+
+
+class _FilterPage:
+    def __init__(self, labels: set[str]) -> None:
+        self.labels = labels
+        self.selected: list[str] = []
+        self.waits: list[int] = []
+
+    def get_by_text(self, label: str, *, exact: bool) -> _FilterLocator:
+        assert exact is True
+        return _FilterLocator(self, label, label in self.labels)
+
+    def wait_for_timeout(self, timeout: int) -> None:
+        self.waits.append(timeout)
+
+
 def _collect_with_fake_browser(
     provider: LocalPlatformBrowserSearchProvider,
     browser: _CollectionBrowser,
@@ -118,7 +199,7 @@ def _collect_with_fake_browser(
     monkeypatch.setattr(
         provider,
         "_rendered_rows",
-        lambda _page: [
+        lambda _page, **_kwargs: [
             {
                 "item_id": "BVREUSE0001",
                 "title": "贴标机使用方法",
@@ -187,7 +268,9 @@ def test_xiaohongshu_explicit_login_profile_is_visible_and_separate(
         "src.adapters.platform_browser_search.subprocess.Popen",
         lambda args, **_kwargs: launched.append(args),
     )
-    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.time.sleep", lambda _seconds: None
+    )
 
     login.open_login_browser()
 
@@ -217,7 +300,9 @@ def test_xiaohongshu_public_start_stays_minimized_and_incognito(tmp_path, monkey
     closed = BrowserSessionStatus(True, False, False, False, "browser_closed", "未打开")
     monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        provider, "_browser_executable", lambda: tmp_path / "chrome.exe"
+    )
     monkeypatch.setattr(
         "src.adapters.platform_browser_search.minimize_browser_window",
         lambda _port: True,
@@ -226,7 +311,9 @@ def test_xiaohongshu_public_start_stays_minimized_and_incognito(tmp_path, monkey
         "src.adapters.platform_browser_search.subprocess.Popen",
         lambda args, **_kwargs: launched.append(args),
     )
-    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.time.sleep", lambda _seconds: None
+    )
 
     provider.start_public_browser()
 
@@ -237,7 +324,10 @@ def test_xiaohongshu_public_start_stays_minimized_and_incognito(tmp_path, monkey
 
 def test_login_button_reveals_waiting_platform_window_for_login(tmp_path, monkeypatch):
     provider = LocalPlatformBrowserSearchProvider(
-        platform=Platform.KUAISHOU, enabled=True, profile_dir=tmp_path / "profile", debug_port=29989
+        platform=Platform.KUAISHOU,
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29989,
     )
     ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
     monkeypatch.setattr(provider, "session_status", lambda: ready)
@@ -285,12 +375,12 @@ def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
         debug_port=29991,
     )
     launched: list[list[str]] = []
-    closed = BrowserSessionStatus(
-        True, False, True, False, "browser_closed", "未打开"
-    )
+    closed = BrowserSessionStatus(True, False, True, False, "browser_closed", "未打开")
     monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        provider, "_browser_executable", lambda: tmp_path / "chrome.exe"
+    )
     minimized: list[int] = []
     monkeypatch.setattr(
         "src.adapters.platform_browser_search.minimize_browser_window",
@@ -300,12 +390,14 @@ def test_automatic_platform_start_stays_minimized(tmp_path, monkeypatch):
         "src.adapters.platform_browser_search.subprocess.Popen",
         lambda args, **kwargs: launched.append(args),
     )
-    monkeypatch.setattr("src.adapters.platform_browser_search.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.time.sleep", lambda _seconds: None
+    )
 
     provider.start_login_browser()
 
     assert "--start-minimized" in launched[0]
-    assert "--window-position=-32000,-32000" in launched[0]
+    assert not any(arg.startswith("--window-position=") for arg in launched[0])
     assert "--new-window" not in launched[0]
     assert minimized == [29991]
 
@@ -321,7 +413,9 @@ def test_collection_reuses_existing_platform_page_and_keeps_it_open(monkeypatch)
         lambda port: minimized.append(port) or True,
     )
 
-    rows = _collect_with_fake_browser(provider, _CollectionBrowser(context), monkeypatch)
+    rows = _collect_with_fake_browser(
+        provider, _CollectionBrowser(context), monkeypatch
+    )
 
     assert [row["item_id"] for row in rows] == ["BVREUSE0001"]
     assert context.new_page_calls == 0
@@ -335,7 +429,8 @@ def test_collection_only_closes_the_page_it_created(monkeypatch):
     fallback = _CollectionPage("about:blank")
     context = _CollectionContext([unrelated], fallback)
     monkeypatch.setattr(
-        "src.adapters.platform_browser_search.minimize_browser_window", lambda _port: True
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
     )
 
     _collect_with_fake_browser(provider, _CollectionBrowser(context), monkeypatch)
@@ -363,10 +458,10 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
                         "display_title": "餐饮获客的三个新方法",
                         "user": {"user_id": "xhs-user-1", "nickname": "餐饮老板说"},
                         "interact_info": {
-                        "liked_count": "1.2万",
-                        "comment_count": "88",
-                        "collected_count": "320",
-                        "share_count": "16",
+                            "liked_count": "1.2万",
+                            "comment_count": "88",
+                            "collected_count": "320",
+                            "share_count": "16",
                         },
                         "time": 1785380400000,
                     },
@@ -498,6 +593,7 @@ def test_kuaishou_current_rest_feed_response_is_recognized_and_normalized():
                     "id": "ks-rest-video",
                     "caption": "餐饮门店如何低成本获客",
                     "timestamp": int((now - timedelta(days=2)).timestamp() * 1000),
+                    "duration": 121000,
                     "viewCount": 680,
                     "likeCount": 31,
                 },
@@ -517,6 +613,457 @@ def test_kuaishou_current_rest_feed_response_is_recognized_and_normalized():
     assert items[0].metrics.plays == 680
     assert items[0].metrics.likes == 31
     assert items[0].published_at == now - timedelta(days=2)
+    assert items[0].duration_seconds == 121
+
+
+def test_kuaishou_search_filters_are_normalized_and_use_visible_controls():
+    provider = _provider(Platform.KUAISHOU)
+    page = _FilterPage({"最新发布", "1-5分钟"})
+
+    filters = provider._normalize_kuaishou_filters(
+        {
+            "kuaishou_sort": "latest",
+            "kuaishou_duration_bucket": "60-300",
+        }
+    )
+    notes = provider._apply_platform_filters(page, search_filters=filters)
+
+    assert filters == {
+        "kuaishou_sort": "newest",
+        "kuaishou_duration_bucket": "between_60_300",
+    }
+    assert page.selected == ["最新发布", "1-5分钟"]
+    assert page.waits == [400, 400]
+    assert notes == ["已选择快手排序“最新发布”", "已选择快手时长“1-5分钟”"]
+
+
+def test_kuaishou_search_forwards_optional_filters_without_changing_contract(
+    monkeypatch,
+):
+    provider = _provider(Platform.KUAISHOU)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_rows",
+        lambda _keyword, *, target, search_filters=None, **collection_options: (
+            captured.update(
+                target=target,
+                search_filters=search_filters,
+                qualified_target=collection_options.get("qualified_target"),
+            )
+            or []
+        ),
+    )
+
+    page = provider.search(
+        Platform.KUAISHOU,
+        "餐饮获客",
+        None,
+        30,
+        "kuaishou-filtered-search",
+        search_filters={
+            "kuaishou_sort": "newest",
+            "kuaishou_duration_bucket": "between_60_300",
+        },
+    )
+
+    assert captured == {
+        "target": 300,
+        "search_filters": {
+            "kuaishou_sort": "newest",
+            "kuaishou_duration_bucket": "between_60_300",
+        },
+        "qualified_target": 30,
+    }
+    assert "请求筛选：最新发布、1-5分钟" in (page.payload_diagnostic or "")
+
+
+def test_kuaishou_likes_sort_does_not_get_overwritten_by_recentness():
+    provider = _provider(Platform.KUAISHOU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+
+    items = provider._to_items(
+        [
+            {
+                "item_id": "ks-recent-low-like",
+                "title": "餐饮获客最新做法",
+                "source_url": "https://www.kuaishou.com/short-video/ks-recent-low-like",
+                "published_at": now - timedelta(hours=1),
+                "time_confident": True,
+                "likes": 10,
+                "evidence": "browser_search_response",
+            },
+            {
+                "item_id": "ks-old-high-like",
+                "title": "餐饮获客高赞做法",
+                "source_url": "https://www.kuaishou.com/short-video/ks-old-high-like",
+                "published_at": now - timedelta(days=2),
+                "time_confident": True,
+                "likes": 1000,
+                "evidence": "browser_search_response",
+            },
+        ],
+        observed_at=now,
+        limit=30,
+        platform_sort="likes",
+    )
+
+    assert [item.platform_item_id for item in items] == [
+        "ks-old-high-like",
+        "ks-recent-low-like",
+    ]
+
+
+def test_kuaishou_newest_sort_uses_reliable_publish_time():
+    provider = _provider(Platform.KUAISHOU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+
+    items = provider._to_items(
+        [
+            {
+                "item_id": "ks-unknown-time",
+                "title": "餐饮获客未标时间",
+                "source_url": "https://www.kuaishou.com/short-video/ks-unknown-time",
+                "time_confident": False,
+                "evidence": "browser_search_response",
+            },
+            {
+                "item_id": "ks-old",
+                "title": "餐饮获客旧内容",
+                "source_url": "https://www.kuaishou.com/short-video/ks-old",
+                "published_at": now - timedelta(days=2),
+                "time_confident": True,
+                "evidence": "browser_search_response",
+            },
+            {
+                "item_id": "ks-newest",
+                "title": "餐饮获客新内容",
+                "source_url": "https://www.kuaishou.com/short-video/ks-newest",
+                "published_at": now - timedelta(hours=1),
+                "time_confident": True,
+                "evidence": "browser_search_response",
+            },
+        ],
+        observed_at=now,
+        limit=30,
+        platform_sort="newest",
+    )
+
+    assert [item.platform_item_id for item in items] == [
+        "ks-newest",
+        "ks-old",
+        "ks-unknown-time",
+    ]
+
+
+def test_kuaishou_duration_filter_sets_final_counts_and_target_stop(monkeypatch):
+    provider = _provider(Platform.KUAISHOU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    raw_rows = [
+        {
+            "item_id": f"ks-duration-{duration or 'unknown'}",
+            "title": "餐饮获客时长测试",
+            "source_url": f"https://www.kuaishou.com/short-video/ks-duration-{duration or 'unknown'}",
+            "published_at": now,
+            "time_confident": True,
+            "duration_seconds": duration,
+            "evidence": "browser_search_response",
+        }
+        for duration in (59, 60, 300, 301, None)
+    ]
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+
+    def collect(_keyword, *, target, search_filters=None, **_collection_options):
+        assert target == 300
+        assert search_filters == {
+            "kuaishou_sort": "platform",
+            "kuaishou_duration_bucket": "between_60_300",
+        }
+        provider._set_collection_stop("safety_limit", "临时扫描上限")
+        return raw_rows
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+
+    page = provider.search(
+        Platform.KUAISHOU,
+        "餐饮获客",
+        None,
+        2,
+        "kuaishou-duration-filter",
+        search_filters={
+            "kuaishou_sort": "platform",
+            "kuaishou_duration_bucket": "between_60_300",
+        },
+    )
+
+    assert [item.duration_seconds for item in page.items] == [60, 300]
+    assert page.raw_item_count == 5
+    assert page.parsed_item_count == 2
+    assert page.duration_filtered_count == 3
+    assert page.crawl_stop_reason == "target_reached"
+    assert page.crawl_stop_message == "已获得目标数量的符合条件视频。"
+
+
+def test_kuaishou_keeps_safety_stop_when_final_duration_matches_are_insufficient(
+    monkeypatch,
+):
+    provider = _provider(Platform.KUAISHOU)
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+
+    def collect(_keyword, *, target, search_filters=None, **_collection_options):
+        assert target == 300
+        provider._set_collection_stop("safety_limit", "临时扫描上限")
+        return [
+            {
+                "item_id": "ks-too-short",
+                "title": "餐饮获客短视频",
+                "source_url": "https://www.kuaishou.com/short-video/ks-too-short",
+                "duration_seconds": 30,
+                "evidence": "browser_search_response",
+            }
+        ]
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+
+    page = provider.search(
+        Platform.KUAISHOU,
+        "餐饮获客",
+        None,
+        1,
+        "kuaishou-insufficient-duration",
+        search_filters={"kuaishou_duration_bucket": "over_300"},
+    )
+
+    assert page.raw_item_count == 1
+    assert page.parsed_item_count == 0
+    assert page.duration_filtered_count == 1
+    assert page.crawl_stop_reason == "safety_limit"
+    assert (
+        page.crawl_stop_message
+        == "为避免过度加载，已扫描 1 条页面结果，筛后保留 0 条。"
+    )
+
+
+def test_kuaishou_time_window_filters_before_target_stop(monkeypatch):
+    provider = _provider(Platform.KUAISHOU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    raw_rows = [
+        {
+            "item_id": "ks-old",
+            "title": "餐饮获客旧视频",
+            "source_url": "https://www.kuaishou.com/short-video/ks-old",
+            "published_at": now - timedelta(days=8),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        },
+        {
+            "item_id": "ks-new-1",
+            "title": "餐饮获客新视频一",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-1",
+            "published_at": now - timedelta(hours=2),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        },
+        {
+            "item_id": "ks-new-2",
+            "title": "餐饮获客新视频二",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-2",
+            "published_at": now - timedelta(hours=1),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        },
+    ]
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+
+    def collect(_keyword, *, target, qualified_target, qualifying_count, **_kwargs):
+        assert target == 300
+        assert qualified_target == 2
+        assert qualifying_count(raw_rows[:2]) == 1
+        assert qualifying_count(raw_rows) == 2
+        provider._set_collection_stop("target_reached", "raw rows reached")
+        return raw_rows
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+
+    page = provider.search(
+        Platform.KUAISHOU,
+        "餐饮获客",
+        now - timedelta(days=7),
+        2,
+        "kuaishou-time-window",
+    )
+
+    assert [item.platform_item_id for item in page.items] == ["ks-new-1", "ks-new-2"]
+    assert page.raw_item_count == 3
+    assert page.parsed_item_count == 2
+    assert page.crawl_stop_reason == "target_reached"
+    assert page.crawl_stop_message == "已获得目标数量的符合条件视频。"
+
+
+def test_kuaishou_does_not_claim_target_when_time_window_leaves_too_few_rows(
+    monkeypatch,
+):
+    provider = _provider(Platform.KUAISHOU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    raw_rows = [
+        {
+            "item_id": f"ks-old-{index}",
+            "title": "餐饮获客旧视频",
+            "source_url": f"https://www.kuaishou.com/short-video/ks-old-{index}",
+            "published_at": now - timedelta(days=8),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        }
+        for index in range(98)
+    ] + [
+        {
+            "item_id": "ks-new-1",
+            "title": "餐饮获客新视频一",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-1",
+            "published_at": now - timedelta(hours=2),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        },
+        {
+            "item_id": "ks-new-2",
+            "title": "餐饮获客新视频二",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-2",
+            "published_at": now - timedelta(hours=1),
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        },
+    ]
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+
+    def collect(_keyword, *, qualifying_count, **_kwargs):
+        assert qualifying_count(raw_rows) == 2
+        provider._set_collection_stop("safety_limit", "扫描上限")
+        return raw_rows
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+
+    page = provider.search(
+        Platform.KUAISHOU,
+        "餐饮获客",
+        now - timedelta(days=7),
+        30,
+        "kuaishou-insufficient-time-window",
+    )
+
+    assert [item.platform_item_id for item in page.items] == ["ks-new-1", "ks-new-2"]
+    assert page.crawl_stop_reason == "safety_limit"
+    assert page.crawl_stop_message == (
+        "为避免过度加载，已扫描 100 条页面结果，发布时间范围和时长筛后保留 2 条。"
+    )
+    assert "目标数量" not in (page.crawl_stop_message or "")
+
+
+def test_kuaishou_scrolls_until_time_qualified_target_is_reached(monkeypatch):
+    provider = _provider(Platform.KUAISHOU)
+    page = _CollectionPage("https://www.kuaishou.com/")
+    context = _CollectionContext([page], _CollectionPage("about:blank"))
+    old_row = {
+        "item_id": "ks-old",
+        "title": "餐饮获客旧视频",
+        "source_url": "https://www.kuaishou.com/short-video/ks-old",
+    }
+    new_rows = [
+        {
+            "item_id": "ks-new-1",
+            "title": "餐饮获客新视频一",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-1",
+        },
+        {
+            "item_id": "ks-new-2",
+            "title": "餐饮获客新视频二",
+            "source_url": "https://www.kuaishou.com/short-video/ks-new-2",
+        },
+    ]
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_rendered_rows",
+        lambda _page: [old_row]
+        if len(page.evaluations) < 18
+        else [old_row, *new_rows],
+    )
+
+    rows = provider._collect_rows(
+        "餐饮获客",
+        target=300,
+        qualified_target=2,
+        qualifying_count=lambda candidate_rows: sum(
+            row["item_id"].startswith("ks-new") for row in candidate_rows
+        ),
+    )
+
+    assert {row["item_id"] for row in rows} == {"ks-old", "ks-new-1", "ks-new-2"}
+    assert len(page.evaluations) == 18
+    assert provider._collection_stop_reason == "target_reached"
+
+
+def test_kuaishou_empty_page_scrolls_until_the_safe_limit(monkeypatch):
+    provider = _provider(Platform.KUAISHOU)
+    page = _CollectionPage("https://www.kuaishou.com/")
+    context = _CollectionContext([page], _CollectionPage("about:blank"))
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+    monkeypatch.setattr(provider, "_rendered_rows", lambda _page: [])
+
+    rows = provider._collect_rows("餐饮获客", target=1)
+
+    assert rows == []
+    assert len(page.evaluations) == 60
+    assert provider._collection_stop_reason == "safety_limit"
+
+
+def test_kuaishou_scroll_targets_its_internal_results_container():
+    provider = _provider(Platform.KUAISHOU)
+    scripts: list[str] = []
+
+    class Page:
+        def evaluate(self, script: str) -> None:
+            scripts.append(script)
+
+    provider._scroll_for_more_results(Page())
+
+    assert len(scripts) == 1
+    assert ".wb-content" in scripts[0]
+    assert "container.scrollBy" in scripts[0]
 
 
 def test_bilibili_search_response_normalizes_visible_video_metadata():
@@ -527,12 +1074,13 @@ def test_bilibili_search_response_normalizes_visible_video_metadata():
             "result": [
                 {
                     "bvid": "BV1TEST2026",
-                    "title": "<em class=\"keyword\">餐饮获客</em>爆火文案拆解",
+                    "title": '<em class="keyword">餐饮获客</em>爆火文案拆解',
                     "author": "经营有道",
                     "mid": 1024,
                     "pubdate": int((now - timedelta(hours=4)).timestamp()),
                     "play": "12.3万",
                     "video_review": 456,
+                    "review": 78,
                     "favorites": 789,
                 }
             ]
@@ -552,19 +1100,136 @@ def test_bilibili_search_response_normalizes_visible_video_metadata():
     assert item.title == "餐饮获客爆火文案拆解"
     assert item.author_name == "经营有道"
     assert item.metrics.plays == 123000
-    assert item.metrics.comments is None
+    assert item.metrics.comments == 78
     assert item.metrics.favorites == 789
     assert str(item.source_url) == "https://www.bilibili.com/video/BV1TEST2026"
 
 
+def test_bilibili_network_rows_require_direct_normalized_keyword_matches():
+    provider = _provider(Platform.BILIBILI)
+    payload = {
+        "data": {
+            "result": [
+                {
+                    "bvid": "BV1TITLE2026",
+                    "title": "AI·智能 营销入门",
+                },
+                {
+                    "bvid": "BV1TOPIC2026",
+                    "title": "门店增长案例",
+                    "tag": "#ai 智能-营销",
+                },
+                {
+                    "bvid": "BV1DESC02026",
+                    "title": "经营复盘",
+                    "description": "这一期讲 AI，智能营销 的执行步骤。",
+                },
+                {
+                    "bvid": "BV1AUTHOR026",
+                    "title": "完全无关的视频",
+                    "author": "AI智能营销讲师",
+                },
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload, keyword="ai 智能-营销")
+
+    assert [row["item_id"] for row in rows] == [
+        "BV1TITLE2026",
+        "BV1TOPIC2026",
+        "BV1DESC02026",
+    ]
+    items = provider._to_items(
+        rows,
+        observed_at=datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
+        limit=30,
+    )
+    evidence_by_id = {item.platform_item_id: item.evidence or "" for item in items}
+    assert "严格话题=1" not in evidence_by_id["BV1TITLE2026"]
+    assert "严格话题=1" in evidence_by_id["BV1TOPIC2026"]
+    assert "严格话题=1" in evidence_by_id["BV1DESC02026"]
+
+
+def test_bilibili_collection_prefers_network_rows_and_loads_later_pages(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    page = _CollectionPage(
+        "https://www.bilibili.com/",
+        response_payloads={
+            1: [
+                {
+                    "data": {
+                        "numPages": 2,
+                        "result": [
+                            {
+                                "bvid": "BV1NETWORK01",
+                                "title": "餐饮 获客-实操课",
+                            },
+                            {
+                                "bvid": "BV1UNRELATED",
+                                "title": "无关视频",
+                                "author": "餐饮获客老师",
+                            },
+                        ],
+                    }
+                }
+            ],
+            2: [
+                {
+                    "data": {
+                        "numPages": 2,
+                        "result": [
+                            {
+                                "bvid": "BV1NETWORK02",
+                                "title": "门店增长分享",
+                                "description": "餐饮获客的可执行案例。",
+                            }
+                        ],
+                    }
+                }
+            ],
+        },
+    )
+    context = _CollectionContext([page], _CollectionPage("about:blank"))
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_rendered_rows",
+        lambda *_args, **_kwargs: pytest.fail("B站已有网络搜索结果时不应读取整页锚点"),
+    )
+
+    rows = provider._collect_rows("餐饮获客", target=3)
+
+    assert [row["item_id"] for row in rows] == ["BV1NETWORK01", "BV1NETWORK02"]
+    assert [parse_qs(urlparse(url).query)["page"][0] for url in page.goto_urls] == [
+        "1",
+        "2",
+    ]
+    assert provider._collection_stop_reason == "platform_end"
+    assert provider._collection_stop_message == "已经没有更多符合条件的视频。"
+
+
 @pytest.mark.parametrize("key", ["duration_ms", "durationMs"])
 def test_millisecond_duration_keys_always_use_millisecond_units(key):
-    assert LocalPlatformBrowserSearchProvider._first_duration_seconds(
-        {key: 9500}, "duration", key
-    ) == 9
-    assert LocalPlatformBrowserSearchProvider._first_duration_seconds(
-        {"duration": 9500}, "duration"
-    ) == 9500
+    assert (
+        LocalPlatformBrowserSearchProvider._first_duration_seconds(
+            {key: 9500}, "duration", key
+        )
+        == 9
+    )
+    assert (
+        LocalPlatformBrowserSearchProvider._first_duration_seconds(
+            {"duration": 9500}, "duration"
+        )
+        == 9500
+    )
 
 
 def test_xiaohongshu_missing_publish_time_keeps_platform_search_order_warning():
@@ -587,7 +1252,9 @@ def test_xiaohongshu_missing_publish_time_keeps_platform_search_order_warning():
     assert len(items) == 1
     assert items[0].published_at == observed_at
     assert "time=search_order_fallback" in (items[0].evidence or "")
-    assert any("未返回可靠发布时间" in warning for warning in items[0].data_quality_warnings)
+    assert any(
+        "未返回可靠发布时间" in warning for warning in items[0].data_quality_warnings
+    )
 
 
 def test_rendered_card_date_keeps_spaces_before_trailing_like_count():
@@ -623,7 +1290,45 @@ def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
         "larger-pool",
     )
 
-    assert captured["target"] == 90
+    assert captured["target"] == 300
+
+
+def test_bilibili_raw_pool_never_assigns_a_provider_rank_above_100(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    raw_rows = [
+        {
+            "item_id": f"BV1rank{index:03d}",
+            "title": "贴标机应用案例",
+            "source_url": f"https://www.bilibili.com/video/BV1rank{index:03d}",
+            "published_at": now,
+            "time_confident": True,
+            "evidence": "browser_search_response",
+        }
+        for index in range(101)
+    ]
+    monkeypatch.setattr(
+        provider,
+        "_collect_rows",
+        lambda _keyword, *, target: raw_rows,
+    )
+
+    page = provider.search(
+        Platform.BILIBILI,
+        "贴标机",
+        None,
+        30,
+        "bilibili-rank-cap",
+    )
+
+    assert page.raw_item_count == 101
+    assert len(page.items) == 100
+    assert page.items[-1].provider_rank == 100
 
 
 def test_xiaohongshu_anonymous_search_has_a_tight_public_budget(monkeypatch):

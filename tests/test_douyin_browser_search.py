@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -8,7 +8,7 @@ from src.adapters.douyin_browser_search import (
     LocalDouyinBrowserSearchProvider,
     LocalDouyinPublicSearchProvider,
 )
-from src.models import Platform, ProviderErrorKind, ProviderMode
+from src.models import Platform, ProviderErrorKind, ProviderMode, ProviderSearchError
 
 
 def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
@@ -57,7 +57,7 @@ def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
     assert "日均点赞=" in items[0].evidence
 
 
-def test_public_search_metrics_preserve_zero_and_missing_values():
+def test_public_search_metrics_preserve_returned_zero_and_missing_values():
     observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
     rows = [
         {
@@ -65,6 +65,18 @@ def test_public_search_metrics_preserve_zero_and_missing_values():
             "href": "https://www.douyin.com/video/7538955201693994391",
             "title": "抖音公开搜索的完整互动指标",
             "duration": 18,
+            "plays": 1200,
+            "likes": 120,
+            "comments": 12,
+            "shares": 3,
+            "favorites": 4,
+            "published_text": "2026-08-02",
+        },
+        {
+            "item_id": "7538955201693994392",
+            "href": "https://www.douyin.com/video/7538955201693994392",
+            "title": "抖音公开搜索的零值互动指标",
+            "duration": 20,
             "plays": 0,
             "likes": 0,
             "comments": 0,
@@ -73,8 +85,8 @@ def test_public_search_metrics_preserve_zero_and_missing_values():
             "published_text": "2026-08-02",
         },
         {
-            "item_id": "7538955201693994392",
-            "href": "https://www.douyin.com/video/7538955201693994392",
+            "item_id": "7538955201693994394",
+            "href": "https://www.douyin.com/video/7538955201693994394",
             "title": "抖音公开搜索未返回互动指标",
             "duration": 20,
             "published_text": "2026-08-02",
@@ -86,7 +98,7 @@ def test_public_search_metrics_preserve_zero_and_missing_values():
         keyword="抖音公开搜索",
         observed_at=observed_at,
         published_after=None,
-        limit=2,
+        limit=3,
     )
 
     assert errors == []
@@ -96,14 +108,438 @@ def test_public_search_metrics_preserve_zero_and_missing_values():
         items[0].metrics.comments,
         items[0].metrics.shares,
         items[0].metrics.favorites,
-    ) == (0, 0, 0, 0, 0)
+    ) == (1200, 120, 12, 3, 4)
     assert (
         items[1].metrics.plays,
         items[1].metrics.likes,
         items[1].metrics.comments,
         items[1].metrics.shares,
         items[1].metrics.favorites,
+    ) == (0, 0, 0, 0, 0)
+    assert (
+        items[2].metrics.plays,
+        items[2].metrics.likes,
+        items[2].metrics.comments,
+        items[2].metrics.shares,
+        items[2].metrics.favorites,
     ) == (None, None, None, None, None)
+    assert "播放量=1200" in items[0].evidence
+    assert "评论数=12" in items[0].evidence
+    assert "公开搜索页未显示互动指标：播放、点赞、评论、分享、收藏。" in (
+        items[2].data_quality_warnings
+    )
+
+
+def test_public_search_prefers_visible_single_column_layout_when_available():
+    scripts: list[str] = []
+
+    class Body:
+        def __init__(self, available):
+            self.available = available
+
+        def evaluate(self, script):
+            scripts.append(script)
+            return self.available
+
+    class Page:
+        def __init__(self, available):
+            self.available = available
+
+        def locator(self, selector):
+            assert selector == "body"
+            return Body(self.available)
+
+    assert LocalDouyinBrowserSearchProvider._prefer_public_search_single_column(Page(True))
+    assert not LocalDouyinBrowserSearchProvider._prefer_public_search_single_column(Page(False))
+    assert "单列" in scripts[0]
+    assert "getBoundingClientRect" in scripts[0]
+    assert "control.click" in scripts[0]
+
+
+class _TextControl:
+    def __init__(self, page, label, *, visible=True, enabled=True, fails=False):
+        self.page = page
+        self.label = label
+        self.visible = visible
+        self.enabled = enabled
+        self.fails = fails
+
+    def is_visible(self):
+        return self.visible
+
+    def is_enabled(self):
+        return self.enabled
+
+    def evaluate(self, script):
+        assert "getBoundingClientRect" in script
+        return self.visible
+
+    def get_attribute(self, name):
+        assert name == "aria-disabled"
+        return "true" if not self.enabled else None
+
+    def click(self):
+        if self.fails:
+            raise RuntimeError("click failed")
+        self.page.clicked.append(self.label)
+
+
+class _TextMatches:
+    def __init__(self, controls):
+        self.controls = controls
+
+    def count(self):
+        return len(self.controls)
+
+    def nth(self, index):
+        return self.controls[index]
+
+
+class _VisibleFilterPage:
+    def __init__(self, controls):
+        self.clicked: list[str] = []
+        self.pressed: list[str] = []
+        self.waits: list[int] = []
+        self.controls = {
+            label: [_TextControl(self, label, **settings) for settings in definitions]
+            for label, definitions in controls.items()
+        }
+        self.keyboard = type(
+            "Keyboard",
+            (),
+            {"press": lambda keyboard, key: self.pressed.append(key)},
+        )()
+
+    def get_by_text(self, label, *, exact):
+        assert exact is True
+        return _TextMatches(self.controls.get(label, []))
+
+    def wait_for_timeout(self, delay):
+        self.waits.append(delay)
+
+
+@pytest.mark.parametrize(
+    ("days", "visible_label"),
+    [(1, "一天内"), (7, "一周内"), (180, "半年内")],
+)
+def test_public_search_applies_only_the_exact_visible_time_filter(days, visible_label):
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage(
+        {
+            "筛选": [{}],
+            visible_label: [{}],
+        }
+    )
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=days),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", visible_label]
+    assert outcome.receipt == f"已应用平台筛选：{visible_label}（{days}天）"
+    assert outcome.warning is None
+
+
+def test_public_search_unlimited_does_not_open_filter():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage({"筛选": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=None,
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == []
+    assert outcome.receipt == "不限（未打开平台筛选）"
+    assert outcome.warning is None
+
+
+def test_public_search_does_not_map_legacy_three_days_to_one_week():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage({"筛选": [{}], "一周内": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=3),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == []
+    assert outcome.receipt == "平台筛选未应用；仅本地过滤"
+    assert "不是抖音官网可精确对应" in outcome.warning
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected_text"),
+    [
+        (None, "未找到"),
+        ({"visible": False}, "不可见"),
+        ({"enabled": False}, "已禁用"),
+        ({"fails": True}, "操作失败"),
+    ],
+)
+def test_public_search_leaves_page_unchanged_when_filter_control_is_unavailable(
+    settings,
+    expected_text,
+):
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    controls = {} if settings is None else {"筛选": [settings]}
+    page = _VisibleFilterPage(controls)
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=7),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == []
+    assert outcome.receipt == "平台筛选未应用；仅本地过滤"
+    assert expected_text in outcome.warning
+    assert "仅按页面可核验发布时间在本地过滤" in outcome.warning
+
+
+def test_public_search_closes_filter_menu_when_requested_option_is_unavailable():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage({"筛选": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=180),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选"]
+    assert page.pressed == ["Escape"]
+    assert outcome.receipt == "平台筛选未应用；仅本地过滤"
+    assert "已关闭筛选菜单并保留原筛选状态" in outcome.warning
+
+
+def test_public_search_uses_single_column_then_filter_before_scrolling(
+    tmp_path,
+    monkeypatch,
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+    )
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    calls: list[str] = []
+
+    class Page:
+        def set_default_timeout(self, _timeout):
+            pass
+
+        def goto(self, _url, *, wait_until):
+            assert wait_until == "domcontentloaded"
+            return None
+
+        def wait_for_timeout(self, _delay):
+            pass
+
+    page = Page()
+
+    class Browser:
+        contexts = [object()]
+
+    class Playwright:
+        chromium = type(
+            "Chromium",
+            (),
+            {"connect_over_cdp": lambda _chromium, _endpoint: Browser()},
+        )()
+
+    class SyncPlaywright:
+        def __enter__(self):
+            return Playwright()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: SyncPlaywright())
+    monkeypatch.setattr(
+        provider,
+        "_reuse_or_create_collection_page",
+        lambda *_args, **_kwargs: (page, False),
+    )
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda _page: None)
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_args: 1)
+    monkeypatch.setattr(
+        provider,
+        "_prefer_public_search_single_column",
+        lambda _page: calls.append("single_column") or True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_apply_public_search_time_filter",
+        lambda _page, **_kwargs: calls.append("time_filter")
+        or type("Outcome", (), {"receipt": "已应用", "warning": None})(),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_public_douyin_search_rows",
+        lambda _page, **_kwargs: (calls.append("scroll") or [], None),
+    )
+
+    rows, errors = provider._collect_public_search_rows(
+        "贴标机",
+        target_limit=10,
+        scan_limit=100,
+        observed_at=observed_at,
+        published_after=observed_at - timedelta(days=7),
+    )
+
+    assert rows == []
+    assert errors == []
+    assert calls == ["single_column", "time_filter", "scroll"]
+
+
+def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+    )
+    goto_calls: list[str] = []
+    connection_calls: list[str] = []
+
+    class Page:
+        def set_default_timeout(self, _timeout):
+            pass
+
+        def goto(self, url, *, wait_until):
+            assert wait_until == "domcontentloaded"
+            goto_calls.append(url)
+            raise PlaywrightError("navigation failed")
+
+    page = Page()
+
+    class Browser:
+        contexts = [object()]
+
+    class Chromium:
+        def connect_over_cdp(self, endpoint):
+            connection_calls.append(endpoint)
+            return Browser()
+
+    class Playwright:
+        chromium = Chromium()
+
+    class SyncPlaywright:
+        def __enter__(self):
+            return Playwright()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: SyncPlaywright())
+    monkeypatch.setattr(
+        provider,
+        "_reuse_or_create_collection_page",
+        lambda *_args, **_kwargs: (page, False),
+    )
+
+    with pytest.raises(LicensedProviderError, match="未再次打开搜索页"):
+        provider._collect_public_search_rows(
+            "贴标机",
+            target_limit=10,
+            scan_limit=100,
+            observed_at=datetime.fromisoformat("2026-08-04T12:00:00+08:00"),
+            published_after=None,
+        )
+
+    assert len(connection_calls) == 1
+    assert len(goto_calls) == 1
+
+
+def test_public_search_default_layout_marks_data_availability_without_fake_metrics():
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
+        [
+            {
+                "item_id": "7538955201693994395",
+                "href": "https://www.douyin.com/video/7538955201693994395",
+                "title": "贴标机默认布局测试",
+                "search_layout": "default",
+                "search_time_filter": "已应用平台筛选：一周内（7天）",
+            }
+        ],
+        keyword="贴标机",
+        observed_at=observed_at,
+        published_after=None,
+        limit=1,
+    )
+
+    assert errors == []
+    assert items[0].metrics.plays is None
+    assert items[0].metrics.comments is None
+    assert "布局=默认卡片" in items[0].evidence
+    assert "发布时间筛选=已应用平台筛选：一周内（7天）" in items[0].evidence
+    assert (
+        "抖音官网当前未提供可见的“单列”结果布局，已按默认卡片读取；"
+        "未显示的指标会保留为空。"
+    ) in items[0].data_quality_warnings
+
+
+def test_public_search_item_records_local_only_filter_without_fake_metrics():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    warning = (
+        "抖音官网没有可用的 7 天发布时间选项；"
+        "平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
+    )
+    items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
+        [
+            {
+                "item_id": "7538955201693994499",
+                "href": "https://www.douyin.com/video/7538955201693994499",
+                "title": "贴标机本地时间过滤回退",
+                "search_layout": "single_column",
+                "search_time_filter": "平台筛选未应用；仅本地过滤",
+                "search_time_filter_warning": warning,
+            }
+        ],
+        keyword="贴标机",
+        observed_at=observed_at,
+        published_after=observed_at - timedelta(days=7),
+        limit=1,
+    )
+
+    assert errors == []
+    assert "发布时间筛选=平台筛选未应用；仅本地过滤" in items[0].evidence
+    assert warning in items[0].data_quality_warnings
+    assert items[0].metrics.plays is None
+    assert items[0].metrics.likes is None
+
+
+def test_public_search_discards_author_only_keyword_matches():
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    items, errors, filtered, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
+        [
+            {
+                "item_id": "7538955201693994401",
+                "href": "https://www.douyin.com/video/7538955201693994401",
+                "title": "贴标机源头厂家现场演示 #贴标机",
+                "author_name": "包装设备工厂",
+            },
+            {
+                "item_id": "7538955201693994402",
+                "href": "https://www.douyin.com/video/7538955201693994402",
+                "title": "积木零件检测设备演示",
+                "author_name": "即时打印贴标机小张",
+            },
+        ],
+        keyword="贴标机",
+        observed_at=observed_at,
+        published_after=None,
+        limit=30,
+    )
+
+    assert errors == []
+    assert [item.platform_item_id for item in items] == ["7538955201693994401"]
+    assert filtered["relevance"] == 1
 
 
 @pytest.mark.parametrize(
@@ -137,6 +573,16 @@ def test_rendered_douyin_search_extractors_read_complete_react_statistics(extrac
     ):
         assert statistic in script
     assert "value !== undefined && value !== null && value !== ''" in script
+    if extractor is LocalDouyinBrowserSearchProvider._extract_public_douyin_search_rows:
+        for statistic in ("aweme_statistics", "interact_info", "forward_count", "collect_cnt"):
+            assert statistic in script
+        assert "metricFromDom" in script
+        assert "播放量" in script
+        assert "评论数" in script
+        assert "video?.statistics" in script
+        assert "video?.aweme_statistics" in script
+        assert "video?.interact_info" in script
+        assert "comment_count', 'commentCount', 'comment_cnt', 'comments" in script
 
 
 def test_browser_provider_reports_login_requirement_without_running_session(tmp_path):
@@ -264,7 +710,7 @@ def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
     provider.start_login_browser()
 
     assert "--start-minimized" in launched[0]
-    assert "--window-position=-32000,-32000" in launched[0]
+    assert not any(arg.startswith("--window-position=") for arg in launched[0])
     assert "--new-window" not in launched[0]
 
 
@@ -913,7 +1359,7 @@ def test_collection_reuses_existing_douyin_tab_without_closing_it(tmp_path):
     provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
 
     class ExistingPage:
-        url = "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=video"
+        url = "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=general"
         closed = False
 
         def is_closed(self):
@@ -981,7 +1427,7 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
     monkeypatch.setattr(
         provider,
         "_collect_public_search_rows",
-        lambda keyword, *, target_limit: ([
+        lambda keyword, **_: ([
             {
                 "item_id": "7538955201693994321",
                 "href": "https://www.douyin.com/video/7538955201693994321",
@@ -1002,7 +1448,7 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
                 "href": "https://www.douyin.com/video/7538955201693994323",
                 "title": "贴标机旧款操作说明",
                 "duration": 24,
-                "published_text": "2026-07-01",
+                "published_text": "2026-07-31",
             },
         ], []),
     )
@@ -1015,12 +1461,12 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
         Platform.DOUYIN,
         "贴标机",
         published_after=datetime.fromisoformat("2026-07-28T12:00:00+08:00"),
-        limit=5,
+        limit=3,
         idempotency_key="public-search",
     )
 
     assert provider.capabilities().provider_name == "douyin_public_browser_v2"
-    assert provider.capabilities().max_page_size == 30
+    assert provider.capabilities().max_page_size == 100
     assert page.provider == "douyin_public_browser_v2"
     assert [item.platform_item_id for item in page.items] == [
         "7538955201693994321",
@@ -1030,28 +1476,735 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
     assert page.items[0].metrics.likes == 2
     assert page.items[0].evidence.startswith("douyin_public_search:")
     assert page.items[1].data_quality_warnings
+    assert page.crawl_stop_reason == "target_reached"
+    assert page.crawl_stop_message == "已读取到目标 3 条公开搜索结果。"
     assert page.payload_diagnostic is None
     assert minimized_ports == [29986]
+
+
+def test_public_provider_accepts_up_to_100_candidates(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(provider, "_minimize_browser_for_background", lambda: None)
+    captured: dict[str, int] = {}
+
+    def collect(keyword, *, target_limit, scan_limit, **_):
+        captured["target_limit"] = target_limit
+        captured["scan_limit"] = scan_limit
+        return [], []
+
+    monkeypatch.setattr(provider, "_collect_public_search_rows", collect)
+
+    page = provider.search(
+        Platform.DOUYIN,
+        "公开搜索",
+        published_after=None,
+        limit=100,
+        idempotency_key="public-limit",
+    )
+
+    assert page.items == []
+    assert captured == {"target_limit": 100, "scan_limit": 150}
+    with pytest.raises(LicensedProviderError, match="100 条"):
+        provider.search(
+            Platform.DOUYIN,
+            "公开搜索",
+            published_after=None,
+            limit=101,
+            idempotency_key="public-limit-over",
+        )
+
+
+def test_public_search_filters_known_out_of_window_rows_before_returning_items():
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    published_after = datetime.fromisoformat("2026-08-01T12:00:00+08:00")
+    rows = [
+        {
+            "item_id": "7538955201693994401",
+            "href": "https://www.douyin.com/video/7538955201693994401",
+            "title": "贴标机旧作品",
+            "duration": 18,
+            "published_text": "2026-07-31",
+        },
+        {
+            "item_id": "7538955201693994402",
+            "href": "https://www.douyin.com/video/7538955201693994402",
+            "title": "贴标机新作品",
+            "duration": 18,
+            "published_text": "2026-08-02",
+        },
+    ]
+
+    items, errors, _, published_filtered_count = (
+        LocalDouyinBrowserSearchProvider._to_public_search_items(
+            rows,
+            keyword="贴标机",
+            observed_at=observed_at,
+            published_after=published_after,
+            limit=2,
+        )
+    )
+
+    assert errors == []
+    assert [item.platform_item_id for item in items] == ["7538955201693994402"]
+    assert published_filtered_count == 1
+
+
+def test_public_search_scans_past_raw_target_until_qualified_target(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    published_after = datetime.fromisoformat("2026-08-01T12:00:00+08:00")
+    rounds = [
+        [
+            {
+                "item_id": "7538955201693994403",
+                "href": "https://www.douyin.com/video/7538955201693994403",
+                "title": "贴标机旧作品",
+                "duration": 18,
+                "published_text": "2026-07-31",
+            }
+        ],
+        [
+            {
+                "item_id": "7538955201693994403",
+                "href": "https://www.douyin.com/video/7538955201693994403",
+                "title": "贴标机旧作品",
+                "duration": 18,
+                "published_text": "2026-07-31",
+            },
+            {
+                "item_id": "7538955201693994404",
+                "href": "https://www.douyin.com/video/7538955201693994404",
+                "title": "贴标机新作品一",
+                "duration": 18,
+                "published_text": "2026-08-02",
+            },
+        ],
+        [
+            {
+                "item_id": "7538955201693994403",
+                "href": "https://www.douyin.com/video/7538955201693994403",
+                "title": "贴标机旧作品",
+                "duration": 18,
+                "published_text": "2026-07-31",
+            },
+            {
+                "item_id": "7538955201693994404",
+                "href": "https://www.douyin.com/video/7538955201693994404",
+                "title": "贴标机新作品一",
+                "duration": 18,
+                "published_text": "2026-08-02",
+            },
+            {
+                "item_id": "7538955201693994405",
+                "href": "https://www.douyin.com/video/7538955201693994405",
+                "title": "贴标机新作品二",
+                "duration": 18,
+                "published_text": "2026-08-02",
+            },
+        ],
+    ]
+    calls: list[tuple[str, object]] = []
+
+    class Page:
+        def evaluate(self, script):
+            calls.append(("scroll", script))
+
+        def wait_for_timeout(self, delay):
+            calls.append(("wait", delay))
+
+    def qualifying_count(candidate_rows):
+        items, _, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
+            candidate_rows,
+            keyword="贴标机",
+            observed_at=observed_at,
+            published_after=published_after,
+            limit=2,
+        )
+        return len(items)
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=2,
+        scan_limit=150,
+        qualifying_count=qualifying_count,
+    )
+
+    assert [row["item_id"] for row in rows] == [
+        "7538955201693994403",
+        "7538955201693994404",
+        "7538955201693994405",
+    ]
+    assert stop_error is None
+    assert len([call for call in calls if call[0] == "scroll"]) == 2
+
+
+def test_public_provider_does_not_mark_raw_count_as_target_after_filtering(
+    tmp_path, monkeypatch
+):
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    published_after = datetime.fromisoformat("2026-08-01T12:00:00+08:00")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        clock=lambda: observed_at,
+    )
+    raw_rows = [
+        {
+            "item_id": "7538955201693994406",
+            "href": "https://www.douyin.com/video/7538955201693994406",
+            "title": "贴标机旧作品",
+            "duration": 18,
+            "published_text": "2026-07-31",
+        },
+        {
+            "item_id": "7538955201693994407",
+            "href": "https://www.douyin.com/video/7538955201693994407",
+            "title": "贴标机新作品",
+            "duration": 18,
+            "published_text": "2026-08-02",
+        },
+    ]
+    captured: dict[str, int] = {}
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(provider, "_minimize_browser_for_background", lambda: None)
+    monkeypatch.setattr(
+        provider,
+        "_collect_public_search_rows",
+        lambda keyword, *, target_limit, scan_limit, **_: (
+            captured.update(target_limit=target_limit, scan_limit=scan_limit) or raw_rows,
+            [
+                ProviderSearchError(
+                    kind=ProviderErrorKind.VALIDATION,
+                    code="public_search_platform_end",
+                    message="公开结果已结束。",
+                )
+            ],
+        ),
+    )
+
+    page = provider.search(
+        Platform.DOUYIN,
+        "贴标机",
+        published_after=published_after,
+        limit=2,
+        idempotency_key="filtered-target",
+    )
+
+    assert captured == {"target_limit": 2, "scan_limit": 100}
+    assert [item.platform_item_id for item in page.items] == ["7538955201693994407"]
+    assert page.crawl_stop_reason == "platform_end"
+    assert page.crawl_stop_reason != "target_reached"
+
+
+@pytest.mark.parametrize(
+    ("rows", "error_code", "expected_reason"),
+    [
+        (
+            [
+                {
+                    "item_id": "7538955201693994393",
+                    "href": "https://www.douyin.com/video/7538955201693994393",
+                    "title": "公开搜索可见结果已到底",
+                    "duration": 18,
+                }
+            ],
+            "public_search_platform_end",
+            "platform_end",
+        ),
+        ([], "public_search_platform_end", "no_more_loaded"),
+        ([], "public_search_safety_limit", "safety_limit"),
+        ([], "public_search_blocked", "safety_limit"),
+        ([], "public_search_service_unavailable", "safety_limit"),
+    ],
+)
+def test_public_provider_carries_structured_collection_stop_reason(
+    tmp_path,
+    monkeypatch,
+    rows,
+    error_code,
+    expected_reason,
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        clock=lambda: datetime.fromisoformat("2026-08-03T12:00:00+08:00"),
+    )
+    error_kind = {
+        "public_search_safety_limit": ProviderErrorKind.SERVICE,
+        "public_search_service_unavailable": ProviderErrorKind.SERVICE,
+        "public_search_blocked": ProviderErrorKind.AUTHORIZATION,
+    }.get(error_code, ProviderErrorKind.VALIDATION)
+    stop_message = f"停止原因：{error_code}"
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(provider, "_minimize_browser_for_background", lambda: None)
+    monkeypatch.setattr(
+        provider,
+        "_collect_public_search_rows",
+        lambda keyword, **_: (
+            rows,
+            [
+                ProviderSearchError(
+                    kind=error_kind,
+                    code=error_code,
+                    message=stop_message,
+                )
+            ],
+        ),
+    )
+
+    page = provider.search(
+        Platform.DOUYIN,
+        "公开搜索",
+        published_after=None,
+        limit=5,
+        idempotency_key="stop-reason",
+    )
+
+    assert page.crawl_stop_reason == expected_reason
+    assert page.crawl_stop_message == stop_message
+    if not rows:
+        assert page.payload_diagnostic == stop_message
+
+
+@pytest.mark.parametrize(
+    ("error_code", "error_kind", "should_reveal"),
+    [
+        ("public_search_verification", ProviderErrorKind.AUTHORIZATION, True),
+        ("public_search_login_required", ProviderErrorKind.AUTHORIZATION, True),
+        ("public_search_rate_limited", ProviderErrorKind.RATE_LIMIT, False),
+        ("public_search_blocked", ProviderErrorKind.AUTHORIZATION, False),
+    ],
+)
+def test_public_provider_reveals_only_confirmed_manual_review_pages(
+    tmp_path,
+    monkeypatch,
+    error_code,
+    error_kind,
+    should_reveal,
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        clock=lambda: datetime.fromisoformat("2026-08-03T12:00:00+08:00"),
+    )
+    revealed: list[bool] = []
+    message = f"停止原因：{error_code}"
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: type("Status", (), {"running": True, "message": "ready"})(),
+    )
+    monkeypatch.setattr(provider, "_minimize_browser_for_background", lambda: None)
+    monkeypatch.setattr(
+        provider,
+        "_reveal_browser_for_manual_review",
+        lambda: revealed.append(True) or True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_collect_public_search_rows",
+        lambda keyword, **_: (
+            [],
+            [
+                ProviderSearchError(
+                    kind=error_kind,
+                    code=error_code,
+                    message=message,
+                )
+            ],
+        ),
+    )
+
+    page = provider.search(
+        Platform.DOUYIN,
+        "公开搜索",
+        published_after=None,
+        limit=5,
+        idempotency_key="manual-review",
+    )
+
+    assert revealed == ([True] if should_reveal else [])
+    if should_reveal:
+        assert "已将抖音专用浏览器显示到前台" in page.errors[0].message
+    else:
+        assert page.errors[0].message == message
 
 
 @pytest.mark.parametrize("marker", ["安全验证", "登录后即可搜索更多精彩视频"])
 def test_public_search_url_and_safety_stop_are_explicit(tmp_path, marker):
     provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
     assert provider._public_search_url("贴标机") == (
-        "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=video"
+        "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=general"
     )
 
     class Body:
-        def inner_text(self, *, timeout):
-            assert timeout == 3_000
-            return marker
+        def evaluate(self, script, markers):
+            assert "getBoundingClientRect" in script
+            assert marker in markers
+            return True
 
     class Page:
         def locator(self, selector):
             assert selector == "body"
             return Body()
 
-    with pytest.raises(LicensedProviderError, match="登录或安全验证") as exc_info:
+    with pytest.raises(LicensedProviderError, match="可见登录或安全提示") as exc_info:
         provider._raise_for_public_search_block(Page())
 
     assert exc_info.value.kind == ProviderErrorKind.AUTHORIZATION
+    assert exc_info.value.code == "public_search_login_required"
+
+
+def test_public_search_stops_on_visible_service_error(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class FrameLocator:
+        def count(self):
+            return 0
+
+    class Body:
+        def evaluate(self, _script, markers):
+            return "服务出现异常" in markers
+
+    class Page:
+        def locator(self, selector):
+            if selector.startswith("iframe["):
+                return FrameLocator()
+            assert selector == "body"
+            return Body()
+
+    with pytest.raises(LicensedProviderError, match="减少搜索次数") as exc_info:
+        provider._raise_for_public_search_block(Page())
+
+    assert exc_info.value.kind == ProviderErrorKind.SERVICE
+    assert exc_info.value.code == "public_search_service_unavailable"
+    assert exc_info.value.retryable is False
+
+
+def test_public_search_stops_when_a_verification_iframe_is_present(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class Frame:
+        def evaluate(self, script):
+            assert "rect.width >= 80" in script
+            return True
+
+    class FrameLocator:
+        def count(self):
+            return 1
+
+        def nth(self, index):
+            assert index == 0
+            return Frame()
+
+    class Page:
+        def locator(self, selector):
+            assert selector.startswith("iframe[")
+            return FrameLocator()
+
+    with pytest.raises(LicensedProviderError, match="出现可见安全验证") as exc_info:
+        provider._raise_for_public_search_block(Page())
+
+    assert exc_info.value.kind == ProviderErrorKind.AUTHORIZATION
+    assert exc_info.value.code == "public_search_verification"
+
+
+def test_public_search_ignores_a_hidden_verification_iframe(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class Frame:
+        def evaluate(self, _script):
+            return False
+
+    class FrameLocator:
+        def count(self):
+            return 1
+
+        def nth(self, index):
+            assert index == 0
+            return Frame()
+
+    class Body:
+        def evaluate(self, _script, _markers):
+            return False
+
+    class Page:
+        def locator(self, selector):
+            if selector.startswith("iframe["):
+                return FrameLocator()
+            assert selector == "body"
+            return Body()
+
+    provider._raise_for_public_search_block(Page())
+
+
+def test_public_search_ignores_hidden_login_marker_text(tmp_path):
+    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+
+    class FrameLocator:
+        def count(self):
+            return 0
+
+    class Body:
+        def evaluate(self, _script, _markers):
+            return False
+
+    class Page:
+        def locator(self, selector):
+            if selector.startswith("iframe["):
+                return FrameLocator()
+            assert selector == "body"
+            return Body()
+
+    provider._raise_for_public_search_block(Page())
+
+
+def test_public_search_collects_until_the_requested_count(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    rounds = [
+        [{"item_id": "one", "title": "第一条"}],
+        [
+            {"item_id": "one", "title": "第一条"},
+            {"item_id": "two", "title": "第二条"},
+        ],
+        [
+            {"item_id": "two", "title": "第二条"},
+            {"item_id": "three", "title": "第三条"},
+        ],
+    ]
+    calls: list[tuple[str, object]] = []
+
+    class Page:
+        def evaluate(self, script):
+            calls.append(("scroll", script))
+
+        def wait_for_timeout(self, delay):
+            calls.append(("wait", delay))
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=3,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one", "two", "three"]
+    assert stop_error is None
+    assert len([call for call in calls if call[0] == "scroll"]) == 2
+
+
+def test_public_search_reports_platform_end_after_visible_results_stop_loading(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    rounds = [[{"item_id": "one", "title": "第一条"}]] * 3
+    calls: list[tuple[str, object]] = []
+
+    class Page:
+        def evaluate(self, script):
+            calls.append(("scroll", script))
+
+        def wait_for_timeout(self, delay):
+            calls.append(("wait", delay))
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=5,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one"]
+    assert stop_error is not None
+    assert stop_error.code == "public_search_platform_end"
+    assert stop_error.kind == ProviderErrorKind.VALIDATION
+    assert "目标 5 条" in stop_error.message
+    assert len([call for call in calls if call[0] == "scroll"]) == 2
+
+
+def test_public_search_reports_verification_that_appears_at_visible_end(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    checks = [
+        None,
+        None,
+        None,
+        LicensedProviderError("需要人工验证", kind=ProviderErrorKind.AUTHORIZATION),
+    ]
+
+    class Page:
+        def evaluate(self, _script):
+            pass
+
+        def wait_for_timeout(self, _delay):
+            pass
+
+    def check_for_block(_page):
+        result = checks.pop(0)
+        if result is not None:
+            raise result
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", check_for_block)
+    monkeypatch.setattr(provider, "_extract_public_douyin_search_rows", lambda _page: [])
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(Page(), target_limit=5)
+
+    assert rows == []
+    assert stop_error is not None
+    assert stop_error.code == "public_search_blocked"
+    assert stop_error.kind == ProviderErrorKind.AUTHORIZATION
+
+
+def test_public_search_does_not_turn_page_when_scrolling_stagnates(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    rounds = [[{"item_id": "one", "title": "第一条"}]] * 3
+
+    class Page:
+        def evaluate(self, script):
+            pass
+
+        def wait_for_timeout(self, delay):
+            pass
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=3,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one"]
+    assert stop_error is not None
+    assert stop_error.code == "public_search_platform_end"
+    assert "本次不再翻页" in stop_error.message
+
+
+def test_public_search_reports_verification_without_loading_more(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    checks = [None, LicensedProviderError("需要人工验证", kind=ProviderErrorKind.AUTHORIZATION)]
+    calls: list[tuple[str, object]] = []
+
+    class Page:
+        def evaluate(self, script):
+            calls.append(("scroll", script))
+
+        def wait_for_timeout(self, delay):
+            calls.append(("wait", delay))
+
+    def check_for_block(page):
+        result = checks.pop(0)
+        if result is not None:
+            raise result
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", check_for_block)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: [{"item_id": "one", "title": "第一条"}],
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=5,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one"]
+    assert stop_error is not None
+    assert stop_error.code == "public_search_blocked"
+    assert stop_error.kind == ProviderErrorKind.AUTHORIZATION
+    assert len([call for call in calls if call[0] == "scroll"]) == 1
+
+
+def test_public_search_reports_the_safety_loading_limit(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    rounds = [
+        [{"item_id": "one", "title": "第一条"}],
+        [
+            {"item_id": "one", "title": "第一条"},
+            {"item_id": "two", "title": "第二条"},
+        ],
+        [
+            {"item_id": "one", "title": "第一条"},
+            {"item_id": "two", "title": "第二条"},
+            {"item_id": "three", "title": "第三条"},
+        ],
+    ]
+
+    class Page:
+        def evaluate(self, script):
+            pass
+
+        def wait_for_timeout(self, delay):
+            pass
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search._PUBLIC_SEARCH_MAX_SCROLL_ROUNDS",
+        3,
+    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=4,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one", "two", "three"]
+    assert stop_error is not None
+    assert stop_error.code == "public_search_safety_limit"
+    assert stop_error.kind == ProviderErrorKind.SERVICE

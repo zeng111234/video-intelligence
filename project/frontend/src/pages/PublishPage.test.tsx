@@ -209,7 +209,7 @@ describe("PublishPage", () => {
     const view = renderPage();
 
     await within(view.container).findByText("从已经完成的视频中选择一条");
-    fireEvent.click(within(view.container).getByRole("button", { name: "更换账号" }));
+    fireEvent.click(within(view.container).getByRole("button", { name: "管理账号" }));
     expect((await within(view.container).findAllByText("系统在本机官方窗口上传、填文案和提交；你只处理登录和验证码。")).length).toBe(1);
     expect(within(view.container).getByText("抖音主号")).toBeTruthy();
     expect(within(view.container).queryByText("快手主号")).toBeNull();
@@ -226,8 +226,27 @@ describe("PublishPage", () => {
     expect(within(view.container).getByText("无需登录账号")).toBeTruthy();
     fireEvent.click(within(view.container).getByRole("button", { name: "去选择成片" }));
 
-    expect(await within(view.container).findByText("B站 · 无需登录")).toBeTruthy();
+    expect(await within(view.container).findByRole("button", { name: "B站 无需登录", pressed: true })).toBeTruthy();
     expect(within(view.container).queryByLabelText("B站发布账号")).toBeNull();
+  });
+
+  it("lets the completed-video step select more than one publish platform", async () => {
+    vi.mocked(listPublishAssets).mockResolvedValue({ items: [completedAsset], total: 1 });
+    vi.mocked(listPublishAccounts).mockResolvedValue([
+      { account_id: "pubacc-dy", platform: "douyin", name: "抖音主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
+      { account_id: "pubacc-ks", platform: "kuaishou", name: "快手主号", status: "ready", message: "已核验", auto_publish_authorized: false, last_verified_at: null, created_at: null, updated_at: null },
+    ]);
+    const view = renderPage();
+
+    const targets = await within(view.container).findByRole("group", { name: "选择发布平台" });
+    expect(within(targets).getAllByRole("button")).toHaveLength(5);
+    expect(within(targets).getByRole("button", { name: "抖音 抖音主号", pressed: true })).toBeTruthy();
+    fireEvent.click(within(targets).getByRole("button", { name: "快手 快手主号", pressed: false }));
+
+    expect(within(view.container).getByText("可多选 · 已选 2 个")).toBeTruthy();
+    fireEvent.click(within(view.container).getByRole("button", { name: "下一步：检查发布内容" }));
+    expect(await within(view.container).findByText("抖音主号")).toBeTruthy();
+    expect(within(view.container).getByText("快手主号")).toBeTruthy();
   });
 
   it("keeps the next step disabled before a completed video is selected", async () => {

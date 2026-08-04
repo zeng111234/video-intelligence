@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.adapters.licensed import LicensedProviderError, SandboxLicensedSearchProvider
 from src.models import (
+    DataSource,
     Platform,
     PlatformRunStatus,
     ProviderCapability,
@@ -656,6 +657,54 @@ def test_kuaishou_public_video_url_matches_platform() -> None:
         "https://www.kuaishou.com/short-video/ks-video-1",
         Platform.KUAISHOU,
     )
+
+
+def test_bilibili_nonmatching_search_card_is_never_imported() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    page = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BVmatch",
+                title="贴标机在饮料行业的应用",
+                author_id="author-match",
+                author_name="匹配作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BVmatch",
+                provider_rank=1,
+                metrics={"item_id": "BVmatch", "sampled_at": now, "confidence": 0.9},
+            ),
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BVnoise",
+                title="高级语言弹幕测试",
+                author_id="author-noise",
+                author_name="无关作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BVnoise",
+                provider_rank=2,
+                metrics={"item_id": "BVnoise", "sampled_at": now, "confidence": 0.9},
+            ),
+        ],
+        observed_at=now,
+        request_id="bilibili-strict-relevance",
+    )
+
+    normalized, errors, counts = CommercialSearchService._normalize_page(
+        page,
+        platform=Platform.BILIBILI,
+        keyword="贴标机",
+        provider="fixture_vendor",
+        source_type=DataSource.PUBLIC_RESEARCH,
+        published_after=None,
+        limit=2,
+    )
+
+    assert errors == []
+    assert [item.platform_item_id for item in normalized] == ["BVmatch"]
+    assert counts["irrelevant_count"] == 1
 
 
 def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> None:

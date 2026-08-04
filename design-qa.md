@@ -799,3 +799,48 @@ final result: blocked
 - result: no actionable P0, P1, or P2 visual findings remain after the documented comparison iteration
 
 final result: passed
+
+---
+
+# Publish Center Option 5 — Video Selection and Review
+
+- source visual truth: `C:\Users\zeng\.codex\generated_images\019fbc2e-d525-79f0-97f2-d4dd98387000\exec-9cd1f86b-6d94-4f19-8255-a497c20b0a61.png`
+- browser-rendered selection screenshot: `C:\Users\zeng\Desktop\video\design-qa-publish-select-1487x1058.png`
+- browser-rendered review screenshot: `C:\Users\zeng\Desktop\video\design-qa-publish-review.png`
+- normalized full-view comparison: `C:\Users\zeng\Desktop\video\design-qa-publish-comparison.png`
+- source pixels: 1487 × 1058; implementation capture pixels: 1481 × 1053
+- CSS viewport override: 1487 × 1058; browser density: 1; implementation capture was normalized to 1487 × 1058 only for the side-by-side comparison
+- state: light theme, `/publish`, collapsed navigation, one real completed video selected, Douyin publishing account not currently verified
+
+## Full-view and focused comparison evidence
+
+- The normalized comparison places the approved option 5 and the real browser implementation in one 2974 × 1102 board. The destination strip, video list, portrait preview, selected-count footer, and right-aligned next action follow the same hierarchy and proportions.
+- A separate focused crop was not needed: at original resolution the search/sort row, asset row, video controls, metadata, and footer action remain legible in the combined board.
+- The mock contains five illustrative videos and a connected account; the implementation intentionally shows one real completed video and the truthful unverified-account state. These are live-data differences, not layout drift.
+
+## Required fidelity surfaces
+
+- Fonts and typography: retained the product's Chinese system-font stack and restrained Ant Design hierarchy. Headings, helper copy, video metadata, and actions match the source's compact weight and line-height rhythm.
+- Spacing and layout rhythm: the selected design's wide list/narrow portrait-preview split, quiet bordered surfaces, single selected row, and bottom action bar are preserved without horizontal overflow or hidden persistent controls.
+- Colors and visual tokens: deep navy navigation, neutral canvas, lavender selected state, muted metadata, amber configuration warning, and one purple primary action match the approved palette.
+- Image quality and asset fidelity: both the list thumbnail and the main preview load the real MP4 first frame through the read-only media endpoint. No placeholder art, fabricated cover, custom SVG, emoji, or CSS illustration is used.
+- Copy and content: all operational copy is plain Chinese. The page does not claim an account is connected when it is not and does not expose a final publish action until title and account prerequisites are satisfied.
+
+## Findings and comparison history
+
+- Pass 1 P2: the selection panel was too tall at 1355 × 906, placing the persistent next action below the fold. Reduced the list and preview minimum heights so the selection count and next action remain visible in the first screen.
+- Pass 1 P2: the same MP4 URL was opened by the list thumbnail before the main preview, leaving the larger player without supported media metadata. Added a separate read-only preview query variant so both players load independently; the browser now reports 0:48 and 1440P and displays the real frame.
+- Pass 1 P1: the review-stage publish action was visually available with no verified account. The action is now disabled unless the title is present and all selected platform accounts are ready; an explicit `先去配置发布账号` route is shown instead.
+- Pass 2 evidence: the revised 1355 × 906 selection screen shows the footer action, the 1487 × 1058 comparison matches the approved composition, the review screen shows the truthful blocked state, and the task-record drawer opens with the real existing task.
+- Pass 2 result: no actionable P0, P1, or P2 mismatch remains. The smaller list population and unverified-account copy are intentional truthful-data constraints.
+
+## Primary interactions and runtime verification
+
+- Selected the real completed video and verified its first frame, duration, resolution, timestamp, search row, sort control, refresh control, and preview playback control.
+- Opened `下一步：检查发布内容`, verified title/description/topic fields, native-music summary, and disabled final action while the account is not ready.
+- Opened and closed the task-record drawer and verified the existing task row without deleting or mutating it.
+- Final reload produced no application console errors; only the existing React Router future-flag warnings were present.
+- Frontend page tests passed 11/11; TypeScript check and production build passed. Backend publish API tests passed 14/14; Python compilation and diff whitespace checks passed.
+- No account login, upload, paid generation, deletion, publication submission, or final platform click was performed.
+
+final result: passed

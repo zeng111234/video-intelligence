@@ -24,9 +24,7 @@ import {
   FileTextOutlined,
   HistoryOutlined,
   MoreOutlined,
-  PlayCircleOutlined,
   SearchOutlined,
-  VideoCameraOutlined,
 } from "@ant-design/icons";
 import {
   createCrawlerBatch,
@@ -77,13 +75,14 @@ type BrowserPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 type MaterialPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 type MaterialCount = 30 | 50 | 100;
 type MaterialSort = "heat" | "newest" | "likes" | "comments" | "plays";
+type KuaishouSort = "platform" | "newest" | "likes";
+type KuaishouDurationBucket = "all" | "under_60" | "between_60_300" | "over_300";
 type PublishedWindowDays = CrawlerSearchRequest["published_window_days"];
 
 interface MaterialDisplaySettings {
   sort: MaterialSort;
 }
 
-const DEFAULT_MATERIAL_PLATFORMS: MaterialPlatform[] = ["douyin", "xiaohongshu", "kuaishou", "bilibili"];
 const PLATFORM_OPTIONS: Array<{ label: string; value: MaterialPlatform }> = [
   { label: "抖音", value: "douyin" },
   { label: "小红书", value: "xiaohongshu" },
@@ -99,10 +98,23 @@ const MATERIAL_PLATFORM_LABELS: Record<string, string> = {
 };
 
 const PUBLISHED_WINDOW_OPTIONS: Array<{ label: string; value: PublishedWindowDays }> = [
-  { label: "不限时间", value: 0 },
-  { label: "近1天", value: 1 },
-  { label: "近3天", value: 3 },
-  { label: "近7天", value: 7 },
+  { label: "不限", value: 0 },
+  { label: "一天内", value: 1 },
+  { label: "一周内", value: 7 },
+  { label: "半年内", value: 180 },
+];
+
+const KUAISHOU_SORT_OPTIONS: Array<{ label: string; value: KuaishouSort }> = [
+  { label: "平台综合", value: "platform" },
+  { label: "最新发布", value: "newest" },
+  { label: "最多点赞", value: "likes" },
+];
+
+const KUAISHOU_DURATION_OPTIONS: Array<{ label: string; value: KuaishouDurationBucket }> = [
+  { label: "不限", value: "all" },
+  { label: "1分钟以下", value: "under_60" },
+  { label: "1-5分钟", value: "between_60_300" },
+  { label: "5分钟以上", value: "over_300" },
 ];
 
 const HOTSPOT_WINDOW_OPTIONS: Array<{ label: string; value: HotspotWindowHours }> = [
@@ -129,6 +141,13 @@ function formatMaterialDuration(seconds: number | null | undefined) {
   const minutes = Math.floor(seconds / 60);
   const remainder = Math.round(seconds % 60);
   return remainder ? `${minutes}分${remainder}秒` : `${minutes}分钟`;
+}
+
+function formatSearchElapsed(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainingSeconds = safeSeconds % 60;
+  return minutes > 0 ? `${minutes}分${remainingSeconds}秒` : `${remainingSeconds}秒`;
 }
 
 function publishedTimestamp(item: CrawlerCandidateResult) {
@@ -234,6 +253,10 @@ function formatNumber(value: number | null | undefined) {
   return value === null || value === undefined ? "未返回" : value.toLocaleString("zh-CN");
 }
 
+function formatMetricCoverage(label: string, available: number, total: number) {
+  return available > 0 && total > 0 ? `${label} ${available}/${total}` : `${label}：未返回`;
+}
+
 function formatLikesPerDay(value: number | null | undefined) {
   return value === null || value === undefined ? "未返回" : `${value.toFixed(1)}/天`;
 }
@@ -295,14 +318,21 @@ export default function KeywordCrawlerPage() {
   const navigate = useNavigate();
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
-  const [platforms, setPlatforms] = useState<MaterialPlatform[]>(DEFAULT_MATERIAL_PLATFORMS);
+  const [platforms, setPlatforms] = useState<MaterialPlatform[]>([]);
   const [countPerPlatform, setCountPerPlatform] = useState<MaterialCount>(30);
   const [publishedWindowDays, setPublishedWindowDays] = useState<PublishedWindowDays>(0);
+  const [kuaishouSort, setKuaishouSort] = useState<KuaishouSort>("platform");
+  const [kuaishouDurationBucket, setKuaishouDurationBucket] = useState<KuaishouDurationBucket>("all");
   const [materialSort, setMaterialSort] = useState<MaterialSort>("heat");
   const [batches, setBatches] = useState<CrawlerBatchResponse[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<CrawlerBatchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [searchProgress, setSearchProgress] = useState<{
+    startedAt: number;
+    platforms: MaterialPlatform[];
+  } | null>(null);
+  const [searchElapsedSeconds, setSearchElapsedSeconds] = useState(0);
   const [probingCopy, setProbingCopy] = useState(false);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
   const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
@@ -329,7 +359,13 @@ export default function KeywordCrawlerPage() {
     target_main_count: countPerPlatform,
     allow_paid_fallback: false,
     platforms,
-  }), [countPerPlatform, keyword, platforms, publishedWindowDays]);
+    ...(platforms.includes("kuaishou")
+      ? {
+        kuaishou_sort: kuaishouSort,
+        kuaishou_duration_bucket: kuaishouDurationBucket,
+      }
+      : {}),
+  }), [countPerPlatform, keyword, kuaishouDurationBucket, kuaishouSort, platforms, publishedWindowDays]);
   const keywordLength = requestPayload.keyword.length;
   const canSearch = keywordLength >= 1 && keywordLength <= 50 && platforms.length > 0;
   const keywordHelp =
@@ -396,6 +432,16 @@ export default function KeywordCrawlerPage() {
     void loadSecondaryData();
   }, [loadBatches, loadSecondaryData]);
 
+  useEffect(() => {
+    if (!searchProgress) return undefined;
+    const updateElapsed = () => {
+      setSearchElapsedSeconds(Math.floor((Date.now() - searchProgress.startedAt) / 1000));
+    };
+    updateElapsed();
+    const intervalId = window.setInterval(updateElapsed, 1_000);
+    return () => window.clearInterval(intervalId);
+  }, [searchProgress]);
+
   const handleSearch = async (keywordOverride?: string) => {
     const searchKeyword = (keywordOverride ?? keyword).trim();
     if (searchKeyword.length < 1 || searchKeyword.length > 50) {
@@ -408,6 +454,8 @@ export default function KeywordCrawlerPage() {
     }
     const payload: CrawlerSearchRequest = { ...requestPayload, keyword: searchKeyword };
     setSubmitting(true);
+    setSearchElapsedSeconds(0);
+    setSearchProgress({ startedAt: Date.now(), platforms: [...platforms] });
     try {
       const batch = await createCrawlerBatch(payload);
       setSelectedBatch(batch);
@@ -418,6 +466,8 @@ export default function KeywordCrawlerPage() {
       toast.error((err as Error).message);
     } finally {
       setSubmitting(false);
+      setSearchProgress(null);
+      setSearchElapsedSeconds(0);
     }
   };
 
@@ -614,6 +664,17 @@ export default function KeywordCrawlerPage() {
                 找素材
               </Button>
             </Tooltip>
+            {searchProgress && (
+              <div role="status" aria-live="polite">
+                <Alert
+                  style={{ marginTop: 12 }}
+                  type="info"
+                  showIcon
+                  message={`正在从${searchProgress.platforms.map(materialPlatformLabel).join("、")}找素材`}
+                  description={`已等待 ${formatSearchElapsed(searchElapsedSeconds)}，正在等待平台返回结果。平台还没返回前，暂不显示完成进度。`}
+                />
+              </div>
+            )}
             {hotWords.length > 0 && (
               <div className="crawler-hot-words">
                 {hotWords.slice(0, 4).map((item) => (
@@ -636,11 +697,9 @@ export default function KeywordCrawlerPage() {
                   ? "状态加载中"
                   : !connection.enabled
                     ? "未启用"
-                    : option.value === "xiaohongshu" && !ready
-                      ? "未登录也可搜索"
-                      : ready
-                        ? "已就绪"
-                        : "搜索时自动打开";
+                    : ready
+                      ? "已就绪"
+                      : "";
                 return (
                   <div className="crawler-platform-row" key={option.value}>
                     <Checkbox
@@ -695,6 +754,28 @@ export default function KeywordCrawlerPage() {
                 ]}
               />
             </div>
+            {platforms.includes("kuaishou") && (
+              <>
+                <div className="crawler-rule-field">
+                  <Text type="secondary">快手排序</Text>
+                  <Select<KuaishouSort>
+                    aria-label="快手排序"
+                    value={kuaishouSort}
+                    onChange={setKuaishouSort}
+                    options={KUAISHOU_SORT_OPTIONS}
+                  />
+                </div>
+                <div className="crawler-rule-field">
+                  <Text type="secondary">快手时长</Text>
+                  <Select<KuaishouDurationBucket>
+                    aria-label="快手时长"
+                    value={kuaishouDurationBucket}
+                    onChange={setKuaishouDurationBucket}
+                    options={KUAISHOU_DURATION_OPTIONS}
+                  />
+                </div>
+              </>
+            )}
           </section>
 
           {selectedBatch && (
@@ -737,10 +818,7 @@ export default function KeywordCrawlerPage() {
           ) : (
             <section className="crawler-recent-searches">
               <div className="crawler-section-heading">
-                <div>
-                  <Title level={5}>最近搜索</Title>
-                  <Text type="secondary">选择一条记录继续查看素材。</Text>
-                </div>
+                <Title level={5}>最近搜索</Title>
               </div>
               <List
                 loading={loading}
@@ -992,6 +1070,8 @@ function BatchDetail({
 }
 
 function emptyRunSummary(run: CrawlerPlatformRun) {
+  const stopMessage = crawlShortfallSummary(run);
+  if (stopMessage) return stopMessage;
   if (run.error) {
     if (run.provider.startsWith("douyin_public_browser")) {
       return `抖音官网搜索已暂停：${run.error}。`;
@@ -1013,6 +1093,11 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
     return `${run.platform_label}解析 ${run.parsed_item_count} 条，${filtered.length ? `其中${filtered.join("、")}` : "没有符合本次条件的内容"}，未进入候选榜。`;
   }
   return `${run.platform_label}没有返回搜索结果，可能需要登录或完成平台验证。`;
+}
+
+function crawlShortfallSummary(run: CrawlerPlatformRun) {
+  if (!run.crawl_stop_message || run.returned_count >= run.requested_count) return null;
+  return `${run.platform_label}已找到 ${run.returned_count} 条，未达到 ${run.requested_count} 条：${run.crawl_stop_message}`;
 }
 
 function UnifiedPlatformResults({
@@ -1039,6 +1124,10 @@ function UnifiedPlatformResults({
     [runs],
   );
   const emptyRuns = runs.filter((run) => run.candidates.length === 0);
+  const platformShortfalls = runs
+    .filter((run) => run.candidates.length > 0)
+    .map(crawlShortfallSummary)
+    .filter((message): message is string => Boolean(message));
   const missingSelectedPlatforms = (batch.platforms ?? [])
     .filter((platform) => !runs.some((run) => run.platform === platform));
   const missingPlatformSummary = (platform: string) => {
@@ -1080,7 +1169,7 @@ function UnifiedPlatformResults({
         </Space>
         <Text type="secondary">已合并去重</Text>
       </div>
-      {(emptyRuns.length > 0 || missingSelectedPlatforms.length > 0) && (
+      {(emptyRuns.length > 0 || missingSelectedPlatforms.length > 0 || platformShortfalls.length > 0) && (
           <Alert
             type="info"
             showIcon
@@ -1089,6 +1178,7 @@ function UnifiedPlatformResults({
             description={[
               ...missingSelectedPlatforms.map(missingPlatformSummary),
               ...emptyRuns.map(emptyRunSummary),
+              ...platformShortfalls,
             ].join(" ")}
           />
       )}
@@ -1176,7 +1266,7 @@ function MaterialCandidateTable({
             <Space size={6} wrap>
               <Text type="secondary">共抓取 {candidates.length} 条，点选一条查看详情。</Text>
               <Text type="secondary">
-                评论 {metricCoverage.comments}/{candidates.length} · 分享 {metricCoverage.shares}/{candidates.length} · 收藏 {metricCoverage.favorites}/{candidates.length}
+                {formatMetricCoverage("评论", metricCoverage.comments, candidates.length)} · {formatMetricCoverage("分享", metricCoverage.shares, candidates.length)} · {formatMetricCoverage("收藏", metricCoverage.favorites, candidates.length)}
               </Text>
             </Space>
           </div>
@@ -1225,7 +1315,6 @@ function MaterialCandidateTable({
                   onChange={() => setDetail(item)}
                   onClick={(event) => event.stopPropagation()}
                 />
-                <CandidateVisual candidate={item} compact />
                 <div className="crawler-candidate-copy">
                   <Text strong ellipsis={{ tooltip: item.title }}>{item.title}</Text>
                   <Text type="secondary" ellipsis={{ tooltip: item.author_name || "作者未返回" }}>
@@ -1254,29 +1343,6 @@ function MaterialCandidateTable({
         onSendToWorkspace={onSendToWorkspace}
         onGenerateOriginalScript={onGenerateOriginalScript}
       />
-    </div>
-  );
-}
-
-function CandidateVisual({
-  candidate,
-  compact = false,
-}: {
-  candidate: CrawlerCandidateResult;
-  compact?: boolean;
-}) {
-  const directVideo = Boolean(candidate.source_url && /\.(mp4|webm|mov)(\?|$)/i.test(candidate.source_url));
-  return (
-    <div className={`crawler-candidate-visual${compact ? " compact" : ""}`}>
-      {directVideo ? (
-        <video src={candidate.source_url || undefined} muted preload="metadata" />
-      ) : (
-        <div className="crawler-candidate-visual-fallback">
-          {compact ? <VideoCameraOutlined /> : <PlayCircleOutlined />}
-          {!compact && <Text type="secondary">平台未返回封面</Text>}
-        </div>
-      )}
-      <span>{formatMaterialDuration(candidate.duration_seconds)}</span>
     </div>
   );
 }
@@ -1313,7 +1379,6 @@ function MaterialCandidatePreview({
   return (
     <aside className="crawler-candidate-preview">
       <Text type="secondary">已选择 1 条</Text>
-      <CandidateVisual candidate={candidate} />
       <Title level={5}>{candidate.title}</Title>
       <Space wrap size={8}>
         <Text type="secondary">{candidate.author_name || "作者未返回"}</Text>
@@ -1378,6 +1443,7 @@ function PlatformRunDetail({
   originalScriptLoadingId: string | null;
 }) {
   const isHotspotRun = run.provider === "douyin_local_browser";
+  const shortfallMessage = crawlShortfallSummary(run);
   const totalRanked = [...run.candidates]
     .sort((a, b) => isHotspotRun
       ? (b.new_plays ?? b.plays ?? 0) - (a.new_plays ?? a.plays ?? 0)
@@ -1407,6 +1473,7 @@ function PlatformRunDetail({
         </Descriptions>
       )}
       {run.error && <Alert style={{ marginTop: 12 }} type="error" showIcon message={run.error} />}
+      {shortfallMessage && <Alert style={{ marginTop: 12 }} type="info" showIcon message="本次暂未凑足目标" description={shortfallMessage} />}
       {run.payload_diagnostic && <Alert style={{ marginTop: 12 }} type="warning" showIcon message="供应商响应诊断" description={run.payload_diagnostic} />}
       {run.candidates.length === 0 && isHotspotRun && lowIncrementalCandidates.length > 0 ? (
         <Space direction="vertical" style={{ width: "100%", marginTop: 16 }} size="middle">

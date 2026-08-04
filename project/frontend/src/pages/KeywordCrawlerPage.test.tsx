@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { Modal } from "antd";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -404,6 +404,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
   afterEach(() => {
     cleanup();
     Modal.destroyAll();
+    vi.useRealTimers();
     vi.clearAllMocks();
   });
 
@@ -423,12 +424,18 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByText("从已选平台的公开页面找素材，结果由你挑选确认。")).toBeNull();
     expect(screen.queryByText(/本次会搜索已选平台/)).toBeNull();
     expect(screen.queryByText("点击“找素材”后生效；平台实际返回可能更少。")).toBeNull();
-    expect(screen.getByText("未登录也可搜索")).toBeTruthy();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(4);
+    expect(screen.queryByText("未登录也可搜索")).toBeNull();
+    expect(screen.queryByText("搜索时自动打开")).toBeNull();
+    expect(screen.queryByText("选择一条记录继续查看素材。")).toBeNull();
+    const platformCheckboxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
+    expect(platformCheckboxes).toHaveLength(4);
+    expect(platformCheckboxes.every((checkbox) => !checkbox.checked)).toBe(true);
     expect(screen.queryByText("小红书人工素材箱")).toBeNull();
     expect(screen.queryByRole("button", { name: "保存人工素材" })).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    expect((screen.getByRole("button", { name: "找素材" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "小红书" }));
     expect((screen.getByRole("button", { name: "找素材" }) as HTMLButtonElement).disabled).toBe(false);
 
     const xiaohongshuRow = screen.getByText("小红书").closest(".crawler-platform-row") as HTMLElement | null;
@@ -450,22 +457,123 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByRole("combobox", { name: "每平台目标" })).toBeTruthy();
     const publishedWindowSelect = screen.getByRole("combobox", { name: "发布时间" });
     fireEvent.mouseDown(publishedWindowSelect);
-    fireEvent.click(await screen.findByText("近3天"));
-    expect(screen.getByRole("checkbox", { name: "小红书" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("checkbox", { name: "快手" }));
+    expect(await screen.findByText("一天内")).toBeTruthy();
+    expect(screen.getByText("一周内")).toBeTruthy();
+    expect(screen.getByText("半年内")).toBeTruthy();
+    expect(screen.queryByText("近3天")).toBeNull();
+    fireEvent.click(screen.getByText("半年内"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "抖音" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "小红书" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "B站" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
       keyword: "获客",
       platforms: ["douyin", "xiaohongshu", "bilibili"],
       count_per_platform: 30,
-      published_window_days: 3,
+      published_window_days: 180,
     })));
     const submittedPayload = vi.mocked(createCrawlerBatch).mock.calls[0][0];
     expect(submittedPayload).not.toHaveProperty("hotspot_window_hours");
     expect(submittedPayload).not.toHaveProperty("hotspot_result_limit");
+    expect(submittedPayload).not.toHaveProperty("kuaishou_sort");
+    expect(submittedPayload).not.toHaveProperty("kuaishou_duration_bucket");
     expect(probeCrawlerBatchCopy).not.toHaveBeenCalled();
     expect(startCrawlerBrowserDiscovery).not.toHaveBeenCalled();
+  });
+
+  it("shows selected-platform waiting progress and clears it after a search completes", async () => {
+    let resolveBatch: (value: CrawlerBatchResponse) => void = () => undefined;
+    const pendingBatch = new Promise<CrawlerBatchResponse>((resolve) => {
+      resolveBatch = resolve;
+    });
+    vi.mocked(createCrawlerBatch).mockReturnValue(pendingBatch);
+
+    renderPage();
+
+    await screen.findByText("企业获客");
+    vi.useFakeTimers();
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "抖音" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "快手" }));
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(screen.getByRole("status").textContent).toContain("正在从抖音、快手找素材");
+    expect(screen.getByRole("status").textContent).toContain("已等待 0秒");
+    expect(screen.getByRole("status").textContent).toContain("正在等待平台返回结果");
+    expect(screen.getByRole("status").textContent).toContain("暂不显示完成进度");
+
+    act(() => {
+      vi.advanceTimersByTime(12_000);
+    });
+    expect(screen.getByRole("status").textContent).toContain("已等待 12秒");
+
+    await act(async () => {
+      resolveBatch(freeMultiPlatformBatch);
+      await pendingBatch;
+    });
+
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("clears waiting progress when a search fails", async () => {
+    let rejectBatch: (error: Error) => void = () => undefined;
+    const pendingBatch = new Promise<CrawlerBatchResponse>((_resolve, reject) => {
+      rejectBatch = reject;
+    });
+    vi.mocked(createCrawlerBatch).mockReturnValue(pendingBatch);
+
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "B站" }));
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+    expect(screen.getByRole("status").textContent).toContain("正在从B站找素材");
+
+    await act(async () => {
+      rejectBatch(new Error("平台暂时没有返回"));
+      await pendingBatch.catch(() => undefined);
+    });
+
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows Kuaishou-only filters and submits the selected values", async () => {
+    renderPage();
+
+    await screen.findByText("企业获客");
+    expect(screen.queryByRole("combobox", { name: "快手排序" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "快手时长" })).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "快手" }));
+
+    const kuaishouSort = await screen.findByRole("combobox", { name: "快手排序" });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+      platforms: ["kuaishou"],
+      kuaishou_sort: "platform",
+      kuaishou_duration_bucket: "all",
+    })));
+    vi.mocked(createCrawlerBatch).mockClear();
+
+    fireEvent.mouseDown(kuaishouSort);
+    fireEvent.click(await screen.findByText("最新发布"));
+    const kuaishouDuration = screen.getByRole("combobox", { name: "快手时长" });
+    fireEvent.mouseDown(kuaishouDuration);
+    fireEvent.click(await screen.findByText("1-5分钟"));
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+      platforms: ["kuaishou"],
+      kuaishou_sort: "newest",
+      kuaishou_duration_bucket: "between_60_300",
+    })));
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "快手" }));
+    expect(screen.queryByRole("combobox", { name: "快手排序" })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "快手时长" })).toBeNull();
   });
 
   it("uses only the official Douyin browser and never treats a started browser as a logged-in account", async () => {
@@ -494,7 +602,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
 
     const settings = await screen.findByRole("complementary", { name: "找素材设置" });
     expect(within(settings).getAllByText("已就绪").length).toBeGreaterThanOrEqual(2);
-    expect(within(settings).getByText("未登录也可搜索")).toBeTruthy();
+    expect(within(settings).queryByText("未登录也可搜索")).toBeNull();
     expect(within(settings).queryByText("热点宝就绪")).toBeNull();
     expect(within(settings).queryByText(/热点宝浏览器/)).toBeNull();
   });
@@ -558,6 +666,8 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByText(/等待后续采样/)).toBeNull();
     expect(screen.queryByRole("button", { name: "追踪这批走势" })).toBeNull();
     expect(view.container.querySelector(".recharts-responsive-container")).toBeNull();
+    expect(view.container.querySelector(".crawler-candidate-visual")).toBeNull();
+    expect(screen.queryByText("平台未返回封面")).toBeNull();
 
     expect(screen.getByText(/仅有标题和互动数据，只能用于选题参考/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "送入智能创作" })).toBeNull();
@@ -577,6 +687,15 @@ describe("KeywordCrawlerPage performance behavior", () => {
       ...freeMultiPlatformBatch,
       platforms: ["douyin", "kuaishou", "bilibili"],
       error: "快手浏览器尚未完成验证。",
+      platform_runs: freeMultiPlatformBatch.platform_runs.map((run) => (
+        run.platform === "bilibili"
+          ? {
+            ...run,
+            crawl_stop_reason: "no_more_loaded",
+            crawl_stop_message: "已经没有更多符合条件的视频。",
+          }
+          : run
+      )),
     });
     renderPage();
 
@@ -588,7 +707,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText("B站 发现 39 条 · 0 条符合")).toBeTruthy();
     expect(screen.getByText("快手 未完成")).toBeTruthy();
     expect(screen.getByText(/快手已选中但本次未完成搜索/)).toBeTruthy();
-    expect(screen.getByText(/B站发现 39 条页面结果/)).toBeTruthy();
+    expect(screen.getByText(/B站已找到 0 条，未达到 30 条：已经没有更多符合条件的视频。/)).toBeTruthy();
     expect(screen.getByText("评论 200")).toBeTruthy();
     expect(screen.queryByText("主榜候选")).toBeNull();
     expect(screen.queryByRole("button", { name: "付费自动解析" })).toBeNull();
@@ -649,6 +768,29 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(probeCrawlerBatchCopy).not.toHaveBeenCalled();
   });
 
+  it("does not present wholly unavailable interaction metrics as zero", async () => {
+    vi.mocked(getCrawlerBatch).mockResolvedValue({
+      ...materialTableBatch,
+      platform_runs: materialTableBatch.platform_runs.map((run) => ({
+        ...run,
+        candidates: run.candidates.map((item) => ({
+          ...item,
+          comments: null,
+          shares: null,
+          favorites: null,
+        })),
+      })),
+    });
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+    await screen.findByText("综合热度最高");
+
+    expect(screen.getByText("评论：未返回 · 分享：未返回 · 收藏：未返回")).toBeTruthy();
+    expect(screen.queryByText("评论 0/4 · 分享 0/4 · 收藏 0/4")).toBeNull();
+  });
+
   it("shows the current crawl summary and omits noisy preview explanations", async () => {
     vi.mocked(getCrawlerBatch).mockResolvedValue({
       ...materialTableBatch,
@@ -672,7 +814,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     const summary = screen.getByRole("region", { name: "本次搜索摘要" });
     expect(within(summary).getByText("企业获客")).toBeTruthy();
     expect(within(summary).getByText("抖音、B站")).toBeTruthy();
-    expect(within(summary).getByText("不限时间")).toBeTruthy();
+    expect(within(summary).getByText("不限")).toBeTruthy();
     expect(within(summary).getByText("4 条")).toBeTruthy();
     expect(screen.queryByText("素材说明")).toBeNull();
     expect(screen.queryByText("仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。")).toBeNull();

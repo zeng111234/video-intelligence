@@ -158,6 +158,11 @@ function publishAssetMediaUrl(asset: PublishAsset) {
   return asset.media_url || `/api/v1/publish/assets/media?name=${encodeURIComponent(asset.name)}`;
 }
 
+function publishAssetPreviewUrl(asset: PublishAsset) {
+  const mediaUrl = publishAssetMediaUrl(asset);
+  return `${mediaUrl}${mediaUrl.includes("?") ? "&" : "?"}preview=1`;
+}
+
 function platformHint(platform: PublishPlatformCapability) {
   if (platform.platform === "xiaohongshu") {
     return "系统在本机官方创作端准备视频和文案；请你检查后手动点击发布。";
@@ -654,6 +659,17 @@ export default function PublishPage() {
     setPublishStage("select");
   };
 
+  const togglePublishPlatform = (platform: string) => {
+    if (platforms.includes(platform) && platforms.length === 1) {
+      toast.warning("至少保留一个发布平台");
+      return;
+    }
+    setPlatforms((current) => current.includes(platform)
+      ? current.filter((item) => item !== platform)
+      : [...current, platform]);
+    setPreflight(null);
+  };
+
   const chooseAsset = (asset: PublishAsset) => {
     setVideoPath(asset.path);
     setNativeMusicHint(asset.recommended_music_hint || "");
@@ -662,15 +678,17 @@ export default function PublishPage() {
     setSelectedVideoMeta({ duration: 0, width: 0, height: 0 });
   };
 
-  const selectedAccountSummary = platforms.map((platform) => {
-    const capability = availablePlatforms.find((item) => item.platform === platform);
+  const publishTargetOptions = availablePlatforms.map((capability) => {
+    const platform = capability.platform;
     const account = accounts.find((item) => item.account_id === selectedAccountIds[platform]);
     return {
       platform,
       accountName: capability?.requires_account === false ? "无需登录" : account?.name || "待选择账号",
       ready: capability?.requires_account === false || account?.status === "ready",
+      statusLabel: capability?.requires_account === false ? "无需登录" : account?.status === "ready" ? "已登录" : "待登录",
     };
   });
+  const selectedAccountSummary = publishTargetOptions.filter((item) => platforms.includes(item.platform));
 
   return <div className="publish-page">
     {pageStep === "configure" && <><div className="publish-page-heading">
@@ -809,21 +827,35 @@ export default function PublishPage() {
     </Spin> : <Spin spinning={loading || submitting}>
       {publishStage === "select" ? <section className="publish-selection-shell">
         <header className="publish-destination-bar">
-          <div className="publish-destination-main">
-            {selectedAccountSummary.map((item) => <span className="publish-destination-item" key={item.platform}>
-              <span className="publish-destination-icon" style={{ color: PLATFORM_TONES[item.platform] }}>
-                {PLATFORM_ICONS[item.platform] || <SendOutlined />}
-              </span>
-              <span>发布到</span>
-              <strong>{platformLabel(item.platform)} · {item.accountName}</strong>
-              <span className={item.ready ? "publish-ready" : "publish-not-ready"}>
-                <i />{item.ready ? "已连接" : "需配置"}
-              </span>
-            </span>)}
+          <div className="publish-target-picker">
+            <div className="publish-target-label">
+              <strong>发布平台</strong>
+              <span>可多选 · 已选 {platforms.length} 个</span>
+            </div>
+            <div className="publish-target-options" role="group" aria-label="选择发布平台">
+              {publishTargetOptions.map((item) => {
+                const selected = platforms.includes(item.platform);
+                return <button
+                  key={item.platform}
+                  type="button"
+                  className={`publish-target-option${selected ? " selected" : ""}`}
+                  aria-pressed={selected}
+                  aria-label={`${platformLabel(item.platform)} ${item.accountName}`}
+                  onClick={() => togglePublishPlatform(item.platform)}
+                >
+                  <span className="publish-target-icon" style={{ color: PLATFORM_TONES[item.platform] }}>
+                    {PLATFORM_ICONS[item.platform] || <SendOutlined />}
+                  </span>
+                  <span>{platformLabel(item.platform)}</span>
+                  <small>{item.statusLabel}</small>
+                  <i className={item.ready ? "ready" : "not-ready"} />
+                </button>;
+              })}
+            </div>
           </div>
           <div className="publish-destination-actions">
             <Button type="text" icon={<ClockCircleOutlined />} onClick={() => setTaskDrawerOpen(true)}>任务记录 <Tag color="purple">{tasks.length}</Tag></Button>
-            <Button type="link" onClick={() => setPageStep("configure")}>更换账号</Button>
+            <Button type="link" onClick={() => setPageStep("configure")}>管理账号</Button>
           </div>
         </header>
 
@@ -877,7 +909,7 @@ export default function PublishPage() {
                   key={selectedAsset.path}
                   controls
                   preload="metadata"
-                  src={publishAssetMediaUrl(selectedAsset)}
+                  src={publishAssetPreviewUrl(selectedAsset)}
                   onLoadedMetadata={(event) => {
                     const video = event.currentTarget;
                     video.currentTime = Math.min(0.1, video.duration || 0.1);
@@ -1249,22 +1281,37 @@ export default function PublishPage() {
         border-radius: 10px;
         background: #fff;
       }
-      .publish-destination-main,
-      .publish-destination-item,
+      .publish-target-picker,
+      .publish-target-label,
+      .publish-target-options,
+      .publish-target-option,
       .publish-destination-actions {
         display: flex;
         align-items: center;
       }
-      .publish-destination-main { min-width: 0; gap: 14px; }
-      .publish-destination-item { gap: 8px; min-width: 0; color: #64748b; }
-      .publish-destination-item strong { color: #172033; white-space: nowrap; }
-      .publish-destination-icon { display: grid; place-items: center; width: 26px; height: 26px; font-size: 18px; }
-      .publish-ready,
-      .publish-not-ready { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
-      .publish-ready { color: #059669; }
-      .publish-not-ready { color: #d97706; }
-      .publish-ready i,
-      .publish-not-ready i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+      .publish-target-picker { min-width: 0; gap: 14px; }
+      .publish-target-label { align-items: baseline; flex: none; gap: 7px; white-space: nowrap; }
+      .publish-target-label strong { color: #172033; }
+      .publish-target-label span { color: #94a3b8; font-size: 12px; }
+      .publish-target-options { min-width: 0; gap: 7px; flex-wrap: wrap; }
+      .publish-target-option {
+        gap: 6px;
+        height: 34px;
+        padding: 0 10px;
+        color: #64748b;
+        border: 1px solid #e3e7ef;
+        border-radius: 8px;
+        background: #fff;
+        cursor: pointer;
+        transition: border-color .16s ease, background .16s ease, color .16s ease;
+      }
+      .publish-target-option:hover { color: #5b21b6; border-color: #c4b5fd; }
+      .publish-target-option.selected { color: #5b21b6; border-color: #8b5cf6; background: #f7f3ff; box-shadow: inset 0 0 0 1px #8b5cf6; }
+      .publish-target-icon { display: grid; place-items: center; font-size: 15px; }
+      .publish-target-option small { color: #94a3b8; font-size: 11px; }
+      .publish-target-option.selected small { color: #7c3aed; }
+      .publish-target-option i { width: 6px; height: 6px; border-radius: 50%; background: #d97706; }
+      .publish-target-option i.ready { background: #10b981; }
       .publish-destination-actions { gap: 4px; }
       .publish-selection-heading {
         display: flex;
@@ -1416,7 +1463,7 @@ export default function PublishPage() {
         .publish-platform-sidebar-note { display: none; }
         .publish-platform-detail { min-height: 430px; padding: 22px 18px; }
         .publish-destination-bar { align-items: flex-start; flex-direction: column; }
-        .publish-destination-main { align-items: flex-start; flex-direction: column; }
+        .publish-target-picker { align-items: flex-start; flex-direction: column; }
         .publish-selection-grid,
         .publish-review-grid { grid-template-columns: 1fr; }
         .publish-asset-list { max-height: none; }

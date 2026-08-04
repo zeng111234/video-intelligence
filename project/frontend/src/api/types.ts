@@ -683,7 +683,7 @@ export interface CrawlerProviderUsage {
 
 export interface CrawlerSearchRequest {
   keyword: string;
-  published_window_days: 0 | 1 | 3 | 7;
+  published_window_days: 0 | 1 | 7 | 180;
   /** 热点宝榜单统计周期；不等同于视频发布时间。 */
   hotspot_window_hours?: 1 | 24 | 72 | 168;
   count_per_platform: number;
@@ -703,6 +703,10 @@ export interface CrawlerSearchRequest {
   hotspot_result_limit?: number;
   /** 本次需要检索的平台；未传时保持旧版全部平台行为。 */
   platforms?: Array<"douyin" | "xiaohongshu" | "kuaishou" | "bilibili">;
+  /** 仅在选择快手时传入的快手站内排序。 */
+  kuaishou_sort?: "platform" | "newest" | "likes";
+  /** 仅在选择快手时传入的快手视频时长范围。 */
+  kuaishou_duration_bucket?: "all" | "under_60" | "between_60_300" | "over_300";
 }
 
 export interface CrawlerPlatformPreview {
@@ -950,6 +954,10 @@ export interface CrawlerPlatformRun {
   billable_units: number | null;
   quota_remaining: number | null;
   error: string | null;
+  /** 平台主动停止时的内部原因；展示时优先使用 crawl_stop_message。 */
+  crawl_stop_reason?: "target_reached" | "platform_end" | "no_more_loaded" | "safety_limit" | string | null;
+  /** 平台未凑足目标时可直接展示的说明。 */
+  crawl_stop_message?: string | null;
   errors: Record<string, unknown>[];
   started_at: string | null;
   finished_at: string | null;

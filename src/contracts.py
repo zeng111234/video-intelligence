@@ -91,6 +91,7 @@ class LicensedSearchProvider(Protocol):
         limit: int,
         idempotency_key: str,
         hotspot_window_hours: int | None = None,
+        search_filters: dict[str, str] | None = None,
     ) -> ProviderSearchPage: ...
 
     def refresh_metrics(

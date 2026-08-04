@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
@@ -522,6 +522,11 @@ class ProviderSearchPage(BaseModel):
     duration_filtered_count: int = Field(default=0, ge=0)
     incremental_play_filtered_count: int = Field(default=0, ge=0)
     relevance_filtered_count: int = Field(default=0, ge=0)
+    # 本次公开页面检索为何停止。只记录采集边界，不把浏览器内部细节暴露给普通用户。
+    crawl_stop_reason: Literal[
+        "target_reached", "platform_end", "no_more_loaded", "safety_limit"
+    ] | None = None
+    crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
     errors: list[ProviderSearchError] = Field(default_factory=list)
 
@@ -771,6 +776,10 @@ class DiscoveryResult(BaseModel):
     incremental_play_filtered_count: int = Field(default=0, ge=0)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
+    crawl_stop_reason: Literal[
+        "target_reached", "platform_end", "no_more_loaded", "safety_limit"
+    ] | None = None
+    crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
     user_notice: str | None = None
     exhausted: bool = False
@@ -799,6 +808,11 @@ class SearchBatch(BaseModel):
     monitoring_policy: str = "low_cost_three_point_v1"
     sampling_offsets_hours: list[int] = Field(default_factory=lambda: [0, 6, 24])
     requested_count_per_platform: int = Field(default=10, ge=1, le=100)
+    # 快手的公开搜索筛选。其它平台保持默认值，历史批次也能自然兼容。
+    kuaishou_sort: Literal["platform", "newest", "likes"] = "platform"
+    kuaishou_duration_bucket: Literal[
+        "all", "under_60", "between_60_300", "over_300"
+    ] = "all"
     provider: str
     mode: ProviderMode
     status: SearchBatchStatus = SearchBatchStatus.PENDING
@@ -868,6 +882,10 @@ class PlatformSearchRun(BaseModel):
     low_incremental_items: list[ProviderSearchItem] = Field(default_factory=list)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
+    crawl_stop_reason: Literal[
+        "target_reached", "platform_end", "no_more_loaded", "safety_limit"
+    ] | None = None
+    crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
     api_call_count: int = Field(default=0, ge=0, le=1)
     billable_units: float | None = Field(default=None, ge=0)

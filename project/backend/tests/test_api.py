@@ -27,6 +27,8 @@ from src.adapters.licensed import SandboxLicensedSearchProvider  # noqa: E402
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from project.backend.app.core import config as backend_config  # noqa: E402
 from src.models import (  # noqa: E402
+    AvatarProviderStatus,
+    AvatarTask,
     CopywritingTask,
     HotWordRecord,
     PipelineRun,
@@ -44,6 +46,8 @@ from src.models import (  # noqa: E402
     SourceCapability,
     TaskStatus,
     VideoMetricSnapshot,
+    VideoEditConfig,
+    VideoEditTask,
 )
 from src.repositories import MockRepository  # noqa: E402
 from src.mock_data import build_mock_candidates  # noqa: E402
@@ -1293,7 +1297,7 @@ class TestCrawlerBatches:
             "/api/v1/crawler/preview",
             json={
                 "keyword": "二手车",
-                "published_window_days": 3,
+                "published_window_days": 180,
                 "count_per_platform": 2,
                 "force_refresh": False,
             },
@@ -1307,7 +1311,7 @@ class TestCrawlerBatches:
             "bilibili",
         ]
         assert data["ranking_mode"] == "platform_default_search_then_table_sort"
-        assert data["published_window_days"] == 3
+        assert data["published_window_days"] == 180
         assert [item["platform_label"] for item in data["platforms"]] == [
             "抖音官网搜索（最多30条）",
             "小红书未登录公开搜索（最多15条）",
@@ -1383,7 +1387,7 @@ class TestCrawlerBatches:
             "/api/v1/crawler/batches",
             json={
                 "keyword": keyword,
-                "published_window_days": 1,
+                "published_window_days": 180,
                 "count_per_platform": 2,
                 "force_refresh": True,
             },
@@ -1391,7 +1395,7 @@ class TestCrawlerBatches:
         assert create_resp.status_code == 200
         created = create_resp.json()
         assert created["status"] in {"succeeded", "partial", "failed"}
-        assert created["published_window_days"] == 1
+        assert created["published_window_days"] == 180
         assert {run["platform"] for run in created["platform_runs"]} == {
             "douyin",
             "xiaohongshu",
@@ -1495,6 +1499,7 @@ class TestCrawlerBatches:
             "keyword": "缓存贴标机",
             "platforms": ["xiaohongshu"],
             "count_per_platform": 15,
+            "published_window_days": 180,
         }
         first = client.post(
             "/api/v1/crawler/batches",
@@ -2040,6 +2045,112 @@ class TestPublish:
         platforms = data["platforms"]
         assert len(platforms) >= 3  # douyin, kuaishou, wechat_channels
         assert {"platform", "mode", "enabled"} <= set(platforms[0])
+
+    def test_completed_local_editor_output_is_available_to_publish(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        now = __import__("datetime").datetime.now().astimezone()
+        result_path = tmp_path / "editor-result.mp4"
+        result_path.write_bytes(b"\x00\x00\x00\x18ftypmp42editor-result")
+        repository = MockRepository()
+        repository.save_task(
+            VideoEditTask(
+                task_id="edit-local-publish-1",
+                title="本机导出 · 测试成片",
+                status=TaskStatus.SUCCEEDED,
+                progress=100,
+                created_at=now,
+                updated_at=now,
+                source_video_path=str(tmp_path / "source.mp4"),
+                edit_config=VideoEditConfig(),
+                result_path=str(result_path),
+                result_mime="video/mp4",
+                result_size_bytes=result_path.stat().st_size,
+                is_mock=False,
+                outputs={
+                    "workflow": "local_preview_export",
+                    "publish_title": "剪辑页真实成片",
+                },
+            )
+        )
+        publish_assets = tmp_path / "publish-assets"
+        monkeypatch.setattr(publish_api, "PUBLISH_ASSET_DIR", publish_assets)
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        try:
+            listed = client.get("/api/v1/publish/assets")
+            assert listed.status_code == 200
+            data = listed.json()
+            assert data["total"] == 1
+            assert data["items"][0]["path"] == str(result_path.resolve())
+            assert data["items"][0]["recommended_title"] == "剪辑页真实成片"
+            assert data["items"][0]["media_url"] == (
+                "/api/v1/video-editor/jobs/edit-local-publish-1/media"
+            )
+
+            imported = client.post(
+                "/api/v1/publish/assets/from-edit/edit-local-publish-1"
+            )
+            assert imported.status_code == 200
+            assert (publish_assets / "ai-edit-edit-local-publish-1.mp4").is_file()
+
+            relisted = client.get("/api/v1/publish/assets")
+            assert relisted.status_code == 200
+            assert relisted.json()["total"] == 1
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_repository, None)
+
+    def test_completed_avatar_output_is_available_to_publish(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        now = __import__("datetime").datetime.now().astimezone()
+        result_path = tmp_path / "avatar-result.mp4"
+        result_path.write_bytes(b"\x00\x00\x00\x18ftypmp42avatar-result")
+        repository = MockRepository()
+        repository.save_task(
+            AvatarTask(
+                task_id="avatar-publish-1",
+                title="机器人也失业，如今到底谁输谁赢？",
+                status=TaskStatus.SUCCEEDED,
+                progress=100,
+                created_at=now,
+                updated_at=now,
+                script_text="你发现没，机器人最近也被裁员了。",
+                avatar_id="avatar-1",
+                avatar_name="测试数字人",
+                voice_id="voice-1",
+                voice_name="测试声音",
+                rights_holder="测试用户",
+                rights_confirmed_at=now,
+                idempotency_key="avatar-publish-1",
+                provider_name="local",
+                provider_status=AvatarProviderStatus.SUCCEEDED,
+                result_path=str(result_path),
+                result_mime="video/mp4",
+                result_size_bytes=result_path.stat().st_size,
+                is_mock=False,
+            )
+        )
+        monkeypatch.setattr(publish_api, "PUBLISH_ASSET_DIR", tmp_path / "publish-assets")
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        try:
+            listed = client.get("/api/v1/publish/assets")
+            assert listed.status_code == 200
+            data = listed.json()
+            assert data["total"] == 1
+            assert data["items"][0]["path"] == str(result_path.resolve())
+            assert data["items"][0]["recommended_title"] == "机器人也失业，如今到底谁输谁赢？"
+            assert data["items"][0]["source_text"] == "你发现没，机器人最近也被裁员了。"
+            assert data["items"][0]["media_url"] == (
+                "/api/v1/video-editor/sources/avatar%3Aavatar-publish-1/media"
+            )
+        finally:
+            app.dependency_overrides.pop(backend_deps.get_repository, None)
 
     def test_publish_invalid_platform(self, client: TestClient):
         """无效平台应返回 400。"""

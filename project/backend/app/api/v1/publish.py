@@ -42,6 +42,68 @@ def _edit_asset_copy_source(task: Any, repository: Any) -> tuple[str | None, str
             source_task_id = avatar_task.source_task_id or source_task_id or avatar_task.task_id
     return source_text[:12_000] or None, source_task_id
 
+
+def _completed_edit_assets(repository: Any) -> list[dict[str, Any]]:
+    """Expose successful real editor outputs without copying large media on list."""
+    from src.models import TaskStatus, VideoEditTask
+
+    items: list[dict[str, Any]] = []
+    for task in repository.list_tasks():
+        if not isinstance(task, VideoEditTask):
+            continue
+        if task.status != TaskStatus.SUCCEEDED or task.is_mock or not task.result_path:
+            continue
+        if task.outputs.get("workflow") not in {"edit", "local_preview_export"}:
+            continue
+        path = Path(task.result_path).resolve()
+        if not path.is_file() or path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
+            continue
+        stat = path.stat()
+        source_text, source_task_id = _edit_asset_copy_source(task, repository)
+        items.append(
+            {
+                "name": f"ai-edit-{task.task_id}{path.suffix.lower()}",
+                "path": str(path),
+                "media_url": f"/api/v1/video-editor/jobs/{quote(task.task_id)}/media",
+                "size_bytes": stat.st_size,
+                "updated_at": stat.st_mtime,
+                "recommended_title": task.outputs.get("publish_title") or task.title,
+                "source_text": source_text,
+                "source_task_id": source_task_id,
+            }
+        )
+    return items
+
+
+def _completed_avatar_assets(repository: Any) -> list[dict[str, Any]]:
+    """Expose successful real avatar videos that still exist on disk."""
+    from src.models import AvatarTask, TaskStatus
+
+    items: list[dict[str, Any]] = []
+    for task in repository.list_tasks():
+        if not isinstance(task, AvatarTask):
+            continue
+        if task.status != TaskStatus.SUCCEEDED or task.is_mock or not task.result_path:
+            continue
+        path = Path(task.result_path).resolve()
+        if not path.is_file() or path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
+            continue
+        stat = path.stat()
+        source_id = quote(f"avatar:{task.task_id}", safe="")
+        items.append(
+            {
+                "name": f"ai-avatar-{task.task_id}{path.suffix.lower()}",
+                "path": str(path),
+                "media_url": f"/api/v1/video-editor/sources/{source_id}/media",
+                "size_bytes": stat.st_size,
+                "updated_at": stat.st_mtime,
+                "recommended_title": task.outputs.get("publish_title") or task.title,
+                "source_text": task.script_text[:12_000] or None,
+                "source_task_id": task.source_task_id or task.task_id,
+            }
+        )
+    return items
+
 PUBLISH_CONFIG_FIELDS: dict[str, dict[str, str]] = {
     "douyin": {
         "mode": "PUBLISH_DOUYIN_MODE",
@@ -810,7 +872,7 @@ def delete_publish_account(account_id: str):
 
 @router.get("/assets")
 def list_assets(repository=Depends(get_repository)):
-    """列出已上传到本机的待发布成片。"""
+    """列出手动上传、数字人及剪辑页已成功生成的真实成片。"""
     PUBLISH_ASSET_DIR.mkdir(parents=True, exist_ok=True)
     items = []
     for path in sorted(
@@ -840,6 +902,15 @@ def list_assets(repository=Depends(get_repository)):
                     }
                 )
         items.append(item)
+    existing_names = {str(item["name"]) for item in items}
+    existing_paths = {Path(str(item["path"])).resolve() for item in items}
+    for item in [*_completed_edit_assets(repository), *_completed_avatar_assets(repository)]:
+        if item["name"] in existing_names:
+            continue
+        if Path(str(item["path"])).resolve() in existing_paths:
+            continue
+        items.append(item)
+    items.sort(key=lambda item: float(item["updated_at"]), reverse=True)
     return {"items": items, "total": len(items)}
 
 
@@ -905,7 +976,7 @@ def import_edited_asset(
     task = repository.get_task(task_id)
     if not isinstance(task, VideoEditTask):
         raise HTTPException(status_code=404, detail="未找到智能剪辑任务。")
-    if task.outputs.get("workflow") != "edit":
+    if task.outputs.get("workflow") not in {"edit", "local_preview_export"}:
         raise HTTPException(
             status_code=400, detail="该任务不是智能剪辑工作流生成的成片。"
         )

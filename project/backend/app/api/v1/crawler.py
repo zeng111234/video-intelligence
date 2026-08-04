@@ -101,7 +101,7 @@ KUAISHOU_PUBLISHED_WINDOW_DAYS = 30
 BILIBILI_PUBLISHED_WINDOW_DAYS = 7
 # 常规“找素材”只检索抖音官网搜索页，不再启动或补足热点宝。
 DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS = 0
-DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 30
+DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 100
 HOTSPOT_CACHE_TTL_MINUTES = 60
 HOTSPOT_COOLDOWN_MIN_SECONDS = 60 * 60
 # 质量池只收“真实检测到文案”的候选：8 条主素材 + 4 条备用。
@@ -175,16 +175,26 @@ class CrawlerSearchRequest(BaseModel):
         min_length=1,
         description="本次要搜索的平台；小红书只使用隔离的未登录公开搜索。",
     )
-    # 热点宝不使用发布时间筛选；其余平台浏览器默认优先保留近 3 天内容。
+    # 热点宝的统计周期独立；这里仅是公开素材的发布时间筛选。
     published_window_days: int = Field(
         7,
-        description="0=不限；1/3/7/30 表示天数；历史批次兼容 180/300 天",
+        description="0=不限；1=一天内；7=一周内；180=半年内；历史批次兼容旧的 3/30/300 天。",
     )
     hotspot_window_hours: Literal[1, 24, 72, 168] = Field(
         168,
         description="热点宝榜单统计周期：1/24/72/168 小时；不限制视频发布时间。",
     )
     count_per_platform: int = Field(30, ge=1, le=100, description="每个平台最多保留数量")
+    kuaishou_sort: Literal["platform", "newest", "likes"] = Field(
+        "platform",
+        description="快手排序：平台综合、最新发布或最多点赞。",
+    )
+    kuaishou_duration_bucket: Literal[
+        "all", "under_60", "between_60_300", "over_300"
+    ] = Field(
+        "all",
+        description="快手时长：不限、1分钟以下、1到5分钟或5分钟以上。",
+    )
     hotspot_result_limit: int = Field(
         100,
         ge=1,
@@ -559,6 +569,8 @@ class CrawlerPlatformRunResponse(BaseModel):
     incremental_play_filtered_count: int = 0
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
+    crawl_stop_reason: str | None = None
+    crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
     cache_hit: bool
     cached_from_run_id: str | None = None
@@ -583,6 +595,10 @@ class CrawlerBatchResponse(BaseModel):
     published_window_days: int
     hotspot_window_hours: int | None = None
     count_per_platform: int
+    kuaishou_sort: Literal["platform", "newest", "likes"] = "platform"
+    kuaishou_duration_bucket: Literal[
+        "all", "under_60", "between_60_300", "over_300"
+    ] = "all"
     provider: str
     mode: str
     status: str
@@ -2130,6 +2146,14 @@ def _execute_free_multi_platform_batch(
             )
             return None
         try:
+            search_options = (
+                {
+                    "kuaishou_sort": body.kuaishou_sort,
+                    "kuaishou_duration_bucket": body.kuaishou_duration_bucket,
+                }
+                if platform == Platform.KUAISHOU
+                else {}
+            )
             batch = service.execute(
                 keyword=body.keyword,
                 published_window_days=published_window_days,
@@ -2138,6 +2162,7 @@ def _execute_free_multi_platform_batch(
                 platforms=(platform,),
                 cache_ttl_minutes=10,
                 schedule_recrawls=False,
+                **search_options,
             )
         except ValueError as exc:
             errors.append(str(exc))
@@ -2186,6 +2211,8 @@ def _execute_free_multi_platform_batch(
             published_window_days=body.published_window_days,
             hotspot_window_hours=None,
             requested_count_per_platform=requested_count,
+            kuaishou_sort=body.kuaishou_sort,
+            kuaishou_duration_bucket=body.kuaishou_duration_bucket,
             provider="free_multi_platform",
             mode=ProviderMode.PUBLIC_WEB,
             platforms=list(selected_platforms),
@@ -2261,6 +2288,8 @@ def _execute_free_multi_platform_batch(
             "published_window_days": body.published_window_days,
             "hotspot_window_hours": None,
             "requested_count_per_platform": requested_count,
+            "kuaishou_sort": body.kuaishou_sort,
+            "kuaishou_duration_bucket": body.kuaishou_duration_bucket,
             "provider": "free_multi_platform",
             "mode": ProviderMode.PUBLIC_WEB,
             "status": status,
@@ -4672,6 +4701,8 @@ def _batch_to_response(
         published_window_days=batch.published_window_days,
         hotspot_window_hours=batch.hotspot_window_hours,
         count_per_platform=batch.requested_count_per_platform,
+        kuaishou_sort=batch.kuaishou_sort,
+        kuaishou_duration_bucket=batch.kuaishou_duration_bucket,
         provider=batch.provider,
         mode=batch.mode.value,
         status=batch.status.value,
@@ -5009,6 +5040,8 @@ def _run_to_response(
         incremental_play_filtered_count=run.incremental_play_filtered_count,
         relevance_rule_version=(run.relevance_rule_version or RELEVANCE_RULE_VERSION),
         result_state=result_state,
+        crawl_stop_reason=run.crawl_stop_reason,
+        crawl_stop_message=run.crawl_stop_message,
         payload_diagnostic=run.payload_diagnostic,
         cache_hit=run.cache_hit,
         cached_from_run_id=run.cached_from_run_id,
