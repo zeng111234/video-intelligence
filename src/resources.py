@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import shutil
 import importlib.util
 import os
+import shutil
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
-
-import streamlit as st
-
 
 ASR_MODEL_REPOSITORIES = {
     "base": "Systran/faster-whisper-base",
@@ -15,7 +13,7 @@ ASR_MODEL_REPOSITORIES = {
 }
 
 
-@st.cache_resource
+@lru_cache(maxsize=None)
 def runtime_capabilities() -> dict[str, bool]:
     return {
         "ffmpeg": shutil.which("ffmpeg") is not None
@@ -24,7 +22,7 @@ def runtime_capabilities() -> dict[str, bool]:
     }
 
 
-@st.cache_resource
+@lru_cache(maxsize=None)
 def load_asr_model(model_name: str = "base") -> Any:
     """Load the local ASR model lazily so normal page startup stays lightweight."""
     try:

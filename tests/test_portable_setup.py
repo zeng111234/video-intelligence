@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -58,3 +59,28 @@ def test_windows_setup_uses_project_local_and_locked_dependencies() -> None:
     assert "--disable-interactivity" in setup
     assert '".venv\\Scripts\\python.exe"' in startup
     assert 'StartCommand = "python"' not in startup
+
+
+def test_frontend_manifest_and_lockfile_stay_in_sync() -> None:
+    frontend = PROJECT_ROOT / "project" / "frontend"
+    manifest = json.loads((frontend / "package.json").read_text(encoding="utf-8"))
+    lockfile = json.loads(
+        (frontend / "package-lock.json").read_text(encoding="utf-8")
+    )
+    locked_root = lockfile["packages"][""]
+
+    assert locked_root["dependencies"] == manifest["dependencies"]
+    assert locked_root["devDependencies"] == manifest["devDependencies"]
+
+
+def test_frontend_test_tools_match_vite_5_and_node_18() -> None:
+    manifest = json.loads(
+        (PROJECT_ROOT / "project" / "frontend" / "package.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    dev_dependencies = manifest["devDependencies"]
+
+    assert dev_dependencies["vite"] == "5.4.21"
+    assert dev_dependencies["vitest"] == "3.2.4"
+    assert dev_dependencies["jsdom"] == "24.1.3"

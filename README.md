@@ -32,7 +32,7 @@
 ### 环境要求
 
 - **Python 3.12+**（缺少时由 `start.bat` 自动安装，并创建项目专用 `.venv`）
-- **Node.js 18+**（缺少时由 `start.bat` 自动安装）
+- **Node.js 18+**（缺少时由 `start.bat` 自动安装；Node.js 22.11 也可直接使用）
 - **Chrome 或 Edge**（热点发现浏览器功能需要）
 - **FFmpeg**（仅本地视频处理功能需要；不影响系统启动）
 
@@ -391,12 +391,7 @@ choco install ffmpeg
 ```
 
 ### Q: 前端启动失败？
-A: 确保 Node.js 版本 >= 18，删除 `node_modules` 重新安装：
-```powershell
-cd project/frontend
-Remove-Item -Path node_modules -Recurse -Force
-npm install
-```
+A: 先获取完整的最新项目文件，确保 `package.json` 和 `package-lock.json` 来自同一版本，然后重新双击根目录的 `start.bat`。启动程序会按锁文件自动准备前端依赖，无需手动运行 npm 命令。
 
 ### Q: 数据库连接失败？
 A: 检查数据库配置，确保 PostgreSQL 服务已启动。开发环境默认使用 SQLite，无需额外配置。

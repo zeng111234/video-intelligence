@@ -48,8 +48,14 @@ function Test-BackendImports {
     if (-not (Test-Path -LiteralPath $venvPython)) {
         return $false
     }
-    & $venvPython -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba; import playwright.sync_api" 2>$null
-    return $LASTEXITCODE -eq 0
+    Push-Location $projectRoot
+    try {
+        & $venvPython -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba; import playwright.sync_api; import src.resources" 2>$null
+        return $LASTEXITCODE -eq 0
+    }
+    finally {
+        Pop-Location
+    }
 }
 
 function Test-FrontendInstall {

@@ -736,7 +736,9 @@ describe("PipelinePage customer workspace", () => {
     const closeButton = setupDialog.querySelector<HTMLButtonElement>(".ant-modal-close");
     expect(closeButton).toBeTruthy();
     fireEvent.click(closeButton!);
-    expect(setupDialog.className).toContain("ant-zoom-leave");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "创作设置" })).toBeNull();
+    });
   });
 
   it("opens a complete add-person form from the setup", async () => {

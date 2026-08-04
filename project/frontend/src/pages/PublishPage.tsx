@@ -857,7 +857,7 @@ export default function PublishPage() {
               {filteredAssets.length ? filteredAssets.map((asset) => {
                 const selected = asset.path === videoPath;
                 return <button type="button" className={`publish-asset-row${selected ? " selected" : ""}`} key={asset.path} onClick={() => chooseAsset(asset)}>
-                  <video className="publish-asset-thumb" src={publishAssetMediaUrl(asset)} muted preload="metadata" />
+                  <video className="publish-asset-thumb" src={publishAssetMediaUrl(asset)} muted preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0.1); }} />
                   <span className="publish-asset-copy">
                     <strong>{publishAssetTitle(asset)}</strong>
                     <span><VideoCameraOutlined /> {formatAssetSize(asset.size_bytes)} <b>9:16</b></span>
@@ -880,6 +880,7 @@ export default function PublishPage() {
                   src={publishAssetMediaUrl(selectedAsset)}
                   onLoadedMetadata={(event) => {
                     const video = event.currentTarget;
+                    video.currentTime = Math.min(0.1, video.duration || 0.1);
                     setSelectedVideoMeta({ duration: video.duration, width: video.videoWidth, height: video.videoHeight });
                   }}
                 />
@@ -945,7 +946,8 @@ export default function PublishPage() {
             </div>
             <Divider />
             <Text type="secondary">确认后系统才会创建发布任务；需要验证码或平台结果不明确时会暂停并提醒你。</Text>
-            <Button type="primary" size="large" icon={<RocketOutlined />} loading={submitting} onClick={startPublishing}>确认并开始发布</Button>
+              {!selectedAccountSummary.every((item) => item.ready) && <Button type="link" onClick={() => setPageStep("configure")}>先去配置发布账号</Button>}
+              <Button type="primary" size="large" icon={<RocketOutlined />} disabled={!title.trim() || !selectedAccountSummary.every((item) => item.ready)} loading={submitting} onClick={startPublishing}>确认并开始发布</Button>
           </aside>
         </div>
       </section>}
@@ -1296,8 +1298,8 @@ export default function PublishPage() {
         border-bottom: 1px solid #e8ebf0;
       }
       .publish-asset-list {
-        min-height: 470px;
-        max-height: calc(100vh - 350px);
+        min-height: 410px;
+        max-height: calc(100vh - 390px);
         overflow-y: auto;
       }
       .publish-asset-list > .ant-empty { margin: 120px 0; }
@@ -1345,7 +1347,7 @@ export default function PublishPage() {
       .publish-asset-selected-icon { color: #7c3aed; font-size: 20px; }
       .publish-preview-panel {
         display: flex;
-        min-height: 540px;
+        min-height: 500px;
         flex-direction: column;
         align-items: center;
         padding: 20px 24px;
@@ -1353,7 +1355,7 @@ export default function PublishPage() {
       .publish-preview-title { align-self: stretch; margin-bottom: 14px; font-size: 15px; }
       .publish-preview-frame {
         display: grid;
-        width: min(100%, 255px);
+        width: min(100%, 190px);
         aspect-ratio: 9 / 16;
         place-items: center;
         overflow: hidden;
