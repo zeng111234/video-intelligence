@@ -109,6 +109,7 @@ type BrowserPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 const PROFILE_STORAGE_KEY = "pipeline.lastProfileId";
 const AUTO_PRIMARY_LIMIT = 4;
 const AUTO_RESERVE_LIMIT = 2;
+const CANDIDATE_LIST_PREVIEW_LIMIT = 10;
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -142,6 +143,9 @@ function sourcePlatformIcon(platform: BrowserPlatform) {
 
 function sourcePlatformReady(status: CrawlerBrowserDiscoveryCapabilities) {
   return Boolean(status.enabled && status.ready_to_crawl);
+}
+function isBrowserPlatform(value: string | undefined): value is BrowserPlatform {
+  return value === "douyin" || value === "xiaohongshu" || value === "kuaishou" || value === "bilibili";
 }
 
 const WORKSPACE_STEPS = [
@@ -277,6 +281,9 @@ function candidateSpokenUse(candidate: CrawlerCandidateResult) {
   if (candidate.spoken_material_status === "text_reference") {
     return { usable: true, label: "有文字，可改成口播" };
   }
+  // 后端搜索阶段对未转写素材统一返回 topic_only；
+  // 仍按标题启发式区分"疑似讲解（可 ASR 确认）"与"疑似纯展示（仅作画面参考）"，
+  // 供候选面板说明与自动选稿使用。
   const title = (candidate.title || "").replace(/#[^#\s]+/g, " ");
   const looksLikeExplanation = /(首先|其次|为什么|怎么|如何|导致|解决|注意|避坑|教程|讲解|分析|测评|实测|区别|问题|原因|方法|技巧|如果|只要|千万|不要|老板|很多人|我们|咱们)/.test(title);
   if (looksLikeExplanation) {
@@ -472,6 +479,7 @@ export default function PipelinePage() {
   const [reviewNote, setReviewNote] = useState("");
   const [creativePlan, setCreativePlan] = useState<ProductionCreativePlan | null>(null);
   const [creativePlanExpanded, setCreativePlanExpanded] = useState(false);
+  const [candidatesExpanded, setCandidatesExpanded] = useState(false);
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
   const [publishTags, setPublishTags] = useState("");
@@ -875,11 +883,17 @@ export default function PipelinePage() {
     max_paid_calls: 0,
     allow_paid_fallback: false,
     hotspot_result_limit: 30,
-  }), [keyword]);
+    // 只检索已连接就绪的素材平台，避免打开用户未配置的网站。
+    platforms: browserDiscoveries.filter(sourcePlatformReady).map((item) => item.platform).filter(isBrowserPlatform),
+  }), [browserDiscoveries, keyword]);
 
   const runKeywordSearch = async () => {
     if (keyword.trim().length < 2 || keyword.trim().length > 50) {
       setActionError("请输入 2–50 个字的关键词。");
+      return;
+    }
+    if (!crawlerRequest.platforms?.length) {
+      setActionError("请先完成素材平台连接，再重新搜索。");
       return;
     }
     setBusy(true);
@@ -1779,8 +1793,8 @@ export default function PipelinePage() {
       if (sourceMode === "keyword" && !candidates.length) {
         return "找素材";
       }
-      if (sourceMode === "keyword" && creationMode === "auto") {
-        return "确认并自动制作";
+      if (sourceMode === "keyword") {
+        return creationMode === "auto" ? "自动生成" : "手动挑选";
       }
       return "用这条开始创作";
     }
@@ -2108,13 +2122,13 @@ export default function PipelinePage() {
                         type="button"
                         role="radio"
                         aria-checked={creationMode === "manual"}
-                        aria-label="手动选择"
+                        aria-label="手动挑选"
                         className={`creation-mode-card${creationMode === "manual" ? " selected" : ""}`}
                         onClick={() => chooseCreationMode("manual")}
                       >
                         <span className="creation-mode-icon"><ControlOutlined aria-hidden /></span>
                         <span className="creation-mode-copy" aria-hidden>
-                          <span className="creation-mode-title"><strong>手动选择</strong><Tag color="purple">推荐</Tag></span>
+                          <span className="creation-mode-title"><strong>手动挑选</strong><Tag color="purple">推荐</Tag></span>
                           <small>自己挑选素材，创作方向更可控</small>
                         </span>
                         <CheckCircleOutlined className="creation-mode-check" aria-hidden />
@@ -2123,13 +2137,13 @@ export default function PipelinePage() {
                         type="button"
                         role="radio"
                         aria-checked={creationMode === "auto"}
-                        aria-label="自动创作"
+                        aria-label="自动生成"
                         className={`creation-mode-card${creationMode === "auto" ? " selected risk" : " risk"}`}
                         onClick={() => chooseCreationMode("auto")}
                       >
                         <span className="creation-mode-icon"><StarOutlined aria-hidden /></span>
                         <span className="creation-mode-copy" aria-hidden>
-                          <span className="creation-mode-title"><strong>自动创作</strong><Tag color="warning">有风险</Tag></span>
+                          <span className="creation-mode-title"><strong>自动生成</strong><Tag color="warning">有风险</Tag></span>
                           <small>可能选偏素材，文案与成片需要复核</small>
                         </span>
                         <CheckCircleOutlined className="creation-mode-check" aria-hidden />
@@ -2171,8 +2185,13 @@ export default function PipelinePage() {
                           : `${candidates.length - visualReferenceCount} 条口播优先 · ${visualReferenceCount} 条画面参考`}
                       </Text>
                     </div>
+                    <Text type="secondary" className="candidate-legend">
+                      口播优先：素材自带可转写成口播的讲解内容；画面参考：仅作镜头与画面素材，不参与口播识别。
+                    </Text>
                     <div className="candidate-stack">
-                      {(creationMode === "auto" ? automaticCandidatePool : candidates).map((candidate, index) => (
+                      {(creationMode === "auto" ? automaticCandidatePool : candidates)
+                        .slice(0, candidatesExpanded ? undefined : CANDIDATE_LIST_PREVIEW_LIMIT)
+                        .map((candidate, index) => (
                         <div
                           key={candidate.video_id}
                           className={`candidate-card${creationMode === "manual" ? " manual" : ""}${selectedCandidateId === candidate.video_id ? " selected" : ""}`}
@@ -2217,6 +2236,19 @@ export default function PipelinePage() {
                           )}
                         </div>
                       ))}
+                      {(creationMode === "auto" ? automaticCandidatePool : candidates).length > CANDIDATE_LIST_PREVIEW_LIMIT && (
+                        <div className="candidate-stack-toggle">
+                          <Button
+                            size="small"
+                            type="link"
+                            onClick={() => setCandidatesExpanded((prev) => !prev)}
+                          >
+                            {candidatesExpanded
+                              ? "收起列表"
+                              : `展开全部 ${(creationMode === "auto" ? automaticCandidatePool : candidates).length} 条素材`}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                     {creationMode === "auto" && automaticCandidatePool.length === 0 && (
                       <Empty
@@ -2293,6 +2325,16 @@ export default function PipelinePage() {
                           </Tag>
                           <Tag>待核对片段 {activeReview?.transcript.uncertain_segment_count || 0}</Tag>
                         </Space>
+                        <Alert
+                          type="info"
+                          showIcon
+                          message="口播定位完成"
+                          description={
+                            <>
+                              系统已识别出画面里的人声并转成文字，下面是分镜口播稿的原文。可打开“创意脚本”查看全部分镜文案；如这段人声没找全或没找到口播，可自行填写口播文案，生成的脚本仍可作参考。
+                            </>
+                          }
+                        />
                         {(activeReview?.transcript.low_confidence_segments?.length || 0) > 0 && (
                           <List
                             size="small"
@@ -2374,7 +2416,7 @@ export default function PipelinePage() {
                         autoSize={{ minRows: 6, maxRows: 12 }}
                         value={reviewText}
                         onChange={(event) => setReviewText(event.target.value)}
-                        placeholder={nextAction === "review_transcript" ? "核对并提交最终原转写" : "核对并提交最终口播稿"}
+                        placeholder={nextAction === "review_transcript" ? "检查识别出的口播文字；若未找到口播，可直接在此填写口播文案（生成的脚本可作参考）" : "核对并提交最终口播稿"}
                       />
                     </div>
                     {nextAction === "review_script" && creativePlan ? (
@@ -3604,6 +3646,22 @@ export default function PipelinePage() {
           margin-bottom: 10px;
         }
         .candidate-stack { display: flex; flex-direction: column; gap: 9px; }
+        .candidate-legend {
+          display: block;
+          margin: -2px 2px 10px;
+          font-size: 12.5px;
+          line-height: 1.6;
+        }
+        .candidate-stack-toggle {
+          display: flex;
+          justify-content: flex-start;
+          margin: 2px 0 0 2px;
+        }
+        .candidate-stack-toggle .ant-btn {
+          height: 30px;
+          padding: 0 4px;
+          font-size: 13px;
+        }
         .candidate-card {
           width: 100%;
           display: grid;

@@ -2606,7 +2606,9 @@ export default function VideoEditorPage() {
                   ) : (
                     <Empty
                       image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      description={isSandbox ? "免费体验不会调用真实字幕识别" : "没有可复核的字幕片段"}
+                      description={isSandbox
+                        ? "免费体验不会调用真实字幕识别"
+                        : "没有识别到画面内的人声口播，可自行填写口播文案，生成的脚本仍可作参考"}
                     />
                   ),
                 },

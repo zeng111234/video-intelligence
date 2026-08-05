@@ -897,7 +897,7 @@ export default function PublishPage() {
                   <span className="publish-asset-updated">{formatAssetTime(asset.updated_at)}</span>
                   {selected && <CheckCircleOutlined className="publish-asset-selected-icon" />}
                 </button>;
-              }) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={assetSearch ? "没有匹配的成片" : "还没有可发布的成片"} />}
+              }) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={assetSearch ? "没有匹配的成片" : "没有待发布的素材了，可回到创作步骤继续制作新视频"} />}
             </div>
           </section>
 

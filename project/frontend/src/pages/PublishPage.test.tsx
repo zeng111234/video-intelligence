@@ -255,7 +255,7 @@ describe("PublishPage", () => {
     fireEvent.click(await within(view.container).findByRole("button", { name: "2 选择成片" }));
     const nextButton = await within(view.container).findByRole("button", { name: "下一步：检查发布内容" });
     expect((nextButton as HTMLButtonElement).disabled).toBe(true);
-    expect(within(view.container).getByText("还没有可发布的成片")).toBeTruthy();
+    expect(within(view.container).getByText("没有待发布的素材了，可回到创作步骤继续制作新视频")).toBeTruthy();
     expect(within(view.container).queryByLabelText("发布标题")).toBeNull();
   });
 

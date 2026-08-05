@@ -502,6 +502,30 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(createVideoEditorBatch).not.toHaveBeenCalled();
   });
 
+  it("explains how to fill in the voiceover when ASR returned no spoken subtitle", async () => {
+    const batch = sandboxBatch();
+    batch.is_mock = false;
+    batch.provider_mode = "aliyun";
+    batch.items[0].is_mock = false;
+    batch.items[0].subtitle_segments = [];
+    vi.mocked(getVideoCapabilities).mockResolvedValue({
+      ...sandboxCapabilities,
+      provider_mode: "aliyun",
+      is_mock: false,
+      live_ready: true,
+    });
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    renderPage();
+
+    const primary = await screen.findByTestId("primary-action");
+    await waitFor(() => expect(primary.textContent).toContain("审核字幕、粗剪和配乐"));
+    fireEvent.click(primary);
+    const drawer = await screen.findByRole("dialog", { name: "字幕与方案复核" });
+    expect(
+      within(drawer).getByText("没有识别到画面内的人声口播，可自行填写口播文案，生成的脚本仍可作参考"),
+    ).toBeTruthy();
+  });
+
   it("downloads a real cloud result directly without confirming publication", async () => {
     const batch = sandboxBatch("awaiting_output_confirmation");
     batch.is_mock = false;

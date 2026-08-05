@@ -665,8 +665,8 @@ describe("PipelinePage customer workspace", () => {
   it("recommends manual selection by default and explains automatic risk", async () => {
     renderPage();
 
-    const manual = await screen.findByRole("radio", { name: "手动选择" });
-    const automatic = screen.getByRole("radio", { name: "自动创作" });
+    const manual = await screen.findByRole("radio", { name: "手动挑选" });
+    const automatic = screen.getByRole("radio", { name: "自动生成" });
 
     expect(manual.getAttribute("aria-checked")).toBe("true");
     expect(automatic.getAttribute("aria-checked")).toBe("false");
@@ -1043,7 +1043,7 @@ describe("PipelinePage customer workspace", () => {
     vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch(manualCandidates));
     renderPage();
 
-    fireEvent.click(await screen.findByRole("radio", { name: "手动选择" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "手动挑选" }));
     fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
@@ -1096,7 +1096,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
-    fireEvent.click(screen.getByRole("radio", { name: "自动创作" }));
+    fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findAllByText("口播候选 4 条＋候补 2 条")).toHaveLength(2);
@@ -1143,7 +1143,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
-    fireEvent.click(screen.getByRole("radio", { name: "自动创作" }));
+    fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findAllByText("口播候选 1 条")).toHaveLength(2);
@@ -1188,7 +1188,7 @@ describe("PipelinePage customer workspace", () => {
     vi.mocked(createCrawlerBatch).mockResolvedValue(response);
     renderPage();
 
-    fireEvent.click(await screen.findByRole("radio", { name: "手动选择" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "手动挑选" }));
     fireEvent.change(screen.getByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
       target: { value: "贴标机" },
     });
