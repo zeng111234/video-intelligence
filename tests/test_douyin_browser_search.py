@@ -130,32 +130,6 @@ def test_public_search_metrics_preserve_returned_zero_and_missing_values():
     )
 
 
-def test_public_search_prefers_visible_single_column_layout_when_available():
-    scripts: list[str] = []
-
-    class Body:
-        def __init__(self, available):
-            self.available = available
-
-        def evaluate(self, script):
-            scripts.append(script)
-            return self.available
-
-    class Page:
-        def __init__(self, available):
-            self.available = available
-
-        def locator(self, selector):
-            assert selector == "body"
-            return Body(self.available)
-
-    assert LocalDouyinBrowserSearchProvider._prefer_public_search_single_column(Page(True))
-    assert not LocalDouyinBrowserSearchProvider._prefer_public_search_single_column(Page(False))
-    assert "单列" in scripts[0]
-    assert "getBoundingClientRect" in scripts[0]
-    assert "control.click" in scripts[0]
-
-
 class _TextControl:
     def __init__(self, page, label, *, visible=True, enabled=True, fails=False):
         self.page = page
@@ -317,7 +291,7 @@ def test_public_search_closes_filter_menu_when_requested_option_is_unavailable()
     assert "已关闭筛选菜单并保留原筛选状态" in outcome.warning
 
 
-def test_public_search_uses_single_column_then_filter_before_scrolling(
+def test_public_search_uses_default_layout_then_filter_before_scrolling(
     tmp_path,
     monkeypatch,
 ):
@@ -401,11 +375,6 @@ def test_public_search_uses_single_column_then_filter_before_scrolling(
     monkeypatch.setattr(provider, "_random_delay_ms", lambda *_args: 1)
     monkeypatch.setattr(
         provider,
-        "_prefer_public_search_single_column",
-        lambda _page: calls.append("single_column") or True,
-    )
-    monkeypatch.setattr(
-        provider,
         "_apply_public_search_time_filter",
         lambda _page, **_kwargs: calls.append("time_filter")
         or type("Outcome", (), {"receipt": "已应用", "warning": None})(),
@@ -426,7 +395,8 @@ def test_public_search_uses_single_column_then_filter_before_scrolling(
 
     assert rows == []
     assert errors == []
-    assert calls == ["single_column", "time_filter", "scroll"]
+    # 默认多列布局:不再点击“单列”按钮,直接走时间筛选与滚动采集
+    assert calls == ["time_filter", "scroll"]
 
 
 def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkeypatch):

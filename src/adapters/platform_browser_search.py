@@ -685,13 +685,11 @@ class LocalPlatformBrowserSearchProvider:
                         )
                         minimize_browser_window(self.debug_port)
                         self._raise_for_search_response(response)
-                        page.wait_for_timeout(1800)
+                        self._wait_for_bilibili_cards_ready(page)
                         self._raise_for_visible_block(page)
                         if not bilibili_search_response_seen:
                             for row in self._rendered_rows(page, keyword=keyword):
-                                item_id = str(row.get("item_id") or "")
-                                if item_id:
-                                    rendered_rows[item_id] = row
+                                self._merge_rendered_row(rendered_rows, row)
                         current_count = (
                             len(network_rows)
                             if bilibili_search_response_seen
@@ -746,9 +744,7 @@ class LocalPlatformBrowserSearchProvider:
                     )
                     for _ in range(max_scroll_rounds):
                         for row in self._rendered_rows(page):
-                            item_id = str(row.get("item_id") or "")
-                            if item_id:
-                                rendered_rows[item_id] = row
+                            self._merge_rendered_row(rendered_rows, row)
                         current_count = len(set(network_rows) | set(rendered_rows))
                         current_rows = self._merge_collected_rows(
                             network_rows, rendered_rows
@@ -805,9 +801,7 @@ class LocalPlatformBrowserSearchProvider:
                         # visible feed after the final loop body ran. Read it
                         # once before declaring the bounded scan complete.
                         for row in self._rendered_rows(page):
-                            item_id = str(row.get("item_id") or "")
-                            if item_id:
-                                rendered_rows[item_id] = row
+                            self._merge_rendered_row(rendered_rows, row)
                         self._set_collection_stop(
                             "safety_limit",
                             "为避免过度滚动，达到安全上限后已停止。",
@@ -832,13 +826,40 @@ class LocalPlatformBrowserSearchProvider:
         return self._merge_collected_rows(network_rows, rendered_rows)
 
     @staticmethod
+    def _merge_rendered_row(
+        rendered_rows: dict[str, dict[str, Any]], row: dict[str, Any]
+    ) -> None:
+        """字段级合并渲染行:新行的非 None 字段覆盖旧值,None 保留旧值。
+
+        多页/多轮提取时同一视频可能重复出现;后提取的行若互动数字
+        尚未渲染(为空),不应清掉先前已提取的指标。
+        """
+        item_id = str(row.get("item_id") or "")
+        if not item_id:
+            return
+        existing = rendered_rows.get(item_id)
+        if existing is None:
+            rendered_rows[item_id] = row
+            return
+        combined = dict(existing)
+        for key, value in row.items():
+            if value is not None:
+                combined[key] = value
+        rendered_rows[item_id] = combined
+
+    @staticmethod
     def _merge_collected_rows(
         network_rows: dict[str, dict[str, Any]],
         rendered_rows: dict[str, dict[str, Any]],
     ) -> list[dict[str, Any]]:
         merged = dict(rendered_rows)
         for item_id, row in network_rows.items():
-            merged[item_id] = {**merged.get(item_id, {}), **row}
+            base = merged.get(item_id, {})
+            combined = dict(base)
+            for key, value in row.items():
+                if value is not None:
+                    combined[key] = value
+            merged[item_id] = combined
         return list(merged.values())
 
     def _search_url(self, keyword: str, *, page: int | None = None) -> str:
@@ -897,6 +918,40 @@ class LocalPlatformBrowserSearchProvider:
         """Scroll down by one viewport height."""
         self._scroll_for_more_results(page)
 
+    def _wait_for_bilibili_cards_ready(
+        self, page, max_wait_ms: int = 8_000
+    ) -> None:
+        """等待 B 站搜索结果卡片 stats 渲染完成。
+
+        B 站搜索页是服务端渲染,互动数字(stats 行)在页面加载后延迟
+        渲染;固定等待 1.8 秒时部分卡片的指标仍是空的。轮询直到
+        stats 项数量达到视频卡片数量的一半(允许个别卡片缺失),
+        最多等 max_wait_ms。
+        """
+        waited = 0
+        while waited < max_wait_ms:
+            try:
+                ready = bool(
+                    page.evaluate(
+                        """() => {
+                          const cardLinks = document.querySelectorAll(
+                            'a[href*="/video/"]'
+                          ).length;
+                          const statsItems = document.querySelectorAll(
+                            '.bili-video-card__stats--item'
+                          ).length;
+                          return cardLinks > 0
+                            && statsItems >= Math.max(1, cardLinks / 2);
+                        }"""
+                    )
+                )
+            except Exception:
+                ready = False
+            if ready:
+                return
+            page.wait_for_timeout(500)
+            waited += 500
+
     def _wait_for_new_rows_after_scroll(
         self,
         page,
@@ -918,9 +973,7 @@ class LocalPlatformBrowserSearchProvider:
             page.wait_for_timeout(500)
             waited += 500
             for row in self._rendered_rows(page):
-                item_id = str(row.get("item_id") or "")
-                if item_id:
-                    rendered_rows[item_id] = row
+                self._merge_rendered_row(rendered_rows, row)
             if len(set(network_rows) | set(rendered_rows)) > current_count:
                 return
 
@@ -1116,10 +1169,14 @@ class LocalPlatformBrowserSearchProvider:
                         '[class*="bili-video-card"], [class*="video-item"], li, article'
                     ) || element;
                     const image = element.querySelector("img") || container.querySelector("img");
+                    const statsItems = [...(container.querySelectorAll(
+                        '.bili-video-card__stats--item'
+                    ) || [])].map(n => (n.innerText || '').trim());
                     return {
                         href: element.href || element.getAttribute("href") || "",
                         title: element.getAttribute("title") || image?.alt || "",
                         text: (container.innerText || element.innerText || "").trim(),
+                        stats: statsItems,
                     };
                 })"""
             )
@@ -1134,10 +1191,14 @@ class LocalPlatformBrowserSearchProvider:
                         if (text.length >= 8 && text.length <= 600) break;
                     }
                     const image = element.querySelector("img") || container?.querySelector("img");
+                    const countNodes = [...(container?.querySelectorAll(
+                        'span.count, [class*="count"]'
+                    ) || [])].map(n => (n.innerText || '').trim());
                     return {
                         href: element.href || element.getAttribute("href") || "",
                         title: element.getAttribute("title") || image?.alt || "",
                         text: (container?.innerText || element.innerText || "").trim(),
+                        counts: countNodes,
                     };
                 })"""
             )
@@ -1158,13 +1219,49 @@ class LocalPlatformBrowserSearchProvider:
                 and not self._bilibili_text_matches(keyword, title, text)
             ):
                 continue
+            # B 站搜索结果是服务端渲染(自动化下不发搜索接口请求),
+            # 互动数字从卡片 stats 行提取:第 1 项为播放数,第 2 项为点赞数。
+            # 小红书卡片通过 span.count 暴露点赞数(无播放数)。
+            raw_stats = item.get("stats")
+            raw_counts = item.get("counts")
+            if isinstance(raw_stats, list):
+                plays_from_stats = (
+                    LocalPlatformBrowserSearchProvider._parse_count_text(raw_stats[0])
+                    if raw_stats
+                    else None
+                )
+                likes_from_stats = (
+                    LocalPlatformBrowserSearchProvider._parse_count_text(raw_stats[1])
+                    if len(raw_stats) > 1
+                    else None
+                )
+                counts_likes = None
+            elif isinstance(raw_counts, list):
+                plays_from_stats = None
+                likes_from_stats = None
+                counts_likes = (
+                    LocalPlatformBrowserSearchProvider._parse_count_text(raw_counts[0])
+                    if raw_counts
+                    else None
+                )
+            else:
+                plays_from_stats = None
+                likes_from_stats = None
+                counts_likes = None
             rows.append(
                 {
                     "item_id": match.group(1),
                     "source_url": href,
                     "title": title,
                     "author_name": self._extract_author(text),
-                    "likes": self._labeled_count(text, ("赞", "点赞")),
+                    "plays": plays_from_stats,
+                    "likes": (
+                        likes_from_stats
+                        if likes_from_stats is not None
+                        else counts_likes
+                        if counts_likes is not None
+                        else self._labeled_count(text, ("赞", "点赞"))
+                    ),
                     "comments": self._labeled_count(text, ("评论",)),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
@@ -1908,6 +2005,23 @@ class LocalPlatformBrowserSearchProvider:
             if count is not None:
                 return count
         return None
+
+    @staticmethod
+    def _parse_count_text(text: str | None) -> int | None:
+        """Parse a raw card count like "1.2万", "1234" or "0" into an int.
+
+        B 站/小红书卡片上的数字没有标签文字(如"点赞"),直接用正则
+        解析数字与"万"单位。
+        """
+        if text is None:
+            return None
+        match = re.search(r"^\s*([\d.]+)\s*([万亿wW]?)\s*$", str(text))
+        if not match:
+            return None
+        unit = "万" if match.group(2) in {"w", "W"} else match.group(2)
+        return LocalPlatformBrowserSearchProvider._as_count(
+            f"{match.group(1)}{unit}"
+        )
 
     @staticmethod
     def _first_duration_seconds(mapping: dict[str, Any], *keys: str) -> int | None:

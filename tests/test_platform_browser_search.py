@@ -1401,3 +1401,139 @@ def test_browser_provider_keeps_parsed_rows_for_shared_relevance_filtering():
         "BVRECENT001",
         "BVOLD00001",
     ]
+
+
+def test_parse_count_text_handles_card_numbers():
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+
+    parse = LocalPlatformBrowserSearchProvider._parse_count_text
+    assert parse("1.2万") == 12000
+    assert parse("1234") == 1234
+    assert parse("0") == 0
+    assert parse("2.5w") == 25000
+    assert parse(None) is None
+    assert parse("") is None
+
+
+def test_rendered_rows_extracts_bilibili_stats(monkeypatch, tmp_path):
+    """B站卡片 stats 行(播放/点赞)应被提取进行数据。"""
+    from project.backend.app.core.config import (
+        BILIBILI_BROWSER_DISCOVERY_ENABLED,
+        BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+    from src.models import Platform
+
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.BILIBILI,
+        enabled=BILIBILI_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=29990,
+        timeout_seconds=5.0,
+    )
+
+    class Locator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://www.bilibili.com/video/BV1ti5e62EBZ/",
+                    "title": "餐饮获客视频",
+                    "text": "121 | 0 | 04:12 | 餐饮获客视频 | 作者 | · 05-17",
+                    "stats": ["121", "0"],
+                }
+            ]
+
+    class Page:
+        def locator(self, _selector):
+            return Locator()
+
+    rows = provider._rendered_rows(Page(), keyword="餐饮获客")
+    assert len(rows) == 1
+    assert rows[0]["plays"] == 121
+    assert rows[0]["likes"] == 0
+    assert rows[0]["item_id"] == "BV1ti5e62EBZ"
+
+
+def test_rendered_rows_extracts_xiaohongshu_count(monkeypatch, tmp_path):
+    """小红书 span.count 点赞数应被提取。"""
+    from project.backend.app.core.config import (
+        XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
+        XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+    from src.models import Platform
+
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=29991,
+        timeout_seconds=5.0,
+        allow_xiaohongshu_login=True,
+    )
+
+    class Locator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://www.xiaohongshu.com/explore/64f2a1c2000000001a003456",
+                    "title": "餐饮获客笔记",
+                    "text": "别小瞧:餐饮店老板靠同城种草天天满座 | 作者 | 2天前 | 22",
+                    "counts": ["22"],
+                }
+            ]
+
+    class Page:
+        def locator(self, _selector):
+            return Locator()
+
+    rows = provider._rendered_rows(Page())
+    assert len(rows) == 1
+    assert rows[0]["likes"] == 22
+
+
+def test_merge_rendered_row_keeps_existing_metrics():
+    """字段级合并:后提取行指标为空时不清掉已有指标。"""
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+
+    rendered = {}
+    LocalPlatformBrowserSearchProvider._merge_rendered_row(
+        rendered,
+        {"item_id": "BV1", "title": "旧标题", "plays": 110, "likes": 5},
+    )
+    LocalPlatformBrowserSearchProvider._merge_rendered_row(
+        rendered,
+        {"item_id": "BV1", "title": "新标题", "plays": None, "likes": None},
+    )
+    assert rendered["BV1"]["title"] == "新标题"
+    assert rendered["BV1"]["plays"] == 110
+    assert rendered["BV1"]["likes"] == 5
+
+
+def test_merge_collected_rows_network_none_does_not_clobber():
+    """网络行指标为 None 时不应覆盖 DOM 行已有指标。"""
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+
+    rendered = {"BV1": {"item_id": "BV1", "plays": 110, "likes": 5}}
+    network = {"BV1": {"item_id": "BV1", "plays": None, "likes": None, "extra": "x"}}
+    merged = LocalPlatformBrowserSearchProvider._merge_collected_rows(
+        network, rendered
+    )
+    row = next(r for r in merged if r["item_id"] == "BV1")
+    assert row["plays"] == 110
+    assert row["likes"] == 5
+    assert row["extra"] == "x"

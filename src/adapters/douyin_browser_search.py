@@ -973,21 +973,10 @@ class LocalDouyinBrowserSearchProvider:
                             )
                         )
                         return [], errors
-                    # The official search page sometimes exposes a visible
-                    # "single column" toggle. Its cards show more of the
-                    # public interaction text than the compact grid, so
-                    # prefer it when it is genuinely available. This is a
-                    # normal rendered-page click; it does not inspect
-                    # requests, cookies, or hidden content.
-                    layout_mode = (
-                        "single_column"
-                        if self._prefer_public_search_single_column(page)
-                        else "default"
-                    )
-                    if layout_mode == "single_column":
-                        # 点击“单列”后页面重新渲染;等待新布局稳定(卡片或
-                        # 搜索响应出现)再开始提取,避免读到空页面。
-                        self._wait_for_public_layout_settle(page)
+                    # 保持页面默认布局(多列)。数据已从搜索接口直接获取,
+                    # 不再依赖单列/多列布局切换;单列切换对受限账号可能
+                    # 引入额外重渲染与风控风险,按用户选择默认多列。
+                    layout_mode = "default"
                     time_filter = self._apply_public_search_time_filter(
                         page,
                         published_after=published_after,
@@ -1163,29 +1152,6 @@ class LocalDouyinBrowserSearchProvider:
             if name in stats and stats[name] is not None:
                 return stats[name]
         return None
-
-    def _wait_for_public_layout_settle(self, page) -> None:
-        """轮询等待单列切换后的重渲染:出现结果卡片即认为布局稳定。
-
-        点击“单列”后页面会整体重新渲染,若立即提取会读到空布局;
-        这里最多等待约 6 秒,卡片出现即提前返回。
-        """
-        for _ in range(12):
-            try:
-                settled = bool(
-                    page.evaluate(
-                        """() => document.querySelectorAll(
-                            ".search-result-card, img[class*='video-card-img']"
-                        ).length > 0"""
-                    )
-                )
-            except Exception:
-                settled = False
-            if settled:
-                return
-            page.wait_for_timeout(500)
-        # 兜底:未检测到卡片也等一次网络往返再提取
-        page.wait_for_timeout(1500)
 
     @staticmethod
     def _raise_for_public_search_block(page) -> None:
@@ -1972,56 +1938,6 @@ class LocalDouyinBrowserSearchProvider:
                 f"未达到目标 {target_limit} 条。"
             ),
         )
-
-    @staticmethod
-    def _prefer_public_search_single_column(page) -> bool:
-        """Select the site's visible single-column result layout when offered.
-
-        The control is optional and changes across Douyin web releases. A
-        missing, hidden, or disabled control deliberately means "leave the
-        current layout alone" rather than trying alternate URLs or internal
-        state. The resulting item evidence makes that data-availability
-        boundary visible downstream.
-        """
-        try:
-            return bool(
-                page.locator("body").evaluate(
-                    """() => {
-                      const normalise = value => String(value || '').replace(/\\s+/g, '');
-                       const isVisible = node => {
-                         const style = window.getComputedStyle(node);
-                         const rect = node.getBoundingClientRect();
-                         return rect.width > 0 && rect.height > 0
-                           && style.display !== 'none' && style.visibility !== 'hidden'
-                           && style.opacity !== '0'
-                           && rect.bottom > 0 && rect.right > 0
-                           && rect.top < window.innerHeight && rect.left < window.innerWidth;
-                      };
-                      const controls = [...document.querySelectorAll(
-                        'button, [role="button"], a, [aria-label], [title]'
-                      )];
-                      const control = controls.find(node => {
-                         const text = normalise(node.innerText || node.textContent);
-                         const aria = normalise(node.getAttribute('aria-label'));
-                         const title = normalise(node.getAttribute('title'));
-                         const namesSingleColumn = text === '单列' || aria.includes('单列') || title.includes('单列');
-                         return namesSingleColumn && isVisible(node)
-                           && !node.disabled
-                           && node.getAttribute('aria-disabled') !== 'true';
-                       });
-                       if (!control) return false;
-                       if (control.getAttribute('aria-pressed') === 'true'
-                         || control.getAttribute('aria-selected') === 'true'
-                         || control.getAttribute('aria-current') === 'true') {
-                        return true;
-                      }
-                      control.click();
-                      return true;
-                    }"""
-                )
-            )
-        except Exception:
-            return False
 
     def _collect_scrolled_rows(
         self,
