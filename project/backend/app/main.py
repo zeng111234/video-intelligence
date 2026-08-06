@@ -154,7 +154,10 @@ async def auth_middleware(request: Request, call_next):
     """API认证中间件。"""
     # 公开端点
     public_paths = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
-    if request.url.path in public_paths:
+    # 媒体流端点:<video>/<audio> 标签与 <a download> 无法附加 X-API-Key 头,
+    # 这类路径(以 /media 或 /download 结尾)跳过 API Key 校验。
+    is_media_stream = request.url.path.endswith("/media") or request.url.path.endswith("/download")
+    if request.url.path in public_paths or is_media_stream:
         return await call_next(request)
 
     # OPTIONS请求（CORS预检）

@@ -1287,7 +1287,7 @@ export default function VideoEditorPage() {
     });
 
     const seekTo = (time: number) => new Promise<void>((resolve) => {
-      const timeout = window.setTimeout(resolve, 1200);
+      const timeout = window.setTimeout(resolve, 900);
       video.addEventListener("seeked", () => {
         window.clearTimeout(timeout);
         resolve();
@@ -1305,8 +1305,8 @@ export default function VideoEditorPage() {
         if (!context || !video.videoWidth || !video.videoHeight) return;
 
         const frameDuration = Number.isFinite(video.duration) ? video.duration : duration;
-        const frameIntervalSeconds = 4;
-        const frameCount = Math.max(1, Math.min(60, Math.ceil(frameDuration / frameIntervalSeconds)));
+        const frameIntervalSeconds = 8;
+        const frameCount = Math.max(1, Math.min(30, Math.ceil(frameDuration / frameIntervalSeconds)));
         const frames: string[] = [];
         for (let index = 0; index < frameCount; index += 1) {
           if (cancelled) return;
@@ -1340,6 +1340,8 @@ export default function VideoEditorPage() {
             canvas.height,
           );
           frames.push(canvas.toDataURL("image/jpeg", 0.78));
+          // 让出主线程,避免帧生成期间页面卡顿
+          await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
         if (!cancelled) setTimelineFrames(frames);
       } catch {
