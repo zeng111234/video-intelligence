@@ -42,7 +42,7 @@ export const lightTheme: ThemeConfig = {
     colorBgContainer: "#ffffff",
     colorBgElevated: "#ffffff",
     colorBgLayout: "#f8fafc",     // gray-50
-    colorBgSpotlight: "#f8fafc",
+    colorBgSpotlight: "#0f172a",   // gray-900 —— Tooltip 等高亮浮层背景，深底保证白字可读
     colorBgMask: "rgba(0, 0, 0, 0.45)",
 
     // 边框
