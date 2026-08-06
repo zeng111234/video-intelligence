@@ -5,9 +5,11 @@
 ## 项目简介
 
 本系统是一个完整的短视频内容生产平台，包含以下核心功能：
-- **热点发现**：三平台（抖音、小红书、视频号）商业 API 统一网关、热度计算与候选管理
-- **内容生产**：视频音轨转文案、文案改写引擎、数字人生成、AI 视频剪辑（FFmpeg 流水线）
-- **一键发布**：多平台发布适配器（支持沙箱与生产模式）
+- **热点发现**：抖音、小红书、视频号、B 站多平台采集与商业 API 统一网关、热度计算、候选管理与关键词趋势分析
+- **内容生产**：视频音轨转文案（本地 faster-whisper 与云端 ASR 双通道）、文案改写引擎、数字人生成、AI 视频剪辑（本地 FFmpeg 与阿里云云端剪辑流水线）
+- **批量生产**：端到端生产工作流编排、任务队列、进度追踪与状态管理
+- **一键发布**：多平台发布适配器（支持沙箱与生产模式）、发布账号与发布元数据管理
+- **商业化能力**：积分账户体系（1 元 = 1 积分）、按量计费、余额与流水管理
 - **系统韧性**：统一重试策略、上下文资源监控、任务状态管理
 
 ## 技术栈
@@ -19,6 +21,7 @@
 - **PostgreSQL**：生产数据库（可选）
 - **FFmpeg**：视频处理工具
 - **faster-whisper**：本地语音识别引擎
+- **Playwright**：关键词爬虫浏览器自动化（使用本机 Chrome/Edge）
 
 ### 前端技术
 - **React 18**：前端框架
@@ -26,6 +29,7 @@
 - **Vite 5**：构建工具
 - **Ant Design 5**：UI 组件库
 - **React Router 6**：路由管理
+- **Recharts**：数据可视化图表
 
 ## 快速开始
 
@@ -147,20 +151,20 @@ video/
 ├── src/                      # 核心业务逻辑
 │   ├── models.py             # 数据模型定义（VideoCandidate、TaskRecord 等）
 │   ├── contracts.py          # 接口协议定义（CrawlerAdapter、Repository 等）
-│   ├── services/             # 业务服务层（14 个服务模块）
-│   │   ├── candidate.py      # 候选管理
-│   │   ├── commercial_search.py # 商业搜索
-│   │   ├── heat.py           # 热度计算
-│   │   ├── transcription.py  # 转写服务
+│   ├── services/             # 业务服务层
+│   │   ├── commercial_search.py # 三平台商业搜索网关
+│   │   ├── crawler*.py       # 关键词爬虫（browser_automation、doubao_browser、platform_config 等）
+│   │   ├── transcription.py / cloud_transcription.py # 本地/云端 ASR 双通道
+│   │   ├── copywriting.py    # 文案改写引擎
 │   │   ├── avatar.py         # 数字人服务
-│   │   ├── pipeline.py       # 流水线服务
-│   │   ├── publisher.py      # 发布服务
-│   │   ├── copywriting.py    # 文案服务
-│   │   ├── video_editor.py   # 视频编辑服务
-│   │   ├── video_source.py   # 视频源管理
-│   │   ├── discovery.py      # 关键词发现
-│   │   ├── keyword_trend.py  # 关键词趋势
-│   │   └── source.py         # 数据源管理
+│   │   ├── production.py / video_editor_workflow.py # 生产工作流与云剪辑编排
+│   │   ├── video_editor.py / video_editor_cloud.py  # 本地/云端视频剪辑
+│   │   ├── pipeline.py / pipeline_worker.py         # 批量流水线与后台执行
+│   │   ├── publisher.py / publish_accounts.py / publish_metadata.py # 多平台发布
+│   │   ├── credits.py        # 积分账户服务（1 元 = 1 积分）
+│   │   ├── hot_pool.py / heat.py / keyword_trend.py # 热点池、热度计算、关键词趋势
+│   │   ├── media_resolution.py / template_service.py / subtitles*.py 等
+│   │   └── ...               # 共 30+ 个服务模块
 │   ├── repositories/         # 数据访问层
 │   │   ├── sqlite.py         # SQLite 仓储实现
 │   │   └── mock.py           # Mock 仓储（测试用）
@@ -172,34 +176,51 @@ video/
 │   ├── resources.py          # 资源管理（FFmpeg、ASR）
 │   ├── asr_quality.py        # ASR 质量评估（CER、数字准确率）
 │   ├── app_state.py          # 应用状态管理
-│   └── retry_policy.py       # 重试策略
+│   ├── context_budget.py     # 上下文资源监控
+│   └── retry.py              # 统一重试策略
 ├── project/
 │   ├── frontend/             # React 前端工程（端口 1001）
 │   │   ├── src/
 │   │   │   ├── App.tsx       # 根组件（Router + ErrorBoundary）
-│   │   │   ├── pages/        # 页面组件
-│   │   │   │   ├── CandidatesPage.tsx    # 候选检索
-│   │   │   │   ├── TranscriptionPage.tsx # 转写页面
-│   │   │   │   ├── PipelinePage.tsx      # 流水线
-│   │   │   │   ├── TasksPage.tsx         # 任务记录
-│   │   │   │   ├── AdminPage.tsx         # 系统管理
-│   │   │   │   └── NotFoundPage.tsx      # 404 页面
+│   │   │   ├── pages/        # 页面组件（18 个）
+│   │   │   │   ├── DashboardPage.tsx      # 工作台总览
+│   │   │   │   ├── KeywordCrawlerPage.tsx # 关键词爬虫
+│   │   │   │   ├── CandidatesPage.tsx     # 候选检索
+│   │   │   │   ├── TranscriptionPage.tsx  # 视频音轨转文案
+│   │   │   │   ├── AiCopyPage.tsx         # AI 文案改写
+│   │   │   │   ├── AvatarPage.tsx         # 数字人生成
+│   │   │   │   ├── VideoEditorPage.tsx    # 视频剪辑（本地/云端）
+│   │   │   │   ├── ProductionPage.tsx     # 批量生产工作流
+│   │   │   │   ├── PipelinePage.tsx       # 流水线
+│   │   │   │   ├── StudioPage.tsx         # 创作台
+│   │   │   │   ├── PublishPage.tsx        # 多平台发布
+│   │   │   │   ├── SubtitlePage.tsx       # 字幕工具
+│   │   │   │   ├── TasksPage.tsx          # 任务记录
+│   │   │   │   ├── AnalyticsPage.tsx      # 数据分析
+│   │   │   │   ├── AdminPage.tsx          # 系统管理（含积分账户）
+│   │   │   │   ├── FeedbackPage.tsx / HelpPage.tsx / NotFoundPage.tsx
 │   │   │   ├── components/   # 通用组件
 │   │   │   └── api/          # API 客户端与类型定义
 │   │   ├── public/           # 静态资源
 │   │   └── package.json      # 前端依赖配置
 │   └── backend/              # FastAPI 后端工程（端口 2001）
 │       ├── app/
-│       │   ├── main.py       # FastAPI 应用入口
-│       │   ├── api/v1/       # API 路由（9 个模块）
-│       │   │   ├── candidates.py     # 候选搜索
-│       │   │   ├── transcriptions.py # 转写任务
-│       │   │   ├── pipelines.py      # 流水线
-│       │   │   ├── tasks.py          # 任务查询
-│       │   │   ├── admin.py          # 系统管理
-│       │   │   ├── copywriting.py    # 文案改写
-│       │   │   ├── video_editor.py   # 视频编辑
-│       │   │   └── publish.py        # 多平台发布
+│       │   ├── main.py       # FastAPI 应用入口（启动时自动运行 pending 迁移）
+│       │   ├── api/v1/       # API 路由（18 个模块）
+│       │   │   ├── crawler.py           # 关键词爬虫
+│       │   │   ├── candidates.py        # 候选搜索
+│       │   │   ├── transcriptions.py    # 转写任务
+│       │   │   ├── link_transcriptions.py # 链接转写
+│       │   │   ├── copywriting.py       # 文案改写
+│       │   │   ├── avatar.py            # 数字人
+│       │   │   ├── video_editor.py      # 视频剪辑
+│       │   │   ├── production.py        # 生产工作流
+│       │   │   ├── pipelines.py         # 流水线
+│       │   │   ├── publish.py           # 多平台发布
+│       │   │   ├── subtitles.py / templates.py # 字幕与模板
+│       │   │   ├── credits.py           # 积分账户
+│       │   │   ├── analytics.py         # 数据分析
+│       │   │   ├── feedback.py / notifications.py / admin.py / tasks.py
 │       │   ├── core/         # 核心配置（config.py、deps.py、security.py）
 │       │   └── schemas/      # Pydantic 模式
 │       ├── requirements.txt  # 后端依赖
@@ -208,25 +229,27 @@ video/
 │   ├── scripts/              # SQL 初始化脚本
 │   └── migrations/           # 数据库迁移框架
 │       ├── runner.py         # MigrationRunner 核心类
-│       ├── 001_initial_schema.py # 初始 Schema（15 张表 + 6 索引）
+│       ├── 001_initial_schema.py # 初始 Schema
 │       ├── 002_add_column_migrations.py # 列扩展迁移
 │       ├── 003_add_media_resolution_tables.py # 媒体解析迁移
 │       ├── 004_quarantine_orphan_sampling_checkpoints.py # 历史检查点修复
+│       ├── 005_mark_observed_publication_times.py       # 观测发布时间标记
 │       └── __main__.py       # CLI 入口
 ├── data/                     # 数据文件目录
-│   └── video_intelligence.db # SQLite 数据库
+│   ├── video_intelligence.db # SQLite 数据库
+│   └── avatar_results/       # 数字人成片（不入 Git）
 ├── scripts/                  # 脚本工具
 │   ├── start_all_services.ps1 # 全服务启动脚本
 │   ├── launch_app.ps1        # 单应用启动脚本
-│   └── benchmark_asr.py      # ASR 基准测试
+│   ├── benchmark_asr.py      # ASR 基准测试
+│   ├── deploy.bat / deploy.sh / setup_windows.ps1
+│   └── ...
 ├── tests/                    # 共享领域与历史 Streamlit 测试代码
-├── doc/                      # 项目文档（详细设计、交付报告等）
+├── doc/                      # 项目文档（详细设计、交付报告、竞品分析等）
 ├── docs/                     # 项目文档（归档、指南等）
 ├── prototype/                # 产品原型
-│   ├── decision-guide.html   # 任务决策引导界面
-│   ├── b2b-optimization/     # B2B 优化原型（高保真 Dashboard）
-│   └── optimized-v1/         # 优化版原型
 ├── references/               # 参考资料
+├── forge_rss_analysis/       # 外部参考项目（ForgeRSS，含独立 Dockerfile 与 LICENSE）
 ├── utils/                    # 工具函数
 ├── start.bat                 # Windows 一键启动脚本
 ├── requirements.txt          # Python 依赖
@@ -235,33 +258,53 @@ video/
 
 ## 核心功能
 
-### 1. 爆火视频检索
-- 三平台（抖音、小红书、视频号）一键查询
-- 商业 API 统一网关
-- 热度计算与候选管理
+### 1. 热点发现与候选管理
+- 抖音、小红书、视频号、B 站多平台采集（浏览器爬虫）与商业 API 统一网关
+- 热度计算、候选管理、关键词趋势分析
 - 支持 CSV/XLSX 导入
+- 爬虫沙箱/生产双模式，带请求限流与用量预警
 
 ### 2. 视频音轨转文案
-- 支持 MP4/MOV 视频上传
+- 支持 MP4/MOV 视频上传与公网直链
 - FFmpeg 音轨提取
-- faster-whisper 本地语音识别
-- 在线校对与导出（TXT/JSON/SRT）
+- faster-whisper 本地识别 + 云端 ASR 双通道
+- 在线校对（片段复核、版本管理）与导出（TXT/JSON/SRT）
+- ASR 质量评估（CER、数字准确率）
 
-### 3. 数字人生成
+### 3. AI 文案改写
+- 多模型接入（DeepSeek 等）
+- 改写、扩写、爆款文案风格生成
+- 草稿管理与历史记录
+
+### 4. 数字人生成
 - 文案驱动视频生成
-- 多形象、多音色支持
-- 异步任务管理
-- 结果验证与存储
+- 多形象、多音色支持（公司内部系统接入）
+- 异步任务管理、结果验证与本地存档
 
-### 4. 批量生产流水线
-- 端到端自动化编排
-- 任务队列管理
+### 5. 视频剪辑
+- 本地 FFmpeg 剪辑流水线
+- 阿里云云端智能剪辑（模板、素材、BGM 库）
+- 沙箱与生产模式，费用报价与确认
+
+### 6. 批量生产流水线
+- 端到端自动化编排（热点 → 文案 → 成片 → 发布）
+- 任务队列管理与后台执行
 - 进度追踪与状态管理
 
-### 5. 多平台发布
-- 抖音、快手、视频号适配
-- 沙箱与生产模式
-- 状态追踪与回滚
+### 7. 多平台发布
+- 抖音、快手、视频号、小红书适配
+- 发布账号与发布元数据管理
+- 沙箱与生产模式、状态追踪与回滚
+
+### 8. 积分账户
+- 1 元 = 1 积分，按量计费（剪辑、数字人等云服务）
+- 余额查询、充值、流水记录
+- 余额不足自动拦截，防并发超扣
+
+### 9. 数据分析与系统管理
+- 生产/发布数据统计看板
+- 反馈收集、通知中心
+- 任务记录、系统状态与迁移管理
 
 ## 竞品分析
 
@@ -291,19 +334,49 @@ video/
 
 ```
 GET  /health                           # 健康检查
-POST /api/v1/candidates/search         # 候选搜索
-POST /api/v1/transcriptions            # 创建转写任务
-GET  /api/v1/transcriptions/{id}       # 查询转写任务
-POST /api/v1/pipelines                 # 创建流水线
-GET  /api/v1/pipelines/{id}            # 查询流水线
-GET  /api/v1/tasks                     # 任务列表
 GET  /api/v1/admin/status              # 系统状态
+
+# 热点发现与候选
+POST /api/v1/candidates/search         # 候选搜索
+POST /api/v1/crawler/keyword-runs      # 关键词采集运行
+GET  /api/v1/crawler/keyword-runs/preflight # 采集预检查
+GET  /api/v1/analytics/dashboard/stats # 数据看板统计
+
+# 转写与文案
+POST /api/v1/transcriptions            # 创建转写任务（上传/直链）
+GET  /api/v1/transcriptions/{id}       # 查询转写任务
+POST /api/v1/crawler/link-transcriptions/url # 链接转写
 POST /api/v1/copywriting/rewrite       # 文案改写
+POST /api/v1/copywriting/generate      # 文案生成
+
+# 数字人与剪辑
+POST /api/v1/avatar/tasks              # 创建数字人任务
+GET  /api/v1/avatar/tasks/{id}         # 查询数字人任务
 POST /api/v1/video-editor/edit         # 视频剪辑
 GET  /api/v1/video-editor/capabilities # 剪辑器能力
+
+# 生产流水线与发布
+POST /api/v1/production/batches        # 创建生产批次
+POST /api/v1/production/batches/{id}/start # 启动批次
+POST /api/v1/production/batches/{id}/publish # 批次发布
+POST /api/v1/pipelines                 # 创建流水线
+GET  /api/v1/tasks                     # 任务列表
 POST /api/v1/publish                   # 发布视频
 GET  /api/v1/publish/platforms         # 可用平台
+
+# 积分账户
+GET  /api/v1/credits/balance           # 查询余额
+GET  /api/v1/credits/transactions      # 积分流水
+POST /api/v1/credits/adjust            # 充值/扣减（管理员）
+
+# 其他
+GET  /subtitles/...                    # 字幕工具
+GET  /templates/...                    # 模板服务
+GET  /api/v1/feedback                  # 反馈
+GET  /api/v1/notifications             # 通知
 ```
+
+> 完整端点以启动后的 Swagger UI（http://localhost:2001/docs）为准。
 
 ## 开发指南
 
@@ -361,13 +434,13 @@ chore: 构建/工具相关
 
 ### Docker 部署（可选）
 
-```bash
-# 构建镜像
-docker build -t video-intelligence .
+当前仓库根目录不提供 Dockerfile，部署以脚本方式为主：
 
-# 运行容器
-docker run -p 1001:1001 -p 2001:2001 video-intelligence
-```
+- **Windows**：双击根目录 `start.bat`
+- **Linux/macOS**：运行 `scripts/deploy.sh`
+- 生产环境部署清单见 `doc/deployment-checklist.md`
+
+> 注：`forge_rss_analysis/ForgeRSS` 为外部参考项目副本，自带 Dockerfile 与 docker-compose.yml，与本系统无关。
 
 ## 常见问题
 
@@ -406,6 +479,6 @@ A: 检查数据库配置，确保 PostgreSQL 服务已启动。开发环境默�
 
 ---
 
-**最后更新**: 2026-07-20  
+**最后更新**: 2026-08-06  
 **版本**: 2.0.0  
 **维护者**: Crow5 开发团队
