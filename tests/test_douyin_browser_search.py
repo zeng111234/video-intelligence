@@ -339,10 +339,34 @@ def test_public_search_uses_single_column_then_filter_before_scrolling(
         def wait_for_timeout(self, _delay):
             pass
 
+        def on(self, _event, _handler):
+            pass
+
+        def remove_listener(self, _event, _handler):
+            pass
+
+        def evaluate(self, _script):
+            return True
+
+        class keyboard:
+            @staticmethod
+            def type(_text, **_kwargs):
+                pass
+
+            @staticmethod
+            def press(_key):
+                pass
+
     page = Page()
 
     class Browser:
-        contexts = [object()]
+        contexts = [
+            type(
+                "Context",
+                (),
+                {"add_init_script": lambda _self, _script: None},
+            )()
+        ]
 
     class Playwright:
         chromium = type(
@@ -351,12 +375,21 @@ def test_public_search_uses_single_column_then_filter_before_scrolling(
             {"connect_over_cdp": lambda _chromium, _endpoint: Browser()},
         )()
 
+        def stop(self):
+            return None
+
     class SyncPlaywright:
         def __enter__(self):
             return Playwright()
 
         def __exit__(self, *_args):
             return False
+
+        def start(self):
+            return Playwright()
+
+        def stop(self):
+            return None
 
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: SyncPlaywright())
     monkeypatch.setattr(
@@ -415,10 +448,34 @@ def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkey
             goto_calls.append(url)
             raise PlaywrightError("navigation failed")
 
+        def on(self, _event, _handler):
+            pass
+
+        def remove_listener(self, _event, _handler):
+            pass
+
+        def evaluate(self, _script):
+            return True
+
+        class keyboard:
+            @staticmethod
+            def type(_text, **_kwargs):
+                pass
+
+            @staticmethod
+            def press(_key):
+                pass
+
     page = Page()
 
     class Browser:
-        contexts = [object()]
+        contexts = [
+            type(
+                "Context",
+                (),
+                {"add_init_script": lambda _self, _script: None},
+            )()
+        ]
 
     class Chromium:
         def connect_over_cdp(self, endpoint):
@@ -428,12 +485,21 @@ def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkey
     class Playwright:
         chromium = Chromium()
 
+        def stop(self):
+            return None
+
     class SyncPlaywright:
         def __enter__(self):
             return Playwright()
 
         def __exit__(self, *_args):
             return False
+
+        def start(self):
+            return Playwright()
+
+        def stop(self):
+            return None
 
     monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: SyncPlaywright())
     monkeypatch.setattr(
@@ -622,7 +688,7 @@ def test_browser_provider_reports_missing_playwright_dependency(tmp_path, monkey
         profile_dir=tmp_path / "profile",
         debug_port=29997,
     )
-    monkeypatch.setattr(provider, "_playwright_available", lambda: False)
+    monkeypatch.setattr(provider, "_browser_engine_available", lambda: False)
     monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
 
     capability = provider.capabilities()
@@ -641,7 +707,7 @@ def test_browser_provider_checks_the_configured_browser_channel(tmp_path, monkey
         browser_channel="msedge",
         debug_port=29996,
     )
-    monkeypatch.setattr(provider, "_playwright_available", lambda: True)
+    monkeypatch.setattr(provider, "_browser_engine_available", lambda: True)
     monkeypatch.setattr(provider, "_browser_executable", lambda: None)
 
     capability = provider.capabilities()
@@ -2208,3 +2274,252 @@ def test_public_search_reports_the_safety_loading_limit(tmp_path, monkeypatch):
     assert stop_error is not None
     assert stop_error.code == "public_search_safety_limit"
     assert stop_error.kind == ProviderErrorKind.SERVICE
+
+
+def test_public_search_api_url_detection():
+    from src.adapters.douyin_browser_search import (
+        LocalDouyinBrowserSearchProvider,
+    )
+
+    assert LocalDouyinBrowserSearchProvider._is_public_search_api_url(
+        "https://www.douyin.com/aweme/v1/web/general/search/single/?keyword=x"
+    )
+    assert LocalDouyinBrowserSearchProvider._is_public_search_api_url(
+        "https://www.douyin.com/aweme/v1/web/search/item/?keyword=x"
+    )
+    assert not LocalDouyinBrowserSearchProvider._is_public_search_api_url(
+        "https://www.douyin.com/aweme/v1/web/solution/resource/list/?spot_keys=1"
+    )
+    assert not LocalDouyinBrowserSearchProvider._is_public_search_api_url(
+        "https://www.douyin.com/search/abc"
+    )
+
+
+def test_public_search_payload_parsing(tmp_path):
+    from datetime import datetime, timezone
+
+    from project.backend.app.core.config import (
+        DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.douyin_browser_search import (
+        LocalDouyinPublicSearchProvider,
+    )
+
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=29998,
+        timeout_seconds=5.0,
+    )
+    payload = {
+        "status_code": 0,
+        "data": {
+            "data": [
+                {
+                    "aweme_id": "7351234567890123456",
+                    "desc": "餐饮获客新思路分享 #餐饮",
+                    "create_time": 1735000000,
+                    "duration": 23500,
+                    "author": {"nickname": "测试作者"},
+                    "statistics": {
+                        "play_count": 10000,
+                        "digg_count": 888,
+                        "comment_count": 66,
+                        "share_count": 7,
+                    },
+                },
+                {
+                    "aweme_id": "7351234567890123457",
+                    "desc": "不相关标题",
+                    "create_time": 1735000001,
+                    "author": {"nickname": "无关作者"},
+                    "statistics": {
+                        "play_count": 1,
+                        "digg_count": 2,
+                        "comment_count": 3,
+                        "share_count": 4,
+                    },
+                },
+                {"aweme_id": "not-a-number", "desc": "餐饮坏数据"},
+                "not-a-dict",
+                {"desc": "餐饮无 id"},
+            ],
+            "has_more": True,
+        },
+    }
+    rows = provider._rows_from_public_search_payload(payload, keyword="餐饮获客")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["item_id"] == "7351234567890123456"
+    assert row["title"] == "餐饮获客新思路分享 #餐饮"
+    assert row["author_name"] == "测试作者"
+    assert row["duration"] == 24  # 23500ms -> 24s(四舍五入)
+    assert row["plays"] == 10000
+    assert row["likes"] == 888
+    assert row["comments"] == 66
+    assert row["shares"] == 7
+    assert row["source_kind"] == "search_api"
+    # 不匹配关键词的标题被过滤;无效 id 与非 dict 被过滤
+    assert not any(r["item_id"] == "7351234567890123457" for r in rows)
+
+
+def test_scroll_and_wait_for_new_rows_returns_when_rows_appear(tmp_path, monkeypatch):
+    from project.backend.app.core.config import (
+        DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.douyin_browser_search import (
+        LocalDouyinPublicSearchProvider,
+    )
+
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=29999,
+        timeout_seconds=5.0,
+    )
+
+    class Page:
+        def __init__(self):
+            self.scrolls = 0
+            self.waits = 0
+
+        def evaluate(self, _script):
+            self.scrolls += 1
+
+        def wait_for_timeout(self, _ms):
+            self.waits += 1
+
+    page = Page()
+    counts = iter([5, 5, 5, 9])
+    monkeypatch.setattr(
+        provider, "_random_delay_ms", lambda *_: 500
+    )
+
+    result = provider._scroll_and_wait_for_new_rows(
+        page, count_rows=lambda: next(counts), max_wait_ms=6_000
+    )
+    assert result is True
+    assert page.scrolls == 1
+    assert page.waits >= 2  # 轮询到第 3 次出现新行
+
+
+def test_scroll_and_wait_for_new_rows_times_out(tmp_path, monkeypatch):
+    from project.backend.app.core.config import (
+        DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.douyin_browser_search import (
+        LocalDouyinPublicSearchProvider,
+    )
+
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=30000,
+        timeout_seconds=5.0,
+    )
+
+    class Page:
+        def evaluate(self, _script):
+            pass
+
+        def wait_for_timeout(self, _ms):
+            pass
+
+    result = provider._scroll_and_wait_for_new_rows(
+        Page(), count_rows=lambda: 3, max_wait_ms=600
+    )
+    assert result is False
+
+
+def test_public_search_payload_stream_format(tmp_path):
+    """抖音搜索结果接口是流式块(hex长度行 + JSON 行,含 aweme_info 键)。"""
+    import json as _json
+
+    from project.backend.app.core.config import (
+        DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_CHANNEL,
+    )
+    from src.adapters.douyin_browser_search import (
+        LocalDouyinPublicSearchProvider,
+    )
+
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=DOUYIN_BROWSER_DISCOVERY_ENABLED,
+        profile_dir=tmp_path / "profile",
+        browser_channel=DOUYIN_BROWSER_CHANNEL,
+        debug_port=30001,
+        timeout_seconds=5.0,
+    )
+    payload = {
+        "status_code": 0,
+        "data": [
+            {
+                "type": 1,
+                "aweme_info": {
+                    "aweme_id": "7668630123502931252",
+                    "desc": "餐饮获客实战分享 #餐饮",
+                    "create_time": 1785492093,
+                    "author": {"nickname": "餐饮运营笔记"},
+                    "statistics": {
+                        "play_count": 0,
+                        "digg_count": 35394,
+                        "comment_count": 7600,
+                        "share_count": 22665,
+                    },
+                    "duration": 213000,
+                },
+            },
+            {"type": 2, "aweme_info": {"aweme_id": "x", "desc": "话题"}},
+        ],
+        "has_more": True,
+    }
+    stream_text = f"1bee5\r\n{_json.dumps(payload)}\r\n"
+    rows = []
+    for line in stream_text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = _json.loads(line)
+        except Exception:
+            continue
+        rows.extend(
+            provider._rows_from_public_search_payload(obj, keyword="餐饮获客")
+        )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["item_id"] == "7668630123502931252"
+    assert row["author_name"] == "餐饮运营笔记"
+    assert row["comments"] == 7600
+    assert row["likes"] == 35394
+    assert row["shares"] == 22665
+    assert row["plays"] == 0
+    assert row["duration"] == 213
+
+
+def test_title_matches_keyword_lax_accepts_root_without_intent():
+    """require_intent=False 时,标题含词根但无意图词也可通过。"""
+    from src.services.commercial_search import title_matches_keyword
+
+    title = "开一家餐饮店,新模式才是王道 #餐饮 #餐饮行业"
+    assert title_matches_keyword(
+        title=title, keyword="餐饮获客", require_intent=False
+    )
+    # 默认(严格)仍然要求意图词
+    assert not title_matches_keyword(title=title, keyword="餐饮获客")
+    # 含意图词的标题在两种模式下都通过
+    intent_title = "餐饮店引流方法分享 #餐饮 #引流"
+    assert title_matches_keyword(
+        title=intent_title, keyword="餐饮获客", require_intent=False
+    )
+    assert title_matches_keyword(title=intent_title, keyword="餐饮获客")

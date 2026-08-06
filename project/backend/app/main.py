@@ -13,11 +13,16 @@ if _project_root not in sys.path:
 
 from contextlib import asynccontextmanager  # noqa: E402
 
-from fastapi import FastAPI  # noqa: E402
-from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi import FastAPI, Depends, Request  # noqa: E402
+from fastapi.exceptions import HTTPException, RequestValidationError  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
+
+from project.backend.app.core.security import (  # noqa: E402
+    check_rate_limit,
+    verify_api_key,
+)
 
 from project.backend.app.api.v1.candidates import router as candidates_router  # noqa: E402
 from project.backend.app.api.v1.transcriptions import router as transcriptions_router  # noqa: E402
@@ -41,6 +46,11 @@ from project.backend.app.api.v1.subtitles import router as subtitles_router  # n
 _SWAGGER_CSS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
 _SWAGGER_JS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"
 
+# 安全配置
+import os
+_IS_PRODUCTION = os.getenv("APP_ENV", "development").lower() == "production"
+_ENABLE_DOCS = os.getenv("ENABLE_DOCS", "false" if _IS_PRODUCTION else "true").lower() == "true"
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +62,27 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """启动时自动执行数据库迁移，关闭时清理。"""
+    # 初始化API Key
+    try:
+        from project.backend.app.core.security import API_KEY_FILE, get_or_create_api_key
+        api_key = get_or_create_api_key()
+        if not API_KEY_FILE.exists():
+            #首次生成，打印完整Key
+            print("\n" + "="*60)
+            print("您的 API Key（请立即保存，不会再次显示）：")
+            print(f"  {api_key}")
+            print("="*60)
+            print(f"使用方法：请求头添加 X-API-Key: {api_key}")
+            print("="*60 + "\n")
+        else:
+            print("\n" + "="*60)
+            print("API 认证已启用")
+            print("所有 /api/* 端点需要 X-API-Key 请求头")
+            print("访问 /api-key-info 查看配置信息")
+            print("="*60 + "\n")
+    except Exception as exc:
+        logger.warning("API Key 初始化失败: %s", exc)
+
     try:
         from database.migrations.runner import MigrationRunner
         from project.backend.app.core.config import DATABASE_PATH
@@ -99,10 +130,11 @@ app = FastAPI(
     title="短视频批量生产系统 API",
     version="0.1.0",
     description="复用现有服务层，提供标准化 REST API。",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    swagger_css_url=_SWAGGER_CSS_URL,
-    swagger_js_url=_SWAGGER_JS_URL,
+    docs_url="/docs" if _ENABLE_DOCS else None,
+    redoc_url="/redoc" if _ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if _ENABLE_DOCS else None,
+    swagger_css_url=_SWAGGER_CSS_URL if _ENABLE_DOCS else None,
+    swagger_js_url=_SWAGGER_JS_URL if _ENABLE_DOCS else None,
     lifespan=lifespan,
 )
 
@@ -114,6 +146,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# 认证中间件 - 对所有 /api/* 路径进行验证
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """API认证中间件。"""
+    # 公开端点
+    public_paths = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+    if request.url.path in public_paths:
+        return await call_next(request)
+
+    # OPTIONS请求（CORS预检）
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # API路径需要验证
+    if request.url.path.startswith("/api/"):
+        try:
+            await verify_api_key(request)
+            await check_rate_limit(request)
+        except HTTPException as e:
+            return JSONResponse(
+                status_code=e.status_code,
+                content=e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)},
+            )
+
+    response = await call_next(request)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +243,27 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api-key-info", include_in_schema=False)
+async def api_key_info():
+    """显示API Key信息（仅首次启动时显示完整Key）。"""
+    from project.backend.app.core.security import API_KEY_FILE, get_or_create_api_key
+
+    if API_KEY_FILE.exists():
+        return {
+            "message": "API Key 已配置",
+            "header": "X-API-Key",
+            "note": "完整Key仅在首次生成时显示一次，请妥善保管"
+        }
+    else:
+        key = get_or_create_api_key()
+        return {
+            "message": "已生成新的 API Key",
+            "api_key": key,
+            "header": "X-API-Key",
+            "warning": "请立即保存此Key，它不会再次显示！"
+        }
+
+
 # ---------- 自包含首页 HTML ----------
 _LANDING_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -249,19 +330,22 @@ _LANDING_HTML = """<!DOCTYPE html>
       <span class="ep-path">/health</span>
       <span class="ep-desc">健康检查</span>
     </a>
-    <a class="ep" href="/api/v1/admin/status">
+    <a class="ep" href="/api-key-info">
+      <span class="badge badge-get">GET</span>
+      <span class="ep-path">/api-key-info</span>
+      <span class="ep-desc">API Key信息</span>
+    </a>
+    <a class="ep" href="/api/v1/admin/status" onclick="return false;">
       <span class="badge badge-get">GET</span>
       <span class="ep-path">/api/v1/admin/status</span>
-      <span class="ep-desc">系统状态</span>
-    </a>
-    <a class="ep" href="/api/v1/tasks">
-      <span class="badge badge-get">GET</span>
-      <span class="ep-path">/api/v1/tasks</span>
-      <span class="ep-desc">任务列表</span>
+      <span class="ep-desc">系统状态（需要API Key）</span>
     </a>
   </div>
   <div class="links">
     <a href="http://localhost:1001">前端应用 (1001)</a>
+  </div>
+  <div style="margin-top:16px;padding:12px;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:8px;font-size:12px;color:#eab308;">
+    <strong>安全提示：</strong>所有 /api/* 端点需要在请求头中添加 <code>X-API-Key</code>
   </div>
   <footer>Powered by FastAPI &middot; NZSK Tech</footer>
 </div>

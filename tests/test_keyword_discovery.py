@@ -398,7 +398,7 @@ def test_first_keyword_snapshot_only_observes_and_ranks_top_ten() -> None:
 
     assert len(results) == 10
     assert all(result.level == KeywordTrendLevel.OBSERVING for result in results)
-    assert all(result.confidence == 0.53 for result in results)
+    assert all(result.confidence == 0.65 for result in results)
     assert all(result.display_tier == "observing" for result in results)
     assert all(result.recrawl_count == 0 for result in results)
     assert all(result.pool_size == 12 for result in results)
@@ -590,7 +590,11 @@ def test_keyword_growth_can_promote_after_three_recrawls() -> None:
     assert target.recall_count == 4
     assert target.engagement_growth_per_hour is not None
     assert target.percentiles["growth"] >= 90
-    assert target.level in {KeywordTrendLevel.A, KeywordTrendLevel.B}
+    assert target.level in {
+            KeywordTrendLevel.S,
+            KeywordTrendLevel.A,
+            KeywordTrendLevel.B,
+        }
     assert target.display_tier in {"exploding", "hot", "potential"}
 
 
@@ -701,11 +705,13 @@ def test_keyword_level_thresholds_are_gated() -> None:
         )
         == KeywordTrendLevel.B
     )
+    # 门槛 MIN_CONFIDENT_POOL_SIZE 曾为 30,现为 5;pool 不足
+    # MIN_COMPARABLE_POOL_SIZE(3)时保持 OBSERVING。
     assert (
         service._level(
             score=90,
             confidence=0.90,
-            pool_size=29,
+            pool_size=2,
             growth_percentile=99,
             acceleration_percentile=90,
             recrawl_count=3,

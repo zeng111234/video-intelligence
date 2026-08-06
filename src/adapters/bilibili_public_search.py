@@ -41,6 +41,20 @@ class BilibiliPublicSearchProvider:
 
     def __init__(self, *, timeout_seconds: float = 12.0) -> None:
         self.timeout_seconds = timeout_seconds
+        self._client = httpx.Client(
+            timeout=httpx.Timeout(timeout_seconds),
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/136.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "zh-CN,zh;q=0.9",
+                "Origin": "https://search.bilibili.com",
+                "Referer": "https://search.bilibili.com/",
+            },
+        )
 
     def capabilities(self) -> ProviderCapability:
         return ProviderCapability(
@@ -218,7 +232,7 @@ class BilibiliPublicSearchProvider:
 
     def _fetch_page(self, *, keyword: str, page: int) -> dict[str, Any]:
         def request() -> dict[str, Any]:
-            response = httpx.get(
+            response = self._client.get(
                 self._endpoint,
                 params={
                     "search_type": "video",
@@ -226,22 +240,6 @@ class BilibiliPublicSearchProvider:
                     "page": page,
                     "order": "pubdate",
                 },
-                headers={
-                    # This endpoint rejects the bare ``Mozilla/5.0`` value
-                    # used by generic HTTP clients.  These are ordinary
-                    # content-negotiation headers only: no cookie, account,
-                    # signature, or access-control bypass is used.
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/136.0.0.0 Safari/537.36"
-                    ),
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "zh-CN,zh;q=0.9",
-                    "Origin": "https://search.bilibili.com",
-                    "Referer": "https://search.bilibili.com/",
-                },
-                timeout=self.timeout_seconds,
             )
             response.raise_for_status()
             payload = response.json()
@@ -282,25 +280,9 @@ class BilibiliPublicSearchProvider:
 
     def _fetch_detail(self, *, bvid: str) -> dict[str, Any]:
         def request() -> dict[str, Any]:
-            response = httpx.get(
+            response = self._client.get(
                 self._detail_endpoint,
                 params={"bvid": bvid},
-                headers={
-                    # This endpoint rejects the bare ``Mozilla/5.0`` value
-                    # used by generic HTTP clients.  These are ordinary
-                    # content-negotiation headers only: no cookie, account,
-                    # signature, or access-control bypass is used.
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/136.0.0.0 Safari/537.36"
-                    ),
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "zh-CN,zh;q=0.9",
-                    "Origin": "https://search.bilibili.com",
-                    "Referer": "https://search.bilibili.com/",
-                },
-                timeout=self.timeout_seconds,
             )
             response.raise_for_status()
             payload = response.json()

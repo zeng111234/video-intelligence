@@ -42,6 +42,7 @@ from src.services.production import (
     DEFAULT_PRODUCTION_TEMPLATE_ID,
     ProductionService,
 )
+from tests.conftest import TEST_API_HEADERS
 
 
 def _candidate(candidate_id: str = "candidate-production-1") -> VideoCandidate:
@@ -129,7 +130,7 @@ def test_production_api_creates_profile_and_pending_batch(tmp_path):
     app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile_response = client.post(
                 "/api/v1/production/profiles",
                 json={"name": "API IP 配方", "tags": ["测试"]},
@@ -195,7 +196,7 @@ def test_production_api_accepts_mixed_source_items(tmp_path):
     app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile = client.post("/api/v1/production/profiles", json={"name": "混合 API 配方"}).json()
             response = client.post(
                 "/api/v1/production/batches",
@@ -224,7 +225,7 @@ def test_keyword_auto_run_api_only_enqueues_after_preflight(tmp_path):
     app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile_response = client.post(
                 "/api/v1/production/profiles",
                 json={
@@ -692,7 +693,7 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile = client.post("/api/v1/production/profiles", json={
                 "name": "API 启动配方", "avatar_id": "avatar-owner", "voice_id": "voice-owner", "edit_template_id": "template-professional",
             }).json()
@@ -796,7 +797,7 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             workspace = client.get(
                 f"/api/v1/production/batches/{batch.batch_id}/workspace"
             )
@@ -1071,7 +1072,7 @@ def test_batch_create_and_start_idempotency_reuse_and_conflict(tmp_path):
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
     app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile = client.post(
                 "/api/v1/production/profiles",
                 json={
@@ -1199,7 +1200,7 @@ def test_publish_requires_output_review_and_persists_manual_targets_idempotently
         "confirmation_accepted": True,
     }
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             blocked = client.post(
                 f"/api/v1/production/batches/{batch.batch_id}/publish/preflight",
                 json=publish_body,
@@ -1819,7 +1820,7 @@ def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
         lambda: pipeline_service
     )
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             response = client.post(
                 f"/api/v1/production/batches/{batch.batch_id}/reviews",
                 json={

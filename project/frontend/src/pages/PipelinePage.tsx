@@ -8,6 +8,7 @@ import {
   InputNumber,
   List,
   Modal,
+  Pagination,
   Progress,
   Segmented,
   Select,
@@ -479,7 +480,8 @@ export default function PipelinePage() {
   const [reviewNote, setReviewNote] = useState("");
   const [creativePlan, setCreativePlan] = useState<ProductionCreativePlan | null>(null);
   const [creativePlanExpanded, setCreativePlanExpanded] = useState(false);
-  const [candidatesExpanded, setCandidatesExpanded] = useState(false);
+  const [candidatePage, setCandidatePage] = useState(1);
+  const candidatePageSize = CANDIDATE_LIST_PREVIEW_LIMIT;
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
   const [publishTags, setPublishTags] = useState("");
@@ -2189,9 +2191,14 @@ export default function PipelinePage() {
                       口播优先：素材自带可转写成口播的讲解内容；画面参考：仅作镜头与画面素材，不参与口播识别。
                     </Text>
                     <div className="candidate-stack">
-                      {(creationMode === "auto" ? automaticCandidatePool : candidates)
-                        .slice(0, candidatesExpanded ? undefined : CANDIDATE_LIST_PREVIEW_LIMIT)
-                        .map((candidate, index) => (
+                      {(() => {
+                        const allCandidates = creationMode === "auto" ? automaticCandidatePool : candidates;
+                        const startIndex = (candidatePage - 1) * candidatePageSize;
+                        const endIndex = startIndex + candidatePageSize;
+                        const currentPageCandidates = allCandidates.slice(startIndex, endIndex);
+                        return currentPageCandidates.map((candidate, localIndex) => {
+                          const globalIndex = startIndex + localIndex;
+                          return (
                         <div
                           key={candidate.video_id}
                           className={`candidate-card${creationMode === "manual" ? " manual" : ""}${selectedCandidateId === candidate.video_id ? " selected" : ""}`}
@@ -2203,12 +2210,12 @@ export default function PipelinePage() {
                               if (creationMode === "manual") setSelectedCandidateId(candidate.video_id);
                             }}
                           >
-                            <span className="candidate-rank">#{index + 1}</span>
+                            <span className="candidate-rank">#{globalIndex + 1}</span>
                             <span className="candidate-copy">
                               <strong>{candidate.title || "未命名候选"}</strong>
                               <small>{candidate.platform_label} · {candidate.author_name || "作者未返回"}</small>
                               <small>
-                                {creationMode === "auto" && index >= automaticCandidates.length
+                                {creationMode === "auto" && globalIndex >= automaticCandidates.length
                                   ? "候补参考 · "
                                   : candidate.selection_tier === "reserve" ? "低热度候补 · " : ""}
                                 {candidateSpokenUse(candidate).label}
@@ -2235,18 +2242,21 @@ export default function PipelinePage() {
                             )
                           )}
                         </div>
-                      ))}
-                      {(creationMode === "auto" ? automaticCandidatePool : candidates).length > CANDIDATE_LIST_PREVIEW_LIMIT && (
-                        <div className="candidate-stack-toggle">
-                          <Button
+                      );
+                    });
+                  })()}
+
+                      {(creationMode === "auto" ? automaticCandidatePool : candidates).length > candidatePageSize && (
+                        <div className="candidate-stack-pagination">
+                          <Pagination
+                            current={candidatePage}
+                            pageSize={candidatePageSize}
+                            total={(creationMode === "auto" ? automaticCandidatePool : candidates).length}
+                            onChange={(page) => setCandidatePage(page)}
                             size="small"
-                            type="link"
-                            onClick={() => setCandidatesExpanded((prev) => !prev)}
-                          >
-                            {candidatesExpanded
-                              ? "收起列表"
-                              : `展开全部 ${(creationMode === "auto" ? automaticCandidatePool : candidates).length} 条素材`}
-                          </Button>
+                            showSizeChanger={false}
+                            showQuickJumper={false}
+                          />
                         </div>
                       )}
                     </div>

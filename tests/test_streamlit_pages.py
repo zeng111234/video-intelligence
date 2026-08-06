@@ -192,7 +192,7 @@ def test_sandbox_search_renders_three_independent_top_ten() -> None:
     batch = CommercialSearchService(
         repository,
         source,
-        KeywordTrendService(repository),
+        KeywordTrendService(repository, clock=lambda: now),
         SandboxLicensedSearchProvider(clock=lambda: now),
         clock=lambda: now,
     ).execute(keyword="二手车")

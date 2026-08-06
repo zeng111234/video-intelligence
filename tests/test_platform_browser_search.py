@@ -116,6 +116,10 @@ class _CollectionContext:
         self.pages.append(self.fallback_page)
         return self.fallback_page
 
+    def add_init_script(self, _script: str) -> None:
+        """Real Playwright BrowserContexts expose add_init_script."""
+        pass
+
 
 class _CollectionBrowser:
     def __init__(self, context: _CollectionContext) -> None:

@@ -31,6 +31,7 @@ from src.adapters.browser_window import (
     minimize_browser_window,
     reveal_browser_window,
 )
+from src.adapters.drission_browser import ANTI_DETECTION_INIT_SCRIPT
 from src.adapters.douyin_browser_search import BrowserSessionStatus
 from src.adapters.licensed import LicensedProviderError
 from src.models import (
@@ -97,6 +98,7 @@ _SPECS = {
 _ACCESS_MARKERS = ("访问频繁", "操作频繁", "请求过于频繁", "网络环境存在风险")
 _HARD_VERIFICATION_MARKERS = ("请通过验证", "请完成验证", "安全验证")
 _MAX_SCROLL_ROUNDS = 18
+_MAX_STAGNANT_SCROLL_ROUNDS = 3
 # 快手的结果流每次懒加载通常只补充少量卡片。对需要按发布时间筛选的
 # 搜索，18 轮不足以填满最多 300 条的原始扫描池；仍保留有限次数和
 # 每轮间隔，并在页面末尾或出现安全提示时立即停止。
@@ -404,6 +406,19 @@ class LocalPlatformBrowserSearchProvider:
             f"--user-data-dir={self.profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--lang=zh-CN",
+            "--disable-extensions",
+            "--disable-plugins-discovery",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--disable-default-apps",
+            "--no-pings",
+            "--disable-component-update",
         ]
         if self.anonymous_only:
             browser_args.append("--incognito")
@@ -627,6 +642,8 @@ class LocalPlatformBrowserSearchProvider:
         with sync_playwright() as playwright:
             try:
                 browser = playwright.chromium.connect_over_cdp(endpoint)
+                for context in browser.contexts:
+                    context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
                 page, owns_page = self._acquire_collection_page(browser)
             except PlaywrightError as exc:
                 raise LicensedProviderError(
@@ -755,7 +772,7 @@ class LocalPlatformBrowserSearchProvider:
                         if self._visible_platform_end(page):
                             self._set_collection_stop(
                                 "platform_end",
-                                "平台已经没有更多公开搜索结果。",
+                                "已经没有更多符合条件的视频。",
                             )
                             break
                         stagnant_rounds = (
@@ -763,15 +780,25 @@ class LocalPlatformBrowserSearchProvider:
                             if current_count == previous_count
                             else 0
                         )
-                        if self.platform != Platform.KUAISHOU and stagnant_rounds >= 3:
+                        if (
+                            self.platform != Platform.KUAISHOU
+                            and stagnant_rounds >= _MAX_STAGNANT_SCROLL_ROUNDS
+                        ):
                             self._set_collection_stop(
                                 "no_more_loaded",
-                                "连续加载未发现新结果，已停止。",
+                                "连续多次未发现新视频，已停止。",
                             )
                             break
                         previous_count = current_count
-                        self._scroll_for_more_results(page)
-                        page.wait_for_timeout(random.randint(900, 1400))
+                        self._scroll_one_viewport(page)
+                        # 平台结果懒加载:滚动后需要等待刷新才有新内容。
+                        # 轮询读取并合并新卡片,出现新行即提前进入下一轮。
+                        self._wait_for_new_rows_after_scroll(
+                            page,
+                            current_count=current_count,
+                            rendered_rows=rendered_rows,
+                            network_rows=network_rows,
+                        )
                         self._raise_for_visible_block(page)
                     else:
                         # The last ordinary scroll may have populated the
@@ -865,6 +892,37 @@ class LocalPlatformBrowserSearchProvider:
             )
             return
         page.evaluate("window.scrollBy(0, Math.max(window.innerHeight * 0.85, 600))")
+
+    def _scroll_one_viewport(self, page) -> None:
+        """Scroll down by one viewport height."""
+        self._scroll_for_more_results(page)
+
+    def _wait_for_new_rows_after_scroll(
+        self,
+        page,
+        *,
+        current_count: int,
+        rendered_rows: dict[str, dict[str, Any]],
+        network_rows: dict[str, dict[str, Any]],
+        max_wait_ms: int = 8_000,
+    ) -> None:
+        """滚动后轮询读取新卡片,直到出现新行或超时。
+
+        平台结果流是懒加载:滚动到一定位置后需要等待刷新才会补充新卡片,
+        固定等待几秒容易误判“没有更多内容”。这里每 500ms 读取一次页面
+        并把新卡片合并进集合,出现新行即提前返回;超过 max_wait_ms 才
+        认为本轮没有新内容(由上层停滞判断决定是否停止)。
+        """
+        waited = 0
+        while waited < max_wait_ms:
+            page.wait_for_timeout(500)
+            waited += 500
+            for row in self._rendered_rows(page):
+                item_id = str(row.get("item_id") or "")
+                if item_id:
+                    rendered_rows[item_id] = row
+            if len(set(network_rows) | set(rendered_rows)) > current_count:
+                return
 
     @staticmethod
     def _visible_platform_end(page) -> bool:

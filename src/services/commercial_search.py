@@ -79,8 +79,13 @@ def normalized_keyword_text(value: str) -> str:
     )
 
 
-def title_matches_keyword(*, title: str, keyword: str) -> bool:
-    """Match only the provider title/description text (including inline hashtags)."""
+def title_matches_keyword(*, title: str, keyword: str, require_intent: bool = True) -> bool:
+    """Match only the provider title/description text (including inline hashtags).
+
+    ``require_intent=True``(默认)要求标题同时含关键词词根与业务意图词
+    (获客/引流/营销/运营等);``False`` 时只要求词根命中,相关性由平台
+    搜索排序兜底,适合抖音这类每页返回量受限的渠道。
+    """
     normalized_keyword = normalized_keyword_text(keyword)
     normalized_title = normalized_keyword_text(title)
     if not normalized_keyword:
@@ -94,7 +99,13 @@ def title_matches_keyword(*, title: str, keyword: str) -> bool:
         return (
             len(subject) >= 2
             and subject in normalized_title
-            and any(intent in normalized_title for intent in _BUSINESS_INTENT_SUFFIXES)
+            and (
+                not require_intent
+                or any(
+                    intent in normalized_title
+                    for intent in _BUSINESS_INTENT_SUFFIXES
+                )
+            )
         )
     return False
 
@@ -1013,15 +1024,13 @@ class CommercialSearchService:
         schedule_recrawls: bool = True,
         tracking_parent_batch_id: str | None = None,
     ) -> None:
-        candidate_ids = {
-            (item.platform, item.platform_item_id): item.video_id
-            for item in self.repository.list_candidates()
-        }
         keyword_key = keyword.casefold()
         all_checkpoints = self.repository.list_sampling_checkpoints(keyword_key)
         observed_ids: set[str] = set()
         for fallback_rank, item in enumerate(normalized, start=1):
-            video_id = candidate_ids.get((platform, item.platform_item_id))
+            video_id = self.repository.resolve_candidate_id(
+                platform.value, item.platform_item_id
+            )
             if not video_id:
                 continue
             observed_ids.add(video_id)

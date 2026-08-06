@@ -10,6 +10,7 @@ from project.backend.app.core import deps as backend_deps
 from project.backend.app.main import app
 from src.models import CopywritingTask, TaskStatus, TranscriptionTask
 from src.repositories.mock import MockRepository
+from tests.conftest import TEST_API_HEADERS
 
 
 def test_clear_transcription_history_deletes_only_transcriptions() -> None:
@@ -38,7 +39,7 @@ def test_clear_transcription_history_deletes_only_transcriptions() -> None:
     repository.save_task(copywriting)
     app.dependency_overrides[backend_deps.get_repository] = lambda: repository
     try:
-        with TestClient(app) as client:
+        with TestClient(app, headers=TEST_API_HEADERS) as client:
             response = client.delete("/api/v1/transcriptions/history")
     finally:
         app.dependency_overrides.pop(backend_deps.get_repository, None)

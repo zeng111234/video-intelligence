@@ -95,12 +95,19 @@ import type {
 
 const BASE = "/api/v1";
 
+// API Key 配置（从环境变量读取或使用默认值）
+const API_KEY = import.meta.env.VITE_API_KEY || "local-dev-key-2024";
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
   const canRetry = method === "GET";
   const run = () =>
     fetch(`${BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": API_KEY,
+        ...init?.headers,
+      },
       ...init,
     });
   let resp: Response;

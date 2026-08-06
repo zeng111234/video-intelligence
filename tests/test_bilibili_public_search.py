@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -19,7 +20,15 @@ def _response(payload: dict) -> httpx.Response:
     return httpx.Response(200, json=payload, request=request)
 
 
-def test_search_keeps_recent_items_and_normalizes_public_metrics(monkeypatch):
+def _make_provider(fake_get):
+    """创建带有 mock client 的 provider"""
+    provider = BilibiliPublicSearchProvider()
+    provider._client = MagicMock()
+    provider._client.get = fake_get
+    return provider
+
+
+def test_search_keeps_recent_items_and_normalizes_public_metrics():
     now = datetime.now(timezone.utc)
     payload = {
         "code": 0,
@@ -44,9 +53,9 @@ def test_search_keeps_recent_items_and_normalizes_public_metrics(monkeypatch):
             ]
         },
     }
-    monkeypatch.setattr(httpx, "get", lambda *args, **kwargs: _response(payload))
+    provider = _make_provider(lambda *args, **kwargs: _response(payload))
 
-    result = BilibiliPublicSearchProvider().search(
+    result = provider.search(
         platform=Platform.BILIBILI,
         keyword="餐饮获客",
         published_after=now - timedelta(days=3),
@@ -67,7 +76,7 @@ def test_search_keeps_recent_items_and_normalizes_public_metrics(monkeypatch):
     assert any("点赞" in warning for warning in item.data_quality_warnings)
 
 
-def test_search_retries_one_time_after_connection_failure(monkeypatch):
+def test_search_retries_one_time_after_connection_failure():
     calls = 0
 
     def fake_get(*args, **kwargs):
@@ -77,8 +86,8 @@ def test_search_retries_one_time_after_connection_failure(monkeypatch):
             raise httpx.ConnectError("temporary connection failure")
         return _response({"code": 0, "data": {"result": []}})
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    result = BilibiliPublicSearchProvider().search(
+    provider = _make_provider(fake_get)
+    result = provider.search(
         platform=Platform.BILIBILI,
         keyword="测试",
         published_after=None,
@@ -90,7 +99,7 @@ def test_search_retries_one_time_after_connection_failure(monkeypatch):
     assert result.items == []
 
 
-def test_refresh_metrics_reads_public_detail_and_keeps_zero_values(monkeypatch):
+def test_refresh_metrics_reads_public_detail_and_keeps_zero_values():
     now = datetime.now(timezone.utc)
     calls: list[tuple[str, dict[str, object]]] = []
 
@@ -115,8 +124,7 @@ def test_refresh_metrics_reads_public_detail_and_keeps_zero_values(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    provider = BilibiliPublicSearchProvider()
+    provider = _make_provider(fake_get)
     result = provider.refresh_metrics(
         platform=Platform.BILIBILI,
         platform_item_ids=["BV1detail"],
@@ -150,7 +158,7 @@ def test_refresh_metrics_reads_public_detail_and_keeps_zero_values(monkeypatch):
     assert item.metrics.favorites == 0
 
 
-def test_refresh_metrics_retries_one_item_once_and_records_its_error(monkeypatch):
+def test_refresh_metrics_retries_one_item_once_and_records_its_error():
     calls: dict[str, int] = {"BV1good": 0, "BV1bad": 0}
     now = datetime.now(timezone.utc)
 
@@ -179,8 +187,8 @@ def test_refresh_metrics_retries_one_item_once_and_records_its_error(monkeypatch
             }
         )
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    result = BilibiliPublicSearchProvider().refresh_metrics(
+    provider = _make_provider(fake_get)
+    result = provider.refresh_metrics(
         platform=Platform.BILIBILI,
         platform_item_ids=["BV1good", "BV1bad"],
         idempotency_key="test-detail-retry",
@@ -194,15 +202,13 @@ def test_refresh_metrics_retries_one_item_once_and_records_its_error(monkeypatch
     assert result.errors[0].retryable is False
 
 
-def test_refresh_metrics_rejects_more_than_ten_items(monkeypatch):
-    monkeypatch.setattr(
-        httpx,
-        "get",
-        lambda *args, **kwargs: pytest.fail("超过上限时不应发起详情请求"),
-    )
+def test_refresh_metrics_rejects_more_than_ten_items():
+    def fake_get(*args, **kwargs):
+        pytest.fail("超过上限时不应发起详情请求")
 
+    provider = _make_provider(fake_get)
     with pytest.raises(LicensedProviderError, match="最多查询 10 条"):
-        BilibiliPublicSearchProvider().refresh_metrics(
+        provider.refresh_metrics(
             platform=Platform.BILIBILI,
             platform_item_ids=[f"BV1{index}" for index in range(11)],
             idempotency_key="test-max-detail-refresh",

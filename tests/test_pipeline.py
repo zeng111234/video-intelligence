@@ -465,7 +465,7 @@ class TestPipelineService:
         stored = self.repo.get_pipeline_run(run.run_id)
         assert stored is not None
         assert stored.status == PipelineRunStatus.PAUSED
-        assert [event.action for event in stored.events][-1] == "stage_updated"
+        assert [event.action for event in stored.events][-1] == "copy_review_required"
 
     def test_review_approval_persists_decision_without_submitting_avatar(self):
         candidate = _pipeline_candidate()

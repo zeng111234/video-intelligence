@@ -25,6 +25,7 @@ from urllib.request import urlopen
 
 from pydantic import HttpUrl
 
+from src.adapters.drission_browser import ANTI_DETECTION_INIT_SCRIPT
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.browser_window import (
     minimize_browser_window,
@@ -65,7 +66,7 @@ _MIN_QUALIFYING_LIKES = 100
 _MIN_QUALIFYING_LIKES_PER_DAY = 1.0
 _HOTSPOT_PAGE_SETTLE_RANGE_MS = (3_500, 5_500)
 _HOTSPOT_SEARCH_SETTLE_RANGE_MS = (3_000, 5_000)
-_HOTSPOT_SCROLL_REFRESH_RANGE_MS = (450, 850)
+_HOTSPOT_SCROLL_REFRESH_RANGE_MS = (800, 2_500)
 _HOTSPOT_LIST_COOLDOWN_RANGE_MS = (7_000, 11_000)
 _HOTSPOT_SCROLL_PIXELS = 500
 _HOTSPOT_KEYSTROKE_DELAY_MIN_MS = 120
@@ -288,6 +289,19 @@ class LocalDouyinBrowserSearchProvider:
             f"--user-data-dir={self.profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--lang=zh-CN",
+            "--disable-extensions",
+            "--disable-plugins-discovery",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--metrics-recording-only",
+            "--disable-default-apps",
+            "--no-pings",
+            "--disable-component-update",
         ]
         if visible:
             browser_args.extend(
@@ -631,189 +645,192 @@ class LocalDouyinBrowserSearchProvider:
         endpoint = f"http://127.0.0.1:{self.debug_port}"
         last_error: Exception | None = None
         for attempt in range(2):
+            playwright_manager = sync_playwright().start()
             try:
-                with sync_playwright() as playwright:
-                    browser = playwright.chromium.connect_over_cdp(endpoint)
-                    context = browser.contexts[0]
-                    page, created_page = self._reuse_or_create_collection_page(
-                        context,
-                        preferred_url_fragments=("douhot.douyin.com",),
-                    )
-                    try:
-                        page.set_default_timeout(int(self.timeout_seconds * 1000))
-                        rows: list[dict[str, Any]] = []
-                        errors: list[ProviderSearchError] = []
-                        def ensure_visible_page(url: str) -> None:
-                            response = page.goto(url, wait_until="domcontentloaded")
-                            if response is not None and response.status in {403, 429}:
-                                raise LicensedProviderError(
-                                    f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
-                                    kind=ProviderErrorKind.RATE_LIMIT,
-                                )
-                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS))
-                            body_text = page.locator("body").inner_text(timeout=3_000)
-                            if any(marker in body_text for marker in _LOGIN_MARKERS):
-                                raise LicensedProviderError(
-                                    "热点宝要求登录或安全验证，已暂停采集，请在专用浏览器中人工处理。",
-                                    kind=ProviderErrorKind.AUTHORIZATION,
-                                )
-                            if any(marker in body_text for marker in ("访问频繁", "操作频繁", "请求过于频繁")):
-                                raise LicensedProviderError(
-                                    "热点宝提示访问频繁，已停止采集并进入安全暂停。",
-                                    kind=ProviderErrorKind.RATE_LIMIT,
-                                )
-
-                        def append_video_board(list_type: int) -> None:
-                            url = (
-                                "https://douhot.douyin.com/square/hotspot?"
-                                f"active_tab=hotspot_video&date_window={window_hours}&sub_type={list_type}"
+                browser = playwright_manager.chromium.connect_over_cdp(endpoint)
+                context = browser.contexts[0]
+                context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
+                page, created_page = self._reuse_or_create_collection_page(
+                    context,
+                    preferred_url_fragments=("douhot.douyin.com",),
+                )
+                try:
+                    page.set_default_timeout(int(self.timeout_seconds * 1000))
+                    rows: list[dict[str, Any]] = []
+                    errors: list[ProviderSearchError] = []
+                    def ensure_visible_page(url: str) -> None:
+                        response = page.goto(url, wait_until="domcontentloaded")
+                        if response is not None and response.status in {403, 429}:
+                            raise LicensedProviderError(
+                                f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
+                                kind=ProviderErrorKind.RATE_LIMIT,
                             )
-                            try:
-                                ensure_visible_page(url)
-                                self._fill_hotspot_keyword(page, keyword)
-                                page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
-                                list_rows: dict[str, dict[str, Any]] = {}
-                                stagnant_rounds = 0
-                                previous_count = -1
-                                for _ in range(_HOTSPOT_MAX_SCROLL_ROUNDS):
-                                    for row in self._extract_hotspot_rows(page):
-                                        item_id = str(row.get("item_id") or "")
-                                        if item_id:
-                                            list_rows[item_id] = row
-                                    current_count = len(list_rows)
-                                    if current_count >= _HOTSPOT_MAX_ROWS_PER_LIST:
-                                        break
-                                    stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
-                                    if stagnant_rounds >= 2:
-                                        break
-                                    previous_count = current_count
-                                    page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
-                                    page.wait_for_timeout(
-                                        self._random_delay_ms(
-                                            *_HOTSPOT_SCROLL_REFRESH_RANGE_MS
-                                        )
-                                    )
-                                for row in list_rows.values():
-                                    row.update(
-                                        {
-                                            "window_hours": window_hours,
-                                            "list_type": list_type,
-                                            "list_label": _HOTSPOT_LIST_LABELS[list_type],
-                                            "source_kind": "video_board",
-                                        }
-                                    )
-                                    rows.append(row)
-                            except LicensedProviderError:
-                                raise
-                            except PlaywrightError as exc:
-                                errors.append(
-                                    ProviderSearchError(
-                                        kind=ProviderErrorKind.CONNECTION,
-                                        message=f"热点宝{_HOTSPOT_LIST_LABELS[list_type]}读取失败，已跳过该榜单：{exc}",
-                                        retryable=False,
-                                    )
-                                )
-
-                        def has_enough_qualifying_rows() -> bool:
-                            qualifying, _, _, _ = self._to_items(
-                                rows,
-                                keyword,
-                                observed_at,
-                                target_limit,
+                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS))
+                        body_text = page.locator("body").inner_text(timeout=3_000)
+                        if any(marker in body_text for marker in _LOGIN_MARKERS):
+                            raise LicensedProviderError(
+                                "热点宝要求登录或安全验证，已暂停采集，请在专用浏览器中人工处理。",
+                                kind=ProviderErrorKind.AUTHORIZATION,
                             )
-                            return len(qualifying) >= target_limit
+                        if any(marker in body_text for marker in ("访问频繁", "操作频繁", "请求过于频繁")):
+                            raise LicensedProviderError(
+                                "热点宝提示访问频繁，已停止采集并进入安全暂停。",
+                                kind=ProviderErrorKind.RATE_LIMIT,
+                            )
 
-                        # 1) Video total leaderboard is always first.
-                        append_video_board(1001)
-                        if has_enough_qualifying_rows():
-                            return rows, errors
-
-                        # 2) Topic leaderboard is essential for business terms such as
-                        # "餐饮获客": the topic itself may match even when individual
-                        # video titles do not repeat the full phrase.
-                        topic_url = (
+                    def append_video_board(list_type: int) -> None:
+                        url = (
                             "https://douhot.douyin.com/square/hotspot?"
-                            f"active_tab=hotspot_topic&date_window={window_hours}&sub_type=2001"
+                            f"active_tab=hotspot_video&date_window={window_hours}&sub_type={list_type}"
                         )
                         try:
-                            ensure_visible_page(topic_url)
+                            ensure_visible_page(url)
                             self._fill_hotspot_keyword(page, keyword)
                             page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
-                            topics = [
-                                item for item in self._extract_hotspot_topic_rows(page)
-                                if title_matches_keyword(title=str(item.get("topic_name") or ""), keyword=keyword)
-                            ][:2]
-                            for topic in topics:
-                                topic_id = str(topic.get("topic_id") or "")
-                                if not topic_id:
-                                    continue
-                                ensure_visible_page(
-                                    "https://douhot.douyin.com/topic/detail?active_tab=topic_detail&topic_id="
-                                    + quote(topic_id, safe="")
+                            list_rows: dict[str, dict[str, Any]] = {}
+                            stagnant_rounds = 0
+                            previous_count = -1
+                            for _ in range(_HOTSPOT_MAX_SCROLL_ROUNDS):
+                                for row in self._extract_hotspot_rows(page):
+                                    item_id = str(row.get("item_id") or "")
+                                    if item_id:
+                                        list_rows[item_id] = row
+                                current_count = len(list_rows)
+                                if current_count >= _HOTSPOT_MAX_ROWS_PER_LIST:
+                                    break
+                                stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
+                                if stagnant_rounds >= 2:
+                                    break
+                                previous_count = current_count
+                                page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
+                                page.wait_for_timeout(
+                                    self._random_delay_ms(
+                                        *_HOTSPOT_SCROLL_REFRESH_RANGE_MS
+                                    )
                                 )
-                                for row in self._extract_topic_detail_rows(page):
-                                    row.update({
+                            for row in list_rows.values():
+                                row.update(
+                                    {
                                         "window_hours": window_hours,
-                                        "list_type": 2001,
-                                        "list_label": _HOTSPOT_LIST_LABELS[2001],
-                                        "source_kind": "topic_board",
-                                        "topic_exact": True,
-                                        "topic_name": str(topic.get("topic_name") or keyword),
-                                        "topic_id": topic_id,
-                                    })
-                                    rows.append(row)
-                        except LicensedProviderError:
-                            raise
-                        except PlaywrightError as exc:
-                            errors.append(ProviderSearchError(
-                                kind=ProviderErrorKind.CONNECTION,
-                                message=f"热点宝话题榜读取失败，已跳过：{exc}",
-                                retryable=False,
-                            ))
-
-                        if has_enough_qualifying_rows():
-                            return rows, errors
-
-                        # 3) Keep Hotspot search-board rows in this provider.  The
-                        # public Douyin website is collected by ``search_public`` so
-                        # callers can label and schedule it as a separate source.
-                        try:
-                            ensure_visible_page(
-                                "https://douhot.douyin.com/square/hotspot?"
-                                f"active_tab=hotspot_search&date_window={window_hours}&sub_type=3001"
-                            )
-                            self._fill_hotspot_keyword(page, keyword)
-                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
-                            for row in self._collect_scrolled_rows(
-                                page,
-                                self._extract_hotspot_rows,
-                            ):
-                                row.update({
-                                    "window_hours": window_hours,
-                                    "list_type": 3001,
-                                    "list_label": _HOTSPOT_LIST_LABELS[3001],
-                                    "source_kind": "search_board",
-                                })
+                                        "list_type": list_type,
+                                        "list_label": _HOTSPOT_LIST_LABELS[list_type],
+                                        "source_kind": "video_board",
+                                    }
+                                )
                                 rows.append(row)
                         except LicensedProviderError:
                             raise
-                        except PlaywrightError as exc:
-                            errors.append(ProviderSearchError(
-                                kind=ProviderErrorKind.CONNECTION,
-                                message=f"抖音搜索读取失败，已跳过：{exc}",
-                                retryable=False,
-                            ))
+                        except Exception as exc:
+                            errors.append(
+                                ProviderSearchError(
+                                    kind=ProviderErrorKind.CONNECTION,
+                                    message=f"热点宝{_HOTSPOT_LIST_LABELS[list_type]}读取失败，已跳过该榜单：{exc}",
+                                    retryable=False,
+                                )
+                            )
 
+                    def has_enough_qualifying_rows() -> bool:
+                        qualifying, _, _, _ = self._to_items(
+                            rows,
+                            keyword,
+                            observed_at,
+                            target_limit,
+                        )
+                        return len(qualifying) >= target_limit
+
+                    # 1) Video total leaderboard is always first.
+                    append_video_board(1001)
+                    if has_enough_qualifying_rows():
                         return rows, errors
-                    finally:
-                        if created_page:
-                            page.close()
+
+                    # 2) Topic leaderboard is essential for business terms such as
+                    # "餐饮获客": the topic itself may match even when individual
+                    # video titles do not repeat the full phrase.
+                    topic_url = (
+                        "https://douhot.douyin.com/square/hotspot?"
+                        f"active_tab=hotspot_topic&date_window={window_hours}&sub_type=2001"
+                    )
+                    try:
+                        ensure_visible_page(topic_url)
+                        self._fill_hotspot_keyword(page, keyword)
+                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                        topics = [
+                            item for item in self._extract_hotspot_topic_rows(page)
+                            if title_matches_keyword(title=str(item.get("topic_name") or ""), keyword=keyword)
+                        ][:2]
+                        for topic in topics:
+                            topic_id = str(topic.get("topic_id") or "")
+                            if not topic_id:
+                                continue
+                            ensure_visible_page(
+                                "https://douhot.douyin.com/topic/detail?active_tab=topic_detail&topic_id="
+                                + quote(topic_id, safe="")
+                            )
+                            for row in self._extract_topic_detail_rows(page):
+                                row.update({
+                                    "window_hours": window_hours,
+                                    "list_type": 2001,
+                                    "list_label": _HOTSPOT_LIST_LABELS[2001],
+                                    "source_kind": "topic_board",
+                                    "topic_exact": True,
+                                    "topic_name": str(topic.get("topic_name") or keyword),
+                                    "topic_id": topic_id,
+                                })
+                                rows.append(row)
+                    except LicensedProviderError:
+                        raise
+                    except Exception as exc:
+                        errors.append(ProviderSearchError(
+                            kind=ProviderErrorKind.CONNECTION,
+                            message=f"热点宝话题榜读取失败，已跳过：{exc}",
+                            retryable=False,
+                        ))
+
+                    if has_enough_qualifying_rows():
+                        return rows, errors
+
+                    # 3) Keep Hotspot search-board rows in this provider.  The
+                    # public Douyin website is collected by ``search_public`` so
+                    # callers can label and schedule it as a separate source.
+                    try:
+                        ensure_visible_page(
+                            "https://douhot.douyin.com/square/hotspot?"
+                            f"active_tab=hotspot_search&date_window={window_hours}&sub_type=3001"
+                        )
+                        self._fill_hotspot_keyword(page, keyword)
+                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                        for row in self._collect_scrolled_rows(
+                            page,
+                            self._extract_hotspot_rows,
+                        ):
+                            row.update({
+                                "window_hours": window_hours,
+                                "list_type": 3001,
+                                "list_label": _HOTSPOT_LIST_LABELS[3001],
+                                "source_kind": "search_board",
+                            })
+                            rows.append(row)
+                    except LicensedProviderError:
+                        raise
+                    except Exception as exc:
+                        errors.append(ProviderSearchError(
+                            kind=ProviderErrorKind.CONNECTION,
+                            message=f"抖音搜索读取失败，已跳过：{exc}",
+                            retryable=False,
+                        ))
+
+                    return rows, errors
+                finally:
+                    if created_page:
+                        page.close()
             except LicensedProviderError:
                 raise
-            except (PlaywrightError, OSError, ConnectionError) as exc:
+            except (PlaywrightError, OSError, ConnectionError, IndexError) as exc:
                 last_error = exc
                 if attempt == 0:
                     continue
+            finally:
+                playwright_manager.stop()
         raise LicensedProviderError(
             "连接本机 Chrome 失败，已自动重试一次。",
             kind=ProviderErrorKind.CONNECTION,
@@ -838,102 +855,180 @@ class LocalDouyinBrowserSearchProvider:
         navigation_started = False
         target_limit = max(1, min(target_limit, _PUBLIC_SEARCH_MAX_RESULT_LIMIT))
         for attempt in range(2):
+            playwright_manager = sync_playwright().start()
             try:
-                with sync_playwright() as playwright:
-                    browser = playwright.chromium.connect_over_cdp(endpoint)
-                    context = browser.contexts[0]
-                    page, created_page = self._reuse_or_create_collection_page(
-                        context,
-                        preferred_url_fragments=("www.douyin.com/search/",),
-                    )
+                browser = playwright_manager.chromium.connect_over_cdp(endpoint)
+                context = browser.contexts[0]
+                context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
+                page, created_page = self._reuse_or_create_collection_page(
+                    context,
+                    preferred_url_fragments=("www.douyin.com/search/",),
+                )
+                network_rows: dict[str, dict[str, Any]] = {}
+
+                def capture_search_response(response) -> None:
+                    if not self._is_public_search_api_url(response.url):
+                        return
+                    payloads: list[Any] = []
                     try:
-                        page.set_default_timeout(int(self.timeout_seconds * 1000))
-                        # Mark before calling goto: a transport error can occur after
-                        # Chrome has already sent the request, so it must never cause a
-                        # second navigation for the same business search.
-                        navigation_started = True
-                        response = page.goto(
+                        payloads.append(response.json())
+                    except Exception:
+                        # 抖音搜索结果接口是流式块响应:
+                        #   <hex长度>\r\n{json}\r\n<hex长度>\r\n{json}...
+                        # 标准 json() 无法解析,逐行尝试解析。
+                        try:
+                            text = response.text()
+                        except Exception:
+                            return
+                        for line in text.split("\n"):
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                payloads.append(json.loads(line))
+                            except Exception:
+                                continue
+                    for payload in payloads:
+                        for row in self._rows_from_public_search_payload(
+                            payload, keyword=keyword
+                        ):
+                            item_id = str(row.get("item_id") or "")
+                            if item_id:
+                                network_rows[item_id] = row
+
+                try:
+                    page.set_default_timeout(int(self.timeout_seconds * 1000))
+                    page.on("response", capture_search_response)
+                    # Mark before calling goto: a transport error can occur after
+                    # Chrome has already sent the request, so it must never cause a
+                    # second navigation for the same business search.
+                    navigation_started = True
+                    response = page.goto(
+                        "https://www.douyin.com/",
+                        wait_until="domcontentloaded",
+                    )
+                    if response is not None and response.status in {403, 412, 429}:
+                        raise LicensedProviderError(
+                            (
+                                f"抖音官网返回 {response.status}，后台检索已停止；"
+                                "当前没有可处理的登录或安全验证，请稍后再搜索。"
+                            ),
+                            kind=ProviderErrorKind.RATE_LIMIT,
+                            code="public_search_rate_limited",
+                        )
+                    page.wait_for_timeout(
+                        self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                    )
+                    # 新版抖音搜索:URL 直带关键词不再发起搜索请求,页面只
+                    # 显示作者卡片。必须像真人一样在搜索框输入关键词后回车,
+                    # 才会触发 general/search 接口并返回完整视频数据。
+                    search_focused = page.evaluate(
+                        """() => {
+                          const input = document.querySelector(
+                            'input[placeholder*="搜索"], input[data-e2e*="search"]'
+                          );
+                          if (!input) return false;
+                          input.focus();
+                          return true;
+                        }"""
+                    )
+                    if search_focused:
+                        page.keyboard.type(keyword, delay=60)
+                        page.wait_for_timeout(
+                            self._random_delay_ms(400, 900)
+                        )
+                        page.keyboard.press("Enter")
+                    else:
+                        # 兜底:找不到搜索框时回退 URL 直访
+                        fallback_response = page.goto(
                             self._public_search_url(keyword),
                             wait_until="domcontentloaded",
                         )
-                        if response is not None and response.status in {403, 412, 429}:
+                        if fallback_response is not None and fallback_response.status in {
+                            403,
+                            412,
+                            429,
+                        }:
                             raise LicensedProviderError(
                                 (
-                                    f"抖音官网搜索返回 {response.status}，后台检索已停止；"
+                                    f"抖音官网返回 {fallback_response.status}，后台检索已停止；"
                                     "当前没有可处理的登录或安全验证，请稍后再搜索。"
                                 ),
                                 kind=ProviderErrorKind.RATE_LIMIT,
                                 code="public_search_rate_limited",
                             )
-                        page.wait_for_timeout(
-                            self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
-                        )
-                        errors: list[ProviderSearchError] = []
-                        try:
-                            self._raise_for_public_search_block(page)
-                        except LicensedProviderError as exc:
-                            errors.append(
-                                ProviderSearchError(
-                                    kind=exc.kind,
-                                    code=exc.code or "public_search_blocked",
-                                    message=exc.args[0],
-                                    retryable=False,
-                                )
+                    page.wait_for_timeout(
+                        self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                    )
+                    errors: list[ProviderSearchError] = []
+                    try:
+                        self._raise_for_public_search_block(page)
+                    except LicensedProviderError as exc:
+                        errors.append(
+                            ProviderSearchError(
+                                kind=exc.kind,
+                                code=exc.code or "public_search_blocked",
+                                message=exc.args[0],
+                                retryable=False,
                             )
-                            return [], errors
-                        # The official search page sometimes exposes a visible
-                        # "single column" toggle. Its cards show more of the
-                        # public interaction text than the compact grid, so
-                        # prefer it when it is genuinely available. This is a
-                        # normal rendered-page click; it does not inspect
-                        # requests, cookies, or hidden content.
-                        layout_mode = (
-                            "single_column"
-                            if self._prefer_public_search_single_column(page)
-                            else "default"
                         )
-                        if layout_mode == "single_column":
-                            page.wait_for_timeout(
-                                self._random_delay_ms(*_HOTSPOT_SCROLL_REFRESH_RANGE_MS)
+                        return [], errors
+                    # The official search page sometimes exposes a visible
+                    # "single column" toggle. Its cards show more of the
+                    # public interaction text than the compact grid, so
+                    # prefer it when it is genuinely available. This is a
+                    # normal rendered-page click; it does not inspect
+                    # requests, cookies, or hidden content.
+                    layout_mode = (
+                        "single_column"
+                        if self._prefer_public_search_single_column(page)
+                        else "default"
+                    )
+                    if layout_mode == "single_column":
+                        # 点击“单列”后页面重新渲染;等待新布局稳定(卡片或
+                        # 搜索响应出现)再开始提取,避免读到空页面。
+                        self._wait_for_public_layout_settle(page)
+                    time_filter = self._apply_public_search_time_filter(
+                        page,
+                        published_after=published_after,
+                        observed_at=observed_at,
+                    )
+                    if time_filter.warning:
+                        errors.append(
+                            ProviderSearchError(
+                                kind=ProviderErrorKind.VALIDATION,
+                                code=time_filter.error_code,
+                                message=time_filter.warning,
                             )
-                        time_filter = self._apply_public_search_time_filter(
-                            page,
-                            published_after=published_after,
-                            observed_at=observed_at,
                         )
+                    rows, stop_error = self._collect_public_douyin_search_rows(
+                        page,
+                        target_limit=target_limit,
+                        scan_limit=scan_limit,
+                        layout_mode=layout_mode,
+                        network_rows=network_rows,
+                        qualifying_count=lambda candidate_rows: len(
+                            self._to_public_search_items(
+                                candidate_rows,
+                                keyword=keyword,
+                                observed_at=observed_at,
+                                published_after=published_after,
+                                limit=target_limit,
+                            )[0]
+                        ),
+                    )
+                    for row in rows:
+                        row["search_layout"] = layout_mode
+                        row["search_time_filter"] = time_filter.receipt
                         if time_filter.warning:
-                            errors.append(
-                                ProviderSearchError(
-                                    kind=ProviderErrorKind.VALIDATION,
-                                    code=time_filter.error_code,
-                                    message=time_filter.warning,
-                                )
-                            )
-                        rows, stop_error = self._collect_public_douyin_search_rows(
-                            page,
-                            target_limit=target_limit,
-                            scan_limit=scan_limit,
-                            qualifying_count=lambda candidate_rows: len(
-                                self._to_public_search_items(
-                                    candidate_rows,
-                                    keyword=keyword,
-                                    observed_at=observed_at,
-                                    published_after=published_after,
-                                    limit=target_limit,
-                                )[0]
-                            ),
-                        )
-                        for row in rows:
-                            row["search_layout"] = layout_mode
-                            row["search_time_filter"] = time_filter.receipt
-                            if time_filter.warning:
-                                row["search_time_filter_warning"] = time_filter.warning
-                        if stop_error is not None:
-                            errors.append(stop_error)
-                        return rows, errors
-                    finally:
-                        if created_page:
-                            page.close()
+                            row["search_time_filter_warning"] = time_filter.warning
+                    if stop_error is not None:
+                        errors.append(stop_error)
+                    return rows, errors
+                finally:
+                    page.remove_listener("response", capture_search_response)
+                    if created_page:
+                        page.close()
             except LicensedProviderError:
                 raise
             except (PlaywrightError, OSError, ConnectionError, IndexError) as exc:
@@ -941,6 +1036,8 @@ class LocalDouyinBrowserSearchProvider:
                 if attempt == 0 and not navigation_started:
                     continue
                 break
+            finally:
+                playwright_manager.stop()
         raise LicensedProviderError(
             (
                 "抖音官网搜索页打开或读取失败；为避免重复请求，本次未再次打开搜索页。"
@@ -957,6 +1054,138 @@ class LocalDouyinBrowserSearchProvider:
         # exposes the visible 多列/单列/筛选 controls. Extraction below still
         # accepts only canonical /video/ cards from the rendered page.
         return "https://www.douyin.com/search/" + quote(keyword.strip(), safe="") + "?type=general"
+
+    @staticmethod
+    def _is_public_search_api_url(url: str) -> bool:
+        """True for Douyin search API responses that carry video results."""
+        return (
+            "/aweme/v1/web/general/search" in url
+            or "/aweme/v1/web/search/single" in url
+            or "/aweme/v1/web/search/item" in url
+            or "/aweme/v1/web/discover/search" in url
+        )
+
+    def _rows_from_public_search_payload(
+        self, payload: Any, *, keyword: str
+    ) -> list[dict[str, Any]]:
+        """Parse search API JSON into rows with full interaction statistics.
+
+        The rendered cards on the current Douyin web release are JS components
+        without stable /video/ links or exposed ids, so the search API
+        response is the reliable source for candidate ids and for 播放/点赞/
+        评论/转发 statistics.
+        """
+        if not isinstance(payload, dict):
+            return []
+        data = payload.get("data")
+        if isinstance(data, list):
+            items = data
+        elif isinstance(data, dict):
+            items = (
+                data.get("data")
+                or data.get("aweme_list")
+                or data.get("search_result")
+                or []
+            )
+        else:
+            return []
+        if not isinstance(items, list):
+            return []
+        rows: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            aweme = (
+                item.get("aweme_info")
+                if isinstance(item.get("aweme_info"), dict)
+                else item.get("aweme")
+                if isinstance(item.get("aweme"), dict)
+                else item
+            )
+            item_id = str(
+                aweme.get("aweme_id") or aweme.get("awemeId") or aweme.get("id") or ""
+            )
+            if not item_id or not item_id.isdigit():
+                continue
+            title = str(aweme.get("desc") or "").strip()
+            if not title or not title_matches_keyword(
+                title=title, keyword=keyword, require_intent=False
+            ):
+                continue
+            stats = aweme.get("statistics") or aweme.get("interact_info") or {}
+            if not isinstance(stats, dict):
+                stats = {}
+            author = aweme.get("author") or {}
+            video = aweme.get("video") or {}
+            if not isinstance(video, dict):
+                video = {}
+            duration_raw = aweme.get("duration") or video.get("duration")
+            duration = None
+            if duration_raw is not None:
+                try:
+                    duration_value = int(duration_raw)
+                    duration = (
+                        round(duration_value / 1000)
+                        if duration_value > 1000
+                        else duration_value
+                    )
+                except (TypeError, ValueError):
+                    duration = None
+            published = aweme.get("create_time") or aweme.get("createTime") or ""
+            rows.append(
+                {
+                    "item_id": item_id,
+                    "title": title,
+                    "author_name": str(author.get("nickname") or ""),
+                    "duration": duration,
+                    "plays": self._as_int(
+                        self._stat_value(stats, "play_count", "playCount")
+                    ),
+                    "likes": self._as_int(
+                        self._stat_value(stats, "digg_count", "diggCount")
+                    ),
+                    "comments": self._as_int(
+                        self._stat_value(stats, "comment_count", "commentCount")
+                    ),
+                    "shares": self._as_int(
+                        self._stat_value(stats, "share_count", "shareCount")
+                    ),
+                    "published_text": str(published) if published else "",
+                    "source_kind": "search_api",
+                }
+            )
+        return rows
+
+    @staticmethod
+    def _stat_value(stats: dict[str, Any], *names: str) -> Any:
+        """取统计字段:保留 0 值(or 会误吞 0)。"""
+        for name in names:
+            if name in stats and stats[name] is not None:
+                return stats[name]
+        return None
+
+    def _wait_for_public_layout_settle(self, page) -> None:
+        """轮询等待单列切换后的重渲染:出现结果卡片即认为布局稳定。
+
+        点击“单列”后页面会整体重新渲染,若立即提取会读到空布局;
+        这里最多等待约 6 秒,卡片出现即提前返回。
+        """
+        for _ in range(12):
+            try:
+                settled = bool(
+                    page.evaluate(
+                        """() => document.querySelectorAll(
+                            ".search-result-card, img[class*='video-card-img']"
+                        ).length > 0"""
+                    )
+                )
+            except Exception:
+                settled = False
+            if settled:
+                return
+            page.wait_for_timeout(500)
+        # 兜底:未检测到卡片也等一次网络往返再提取
+        page.wait_for_timeout(1500)
 
     @staticmethod
     def _raise_for_public_search_block(page) -> None:
@@ -1606,6 +1835,8 @@ class LocalDouyinBrowserSearchProvider:
         target_limit: int,
         scan_limit: int | None = None,
         qualifying_count: Callable[[list[dict[str, Any]]], int] | None = None,
+        layout_mode: str = "default",
+        network_rows: dict[str, dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], ProviderSearchError | None]:
         """Load rendered public-search cards until the goal or a safe stop condition."""
         target_limit = max(1, min(target_limit, _PUBLIC_SEARCH_MAX_RESULT_LIMIT))
@@ -1626,7 +1857,14 @@ class LocalDouyinBrowserSearchProvider:
                     retryable=False,
                 )
 
+            # 渲染卡片(DOM)与搜索 API 响应(网络)双路收集,按 item_id 去重。
+            # 当前抖音网页版卡片是 JS 组件、无 /video/ 链接,网络响应是
+            # 候选 id 与 播放/点赞/评论/转发 统计的可靠来源。
             for row in self._extract_public_douyin_search_rows(page):
+                item_id = str(row.get("item_id") or "")
+                if item_id and item_id not in rows_by_id and len(rows_by_id) < scan_limit:
+                    rows_by_id[item_id] = row
+            for row in (network_rows or {}).values():
                 item_id = str(row.get("item_id") or "")
                 if item_id and item_id not in rows_by_id and len(rows_by_id) < scan_limit:
                     rows_by_id[item_id] = row
@@ -1676,9 +1914,10 @@ class LocalDouyinBrowserSearchProvider:
 
             if round_index + 1 >= _PUBLIC_SEARCH_MAX_SCROLL_ROUNDS:
                 break
-            page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
-            page.wait_for_timeout(
-                self._random_delay_ms(*_HOTSPOT_SCROLL_REFRESH_RANGE_MS)
+            # 懒加载:滚动后需要等待刷新才有新内容。轮询等待新行出现,
+            # 而不是固定等几秒;单列模式布局卡片更高,天然需要更久。
+            self._scroll_and_wait_for_new_rows(
+                page, count_rows=lambda: len(rows_by_id)
             )
 
         final_rows = list(rows_by_id.values())
@@ -1693,6 +1932,28 @@ class LocalDouyinBrowserSearchProvider:
             target_limit=target_limit,
             scan_limit=scan_limit,
         )
+
+    def _scroll_and_wait_for_new_rows(
+        self, page, *, count_rows, max_wait_ms: int = 10_000
+    ) -> bool:
+        """滚动后轮询等待新行出现,而不是固定等几秒。
+
+        平台搜索结果采用懒加载:滚动到一定位置后需要等待刷新才会出现
+        新内容。每次滚动 500px 后,每 500ms 检查一次行数,直到出现
+        新行或超过 max_wait_ms。返回是否在等待期内出现新行。
+        """
+        before = count_rows()
+        try:
+            page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
+        except Exception:
+            return False
+        waited = 0
+        while waited < max_wait_ms:
+            page.wait_for_timeout(500)
+            waited += 500
+            if count_rows() > before:
+                return True
+        return False
 
     @staticmethod
     def _public_search_safety_limit_error(
@@ -1913,7 +2174,9 @@ class LocalDouyinBrowserSearchProvider:
                 continue
             # 官网搜索卡片会同时露出作者名；不能因为作者昵称里有关键词就
             # 把无关视频带入。只保留标题/内联话题直接命中的作品。
-            if not title_matches_keyword(title=title, keyword=keyword):
+            if not title_matches_keyword(
+                title=title, keyword=keyword, require_intent=False
+            ):
                 filter_counts["relevance"] += 1
                 continue
             duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
@@ -2231,19 +2494,19 @@ class LocalDouyinBrowserSearchProvider:
         missing: list[str] = []
         if not self.enabled:
             missing.append("DOUYIN_BROWSER_DISCOVERY_ENABLED=true")
-        if not self._playwright_available():
+        if not self._browser_engine_available():
             missing.append("Playwright Python 依赖")
         if self._browser_executable() is None:
             missing.append("Google Chrome" if self.browser_channel == "chrome" else "Microsoft Edge")
         return missing
 
     @staticmethod
-    def _playwright_available() -> bool:
+    def _browser_engine_available() -> bool:
         try:
             import playwright.sync_api  # noqa: F401
+            return True
         except ImportError:
             return False
-        return True
 
     def _browser_executable(self) -> Path | None:
         names = ["chrome", "chrome.exe"] if self.browser_channel == "chrome" else ["msedge", "msedge.exe"]

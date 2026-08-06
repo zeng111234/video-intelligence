@@ -1557,9 +1557,11 @@ export default function VideoEditorPage() {
     setReviewLoading(true);
     try {
       const task = await videoEditorApi.getTranscription(item.subtitle_task_id);
-      setReviewSegments(task.segments.map((segment) => ({ ...segment })));
+      const segments = Array.isArray(task?.segments) ? task.segments : [];
+      setReviewSegments(segments.map((segment) => ({ ...segment })));
     } catch (error) {
       message.error((error as Error).message || "字幕草稿加载失败");
+      setReviewItem(null);
     } finally {
       setReviewLoading(false);
     }

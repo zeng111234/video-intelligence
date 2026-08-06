@@ -113,6 +113,20 @@ class MockRepository:
     def get_candidate(self, video_id: str) -> VideoCandidate | None:
         return self._candidates.get(video_id)
 
+    def resolve_candidate_id(self, platform: str, platform_item_id: str) -> str | None:
+        for candidate in self._candidates.values():
+            candidate_platform = (
+                candidate.platform.value
+                if isinstance(candidate.platform, Platform)
+                else str(candidate.platform)
+            )
+            if (
+                candidate_platform == platform
+                and candidate.platform_item_id == platform_item_id
+            ):
+                return candidate.video_id
+        return None
+
     def save_candidate_copy_probe(self, probe: CandidateCopyProbe) -> None:
         self._candidate_copy_probes[probe.candidate_id] = probe
 
