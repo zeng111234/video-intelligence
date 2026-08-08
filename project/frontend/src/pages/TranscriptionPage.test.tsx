@@ -166,6 +166,7 @@ describe("TranscriptionPage", () => {
 
     const platformLinkTab = await screen.findByRole("tab", { name: /平台分享链接/ });
     expect(platformLinkTab.getAttribute("aria-selected")).toBe("true");
+    expect(screen.queryByRole("tab", { name: /授权直链/ })).toBeNull();
     const linkInput = await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接");
     expect(screen.queryByRole("tab", { name: /抖音分享链接/ })).toBeNull();
     expect(screen.queryByRole("checkbox")).toBeNull();
@@ -183,6 +184,50 @@ describe("TranscriptionPage", () => {
       rightsConfirmed: true,
       modelName: "fun-asr",
     });
+  });
+
+  it("does not reopen a stale task behind a new candidate intake", async () => {
+    window.localStorage.setItem("video_app_persistent_transcription_current_task_id", JSON.stringify({
+      value: autoReviewedTask.task_id,
+      timestamp: Date.now(),
+      expiry: 7 * 24 * 60 * 60 * 1000,
+    }));
+
+    render(
+      <MemoryRouter initialEntries={["/transcription?candidate=candidate-new&share_text=https%3A%2F%2Fwww.kuaishou.com%2Fshort-video%2Fnew"]}>
+        <ToastProvider><TranscriptionPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole("tab", { name: /平台分享链接/ })).toBeTruthy();
+    expect(screen.getByText("新建或从历史选择一个转写任务")).toBeTruthy();
+    expect(screen.queryByText("真实视频.mp4")).toBeNull();
+  });
+
+  it("offers a safe cleanup action when cloud submission has no queryable job", async () => {
+    vi.mocked(listTranscriptions).mockResolvedValue([{
+      ...autoReviewedTask,
+      task_id: "transcript-unknown",
+      status: "outcome_unknown",
+      stage: "结果待确认",
+      provider_name: "aliyun_fun_asr",
+      provider_job_id: null,
+      provider_status: "outcome_unknown",
+      segments: [],
+      error_message: "上次云端提交结果无法确认，系统不会自动重复扣费。",
+    }]);
+
+    render(
+      <MemoryRouter initialEntries={["/transcription?task=transcript-unknown"]}>
+        <ToastProvider><TranscriptionPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText("这次云端提交没有拿到确认结果")).toBeTruthy();
+    expect(screen.getByText("为避免重复扣费，系统已停止处理；删除记录后可重新选择素材。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除记录" })).toBeTruthy();
+    expect(screen.queryByText("上次云端提交结果无法确认，系统不会自动重复扣费。")).toBeNull();
+    expect(screen.queryByText("已全部复核")).toBeNull();
   });
 
   it("opens the crawler upload handoff on the file tab, stages the file, and waits for explicit confirmation", async () => {

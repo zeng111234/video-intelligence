@@ -34,7 +34,6 @@ import {
 } from "@ant-design/icons";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  createTranscriptionByUrl,
   createCrawlerCandidateLinkTranscription,
   createCrawlerLinkTranscription,
   clearTranscriptionHistory,
@@ -205,7 +204,6 @@ export default function TranscriptionPage() {
   const [selected, setSelected] = useState<TranscriptionResponse | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [selectedTaskId, setSelectedTaskId] = usePersistentState<string | null>("transcription_current_task_id", null);
-  const [videoUrl, setVideoUrl] = usePersistentState("transcription_video_url", "");
   const [shareText, setShareText] = useState("");
   const [filterStatus, setFilterStatus] = usePersistentState("transcription_filter_status", "all");
   const [searchText, setSearchText] = usePersistentState("transcription_search_text", "");
@@ -226,9 +224,11 @@ export default function TranscriptionPage() {
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
   const entryFromQuery = searchParams.get("entry")?.trim() || "";
   const shareTextFromQuery = searchParams.get("share_text")?.trim() || "";
-  const urlFromQuery = searchParams.get("url")?.trim() || "";
   const taskFromQuery = searchParams.get("task")?.trim() || "";
   const isUploadEntry = entryFromQuery === "upload";
+  const isNewIntakeEntry = !taskFromQuery && Boolean(
+    isUploadEntry || candidateFromQuery || shareTextFromQuery,
+  );
 
   const filteredTasks = useMemo(() => {
     const normalized = searchText.trim().toLowerCase();
@@ -267,7 +267,7 @@ export default function TranscriptionPage() {
     try {
       const items = await listTranscriptions();
       setTasks(items);
-      const targetId = isUploadEntry ? "" : (taskFromQuery || selectedTaskId);
+      const targetId = isNewIntakeEntry ? "" : (taskFromQuery || selectedTaskId);
       if (targetId) {
         const task = items.find((item) => item.task_id === targetId) || await getTranscription(targetId);
         applyTask(task, false);
@@ -277,7 +277,7 @@ export default function TranscriptionPage() {
     } finally {
       setLoading(false);
     }
-  }, [applyTask, isUploadEntry, selectedTaskId, taskFromQuery, toast]);
+  }, [applyTask, isNewIntakeEntry, selectedTaskId, taskFromQuery, toast]);
 
   const handleDeleteTranscription = async (task: TranscriptionResponse) => {
     setDeletingTaskId(task.task_id);
@@ -318,10 +318,12 @@ export default function TranscriptionPage() {
   }, [refresh]);
 
   useEffect(() => {
-    if (isUploadEntry) {
+    if (isNewIntakeEntry) {
       setSelected(null);
       setSelectedTaskId(null);
       setSegments([]);
+    }
+    if (isUploadEntry) {
       setCreateTab("file");
       setPendingUploadFile(null);
       setFileUploadConfirmed(false);
@@ -329,9 +331,8 @@ export default function TranscriptionPage() {
       return;
     }
     if (shareTextFromQuery) setShareText(shareTextFromQuery);
-    if (urlFromQuery) setVideoUrl(urlFromQuery);
-    if (candidateFromQuery || shareTextFromQuery || urlFromQuery) setCreateOpen(true);
-  }, [candidateFromQuery, isUploadEntry, setSelectedTaskId, setVideoUrl, shareTextFromQuery, urlFromQuery]);
+    if (candidateFromQuery || shareTextFromQuery) setCreateOpen(true);
+  }, [candidateFromQuery, isNewIntakeEntry, isUploadEntry, setSelectedTaskId, shareTextFromQuery]);
 
   useEffect(() => {
     if (!selected || !["queued", "submitted", "running"].includes(selected.status)) return undefined;
@@ -369,29 +370,6 @@ export default function TranscriptionPage() {
     setPendingUploadFile(null);
     setFileUploadConfirmed(false);
     setCreateOpen(true);
-  };
-
-  const handleUrlTranscribe = async () => {
-    const url = videoUrl.trim();
-    if (!url) {
-      toast.warning("请输入授权 MP4/MOV 直链");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const created = await createTranscriptionByUrl(url, true, "fun-asr", rightsHolder.trim() || "本人/公司已授权");
-      toast.success("转写任务已创建");
-      setVideoUrl("");
-      setCreateOpen(false);
-      applyTask(created, false);
-      await refresh();
-    } catch (err) {
-      if (!handleCreditsError(err, () => navigate("/admin"))) {
-        toast.error((err as Error).message);
-      }
-    } finally {
-      setSubmitting(false);
-    }
   };
 
   const handleFileUpload = async () => {
@@ -561,9 +539,9 @@ export default function TranscriptionPage() {
           type="info"
           showIcon
           message="已带入候选视频"
-          description={shareTextFromQuery || urlFromQuery
+          description={shareTextFromQuery
             ? "原视频链接已自动带入，请确认处理权后开始转写。"
-            : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
+            : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充平台分享链接或上传文件。`}
         />
       )}
 
@@ -578,10 +556,12 @@ export default function TranscriptionPage() {
               <Tag color={STATUS_COLOR[selected.status]}>
                 {selected.status === "succeeded" ? "识别完成" : statusLabel(selected.status)}
               </Tag>
-              {issueIndexes.length > 0 ? (
-                <Tag color="warning">{issueIndexes.length}处待确认</Tag>
-              ) : (
-                <Tag color="success">已全部复核</Tag>
+              {segments.length > 0 && (
+                issueIndexes.length > 0 ? (
+                  <Tag color="warning">{issueIndexes.length}处待确认</Tag>
+                ) : (
+                  <Tag color="success">已全部复核</Tag>
+                )
               )}
             </div>
             <Space size={8}>
@@ -609,12 +589,36 @@ export default function TranscriptionPage() {
             </Space>
           </header>
 
-          {selected.error_message && <Alert type="error" showIcon message={selected.error_message} />}
+          {selected.error_message && selected.status !== "outcome_unknown" && (
+            <Alert type="error" showIcon message={selected.error_message} />
+          )}
           {selected.auto_review_error && <Alert type="warning" showIcon message={selected.auto_review_error} />}
-          {selected.status === "outcome_unknown" && selected.provider_job_id && (
+          {selected.status === "outcome_unknown" && (
             <div className="transcription-recovery-row">
-              <Text>云端结果暂时无法确认。</Text>
-              <Button type="primary" loading={submitting} onClick={handleReconnect}>重新连接原任务</Button>
+              <div>
+                <Text strong>
+                  {selected.provider_job_id ? "云端结果暂时无法确认" : "这次云端提交没有拿到确认结果"}
+                </Text>
+                <br />
+                <Text type="secondary">
+                  {selected.provider_job_id
+                    ? "系统只会查询原任务，不会重复提交或重复扣费。"
+                    : "为避免重复扣费，系统已停止处理；删除记录后可重新选择素材。"}
+                </Text>
+              </div>
+              {selected.provider_job_id ? (
+                <Button type="primary" loading={submitting} onClick={handleReconnect}>重新连接原任务</Button>
+              ) : (
+                <Popconfirm
+                  title="删除这条未完成记录？"
+                  description="只删除本地记录，不会发起新的云端任务。"
+                  okText="删除记录"
+                  cancelText="保留"
+                  onConfirm={() => void handleDeleteTranscription(selected)}
+                >
+                  <Button danger loading={deletingTaskId === selected.task_id}>删除记录</Button>
+                </Popconfirm>
+              )}
             </div>
           )}
           {selected.status === "failed" && (
@@ -743,16 +747,6 @@ export default function TranscriptionPage() {
                   <Space direction="vertical" style={{ width: "100%" }}>
                     <TextArea value={shareText} onChange={(event) => setShareText(event.target.value)} placeholder="粘贴抖音、小红书、快手或B站分享链接" rows={3} />
                     <Button type="primary" loading={submitting} onClick={handleShareLinkTranscribe}>开始转写</Button>
-                  </Space>
-                ),
-              },
-              {
-                key: "url",
-                label: <span><LinkOutlined /> 授权直链</span>,
-                children: (
-                  <Space direction="vertical" style={{ width: "100%" }}>
-                    <TextArea value={videoUrl} onChange={(event) => setVideoUrl(event.target.value)} placeholder="填写已授权的 MP4/MOV 直链；不支持平台分享页自动下载" rows={3} />
-                    <Button type="primary" loading={submitting} onClick={handleUrlTranscribe}>确认权利并创建转写</Button>
                   </Space>
                 ),
               },
