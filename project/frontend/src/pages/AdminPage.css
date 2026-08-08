@@ -65,18 +65,19 @@
 .admin-recharge-empty {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
-  min-height: 88px;
+  min-height: 44px;
+  padding: 0 12px;
   color: var(--text-secondary);
-  border: 1px dashed var(--border-default);
+  border: 1px solid var(--border-light);
   border-radius: var(--radius-md);
-  background: var(--gray-50);
+  background: transparent;
 }
 
 .admin-recharge-empty .anticon {
   color: var(--success);
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .admin-secondary-card .ant-table {

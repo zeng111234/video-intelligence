@@ -17,6 +17,7 @@ import {
   VideoCameraOutlined,
   AppstoreOutlined,
   RobotOutlined,
+  SettingOutlined,
   DownOutlined,
 } from "@ant-design/icons";
 import {
@@ -36,6 +37,7 @@ const NAV_ICONS: Record<string, ReactNode> = {
   "ai-copy": <EditOutlined />,
   avatar: <VideoCameraOutlined />,
   "video-editor": <RobotOutlined />,
+  admin: <SettingOutlined />,
 };
 
 const ADVANCED_TOOL_ITEMS = [

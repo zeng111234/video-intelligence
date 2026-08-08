@@ -25,7 +25,6 @@ import {
   SettingOutlined,
   CheckOutlined,
   DeleteOutlined,
-  MailOutlined,
   ClockCircleOutlined,
   SafetyCertificateOutlined,
   MobileOutlined,
@@ -37,7 +36,6 @@ import {
   getCredits,
   getNotifications,
   getMessages,
-  getUserProfile,
 } from "../api/client";
 import { getPageTitle } from "../navigation";
 import { useToast } from "./Toast";
@@ -79,15 +77,6 @@ interface MessageItem {
   read: boolean;
 }
 
-/** 用户信息类型 */
-interface UserProfile {
-  username: string;
-  email: string;
-  phone: string;
-  role: string;
-  two_factor_enabled: boolean;
-}
-
 /**
  * 顶部栏组件
  */
@@ -105,7 +94,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   /** 通知状态 */
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   /** 积分状态 */
   const [credits, setCredits] = useState<CreditBalanceResponse | null>(null);
@@ -121,7 +109,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
     }
   }, []);
 
-  /** 加载通知、消息和用户信息 */
+  /** 加载通知和消息 */
   useEffect(() => {
     getNotifications()
       .then((data) => {
@@ -139,13 +127,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       })
       .catch(() => {});
 
-    getUserProfile()
-      .then((data) => {
-        if (data) {
-          setUserProfile(data);
-        }
-      })
-      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -679,18 +660,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           white-space: nowrap;
         }
 
-        /* 账号信息 */
-        .profile-info-section {
-          padding: 16px 24px;
-        }
-        .profile-info-row {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 0;
-          font-size: 13px;
-          color: var(--text-secondary, #64748b);
-        }
       `}</style>
 
       {/* ===== 通知抽屉 ===== */}
@@ -840,7 +809,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           </div>
           <div className="profile-user-info">
             <div className="profile-name">{displayName}</div>
-            <div className="profile-role">{userProfile?.role || "普通用户"}</div>
+            <div className="profile-role">{isAdmin ? "管理员" : "客户账号"}</div>
           </div>
         </div>
 
@@ -911,21 +880,6 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           )}
         </div>
 
-        {/* 账号信息 */}
-        <div className="profile-info-section">
-          {userProfile?.email && (
-            <div className="profile-info-row">
-              <MailOutlined />
-              <span>{userProfile.email}</span>
-            </div>
-          )}
-          {userProfile?.phone && (
-            <div className="profile-info-row">
-              <MobileOutlined />
-              <span>{userProfile.phone}</span>
-            </div>
-          )}
-        </div>
       </Drawer>
     </>
   );

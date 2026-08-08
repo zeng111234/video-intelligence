@@ -57,6 +57,21 @@ describe("Sidebar", () => {
     expect(screen.getByTestId("location").textContent).toBe("/pipeline?batch=batch-1&run=run-1");
   });
 
+  it("shows the system-management icon for an administrator", () => {
+    localStorage.setItem("vi_admin_token", "admin-test-token");
+    render(
+      <MemoryRouter initialEntries={["/admin"]}>
+        <Sidebar />
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+
+    const button = screen.getByRole("button", { name: /系统管理/ });
+    expect(button.querySelector(".anticon-setting")).not.toBeNull();
+    fireEvent.click(button);
+    expect(screen.getByTestId("location").textContent).toBe("/admin");
+  });
+
   it("keeps publishing as the last advanced tool and hides the logo when collapsed", () => {
     const { container, rerender } = render(
       <MemoryRouter initialEntries={["/pipeline"]}>
