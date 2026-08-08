@@ -764,6 +764,8 @@ class OpenAICompatibleCopywritingEngine:
             ("prompt_tokens", "prompt_tokens"),
             ("completion_tokens", "completion_tokens"),
             ("total_tokens", "total_tokens"),
+            ("prompt_cache_hit_tokens", "prompt_cache_hit_tokens"),
+            ("prompt_cache_miss_tokens", "prompt_cache_miss_tokens"),
         ]:
             value = usage.get(source_key)
             if isinstance(value, int):

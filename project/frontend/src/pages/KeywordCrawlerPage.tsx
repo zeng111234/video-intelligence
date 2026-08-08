@@ -51,8 +51,10 @@ import type {
   CrawlerPlatformRun,
   CrawlerSearchRequest,
 } from "../api/types";
+import MaterialSearchExperience from "../components/MaterialSearchExperience";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
+import { cnyToCredits, handleCreditsError } from "../utils/credits";
 import "./KeywordCrawlerPage.css";
 
 const { Text, Title, Paragraph } = Typography;
@@ -129,13 +131,6 @@ function formatMaterialDuration(seconds: number | null | undefined) {
   return remainder ? `${minutes}分${remainder}秒` : `${minutes}分钟`;
 }
 
-function formatSearchElapsed(seconds: number) {
-  const safeSeconds = Math.max(0, Math.floor(seconds));
-  const minutes = Math.floor(safeSeconds / 60);
-  const remainingSeconds = safeSeconds % 60;
-  return minutes > 0 ? `${minutes}分${remainingSeconds}秒` : `${remainingSeconds}秒`;
-}
-
 function publishedTimestamp(item: CrawlerCandidateResult) {
   if (!item.published_at || item.published_at_reliable === false) return null;
   const timestamp = Date.parse(item.published_at);
@@ -164,8 +159,12 @@ function buildTranscriptionHref(candidate: CrawlerCandidateResult) {
   const query = new URLSearchParams({
     candidate: candidate.video_id,
     title: candidate.title,
-    entry: "upload",
   });
+  if (candidate.source_url) {
+    query.set("share_text", candidate.source_url);
+  } else {
+    query.set("entry", "upload");
+  }
   return `/transcription?${query.toString()}`;
 }
 
@@ -247,11 +246,11 @@ function formatLikesPerDay(value: number | null | undefined) {
   return value === null || value === undefined ? "未返回" : `${value.toFixed(1)}/天`;
 }
 
-function formatCurrency(value: number | null | undefined, currency = "CNY") {
+function formatCurrency(value: number | null | undefined, _currency = "CNY") {
   if (value === null || value === undefined) {
     return "未返回";
   }
-  return currency === "CNY" ? `¥${value.toFixed(2)}` : `${value.toFixed(2)} ${currency}`;
+  return `${cnyToCredits(value)} 积分`;
 }
 
 const OFFICIAL_HOT_NO_MATCH_MESSAGE = "官方热门池中没有匹配，不代表抖音搜索无视频。";
@@ -317,7 +316,7 @@ export default function KeywordCrawlerPage() {
     startedAt: number;
     platforms: MaterialPlatform[];
   } | null>(null);
-  const [searchElapsedSeconds, setSearchElapsedSeconds] = useState(0);
+  const [searchResultBatch, setSearchResultBatch] = useState<CrawlerBatchResponse | null>(null);
   const [probingCopy, setProbingCopy] = useState(false);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
   const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
@@ -411,15 +410,15 @@ export default function KeywordCrawlerPage() {
     void loadSecondaryData();
   }, [loadBatches, loadSecondaryData]);
 
-  useEffect(() => {
-    if (!searchProgress) return undefined;
-    const updateElapsed = () => {
-      setSearchElapsedSeconds(Math.floor((Date.now() - searchProgress.startedAt) / 1000));
-    };
-    updateElapsed();
-    const intervalId = window.setInterval(updateElapsed, 1_000);
-    return () => window.clearInterval(intervalId);
-  }, [searchProgress]);
+  const finishSearchReveal = useCallback((batch: CrawlerBatchResponse) => {
+    setSelectedBatch(batch);
+    upsertBatch(batch);
+    setSearchResultBatch(null);
+    setSearchProgress(null);
+    setSubmitting(false);
+    searchInFlightRef.current = false;
+    toast.success("已找到素材；可排序并点选查看。");
+  }, [toast, upsertBatch]);
 
   const handleSearch = async (keywordOverride?: string) => {
     if (searchInFlightRef.current) {
@@ -438,21 +437,20 @@ export default function KeywordCrawlerPage() {
     const payload: CrawlerSearchRequest = { ...requestPayload, keyword: searchKeyword };
     searchInFlightRef.current = true;
     setSubmitting(true);
-    setSearchElapsedSeconds(0);
+    setKeyword(searchKeyword);
+    setSearchResultBatch(null);
     setSearchProgress({ startedAt: Date.now(), platforms: [...platforms] });
     try {
       const batch = await createCrawlerBatch(payload);
-      setSelectedBatch(batch);
-      setKeyword(searchKeyword);
-      upsertBatch(batch);
-      toast.success("已找到素材；可排序并点选查看。");
+      setSearchResultBatch(batch);
     } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
+      if (!handleCreditsError(err, () => navigate("/admin"))) {
+        toast.error((err as Error).message);
+      }
       searchInFlightRef.current = false;
       setSubmitting(false);
       setSearchProgress(null);
-      setSearchElapsedSeconds(0);
+      setSearchResultBatch(null);
     }
   };
 
@@ -617,6 +615,7 @@ export default function KeywordCrawlerPage() {
       <header className="crawler-page-heading">
         <div>
           <Title level={4}>找素材</Title>
+          <Text type="secondary">本页找素材不消耗积分，也不会自动开启付费补充。</Text>
         </div>
         <Button icon={<HistoryOutlined />} onClick={() => setHistoryDrawerOpen(true)}>
           历史记录{batches.length ? ` ${batches.length}` : ""}
@@ -630,6 +629,7 @@ export default function KeywordCrawlerPage() {
             <Input
               prefix={<SearchOutlined />}
               value={keyword}
+              disabled={submitting}
               onChange={(event) => setKeyword(event.target.value)}
               onPressEnter={() => void handleSearch()}
               placeholder="例如：餐饮获客"
@@ -647,17 +647,6 @@ export default function KeywordCrawlerPage() {
                 找素材
               </Button>
             </Tooltip>
-            {searchProgress && (
-              <div role="status" aria-live="polite">
-                <Alert
-                  style={{ marginTop: 12 }}
-                  type="info"
-                  showIcon
-                  message={`正在从${searchProgress.platforms.map(materialPlatformLabel).join("、")}找素材`}
-                  description={`已等待 ${formatSearchElapsed(searchElapsedSeconds)}，正在等待平台返回结果。平台还没返回前，暂不显示完成进度。`}
-                />
-              </div>
-            )}
             {hotWords.length > 0 && (
               <div className="crawler-hot-words">
                 {hotWords.slice(0, 4).map((item) => (
@@ -774,7 +763,15 @@ export default function KeywordCrawlerPage() {
         </aside>
 
         <main className="crawler-results-area">
-          {selectedBatch ? (
+          {searchProgress ? (
+            <MaterialSearchExperience
+              keyword={keyword}
+              platforms={searchProgress.platforms}
+              startedAt={searchProgress.startedAt}
+              batch={searchResultBatch}
+              onRevealComplete={finishSearchReveal}
+            />
+          ) : selectedBatch ? (
             <BatchDetail
               batch={selectedBatch}
               onResolveMedia={handleOpenCandidateMedia}
@@ -1400,7 +1397,7 @@ function MaterialCandidatePreview({
         )}
         {status?.filter !== "detected" && (
           <Button block href={buildTranscriptionHref(candidate)}>
-            上传视频转写
+            {candidate.source_url ? "转写文案" : "上传视频转写"}
           </Button>
         )}
       </div>
@@ -1478,7 +1475,7 @@ function PlatformRunDetail({
           type="warning"
           showIcon
           message="暂时没有找到素材"
-          description="换一个词再找；也可以直接去抖音看看这个词的常见说法。"
+          description={run.error || "换一个词再找；也可以直接去抖音看看这个词的常见说法。"}
         />
       ) : run.candidates.length === 0 ? (
         <Alert
@@ -1645,7 +1642,7 @@ function HotspotCandidateTable({
             size="small"
             href={buildTranscriptionHref(item)}
           >
-            上传视频转写
+            {item.source_url ? "转写文案" : "上传视频转写"}
           </Button>
           <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : undefined}>
             <span>
@@ -1732,7 +1729,7 @@ function HotspotCandidateTable({
                 按这个话题写原创
               </Button>
               <Button href={buildTranscriptionHref(detail)}>
-                上传视频转写
+                {detail.source_url ? "转写文案" : "上传视频转写"}
               </Button>
               <Button href={detail.source_url || undefined} target="_blank" disabled={!detail.source_url}>
                 原视频
@@ -1844,7 +1841,7 @@ function CandidateListItem({
             size="small"
             href={buildTranscriptionHref(item)}
           >
-            上传视频转写
+            {item.source_url ? "转写文案" : "上传视频转写"}
           </Button>
         ) : null,
       ]}

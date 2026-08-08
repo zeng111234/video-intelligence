@@ -1,5 +1,6 @@
 # Downloaded third-party reference repositories (see references/README.md)
 /references/github/
+/forge_rss_analysis/
 
 # Windows reserved device name
 nul
@@ -45,3 +46,9 @@ Thumbs.db
 # New project scaffold
 project/frontend/node_modules/
 project/frontend/dist/
+
+# Local agent diagnostics and runtime logs
+.reasonix/
+backend_customer.log
+frontend_run.log
+_diag_*.py

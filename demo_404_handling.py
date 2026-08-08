@@ -8,7 +8,6 @@ from pathlib import Path
 # 添加项目根目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from src.adapters.official import DouyinKeywordAdapter, OfficialApiError
 from src.adapters.oneapi import OneApiLicensedSearchProvider, LicensedProviderError
 from utils.common.errors import analyze_404_error, create_error_context, log_http_request_response
 
@@ -115,7 +114,7 @@ def demo_oneapi_404_handling():
         # 模拟404错误
         OneApiLicensedSearchProvider._raise_http_error(404)
     except LicensedProviderError as e:
-        print(f"捕获到OneAPI 404错误:")
+        print("捕获到OneAPI 404错误:")
         print(f"  错误消息: {e}")
         print(f"  错误代码: {e.code}")
         print(f"  是否可重试: {e.retryable}")

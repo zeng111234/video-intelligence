@@ -34,6 +34,10 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
 import GlobalSearchModal from "./components/GlobalSearchModal";
 import ShortcutHelpModal from "./components/ShortcutHelpModal";
+import AdminLoginModal from "./components/AdminLoginModal";
+import { useAdminToken } from "./hooks/useAdminAuth";
+import { useCustomerLoggedIn } from "./hooks/useCustomerAuth";
+import LoginPage from "./pages/LoginPage";
 import { useGlobalShortcuts } from "./hooks/useKeyboardShortcuts";
 
 /**
@@ -41,9 +45,21 @@ import { useGlobalShortcuts } from "./hooks/useKeyboardShortcuts";
  */
 function AppInner() {
   const { searchOpen, setSearchOpen, helpOpen, setHelpOpen } = useGlobalShortcuts();
+  const customerLoggedIn = useCustomerLoggedIn();
+  const isAdmin = useAdminToken();
+
+  // 未登录（无客户激活码、无管理员 token）时只显示登录页
+  if (!customerLoggedIn && !isAdmin) {
+    return (
+      <>
+        <LoginPage />
+        <AdminLoginModal />
+      </>
+    );
+  }
 
   return (
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <>
         <ErrorBoundary>
           <Routes>
@@ -89,6 +105,7 @@ function AppInner() {
         {/* Phase 4 全局组件 */}
         <GlobalSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
         <ShortcutHelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+        <AdminLoginModal />
       </>
     </BrowserRouter>
   );

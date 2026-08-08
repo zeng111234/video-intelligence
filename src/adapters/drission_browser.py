@@ -698,6 +698,7 @@ def create_browser(headless: bool = False, **kwargs) -> Browser:
         co.set_argument('--no-first-run')
         co.set_argument('--no-default-browser-check')
         co.set_argument('--disable-infobars')
+        co.set_argument('--disable-features=OptimizationGuideOnDeviceModel')
         for key, value in kwargs.items():
             co.set_argument(f'--{key}={value}')
         page = DrissionChromiumPage(co)

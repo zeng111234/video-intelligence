@@ -6,7 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Security, UploadFile
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
@@ -15,6 +15,7 @@ from project.backend.app.core.deps import (
     get_transcription_service,
 )
 from project.backend.app.core.config import ASRMode, ASR_MODE
+from project.backend.app.core.security import require_admin_token
 from project.backend.app.schemas.requests import (
     TranscriptionCreateRequest,
     TranscriptionRevisionRequest,
@@ -303,8 +304,9 @@ async def create_transcription_by_url(
 @router.get("/config", response_model=dict[str, Any])
 def get_asr_config(
     service=Depends(get_transcription_service),
+    _admin: bool = Security(require_admin_token),
 ) -> dict[str, Any]:
-    """返回当前 ASR 配置信息，供前端展示。"""
+    """返回当前 ASR 配置信息（仅管理员），供前端展示。"""
     if ASR_MODE == ASRMode.CLOUD:
         capability = service.cloud_runtime.capability()
         return {
@@ -328,6 +330,7 @@ def get_asr_config(
 def authorize_cloud_asr(
     body: ASRAuthorizationRequest,
     service=Depends(get_transcription_service),
+    _admin: bool = Security(require_admin_token),
 ):
     if ASR_MODE != ASRMode.CLOUD or service.cloud_runtime is None:
         raise HTTPException(

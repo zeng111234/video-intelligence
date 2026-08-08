@@ -537,11 +537,26 @@ def test_transcription_approved_revision_can_preselect_avatar_page(monkeypatch) 
 
 
 def test_task_page_shows_all_demo_statuses() -> None:
+    from src.models import TaskStatus
     from src.repositories import MockRepository
 
+    demo_repository = MockRepository()
+    unknown_task = demo_repository.list_tasks()[0].model_copy(
+        update={
+            "task_id": "outcome-unknown-demo",
+            "title": "发布结果待核对",
+            "status": TaskStatus.OUTCOME_UNKNOWN,
+        }
+    )
+    repository = MockRepository(
+        candidates=[],
+        tasks=[*demo_repository.list_tasks(), unknown_task],
+    )
     app = AppTest.from_file(str(ROOT / "app_pages" / "tasks.py"))
-    app.session_state["_repository"] = MockRepository()
+    app.session_state["_repository"] = repository
+    app.session_state["selected_task_id"] = unknown_task.task_id
     app.run(timeout=15)
 
+    assert not app.exception
     statuses = set(app.dataframe[0].value["状态"].tolist())
-    assert {"处理中", "已完成", "失败"} <= statuses
+    assert {"处理中", "已完成", "失败", "结果待核对"} <= statuses

@@ -355,7 +355,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
         outputProfile: "1080p",
         targetPlatform: "douyin",
       });
-      expect(screen.getByTestId("cost-total").textContent).toBe("¥0.080");
+      expect(screen.getByTestId("cost-total").textContent).toBe("0.08 积分");
     });
   });
 
@@ -495,7 +495,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
       );
       expect(screen.getByText("本次下载新增费用")).toBeTruthy();
     });
-    expect(screen.getByTestId("prior-cloud-quote").textContent).toContain("¥0.048");
+    expect(screen.getByTestId("prior-cloud-quote").textContent).toContain("0.05 积分");
     expect(screen.queryByText("¥0 只表示当前下载不会重复计费，不代表此前云端处理免费。")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "确认预计费用" })).toBeNull();
     expect(preflightVideoEditor).not.toHaveBeenCalled();

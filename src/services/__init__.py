@@ -2,6 +2,7 @@ from src.services.avatar import AvatarService
 from src.services.candidate import CandidateService
 from src.services.commercial_search import CommercialSearchService
 from src.services.copywriting import CopywritingService
+from src.services.credits import CreditsService
 from src.services.discovery import KeywordDiscoveryService
 from src.services.heat import HeatService
 from src.services.hot_pool import OfficialHotPoolService
@@ -18,6 +19,7 @@ __all__ = [
     "CandidateService",
     "CommercialSearchService",
     "CopywritingService",
+    "CreditsService",
     "HeatService",
     "KeywordDiscoveryService",
     "KeywordTrendService",

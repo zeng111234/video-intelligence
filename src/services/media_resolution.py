@@ -17,7 +17,7 @@ from src.models import (
 )
 from src.services.commercial_search import (
     DUPLICATE_GUARD_SECONDS,
-    MONTHLY_HARD_LIMIT_COST_CNY,
+    _monthly_cost_limit_cny,
 )
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES
 from src.services.video_source import (
@@ -107,7 +107,7 @@ class MediaResolutionService:
             platform_item_id=candidate.platform_item_id,
             estimated_cost_cny=estimated_cost,
             monthly_budget_used_cny=monthly_cost,
-            monthly_budget_limit_cny=MONTHLY_HARD_LIMIT_COST_CNY,
+            monthly_budget_limit_cny=_monthly_cost_limit_cny(),
             existing_task_id=task_id,
             last_resolution_status=latest.status if latest else None,
             block_reason=block_reason,
@@ -328,8 +328,8 @@ class MediaResolutionService:
             return "当前供应商适配器不支持补媒体直链。"
         if estimated_cost is None:
             return "当前平台没有明确媒体解析单价，未发起付费调用。"
-        if monthly_cost + estimated_cost > MONTHLY_HARD_LIMIT_COST_CNY:
-            return "已达到本地本月 ¥10 共享预算上限，未发起付费解析。"
+        if monthly_cost + estimated_cost > _monthly_cost_limit_cny():
+            return "已达到本地本月共享爬虫预算上限，未发起付费解析。"
         return None
 
     @staticmethod

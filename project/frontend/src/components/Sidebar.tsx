@@ -24,6 +24,7 @@ import {
   CORE_NAVIGATION_ITEMS,
   type NavigationItem,
 } from "../navigation";
+import { useAdminToken } from "../hooks/useAdminAuth";
 
 const NAV_ICONS: Record<string, ReactNode> = {
   pipeline: <ThunderboltOutlined />,
@@ -63,11 +64,12 @@ interface SidebarProps {
 export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const isAdmin = useAdminToken();
   const [advancedOpen, setAdvancedOpen] = useState(() =>
     ADVANCED_TOOL_ITEMS.some((item) => item.path === location.pathname)
   );
 
-  /** 导航分组配置 */
+  /** 导航分组配置：系统管理仅管理员登录后可见 */
   const navGroups: NavGroup[] = useMemo(
     () => [
       {
@@ -79,8 +81,24 @@ export default function Sidebar({ collapsed = false, onCollapse }: SidebarProps)
         items: ADVANCED_TOOL_ITEMS,
         collapsible: true,
       },
+      ...(isAdmin
+        ? [
+            {
+              title: "系统",
+              items: [
+                {
+                  id: "admin",
+                  label: "系统管理",
+                  path: "/admin",
+                  section: "支持" as const,
+                  description: "积分充值、客户激活码与管理员账号",
+                },
+              ],
+            },
+          ]
+        : []),
     ],
-    []
+    [isAdmin]
   );
 
   useEffect(() => {

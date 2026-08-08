@@ -62,10 +62,15 @@ import type {
   VideoEditorVisualAsset,
 } from "../api/types";
 import { useToast } from "../components/Toast";
-import { useSearchParams } from "react-router-dom";
+import { handleCreditsError } from "../utils/credits";
+import { useNavigate, useSearchParams } from "react-router-dom";
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
+
+// 训练收费（积分）——与后端默认一致；如在 .env 调整价格需同步更新此处
+const AVATAR_FACE_TRAINING_CREDITS = 100;
+const AVATAR_VOICE_TRAINING_CREDITS = 60;
 
 const TERMINAL_STATUSES = new Set([
   "succeeded",
@@ -103,6 +108,7 @@ function statusLabel(status: string) {
 
 export default function AvatarPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const sourceTaskId = searchParams.get("sourceTask")?.trim() || null;
   const sourceRevisionId = searchParams.get("sourceRevision")?.trim() || null;
@@ -375,7 +381,9 @@ export default function AvatarPage() {
         toast.success(job.is_mock ? "演示任务已创建" : "数字人任务已提交");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "提交数字人任务失败");
+      if (!handleCreditsError(error, () => navigate("/admin"))) {
+        toast.error(error instanceof Error ? error.message : "提交数字人任务失败");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -563,6 +571,22 @@ export default function AvatarPage() {
       toast.warning("公司云形象训练线路尚未配置。");
       return false;
     }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "确认提交云形象（脸部）训练？",
+        content: (
+          <Text type="warning">
+            云形象训练需扣除 {AVATAR_FACE_TRAINING_CREDITS} 积分（约
+            {AVATAR_FACE_TRAINING_CREDITS} 元）。训练提交后即使失败也不退款，请确认素材无误。
+          </Text>
+        ),
+        okText: "确认并训练",
+        cancelText: "取消",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return false;
     setUploadingAvatar(true);
     try {
       const asset = await trainCloudAvatar({
@@ -585,6 +609,22 @@ export default function AvatarPage() {
       toast.warning("公司云声音训练线路尚未就绪，暂不能提交训练。");
       return false;
     }
+    const confirmed = await new Promise<boolean>((resolve) => {
+      Modal.confirm({
+        title: "确认提交声音训练？",
+        content: (
+          <Text type="warning">
+            声音训练需扣除 {AVATAR_VOICE_TRAINING_CREDITS} 积分（约
+            {AVATAR_VOICE_TRAINING_CREDITS} 元）。训练提交后即使失败也不退款，请确认样本无误。
+          </Text>
+        ),
+        okText: "确认并训练",
+        cancelText: "取消",
+        onOk: () => resolve(true),
+        onCancel: () => resolve(false),
+      });
+    });
+    if (!confirmed) return false;
     setUploadingVoice(true);
     try {
       const asset = await trainCloudVoice({

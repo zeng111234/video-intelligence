@@ -40,6 +40,7 @@ class CopywritingResponse(BaseModel):
     model_name: str
     is_mock: bool
     token_usage: dict[str, int] = Field(default_factory=dict)
+    charged_credits: float | None = None
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
     attention_terms: list[str] = Field(default_factory=list)
@@ -81,6 +82,11 @@ class CopywritingCapabilitiesResponse(BaseModel):
     max_variants: int
     supported_platforms: list[str]
     missing_configuration: list[str]
+    billing_label: str = "平台服务价"
+    input_price_credits_per_1k_tokens: str = "0.0015"
+    output_price_credits_per_1k_tokens: str = "0.003"
+    minimum_charge_credits: str = "0.01"
+    billing_rounding: str = "整次任务合计后向上进位保留两位小数"
 
 
 class CopywritingHistoryDeleteResponse(BaseModel):
@@ -103,6 +109,7 @@ class PublishMetadataResponse(BaseModel):
     title: str
     description: str
     tags: list[str]
+    charged_credits: float | None = None
 
 
 @router.get("/capabilities", response_model=CopywritingCapabilitiesResponse)
@@ -123,6 +130,17 @@ def capabilities(service=Depends(get_copywriting_service)):
         missing_configuration=[
             str(item) for item in cap.get("missing_configuration", [])  # type: ignore[arg-type]
         ],
+        billing_label=str(cap.get("billing_label", "平台服务价")),
+        input_price_credits_per_1k_tokens=str(
+            cap.get("input_price_credits_per_1k_tokens", "0.0015")
+        ),
+        output_price_credits_per_1k_tokens=str(
+            cap.get("output_price_credits_per_1k_tokens", "0.003")
+        ),
+        minimum_charge_credits=str(cap.get("minimum_charge_credits", "0.01")),
+        billing_rounding=str(
+            cap.get("billing_rounding", "整次任务合计后向上进位保留两位小数")
+        ),
     )
 
 
@@ -231,6 +249,7 @@ def generate_publish_metadata(
         title=str(metadata["title"]),
         description=str(metadata["description"]),
         tags=[str(item) for item in metadata["tags"]],
+        charged_credits=task.charged_credits,
     )
 
 
@@ -242,6 +261,7 @@ def _to_response(task) -> CopywritingResponse:
         model_name=task.model_name,
         is_mock=task.is_mock,
         token_usage=task.token_usage,
+        charged_credits=task.charged_credits,
         result_text=task.result_text,
         result_variants=task.result_variants,
         attention_terms=task.attention_terms,

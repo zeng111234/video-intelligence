@@ -17,9 +17,6 @@ from src.models import (
     EditTemplate,
     TaskStatus,
     TemplateStepDef,
-    VideoEditConfig,
-    VideoEditStep,
-    VideoEditStepKind,
 )
 from src.repositories.mock import MockRepository
 from src.services.template_service import TemplateService, TemplateServiceError

@@ -21,6 +21,7 @@ from src.models import (
     ProviderCapability,
     ProviderSearchPage,
     ProviderUsage,
+    PublishSafetyState,
     PublishStatus,
     PublishTask,
     PublishTarget,
@@ -268,6 +269,14 @@ class TaskRepository(Protocol):
     def save_task(self, task: TaskRecord) -> None: ...
 
     def delete_task(self, task_id: str) -> bool: ...
+
+    # -- 发布防封状态 --
+
+    def get_publish_safety_state(
+        self, platform: str, account_id: str
+    ) -> PublishSafetyState | None: ...
+
+    def update_publish_safety_state(self, state: PublishSafetyState) -> None: ...
 
     def save_transcript_revision(self, revision: TranscriptRevision) -> None: ...
 

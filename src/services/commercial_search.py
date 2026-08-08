@@ -36,7 +36,13 @@ SMART_FALLBACK_CACHE_TTL_MINUTES = 24 * 60
 DUPLICATE_GUARD_SECONDS = 60
 MONTHLY_WARNING_QUERIES = 80
 MONTHLY_HARD_LIMIT_QUERIES = 100
+# 兼容旧引用（新代码统一走 _monthly_cost_limit_cny，管理员可在定价设置中调整）
 MONTHLY_HARD_LIMIT_COST_CNY = 10.0
+
+
+def _monthly_cost_limit_cny() -> float:
+    """供应商侧月度预算保护，不属于客户收费项目。"""
+    return MONTHLY_HARD_LIMIT_COST_CNY
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
@@ -243,9 +249,9 @@ class CommercialSearchService:
             elif (
                 estimated_cost is not None
                 and monthly_cost + pending_cost + estimated_cost
-                > MONTHLY_HARD_LIMIT_COST_CNY
+                > _monthly_cost_limit_cny()
             ):
-                blocked_reason = "已达到本地本月 ¥10 爬虫预算上限"
+                blocked_reason = "已达到本月素材检索的系统保护上限"
             if not blocked_reason:
                 pending_calls += estimated_calls
                 pending_cost += estimated_cost or 0.0
@@ -595,28 +601,38 @@ class CommercialSearchService:
                 cache_hit=True,
             )
 
-        if (
-            capability.mode == ProviderMode.PRODUCTION
-            and self.monthly_query_count(started_at) >= MONTHLY_HARD_LIMIT_QUERIES
-        ):
+        # 原子占位：60 秒防重复 + 月上限检查 + 写入占位一次完成，
+        # 并发请求下也只有一个能通过（防止重复扣费、超上限）。
+        unit_price = self._endpoint_prices().get(platform)
+        claim_result = self.repository.try_claim_platform_search_request(
+            fingerprint=fingerprint,
+            run_id=run.run_id,
+            claimed_at=started_at,
+            ttl_seconds=DUPLICATE_GUARD_SECONDS,
+            unit_price=float(unit_price or 0.0),
+            enforce_limits=capability.mode == ProviderMode.PRODUCTION,
+            monthly_queries_limit=MONTHLY_HARD_LIMIT_QUERIES,
+            monthly_cost_limit_cny=_monthly_cost_limit_cny(),
+        )
+        if claim_result == "duplicate":
+            return self._finish_run(
+                run,
+                status=PlatformRunStatus.BLOCKED,
+                error="相同请求刚刚执行过，请等待 60 秒，防止重复计费。",
+            )
+        if claim_result == "count_limit":
             return self._finish_run(
                 run,
                 status=PlatformRunStatus.BLOCKED,
                 error="已达到本月 100 次平台查询上限，未发起请求。",
             )
-        unit_price = self._endpoint_prices().get(platform)
-        if (
-            capability.mode == ProviderMode.PRODUCTION
-            and unit_price is not None
-            and self.monthly_query_cost(started_at) + unit_price
-            > MONTHLY_HARD_LIMIT_COST_CNY
-        ):
+        if claim_result == "cost_limit":
             return self._finish_run(
                 run,
                 status=PlatformRunStatus.BLOCKED,
-                error="已达到本地本月 ¥10 爬虫预算上限，未发起请求。",
+                error="已达到本月素材检索的系统保护上限，未发起请求。",
             )
-        if self.repository.has_unresolved_platform_search_request(fingerprint):
+        if claim_result == "unresolved":
             if capability.mode == ProviderMode.PRODUCTION:
                 return self._finish_run(
                     run,
@@ -626,18 +642,24 @@ class CommercialSearchService:
             # 免费的本机浏览器不会产生供应商费用。上次程序异常不应留下
             # 永久付费锁，否则修复代码后同一关键词也无法重新验证。
             self.repository.resolve_platform_search_request(fingerprint)
-        if not self.repository.claim_platform_search_request(
-            fingerprint,
-            run.run_id,
-            started_at,
-            ttl_seconds=DUPLICATE_GUARD_SECONDS,
-        ):
-            return self._finish_run(
-                run,
-                status=PlatformRunStatus.BLOCKED,
-                error="相同请求刚刚执行过，请等待 60 秒，防止重复计费。",
+            claim_result = self.repository.try_claim_platform_search_request(
+                fingerprint=fingerprint,
+                run_id=run.run_id,
+                claimed_at=started_at,
+                ttl_seconds=DUPLICATE_GUARD_SECONDS,
+                unit_price=float(unit_price or 0.0),
+                enforce_limits=capability.mode == ProviderMode.PRODUCTION,
+                monthly_queries_limit=MONTHLY_HARD_LIMIT_QUERIES,
+                monthly_cost_limit_cny=_monthly_cost_limit_cny(),
             )
+            if claim_result != "ok":
+                return self._finish_run(
+                    run,
+                    status=PlatformRunStatus.BLOCKED,
+                    error="相同请求刚刚执行过，请等待 60 秒，防止重复计费。",
+                )
 
+        # 找素材不消耗客户积分；供应商侧仍受前面的防重复、缓存及月预算限制。
         run = run.model_copy(update={"status": PlatformRunStatus.RUNNING})
         self.repository.save_platform_search_run(run)
         published_after = (

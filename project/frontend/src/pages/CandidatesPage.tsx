@@ -75,8 +75,10 @@ export default function CandidatesPage() {
       candidate: item.video_id,
       title: item.title,
     });
-    if (item.platform === "douyin" && item.source_url) {
+    if (item.source_url) {
       params.set("share_text", item.source_url);
+    } else {
+      params.set("entry", "upload");
     }
     navigate(`/transcription?${params.toString()}`);
   };
@@ -145,7 +147,7 @@ export default function CandidatesPage() {
       render: (_, item) => (
         <Tooltip title="进入转写页后仍需确认内容处理权；不会自动下载或创建任务。">
           <Button size="small" type="primary" onClick={() => goToTranscription(item)}>
-            文案转写
+            {item.source_url ? "文案转写" : "上传视频转写"}
           </Button>
         </Tooltip>
       ),

@@ -1,0 +1,121 @@
+.admin-page {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.admin-page-heading {
+  margin-bottom: 28px;
+}
+
+.admin-page-heading h2.ant-typography {
+  margin: 4px 0 6px;
+  font-size: 30px;
+  letter-spacing: -0.6px;
+}
+
+.admin-page-kicker {
+  color: var(--primary-600);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.admin-management-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.admin-secondary-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.admin-primary-card,
+.admin-secondary-card,
+.admin-pricing-card {
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+
+.admin-primary-card .ant-card-head,
+.admin-secondary-card .ant-card-head {
+  min-height: 68px;
+  border-bottom-color: var(--border-default);
+}
+
+.admin-primary-card .ant-card-head-title,
+.admin-secondary-card .ant-card-head-title {
+  font-size: 17px;
+}
+
+.admin-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-section-intro {
+  margin: -4px 0 16px;
+}
+
+.admin-recharge-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 88px;
+  color: var(--text-secondary);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+}
+
+.admin-recharge-empty .anticon {
+  color: var(--success);
+  font-size: 18px;
+}
+
+.admin-secondary-card .ant-table {
+  font-size: 13px;
+}
+
+.admin-secondary-card .ant-table-cell {
+  white-space: nowrap;
+}
+
+.admin-pricing-card {
+  margin-top: 24px;
+}
+
+.admin-pricing-card .ant-card-head {
+  min-height: 60px;
+}
+
+.admin-pricing-card .ant-card-body {
+  padding-top: 8px;
+}
+
+@media (max-width: 980px) {
+  .admin-secondary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-page-heading h2.ant-typography {
+    font-size: 25px;
+  }
+
+  .admin-secondary-grid {
+    gap: 16px;
+  }
+
+  .admin-primary-card .ant-card-head,
+  .admin-secondary-card .ant-card-head {
+    min-height: 58px;
+  }
+}

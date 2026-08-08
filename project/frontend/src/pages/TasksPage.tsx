@@ -13,6 +13,22 @@ const STATUS_COLOR: Record<string, string> = {
   failed: "red",
   pending: "default",
   queued: "default",
+  submitted: "blue",
+  cancelled: "default",
+  outcome_unknown: "orange",
+  paused: "orange",
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  succeeded: "已完成",
+  running: "处理中",
+  failed: "失败",
+  pending: "待处理",
+  queued: "排队中",
+  submitted: "已提交",
+  cancelled: "已取消",
+  outcome_unknown: "结果待核对",
+  paused: "等待操作",
 };
 
 const KIND_LABELS: Record<string, string> = {
@@ -66,7 +82,9 @@ export default function TasksPage() {
       dataIndex: "status",
       width: 120,
       render: (v: string) => (
-        <Tag color={STATUS_COLOR[v] || "default"}>{v}</Tag>
+        <Tag color={STATUS_COLOR[v] || "default"}>
+          {STATUS_LABELS[v] || "状态待确认"}
+        </Tag>
       ),
     },
     {

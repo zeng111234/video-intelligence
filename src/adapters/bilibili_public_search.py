@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import html
 import math
+import random
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -38,6 +40,14 @@ class BilibiliPublicSearchProvider:
     _detail_endpoint = "https://api.bilibili.com/x/web-interface/view"
     _page_size = 20
     _max_pages = 2
+
+    @staticmethod
+    def _safe_error(exc: BaseException) -> str:
+        """截断异常文本，避免向用户暴露过长或敏感的底层细节。"""
+        text = str(exc).strip()
+        if len(text) > 200:
+            text = text[:200] + "..."
+        return text or exc.__class__.__name__
 
     def __init__(self, *, timeout_seconds: float = 12.0) -> None:
         self.timeout_seconds = timeout_seconds
@@ -99,6 +109,9 @@ class BilibiliPublicSearchProvider:
         has_more = False
 
         for page in range(1, page_count + 1):
+            # 翻页之间留 1-2 秒随机间隔，避免短时连发触发平台限流
+            if page > 1:
+                time.sleep(random.uniform(1.0, 2.0))
             payload = self._fetch_page(keyword=keyword, page=page)
             data = payload.get("data") if isinstance(payload, dict) else None
             raw_items = data.get("result") if isinstance(data, dict) else None
@@ -190,7 +203,7 @@ class BilibiliPublicSearchProvider:
                     ProviderSearchError(
                         kind=exc.kind,
                         code=exc.code,
-                        message=f"B站作品 {bvid} 指标刷新失败：{exc}",
+                        message=f"B站作品 {bvid} 指标刷新失败：{self._safe_error(exc)}",
                         item_index=index,
                         retryable=exc.retryable,
                     )
@@ -201,7 +214,7 @@ class BilibiliPublicSearchProvider:
                     ProviderSearchError(
                         kind=ProviderErrorKind.VALIDATION,
                         code="invalid_detail_payload",
-                        message=f"B站作品 {bvid} 详情字段不完整，已跳过：{exc}",
+                        message=f"B站作品 {bvid} 详情字段不完整，已跳过：{self._safe_error(exc)}",
                         item_index=index,
                     )
                 )
@@ -242,6 +255,12 @@ class BilibiliPublicSearchProvider:
                 },
             )
             response.raise_for_status()
+            # 响应体大小上限：防止异常响应撑爆内存
+            if len(response.content) > 5 * 1024 * 1024:
+                raise LicensedProviderError(
+                    "B站公开搜索响应过大，已放弃本次请求。",
+                    kind=ProviderErrorKind.SERVICE,
+                )
             payload = response.json()
             if not isinstance(payload, dict) or payload.get("code") != 0:
                 message = (
@@ -285,6 +304,12 @@ class BilibiliPublicSearchProvider:
                 params={"bvid": bvid},
             )
             response.raise_for_status()
+            # 响应体大小上限：防止异常响应撑爆内存
+            if len(response.content) > 5 * 1024 * 1024:
+                raise LicensedProviderError(
+                    "B站公开搜索响应过大，已放弃本次请求。",
+                    kind=ProviderErrorKind.SERVICE,
+                )
             payload = response.json()
             if not isinstance(payload, dict) or payload.get("code") != 0:
                 message = (

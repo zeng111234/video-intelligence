@@ -1417,11 +1417,10 @@ def test_parse_count_text_handles_card_numbers():
     assert parse("") is None
 
 
-def test_rendered_rows_extracts_bilibili_stats(monkeypatch, tmp_path):
-    """B站卡片 stats 行(播放/点赞)应被提取进行数据。"""
+def test_rendered_rows_only_uses_confirmed_bilibili_play_stats(monkeypatch, tmp_path):
+    """B站第二个卡片数字没有稳定语义，不能伪装成点赞数。"""
     from project.backend.app.core.config import (
         BILIBILI_BROWSER_DISCOVERY_ENABLED,
-        BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.platform_browser_search import (
@@ -1456,7 +1455,7 @@ def test_rendered_rows_extracts_bilibili_stats(monkeypatch, tmp_path):
     rows = provider._rendered_rows(Page(), keyword="餐饮获客")
     assert len(rows) == 1
     assert rows[0]["plays"] == 121
-    assert rows[0]["likes"] == 0
+    assert rows[0]["likes"] is None
     assert rows[0]["item_id"] == "BV1ti5e62EBZ"
 
 
@@ -1464,7 +1463,6 @@ def test_rendered_rows_extracts_xiaohongshu_count(monkeypatch, tmp_path):
     """小红书 span.count 点赞数应被提取。"""
     from project.backend.app.core.config import (
         XIAOHONGSHU_LOGIN_BROWSER_ENABLED,
-        XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.platform_browser_search import (

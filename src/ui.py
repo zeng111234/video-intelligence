@@ -10,6 +10,21 @@ _BadgeColor = Literal[
     "red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"
 ]
 
+_TASK_STATUS_PRESENTATION: dict[TaskStatus, tuple[str, _BadgeColor, str]] = {
+    TaskStatus.QUEUED: ("排队中", "gray", ":material/schedule:"),
+    TaskStatus.SUBMITTED: ("已提交", "blue", ":material/upload:"),
+    TaskStatus.RUNNING: ("处理中", "blue", ":material/pending:"),
+    TaskStatus.SUCCEEDED: ("已完成", "green", ":material/check_circle:"),
+    TaskStatus.FAILED: ("失败", "red", ":material/error:"),
+    TaskStatus.CANCELLED: ("已取消", "gray", ":material/cancel:"),
+    TaskStatus.OUTCOME_UNKNOWN: (
+        "结果待核对",
+        "orange",
+        ":material/help_center:",
+    ),
+    TaskStatus.PAUSED: ("等待操作", "orange", ":material/pause_circle:"),
+}
+
 
 def render_page_header(title: str, description: str, *, icon: str) -> None:
     with st.container(
@@ -35,11 +50,13 @@ def render_heat_badge(level: HeatLevel) -> None:
 
 
 def render_task_badge(status: TaskStatus) -> None:
-    labels: dict[TaskStatus, tuple[str, _BadgeColor, str]] = {
-        TaskStatus.QUEUED: ("排队中", "gray", ":material/schedule:"),
-        TaskStatus.RUNNING: ("处理中", "blue", ":material/pending:"),
-        TaskStatus.SUCCEEDED: ("已完成", "green", ":material/check_circle:"),
-        TaskStatus.FAILED: ("失败", "red", ":material/error:"),
-    }
-    label, color, icon = labels[status]
+    label, color, icon = _TASK_STATUS_PRESENTATION.get(
+        status,
+        ("状态待确认", "gray", ":material/help:"),
+    )
     st.badge(label, color=cast(_BadgeColor, color), icon=icon)
+
+
+def task_status_label(status: TaskStatus) -> str:
+    presentation = _TASK_STATUS_PRESENTATION.get(status)
+    return presentation[0] if presentation else "状态待确认"

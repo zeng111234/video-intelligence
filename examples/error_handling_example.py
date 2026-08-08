@@ -31,7 +31,7 @@ def example_1_basic_error_handling():
         import urllib.error
         
         # 尝试访问一个不存在的URL
-        response = urllib.request.urlopen("https://httpbin.org/status/404")
+        urllib.request.urlopen("https://httpbin.org/status/404")
     except urllib.error.HTTPError as e:
         print(f"捕获到HTTP错误: {e.code}")
         
@@ -196,8 +196,8 @@ def example_6_integration_with_crawler():
         
         try:
             # 模拟请求
-            url = f"https://httpbin.org/status/404"
-            response = urllib.request.urlopen(url)
+            url = "https://httpbin.org/status/404"
+            urllib.request.urlopen(url)
             return {"status": "success", "data": []}
         except urllib.error.HTTPError as e:
             if e.code == 404:
@@ -226,7 +226,7 @@ def example_6_integration_with_crawler():
                 
                 # 根据分析结果决定是否重试
                 if analysis["is_retryable"]:
-                    print(f"  错误可重试，准备重试...")
+                    print("  错误可重试，准备重试...")
                     # 这里可以实现重试逻辑
                 else:
                     print(f"  错误不可重试: {analysis['possible_causes']}")

@@ -249,7 +249,6 @@ video/
 ├── docs/                     # 项目文档（归档、指南等）
 ├── prototype/                # 产品原型
 ├── references/               # 参考资料
-├── forge_rss_analysis/       # 外部参考项目（ForgeRSS，含独立 Dockerfile 与 LICENSE）
 ├── utils/                    # 工具函数
 ├── start.bat                 # Windows 一键启动脚本
 ├── requirements.txt          # Python 依赖
@@ -365,8 +364,7 @@ POST /api/v1/publish                   # 发布视频
 GET  /api/v1/publish/platforms         # 可用平台
 
 # 积分账户
-GET  /api/v1/credits/balance           # 查询余额
-GET  /api/v1/credits/transactions      # 积分流水
+GET  /api/v1/credits                   # 查询余额与积分流水
 POST /api/v1/credits/adjust            # 充值/扣减（管理员）
 
 # 其他
@@ -439,8 +437,8 @@ chore: 构建/工具相关
 - **Windows**：双击根目录 `start.bat`
 - **Linux/macOS**：运行 `scripts/deploy.sh`
 - 生产环境部署清单见 `doc/deployment-checklist.md`
+- 正式交付前运行 `scripts/check_release.ps1`；交付范围和高副作用验收边界见 `doc/release-gate.md`
 
-> 注：`forge_rss_analysis/ForgeRSS` 为外部参考项目副本，自带 Dockerfile 与 docker-compose.yml，与本系统无关。
 
 ## 常见问题
 

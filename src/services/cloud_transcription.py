@@ -90,9 +90,13 @@ class AliyunFunASRRuntime:
         return not self.missing_configuration
 
     def estimate_cost(self, duration_seconds: float) -> Decimal:
-        return (
-            Decimal(str(duration_seconds)) * ASR_UNIT_PRICE_CNY_PER_SECOND
-        ).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+        # 单价以管理员定价为准（可调），未覆盖时用代码默认值
+        from src.services.pricing import get_price
+
+        unit_price = get_price("transcription_per_second_cny")
+        return (Decimal(str(duration_seconds)) * unit_price).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP
+        )
 
     def ensure_authorized(self, duration_seconds: float) -> Decimal:
         if self.missing_configuration:
@@ -112,10 +116,14 @@ class AliyunFunASRRuntime:
                 "请管理员在系统设置中重新确认。"
             )
         estimated = self.estimate_cost(duration_seconds)
-        if estimated > authorization.per_task_cap_cny:
+        # 单条费用上限以管理员定价为准（可调），未覆盖时用代码默认值
+        from src.services.pricing import get_price
+
+        cap = get_price("transcription_max_per_item_cny")
+        if estimated > cap:
             raise RuntimeError(
                 f"本次语音识别预计费用 ¥{estimated:.4f}，"
-                f"超过管理员设置的单条上限 ¥{authorization.per_task_cap_cny:.2f}。"
+                f"超过管理员设置的单条上限 ¥{cap:.2f}。"
             )
         return estimated
 

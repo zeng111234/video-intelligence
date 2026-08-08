@@ -2266,11 +2266,9 @@ def test_public_search_api_url_detection():
 
 
 def test_public_search_payload_parsing(tmp_path):
-    from datetime import datetime, timezone
 
     from project.backend.app.core.config import (
         DOUYIN_BROWSER_DISCOVERY_ENABLED,
-        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.douyin_browser_search import (
@@ -2339,7 +2337,6 @@ def test_public_search_payload_parsing(tmp_path):
 def test_scroll_and_wait_for_new_rows_returns_when_rows_appear(tmp_path, monkeypatch):
     from project.backend.app.core.config import (
         DOUYIN_BROWSER_DISCOVERY_ENABLED,
-        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.douyin_browser_search import (
@@ -2382,7 +2379,6 @@ def test_scroll_and_wait_for_new_rows_returns_when_rows_appear(tmp_path, monkeyp
 def test_scroll_and_wait_for_new_rows_times_out(tmp_path, monkeypatch):
     from project.backend.app.core.config import (
         DOUYIN_BROWSER_DISCOVERY_ENABLED,
-        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.douyin_browser_search import (
@@ -2416,7 +2412,6 @@ def test_public_search_payload_stream_format(tmp_path):
 
     from project.backend.app.core.config import (
         DOUYIN_BROWSER_DISCOVERY_ENABLED,
-        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
         DOUYIN_BROWSER_CHANNEL,
     )
     from src.adapters.douyin_browser_search import (

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
@@ -16,6 +18,9 @@ from src.models import (
     Platform,
     PlatformSearchRun,
     ProviderSafetyState,
+    PublishSafetyState,
+    AdminAccount,
+    CustomerCode,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -56,6 +61,7 @@ class MockRepository:
         self._platform_search_runs: dict[str, PlatformSearchRun] = {}
         self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
         self._provider_safety_states: dict[str, ProviderSafetyState] = {}
+        self._publish_safety_states: dict[tuple[str, str], PublishSafetyState] = {}
         self._media_resolution_attempts: dict[str, MediaResolutionAttempt] = {}
         self._media_resolution_guards: dict[str, tuple[str, str, datetime, str]] = {}
         self._pipeline_runs: dict[str, PipelineRun] = {}
@@ -66,7 +72,117 @@ class MockRepository:
         self._video_editor_operations: dict[str, dict] = {}
         self._video_editor_cloud_jobs: dict[str, dict] = {}
         self._hot_words: dict[tuple[str, datetime], HotWordRecord] = {}
+        # 演示仓库默认预置演示余额，避免测试/沙箱环境处处充值；生产走 SQLite 真实余额。
+        self._credit_balance = Decimal(
+            os.getenv("MOCK_CREDIT_BALANCE", "1000")
+        )
+        self._credit_transactions: list[dict] = []
+        # 多账户：owner -> balance；默认账户与演示余额一致
+        self._credit_accounts: dict[str, Decimal] = {"admin": self._credit_balance}
+        self._customer_codes: dict[str, CustomerCode] = {}
+        self._admin_accounts: dict[str, AdminAccount] = {}
+        self._pricing: dict[str, str] = {}
 
+    def get_credit_balance(self, owner: str = "admin") -> Decimal:
+        return self._credit_accounts.get(owner, self._credit_balance if owner == "admin" else Decimal("0"))
+
+    def ensure_credit_account(self, owner: str) -> Decimal:
+        if owner not in self._credit_accounts:
+            self._credit_accounts[owner] = Decimal("0")
+        return self._credit_accounts[owner]
+
+    def list_credit_transactions(self, owner: str = "admin", limit: int = 100) -> list[dict]:
+        filtered = [t for t in self._credit_transactions if t.get("owner") == owner]
+        return list(filtered)[-int(limit):][::-1]
+
+    def adjust_credit_balance(
+        self,
+        *,
+        amount,
+        reason: str,
+        owner: str = "admin",
+        ref_type: str | None = None,
+        ref_id: str | None = None,
+        now: datetime | None = None,
+    ) -> Decimal:
+        amount = Decimal(str(amount))
+        current = self._credit_accounts.get(owner, Decimal("0"))
+        new_balance = current + amount
+        if new_balance < 0:
+            raise ValueError("积分不足")
+        self._credit_accounts[owner] = new_balance
+        self._credit_transactions.append(
+            {
+                "owner": owner,
+                "amount": str(amount),
+                "balance_after": str(new_balance),
+                "reason": reason,
+                "ref_type": ref_type,
+                "ref_id": ref_id,
+                "created_at": (now or datetime.now().astimezone()).isoformat(),
+            }
+        )
+        return new_balance
+
+    # ------------------------------------------------------------------
+    # 客户激活码
+    # ------------------------------------------------------------------
+
+    def create_customer_codes(self, codes: list[CustomerCode]) -> None:
+        for code in codes:
+            self._customer_codes[code.code] = code
+
+    def get_customer_code(self, code: str) -> CustomerCode | None:
+        return self._customer_codes.get(code)
+
+    def list_customer_codes(self) -> list[CustomerCode]:
+        return sorted(self._customer_codes.values(), key=lambda c: c.created_at, reverse=True)
+
+    def set_customer_code_enabled(self, code: str, enabled: bool) -> None:
+        found = self._customer_codes.get(code)
+        if found is not None:
+            self._customer_codes[code] = found.model_copy(
+                update={"enabled": enabled, "updated_at": datetime.now().astimezone()}
+            )
+
+    def delete_customer_code(self, code: str) -> None:
+        self._customer_codes.pop(code, None)
+
+    # ------------------------------------------------------------------
+    # 定价设置
+    # ------------------------------------------------------------------
+
+    def get_pricing(self, key: str) -> str | None:
+        return self._pricing.get(key)
+
+    def set_pricing(self, key: str, value: str) -> None:
+        self._pricing[key] = value
+
+    def list_pricing(self) -> list[dict]:
+        return [
+            {"key": key, "value": value, "updated_at": ""}
+            for key, value in self._pricing.items()
+        ]
+
+    # ------------------------------------------------------------------
+    # 管理员账号（多账号）
+    # ------------------------------------------------------------------
+
+    def create_admin_account(self, account: AdminAccount) -> None:
+        self._admin_accounts[account.username] = account
+
+    def get_admin_account(self, username: str) -> AdminAccount | None:
+        return self._admin_accounts.get(username)
+
+    def list_admin_accounts(self) -> list[AdminAccount]:
+        return list(self._admin_accounts.values())
+
+    def set_admin_password(self, username: str, password_hash: str) -> None:
+        found = self._admin_accounts.get(username)
+        if found is not None:
+            self._admin_accounts[username] = found.model_copy(
+                update={"password_hash": password_hash, "updated_at": datetime.now().astimezone()}
+            )
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
 
@@ -309,6 +425,14 @@ class MockRepository:
             reverse=True,
         )[:limit]
 
+    def get_publish_safety_state(
+        self, platform: str, account_id: str
+    ) -> PublishSafetyState | None:
+        return self._publish_safety_states.get((platform, account_id))
+
+    def update_publish_safety_state(self, state: PublishSafetyState) -> None:
+        self._publish_safety_states[(state.platform, state.account_id)] = state
+
     def get_provider_safety_state(self, provider: str) -> ProviderSafetyState | None:
         return self._provider_safety_states.get(provider)
 
@@ -479,21 +603,55 @@ class MockRepository:
         )
         return search_cost + media_cost
 
-    def claim_platform_search_request(
+    def try_claim_platform_search_request(
         self,
+        *,
         fingerprint: str,
         run_id: str,
         claimed_at: datetime,
         ttl_seconds: int = 60,
-    ) -> bool:
+        unit_price: float = 0.0,
+        enforce_limits: bool = True,
+        monthly_queries_limit: int | None = 100,
+        monthly_cost_limit_cny: float | None = 10.0,
+    ) -> str:
         previous = self._provider_request_guards.get(fingerprint)
         if previous:
             if previous[2] == "outcome_unknown":
-                return False
+                return "unresolved"
             if claimed_at - previous[1] < timedelta(seconds=ttl_seconds):
-                return False
-        self._provider_request_guards[fingerprint] = (run_id, claimed_at, "claimed")
-        return True
+                return "duplicate"
+        if enforce_limits:
+            month_start = claimed_at.replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+            pending = [
+                g
+                for g in self._provider_request_guards.values()
+                if g[2] == "claimed" and g[1] >= month_start
+            ]
+            used_count = self.monthly_platform_query_count(month_start) + len(pending)
+            used_cost = (
+                self.monthly_platform_query_cost(month_start)
+                + sum(float(g[3]) for g in pending)
+            )
+            if (
+                monthly_queries_limit is not None
+                and used_count >= monthly_queries_limit
+            ):
+                return "count_limit"
+            if (
+                monthly_cost_limit_cny is not None
+                and used_cost + unit_price > monthly_cost_limit_cny
+            ):
+                return "cost_limit"
+        self._provider_request_guards[fingerprint] = (
+            run_id,
+            claimed_at,
+            "claimed",
+            str(unit_price),
+        )
+        return "ok"
 
     def mark_platform_search_request(
         self, fingerprint: str, status: str, updated_at: datetime
@@ -802,6 +960,9 @@ class MockRepository:
 
     def get_video_editor_operation(self, idempotency_key: str):
         return self._video_editor_operations.get(idempotency_key)
+
+    def delete_video_editor_operation(self, idempotency_key: str) -> bool:
+        return self._video_editor_operations.pop(idempotency_key, None) is not None
 
     def complete_video_editor_operation(
         self,

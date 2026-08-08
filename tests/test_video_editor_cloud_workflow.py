@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -252,7 +253,10 @@ def test_cloud_flow_automatically_selects_bgm_from_transcript_and_title(tmp_path
 
 def test_sqlite_restores_quotes_operations_jobs_and_batch(tmp_path: Path):
     database_path = tmp_path / "editor.db"
-    first = _service(tmp_path, SQLiteRepository(database_path))
+    first_repository = SQLiteRepository(database_path)
+    # 测试用 SQLite 真实余额为 0，先充值以便走完整确认扣费流程
+    first_repository.adjust_credit_balance(amount=Decimal("100"), reason="test-funding")
+    first = _service(tmp_path, first_repository)
     source_id = _source(first)
     quote = _quote(first, source_id)
     created = _create(first, source_id, quote, key="sqlite-create")

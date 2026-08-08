@@ -489,7 +489,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(startCrawlerBrowserDiscovery).toHaveBeenCalledTimes(3);
   });
 
-  it("shows selected-platform waiting progress and clears it after a search completes", async () => {
+  it("shows selected-platform waiting progress and reveals actual videos before completing", async () => {
     let resolveBatch: (value: CrawlerBatchResponse) => void = () => undefined;
     const pendingBatch = new Promise<CrawlerBatchResponse>((resolve) => {
       resolveBatch = resolve;
@@ -522,6 +522,14 @@ describe("KeywordCrawlerPage performance behavior", () => {
       await pendingBatch;
     });
 
+    expect(screen.getByRole("status").textContent).toContain("平台已经返回");
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+    expect(screen.getByRole("status").textContent).toContain("已找到 1 条");
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
     expect(screen.queryByRole("status")).toBeNull();
   });
 
@@ -700,13 +708,13 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByRole("button", { name: "送入智能创作" })).toBeNull();
     expect(screen.getByRole("button", { name: /生成原创口播/ })).toBeTruthy();
     expect(screen.getByText(/标题信息较完整/)).toBeTruthy();
-    const transcriptionLink = screen.getByRole("link", { name: "上传视频转写" });
+    const transcriptionLink = screen.getByRole("link", { name: "转写文案" });
     const transcriptionUrl = new URL(transcriptionLink.getAttribute("href")!, "http://localhost");
     expect(transcriptionUrl.pathname).toBe("/transcription");
     expect(transcriptionUrl.searchParams.get("candidate")).toBe(candidate.video_id);
     expect(transcriptionUrl.searchParams.get("title")).toBe(candidate.title);
-    expect(transcriptionUrl.searchParams.get("entry")).toBe("upload");
-    expect(transcriptionUrl.searchParams.get("url")).toBeNull();
+    expect(transcriptionUrl.searchParams.get("entry")).toBeNull();
+    expect(transcriptionUrl.searchParams.get("share_text")).toBe(candidate.source_url);
   });
 
   it("merges platform candidates and names a selected platform that did not complete", async () => {

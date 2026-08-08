@@ -50,12 +50,12 @@ describe("CandidatesPage", () => {
       items: [{
         video_id: "douyin-1",
         title: "租房避坑",
-        platform: "douyin",
+        platform: "bilibili",
         author_name: "测试作者",
         category: "关键词/租房",
         heat_score: 86,
         heat_level: "普通",
-        source_url: "https://www.douyin.com/video/1",
+        source_url: "https://www.bilibili.com/video/BV1test",
         published_at: "2026-07-24T17:35:06+08:00",
         observed_at: "2026-07-24T17:35:06+08:00",
         publication_time_state: "sampled_fallback",
@@ -83,7 +83,9 @@ describe("CandidatesPage", () => {
     expect(screen.getByText(/采样于/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "文案转写" }));
-    expect(screen.getByTestId("location").textContent).toContain("/transcription?candidate=douyin-1");
-    expect(screen.getByTestId("location").textContent).toContain("share_text=");
+    const transcriptionUrl = new URL(screen.getByTestId("location").textContent || "", "http://localhost");
+    expect(transcriptionUrl.pathname).toBe("/transcription");
+    expect(transcriptionUrl.searchParams.get("candidate")).toBe("douyin-1");
+    expect(transcriptionUrl.searchParams.get("share_text")).toBe("https://www.bilibili.com/video/BV1test");
   });
 });

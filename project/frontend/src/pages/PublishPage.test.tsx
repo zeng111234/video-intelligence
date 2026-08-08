@@ -10,6 +10,7 @@ import { ToastProvider } from "../components/Toast";
 import {
   connectPublishAccount,
   createPublishAccount,
+  getPublishSafety,
   listPublishAccounts,
   listPublishAssets,
   listPublishBatches,
@@ -27,6 +28,7 @@ vi.mock("../api/client", () => ({
   deletePublishTask: vi.fn(),
   deletePublishTasks: vi.fn(),
   getPublishAccountStatus: vi.fn(),
+  getPublishSafety: vi.fn(),
   importEditedVideoToPublish: vi.fn(),
   listPublishAccounts: vi.fn(),
   listPublishAssets: vi.fn(),
@@ -91,6 +93,7 @@ describe("PublishPage", () => {
     vi.mocked(listPublishAssets).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(listPublishBatches).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(listPublishAccounts).mockResolvedValue([]);
+    vi.mocked(getPublishSafety).mockResolvedValue([]);
     window.sessionStorage.clear();
     window.history.pushState({}, "", "/publish");
   });

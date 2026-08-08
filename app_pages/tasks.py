@@ -7,7 +7,7 @@ import streamlit as st
 
 from src.app_state import get_services
 from src.models import AvatarTask, TaskKind, TaskStatus, AvatarProviderStatus
-from src.ui import render_page_header, render_task_badge
+from src.ui import render_page_header, render_task_badge, task_status_label
 
 render_page_header(
     "任务记录",
@@ -48,12 +48,6 @@ filtered_tasks = (
     else [task for task in tasks if task.status == status_map[status_filter]]
 )
 
-status_labels = {
-    TaskStatus.QUEUED: "排队中",
-    TaskStatus.RUNNING: "处理中",
-    TaskStatus.SUCCEEDED: "已完成",
-    TaskStatus.FAILED: "失败",
-}
 kind_labels = {
     TaskKind.SEARCH: "候选检索",
     TaskKind.TRANSCRIPTION: "视频音轨转写",
@@ -71,7 +65,7 @@ with st.container(border=True):
                 "task_id": task.task_id,
                 "任务": task.title,
                 "类型": kind_labels[task.kind],
-                "状态": status_labels[task.status],
+                "状态": task_status_label(task.status),
                 "处理阶段": getattr(task, "stage", ""),
                 "进度": task.progress,
                 "创建时间": task.created_at,

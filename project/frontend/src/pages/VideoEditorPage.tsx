@@ -44,6 +44,7 @@ import {
 } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import * as videoEditorApi from "../api/client";
+import { cnyToCredits, handleCreditsError } from "../utils/credits";
 import type {
   TranscriptSegment,
   VideoCapabilitiesResponse,
@@ -356,7 +357,7 @@ function asNumber(value: unknown, fallback = 0): number {
 }
 
 function formatCost(value: number) {
-  return `¥${value.toFixed(value >= 1 ? 2 : value > 0 && value < 0.001 ? 4 : 3)}`;
+  return `${cnyToCredits(value)} 积分`;
 }
 
 function statusTag(status: string) {
@@ -1531,7 +1532,9 @@ export default function VideoEditorPage() {
           : "已确认费用，开始云端分析",
       );
     } catch (error) {
-      message.error((error as Error).message || "无法启动云端分析");
+      if (!handleCreditsError(error, () => navigate("/admin"))) {
+        message.error((error as Error).message || "无法启动云端分析");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -2408,7 +2411,7 @@ export default function VideoEditorPage() {
                 <Text type="secondary">画面 9:16 · {outputProfile === "720p" ? "720P" : "1080P"}</Text>
               </div>
               <Text className="video-editor-cost-total" data-testid="cost-total">
-                {isLocalExport ? "¥0" : formatCost(costUpperBound)}
+                {isLocalExport ? "0 积分" : formatCost(costUpperBound)}
               </Text>
             </div>
             {isLocalExport && quote && (

@@ -8,7 +8,6 @@ import os
 import shutil
 import re
 import hashlib
-import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -124,13 +123,18 @@ HOTSPOT_ROLLING_WINDOW_SECONDS = 24 * 60 * 60
 HOTSPOT_MAX_REAL_RUNS_PER_WINDOW = 4
 HOTSPOT_PROVIDER_KEY = "douyin_hotspot_browser"
 BROWSER_CACHE_TTL_MINUTES = 10
-BROWSER_COOLDOWN_SECONDS = 60 * 60
+# 冷却用于防止浏览器被频繁启停；3 分钟足够防抖，不阻碍用户换词再搜。
+BROWSER_COOLDOWN_SECONDS = 3 * 60
 BROWSER_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
-BROWSER_MAX_REAL_RUNS_PER_WINDOW = 4
+# 安全优先：每个平台每天只允许少量真实浏览器采集；缓存始终优先。
+# 24 小时滚动窗口内默认 8 次，可在 .env 配置调整。
+BROWSER_MAX_REAL_RUNS_PER_WINDOW = int(
+    os.getenv("BROWSER_MAX_REAL_RUNS_PER_WINDOW", "8")
+)
+BROWSER_LEASE_SECONDS = 15 * 60
 BROWSER_RESULT_LIMIT = 15
 # B站公开详情接口逐条读取，当前搜索批次只补全平台排序靠前的少量候选。
 BILIBILI_PUBLIC_METRIC_REFRESH_LIMIT = 10
-_BROWSER_CRAWL_LOCK = threading.Lock()
 HOTSPOT_WINDOW_LABELS = {
     1: "近1小时",
     24: "近1天",
@@ -1490,6 +1494,27 @@ def _browser_provider_key(platform: Platform) -> str:
     return f"{platform.value}_browser_search"
 
 
+def _claim_browser_lease(
+    platform: Platform, repo, now: datetime
+) -> str | None:
+    """为平台的真实浏览器采集抢占配额（并发互斥 + 24h 滚动次数上限）。
+
+    返回租约 id 表示成功；返回 None 表示被限（冷却/运行中/今日次数用完）。
+    调用方在 finally 中必须用同一租约 id 释放。
+    """
+    lease_id = f"browser-{uuid4().hex}"
+    if repo.claim_provider_safety_lease(
+        provider=_browser_provider_key(platform),
+        run_id=lease_id,
+        now=now,
+        lease_seconds=BROWSER_LEASE_SECONDS,
+        max_runs_in_window=BROWSER_MAX_REAL_RUNS_PER_WINDOW,
+        rolling_window_seconds=24 * 60 * 60,
+    ):
+        return lease_id
+    return None
+
+
 def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
     """Read persisted pacing state without opening a platform page."""
     now = datetime.now().astimezone()
@@ -1550,7 +1575,10 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
         )
     return CrawlerSafetyStatus(
         state="ready",
-        message=f"{_platform_label(platform.value)}安全模式已就绪：最多15条、每小时最多一次、24小时最多4次。",
+        message=(
+            f"{_platform_label(platform.value)}安全模式已就绪：最多15条、"
+            f"每小时最多一次、24小时最多{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次。"
+        ),
         **common,
     )
 
@@ -2182,6 +2210,17 @@ def _execute_free_multi_platform_batch(
                 else f"{_platform_label(platform.value)}浏览器未连接。"
             )
             return None
+        # 真实浏览器采集前抢占平台配额（并发互斥 + 24h 次数上限）；
+        # 缓存命中不占用配额。被限时跳过该平台并提示，不影响其他平台。
+        lease_id: str | None = None
+        if not cache_hit:
+            lease_id = _claim_browser_lease(
+                platform, repo, datetime.now().astimezone()
+            )
+            if lease_id is None:
+                errors.append(_browser_safety_status(platform, repo).message)
+                return None
+        batch: SearchBatch | None = None
         try:
             # 快手公开搜索页没有可验证的发布时间筛选。不要把通用时间条件
             # 伪装成平台筛选，否则会因卡片时间缺失而错误丢弃候选。
@@ -2209,6 +2248,25 @@ def _execute_free_multi_platform_batch(
         except ValueError as exc:
             errors.append(str(exc))
             return None
+        finally:
+            if lease_id is not None:
+                error_text = batch.error if batch is not None else ""
+                is_safety_event = _browser_safety_event(error_text)
+                repo.release_provider_safety_lease(
+                    provider=_browser_provider_key(platform),
+                    run_id=lease_id,
+                    now=datetime.now().astimezone(),
+                    cooldown_seconds=BROWSER_COOLDOWN_SECONDS,
+                    safety_pause_seconds=(
+                        BROWSER_SAFETY_PAUSE_SECONDS if is_safety_event else 0
+                    ),
+                    safety_reason=(
+                        f"{_platform_label(platform.value)}出现安全验证或访问频繁提示，"
+                        "已自动暂停真实采集 24 小时。"
+                        if is_safety_event
+                        else None
+                    ),
+                )
         batches.append(batch)
         if batch.error:
             errors.append(batch.error)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -14,7 +12,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.adapters.official import (
-    DouyinKeywordAdapter,
     OfficialApiError,
     _default_transport,
 )
@@ -25,7 +22,6 @@ from utils.common.errors import (
     log_http_request_response,
     smart_retry,
     ErrorCategory,
-    ErrorContext,
     ErrorSeverity,
 )
 

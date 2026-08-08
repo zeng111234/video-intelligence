@@ -16,7 +16,6 @@ import {
 import { getNavigationItem } from "../navigation";
 
 const { Title, Text, Paragraph } = Typography;
-const { Panel } = Collapse;
 const intelligentCreation = getNavigationItem("/pipeline")!;
 const taskQueue = getNavigationItem("/production")!;
 const publishCenter = getNavigationItem("/publish")!;
@@ -135,6 +134,27 @@ export default function HelpPage() {
     ),
   })).filter((category) => category.items.length > 0);
 
+  const faqItems = filteredFAQ.map((category) => ({
+    key: category.category,
+    label: (
+      <Space>
+        {category.icon}
+        <Text strong>{category.category}</Text>
+        <Tag>{category.items.length}</Tag>
+      </Space>
+    ),
+    children: (
+      <Collapse
+        ghost
+        items={category.items.map((item, index) => ({
+          key: `${category.category}-${index}`,
+          label: item.q,
+          children: <Paragraph>{item.a}</Paragraph>,
+        }))}
+      />
+    ),
+  }));
+
   return (
     <div>
       {/* 页面头部 */}
@@ -202,28 +222,7 @@ export default function HelpPage() {
       {/* 常见问题 */}
       <Card title={<Space><QuestionCircleOutlined /> 常见问题</Space>} style={{ marginBottom: 24 }}>
         {filteredFAQ.length > 0 ? (
-          <Collapse accordion>
-            {filteredFAQ.map((category) => (
-              <Panel
-                header={
-                  <Space>
-                    {category.icon}
-                    <Text strong>{category.category}</Text>
-                    <Tag>{category.items.length}</Tag>
-                  </Space>
-                }
-                key={category.category}
-              >
-                <Collapse ghost>
-                  {category.items.map((item, index) => (
-                    <Panel header={item.q} key={`${category.category}-${index}`}>
-                      <Paragraph>{item.a}</Paragraph>
-                    </Panel>
-                  ))}
-                </Collapse>
-              </Panel>
-            ))}
-          </Collapse>
+          <Collapse accordion items={faqItems} />
         ) : (
           <div style={{ textAlign: "center", padding: 40 }}>
             <Text type="secondary">未找到匹配的问题</Text>

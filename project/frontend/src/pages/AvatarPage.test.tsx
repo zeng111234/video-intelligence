@@ -269,6 +269,10 @@ describe("AvatarPage avatar library", () => {
 
     fireEvent.change(fileInput!, { target: { files: [file] } });
 
+    // 价格确认弹窗：点击确认后才会真正提交训练
+    const confirmButton = await screen.findByRole("button", { name: "确认并训练" });
+    fireEvent.click(confirmButton);
+
     await waitFor(() =>
       expect(trainCloudAvatar).toHaveBeenCalledWith({
         file,
@@ -310,6 +314,10 @@ describe("AvatarPage avatar library", () => {
     });
 
     fireEvent.change(fileInput!, { target: { files: [file] } });
+
+    // 价格确认弹窗：点击确认后才会真正提交训练
+    const confirmButton = await screen.findByRole("button", { name: "确认并训练" });
+    fireEvent.click(confirmButton);
 
     await waitFor(() =>
       expect(trainCloudVoice).toHaveBeenCalledWith({

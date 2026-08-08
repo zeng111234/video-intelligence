@@ -97,7 +97,9 @@ import type {
   PublishAccount,
   PublishPlatformCapability,
 } from "../api/types";
+import MaterialSearchExperience from "../components/MaterialSearchExperience";
 import { productionTaskTitle } from "../utils/productionTask";
+import { cnyToCredits } from "../utils/credits";
 
 const { Text, Title, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -275,6 +277,36 @@ function candidateRank(candidate: CrawlerCandidateResult) {
   return candidate.system_rank ?? candidate.provider_hot_rank ?? candidate.platform_rank ?? 999_999;
 }
 
+function candidateInteractionHeat(candidate: CrawlerCandidateResult) {
+  const metrics = [candidate.likes, candidate.comments, candidate.shares, candidate.favorites];
+  if (metrics.every((value) => value === null || value === undefined)) return null;
+  if (candidate.heat_score !== null && candidate.heat_score !== undefined) return candidate.heat_score;
+  return (candidate.likes ?? 0)
+    + (candidate.comments ?? 0) * 3
+    + (candidate.shares ?? 0) * 4
+    + (candidate.favorites ?? 0) * 4;
+}
+
+function compareCandidateRanking(left: CrawlerCandidateResult, right: CrawlerCandidateResult) {
+  const tier = (left.selection_tier === "reserve" ? 1 : 0)
+    - (right.selection_tier === "reserve" ? 1 : 0);
+  if (tier !== 0) return tier;
+
+  const leftHeat = candidateInteractionHeat(left);
+  const rightHeat = candidateInteractionHeat(right);
+  if (leftHeat === null && rightHeat !== null) return 1;
+  if (leftHeat !== null && rightHeat === null) return -1;
+  if (leftHeat !== null && rightHeat !== null && leftHeat !== rightHeat) return rightHeat - leftHeat;
+
+  const plays = (right.plays ?? -1) - (left.plays ?? -1);
+  if (plays !== 0) return plays;
+  const rank = candidateRank(left) - candidateRank(right);
+  if (rank !== 0) return rank;
+  const trend = (right.trend_score ?? -1) - (left.trend_score ?? -1);
+  if (trend !== 0) return trend;
+  return left.video_id.localeCompare(right.video_id);
+}
+
 function candidateSpokenUse(candidate: CrawlerCandidateResult) {
   if (candidate.spoken_material_status === "transcript_ready") {
     return { usable: true, label: "已有可用口播" };
@@ -306,31 +338,13 @@ function strictCandidates(batch: CrawlerBatchResponse, preferredCandidateId = ""
     });
   });
   const preferred = preferredCandidateId ? byId.get(preferredCandidateId) : undefined;
-  const ranked = [...byId.values()]
-    .sort((left, right) => {
-      const spoken = Number(candidateSpokenUse(right).usable)
-        - Number(candidateSpokenUse(left).usable);
-      if (spoken !== 0) return spoken;
-      const tier = (left.selection_tier === "reserve" ? 1 : 0)
-        - (right.selection_tier === "reserve" ? 1 : 0);
-      if (tier !== 0) return tier;
-      const rank = candidateRank(left) - candidateRank(right);
-      if (rank !== 0) return rank;
-      return (right.trend_score ?? -1) - (left.trend_score ?? -1);
-    });
+  const ranked = [...byId.values()].sort(compareCandidateRanking);
   if (!preferred) return ranked;
   return [preferred, ...ranked.filter((item) => item.video_id !== preferred.video_id)];
 }
 
 function selectAutomaticCandidates(candidates: CrawlerCandidateResult[], limit = 4) {
-  const ranked = [...candidates].sort((left, right) => {
-    const tier = (left.selection_tier === "reserve" ? 1 : 0)
-      - (right.selection_tier === "reserve" ? 1 : 0);
-    if (tier !== 0) return tier;
-    const rank = candidateRank(left) - candidateRank(right);
-    if (rank !== 0) return rank;
-    return (right.trend_score ?? -1) - (left.trend_score ?? -1);
-  });
+  const ranked = [...candidates].sort(compareCandidateRanking);
   const selected: CrawlerCandidateResult[] = [];
   for (const platform of ["douyin", "xiaohongshu", "kuaishou", "bilibili"]) {
     const candidate = ranked.find(
@@ -345,7 +359,7 @@ function selectAutomaticCandidates(candidates: CrawlerCandidateResult[], limit =
       selected.push(candidate);
     }
   }
-  return selected.slice(0, limit);
+  return selected.slice(0, limit).sort(compareCandidateRanking);
 }
 
 function selectSpokenAutomaticCandidates(
@@ -441,6 +455,11 @@ export default function PipelinePage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [crawlerReason, setCrawlerReason] = useState<{ kind: string; message: string } | null>(null);
   const [hotWords, setHotWords] = useState<CrawlerHotWordItem[]>([]);
+  const [materialSearchProgress, setMaterialSearchProgress] = useState<{
+    startedAt: number;
+    platforms: BrowserPlatform[];
+  } | null>(null);
+  const [materialSearchBatch, setMaterialSearchBatch] = useState<CrawlerBatchResponse | null>(null);
 
   const [profiles, setProfiles] = useState<ProductionProfile[]>([]);
   const [profileId, setProfileId] = useState("");
@@ -889,6 +908,30 @@ export default function PipelinePage() {
     platforms: browserDiscoveries.filter(sourcePlatformReady).map((item) => item.platform).filter(isBrowserPlatform),
   }), [browserDiscoveries, keyword]);
 
+  const finishMaterialSearchReveal = useCallback((batch: CrawlerBatchResponse) => {
+    const found = strictCandidates(batch);
+    setCandidates(found);
+    const automatic = selectSpokenAutomaticCandidates(found);
+    const primaryCount = Math.min(AUTO_PRIMARY_LIMIT, automatic.length);
+    const reserveCount = Math.max(0, automatic.length - primaryCount);
+    const visualCount = found.filter((candidate) => !candidateSpokenUse(candidate).usable).length;
+    setSelectedCandidateId(
+      (creationMode === "auto" ? automatic[0] : found[0])?.video_id || "",
+    );
+    if (found.length) {
+      setActionMessage(
+        creationMode === "auto"
+          ? `找到 ${found.length} 条相关素材：${primaryCount} 条进入口播筛选${reserveCount ? `，另留 ${reserveCount} 条口播候补` : ""}${visualCount ? `；${visualCount} 条疑似纯展示，只作画面参考` : ""}。`
+          : `找到 ${found.length} 条相关素材，其中 ${visualCount} 条疑似纯展示，已单独标为画面参考。`,
+      );
+    } else {
+      setCrawlerReason({ kind: "暂时没找到合适素材", message: "换一个更具体的词再试试。" });
+    }
+    setMaterialSearchBatch(null);
+    setMaterialSearchProgress(null);
+    setBusy(false);
+  }, [creationMode]);
+
   const runKeywordSearch = async () => {
     if (keyword.trim().length < 2 || keyword.trim().length > 50) {
       setActionError("请输入 2–50 个字的关键词。");
@@ -902,6 +945,11 @@ export default function PipelinePage() {
     setActionError("");
     setActionMessage("");
     setCrawlerReason(null);
+    setMaterialSearchBatch(null);
+    setMaterialSearchProgress({
+      startedAt: Date.now(),
+      platforms: [...(crawlerRequest.platforms || [])].filter(isBrowserPlatform),
+    });
     try {
       // 先由服务端按同一口径检查；客户只需点击一次，免费搜索才会继续。
       const preview = await previewCrawlerBatch(crawlerRequest);
@@ -910,33 +958,19 @@ export default function PipelinePage() {
           kind: "暂时没找到合适素材",
           message: "换一个更具体的词再试试。",
         });
+        setMaterialSearchProgress(null);
+        setBusy(false);
         return;
       }
       const batch = await createCrawlerBatch(crawlerRequest);
-      const found = strictCandidates(batch);
-      setCandidates(found);
-      const automatic = selectSpokenAutomaticCandidates(found);
-      const primaryCount = Math.min(AUTO_PRIMARY_LIMIT, automatic.length);
-      const reserveCount = Math.max(0, automatic.length - primaryCount);
-      const visualCount = found.filter((candidate) => !candidateSpokenUse(candidate).usable).length;
-      setSelectedCandidateId(
-        (creationMode === "auto" ? automatic[0] : found[0])?.video_id || "",
-      );
-      if (found.length) {
-        setActionMessage(
-          creationMode === "auto"
-            ? `找到 ${found.length} 条相关素材：${primaryCount} 条进入口播筛选${reserveCount ? `，另留 ${reserveCount} 条口播候补` : ""}${visualCount ? `；${visualCount} 条疑似纯展示，只作画面参考` : ""}。`
-            : `找到 ${found.length} 条相关素材，其中 ${visualCount} 条疑似纯展示，已单独标为画面参考。`,
-        );
-      } else {
-        setCrawlerReason({ kind: "暂时没找到合适素材", message: "换一个更具体的词再试试。" });
-      }
+      setMaterialSearchBatch(batch);
     } catch (error) {
       setCrawlerReason({
         kind: "检索没有开始",
         message: "搜索请求没有成功提交，请刷新页面后再试；你的关键词不会丢失。",
       });
-    } finally {
+      setMaterialSearchBatch(null);
+      setMaterialSearchProgress(null);
       setBusy(false);
     }
   };
@@ -1170,7 +1204,7 @@ export default function PipelinePage() {
       setActionMessage(
         status.ready_to_crawl
           ? `${label}已连接。`
-          : `${label}登录窗口已打开，请在窗口中扫码或完成验证，然后刷新状态。`,
+          : `${label}登录窗口已打开，请在窗口中扫码或完成验证，然后刷新状态。建议使用专门的采集小号登录，避免主账号风险。`,
       );
     } catch (error) {
       setActionError((error as Error).message || "平台浏览器没有打开，请稍后再试。");
@@ -1205,7 +1239,7 @@ export default function PipelinePage() {
       const connected = await connectPublishAccount(account.account_id);
       upsertPublishAccount(connected);
       setActionMessage(
-        `${PLATFORM_LABELS[platform] || platform}官方登录窗口已打开，扫码完成后系统会自动检查。`,
+        `${PLATFORM_LABELS[platform] || platform}官方登录窗口已打开，扫码完成后系统会自动检查。建议使用专门的发布小号，避免主账号风险。`,
       );
     } catch (error) {
       setActionError((error as Error).message || "发布账号扫码窗口没有打开，请稍后再试。");
@@ -2033,7 +2067,21 @@ export default function PipelinePage() {
       </Card>}
 
       {loadError && <Alert type="error" showIcon message="工作台载入失败" description={loadError} />}
-      {actionError && <Alert type="error" showIcon closable onClose={() => setActionError("")} message="当前操作未完成" description={actionError} />}
+      {actionError && (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setActionError("")}
+          message="当前操作未完成"
+          description={actionError}
+          action={actionError.includes("积分不足") ? (
+            <Button type="primary" size="small" onClick={() => navigate("/admin")}>
+              去充值
+            </Button>
+          ) : undefined}
+        />
+      )}
       {actionMessage && <Alert type="success" showIcon closable onClose={() => setActionMessage("")} message={actionMessage} />}
 
       <div className={`workspace-grid${workspace ? "" : " is-start"}`}>
@@ -2050,6 +2098,7 @@ export default function PipelinePage() {
                     className="creation-source-tabs"
                     block
                     value={sourceMode}
+                    disabled={Boolean(materialSearchProgress)}
                     options={SOURCE_OPTIONS}
                     onChange={(value) => {
                       setSourceMode(value as SourceMode);
@@ -2065,6 +2114,7 @@ export default function PipelinePage() {
                         <Input
                           size="large"
                           value={keyword}
+                          disabled={Boolean(materialSearchProgress)}
                           placeholder="例如：餐饮老板获客、汽修店避坑"
                           onChange={(event) => {
                             setKeyword(event.target.value);
@@ -2122,6 +2172,7 @@ export default function PipelinePage() {
                     <div className="creation-mode-cards" role="radiogroup" aria-label="创作方式">
                       <button
                         type="button"
+                        disabled={Boolean(materialSearchProgress)}
                         role="radio"
                         aria-checked={creationMode === "manual"}
                         aria-label="手动挑选"
@@ -2137,6 +2188,7 @@ export default function PipelinePage() {
                       </button>
                       <button
                         type="button"
+                        disabled={Boolean(materialSearchProgress)}
                         role="radio"
                         aria-checked={creationMode === "auto"}
                         aria-label="自动生成"
@@ -2162,6 +2214,17 @@ export default function PipelinePage() {
                       </Paragraph>
                     )}
                   </div>
+                )}
+
+                {sourceMode === "keyword" && materialSearchProgress && (
+                  <MaterialSearchExperience
+                    compact
+                    keyword={keyword.trim()}
+                    platforms={materialSearchProgress.platforms}
+                    startedAt={materialSearchProgress.startedAt}
+                    batch={materialSearchBatch}
+                    onRevealComplete={finishMaterialSearchReveal}
+                  />
                 )}
 
                 {crawlerReason && (
@@ -2757,7 +2820,7 @@ export default function PipelinePage() {
                   <div><span>当前阶段</span><strong>{STAGE_LABEL[currentStage] || currentStage}</strong></div>
                   <div>
                     <span>预计费用</span>
-                    <strong>{workspace.cost.known ? `¥${Number(workspace.cost.estimated_cost_cny || 0).toFixed(2)}` : "未知 · 已阻断"}</strong>
+                    <strong>{workspace.cost.known ? `${cnyToCredits(workspace.cost.estimated_cost_cny || 0)} 积分` : "未知 · 已阻断"}</strong>
                   </div>
                   <div><span>发布方式</span><strong>{workspace.publish.message || (workspace.publish.confirmed ? "已确认" : "待确认")}</strong></div>
                 </div>

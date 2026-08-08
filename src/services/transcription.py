@@ -5,6 +5,7 @@ import json
 import math
 import re
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -91,6 +92,37 @@ class TranscriptionService:
         )
         self.cloud_poll_interval_seconds = cloud_poll_interval_seconds
         self.cloud_timeout_seconds = cloud_timeout_seconds
+
+    def _debit_credits(
+        self,
+        cost_cny: Decimal | float,
+        *,
+        reason: str,
+        ref_type: str,
+        ref_id: str,
+    ) -> None:
+        """按人民币费用扣积分；费用为 0/未知不扣，余额不足抛出用户可读错误。"""
+        from src.services.credits import (
+            CreditsService,
+            InsufficientCreditsError,
+            cny_to_credits,
+        )
+
+        credits = cny_to_credits(cost_cny)
+        if credits <= 0:
+            return
+        try:
+            CreditsService(self.repository).debit(
+                credits,
+                reason,
+                ref_type=ref_type,
+                ref_id=ref_id,
+            )
+        except InsufficientCreditsError as exc:
+            raise TranscriptionError(
+                exc.message,
+                code="insufficient_credits",
+            ) from exc
 
     def create_task(
         self,
@@ -300,6 +332,12 @@ class TranscriptionService:
         try:
             duration = self._probe(media_path)
             estimated_cost = self.cloud_runtime.ensure_authorized(duration)
+            self._debit_credits(
+                estimated_cost,
+                reason="云端转写费用",
+                ref_type="transcription",
+                ref_id=task_id,
+            )
         except Exception:
             media_path.unlink(missing_ok=True)
             try:

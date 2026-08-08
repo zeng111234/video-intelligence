@@ -53,6 +53,7 @@ import type {
 } from "../api/types";
 import { useToast } from "../components/Toast";
 import { usePersistentState } from "../hooks/usePersistentState";
+import { cnyToCredits, handleCreditsError } from "../utils/credits";
 import "./TranscriptionPage.css";
 
 const { Text } = Typography;
@@ -385,7 +386,9 @@ export default function TranscriptionPage() {
       applyTask(created, false);
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      if (!handleCreditsError(err, () => navigate("/admin"))) {
+        toast.error((err as Error).message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -410,7 +413,9 @@ export default function TranscriptionPage() {
       applyTask(created, false);
       await refresh();
     } catch (err) {
-      toast.error((err as Error).message);
+      if (!handleCreditsError(err, () => navigate("/admin"))) {
+        toast.error((err as Error).message);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -556,8 +561,8 @@ export default function TranscriptionPage() {
           type="info"
           showIcon
           message="已带入候选视频"
-          description={urlFromQuery
-            ? "已预填授权直链，请确认权利主体后创建转写。"
+          description={shareTextFromQuery || urlFromQuery
+            ? "原视频链接已自动带入，请确认处理权后开始转写。"
             : `候选 ${candidateTitleFromQuery || candidateFromQuery} 暂无可直接转写媒体，请补充已授权直链或上传文件。`}
         />
       )}
@@ -789,7 +794,7 @@ export default function TranscriptionPage() {
                           action={<Button type="link" onClick={() => { setPendingUploadFile(null); setFileUploadConfirmed(false); }}>移除</Button>}
                         />
                         <Checkbox checked={fileUploadConfirmed} onChange={(event) => setFileUploadConfirmed(event.target.checked)}>
-                          我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 ¥0.20。
+                          我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 {cnyToCredits(0.2)} 积分。
                         </Checkbox>
                         <Button
                           type="primary"

@@ -135,6 +135,33 @@ class AvatarService:
                 estimated_seconds=capability.estimated_seconds,
                 is_mock=capability.mode.value == "sandbox",
             )
+            # 费用已知（>0）才扣积分；余额不足阻止提交（任务尚未落库，重试不受幂等拦截）。
+            # 管理员可在定价设置中调整"数字人生成（元/分钟）"；未设置时用供应商估算。
+            from src.services.pricing import DEFAULT_PRICING, get_price
+
+            estimated_cost = capability.estimated_cost_cny
+            pricing_minute = get_price("avatar_per_minute_cny")
+            if pricing_minute != DEFAULT_PRICING["avatar_per_minute_cny"]:
+                seconds = capability.estimated_seconds or 0
+                estimated_cost = float(pricing_minute) * seconds / 60
+            if estimated_cost:
+                from src.services.credits import (
+                    CreditsService,
+                    InsufficientCreditsError,
+                    cny_to_credits,
+                )
+
+                credits = cny_to_credits(estimated_cost)
+                if credits > 0:
+                    try:
+                        CreditsService(self.repository).debit(
+                            credits,
+                            "数字人视频生成费用",
+                            ref_type="avatar",
+                            ref_id=task.task_id,
+                        )
+                    except InsufficientCreditsError as exc:
+                        raise ValueError(exc.message) from exc
             self.repository.save_task(task)
         try:
             snapshot = self.provider.submit(request)

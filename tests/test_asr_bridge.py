@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -230,7 +229,6 @@ class TestAliyunASRProviderWithMockHTTP:
 
     def test_full_transcribe_flow(self, tmp_path):
         """模拟完整的 token -> create -> query -> parse 流程。"""
-        from src.adapters.aliyun_asr import AliyunASRProvider
 
         # 创建一个假音频文件
         audio_file = tmp_path / "test.wav"
@@ -275,7 +273,6 @@ class TestAliyunASRProviderWithMockHTTP:
 
     def test_bridge_with_aliyun_mock(self, tmp_path):
         """通过 ASRBridge 使用 AliyunASRProvider，验证适配后的接口兼容性。"""
-        from src.adapters.aliyun_asr import AliyunASRProvider
 
         audio_file = tmp_path / "test.wav"
         audio_file.write_bytes(b"\x00" * 1024)

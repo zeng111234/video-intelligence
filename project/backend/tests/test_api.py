@@ -1834,6 +1834,10 @@ class TestCopywriting:
             "xiaohongshu",
             "wechat_channels",
         ]
+        assert data["billing_label"] == "平台服务价"
+        assert data["input_price_credits_per_1k_tokens"] == "0.0015"
+        assert data["output_price_credits_per_1k_tokens"] == "0.003"
+        assert data["minimum_charge_credits"] == "0.01"
 
     def test_generate_basic(self, client: TestClient):
         resp = client.post(
@@ -1853,6 +1857,7 @@ class TestCopywriting:
         assert data["provider_name"] == "sandbox_copywriting"
         assert data["model_name"] == "sandbox-template"
         assert data["is_mock"] is True
+        assert data["charged_credits"] == 0
         assert len(data["result_variants"]) == 1
         assert data["attention_terms"] == []
         assert data["compliance_status"] == "passed"

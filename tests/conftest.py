@@ -1,6 +1,5 @@
 """共享测试配置:API Key 环境变量与默认请求头。"""
 
-import os
 
 import pytest
 

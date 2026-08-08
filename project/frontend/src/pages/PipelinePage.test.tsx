@@ -1062,6 +1062,77 @@ describe("PipelinePage customer workspace", () => {
     });
   });
 
+  it("ranks hotter materials ahead of a zero-like supplier top result", async () => {
+    const zeroLikeTopResult = {
+      ...candidate,
+      video_id: "zero-like-provider-top",
+      title: "供应商第一但零赞",
+      system_rank: 1,
+      provider_hot_rank: 1,
+      platform_rank: 1,
+      plays: 20,
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      favorites: 0,
+      heat_score: 0,
+      spoken_material_status: "transcript_ready",
+    };
+    const hotterResult = {
+      ...candidate,
+      video_id: "hotter-result",
+      title: "真实互动更高的素材",
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      system_rank: 2,
+      provider_hot_rank: 2,
+      platform_rank: 2,
+      plays: 8_000,
+      likes: 800,
+      comments: 30,
+      shares: 10,
+      favorites: 20,
+      heat_score: 1_010,
+      spoken_material_status: "text_reference",
+    };
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 7,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch([zeroLikeTopResult, hotterResult]));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    const hotterButton = await screen.findByRole("button", { name: /真实互动更高的素材/ });
+    const zeroLikeButton = screen.getByRole("button", { name: /供应商第一但零赞/ });
+    expect(hotterButton.textContent).toContain("#1");
+    expect(zeroLikeButton.textContent).toContain("#2");
+    expect(hotterButton.compareDocumentPosition(zeroLikeButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
+    expect(screen.getByRole("button", { name: /真实互动更高的素材/ }).textContent).toContain("#1");
+    expect(screen.getByRole("button", { name: /供应商第一但零赞/ }).textContent).toContain("#2");
+  });
+
   it("keeps two reserve materials idle behind the first four automatic candidates", async () => {
     const automaticPool = [1, 2, 3, 4, 5, 6].map((rank) => ({
       ...candidate,

@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import os
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -16,11 +18,33 @@ from collections.abc import Mapping
 from src.contracts import Publisher, TaskRepository
 from src.models import (
     PublishPlatform,
+    PublishSafetyState,
     PublishStatus,
     PublishTask,
     PublishTarget,
     TaskStatus,
 )
+
+# 发布防封保护（可在项目根 .env 调整）:
+# - PUBLISH_DAILY_LIMIT: 每个平台账号每天最多发布条数
+# - PUBLISH_MIN_INTERVAL_MINUTES: 同平台两条发布之间的最小间隔
+PUBLISH_DAILY_LIMIT = int(os.getenv("PUBLISH_DAILY_LIMIT", "5"))
+PUBLISH_MIN_INTERVAL_MINUTES = int(os.getenv("PUBLISH_MIN_INTERVAL_MINUTES", "15"))
+
+# 发布行为风控提示标记：一旦出现即视为平台风控信号，账号自动暂停发布
+PUBLISH_RISK_MARKERS = (
+    "发布频繁",
+    "操作频繁",
+    "访问频繁",
+    "内容违规",
+    "行为异常",
+    "频繁发布",
+    "频率过快",
+)
+# 连续失败达到该次数后自动暂停账号发布
+PUBLISH_MAX_CONSECUTIVE_FAILURES = 2
+# 风控/连续失败暂停时长
+PUBLISH_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 
 
 class PublishService:
@@ -31,6 +55,18 @@ class PublishService:
     ) -> None:
         self.repository = repository
         self.publishers = publishers
+        # 账号级发布互斥锁：同一平台同一账号同时只能有一个发布在跑，
+        # 防止同步发布与队列并发抢同一官方页面。
+        self._publish_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._publish_locks_guard = threading.Lock()
+
+    def _publish_lock(self, platform: PublishPlatform, account_id: str | None) -> threading.Lock:
+        key = (platform.value, self._account_key(platform, account_id))
+        with self._publish_locks_guard:
+            lock = self._publish_locks.get(key)
+            if lock is None:
+                lock = self._publish_locks[key] = threading.Lock()
+            return lock
 
     def available_platforms(self) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -138,6 +174,39 @@ class PublishService:
         on_progress: Callable[[PublishTask], None] | None = None,
     ) -> PublishTask:
         """发布视频到指定平台。"""
+        platform_key = target.platform.value
+        publisher = self.publishers.get(platform_key)
+        if publisher is None:
+            raise ValueError(f"未找到 {target.platform.value} 的发布适配器。")
+
+        # 账号级互斥：该账号正在被其他发布占用时直接拒绝，
+        # 防止同步发布与队列并发抢同一官方页面。
+        lock = self._publish_lock(target.platform, target.account_id)
+        if not lock.acquire(blocking=False):
+            raise ValueError(
+                "该平台账号已有发布任务正在执行，请稍后再试（防并发保护）。"
+            )
+        try:
+            return self._publish_locked(
+                video_path=video_path,
+                target=target,
+                source_pipeline_run_id=source_pipeline_run_id,
+                batch_id=batch_id,
+                on_progress=on_progress,
+            )
+        finally:
+            lock.release()
+
+    def _publish_locked(
+        self,
+        *,
+        video_path: str,
+        target: PublishTarget,
+        source_pipeline_run_id: str | None = None,
+        batch_id: str | None = None,
+        on_progress: Callable[[PublishTask], None] | None = None,
+    ) -> PublishTask:
+        """持锁状态下的实际发布流程（原 publish 主体）。"""
         video = Path(video_path)
 
         platform_key = target.platform.value
@@ -276,11 +345,241 @@ class PublishService:
         self._save(task, None)
         return task
 
+    def _publish_usage(self, platform: PublishPlatform) -> tuple[int, datetime | None]:
+        """该平台今天已发布条数与最近一次发布完成时间。
+
+        以 final_publish_started_at（最终发布点击时间）为准；
+        未真正点击发布的准备/暂停任务不计入。
+        """
+        now = datetime.now().astimezone()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        count = 0
+        last_at: datetime | None = None
+        for task in self.list_tasks():
+            if task.target.platform != platform:
+                continue
+            final_at = task.final_publish_started_at
+            if final_at is None:
+                continue
+            if final_at >= today_start:
+                count += 1
+            if last_at is None or final_at > last_at:
+                last_at = final_at
+        return count, last_at
+
+    def publish_safety_status(self) -> list[dict[str, Any]]:
+        """各平台/账号的发布安全状态：今日已发、剩余条数、下次可发、暂停信息。"""
+        now = datetime.now().astimezone()
+        result: list[dict[str, Any]] = []
+        for platform in PublishPlatform:
+            count_today, last_at = self._publish_usage(platform)
+            account_keys = {
+                self._account_key(platform, task.target.account_id)
+                for task in self.list_tasks()
+                if task.target.platform == platform
+            }
+            keys = sorted(account_keys) or ["default"]
+            for key in keys:
+                state = self.repository.get_publish_safety_state(platform.value, key)
+                blocked = bool(
+                    state and state.blocked_until and state.blocked_until > now
+                )
+                result.append(
+                    {
+                        "platform": platform.value,
+                        "account_id": key,
+                        "today_published": count_today,
+                        "daily_limit": PUBLISH_DAILY_LIMIT,
+                        "remaining_today": max(0, PUBLISH_DAILY_LIMIT - count_today),
+                        "next_allowed_at": (
+                            (last_at + timedelta(minutes=PUBLISH_MIN_INTERVAL_MINUTES)).isoformat()
+                            if last_at
+                            else None
+                        ),
+                        "blocked": blocked,
+                        "blocked_until": (
+                            state.blocked_until.isoformat()
+                            if state and state.blocked_until
+                            else None
+                        ),
+                        "blocked_reason": state.blocked_reason if state else None,
+                    }
+                )
+        return result
+
+    def resume_publish_account(
+        self, platform: PublishPlatform, account_id: str | None = None
+    ) -> dict[str, Any]:
+        """手动恢复被暂停的发布账号（清暂停与失败计数）。"""
+        key = self._account_key(platform, account_id)
+        state = self.repository.get_publish_safety_state(platform.value, key)
+        now = datetime.now().astimezone()
+        active_block = bool(
+            state and state.blocked_until and state.blocked_until > now
+        )
+        if state is not None and (
+            active_block or state.consecutive_failures > 0
+        ):
+            self.repository.update_publish_safety_state(
+                state.model_copy(
+                    update={
+                        "blocked_until": None,
+                        "blocked_reason": None,
+                        "consecutive_failures": 0,
+                        "updated_at": now,
+                    }
+                )
+            )
+        return {
+            "platform": platform.value,
+            "account_id": key,
+            "resumed": active_block,
+            "message": "已恢复该账号发布。" if active_block else "该账号当前未处于暂停状态。",
+        }
+
+    def _account_key(self, platform: PublishPlatform, account_id: str | None) -> str:
+        """账号粒度键：未指定账号时使用 default。"""
+        return (account_id or "default").strip() or "default"
+
+    def _record_publish_failure(
+        self, platform: PublishPlatform, account_id: str | None, error_text: str
+    ) -> None:
+        """记录一次发布失败：连续失败达到上限或命中风控标记时自动暂停账号。"""
+        key = self._account_key(platform, account_id)
+        state = self.repository.get_publish_safety_state(platform.value, key)
+        if state is None:
+            state = PublishSafetyState(platform=platform.value, account_id=key)
+        now = datetime.now().astimezone()
+        failures = state.consecutive_failures + 1
+        is_risk = any(marker in error_text for marker in PUBLISH_RISK_MARKERS)
+        if is_risk:
+            updated = state.model_copy(
+                update={
+                    "blocked_until": now + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
+                    "blocked_reason": (
+                        "平台提示发布频繁或操作频繁，已自动暂停该账号发布 24 小时，"
+                        "避免账号被限流。可在发布账号管理页手动恢复。"
+                    ),
+                    "consecutive_failures": failures,
+                    "updated_at": now,
+                }
+            )
+        elif failures >= PUBLISH_MAX_CONSECUTIVE_FAILURES:
+            updated = state.model_copy(
+                update={
+                    "blocked_until": now + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
+                    "blocked_reason": (
+                        f"连续 {failures} 次发布失败，已自动暂停该账号发布 24 小时，"
+                        "避免异常操作被平台盯上。请检查发布环境后到发布账号管理页恢复。"
+                    ),
+                    "consecutive_failures": failures,
+                    "updated_at": now,
+                }
+            )
+        else:
+            updated = state.model_copy(
+                update={
+                    "consecutive_failures": failures,
+                    "updated_at": now,
+                }
+            )
+        self.repository.update_publish_safety_state(updated)
+
+    def _record_publish_success(
+        self, platform: PublishPlatform, account_id: str | None
+    ) -> None:
+        """发布成功：清零连续失败计数（保留已触发的暂停状态）。"""
+        key = self._account_key(platform, account_id)
+        state = self.repository.get_publish_safety_state(platform.value, key)
+        if state is None or state.consecutive_failures == 0:
+            return
+        self.repository.update_publish_safety_state(
+            state.model_copy(
+                update={
+                    "consecutive_failures": 0,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+        )
+
     def execute_queued_task(self, task_id: str) -> PublishTask | None:
         """Execute exactly one queued task.  Called only by PublishWorker."""
         task = self.get_task(task_id)
         if task is None or task.status != TaskStatus.QUEUED:
             return task
+        # 发布防封闸门：每日条数上限 + 条间最小间隔。
+        # 超上限的任务明确失败并提示；间隔不足的任务保持排队自动等待。
+        count_today, last_at = self._publish_usage(task.target.platform)
+        if count_today >= PUBLISH_DAILY_LIMIT:
+            blocked = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "publish_status": PublishStatus.FAILED,
+                    "stage": "今日发布次数已用完",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": (
+                        f"该平台今天已发布 {count_today} 条，达到每日上限 "
+                        f"{PUBLISH_DAILY_LIMIT} 条（防封保护）。请明天再发布，"
+                        "或在项目根 .env 调整 PUBLISH_DAILY_LIMIT。"
+                    ),
+                }
+            )
+            self._save(blocked, None)
+            return blocked
+        if last_at is not None:
+            elapsed_minutes = (
+                datetime.now().astimezone() - last_at
+            ).total_seconds() / 60
+            if elapsed_minutes < PUBLISH_MIN_INTERVAL_MINUTES:
+                # 间隔不足：保持排队，下一轮 tick 自动继续等待
+                return None
+        # 账号防封暂停检查：风控提示或连续失败触发后，暂停期间任务明确失败
+        account_key = self._account_key(task.target.platform, task.target.account_id)
+        safety = self.repository.get_publish_safety_state(
+            task.target.platform.value, account_key
+        )
+        if safety and safety.blocked_until and safety.blocked_until > datetime.now().astimezone():
+            blocked = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "publish_status": PublishStatus.FAILED,
+                    "stage": "账号已暂停发布",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": (
+                        f"该发布账号已暂停：{safety.blocked_reason or '风控保护'}（"
+                        f"暂停至 {safety.blocked_until.strftime('%m-%d %H:%M')}）。"
+                        "可在发布账号管理页手动恢复。"
+                    ),
+                }
+            )
+            self._save(blocked, None)
+            return blocked
+        publisher = self.publishers.get(task.target.platform.value)
+        if publisher is None:
+            failed = task.model_copy(
+                update={
+                    "status": TaskStatus.FAILED,
+                    "publish_status": PublishStatus.FAILED,
+                    "stage": "发布适配器不存在",
+                    "updated_at": datetime.now().astimezone(),
+                    "error_message": f"未找到 {task.target.platform.value} 的发布适配器。",
+                }
+            )
+            self._save(failed, None)
+            return failed
+        # 账号级互斥：该账号正在被同步发布或其他任务占用时，保持排队下一轮再试
+        lock = self._publish_lock(task.target.platform, task.target.account_id)
+        if not lock.acquire(blocking=False):
+            return None
+        try:
+            return self._execute_queued_locked(task, running=None)
+        finally:
+            lock.release()
+
+    def _execute_queued_locked(
+        self, task: PublishTask, running: PublishTask | None
+    ) -> PublishTask | None:
+        """持锁状态下执行队列任务（原 execute_queued_task 主体）。"""
         publisher = self.publishers.get(task.target.platform.value)
         if publisher is None:
             failed = task.model_copy(
@@ -327,15 +626,20 @@ class PublishService:
                 }
             )
             self._save(updated, None)
+            self._record_publish_success(task.target.platform, task.target.account_id)
             return updated
         except Exception as exc:
+            error_text = str(exc)
+            self._record_publish_failure(
+                task.target.platform, task.target.account_id, error_text
+            )
             failed = running.model_copy(
                 update={
                     "status": TaskStatus.FAILED,
                     "publish_status": PublishStatus.FAILED,
                     "stage": "发布失败",
                     "updated_at": datetime.now().astimezone(),
-                    "error_message": str(exc),
+                    "error_message": error_text,
                 }
             )
             self._save(failed, None)

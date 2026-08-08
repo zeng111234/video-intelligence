@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from difflib import SequenceMatcher
 import json
 import re
@@ -65,6 +66,9 @@ COMPLIANCE_RISK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 
 MAX_AUTOMATIC_COPY_ATTEMPTS = 3
+COPYWRITING_INPUT_PRICE_KEY = "copywriting_input_cny_per_1k_tokens"
+COPYWRITING_OUTPUT_PRICE_KEY = "copywriting_output_cny_per_1k_tokens"
+MINIMUM_COPYWRITING_CHARGE = Decimal("0.01")
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,101 @@ class CopywritingService:
         self.repository = repository
         self.engine = engine
 
+    def _ensure_minimum_credits(
+        self,
+        *,
+        capability: dict[str, Any],
+        on_progress: Callable[[CopywritingTask], None] | None = None,
+        task: CopywritingTask | None = None,
+    ) -> None:
+        """真实模型调用前确认客户至少能支付最小计费单位。"""
+        if capability.get("mode") != "production":
+            return
+        from src.services.credits import (
+            CreditsService,
+            get_current_owner,
+        )
+
+        if get_current_owner() == "admin":
+            return
+        if not CreditsService(self.repository).can_afford(MINIMUM_COPYWRITING_CHARGE):
+            message = "积分不足，本次文案至少需要 0.01 积分，请先充值。"
+            if task is not None:
+                failed = task.model_copy(
+                    update={
+                        "status": TaskStatus.FAILED,
+                        "stage": "积分不足",
+                        "updated_at": datetime.now().astimezone(),
+                        "error_message": message,
+                    }
+                )
+                self._save(failed, on_progress)
+            raise ValueError(message)
+
+    @staticmethod
+    def token_cost_cny(token_usage: dict[str, int]) -> Decimal:
+        """按整次任务的实际输入/输出 Token 合计平台服务价。"""
+        from src.services.pricing import get_price
+
+        prompt_tokens = max(0, int(token_usage.get("prompt_tokens", 0)))
+        if prompt_tokens == 0:
+            prompt_tokens = max(
+                0,
+                int(token_usage.get("prompt_cache_hit_tokens", 0))
+                + int(token_usage.get("prompt_cache_miss_tokens", 0)),
+            )
+        completion_tokens = max(0, int(token_usage.get("completion_tokens", 0)))
+        return (
+            Decimal(prompt_tokens)
+            * get_price(COPYWRITING_INPUT_PRICE_KEY)
+            / Decimal("1000")
+            + Decimal(completion_tokens)
+            * get_price(COPYWRITING_OUTPUT_PRICE_KEY)
+            / Decimal("1000")
+        )
+
+    def _charge_token_usage(
+        self,
+        *,
+        capability: dict[str, Any],
+        task_id: str,
+        token_usage: dict[str, int],
+    ) -> float:
+        """成功后按实际 Token 扣费，返回本次实际收取积分。"""
+        if capability.get("mode") != "production":
+            return 0.0
+        from src.services.credits import CreditsService, cny_to_credits, get_current_owner
+
+        raw_cost = self.token_cost_cny(token_usage)
+        charged = cny_to_credits(raw_cost)
+        if charged <= 0 or get_current_owner() == "admin":
+            return 0.0
+        CreditsService(self.repository).debit(
+            charged,
+            "AI 文案生成费用（按 Token）",
+            ref_type="copywriting",
+            ref_id=task_id,
+        )
+        return float(charged)
+
     def capabilities(self) -> dict[str, Any]:
-        return self.engine.capabilities()
+        from src.services.pricing import get_price
+
+        capability = dict(self.engine.capabilities())
+        capability.update(
+            {
+                "billing_label": "平台服务价",
+                "input_price_credits_per_1k_tokens": str(
+                    get_price(COPYWRITING_INPUT_PRICE_KEY)
+                ),
+                "output_price_credits_per_1k_tokens": str(
+                    get_price(COPYWRITING_OUTPUT_PRICE_KEY)
+                ),
+                "minimum_charge_credits": str(MINIMUM_COPYWRITING_CHARGE),
+                "billing_rounding": "整次任务合计后向上进位保留两位小数",
+            }
+        )
+        return capability
 
     def select_best_spoken_script(
         self,
@@ -486,6 +583,11 @@ class CopywritingService:
             estimated_cost_cny=None,
         )
         self._save(task, on_progress)
+        self._ensure_minimum_credits(
+            capability=cap,
+            on_progress=on_progress,
+            task=task,
+        )
         try:
             results = self.engine.generate(
                 content_brief=content_brief,
@@ -498,13 +600,20 @@ class CopywritingService:
             )
             if not results:
                 raise RuntimeError("LLM 未返回有效内容。")
+            token_usage = self._last_usage()
+            charged_credits = self._charge_token_usage(
+                capability=cap,
+                task_id=task.task_id,
+                token_usage=token_usage,
+            )
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "文案已生成（需人工复核）",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": self._last_usage(),
+                    "token_usage": token_usage,
+                    "charged_credits": charged_credits,
                     "result_text": results[0],
                     "result_variants": results,
                 }
@@ -603,6 +712,11 @@ class CopywritingService:
             is_mock=bool(cap.get("mode") == "sandbox"),
         )
         self._save(task, None)
+        self._ensure_minimum_credits(
+            capability=cap,
+            on_progress=None,
+            task=task,
+        )
         try:
             generator = getattr(self.engine, "generate_publish_metadata", None)
             if not callable(generator):
@@ -621,13 +735,20 @@ class CopywritingService:
             if not title or not description:
                 raise RuntimeError("LLM 未返回完整的标题和发布描述。")
             result = {"title": title, "description": description, "tags": tags}
+            token_usage = self._last_usage()
+            charged_credits = self._charge_token_usage(
+                capability=cap,
+                task_id=task.task_id,
+                token_usage=token_usage,
+            )
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "发布信息生成完成",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": self._last_usage(),
+                    "token_usage": token_usage,
+                    "charged_credits": charged_credits,
                     "result_text": json.dumps(result, ensure_ascii=False),
                     "result_variants": [description],
                 }
@@ -697,6 +818,11 @@ class CopywritingService:
             is_mock=bool(cap.get("mode") == "sandbox"),
         )
         self._save(task, on_progress)
+        self._ensure_minimum_credits(
+            capability=cap,
+            on_progress=on_progress,
+            task=task,
+        )
         try:
             accumulated_usage: dict[str, int] = {}
             latest_attention_terms: list[str] = []
@@ -732,13 +858,20 @@ class CopywritingService:
                     *compliance_notes,
                     "疑似其他企业、品牌、机构或人物名称已在文案中高亮。",
                 ]
+            token_usage = accumulated_usage or self._last_usage()
+            charged_credits = self._charge_token_usage(
+                capability=cap,
+                task_id=task.task_id,
+                token_usage=token_usage,
+            )
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "改写完成",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": accumulated_usage or self._last_usage(),
+                    "token_usage": token_usage,
+                    "charged_credits": charged_credits,
                     "result_text": results[0] if results else None,
                     "result_variants": results,
                     "attention_terms": attention_terms,
@@ -812,6 +945,11 @@ class CopywritingService:
             is_mock=bool(cap.get("mode") == "sandbox"),
         )
         self._save(task, on_progress)
+        self._ensure_minimum_credits(
+            capability=cap,
+            on_progress=on_progress,
+            task=task,
+        )
         try:
             accumulated_usage: dict[str, int] = {}
             latest_attention_terms: list[str] = []
@@ -856,13 +994,20 @@ class CopywritingService:
                     *compliance_notes,
                     "疑似其他企业、品牌、机构或人物名称已在文案中高亮。",
                 ]
+            token_usage = accumulated_usage or self._last_usage()
+            charged_credits = self._charge_token_usage(
+                capability=cap,
+                task_id=task.task_id,
+                token_usage=token_usage,
+            )
             task = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "progress": 100,
                     "stage": "生成完成",
                     "updated_at": datetime.now().astimezone(),
-                    "token_usage": accumulated_usage or self._last_usage(),
+                    "token_usage": token_usage,
+                    "charged_credits": charged_credits,
                     "result_text": results[0],
                     "result_variants": results,
                     "attention_terms": attention_terms,

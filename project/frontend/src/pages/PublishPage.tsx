@@ -46,6 +46,7 @@ import {
   deletePublishTasks,
   generatePublishMetadata,
   getPublishAccountStatus,
+  getPublishSafety,
   importEditedVideoToPublish,
   listPublishAccounts,
   listPublishAssets,
@@ -53,6 +54,7 @@ import {
   listPublishPlatforms,
   preflightPublish,
   recordManualPublishResult,
+  resumePublishSafety,
   resumePublishTask,
   retryPublishTask,
   uploadPublishAsset,
@@ -63,6 +65,7 @@ import type {
   PublishPlatformCapability,
   PublishPreflightResponse,
   PublishResponse,
+  PublishSafetyItem,
 } from "../api/types";
 import { SkeletonCard } from "../components/SkeletonLoader";
 import { useToast } from "../components/Toast";
@@ -188,6 +191,7 @@ export default function PublishPage() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [addingAccount, setAddingAccount] = useState(false);
   const [accounts, setAccounts] = useState<PublishAccount[]>([]);
+  const [publishSafety, setPublishSafety] = useState<PublishSafetyItem[]>([]);
   const [accountNames, setAccountNames] = useState<Record<string, string>>({});
   const [selectedAccountIds, setSelectedAccountIds] = useState<Record<string, string>>({});
   const [availablePlatforms, setAvailablePlatforms] = useState<PublishPlatformCapability[]>([]);
@@ -249,11 +253,12 @@ export default function PublishPage() {
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [platformData, assetData, batchData, accountData] = await Promise.all([
+      const [platformData, assetData, batchData, accountData, safetyData] = await Promise.all([
         listPublishPlatforms(),
         listPublishAssets(),
         listPublishBatches(),
         listPublishAccounts(),
+        getPublishSafety().catch(() => [] as PublishSafetyItem[]),
       ]);
       const readyByPlatform = accountData.reduce<Record<string, string>>((result, account) => {
         if (account.status === "ready" && !result[account.platform]) result[account.platform] = account.account_id;
@@ -274,6 +279,7 @@ export default function PublishPage() {
       setTasks(loadedTasks);
       setSelectedTaskIds((current) => current.filter((taskId) => loadedTasks.some((task) => task.task_id === taskId)));
       setAccounts(accountData);
+      setPublishSafety(safetyData);
       setSelectedAccountIds((current) => ({ ...readyByPlatform, ...Object.fromEntries(Object.entries(current).filter(([, id]) => accountData.some((account) => account.account_id === id && account.status === "ready"))) }));
       if (Object.keys(readyByPlatform).length) setPageStep("publish");
     } catch (error) {
@@ -691,6 +697,62 @@ export default function PublishPage() {
   const selectedAccountSummary = publishTargetOptions.filter((item) => platforms.includes(item.platform));
 
   return <div className="publish-page">
+    {publishSafety.filter((item) => item.blocked).length > 0 && (
+      <Alert
+        type="warning"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="有发布账号处于防封暂停"
+        description={
+          <div>
+            {publishSafety.filter((item) => item.blocked).map((item) => (
+              <div key={`${item.platform}-${item.account_id}`} style={{ marginBottom: 6 }}>
+                <b>{platformLabel(item.platform)}</b>（{item.account_id === "default" ? "默认账号" : item.account_id}）：
+                {item.blocked_reason}
+                <Button
+                  size="small"
+                  style={{ marginLeft: 8 }}
+                  onClick={async () => {
+                    try {
+                      const result = await resumePublishSafety({
+                        platform: item.platform,
+                        account_id: item.account_id === "default" ? undefined : item.account_id,
+                      });
+                      toast.success(result.message || "已恢复");
+                      setPublishSafety(await getPublishSafety());
+                    } catch (error) {
+                      toast.error((error as Error).message || "恢复失败");
+                    }
+                  }}
+                >
+                  立即恢复
+                </Button>
+              </div>
+            ))}
+          </div>
+        }
+      />
+    )}
+    {publishSafety.some((item) => item.remaining_today < item.daily_limit) && (
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="发布保护已开启"
+        description={
+          <div>
+            每个平台每天最多发布 {publishSafety[0]?.daily_limit ?? 5} 条，两条之间至少间隔 15 分钟（防封保护，可在 .env 调整）。
+            {publishSafety.map((item) => (
+              item.remaining_today < item.daily_limit ? (
+                <div key={`${item.platform}-${item.account_id}`} style={{ marginTop: 4 }}>
+                  {platformLabel(item.platform)}：今日已发 {item.today_published} 条，剩余 {item.remaining_today} 条
+                </div>
+              ) : null
+            ))}
+          </div>
+        }
+      />
+    )}
     {pageStep === "configure" && <><div className="publish-page-heading">
       <div>
         <Title level={3} style={{ margin: 0 }}>发布中心</Title>

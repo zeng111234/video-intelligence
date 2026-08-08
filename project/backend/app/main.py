@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -13,17 +14,22 @@ if _project_root not in sys.path:
 
 from contextlib import asynccontextmanager  # noqa: E402
 
-from fastapi import FastAPI, Depends, Request  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import HTTPException, RequestValidationError  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import HTMLResponse, JSONResponse  # noqa: E402
 from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 
 from project.backend.app.core.security import (  # noqa: E402
+    check_auth_rate_limit,
     check_rate_limit,
     verify_api_key,
+    verify_auth_token,
 )
+from src.services.credits import set_current_owner  # noqa: E402
 
+from project.backend.app.api.v1.auth import router as auth_router  # noqa: E402
+from project.backend.app.api.v1.customer_admin import router as customer_admin_router  # noqa: E402
 from project.backend.app.api.v1.candidates import router as candidates_router  # noqa: E402
 from project.backend.app.api.v1.transcriptions import router as transcriptions_router  # noqa: E402
 from project.backend.app.api.v1.pipelines import router as pipelines_router  # noqa: E402
@@ -32,6 +38,7 @@ from project.backend.app.api.v1.feedback import router as feedback_router  # noq
 from project.backend.app.api.v1.tasks import router as tasks_router  # noqa: E402
 from project.backend.app.api.v1.admin import router as admin_router  # noqa: E402
 from project.backend.app.api.v1.copywriting import router as copywriting_router  # noqa: E402
+from project.backend.app.api.v1.credits import router as credits_router  # noqa: E402
 from project.backend.app.api.v1.video_editor import router as video_editor_router  # noqa: E402
 from project.backend.app.api.v1.publish import router as publish_router  # noqa: E402
 from project.backend.app.api.v1.crawler import router as crawler_router  # noqa: E402
@@ -47,7 +54,6 @@ _SWAGGER_CSS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui.css"
 _SWAGGER_JS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"
 
 # 安全配置
-import os
 _IS_PRODUCTION = os.getenv("APP_ENV", "development").lower() == "production"
 _ENABLE_DOCS = os.getenv("ENABLE_DOCS", "false" if _IS_PRODUCTION else "true").lower() == "true"
 
@@ -65,21 +71,16 @@ async def lifespan(application: FastAPI):
     # 初始化API Key
     try:
         from project.backend.app.core.security import API_KEY_FILE, get_or_create_api_key
-        api_key = get_or_create_api_key()
-        if not API_KEY_FILE.exists():
-            #首次生成，打印完整Key
-            print("\n" + "="*60)
-            print("您的 API Key（请立即保存，不会再次显示）：")
-            print(f"  {api_key}")
-            print("="*60)
-            print(f"使用方法：请求头添加 X-API-Key: {api_key}")
-            print("="*60 + "\n")
+
+        api_key_file_existed = API_KEY_FILE.exists()
+        configured_in_env = bool(os.getenv("API_KEY", "").strip())
+        get_or_create_api_key()
+        if not api_key_file_existed and not configured_in_env:
+            logger.warning(
+                "已生成仅哈希保存的 API Key；请改在 .env 配置 API_KEY 供受信脚本使用。"
+            )
         else:
-            print("\n" + "="*60)
-            print("API 认证已启用")
-            print("所有 /api/* 端点需要 X-API-Key 请求头")
-            print("访问 /api-key-info 查看配置信息")
-            print("="*60 + "\n")
+            logger.info("API Key 脚本认证已启用（密钥不会输出到日志）。")
     except Exception as exc:
         logger.warning("API Key 初始化失败: %s", exc)
 
@@ -151,13 +152,13 @@ app.add_middleware(
 # 认证中间件 - 对所有 /api/* 路径进行验证
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """API认证中间件。"""
+    """API认证中间件：客户 token / 管理员 token / API Key（兼容）三选一。"""
     # 公开端点
     public_paths = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
-    # 媒体流端点:<video>/<audio> 标签与 <a download> 无法附加 X-API-Key 头,
-    # 这类路径(以 /media 或 /download 结尾)跳过 API Key 校验。
+    # 媒体流端点的 <video>/<audio> 标签无法附加自定义 header，单独接受
+    # 管理员登录时写入的 HttpOnly Cookie；客户资源尚未具有 owner 字段，暂不开放。
     is_media_stream = request.url.path.endswith("/media") or request.url.path.endswith("/download")
-    if request.url.path in public_paths or is_media_stream:
+    if request.url.path in public_paths:
         return await call_next(request)
 
     # OPTIONS请求（CORS预检）
@@ -166,9 +167,74 @@ async def auth_middleware(request: Request, call_next):
 
     # API路径需要验证
     if request.url.path.startswith("/api/"):
+        if is_media_stream:
+            media_token = (
+                request.headers.get("X-Admin-Token")
+                or request.cookies.get("vi_admin_media_token")
+            )
+            record = verify_auth_token(media_token) if media_token else None
+            if not record or record["role"] != "admin":
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": True,
+                        "code": 401,
+                        "message": "媒体预览需要管理员登录；客户工作区正在升级资源隔离。",
+                    },
+                )
+            request.state.admin_username = record["subject"]
+            set_current_owner("admin")
+            return await call_next(request)
+        # 登录接口本身公开（客户/管理员登录、健康检查）
+        if request.url.path.startswith("/api/v1/auth/"):
+            try:
+                await check_auth_rate_limit(request)
+            except HTTPException as e:
+                return JSONResponse(status_code=e.status_code, content=e.detail)
+            return await call_next(request)
         try:
+            # 1) 客户登录 token（普通用户身份）
+            customer_token = request.headers.get("X-Customer-Token")
+            if customer_token:
+                record = verify_auth_token(customer_token)
+                if record and record["role"] == "customer":
+                    customer_safe_paths = {
+                        "/api/v1/credits",
+                        "/api/v1/credits/recharge-request",
+                        "/api/v1/credits/recharge-requests/mine",
+                    }
+                    if request.url.path not in customer_safe_paths:
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "error": True,
+                                "code": 403,
+                                "message": "客户工作区正在升级数据隔离，当前仅可查看余额和充值申请。",
+                            },
+                        )
+                    request.state.customer_code = record["subject"]
+                    set_current_owner(record["subject"])
+                    return await call_next(request)
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": True, "code": 401, "message": "登录已过期，请重新输入激活码。"},
+                )
+            # 2) 管理员登录 token
+            admin_token = request.headers.get("X-Admin-Token")
+            if admin_token:
+                record = verify_auth_token(admin_token)
+                if record and record["role"] == "admin":
+                    request.state.admin_username = record["subject"]
+                    set_current_owner("admin")
+                    return await call_next(request)
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": True, "code": 401, "message": "管理员登录已过期，请重新登录。"},
+                )
+            # 3) 兼容旧 API Key（脚本/测试通道）
             await verify_api_key(request)
             await check_rate_limit(request)
+            set_current_owner("api_key")
         except HTTPException as e:
             return JSONResponse(
                 status_code=e.status_code,
@@ -248,23 +314,14 @@ async def health():
 
 @app.get("/api-key-info", include_in_schema=False)
 async def api_key_info():
-    """显示API Key信息（仅首次启动时显示完整Key）。"""
-    from project.backend.app.core.security import API_KEY_FILE, get_or_create_api_key
+    """仅返回 API Key 的配置状态，绝不通过 HTTP 输出密钥。"""
+    from project.backend.app.core.security import API_KEY_FILE
 
-    if API_KEY_FILE.exists():
-        return {
-            "message": "API Key 已配置",
-            "header": "X-API-Key",
-            "note": "完整Key仅在首次生成时显示一次，请妥善保管"
-        }
-    else:
-        key = get_or_create_api_key()
-        return {
-            "message": "已生成新的 API Key",
-            "api_key": key,
-            "header": "X-API-Key",
-            "warning": "请立即保存此Key，它不会再次显示！"
-        }
+    return {
+        "configured": bool(os.getenv("API_KEY", "").strip()) or API_KEY_FILE.exists(),
+        "header": "X-API-Key",
+        "note": "密钥仅应保存在服务端 .env，网页不会显示或保存它。",
+    }
 
 
 # ---------- 自包含首页 HTML ----------
@@ -357,6 +414,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 
 
 # 注册路由
+app.include_router(auth_router)
+app.include_router(customer_admin_router)
 app.include_router(candidates_router)
 app.include_router(transcriptions_router)
 app.include_router(pipelines_router)
@@ -365,6 +424,7 @@ app.include_router(feedback_router)
 app.include_router(tasks_router)
 app.include_router(admin_router)
 app.include_router(copywriting_router)
+app.include_router(credits_router)
 app.include_router(video_editor_router)
 app.include_router(publish_router)
 app.include_router(crawler_router)

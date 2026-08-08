@@ -194,7 +194,11 @@ class LocalDouyinBrowserParserClient:
         captured: dict[str, str] = {}
         try:
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(channel=self.browser_channel, headless=True)
+                browser = playwright.chromium.launch(
+                    channel=self.browser_channel,
+                    headless=True,
+                    args=["--disable-features=OptimizationGuideOnDeviceModel"],
+                )
                 context = None
                 try:
                     context = browser.new_context(

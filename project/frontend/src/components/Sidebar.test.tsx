@@ -12,7 +12,10 @@ function LocationProbe() {
 }
 
 describe("Sidebar", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    localStorage.removeItem("vi_admin_token");
+    cleanup();
+  });
 
   it("keeps customer workflow focused and hides support settings", () => {
     render(
@@ -34,6 +37,8 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: /字幕工具/ })).toBeNull();
     expect(screen.queryByText("支持")).toBeNull();
     expect(screen.queryByRole("button", { name: /帮助中心/ })).toBeNull();
+    // 系统管理模块已从导航移除，任何用户都看不到该入口
+    expect(screen.queryByRole("button", { name: /系统管理/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /系统设置/ })).toBeNull();
   });
 

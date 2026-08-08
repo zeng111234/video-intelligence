@@ -34,6 +34,7 @@ from src.models import (
     VideoEditorBatch,
     VideoEditorBatchItem,
 )
+from src.services.credits import InsufficientCreditsError
 
 
 _WORKFLOW_EXECUTOR = ThreadPoolExecutor(
@@ -90,6 +91,30 @@ class VideoEditorWorkflowService:
         self.copywriting_service = copywriting_service
         self._cloud_configuration_override = cloud_configuration
         self._cloud_providers_override = cloud_providers
+
+    def _debit_credits(
+        self,
+        cost_cny: Decimal | float,
+        *,
+        reason: str,
+        ref_type: str,
+        ref_id: str,
+    ) -> None:
+        """按人民币费用扣积分；费用为 0/未知不扣，余额不足抛出 InsufficientCreditsError。"""
+        from src.services.credits import (
+            CreditsService,
+            cny_to_credits,
+        )
+
+        credits = cny_to_credits(cost_cny)
+        if credits <= 0:
+            return
+        CreditsService(self.repository).debit(
+            credits,
+            reason,
+            ref_type=ref_type,
+            ref_id=ref_id,
+        )
 
     # ------------------------------------------------------------------
     # 系统素材
@@ -1701,6 +1726,18 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError(
                 "同一请求正在处理或结果待确认；系统不会重复提交付费任务。"
             )
+
+        # 报价确认已通过且幂等锁已取得：按报价扣积分，余额不足则回滚幂等锁并阻止。
+        try:
+            self._debit_credits(
+                quote.estimated_total,
+                reason="云端剪辑成片费用",
+                ref_type="video_editor",
+                ref_id=quote_id,
+            )
+        except InsufficientCreditsError as exc:
+            self.repository.delete_video_editor_operation(idempotency_key)
+            raise VideoEditorWorkflowError(exc.message) from exc
 
         item = VideoEditorBatchItem(
             source_id=source_id,

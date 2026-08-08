@@ -537,7 +537,11 @@ export default function AiCopyPage() {
               )}
 
               <div className="ai-copy-compose-actions">
-                <Text type="secondary">内容会自动保存在本机</Text>
+                <Text type="secondary">
+                  平台服务价：输入 {capability?.input_price_credits_per_1k_tokens ?? "0.0015"}、
+                  输出 {capability?.output_price_credits_per_1k_tokens ?? "0.003"} 积分/千 Token；
+                  整次合计后向上进位到 0.01 积分
+                </Text>
                 <Button
                   type="primary"
                   icon={<EditOutlined />}
@@ -560,6 +564,11 @@ export default function AiCopyPage() {
                     {pendingReviewRows.length}处需核对
                   </span>
                   <span className="ai-copy-summary-chip is-info"><InfoCircleFilled /> 事实信息已保留</span>
+                  {lastResponse?.charged_credits != null && (
+                    <span className="ai-copy-summary-chip is-info">
+                      本次扣费 {lastResponse.charged_credits.toFixed(2)} 积分
+                    </span>
+                  )}
                 </Space>
                 <Segmented
                   aria-label="段落筛选"

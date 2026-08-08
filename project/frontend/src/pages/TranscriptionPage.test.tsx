@@ -150,6 +150,7 @@ describe("TranscriptionPage", () => {
   });
 
   it("opens on the multi-platform link entry and starts transcription in one click", async () => {
+    const sourceUrl = "https://www.bilibili.com/video/BV18m421j7jA";
     vi.mocked(createCrawlerLinkTranscription).mockResolvedValue({
       status: "succeeded",
       message: "已创建转写任务",
@@ -158,12 +159,11 @@ describe("TranscriptionPage", () => {
       transcription: autoReviewedTask,
     });
     render(
-      <MemoryRouter initialEntries={["/transcription"]}>
+      <MemoryRouter initialEntries={[`/transcription?share_text=${encodeURIComponent(sourceUrl)}`]}>
         <ToastProvider><TranscriptionPage /></ToastProvider>
       </MemoryRouter>,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /新建转写/ }));
     const platformLinkTab = await screen.findByRole("tab", { name: /平台分享链接/ });
     expect(platformLinkTab.getAttribute("aria-selected")).toBe("true");
     const linkInput = await screen.findByPlaceholderText("粘贴抖音、小红书、快手或B站分享链接");
@@ -174,12 +174,12 @@ describe("TranscriptionPage", () => {
     expect(screen.queryByText("链接解析已就绪")).toBeNull();
     expect(screen.queryByRole("button", { name: "识别链接" })).toBeNull();
 
-    fireEvent.change(linkInput, { target: { value: "https://www.bilibili.com/video/BV18m421j7jA" } });
+    await waitFor(() => expect((linkInput as HTMLTextAreaElement).value).toBe(sourceUrl));
     fireEvent.click(screen.getByRole("button", { name: "开始转写" }));
 
     await waitFor(() => expect(createCrawlerLinkTranscription).toHaveBeenCalledTimes(1));
     expect(vi.mocked(createCrawlerLinkTranscription).mock.calls[0][0]).toMatchObject({
-      shareText: "https://www.bilibili.com/video/BV18m421j7jA",
+      shareText: sourceUrl,
       rightsConfirmed: true,
       modelName: "fun-asr",
     });

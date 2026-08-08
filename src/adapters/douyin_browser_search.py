@@ -47,6 +47,16 @@ from src.services.commercial_search import title_matches_keyword
 
 _VIDEO_ID_RE = re.compile(r"/video/(\d{10,})")
 _LOGIN_MARKERS = ("安全验证", "扫码登录", "请完成验证")
+
+
+def _safe_error(exc: BaseException) -> str:
+    """截断异常文本，避免向用户暴露过长或敏感的底层细节。"""
+    text = str(exc).strip()
+    if len(text) > 200:
+        text = text[:200] + "..."
+    return text or exc.__class__.__name__
+
+
 _HOTSPOT_SUPPORTED_WINDOW_HOURS = {1, 24, 72, 168}
 _HOTSPOT_DEFAULT_WINDOW_HOURS = 168
 _HOTSPOT_LIST_TYPES = (1001, 1002, 1003, 1004, 1005)
@@ -724,7 +734,7 @@ class LocalDouyinBrowserSearchProvider:
                             errors.append(
                                 ProviderSearchError(
                                     kind=ProviderErrorKind.CONNECTION,
-                                    message=f"热点宝{_HOTSPOT_LIST_LABELS[list_type]}读取失败，已跳过该榜单：{exc}",
+                                    message=f"热点宝{_HOTSPOT_LIST_LABELS[list_type]}读取失败，已跳过该榜单：{_safe_error(exc)}",
                                     retryable=False,
                                 )
                             )
@@ -782,7 +792,7 @@ class LocalDouyinBrowserSearchProvider:
                     except Exception as exc:
                         errors.append(ProviderSearchError(
                             kind=ProviderErrorKind.CONNECTION,
-                            message=f"热点宝话题榜读取失败，已跳过：{exc}",
+                            message=f"热点宝话题榜读取失败，已跳过：{_safe_error(exc)}",
                             retryable=False,
                         ))
 
@@ -815,7 +825,7 @@ class LocalDouyinBrowserSearchProvider:
                     except Exception as exc:
                         errors.append(ProviderSearchError(
                             kind=ProviderErrorKind.CONNECTION,
-                            message=f"抖音搜索读取失败，已跳过：{exc}",
+                            message=f"抖音搜索读取失败，已跳过：{_safe_error(exc)}",
                             retryable=False,
                         ))
 

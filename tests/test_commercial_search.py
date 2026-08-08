@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.adapters.licensed import LicensedProviderError, SandboxLicensedSearchProvider
 from src.models import (
     DataSource,
@@ -166,6 +168,26 @@ def test_douyin_only_service_never_calls_other_platforms() -> None:
     assert preview[0].estimated_cost_cny == 0.09
     assert batch.platforms == [Platform.DOUYIN]
     assert [run.platform for run in runs] == [Platform.DOUYIN]
+
+
+def test_production_crawler_does_not_debit_customer_credits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """即使底层商业供应商有单价，找素材也不能扣客户积分。"""
+    from src.services.credits import CreditsService
+
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.endpoint_prices_cny = {Platform.DOUYIN: 0.03}
+
+    def _unexpected_debit(*_args, **_kwargs):
+        raise AssertionError("crawler must not debit credits")
+
+    monkeypatch.setattr(CreditsService, "debit", _unexpected_debit)
+    batch = _douyin_only_service(repository, provider, now).execute(keyword="找素材")
+
+    assert batch.status.value in {"succeeded", "partial"}
     assert provider.search_calls == [Platform.DOUYIN]
 
 

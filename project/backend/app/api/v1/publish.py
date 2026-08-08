@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Security, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -21,6 +21,7 @@ from project.backend.app.core import config as backend_config
 from project.backend.app.core import deps as backend_deps
 from project.backend.app.core.config import PROJECT_ROOT
 from project.backend.app.core.deps import get_publish_service, get_repository
+from project.backend.app.core.security import require_admin_token
 from src.services.publish_accounts import PublishAccountError, publish_account_manager
 
 router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
@@ -692,8 +693,10 @@ def _connection_callback_page(message: str, *, succeeded: bool) -> HTMLResponse:
 
 
 @router.get("/config", response_model=PublishConfigResponse)
-def get_publish_config():
-    """读取发布配置状态，不回显完整密钥。"""
+def get_publish_config(
+    _admin: bool = Security(require_admin_token),
+):
+    """读取发布配置状态（仅管理员），不回显完整密钥。"""
     return PublishConfigResponse(
         env_path=str(backend_config.ENV_PATH),
         platforms=[
@@ -712,8 +715,9 @@ def get_publish_config():
 def update_publish_config(
     platform: str,
     body: PublishPlatformConfigUpdate,
+    _admin: bool = Security(require_admin_token),
 ):
-    """保存单个平台发布配置到根目录 .env。"""
+    """保存单个平台发布配置到根目录 .env（仅管理员）。"""
     updates = _config_updates(platform, body)
     _update_env_file(updates)
     return _platform_config(platform)
@@ -798,6 +802,53 @@ def list_platforms(
 ):
     """列出可用发布平台。"""
     return {"platforms": service.available_platforms()}
+
+
+class PublishSafetyItem(BaseModel):
+    platform: str
+    account_id: str
+    today_published: int
+    daily_limit: int
+    remaining_today: int
+    next_allowed_at: str | None = None
+    blocked: bool = False
+    blocked_until: str | None = None
+    blocked_reason: str | None = None
+
+
+class PublishSafetyResumeRequest(BaseModel):
+    platform: str
+    account_id: str | None = None
+
+
+class PublishSafetyResumeResponse(BaseModel):
+    platform: str
+    account_id: str
+    resumed: bool
+    message: str
+
+
+@router.get("/safety", response_model=list[PublishSafetyItem])
+def get_publish_safety_status(
+    service=Depends(get_publish_service),
+):
+    """各平台/账号发布安全状态：今日剩余条数、下次可发时间、暂停信息。"""
+    return service.publish_safety_status()
+
+
+@router.post("/safety/resume", response_model=PublishSafetyResumeResponse)
+def resume_publish_safety(
+    body: PublishSafetyResumeRequest,
+    service=Depends(get_publish_service),
+):
+    """手动恢复被暂停的发布账号（清暂停与失败计数）。"""
+    from src.models import PublishPlatform
+
+    try:
+        platform = PublishPlatform(body.platform)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"不支持的平台: {body.platform}") from None
+    return service.resume_publish_account(platform, body.account_id)
 
 
 @router.get("/accounts", response_model=list[PublishAccountResponse])

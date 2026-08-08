@@ -45,6 +45,13 @@ CLOUD_VOICE_UPLOAD_EXTENSIONS = {".wav", ".mp3", ".m4a"}
 MAX_CLOUD_AVATAR_UPLOAD_BYTES = 500 * 1024 * 1024
 MAX_CLOUD_VOICE_UPLOAD_BYTES = 20 * 1024 * 1024
 
+def _training_credits(kind: str) -> int:
+    """训练一口价积分：管理员可在定价设置中调整（默认声音 60 / 脸部 100）。"""
+    from src.services.pricing import get_price
+
+    key = "avatar_voice_training_credits" if kind == "voice" else "avatar_face_training_credits"
+    return int(get_price(key))
+
 
 class AvatarJobCreate(BaseModel):
     """客户版数字人任务请求。"""
@@ -230,6 +237,13 @@ def train_cloud_avatar(
         provider = service.provider
         if not isinstance(provider, ShuyingLegacyAvatarProvider):
             raise HTTPException(status_code=503, detail="当前数字人供应商不支持云形象训练。")
+        # 训练收费：校验通过后扣积分（余额不足阻止；与数字人生成扣费一致）
+        _debit_training_credits(
+            service,
+            _training_credits("face"),
+            "云形象（脸部）训练费用",
+            ref_id=f"face-{display_name}",
+        )
         return provider.create_cloud_avatar(
             name=display_name, training_video_path=path, filename=file.filename or "training.mp4"
         )
@@ -268,6 +282,13 @@ def train_cloud_voice(
         if not isinstance(provider, ShuyingLegacyAvatarProvider):
             raise HTTPException(status_code=503, detail="当前数字人供应商不支持声音克隆。")
         mime_type = mimetypes.guess_type(file.filename or "")[0] or "audio/mpeg"
+        # 训练收费：校验通过后扣积分（余额不足阻止；与数字人生成扣费一致）
+        _debit_training_credits(
+            service,
+            _training_credits("voice"),
+            "声音训练费用",
+            ref_id=f"voice-{display_name}",
+        )
         if capability.supports_voice_cloning:
             return provider.create_voice_clone(
                 name=display_name,
@@ -554,6 +575,22 @@ def _asset_names(
         if item.kind == AvatarAssetKind.VOICE
     }
     return avatars.get(avatar_id, avatar_id), voices.get(voice_id, voice_id)
+
+
+def _debit_training_credits(service: AvatarService, credits: int, reason: str, ref_id: str) -> None:
+    """提交训练前扣积分；余额不足直接拒绝（与数字人生成扣费一致）。"""
+    if credits <= 0:
+        return
+    from decimal import Decimal
+
+    from src.services.credits import CreditsService, InsufficientCreditsError
+
+    try:
+        CreditsService(service.repository).debit(
+            Decimal(credits), reason, ref_type="avatar_training", ref_id=ref_id
+        )
+    except InsufficientCreditsError as exc:
+        raise HTTPException(status_code=400, detail=exc.message) from exc
 
 
 def _stage_cloud_upload(

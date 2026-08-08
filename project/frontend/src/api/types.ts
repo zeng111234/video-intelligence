@@ -1026,6 +1026,7 @@ export interface CopywritingResponse {
   model_name: string;
   is_mock: boolean;
   token_usage: Record<string, number>;
+  charged_credits: number | null;
   result_text: string | null;
   result_variants: string[];
   attention_terms: string[];
@@ -1067,6 +1068,11 @@ export interface CopywritingCapabilitiesResponse {
   max_variants: number;
   supported_platforms: string[];
   missing_configuration: string[];
+  billing_label: string;
+  input_price_credits_per_1k_tokens: string;
+  output_price_credits_per_1k_tokens: string;
+  minimum_charge_credits: string;
+  billing_rounding: string;
 }
 
 export interface CopywritingGenerateRequest {
@@ -1120,6 +1126,7 @@ export interface PublishMetadataResponse {
   title: string;
   description: string;
   tags: string[];
+  charged_credits: number | null;
 }
 
 export interface PublishPlatformsResponse {
@@ -1156,6 +1163,18 @@ export interface PublishPreflightPlatform {
   account_status: "needs_login" | "browser_open" | "ready" | "missing" | string | null;
   missing_configuration: string[];
   manual_steps: string[];
+}
+
+export interface PublishSafetyItem {
+  platform: string;
+  account_id: string;
+  today_published: number;
+  daily_limit: number;
+  remaining_today: number;
+  next_allowed_at: string | null;
+  blocked: boolean;
+  blocked_until: string | null;
+  blocked_reason: string | null;
 }
 
 export interface PublishPreflightResponse {
@@ -1883,4 +1902,42 @@ export interface SubtitleStatusResponse {
   supported_models: string[];
   default_model: string;
   reason?: string;
+}
+
+// ====== 积分系统 ======
+
+export interface CreditTransaction {
+  id: number;
+  amount: string;
+  balance_after: string;
+  reason: string;
+  ref_type?: string | null;
+  ref_id?: string | null;
+  created_at: string;
+}
+
+export interface CreditBalanceResponse {
+  balance: string;
+  transactions: CreditTransaction[];
+}
+
+export interface CreditAdjustRequest {
+  amount: number;
+  reason: string;
+  owner?: string;
+  ref_type?: string;
+  ref_id?: string;
+}
+
+export interface CustomerLoginResponse {
+  token: string;
+  role: string;
+  code: string;
+  name: string;
+  balance: string;
+}
+
+export interface AdminLoginResponse {
+  token: string;
+  expires_in_seconds: number;
 }

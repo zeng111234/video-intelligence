@@ -17,6 +17,10 @@ import type {
   CopywritingResponse,
   CopywritingRewriteRequest,
   CopywritingSummaryResponse,
+  CreditAdjustRequest,
+  CreditBalanceResponse,
+  AdminLoginResponse,
+  CustomerLoginResponse,
   CrawlerBatchListResponse,
   CrawlerBatchResponse,
   CrawlerBrowserDiscoveryCapabilities,
@@ -95,20 +99,79 @@ import type {
 
 const BASE = "/api/v1";
 
-// API Key 配置（从环境变量读取或使用默认值）
-const API_KEY = import.meta.env.VITE_API_KEY || "local-dev-key-2024";
+// 客户/管理员登录 token（localStorage），请求时按身份携带
+const CUSTOMER_TOKEN_KEY = "vi_customer_token";
+const ADMIN_TOKEN_KEY = "vi_admin_token";
+
+function getStoredToken(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function getCustomerToken(): string | null {
+  return getStoredToken(CUSTOMER_TOKEN_KEY);
+}
+
+export function getAdminToken(): string | null {
+  return getStoredToken(ADMIN_TOKEN_KEY);
+}
+
+export function clearCustomerSession(): void {
+  const token = getCustomerToken();
+  try {
+    localStorage.removeItem(CUSTOMER_TOKEN_KEY);
+    localStorage.removeItem("vi_customer_name");
+    localStorage.removeItem("vi_customer_code");
+  } catch {
+    // 忽略存储异常
+  }
+  if (token) {
+    void fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      headers: { "X-Customer-Token": token },
+      credentials: "include",
+    }).catch(() => undefined);
+  }
+}
+
+export function clearAdminSession(): void {
+  const token = getAdminToken();
+  try {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+  } catch {
+    // 忽略存储异常
+  }
+  if (token) {
+    void fetch(`${BASE}/auth/logout`, {
+      method: "POST",
+      headers: { "X-Admin-Token": token },
+      credentials: "include",
+    }).catch(() => undefined);
+  }
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const customerToken = getCustomerToken();
+  const adminToken = getAdminToken();
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  // 客户 token 优先；管理操作由后端按 X-Admin-Token 单独校验
+  if (customerToken && !headers.has("X-Customer-Token")) {
+    headers.set("X-Customer-Token", customerToken);
+  }
+  if (adminToken && !headers.has("X-Admin-Token")) {
+    headers.set("X-Admin-Token", adminToken);
+  }
   const method = (init?.method || "GET").toUpperCase();
   const canRetry = method === "GET";
   const run = () =>
     fetch(`${BASE}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": API_KEY,
-        ...init?.headers,
-      },
       ...init,
+      headers,
+      credentials: "include",
     });
   let resp: Response;
   try {
@@ -127,22 +190,42 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!resp.ok) {
-    const body = await resp.json().catch(() => ({}));
-    const detail = typeof body.detail === "string"
-      ? body.detail
-      : typeof body.detail?.message === "string"
-        ? body.detail.message
-        : undefined;
-    const statusMessages: Record<number, string> = {
-      400: "请求参数错误",
-      404: "请求的资源不存在",
-      500: "服务器内部错误",
-      502: "后端服务未响应",
-      503: "服务暂时不可用",
-    };
-    throw new Error(
-      detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
-    );
+    if (resp.status === 401) {
+      const body = await resp.json().catch(() => ({}));
+      const errorMessage =
+        typeof body?.message === "string"
+          ? body.message
+          : typeof body?.detail === "string"
+            ? body.detail
+            : "";
+      if (errorMessage.includes("管理员登录已过期") || errorMessage.includes("管理员账号或密码")) {
+        // 管理员凭证过期（如后端重启后内存凭证失效）：清除后刷新，
+        // 由登录页/管理入口引导重新登录
+        clearAdminSession();
+        window.location.reload();
+        throw new Error("管理员登录已过期，请重新登录。");
+      }
+      if (customerToken && !path.startsWith("/auth/")) {
+        // 客户登录过期：清会话，由登录页兜底
+        clearCustomerSession();
+        window.location.reload();
+      }
+      const detail = typeof body.detail === "string"
+        ? body.detail
+        : typeof body.detail?.message === "string"
+          ? body.detail.message
+          : undefined;
+      const statusMessages: Record<number, string> = {
+        400: "请求参数错误",
+        404: "请求的资源不存在",
+        500: "服务器内部错误",
+        502: "后端服务未响应",
+        503: "服务暂时不可用",
+      };
+      throw new Error(
+        detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
+      );
+    }
   }
   // 删除接口以 204 表示已完成且不返回 JSON。继续解析响应体会把成功误判为失败，
   // 从而阻断调用方即时更新页面列表。
@@ -705,6 +788,179 @@ export function getAdminStatus(): Promise<AdminStatusResponse> {
   return request("/admin/status");
 }
 
+/* ---- 积分账户 ---- */
+
+export function getCredits(): Promise<CreditBalanceResponse> {
+  return request("/credits");
+}
+
+/** 管理员登录（账号+密码；兼容旧版 password-only） */
+export function adminLogin(
+  password: string,
+  username = "admin",
+): Promise<AdminLoginResponse> {
+  return request("/auth/admin-login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+/** 客户激活码登录 */
+export function customerLogin(code: string): Promise<CustomerLoginResponse> {
+  return request("/auth/customer-login", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export function adjustCredits(
+  body: CreditAdjustRequest,
+  adminToken?: string,
+): Promise<CreditBalanceResponse> {
+  return request("/credits/adjust", {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: adminToken ? { "X-Admin-Token": adminToken } : undefined,
+  });
+}
+
+/* ---- 充值请求（客户提交，管理员审批） ---- */
+
+export interface RechargeRequestItem {
+  id: number;
+  customer_code: string;
+  amount: string;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+}
+
+/** 客户提交充值请求 */
+export function createRechargeRequest(body: {
+  amount: number;
+  reason?: string;
+}): Promise<RechargeRequestItem> {
+  return request("/credits/recharge-request", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** 客户查看自己的充值请求 */
+export function listMyRechargeRequests(): Promise<RechargeRequestItem[]> {
+  return request("/credits/recharge-requests/mine");
+}
+
+/** 管理员查看所有充值请求 */
+export function listRechargeRequests(params?: {
+  status?: string;
+  customer_code?: string;
+}): Promise<RechargeRequestItem[]> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set("status", params.status);
+  if (params?.customer_code) query.set("customer_code", params.customer_code);
+  const qs = query.toString();
+  return request(`/credits/recharge-requests${qs ? `?${qs}` : ""}`);
+}
+
+/** 管理员审批充值请求 */
+export function reviewRechargeRequest(
+  requestId: number,
+  body: { status: "approved" | "rejected"; review_note?: string },
+  adminToken: string,
+): Promise<RechargeRequestItem> {
+  return request(`/credits/recharge-requests/${requestId}/review`, {
+    method: "POST",
+    body: JSON.stringify(body),
+    headers: { "X-Admin-Token": adminToken },
+  });
+}
+
+/* ---- 客户激活码管理（管理员） ---- */
+
+export interface CustomerCodeItem {
+  code: string;
+  name: string;
+  enabled: boolean;
+  initial_credits: string;
+  balance: string;
+  created_at: string;
+}
+
+export function generateCustomerCodes(params: {
+  name: string;
+  initial_credits: string;
+  count: number;
+}): Promise<CustomerCodeItem[]> {
+  return request("/admin/codes/generate", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listCustomerCodes(): Promise<CustomerCodeItem[]> {
+  return request("/admin/codes");
+}
+
+export function toggleCustomerCode(code: string): Promise<CustomerCodeItem> {
+  return request(`/admin/codes/${encodeURIComponent(code)}/toggle`, {
+    method: "POST",
+  });
+}
+
+export interface AdminAccountItem {
+  username: string;
+  created_at: string;
+}
+
+export function createAdminAccount(params: {
+  username: string;
+  password: string;
+}): Promise<AdminAccountItem> {
+  return request("/admin/accounts", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listAdminAccounts(): Promise<AdminAccountItem[]> {
+  return request("/admin/accounts");
+}
+
+export interface PricingItem {
+  key: string;
+  label: string;
+  default: string;
+  value: string;
+  overridden: boolean;
+  updated_at?: string | null;
+}
+
+export function listPricing(): Promise<PricingItem[]> {
+  return request("/admin/pricing");
+}
+
+export function updatePricing(key: string, value: string): Promise<PricingItem> {
+  return request("/admin/pricing", {
+    method: "PUT",
+    body: JSON.stringify({ key, value }),
+  });
+}
+
+export function resetAdminPassword(
+  username: string,
+  password: string,
+): Promise<AdminAccountItem> {
+  return request(`/admin/accounts/${encodeURIComponent(username)}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
 /* ---- Dashboard 统计 ---- */
 
 export interface DashboardStatsResponse {
@@ -1017,6 +1273,32 @@ export function listPublishPlatforms(): Promise<PublishPlatformsResponse> {
 export function listPublishAccounts(platform?: string): Promise<PublishAccount[]> {
   const query = platform ? `?platform=${encodeURIComponent(platform)}` : "";
   return request(`/publish/accounts${query}`);
+}
+
+export interface PublishSafetyItem {
+  platform: string;
+  account_id: string;
+  today_published: number;
+  daily_limit: number;
+  remaining_today: number;
+  next_allowed_at: string | null;
+  blocked: boolean;
+  blocked_until: string | null;
+  blocked_reason: string | null;
+}
+
+export function getPublishSafety(): Promise<PublishSafetyItem[]> {
+  return request("/publish/safety");
+}
+
+export function resumePublishSafety(params: {
+  platform: string;
+  account_id?: string;
+}): Promise<{ platform: string; account_id: string; resumed: boolean; message: string }> {
+  return request("/publish/safety/resume", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
 export function createPublishAccount(params: { platform: string; name: string }): Promise<PublishAccount> {

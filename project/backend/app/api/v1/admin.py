@@ -6,11 +6,12 @@ import platform
 import sqlite3
 import sys
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Security
 from pydantic import BaseModel
 
 from project.backend.app.core.config import DATABASE_PATH
 from project.backend.app.core.deps import get_repository
+from project.backend.app.core.security import require_admin_token
 from project.backend.app.schemas.responses import AdminStatusResponse
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -72,8 +73,9 @@ def _get_migration_details(db_path) -> dict:
 @router.get("/status", response_model=AdminStatusResponse)
 def admin_status(
     repo=Depends(get_repository),
+    _admin: bool = Security(require_admin_token),
 ):
-    """获取系统状态。"""
+    """获取系统状态（仅管理员）。"""
     candidate_count = len(repo.list_candidates())
     task_count = len(repo.list_tasks())
     pipeline_runs = repo.list_pipeline_runs(limit=9999)
@@ -97,8 +99,9 @@ def admin_status(
 @router.get("/dashboard/stats", response_model=DashboardStatsResponse)
 def dashboard_stats(
     repo=Depends(get_repository),
+    _admin: bool = Security(require_admin_token),
 ):
-    """获取 Dashboard 统计数据，基于数据库真实数据。"""
+    """获取 Dashboard 统计数据（仅管理员），基于数据库真实数据。"""
     from datetime import date
 
     today = date.today().isoformat()

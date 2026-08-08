@@ -94,6 +94,7 @@ class BrowserAutomation:
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
                     "--no-sandbox",
+                    "--disable-features=OptimizationGuideOnDeviceModel",
                 ],
             )
             logger.info("浏览器初始化成功")

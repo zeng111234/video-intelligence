@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+
+from fastapi import Depends
 from functools import lru_cache
 from pathlib import Path
 
@@ -10,6 +12,12 @@ from pathlib import Path
 _project_root = str(Path(__file__).resolve().parent.parent.parent.parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
+
+# 最先加载根目录 .env，保证后续所有模块（src.services.publisher 的发布限制、
+# crawler 的采集配额等）在 import 时能读到环境配置。
+from project.backend.app.core.config import _load_env_files  # noqa: E402
+
+_load_env_files()
 
 from src.repositories.sqlite import SQLiteRepository  # noqa: E402
 from src.adapters.licensed import (  # noqa: E402
@@ -53,6 +61,7 @@ from src.services.production import ProductionService  # noqa: E402
 from src.services.feedback import FeedbackService  # noqa: E402
 from src.services.pipeline_worker import PipelineWorker  # noqa: E402
 from src.services.copywriting import CopywritingService  # noqa: E402
+from src.services.credits import CreditsService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
 from src.services.publish_worker import PublishWorker  # noqa: E402
@@ -482,6 +491,13 @@ def get_copywriting_engine():
 @lru_cache
 def get_copywriting_service() -> CopywritingService:
     return CopywritingService(get_repository(), get_copywriting_engine())
+
+
+def get_credits_service(
+    repo: SQLiteRepository = Depends(get_repository),
+) -> CreditsService:
+    # 不缓存：积分账户按请求身份（客户/管理员）归属，且测试按仓库覆盖生效
+    return CreditsService(repo)
 
 
 # ---------------------------------------------------------------------------

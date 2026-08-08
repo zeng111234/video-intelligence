@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 from src.models import (
@@ -22,6 +24,9 @@ from src.models import (
     Platform,
     PlatformSearchRun,
     ProviderSafetyState,
+    PublishSafetyState,
+    AdminAccount,
+    CustomerCode,
     RelevanceReview,
     SamplingCheckpoint,
     SearchBatch,
@@ -35,6 +40,11 @@ from src.models import (
     VideoCandidate,
     VideoMetricSnapshot,
 )
+
+
+def _default_credit_balance() -> Decimal:
+    """新积分账户的默认赠送余额（元/积分，可在项目根 .env 调整）。"""
+    return Decimal(os.getenv("DEFAULT_CREDIT_BALANCE", "400"))
 
 
 class SQLiteRepository:
@@ -80,6 +90,8 @@ class SQLiteRepository:
             self._ensure_provider_safety_tables()
             self._ensure_crawler_history_indexes()
             self._ensure_candidate_copy_probe_table()
+            self._ensure_credit_tables()
+            self._ensure_publish_safety_tables()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
@@ -90,6 +102,8 @@ class SQLiteRepository:
         self._ensure_provider_safety_tables()
         self._ensure_crawler_history_indexes()
         self._ensure_candidate_copy_probe_table()
+        self._ensure_credit_tables()
+        self._ensure_publish_safety_tables()
 
     def _ensure_candidate_copy_probe_table(self) -> None:
         self.connection.execute(
@@ -97,6 +111,137 @@ class SQLiteRepository:
                 candidate_id TEXT PRIMARY KEY REFERENCES candidates(video_id) ON DELETE CASCADE,
                 payload_json TEXT NOT NULL
             )"""
+        )
+        self.connection.commit()
+
+    def _ensure_credit_tables(self) -> None:
+        """积分账户与流水表（按 owner 多账户，金额以 Decimal 字符串存储）。"""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS credit_accounts (
+                owner TEXT PRIMARY KEY,
+                balance TEXT NOT NULL DEFAULT '0',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS credit_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner TEXT NOT NULL DEFAULT 'admin',
+                amount TEXT NOT NULL,
+                balance_after TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                ref_type TEXT,
+                ref_id TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_credit_transactions_created
+            ON credit_transactions(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS customer_codes (
+                code TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                initial_credits TEXT NOT NULL DEFAULT '400',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS admin_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS pricing_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS recharge_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_code TEXT NOT NULL,
+                amount TEXT NOT NULL,
+                reason TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                reviewed_by TEXT,
+                reviewed_at TEXT,
+                review_note TEXT,
+                FOREIGN KEY (customer_code) REFERENCES customer_codes(code)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_recharge_requests_status
+            ON recharge_requests(status, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_recharge_requests_customer
+            ON recharge_requests(customer_code, created_at);
+            """
+        )
+        # 旧版单账户表迁移：id=1 记录 -> owner='admin'
+        self._migrate_legacy_credit_accounts()
+        # 旧版流水表补 owner 列（默认归属 admin）
+        self._ensure_column("credit_transactions", "owner", "TEXT NOT NULL DEFAULT 'admin'")
+        # owner 索引必须在 owner 列迁移之后创建（旧库升级路径）
+        self.connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_credit_transactions_owner
+            ON credit_transactions(owner, id DESC)
+            """
+        )
+        self.connection.commit()
+
+    def _migrate_legacy_credit_accounts(self) -> None:
+        """把旧版单账户（id=1）迁移为 owner='admin' 账户。"""
+        columns = {
+            str(row["name"])
+            for row in self.connection.execute(
+                "PRAGMA table_info(credit_accounts)"
+            ).fetchall()
+        }
+        if "owner" in columns:
+            return
+        with self.connection:
+            rows = self.connection.execute(
+                "SELECT balance, updated_at FROM credit_accounts"
+            ).fetchall()
+            self.connection.execute("DROP TABLE credit_accounts")
+            self.connection.execute(
+                """
+                CREATE TABLE credit_accounts (
+                    owner TEXT PRIMARY KEY,
+                    balance TEXT NOT NULL DEFAULT '0',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            for row in rows:
+                self.connection.execute(
+                    """
+                    INSERT INTO credit_accounts(owner, balance, updated_at)
+                    VALUES ('admin', ?, ?)
+                    """,
+                    (row["balance"], row["updated_at"]),
+                )
+
+    def _ensure_publish_safety_tables(self) -> None:
+        """发布账号防封状态表（平台+账号粒度）。"""
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS publish_safety_states (
+                platform TEXT NOT NULL,
+                account_id TEXT NOT NULL,
+                blocked_until TEXT,
+                blocked_reason TEXT,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (platform, account_id)
+            );
+            """
         )
         self.connection.commit()
 
@@ -256,6 +401,10 @@ class SQLiteRepository:
         self._ensure_column(
             "provider_safety_states", "real_runs_in_window", "INTEGER NOT NULL DEFAULT 0"
         )
+        # 旧库迁移：provider_request_guards 增加预计成本列（月上限原子统计用）
+        self._ensure_column(
+            "provider_request_guards", "cost", "TEXT NOT NULL DEFAULT '0'"
+        )
         self.connection.commit()
 
     def _create_schema_tables_only(self) -> None:
@@ -414,7 +563,8 @@ class SQLiteRepository:
                 fingerprint TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
                 claimed_at TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                cost TEXT NOT NULL DEFAULT '0'
             );
 
             CREATE TABLE IF NOT EXISTS pipeline_runs (
@@ -640,7 +790,8 @@ class SQLiteRepository:
                 fingerprint TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL,
                 claimed_at TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                cost TEXT NOT NULL DEFAULT '0'
             );
 
             CREATE TABLE IF NOT EXISTS pipeline_runs (
@@ -1536,6 +1687,577 @@ class SQLiteRepository:
             ).rowcount
         return bool(deleted)
 
+    # ------------------------------------------------------------------
+    # 积分账户（余额 + 流水，原子扣费防并发）
+    # ------------------------------------------------------------------
+
+    def ensure_credit_account(self, owner: str) -> Decimal:
+        """确保账户已开立（管理员/客户首次使用时赠送初始积分），返回余额。
+
+        与 adjust_credit_balance 的开户逻辑共用，保证只赠送一次。
+        """
+        now = datetime.now().astimezone()
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            exists = connection.execute(
+                "SELECT 1 FROM credit_accounts WHERE owner = ?", (owner,)
+            ).fetchone()
+            if exists is None:
+                opening = Decimal("0")
+                gift_reason = ""
+                if owner == "admin":
+                    opening = _default_credit_balance()
+                    gift_reason = "新用户默认赠送"
+                else:
+                    code_row = connection.execute(
+                        "SELECT initial_credits FROM customer_codes WHERE code = ?",
+                        (owner,),
+                    ).fetchone()
+                    if code_row is not None:
+                        opening = Decimal(str(code_row["initial_credits"]))
+                        gift_reason = "激活码初始赠送"
+                connection.execute(
+                    """
+                    INSERT INTO credit_accounts(owner, balance, updated_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (owner, str(opening), now.isoformat()),
+                )
+                if opening > 0:
+                    connection.execute(
+                        """
+                        INSERT INTO credit_transactions(
+                            owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                        ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
+                        """,
+                        (owner, str(opening), str(opening), gift_reason, now.isoformat()),
+                    )
+            balance = self.get_credit_balance(owner)
+            connection.commit()
+            return balance
+        except Exception:
+            connection.rollback()
+            raise
+
+    def get_credit_balance(self, owner: str = "admin") -> Decimal:
+        """读取指定账户（owner：管理员或客户激活码）积分余额；账户不存在时视为默认赠送余额。"""
+        row = self.connection.execute(
+            "SELECT balance FROM credit_accounts WHERE owner = ?",
+            (owner,),
+        ).fetchone()
+        if row is None:
+            if owner == "admin":
+                return _default_credit_balance()
+            # 客户账户未开立：默认 0（激活时按 initial_credits 赠送）
+            return Decimal("0")
+        return Decimal(str(row["balance"]))
+
+    def list_credit_transactions(self, owner: str = "admin", limit: int = 100) -> list[dict]:
+        """按时间倒序返回指定账户的积分流水。"""
+        rows = self.connection.execute(
+            """
+            SELECT id, owner, amount, balance_after, reason, ref_type, ref_id, created_at
+            FROM credit_transactions
+            WHERE owner = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (owner, int(limit)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # 客户激活码
+    # ------------------------------------------------------------------
+
+    def create_customer_codes(self, codes: list[CustomerCode]) -> None:
+        with self.connection:
+            for code in codes:
+                self.connection.execute(
+                    """
+                    INSERT INTO customer_codes(
+                        code, name, enabled, initial_credits, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        code.code,
+                        code.name,
+                        1 if code.enabled else 0,
+                        str(code.initial_credits),
+                        code.created_at.isoformat(),
+                        code.updated_at.isoformat(),
+                    ),
+                )
+
+    def get_customer_code(self, code: str) -> CustomerCode | None:
+        row = self.connection.execute(
+            """
+            SELECT code, name, enabled, initial_credits, created_at, updated_at
+            FROM customer_codes WHERE code = ?
+            """,
+            (code,),
+        ).fetchone()
+        if row is None:
+            return None
+        return CustomerCode(
+            code=row["code"],
+            name=row["name"],
+            enabled=bool(row["enabled"]),
+            initial_credits=Decimal(str(row["initial_credits"])),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def list_customer_codes(self) -> list[CustomerCode]:
+        rows = self.connection.execute(
+            """
+            SELECT code, name, enabled, initial_credits, created_at, updated_at
+            FROM customer_codes ORDER BY created_at DESC
+            """
+        ).fetchall()
+        return [
+            CustomerCode(
+                code=row["code"],
+                name=row["name"],
+                enabled=bool(row["enabled"]),
+                initial_credits=Decimal(str(row["initial_credits"])),
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def set_customer_code_enabled(self, code: str, enabled: bool) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE customer_codes SET enabled = ?, updated_at = ? WHERE code = ?
+                """,
+                (1 if enabled else 0, datetime.now().astimezone().isoformat(), code),
+            )
+
+    def delete_customer_code(self, code: str) -> None:
+        with self.connection:
+            self.connection.execute("DELETE FROM customer_codes WHERE code = ?", (code,))
+
+    # ------------------------------------------------------------------
+    # 定价设置（管理员可调，表覆盖 > 代码默认值）
+    # ------------------------------------------------------------------
+
+    def get_pricing(self, key: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT value FROM pricing_settings WHERE key = ?",
+            (key,),
+        ).fetchone()
+        return row["value"] if row is not None else None
+
+    def set_pricing(self, key: str, value: str) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO pricing_settings(key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (key, value, now),
+            )
+
+    def list_pricing(self) -> list[dict]:
+        rows = self.connection.execute(
+            "SELECT key, value, updated_at FROM pricing_settings ORDER BY key"
+        ).fetchall()
+        return [
+            {
+                "key": row["key"],
+                "value": row["value"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    # ------------------------------------------------------------------
+    # 管理员账号（多账号）
+    # ------------------------------------------------------------------
+
+    def create_admin_account(self, account: AdminAccount) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO admin_accounts(username, password_hash, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    account.username,
+                    account.password_hash,
+                    account.created_at.isoformat(),
+                    account.updated_at.isoformat(),
+                ),
+            )
+
+    def get_admin_account(self, username: str) -> AdminAccount | None:
+        row = self.connection.execute(
+            """
+            SELECT username, password_hash, created_at, updated_at
+            FROM admin_accounts WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+        if row is None:
+            return None
+        return AdminAccount(
+            username=row["username"],
+            password_hash=row["password_hash"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def list_admin_accounts(self) -> list[AdminAccount]:
+        rows = self.connection.execute(
+            "SELECT username, password_hash, created_at, updated_at FROM admin_accounts"
+        ).fetchall()
+        return [
+            AdminAccount(
+                username=row["username"],
+                password_hash=row["password_hash"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
+
+    def set_admin_password(self, username: str, password_hash: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE admin_accounts SET password_hash = ?, updated_at = ? WHERE username = ?
+                """,
+                (password_hash, datetime.now().astimezone().isoformat(), username),
+            )
+
+    def get_publish_safety_state(
+        self, platform: str, account_id: str
+    ) -> PublishSafetyState | None:
+        row = self.connection.execute(
+            """
+            SELECT platform, account_id, blocked_until, blocked_reason,
+                   consecutive_failures, updated_at
+            FROM publish_safety_states
+            WHERE platform = ? AND account_id = ?
+            """,
+            (platform, account_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return PublishSafetyState(
+            platform=row["platform"],
+            account_id=row["account_id"],
+            blocked_until=(
+                datetime.fromisoformat(row["blocked_until"])
+                if row["blocked_until"]
+                else None
+            ),
+            blocked_reason=row["blocked_reason"],
+            consecutive_failures=int(row["consecutive_failures"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    def update_publish_safety_state(self, state: PublishSafetyState) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO publish_safety_states(
+                    platform, account_id, blocked_until, blocked_reason,
+                    consecutive_failures, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(platform, account_id) DO UPDATE SET
+                    blocked_until = excluded.blocked_until,
+                    blocked_reason = excluded.blocked_reason,
+                    consecutive_failures = excluded.consecutive_failures,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    state.platform,
+                    state.account_id,
+                    state.blocked_until.isoformat() if state.blocked_until else None,
+                    state.blocked_reason,
+                    state.consecutive_failures,
+                    state.updated_at.isoformat(),
+                ),
+            )
+
+    def adjust_credit_balance(
+        self,
+        *,
+        amount: Decimal,
+        reason: str,
+        owner: str = "admin",
+        ref_type: str | None = None,
+        ref_id: str | None = None,
+        now: datetime | None = None,
+    ) -> Decimal:
+        """原子调整积分余额并记录流水；amount 为负表示扣费。
+
+        检查余额 → 扣减 → 记流水在同一事务内完成，防止并发超扣。
+        余额不足时抛出 ValueError（不产生任何写入）。
+        """
+        amount = Decimal(str(amount))
+        now = now or datetime.now().astimezone()
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            # 账户不存在时自动开户：管理员送默认积分；客户按激活码 initial_credits 赠送
+            exists = connection.execute(
+                "SELECT 1 FROM credit_accounts WHERE owner = ?",
+                (owner,),
+            ).fetchone()
+            if exists is None:
+                opening = Decimal("0")
+                gift_reason = ""
+                if owner == "admin":
+                    opening = _default_credit_balance()
+                    gift_reason = "新用户默认赠送"
+                else:
+                    code_row = connection.execute(
+                        "SELECT initial_credits FROM customer_codes WHERE code = ?",
+                        (owner,),
+                    ).fetchone()
+                    if code_row is not None:
+                        opening = Decimal(str(code_row["initial_credits"]))
+                        gift_reason = "激活码初始赠送"
+                connection.execute(
+                    """
+                    INSERT INTO credit_accounts(owner, balance, updated_at)
+                    VALUES (?, ?, ?)
+                    """,
+                    (owner, str(opening), now.isoformat()),
+                )
+                if opening > 0:
+                    connection.execute(
+                        """
+                        INSERT INTO credit_transactions(
+                            owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                        ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
+                        """,
+                        (
+                            owner,
+                            str(opening),
+                            str(opening),
+                            gift_reason,
+                            now.isoformat(),
+                        ),
+                    )
+            balance = self.get_credit_balance(owner)
+            new_balance = balance + amount
+            if new_balance < 0:
+                raise ValueError(
+                    f"积分不足，当前余额 {balance}，本次需要 {abs(amount)}"
+                )
+            connection.execute(
+                """
+                INSERT INTO credit_accounts(owner, balance, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(owner) DO UPDATE SET
+                    balance = excluded.balance,
+                    updated_at = excluded.updated_at
+                """,
+                (owner, str(new_balance), now.isoformat()),
+            )
+            connection.execute(
+                """
+                INSERT INTO credit_transactions(
+                    owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    owner,
+                    str(amount),
+                    str(new_balance),
+                    reason,
+                    ref_type,
+                    ref_id,
+                    now.isoformat(),
+                ),
+            )
+            connection.commit()
+            return new_balance
+        except Exception:
+            connection.rollback()
+            raise
+
+    # ------------------------------------------------------------------
+    # 充值请求（recharge_requests）
+    # ------------------------------------------------------------------
+
+    def create_recharge_request(
+        self,
+        customer_code: str,
+        amount: Decimal,
+        reason: str | None = None,
+    ) -> dict:
+        """创建充值请求，返回新记录。"""
+        now = datetime.now().astimezone()
+        cursor = self.connection.execute(
+            """
+            INSERT INTO recharge_requests(
+                customer_code, amount, reason, status, created_at, updated_at
+            ) VALUES (?, ?, ?, 'pending', ?, ?)
+            """,
+            (customer_code, str(amount), reason, now.isoformat(), now.isoformat()),
+        )
+        self.connection.commit()
+        return {
+            "id": cursor.lastrowid,
+            "customer_code": customer_code,
+            "amount": str(amount),
+            "reason": reason,
+            "status": "pending",
+            "created_at": now.isoformat(),
+            "updated_at": now.isoformat(),
+        }
+
+    def list_recharge_requests(
+        self,
+        status: str | None = None,
+        customer_code: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """列出充值请求。可按状态和客户筛选。"""
+        query = "SELECT * FROM recharge_requests WHERE 1=1"
+        params: list = []
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+        if customer_code:
+            query += " AND customer_code = ?"
+            params.append(customer_code)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        rows = self.connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_recharge_request(self, request_id: int) -> dict | None:
+        """按 ID 获取单条充值请求。"""
+        row = self.connection.execute(
+            "SELECT * FROM recharge_requests WHERE id = ?",
+            (request_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def update_recharge_request_status(
+        self,
+        request_id: int,
+        status: str,
+        reviewed_by: str,
+        review_note: str | None = None,
+    ) -> dict | None:
+        """更新充值请求状态（approved / rejected）。"""
+        now = datetime.now().astimezone()
+        self.connection.execute(
+            """
+            UPDATE recharge_requests
+            SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (status, reviewed_by, now.isoformat(), review_note, now.isoformat(), request_id),
+        )
+        self.connection.commit()
+        return self.get_recharge_request(request_id)
+
+    def review_recharge_request_and_credit(
+        self,
+        request_id: int,
+        status: str,
+        reviewed_by: str,
+        review_note: str | None = None,
+    ) -> dict | None:
+        """原子审批充值请求；批准状态与入账要么都完成，要么都不完成。"""
+        if status not in {"approved", "rejected"}:
+            raise ValueError("充值请求状态无效")
+        connection = self.connection
+        now = datetime.now().astimezone()
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                "SELECT * FROM recharge_requests WHERE id = ?", (request_id,)
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                connection.rollback()
+                return None
+            cursor = connection.execute(
+                """
+                UPDATE recharge_requests
+                SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
+                WHERE id = ? AND status = 'pending'
+                """,
+                (status, reviewed_by, now.isoformat(), review_note, now.isoformat(), request_id),
+            )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return None
+            if status == "approved":
+                owner = str(row["customer_code"])
+                account = connection.execute(
+                    "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
+                ).fetchone()
+                if account is None:
+                    code_row = connection.execute(
+                        "SELECT initial_credits FROM customer_codes WHERE code = ?", (owner,)
+                    ).fetchone()
+                    opening = (
+                        Decimal(str(code_row["initial_credits"]))
+                        if code_row is not None
+                        else Decimal("0")
+                    )
+                    connection.execute(
+                        "INSERT INTO credit_accounts(owner, balance, updated_at) VALUES (?, ?, ?)",
+                        (owner, str(opening), now.isoformat()),
+                    )
+                    if opening > 0:
+                        connection.execute(
+                            """
+                            INSERT INTO credit_transactions(
+                                owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                            ) VALUES (?, ?, ?, '激活码初始赠送', NULL, NULL, ?)
+                            """,
+                            (owner, str(opening), str(opening), now.isoformat()),
+                        )
+                    balance = opening
+                else:
+                    balance = Decimal(str(account["balance"]))
+                amount = Decimal(str(row["amount"]))
+                new_balance = balance + amount
+                connection.execute(
+                    "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
+                    (str(new_balance), now.isoformat(), owner),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO credit_transactions(
+                        owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                    ) VALUES (?, ?, ?, ?, 'recharge_request', ?, ?)
+                    """,
+                    (
+                        owner,
+                        str(amount),
+                        str(new_balance),
+                        f"充值请求 #{request_id} 审批通过",
+                        str(request_id),
+                        now.isoformat(),
+                    ),
+                )
+            result = connection.execute(
+                "SELECT * FROM recharge_requests WHERE id = ?", (request_id,)
+            ).fetchone()
+            connection.commit()
+            return dict(result) if result else None
+        except Exception:
+            connection.rollback()
+            raise
+
     def save_platform_search_run(self, run: PlatformSearchRun) -> None:
         with self.connection:
             self.connection.execute(
@@ -1677,40 +2399,129 @@ class SQLiteRepository:
             )
         return round(total, 4)
 
-    def claim_platform_search_request(
+    def try_claim_platform_search_request(
         self,
+        *,
         fingerprint: str,
         run_id: str,
         claimed_at: datetime,
         ttl_seconds: int = 60,
-    ) -> bool:
-        row = self.connection.execute(
-            """
-            SELECT claimed_at, status FROM provider_request_guards
-            WHERE fingerprint = ?
-            """,
-            (fingerprint,),
-        ).fetchone()
-        if row:
-            if row["status"] == "outcome_unknown":
-                return False
-            previous = datetime.fromisoformat(str(row["claimed_at"]))
-            if (claimed_at - previous).total_seconds() < ttl_seconds:
-                return False
-        with self.connection:
-            self.connection.execute(
+        unit_price: float = 0.0,
+        enforce_limits: bool = True,
+        monthly_queries_limit: int | None = 100,
+        monthly_cost_limit_cny: float | None = 10.0,
+    ) -> str:
+        """单事务原子占位：60 秒防重复 + 月上限检查 + 写入占位。
+
+        返回结果:
+          - "ok": 占位成功
+          - "duplicate": 相同请求在 ttl 窗口内已执行
+          - "unresolved": 上次请求费用状态待核对
+          - "count_limit": 本月查询次数已达上限
+          - "cost_limit": 本月预算已达上限
+        检查、判断与写入在同一个 BEGIN IMMEDIATE 事务内完成，
+        并发请求下也只有一个能通过，杜绝重复扣费与超上限。
+        """
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                """
+                SELECT claimed_at, status FROM provider_request_guards
+                WHERE fingerprint = ?
+                """,
+                (fingerprint,),
+            ).fetchone()
+            if row:
+                if row["status"] == "outcome_unknown":
+                    connection.rollback()
+                    return "unresolved"
+                previous = datetime.fromisoformat(str(row["claimed_at"]))
+                if (claimed_at - previous).total_seconds() < ttl_seconds:
+                    connection.rollback()
+                    return "duplicate"
+            if enforce_limits:
+                month_start = claimed_at.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0
+                )
+                used_count = int(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(SUM(api_call_count), 0) AS c
+                        FROM platform_search_runs WHERE started_at >= ?
+                        """,
+                        (month_start.isoformat(),),
+                    ).fetchone()["c"]
+                )
+                used_cost = 0.0
+                for row in connection.execute(
+                    """
+                    SELECT payload_json FROM platform_search_runs
+                    WHERE started_at >= ?
+                    """,
+                    (month_start.isoformat(),),
+                ).fetchall():
+                    payload = json.loads(row["payload_json"])
+                    used_cost += float(payload.get("billable_units") or 0.0)
+                for row in connection.execute(
+                    """
+                    SELECT payload_json FROM media_resolution_attempts
+                    WHERE created_at >= ?
+                    """,
+                    (month_start.isoformat(),),
+                ).fetchall():
+                    payload = json.loads(row["payload_json"])
+                    used_cost += float(
+                        payload.get("billable_units")
+                        or payload.get("estimated_cost_cny")
+                        or 0.0
+                    )
+                # 已占位未结算的请求也计入（并发窗口内的其他请求）
+                pending = connection.execute(
+                    """
+                    SELECT COUNT(*) AS c, COALESCE(SUM(CAST(cost AS REAL)), 0) AS cost
+                    FROM provider_request_guards
+                    WHERE status = 'claimed' AND claimed_at >= ?
+                    """,
+                    (month_start.isoformat(),),
+                ).fetchone()
+                pending_count = int(pending["c"])
+                pending_cost = float(pending["cost"])
+                if (
+                    monthly_queries_limit is not None
+                    and used_count + pending_count >= monthly_queries_limit
+                ):
+                    connection.rollback()
+                    return "count_limit"
+                if (
+                    monthly_cost_limit_cny is not None
+                    and used_cost + pending_cost + unit_price > monthly_cost_limit_cny
+                ):
+                    connection.rollback()
+                    return "cost_limit"
+            connection.execute(
                 """
                 INSERT INTO provider_request_guards(
-                    fingerprint, run_id, claimed_at, status
-                ) VALUES (?, ?, ?, 'claimed')
+                    fingerprint, run_id, claimed_at, status, cost
+                ) VALUES (?, ?, ?, 'claimed', ?)
                 ON CONFLICT(fingerprint) DO UPDATE SET
                     run_id = excluded.run_id,
                     claimed_at = excluded.claimed_at,
-                    status = excluded.status
+                    status = excluded.status,
+                    cost = excluded.cost
                 """,
-                (fingerprint, run_id, claimed_at.isoformat()),
+                (
+                    fingerprint,
+                    run_id,
+                    claimed_at.isoformat(),
+                    str(unit_price),
+                ),
             )
-        return True
+            connection.commit()
+            return "ok"
+        except Exception:
+            connection.rollback()
+            raise
 
     def mark_platform_search_request(
         self, fingerprint: str, status: str, updated_at: datetime
@@ -2434,6 +3245,15 @@ class SQLiteRepository:
             ),
         )
         self.connection.commit()
+
+    def delete_video_editor_operation(self, idempotency_key: str) -> bool:
+        """删除未完成的幂等操作记录（用于扣费失败后允许用户重试）。"""
+        cursor = self.connection.execute(
+            "DELETE FROM video_editor_operations WHERE idempotency_key = ?",
+            (idempotency_key,),
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
 
     def save_video_editor_cloud_job(
         self,

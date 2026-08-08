@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Literal
 from uuid import uuid4
@@ -862,6 +863,37 @@ class ProviderSafetyState(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 
 
+class PublishSafetyState(BaseModel):
+    """发布账号防封状态：风控/连续失败暂停与失败计数。"""
+
+    platform: str
+    account_id: str
+    blocked_until: datetime | None = None
+    blocked_reason: str | None = None
+    consecutive_failures: int = Field(default=0, ge=0)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class CustomerCode(BaseModel):
+    """客户激活码：一个激活码对应一个客户身份与独立积分账户。"""
+
+    code: str
+    name: str
+    enabled: bool = True
+    initial_credits: Decimal = Field(default=Decimal("400"), ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
+class AdminAccount(BaseModel):
+    """管理员账号（多账号）。"""
+
+    username: str
+    password_hash: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+
+
 class PlatformSearchRun(BaseModel):
     run_id: str = Field(default_factory=lambda: f"platform-{uuid4().hex[:12]}")
     batch_id: str
@@ -1115,6 +1147,8 @@ class CopywritingTask(TaskRecord):
     provider_name: str = "local_llm"
     model_name: str = ""
     token_usage: dict[str, int] = Field(default_factory=dict)
+    # 实际向客户收取的积分，已按整次任务合计后向上进位到两位小数。
+    charged_credits: float | None = Field(default=None, ge=0)
     result_text: str | None = None
     result_variants: list[str] = Field(default_factory=list)
     # 疑似属于其他企业、品牌、机构或人物的原文词，供前端在结果中高亮。

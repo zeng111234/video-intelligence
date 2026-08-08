@@ -12,7 +12,6 @@ import html
 import importlib.util
 import json
 import os
-import random
 import re
 import shutil
 import subprocess
@@ -1219,8 +1218,8 @@ class LocalPlatformBrowserSearchProvider:
                 and not self._bilibili_text_matches(keyword, title, text)
             ):
                 continue
-            # B 站搜索结果是服务端渲染(自动化下不发搜索接口请求),
-            # 互动数字从卡片 stats 行提取:第 1 项为播放数,第 2 项为点赞数。
+            # B 站搜索结果是服务端渲染(自动化下不发搜索接口请求)。第一个 stats
+            # 数字可作为播放数；第二个数字在不同卡片布局下语义不稳定，不能猜成点赞。
             # 小红书卡片通过 span.count 暴露点赞数(无播放数)。
             raw_stats = item.get("stats")
             raw_counts = item.get("counts")
@@ -1230,11 +1229,7 @@ class LocalPlatformBrowserSearchProvider:
                     if raw_stats
                     else None
                 )
-                likes_from_stats = (
-                    LocalPlatformBrowserSearchProvider._parse_count_text(raw_stats[1])
-                    if len(raw_stats) > 1
-                    else None
-                )
+                likes_from_stats = None
                 counts_likes = None
             elif isinstance(raw_counts, list):
                 plays_from_stats = None

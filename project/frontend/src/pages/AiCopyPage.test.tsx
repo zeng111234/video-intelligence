@@ -61,6 +61,11 @@ describe("AiCopyPage", () => {
       max_variants: 5,
       supported_platforms: ["douyin"],
       missing_configuration: [],
+      billing_label: "平台服务价",
+      input_price_credits_per_1k_tokens: "0.0015",
+      output_price_credits_per_1k_tokens: "0.003",
+      minimum_charge_credits: "0.01",
+      billing_rounding: "整次任务合计后向上进位保留两位小数",
     });
     vi.mocked(listCopywritingTasks).mockResolvedValue([]);
     vi.mocked(rewriteCopywriting).mockResolvedValue({
@@ -70,6 +75,7 @@ describe("AiCopyPage", () => {
       model_name: "test-model",
       is_mock: false,
       token_usage: {},
+      charged_credits: 0.01,
       result_text: "已生成的口播文案",
       result_variants: ["已生成的口播文案"],
       attention_terms: [],
@@ -90,6 +96,9 @@ describe("AiCopyPage", () => {
     );
     const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
+    expect(view.container.textContent?.replace(/\s/g, "")).toContain(
+      "平台服务价：输入0.0015、输出0.003积分/千Token",
+    );
     fireEvent.click(optimizeButton);
 
     await waitFor(() => expect(rewriteCopywriting).toHaveBeenCalledWith(expect.objectContaining({
@@ -98,6 +107,7 @@ describe("AiCopyPage", () => {
     })));
 
     expect(await within(view.container).findByText("已生成的口播文案")).toBeTruthy();
+    expect(within(view.container).getByText("本次扣费 0.01 积分")).toBeTruthy();
     expect(within(view.container).queryByText("发布标题、描述和话题")).toBeNull();
     expect(within(view.container).queryByRole("button", { name: "AI 生成发布信息" })).toBeNull();
     expect(within(view.container).queryByRole("button", { name: /带入多平台发布/ })).toBeNull();
@@ -111,6 +121,7 @@ describe("AiCopyPage", () => {
       model_name: "test-model",
       is_mock: false,
       token_usage: {},
+      charged_credits: 0.01,
       result_text: "竞品科技发布了这款工具。",
       result_variants: ["竞品科技发布了这款工具。"],
       attention_terms: ["竞品科技"],
@@ -153,6 +164,7 @@ describe("AiCopyPage", () => {
       model_name: "test-model",
       is_mock: false,
       token_usage: { total_tokens: 45 },
+      charged_credits: 0.01,
       result_text: "这是自动优化后的最后版本。",
       result_variants: ["这是自动优化后的最后版本。"],
       attention_terms: [],

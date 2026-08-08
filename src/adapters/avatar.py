@@ -73,6 +73,24 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _estimate_by_minute(
+    price_env_name: str,
+    default_price_per_minute: float,
+    estimated_seconds: int | None,
+) -> float | None:
+    """按分钟单价估算数字人费用；时长未知或价格为 0 时返回 None（费用未知不扣）。
+
+    价格取环境变量（元/分钟），估算费用 = 单价 × 秒数 / 60。
+    """
+    seconds = int(estimated_seconds or 0)
+    if seconds <= 0:
+        return None
+    price_per_minute = _float_env(price_env_name, default_price_per_minute)
+    if price_per_minute <= 0:
+        return None
+    return round(price_per_minute * seconds / 60, 4)
+
+
 class AvatarProviderError(RuntimeError):
     def __init__(
         self,
@@ -1095,7 +1113,9 @@ class BaiduXilingAvatarProvider:
             permission_status="authorized" if not missing else "configuration_missing",
             max_script_chars=_int_env("BAIDU_XILING_MAX_SCRIPT_CHARS", 20000),
             supported_aspect_ratios=["9:16"],
-            estimated_cost_cny=_float_env("BAIDU_XILING_ESTIMATED_45S_COST_CNY", 2.25),
+            estimated_cost_cny=_estimate_by_minute(
+                "BAIDU_XILING_PRICE_CNY_PER_MINUTE", 2.5, 45
+            ),
             estimated_seconds=45,
             missing_configuration=missing,
         )
@@ -1354,8 +1374,7 @@ class ShuyingLegacyAvatarProvider:
 
     @classmethod
     def from_env(cls) -> ShuyingLegacyAvatarProvider:
-        cost = _float_env("SHUYING_AVATAR_ESTIMATED_COST_CNY", 0)
-        seconds = _int_env("SHUYING_AVATAR_ESTIMATED_SECONDS", 0)
+        seconds = _int_env("SHUYING_AVATAR_ESTIMATED_SECONDS", 45)
         return cls(
             base_url=os.getenv("SHUYING_AVATAR_BASE_URL", ""),
             api_code=os.getenv("SHUYING_AVATAR_API_CODE", ""),
@@ -1379,8 +1398,10 @@ class ShuyingLegacyAvatarProvider:
                 "SHUYING_AVATAR_RESULT_TIMEOUT_SECONDS", 120
             ),
             max_script_chars=_int_env("SHUYING_AVATAR_MAX_SCRIPT_CHARS", 2000),
-            estimated_cost_cny=cost if cost > 0 else None,
-            estimated_seconds=seconds if seconds > 0 else None,
+            estimated_cost_cny=_estimate_by_minute(
+                "SHUYING_AVATAR_PRICE_CNY_PER_MINUTE", 2.5, seconds
+            ),
+            estimated_seconds=seconds,
         )
 
     @staticmethod

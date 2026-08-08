@@ -4,8 +4,20 @@
  * 所有数据来自后端 API，无硬编码测试数据
  */
 import { useMemo, useState, useCallback, useEffect } from "react";
-import { useLocation } from "react-router-dom";
-import { Dropdown, Tooltip, Drawer, Tag, Button, Empty, Typography } from "antd";
+import { useLocation, useNavigate } from "react-router-dom";
+import {
+  Dropdown,
+  Tooltip,
+  Drawer,
+  Button,
+  Empty,
+  Typography,
+  Popover,
+  InputNumber,
+  Table,
+  Space,
+  Alert,
+} from "antd";
 import {
   BellOutlined,
   UserOutlined,
@@ -15,13 +27,27 @@ import {
   DeleteOutlined,
   MailOutlined,
   ClockCircleOutlined,
-  TeamOutlined,
   SafetyCertificateOutlined,
   MobileOutlined,
-  RightOutlined,
+  WalletOutlined,
+  PlusOutlined,
 } from "@ant-design/icons";
-import { getNotifications, getMessages, getUserProfile } from "../api/client";
+import {
+  createRechargeRequest,
+  getCredits,
+  getNotifications,
+  getMessages,
+  getUserProfile,
+} from "../api/client";
 import { getPageTitle } from "../navigation";
+import { useToast } from "./Toast";
+import { clearAdminToken, getAdminToken, useAdminToken } from "../hooks/useAdminAuth";
+import {
+  clearCustomerSession,
+  getCustomerToken,
+} from "../api/client";
+import { getCustomerName } from "../hooks/useCustomerAuth";
+import type { CreditBalanceResponse } from "../api/types";
 
 const { Text } = Typography;
 
@@ -67,6 +93,9 @@ interface UserProfile {
  */
 export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const isAdmin = useAdminToken();
 
   /** 抽屉状态 */
   const [notifOpen, setNotifOpen] = useState(false);
@@ -77,6 +106,20 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  /** 积分状态 */
+  const [credits, setCredits] = useState<CreditBalanceResponse | null>(null);
+  const [creditsOpen, setCreditsOpen] = useState(false);
+  const [rechargeAmount, setRechargeAmount] = useState<number | null>(50);
+  const [recharging, setRecharging] = useState(false);
+
+  const fetchCredits = useCallback(async () => {
+    try {
+      setCredits(await getCredits());
+    } catch {
+      // 后端未启动或未配置时静默，不打扰页面
+    }
+  }, []);
 
   /** 加载通知、消息和用户信息 */
   useEffect(() => {
@@ -104,6 +147,28 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       })
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    void fetchCredits();
+  }, [fetchCredits]);
+
+  const recharge = async () => {
+    const amount = rechargeAmount ?? 0;
+    if (amount <= 0) {
+      toast.error("请输入大于 0 的积分数量");
+      return;
+    }
+    setRecharging(true);
+    try {
+      await createRechargeRequest({ amount });
+      toast.success(`充值申请已提交（${amount} 积分），等待管理员审批`);
+      setCreditsOpen(false);
+    } catch (err) {
+      toast.error((err as Error).message || "提交失败，请重试");
+    } finally {
+      setRecharging(false);
+    }
+  };
 
   /** 未读计数 */
   const unreadNotifCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
@@ -163,8 +228,35 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       onClick: () => setProfileOpen(true),
     },
     { type: "divider" as const },
-    { key: "logout", icon: <LogoutOutlined />, label: "退出登录", danger: true },
+    {
+      key: "logout",
+      icon: <LogoutOutlined />,
+      label: "退出登录",
+      danger: true,
+      onClick: () => {
+        const customerLoggedIn = Boolean(getCustomerToken());
+        const adminLoggedIn = Boolean(getAdminToken());
+        if (customerLoggedIn) {
+          clearCustomerSession();
+        }
+        if (adminLoggedIn) {
+          clearAdminToken();
+        }
+        // 客户退出后回到登录页；管理员退出后仅清除管理身份（若客户身份仍在则继续使用）
+        window.location.href = "/";
+      },
+    },
   ];
+
+  /** 当前身份显示 */
+  const displayName = useMemo(() => {
+    const customerName = getCustomerName();
+    if (customerName) return customerName;
+    const adminName =
+      (typeof localStorage !== "undefined" ? localStorage.getItem("vi_admin_username") : null) ||
+      "管理员";
+    return adminName;
+  }, []);
 
   return (
     <>
@@ -180,6 +272,75 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
         {/* 右侧：操作区 */}
         <div className="vi-header-right">
+          {/* 积分余额入口：所有页面可见，点击可查看流水并快速充值 */}
+          <Popover
+            open={creditsOpen}
+            onOpenChange={setCreditsOpen}
+            trigger="click"
+            placement="bottomRight"
+            content={(
+              <div style={{ width: 320 }}>
+                <Space direction="vertical" size={12} style={{ width: "100%" }}>
+                  <Alert
+                    showIcon
+                    type="info"
+                    message={`当前余额 ${credits?.balance ?? "—"} 积分`}
+                    description="1 元 = 1 积分；提交后等待管理员审批。"
+                  />
+                  <Space.Compact style={{ width: "100%" }}>
+                    <InputNumber
+                      style={{ width: "100%" }}
+                      value={rechargeAmount}
+                      onChange={(value) => setRechargeAmount(value ?? null)}
+                      min={1}
+                      precision={0}
+                      placeholder="充值数量"
+                    />
+                    <Button type="primary" loading={recharging} onClick={recharge}>
+                      <PlusOutlined /> 申请充值
+                    </Button>
+                  </Space.Compact>
+                  {isAdmin && (
+                    <Button type="link" style={{ padding: 0 }} onClick={() => navigate("/admin")}>
+                      查看完整流水 / 调整积分
+                    </Button>
+                  )}
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    dataSource={credits?.transactions?.slice(0, 5) || []}
+                    pagination={false}
+                    columns={[
+                      {
+                        title: "时间",
+                        dataIndex: "created_at",
+                        render: (value: string) =>
+                          value ? value.replace("T", " ").slice(5, 16) : "—",
+                      },
+                      {
+                        title: "变动",
+                        dataIndex: "amount",
+                        render: (value: string) => (
+                          <Text strong style={{ color: Number(value) >= 0 ? "#389e0d" : "#cf1322" }}>
+                            {Number(value) >= 0 ? `+${value}` : value}
+                          </Text>
+                        ),
+                      },
+                      { title: "原因", dataIndex: "reason" },
+                    ]}
+                  />
+                </Space>
+              </div>
+            )}
+          >
+            <Button
+              className="vi-header-credits"
+              icon={<WalletOutlined />}
+              onClick={() => setCreditsOpen(true)}
+            >
+              {credits?.balance ?? "—"} 积分
+            </Button>
+          </Popover>
           {/* 用户头像 */}
           <Dropdown
             menu={{ items: userMenuItems }}
@@ -187,7 +348,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             trigger={["click"]}
           >
             <div className="vi-user-avatar">
-              <span>U</span>
+              <span>{displayName.slice(0, 1).toUpperCase()}</span>
             </div>
           </Dropdown>
         </div>
@@ -261,6 +422,23 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           display: flex;
           align-items: center;
           gap: 12px;
+        }
+
+        .vi-header-credits {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 999px;
+          border: 1px solid var(--border-default);
+          background: var(--bg-card, #fff);
+          color: var(--text-primary);
+          font-weight: 600;
+          box-shadow: var(--shadow-sm);
+        }
+
+        .vi-header-credits:hover {
+          border-color: var(--primary-400);
+          color: var(--primary-600);
         }
 
         .vi-user-avatar {
@@ -412,54 +590,106 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
         }
 
         /* 个人中心样式 */
-        .profile-header {
-          text-align: center;
-          padding: 24px 0;
+        .profile-user-card {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 20px 24px;
           background: linear-gradient(135deg, var(--primary-500, #6366f1), var(--primary-700, #4338ca));
-          border-radius: 12px;
-          margin-bottom: 24px;
         }
-        .profile-avatar {
-          width: 72px;
-          height: 72px;
+        .profile-avatar-sm {
+          width: 44px;
+          height: 44px;
           border-radius: 50%;
           background: rgba(255,255,255,0.2);
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 32px;
-          color: white;
-          margin: 0 auto 12px;
-          border: 3px solid rgba(255,255,255,0.3);
-        }
-        .profile-name {
-          font-size: 20px;
+          font-size: 18px;
           font-weight: 600;
           color: white;
-          margin-bottom: 4px;
+          flex-shrink: 0;
         }
-        .profile-email {
-          font-size: 13px;
-          color: rgba(255,255,255,0.75);
+        .profile-user-info {
+          flex: 1;
+          min-width: 0;
         }
-        .profile-info-item {
+        .profile-name {
+          font-size: 16px;
+          font-weight: 600;
+          color: white;
+          margin-bottom: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .profile-role {
+          font-size: 12px;
+          color: rgba(255,255,255,0.7);
+        }
+
+        /* 积分卡片 */
+        .profile-credits-card {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          padding: 14px 0;
+          gap: 12px;
+          padding: 16px 24px;
+          background: var(--bg-card, #fff);
           border-bottom: 1px solid var(--border-light, #e2e8f0);
         }
-        .profile-info-label {
+        .profile-credits-label {
+          font-size: 13px;
+          color: var(--text-secondary, #64748b);
+        }
+        .profile-credits-value {
+          font-size: 20px;
+          font-weight: 700;
+          color: var(--primary-600, #4f46e5);
+          flex: 1;
+        }
+
+        /* 快捷操作 */
+        .profile-quick-actions {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 0;
+          padding: 16px 24px;
+          border-bottom: 1px solid var(--border-light, #e2e8f0);
+        }
+        .profile-action-item {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 8px;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .profile-action-item:hover {
+          background: var(--primary-50, #eef2ff);
+        }
+        .profile-action-icon {
+          font-size: 24px;
+          line-height: 1;
+        }
+        .profile-action-text {
+          font-size: 12px;
+          color: var(--text-secondary, #64748b);
+          white-space: nowrap;
+        }
+
+        /* 账号信息 */
+        .profile-info-section {
+          padding: 16px 24px;
+        }
+        .profile-info-row {
           display: flex;
           align-items: center;
           gap: 10px;
-          font-size: 14px;
+          padding: 10px 0;
+          font-size: 13px;
           color: var(--text-secondary, #64748b);
-        }
-        .profile-info-value {
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--text-primary, #1e293b);
         }
       `}</style>
 
@@ -600,70 +830,101 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
         title="个人中心"
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
-        width={400}
-        styles={{ body: { padding: "16px 24px" } }}
+        width={360}
+        styles={{ body: { padding: 0 } }}
       >
-        {/* 头部卡片 */}
-        <div className="profile-header">
-          <div className="profile-avatar">
-            <UserOutlined />
+        {/* 用户卡片 */}
+        <div className="profile-user-card">
+          <div className="profile-avatar-sm">
+            {displayName.slice(0, 1).toUpperCase()}
           </div>
-          <div className="profile-name">{userProfile?.username || "未登录"}</div>
-          <div className="profile-email">{userProfile?.email || ""}</div>
-        </div>
-
-        {/* 基本信息 */}
-        <div style={{ marginBottom: 24 }}>
-          <Text strong style={{ fontSize: 15, display: "block", marginBottom: 12 }}>
-            基本信息
-          </Text>
-          <div className="profile-info-item">
-            <span className="profile-info-label">
-              <UserOutlined /> 用户名
-            </span>
-            <span className="profile-info-value">{userProfile?.username || "-"}</span>
-          </div>
-          <div className="profile-info-item">
-            <span className="profile-info-label">
-              <MailOutlined /> 邮箱
-            </span>
-            <span className="profile-info-value">{userProfile?.email || "-"}</span>
-          </div>
-          <div className="profile-info-item">
-            <span className="profile-info-label">
-              <MobileOutlined /> 手机
-            </span>
-            <span className="profile-info-value">{userProfile?.phone || "-"}</span>
-          </div>
-          <div className="profile-info-item" style={{ borderBottom: "none" }}>
-            <span className="profile-info-label">
-              <TeamOutlined /> 角色
-            </span>
-            <Tag color="purple">{userProfile?.role || "普通用户"}</Tag>
+          <div className="profile-user-info">
+            <div className="profile-name">{displayName}</div>
+            <div className="profile-role">{userProfile?.role || "普通用户"}</div>
           </div>
         </div>
 
-        {/* 账号安全 */}
-        <div>
-          <Text strong style={{ fontSize: 15, display: "block", marginBottom: 12 }}>
-            账号安全
-          </Text>
-          <div className="profile-info-item">
-            <span className="profile-info-label">
-              <SafetyCertificateOutlined /> 密码
-            </span>
-            <Button type="link" size="small" style={{ padding: 0 }}>
-              修改密码 <RightOutlined />
-            </Button>
+        {/* 积分余额 */}
+        <div className="profile-credits-card">
+          <div className="profile-credits-label">积分余额</div>
+          <div className="profile-credits-value">{credits?.balance ?? "—"}</div>
+          <Button
+            type="primary"
+            size="small"
+            icon={<WalletOutlined />}
+            onClick={() => {
+              setProfileOpen(false);
+              if (isAdmin) {
+                navigate("/admin");
+              } else {
+                setCreditsOpen(true);
+              }
+            }}
+          >
+            充值
+          </Button>
+        </div>
+
+        {/* 快捷操作 */}
+        <div className="profile-quick-actions">
+          <div
+            className="profile-action-item"
+            onClick={() => {
+              setProfileOpen(false);
+              navigate("/pipeline");
+            }}
+          >
+            <div className="profile-action-icon">🎬</div>
+            <div className="profile-action-text">智能创作</div>
           </div>
-          <div className="profile-info-item" style={{ borderBottom: "none" }}>
-            <span className="profile-info-label">
-              <MobileOutlined /> 两步验证
-            </span>
-            <Tag color={userProfile?.two_factor_enabled ? "green" : "default"}>
-              {userProfile?.two_factor_enabled ? "已开启" : "未开启"}
-            </Tag>
+          <div
+            className="profile-action-item"
+            onClick={() => {
+              setProfileOpen(false);
+              navigate("/publish");
+            }}
+          >
+            <div className="profile-action-icon">📤</div>
+            <div className="profile-action-text">发布管理</div>
           </div>
+          <div
+            className="profile-action-item"
+            onClick={() => {
+              setProfileOpen(false);
+              navigate("/materials");
+            }}
+          >
+            <div className="profile-action-icon">📁</div>
+            <div className="profile-action-text">素材库</div>
+          </div>
+          {isAdmin && (
+            <div
+              className="profile-action-item"
+              onClick={() => {
+                setProfileOpen(false);
+                navigate("/admin");
+              }}
+            >
+              <div className="profile-action-icon">⚙️</div>
+              <div className="profile-action-text">管理后台</div>
+            </div>
+          )}
+        </div>
+
+        {/* 账号信息 */}
+        <div className="profile-info-section">
+          {userProfile?.email && (
+            <div className="profile-info-row">
+              <MailOutlined />
+              <span>{userProfile.email}</span>
+            </div>
+          )}
+          {userProfile?.phone && (
+            <div className="profile-info-row">
+              <MobileOutlined />
+              <span>{userProfile.phone}</span>
+            </div>
+          )}
         </div>
       </Drawer>
     </>
