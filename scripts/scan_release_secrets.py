@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import subprocess
+import tomllib
 from pathlib import Path
 
 try:
@@ -20,8 +22,14 @@ except ModuleNotFoundError:  # Direct execution puts scripts/ on sys.path.
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    if not path.is_file() or path.stat().st_size > 1024 * 1024:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
         return values
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError(f"secret input is not a regular file: {path.name}")
+    if metadata.st_size > 1024 * 1024:
+        raise OSError(f"secret input exceeds 1 MiB: {path.name}")
     for raw_line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -35,6 +43,22 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _parse_legacy_streamlit_secrets(path: Path) -> dict[str, str]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return {}
+    if not stat.S_ISREG(metadata.st_mode):
+        raise OSError(f"secret input is not a regular file: {path.name}")
+    if metadata.st_size > 1024 * 1024:
+        raise OSError(f"secret input exceeds 1 MiB: {path.name}")
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        raise OSError(f"secret input cannot be parsed: {path.name}") from exc
+    return {str(key).upper(): str(value) for key, value in payload.items()}
+
+
 def _configured_values(repository_root: Path) -> dict[str, bytes]:
     sources = [
         ("process", {key.upper(): value for key, value in os.environ.items()}),
@@ -44,8 +68,26 @@ def _configured_values(repository_root: Path) -> dict[str, bytes]:
             "backend-env",
             _parse_env_file(repository_root / "project" / "backend" / ".env"),
         ),
+        (
+            "control-plane-env",
+            _parse_env_file(repository_root / "deploy" / "control-plane" / ".env"),
+        ),
+        (
+            "legacy-streamlit",
+            _parse_legacy_streamlit_secrets(
+                repository_root / ".streamlit" / "secrets.toml"
+            ),
+        ),
     ]
-    ignored = {"change-me", "changeme", "placeholder", "replace-me"}
+    ignored = {
+        "change-me",
+        "changeme",
+        "placeholder",
+        "replace-me",
+        "your-secret-key-change-this",
+        "change_me_at_least_16_characters",
+        "postgres",
+    }
     configured: dict[str, bytes] = {}
     for source, values in sources:
         for key in SENSITIVE_ENVIRONMENT_KEYS:
@@ -69,9 +111,37 @@ def _release_candidates(repository_root: Path) -> list[Path]:
             continue
         relative = raw_path.decode("utf-8", errors="surrogateescape")
         path = repository_root / relative
-        if path.is_file() and path.stat().st_size <= 32 * 1024 * 1024:
-            candidates.append(path)
+        mode = path.lstat().st_mode
+        if not stat.S_ISREG(mode):
+            raise OSError(f"release candidate is not a regular file: {relative}")
+        candidates.append(path)
     return candidates
+
+
+def _matching_secret_labels(
+    path: Path,
+    configured: dict[str, bytes],
+    *,
+    chunk_size: int = 1024 * 1024,
+) -> list[str]:
+    if not configured:
+        return []
+    remaining = dict(configured)
+    matched: list[str] = []
+    overlap = max(len(value) for value in configured.values()) - 1
+    tail = b""
+    with path.open("rb") as stream:
+        while remaining:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+            window = tail + chunk
+            for label, value in list(remaining.items()):
+                if value in window:
+                    matched.append(label)
+                    del remaining[label]
+            tail = window[-overlap:] if overlap > 0 else b""
+    return matched
 
 
 def scan(repository_root: Path) -> tuple[int, list[str]]:
@@ -80,13 +150,8 @@ def scan(repository_root: Path) -> tuple[int, list[str]]:
         return 0, []
     matches: list[str] = []
     for path in _release_candidates(repository_root):
-        try:
-            content = path.read_bytes()
-        except OSError:
-            continue
-        for label, value in configured.items():
-            if value in content:
-                matches.append(f"{label}:{path.relative_to(repository_root).as_posix()}")
+        for label in _matching_secret_labels(path, configured):
+            matches.append(f"{label}:{path.relative_to(repository_root).as_posix()}")
     return len(configured), matches
 
 

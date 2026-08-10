@@ -29,6 +29,32 @@ def _result(status: int, payload=None, headers=None):
     )
 
 
+def test_live_requester_disables_environment_proxies(monkeypatch):
+    captured_handlers = []
+
+    class _Opener:
+        pass
+
+    def _capture_opener(*handlers):
+        captured_handlers.extend(handlers)
+        return _Opener()
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.invalid:8080")
+    monkeypatch.setattr(verify, "build_opener", _capture_opener)
+
+    requester = verify.LiveRequester("https://video-api.company.com")
+
+    assert isinstance(requester.opener, _Opener)
+    proxy_handlers = [
+        handler
+        for handler in captured_handlers
+        if isinstance(handler, verify.ProxyHandler)
+    ]
+    assert len(proxy_handlers) == 1
+    assert proxy_handlers[0].proxies == {}
+    assert any(isinstance(handler, verify._NoRedirect) for handler in captured_handlers)
+
+
 class _HappyRequester:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -40,7 +66,7 @@ class _HappyRequester:
         if path == "/health":
             return _result(
                 200,
-                {"status": "ok"},
+                {"status": "ok", "release_version": "0.2.7"},
                 {
                     "x-content-type-options": "nosniff",
                     "x-frame-options": "DENY",
@@ -71,7 +97,43 @@ class _HappyRequester:
                         "location": "customer_desktop",
                         "billable": False,
                         "server_provider_disabled": True,
-                    }
+                    },
+                    "copywriting": {"mode": "production", "enabled": True},
+                    "transcription": {
+                        "provider_mode": "aliyun",
+                        "provider_name": "aliyun_fun_asr",
+                        "enabled": True,
+                        "live_ready": True,
+                        "is_mock": False,
+                        "billing_authorized": True,
+                        "missing_configuration": [],
+                    },
+                    "video_editor": {
+                        "provider_mode": "aliyun",
+                        "provider_name": "aliyun_cloud_editor",
+                        "enabled": True,
+                        "live_ready": True,
+                        "is_mock": False,
+                        "missing_configuration": [],
+                    },
+                    "avatar": {
+                        "mode": "production",
+                        "provider_name": "shuying_legacy_cloud",
+                        "enabled": True,
+                        "missing_configuration": [],
+                        "required_shared_assets": {
+                            "avatar": {
+                                "asset_id": "shuying-avatar-21920",
+                                "provider_asset_id": "21920",
+                                "ready": True,
+                            },
+                            "voice": {
+                                "asset_id": "shuying-voice-7869",
+                                "provider_asset_id": "7869",
+                                "ready": True,
+                            },
+                        },
+                    },
                 },
             )
         if path.startswith("/api/v1/"):
@@ -87,10 +149,12 @@ def test_live_verifier_public_checks_are_no_charge_and_pass():
     )
     assert all(check.passed for check in checks)
     assert not any("copywriting" in path for _, path in requester.calls)
-    assert not any(method in {"PUT", "PATCH", "DELETE"} for method, _ in requester.calls)
+    assert not any(
+        method in {"PUT", "PATCH", "DELETE"} for method, _ in requester.calls
+    )
 
 
-def test_live_verifier_can_check_existing_customer_and_admin_read_only():
+def test_live_verifier_can_check_dedicated_customer_and_admin_without_charge():
     checks = verify.run_checks(
         "https://video-api.company.com",
         activation_code="TEST-ACTIVATION",
@@ -101,6 +165,65 @@ def test_live_verifier_can_check_existing_customer_and_admin_read_only():
     assert all(check.passed for check in checks)
     assert any(check.name == "客户积分只读查询" for check in checks)
     assert any(check.name == "服务器状态与免费本地爬虫边界" for check in checks)
+
+
+def test_live_verifier_strict_mode_requires_credentials_and_production_config():
+    missing = verify.run_checks(
+        "https://video-api.company.com",
+        require_authenticated=True,
+        require_production_configuration=True,
+        requester=_HappyRequester(),
+    )
+    assert any(
+        check.name == "正式验收凭据已提供" and not check.passed for check in missing
+    )
+    assert any(
+        check.name == "正式供应商生产配置" and not check.passed for check in missing
+    )
+
+    strict = verify.run_checks(
+        "https://video-api.company.com",
+        expected_version="0.2.7",
+        activation_code="TEST-ACTIVATION",
+        admin_username="admin",
+        admin_password="correct-admin-password",
+        require_authenticated=True,
+        require_production_configuration=True,
+        requester=_HappyRequester(),
+    )
+    assert all(check.passed for check in strict)
+    assert any(check.name == "正式供应商生产配置" for check in strict)
+
+
+def test_live_verifier_rejects_wrong_release_and_missing_required_avatar_asset():
+    class _WrongReleaseRequester(_HappyRequester):
+        def __call__(self, method: str, path: str, **kwargs):
+            result = super().__call__(method, path, **kwargs)
+            if path == "/health" and isinstance(result.payload, dict):
+                result.payload["release_version"] = "0.2.6"
+            if path == "/api/v1/admin/server-status" and isinstance(
+                result.payload, dict
+            ):
+                result.payload["avatar"]["required_shared_assets"]["voice"]["ready"] = (
+                    False
+                )
+            return result
+
+    checks = verify.run_checks(
+        "https://video-api.company.com",
+        expected_version="0.2.7",
+        activation_code="TEST-ACTIVATION",
+        admin_username="admin",
+        admin_password="correct-admin-password",
+        require_authenticated=True,
+        require_production_configuration=True,
+        requester=_WrongReleaseRequester(),
+    )
+
+    assert any(check.name == "控制层发布版本" and not check.passed for check in checks)
+    assert any(
+        check.name == "正式供应商生产配置" and not check.passed for check in checks
+    )
 
 
 @pytest.mark.parametrize(

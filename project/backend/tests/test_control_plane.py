@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from project.backend.app.control_plane import app
+from project.backend.app.release_version import get_release_version
 from project.backend.app.core.copywriting import get_copywriting_service
 from project.backend.app.core.deps import get_repository
 from project.backend.app.core.security import _auth_tokens, issue_auth_token
@@ -13,6 +14,17 @@ from src.adapters.llm import SandboxCopywritingEngine
 from src.models import CustomerCode
 from src.repositories.sqlite import SQLiteRepository
 from src.services.copywriting import CopywritingService
+
+
+def test_control_plane_health_exposes_immutable_bundle_version():
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "release_version": get_release_version(),
+    }
 
 
 def test_control_plane_customer_login_and_authoritative_balance(tmp_path):
@@ -82,9 +94,7 @@ def test_control_plane_copywriting_requires_customer_session(tmp_path):
             )
             assert unauthorized.status_code == 401
 
-            login = client.post(
-                "/api/v1/auth/customer-login", json={"code": "copy-01"}
-            )
+            login = client.post("/api/v1/auth/customer-login", json={"code": "copy-01"})
             token = login.json()["token"]
             missing_request_id = client.post(
                 "/api/v1/copywriting/generate",
@@ -153,9 +163,17 @@ def test_admin_server_status_never_exposes_secret_values():
         payload = response.json()
         assert payload["crawler"]["location"] == "customer_desktop"
         assert payload["crawler"]["billable"] is False
+        required_assets = payload["avatar"]["required_shared_assets"]
+        assert required_assets["avatar"]["asset_id"] == "shuying-avatar-21920"
+        assert required_assets["avatar"]["provider_asset_id"] == "21920"
+        assert isinstance(required_assets["avatar"]["ready"], bool)
+        assert required_assets["voice"]["asset_id"] == "shuying-voice-7869"
+        assert required_assets["voice"]["provider_asset_id"] == "7869"
+        assert isinstance(required_assets["voice"]["ready"], bool)
         serialized = response.text.casefold()
         assert "api_key" not in serialized
         assert "access_key" not in serialized
+        assert "shuying_avatar_api_code" not in serialized
         assert "secret" not in serialized
     finally:
         _auth_tokens.clear()

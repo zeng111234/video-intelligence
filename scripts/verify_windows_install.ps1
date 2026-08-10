@@ -1,5 +1,6 @@
 ﻿param(
-    [string]$ExpectedVersion = "0.2.0",
+    [ValidatePattern('^$|^[0-9]+\.[0-9]+\.[0-9]+$')]
+    [string]$ExpectedVersion = "",
     [string]$ReportPath = "",
     [switch]$RequireNoDeveloperTools
 )
@@ -20,6 +21,90 @@ function Add-Check {
     })
 }
 
+function ConvertTo-ThreePartVersion {
+    param([AllowEmptyString()][string]$Value)
+
+    $trimmed = ([string]$Value).Trim()
+    if ($trimmed -notmatch '^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.0)?$') {
+        return ""
+    }
+    return ("{0}.{1}.{2}" -f $matches[1], $matches[2], $matches[3])
+}
+
+function Invoke-LocalHttp {
+    param(
+        [string]$Uri,
+        [hashtable]$Headers = @{},
+        [string]$Method = "Get",
+        [string]$Body = "",
+        [string]$ContentType = "application/json"
+    )
+    $target = [Uri]$Uri
+    if (
+        $target.Scheme -ne "http" -or
+        $target.Host -ne "127.0.0.1" -or
+        $target.Port -ne 1001 -or
+        -not [string]::IsNullOrEmpty($target.UserInfo)
+    ) {
+        throw "自动验收只允许连接本机 VideoInsight 服务。"
+    }
+    $request = [System.Net.HttpWebRequest]::Create($target)
+    $request.Method = $Method.ToUpperInvariant()
+    $request.Proxy = $null
+    $request.AllowAutoRedirect = $false
+    $request.Timeout = 10000
+    $request.ReadWriteTimeout = 10000
+    $request.Accept = "application/json"
+    foreach ($name in $Headers.Keys) {
+        $request.Headers[[string]$name] = [string]$Headers[$name]
+    }
+    if ($Body) {
+        $payload = [System.Text.UTF8Encoding]::new($false).GetBytes($Body)
+        $request.ContentType = $ContentType
+        $request.ContentLength = $payload.Length
+        $requestStream = $request.GetRequestStream()
+        try {
+            $requestStream.Write($payload, 0, $payload.Length)
+        }
+        finally {
+            $requestStream.Dispose()
+        }
+    }
+    $response = $null
+    try {
+        $response = [System.Net.HttpWebResponse]$request.GetResponse()
+    }
+    catch [System.Net.WebException] {
+        if ($null -ne $_.Exception.Response) {
+            $response = [System.Net.HttpWebResponse]$_.Exception.Response
+        }
+        else {
+            return [pscustomobject]@{ StatusCode = 0; Body = "" }
+        }
+    }
+    try {
+        $reader = [System.IO.StreamReader]::new(
+            $response.GetResponseStream(),
+            [System.Text.Encoding]::UTF8
+        )
+        try {
+            $responseBody = $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+        }
+        return [pscustomobject]@{
+            StatusCode = [int]$response.StatusCode
+            Body = $responseBody
+        }
+    }
+    finally {
+        if ($null -ne $response) {
+            $response.Dispose()
+        }
+    }
+}
+
 function Get-HttpStatus {
     param(
         [string]$Uri,
@@ -28,40 +113,79 @@ function Get-HttpStatus {
         [string]$Body = "",
         [string]$ContentType = "application/json"
     )
-    try {
-        $parameters = @{
-            Uri = $Uri
-            Headers = $Headers
-            Method = $Method
-            UseBasicParsing = $true
-            TimeoutSec = 10
-        }
-        if ($Body) {
-            $parameters["Body"] = $Body
-            $parameters["ContentType"] = $ContentType
-        }
-        $response = Invoke-WebRequest @parameters
-        return [int]$response.StatusCode
-    }
-    catch {
-        if ($_.Exception.Response) {
-            return [int]$_.Exception.Response.StatusCode
-        }
-        return 0
-    }
+    return [int](
+        Invoke-LocalHttp `
+            -Uri $Uri `
+            -Headers $Headers `
+            -Method $Method `
+            -Body $Body `
+            -ContentType $ContentType
+    ).StatusCode
 }
 
 function Get-LocalHealth {
+    $response = Invoke-LocalHttp -Uri "http://127.0.0.1:1001/health"
+    if ($response.StatusCode -ne 200) {
+        return $null
+    }
     try {
-        return Invoke-RestMethod `
-            -Uri "http://127.0.0.1:1001/health" `
-            -Method Get `
-            -TimeoutSec 10 `
-            -UseBasicParsing
+        return $response.Body | ConvertFrom-Json
     }
     catch {
         return $null
     }
+}
+
+function Test-SafeDirectoryTree {
+    param([string]$LiteralPath)
+    if (-not (Test-Path -LiteralPath $LiteralPath -PathType Container)) {
+        return $false
+    }
+    $pending = New-Object 'System.Collections.Generic.Stack[System.IO.DirectoryInfo]'
+    $root = Get-Item -LiteralPath $LiteralPath -Force
+    if (($root.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        return $false
+    }
+    $pending.Push($root)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Pop()
+        foreach ($item in Get-ChildItem -LiteralPath $directory.FullName -Force) {
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                return $false
+            }
+            if ($item.PSIsContainer) {
+                $pending.Push($item)
+            }
+        }
+    }
+    return $true
+}
+
+function Test-PathInsideRoot {
+    param([string]$Candidate, [string]$Root)
+    if ([string]::IsNullOrWhiteSpace($Candidate)) {
+        return $false
+    }
+    try {
+        $candidatePath = [System.IO.Path]::GetFullPath($Candidate)
+        $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    }
+    catch {
+        return $false
+    }
+    return $candidatePath.StartsWith(
+        $rootPath + [System.IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )
+}
+
+function Test-SafeLeaf {
+    param([string]$LiteralPath)
+    if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+        return $false
+    }
+    $item = Get-Item -LiteralPath $LiteralPath -Force
+    return ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0
 }
 
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
@@ -87,10 +211,16 @@ Add-Check `
     -Passed ((-not $RequireNoDeveloperTools) -or $developerToolsAbsent) `
     -Evidence ("python={0}; node={1}" -f $(if ($python) { $python.Source } else { "not on PATH" }), $(if ($node) { $node.Source } else { "not on PATH" }))
 
-Add-Check -Name "Installed executable" -Passed (Test-Path -LiteralPath $installedExe) -Evidence $installedExe
-Add-Check -Name "Desktop shortcut" -Passed (Test-Path -LiteralPath $desktopShortcut) -Evidence $desktopShortcut
-Add-Check -Name "Start menu shortcut" -Passed (Test-Path -LiteralPath $startShortcut) -Evidence $startShortcut
-Add-Check -Name "Local data database" -Passed (Test-Path -LiteralPath $database) -Evidence $database
+$installTreeSafe = Test-SafeDirectoryTree -LiteralPath $installRoot
+$installedExeSafe = Test-SafeLeaf -LiteralPath $installedExe
+$desktopShortcutSafe = Test-SafeLeaf -LiteralPath $desktopShortcut
+$startShortcutSafe = Test-SafeLeaf -LiteralPath $startShortcut
+$databaseSafe = Test-SafeLeaf -LiteralPath $database
+Add-Check -Name "Installed executable" -Passed $installedExeSafe -Evidence $installedExe
+Add-Check -Name "Install directory has no links" -Passed $installTreeSafe -Evidence $installRoot
+Add-Check -Name "Desktop shortcut" -Passed $desktopShortcutSafe -Evidence $desktopShortcut
+Add-Check -Name "Start menu shortcut" -Passed $startShortcutSafe -Evidence $startShortcut
+Add-Check -Name "Local data database" -Passed $databaseSafe -Evidence $database
 
 $registeredVersion = ""
 $registeredLocation = ""
@@ -99,13 +229,50 @@ if (Test-Path -LiteralPath $uninstallKey) {
     $registeredVersion = [string]$uninstall.DisplayVersion
     $registeredLocation = [string]$uninstall.InstallLocation
 }
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
+    if ($registeredVersion -match '^[0-9]+\.[0-9]+\.[0-9]+$') {
+        $ExpectedVersion = $registeredVersion
+    }
+}
+$registeredLocationMatches = $false
+try {
+    $registeredLocationMatches = (
+        [System.IO.Path]::GetFullPath($registeredLocation) -eq
+        [System.IO.Path]::GetFullPath($installRoot)
+    )
+}
+catch {
+    $registeredLocationMatches = $false
+}
 Add-Check `
     -Name "Apps and Features registration" `
-    -Passed ((Test-Path -LiteralPath $uninstallKey) -and $registeredVersion -eq $ExpectedVersion -and $registeredLocation -eq $installRoot) `
+    -Passed ((Test-Path -LiteralPath $uninstallKey) -and $ExpectedVersion -and $registeredVersion -eq $ExpectedVersion -and $registeredLocationMatches) `
     -Evidence ("version={0}; location={1}" -f $registeredVersion, $registeredLocation)
 
+$installedFileVersion = ""
+$installedProductVersion = ""
+if ($installedExeSafe) {
+    $installedVersionInfo = (Get-Item -LiteralPath $installedExe).VersionInfo
+    $installedFileVersion = [string]$installedVersionInfo.FileVersion
+    $installedProductVersion = [string]$installedVersionInfo.ProductVersion
+}
+$expectedCanonicalVersion = ConvertTo-ThreePartVersion -Value $ExpectedVersion
+$fileCanonicalVersion = ConvertTo-ThreePartVersion -Value $installedFileVersion
+$productCanonicalVersion = ConvertTo-ThreePartVersion -Value $installedProductVersion
+Add-Check `
+    -Name "Installed executable version" `
+    -Passed (
+        $expectedCanonicalVersion -and
+        $fileCanonicalVersion -eq $expectedCanonicalVersion -and
+        $productCanonicalVersion -eq $expectedCanonicalVersion
+    ) `
+    -Evidence (
+        "expected={0}; file={1}; product={2}" -f `
+            $expectedCanonicalVersion, $installedFileVersion, $installedProductVersion
+    )
+
 $shortcutTarget = ""
-if (Test-Path -LiteralPath $desktopShortcut) {
+if ($desktopShortcutSafe) {
     $shell = New-Object -ComObject WScript.Shell
     $shortcutTarget = $shell.CreateShortcut($desktopShortcut).TargetPath
 }
@@ -152,11 +319,11 @@ Add-Check -Name "Tasks require login" -Passed ($tasksStatus -eq 401) -Evidence (
 Add-Check -Name "Crawler requires login" -Passed ($crawlerStatus -eq 401) -Evidence ("HTTP {0}" -f $crawlerStatus)
 Add-Check -Name "Admin requires login" -Passed ($adminStatus -eq 401) -Evidence ("HTTP {0}" -f $adminStatus)
 
-$processes = Get-CimInstance Win32_Process | Where-Object {
+$processes = @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -in @("VideoInsight.exe", "VideoInsightBackend.exe")
-}
+})
 $unexpectedProcess = $processes | Where-Object {
-    -not $_.ExecutablePath.StartsWith($installRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    -not (Test-PathInsideRoot -Candidate ([string]$_.ExecutablePath) -Root $installRoot)
 }
 $processEvidence = ($processes | ForEach-Object { $_.ExecutablePath } | Sort-Object -Unique) -join "; "
 Add-Check `

@@ -436,10 +436,10 @@ chore: 构建/工具相关
 正式域名和服务器 `.env` 填好且全量验收通过后，才运行一次：
 
 ```powershell
-.\scripts\build_final_windows_release.ps1 -ControlPlaneUrl "https://你的正式域名" -Version "0.2.1"
+.\scripts\build_final_windows_release.ps1 -ControlPlaneUrl "https://你的正式域名" -Version "0.2.7" -PaidAcceptanceReport ".\build\paid-release-acceptance-0.2.7.json"
 ```
 
-示例版本必须替换为从未生成过的新版本号；`0.2.0` 及更早版本会被正式构建脚本拒绝。该命令生成唯一的客户安装包和更新清单。不要把 `.env`、数据库、日志、客户媒体、备份或正式密钥打进安装包。
+示例版本必须替换为从未生成过的新版本号；`0.2.0` 及更早版本会被正式构建脚本拒绝。付费报告必须来自同一域名、同一版本最近 24 小时内的四项最低成本真实验收。该命令生成唯一的客户安装包和更新清单。不要把 `.env`、数据库、日志、客户媒体、备份或正式密钥打进安装包。
 
 
 ## 常见问题

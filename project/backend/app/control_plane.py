@@ -30,6 +30,9 @@ from project.backend.app.api.v1.provider_copywriting import (
 )
 from project.backend.app.api.v1.provider_asr import router as provider_asr_router
 from project.backend.app.api.v1.provider_avatar import router as provider_avatar_router
+from project.backend.app.api.v1.provider_release_acceptance import (
+    router as provider_release_acceptance_router,
+)
 from project.backend.app.api.v1.provider_video_editor import (
     router as provider_video_editor_router,
 )
@@ -49,15 +52,16 @@ from project.backend.app.core.security import (
     check_auth_rate_limit,
     verify_auth_token,
 )
+from project.backend.app.release_version import get_release_version
+from src.models import AvatarAssetKind
 from src.services.credits import set_current_owner
 
 MAX_IDEMPOTENT_RESPONSE_BYTES = 2 * 1024 * 1024
+RELEASE_VERSION = get_release_version()
 
 
 def _allowed_hosts() -> list[str]:
-    raw = os.getenv(
-        "CONTROL_PLANE_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver"
-    )
+    raw = os.getenv("CONTROL_PLANE_ALLOWED_HOSTS", "localhost,127.0.0.1,testserver")
     return [host.strip() for host in raw.split(",") if host.strip()]
 
 
@@ -72,7 +76,7 @@ async def lifespan(_application: FastAPI):
 
 app = FastAPI(
     title="VideoInsight 公司控制层",
-    version="0.2.0",
+    version=RELEASE_VERSION,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -161,12 +165,16 @@ async def _run_idempotent_paid_request(request: Request, call_next, *, owner: st
         except ValueError:
             content_length = 0
         if content_length <= 0 or content_length > 513 * 1024 * 1024:
-            return JSONResponse(status_code=413, content={"message": "上传素材不能超过 512MB。"})
+            return JSONResponse(
+                status_code=413, content={"message": "上传素材不能超过 512MB。"}
+            )
         operation_fingerprint = request.headers.get(
             "X-Operation-Fingerprint", ""
         ).strip()
         if not re.fullmatch(r"[a-f0-9]{64}", operation_fingerprint.casefold()):
-            return JSONResponse(status_code=400, content={"message": "素材校验信息缺失。"})
+            return JSONResponse(
+                status_code=400, content={"message": "素材校验信息缺失。"}
+            )
         body = operation_fingerprint.encode("ascii", errors="ignore")
     else:
         body = await request.body()
@@ -213,7 +221,10 @@ async def _run_idempotent_paid_request(request: Request, call_next, *, owner: st
         )
         raise
 
-    if response.status_code >= 500 or len(response_body) > MAX_IDEMPOTENT_RESPONSE_BYTES:
+    if (
+        response.status_code >= 500
+        or len(response_body) > MAX_IDEMPOTENT_RESPONSE_BYTES
+    ):
         mark_operation_unknown(
             owner=owner,
             operation_type=operation_type,
@@ -240,7 +251,9 @@ async def _run_idempotent_paid_request(request: Request, call_next, *, owner: st
 async def http_exception_handler(_request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
-        content={"message": exc.detail if isinstance(exc.detail, str) else str(exc.detail)},
+        content={
+            "message": exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        },
     )
 
 
@@ -268,7 +281,7 @@ def root() -> dict[str, str]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "release_version": RELEASE_VERSION}
 
 
 @app.get("/ready")
@@ -304,17 +317,67 @@ def server_status() -> dict[str, object]:
         except Exception:
             return {"enabled": False, "missing_configuration": ["服务配置读取失败"]}
 
-    asr = safe_capability(lambda: get_server_asr_runtime().capability())
-    video = safe_capability(
-        lambda: get_cloud_capability(
-            get_server_video_editor_runtime().configuration
-        ).model_dump(mode="json")
+    def redact_configuration_names(
+        capability: dict[str, object], *, unavailable_message: str
+    ) -> dict[str, object]:
+        """Keep readiness useful without exposing secret/config variable names."""
+
+        if capability.get("missing_configuration"):
+            return {
+                **capability,
+                "missing_configuration": [unavailable_message],
+            }
+        return capability
+
+    asr = redact_configuration_names(
+        safe_capability(lambda: get_server_asr_runtime().capability()),
+        unavailable_message="公司云端转写配置尚未完成",
     )
-    avatar = safe_capability(
-        lambda: _customer_capability(
-            get_server_avatar_provider()
-        ).model_dump(mode="json")
+    video = redact_configuration_names(
+        safe_capability(
+            lambda: get_cloud_capability(
+                get_server_video_editor_runtime().configuration
+            ).model_dump(mode="json")
+        ),
+        unavailable_message="公司云端剪辑配置尚未完成",
     )
+
+    def avatar_capability() -> dict[str, object]:
+        provider = get_server_avatar_provider()
+        capability = _customer_capability(provider).model_dump(mode="json")
+        checker = getattr(provider, "has_ready_shared_asset", None)
+        capability["required_shared_assets"] = {
+            "avatar": {
+                "asset_id": "shuying-avatar-21920",
+                "provider_asset_id": "21920",
+                "ready": bool(
+                    callable(checker)
+                    and checker(
+                        asset_id="shuying-avatar-21920",
+                        kind=AvatarAssetKind.AVATAR,
+                        provider_asset_id="21920",
+                    )
+                ),
+            },
+            "voice": {
+                "asset_id": "shuying-voice-7869",
+                "provider_asset_id": "7869",
+                "ready": bool(
+                    callable(checker)
+                    and checker(
+                        asset_id="shuying-voice-7869",
+                        kind=AvatarAssetKind.VOICE,
+                        provider_asset_id="7869",
+                    )
+                ),
+            },
+        }
+        return redact_configuration_names(
+            capability,
+            unavailable_message="公司数字人配置尚未完成",
+        )
+
+    avatar = safe_capability(avatar_capability)
     copy_production = str(COPYWRITING_MODE) == "production"
     return {
         "service": "ready",
@@ -348,3 +411,4 @@ app.include_router(provider_copywriting_router)
 app.include_router(provider_asr_router)
 app.include_router(provider_video_editor_router)
 app.include_router(provider_avatar_router)
+app.include_router(provider_release_acceptance_router)

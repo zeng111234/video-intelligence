@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "used_versions": [
+    "0.2.0",
+    "0.2.1",
+    "0.2.2",
+    "0.2.3",
+    "0.2.4",
+    "0.2.5",
+    "0.2.6"
+  ],
+  "current_candidate": "0.2.7",
+  "release_in_progress": null,
+  "completed_releases": []
+}

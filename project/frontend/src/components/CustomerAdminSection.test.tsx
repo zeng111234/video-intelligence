@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Modal } from "antd";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "./Toast";
 import CustomerAdminSection from "./CustomerAdminSection";
@@ -63,6 +64,7 @@ describe("CustomerAdminSection access package", () => {
   });
 
   afterEach(() => {
+    Modal.destroyAll();
     cleanup();
     vi.restoreAllMocks();
   });
@@ -108,5 +110,36 @@ describe("CustomerAdminSection access package", () => {
         count: 1,
       });
     });
+  });
+
+  it("keeps many customers paginated inside a horizontally scrollable table", async () => {
+    mockListCustomerCodes.mockResolvedValue(
+      Array.from({ length: 12 }, (_, index) => ({
+        ...weeklyCode,
+        code: `ABCD-EFGH-JK23-${String(index + 1).padStart(4, "0")}`,
+        name: `需要完整显示管理操作的客户 ${index + 1}`,
+      })),
+    );
+
+    const { container } = render(
+      <ToastProvider>
+        <CustomerAdminSection />
+      </ToastProvider>,
+    );
+
+    const table = await waitFor(() => {
+      const element = container.querySelector<HTMLElement>(".admin-customer-codes-table");
+      expect(element).toBeTruthy();
+      expect(element!.querySelectorAll("tbody .ant-table-row")).toHaveLength(10);
+      return element!;
+    });
+
+    expect(table.querySelector(".ant-table-scroll-horizontal")).toBeTruthy();
+    expect(within(table).getByText("共 12 个客户")).toBeTruthy();
+
+    fireEvent.click(
+      within(table).getAllByRole("button", { name: "调整套餐" })[0],
+    );
+    expect(screen.getByRole("dialog", { name: /延长使用期/ })).toBeTruthy();
   });
 });

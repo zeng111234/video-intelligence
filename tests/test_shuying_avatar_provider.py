@@ -116,6 +116,9 @@ def test_submit_uses_single_key_legacy_form_protocol_without_retry():
     assert b"test-api-code" in calls[0][3]
     assert b'name="audioUrl"' in calls[1][3]
     assert b"\xe6\x8e\xa5\xe5\x8f\xa3\xe9\xaa\x8c\xe8\xaf\x811" in calls[1][3]
+    assert b'name="aspect_ratio"' not in calls[1][3]
+    assert b'name="resolution"' not in calls[1][3]
+    assert b'name="background"' not in calls[1][3]
 
 
 def test_submit_maps_custom_avatar_to_its_provider_model_id(tmp_path):
@@ -164,7 +167,9 @@ def test_shared_ready_manifest_assets_enable_existing_paid_pair_without_retraini
     def transport(method, url, headers, body, timeout):
         calls.append(url)
         if url.endswith("/voice_2"):
-            return json.dumps({"code": 1, "data": "tts-existing-1"}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": "tts-existing-1"}
+            ).encode(), "application/json"
         if url.endswith("/voice_tts_info"):
             return (
                 json.dumps(
@@ -176,7 +181,9 @@ def test_shared_ready_manifest_assets_enable_existing_paid_pair_without_retraini
                 "application/json",
             )
         if url.endswith("/video"):
-            return json.dumps({"code": 1, "data": {"videoId": "video-existing-1"}}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": {"videoId": "video-existing-1"}}
+            ).encode(), "application/json"
         raise AssertionError(f"unexpected URL: {url}")
 
     runtime_root = tmp_path / "runtime"
@@ -237,6 +244,21 @@ def test_shared_ready_manifest_assets_enable_existing_paid_pair_without_retraini
     }
     assert all(item.shared for item in assets)
     assert provider.is_shared_asset("shuying-voice-7869") is True
+    assert provider.has_ready_shared_asset(
+        asset_id="shuying-avatar-21920",
+        kind=AvatarAssetKind.AVATAR,
+        provider_asset_id="21920",
+    )
+    assert provider.has_ready_shared_asset(
+        asset_id="shuying-voice-7869",
+        kind=AvatarAssetKind.VOICE,
+        provider_asset_id="7869",
+    )
+    assert not provider.has_ready_shared_asset(
+        asset_id="shuying-voice-7869",
+        kind=AvatarAssetKind.VOICE,
+        provider_asset_id="wrong-provider-id",
+    )
 
     snapshot = provider.submit(
         _request().model_copy(
@@ -338,13 +360,18 @@ def test_video_name_is_trimmed_to_the_legacy_gateway_limit():
         if url.endswith("/voice"):
             return (
                 json.dumps(
-                    {"code": 1, "data": {"ossurl": "https://media.example.com/voice.mp3"}}
+                    {
+                        "code": 1,
+                        "data": {"ossurl": "https://media.example.com/voice.mp3"},
+                    }
                 ).encode(),
                 "application/json",
             )
         video_bodies.append(body)
         return (
-            json.dumps({"code": 1, "data": {"videoId": "video-job-short-name"}}).encode(),
+            json.dumps(
+                {"code": 1, "data": {"videoId": "video-job-short-name"}}
+            ).encode(),
             "application/json",
         )
 
@@ -393,7 +420,14 @@ def test_submit_connection_failure_is_outcome_unknown_and_not_retried():
     assert call_count == 1
 
 
-def test_status_maps_success_and_download_checks_allowed_host():
+@pytest.mark.parametrize(
+    ("provider_duration", "expected_seconds"),
+    [("1.07", 2), ("1.067", 2), (999, 999), (1200, 1200)],
+)
+def test_status_maps_success_and_download_checks_allowed_host(
+    provider_duration,
+    expected_seconds,
+):
     def transport(method, url, headers, body, timeout):
         assert url.endswith("/videoDetail")
         return (
@@ -404,7 +438,7 @@ def test_status_maps_success_and_download_checks_allowed_host():
                         "synthesisStatus": 3,
                         "videoUrl": "https://media.example.com/result.mp4",
                         "videoSize": 1234,
-                        "duration": 1067,
+                        "duration": provider_duration,
                     },
                 }
             ).encode(),
@@ -427,9 +461,70 @@ def test_status_maps_success_and_download_checks_allowed_host():
     assert snapshot.status == AvatarProviderStatus.SUCCEEDED
     assert snapshot.result_mime == "video/mp4"
     assert snapshot.result_size_bytes == 1234
-    assert snapshot.estimated_seconds == 2
+    assert snapshot.estimated_seconds == expected_seconds
     assert payload[4:8] == b"ftyp"
     assert mime_type == "video/mp4"
+
+
+@pytest.mark.parametrize(
+    "provider_duration",
+    [None, "", 0, -1, True, {}, "not-a-duration", float("nan"), float("inf")],
+)
+def test_status_keeps_invalid_provider_duration_unknown(provider_duration):
+    def transport(method, url, headers, body, timeout):
+        assert url.endswith("/videoDetail")
+        return (
+            json.dumps(
+                {
+                    "code": 1,
+                    "data": {
+                        "synthesisStatus": 3,
+                        "videoUrl": "https://media.example.com/result.mp4",
+                        "duration": provider_duration,
+                    },
+                }
+            ).encode(),
+            "application/json",
+        )
+
+    snapshot = _provider(transport=transport).get_job("video-job-duration-unknown")
+
+    assert snapshot.status == AvatarProviderStatus.SUCCEEDED
+    assert snapshot.estimated_seconds is None
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected_status", "error_field"),
+    [
+        (4, AvatarProviderStatus.FAILED, {"err_msg": "服务异常：视频合成失败"}),
+        (5, AvatarProviderStatus.FAILED, {"failreason": "任务已归档"}),
+        (6, AvatarProviderStatus.CANCELLED, {"message": "用户取消任务"}),
+        (7, AvatarProviderStatus.FAILED, {"msg": "供应商任务失败"}),
+    ],
+)
+def test_status_maps_legacy_terminal_states(
+    provider_status: int,
+    expected_status: AvatarProviderStatus,
+    error_field: dict[str, str],
+):
+    def transport(method, url, headers, body, timeout):
+        assert url.endswith("/videoDetail")
+        return (
+            json.dumps(
+                {
+                    "code": 1,
+                    "data": {"synthesisStatus": provider_status, **error_field},
+                },
+                ensure_ascii=False,
+            ).encode(),
+            "application/json",
+        )
+
+    snapshot = _provider(transport=transport).get_job("video-job-terminal")
+
+    assert snapshot.status == expected_status
+    assert snapshot.progress == 100
+    assert snapshot.error_message == next(iter(error_field.values()))
 
 
 def test_download_rejects_unapproved_result_host():
@@ -448,9 +543,13 @@ def test_cloud_avatar_training_persists_a_pending_video_asset(tmp_path):
 
     def transport(method, url, headers, body, timeout):
         if url.endswith("/model"):
-            return json.dumps({"code": 1, "data": {"id": 10079}}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": {"id": 10079}}
+            ).encode(), "application/json"
         assert url.endswith("/modelDetail")
-        return json.dumps({"code": 1, "data": {"status": 1}}).encode(), "application/json"
+        return json.dumps(
+            {"code": 1, "data": {"status": 1}}
+        ).encode(), "application/json"
 
     provider = _provider(
         transport=transport,
@@ -458,7 +557,9 @@ def test_cloud_avatar_training_persists_a_pending_video_asset(tmp_path):
         model_upload_url="https://upload.example.com/system/basic/test",
         model_upload_allowed_hosts="upload.example.com,media.example.com",
         file_upload_transport=lambda url, filename, mime_type, path, timeout: (
-            json.dumps({"code": 1, "path": "https://media.example.com/training.mp4"}).encode(),
+            json.dumps(
+                {"code": 1, "path": "https://media.example.com/training.mp4"}
+            ).encode(),
             "application/json",
         ),
     )
@@ -481,12 +582,16 @@ def test_cloud_avatar_training_reuses_the_configured_audio_upload_entry(tmp_path
 
     def transport(method, url, headers, body, timeout):
         assert url.endswith("/model")
-        return json.dumps({"code": 1, "data": {"id": 10080}}).encode(), "application/json"
+        return json.dumps(
+            {"code": 1, "data": {"id": 10080}}
+        ).encode(), "application/json"
 
     def upload_transport(url, filename, mime_type, path, timeout):
         upload_urls.append(url)
         return (
-            json.dumps({"code": 1, "path": "https://media.example.com/training.mp4"}).encode(),
+            json.dumps(
+                {"code": 1, "path": "https://media.example.com/training.mp4"}
+            ).encode(),
             "application/json",
         )
 
@@ -506,9 +611,7 @@ def test_cloud_avatar_training_reuses_the_configured_audio_upload_entry(tmp_path
         filename="training.mp4",
     )
 
-    assert upload_urls == [
-        "https://upload.example.com/system/basic/test?is_video=1"
-    ]
+    assert upload_urls == ["https://upload.example.com/system/basic/test?is_video=1"]
     assert asset.asset_id == "shuying-avatar-10080"
 
 
@@ -529,7 +632,9 @@ def test_voice_cloning_reuses_the_configured_gateway_route_and_key(tmp_path):
     def transport(method, url, headers, body, timeout):
         calls.append((method, url, headers, body, timeout))
         assert url == "https://avatar-gateway.example.com/apiai/ai/voice_clone"
-        return json.dumps({"code": 0, "data": {"task_id": "voice-task-101"}}).encode(), "application/json"
+        return json.dumps(
+            {"code": 0, "data": {"task_id": "voice-task-101"}}
+        ).encode(), "application/json"
 
     provider = _provider(
         base_url="https://avatar-gateway.example.com/apiai/aif",
@@ -538,7 +643,9 @@ def test_voice_cloning_reuses_the_configured_gateway_route_and_key(tmp_path):
         assets_manifest_path=str(tmp_path / "assets.json"),
         transport=transport,
         file_upload_transport=lambda url, filename, mime_type, path, timeout: (
-            json.dumps({"code": 1, "path": "https://media.example.com/sample.mp3"}).encode(),
+            json.dumps(
+                {"code": 1, "path": "https://media.example.com/sample.mp3"}
+            ).encode(),
             "application/json",
         ),
     )
@@ -563,7 +670,9 @@ def test_cloned_voice_waits_as_a_resumable_job_before_submitting_video(tmp_path)
         nonlocal voice_status_calls
         calls.append(url)
         if url.endswith("/voice_2"):
-            return json.dumps({"code": 1, "data": "tts-task-101"}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": "tts-task-101"}
+            ).encode(), "application/json"
         if url.endswith("/voice_tts_info"):
             voice_status_calls += 1
             data = (
@@ -573,7 +682,9 @@ def test_cloned_voice_waits_as_a_resumable_job_before_submitting_video(tmp_path)
             )
             return json.dumps({"code": 1, "data": data}).encode(), "application/json"
         if url.endswith("/video"):
-            return json.dumps({"code": 1, "data": {"videoId": "video-job-voice"}}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": {"videoId": "video-job-voice"}}
+            ).encode(), "application/json"
         raise AssertionError(f"unexpected URL: {url}")
 
     provider = _provider(
@@ -626,18 +737,26 @@ def test_pending_voice_sample_is_saved_without_submitting_a_clone(tmp_path):
     assert asset.preview_type == "audio"
     assert asset.preview_url == f"/api/v1/avatar/assets/{asset.asset_id}/media"
     assert provider.list_assets()[-1].status == "pending_configuration"
-    assert (tmp_path / "voice_samples" / f"{asset.asset_id}.mp3").read_bytes() == b"authorised-sample"
+    assert (
+        tmp_path / "voice_samples" / f"{asset.asset_id}.mp3"
+    ).read_bytes() == b"authorised-sample"
 
 
-def test_pending_voice_sample_can_be_submitted_after_the_clone_route_is_restored(tmp_path):
+def test_pending_voice_sample_can_be_submitted_after_the_clone_route_is_restored(
+    tmp_path,
+):
     sample = tmp_path / "sample.mp3"
     sample.write_bytes(b"authorised-sample")
 
     def transport(method, url, headers, body, timeout):
         if url.endswith("/voice_clone_status_2"):
-            return json.dumps({"code": 1, "data": {"status": 1}}).encode(), "application/json"
+            return json.dumps(
+                {"code": 1, "data": {"status": 1}}
+            ).encode(), "application/json"
         assert url == "https://avatar-gateway.example.com/voice_clone"
-        return json.dumps({"code": 0, "data": {"task_id": "voice-task-resumed"}}).encode(), "application/json"
+        return json.dumps(
+            {"code": 0, "data": {"task_id": "voice-task-resumed"}}
+        ).encode(), "application/json"
 
     provider = _provider(
         assets_manifest_path=str(tmp_path / "assets.json"),
@@ -645,7 +764,9 @@ def test_pending_voice_sample_can_be_submitted_after_the_clone_route_is_restored
         audio_allowed_hosts="media.example.com",
         transport=transport,
         file_upload_transport=lambda url, filename, mime_type, path, timeout: (
-            json.dumps({"code": 1, "path": "https://media.example.com/sample.mp3"}).encode(),
+            json.dumps(
+                {"code": 1, "path": "https://media.example.com/sample.mp3"}
+            ).encode(),
             "application/json",
         ),
     )

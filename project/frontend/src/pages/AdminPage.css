@@ -72,6 +72,42 @@
   box-shadow: none;
 }
 
+.admin-secondary-grid > *,
+.admin-secondary-card,
+.admin-secondary-card .ant-card-body,
+.admin-customer-codes-table {
+  min-width: 0;
+}
+
+.admin-customer-codes-card {
+  overflow: hidden;
+}
+
+.admin-customer-codes-table {
+  max-width: 100%;
+}
+
+.admin-customer-codes-table .ant-table-container {
+  max-width: 100%;
+}
+
+.admin-customer-codes-table .ant-table-content {
+  overflow-x: auto !important;
+  overscroll-behavior-x: contain;
+}
+
+.admin-customer-codes-table .ant-table-cell {
+  overflow: hidden;
+}
+
+.admin-code-actions {
+  row-gap: 0 !important;
+}
+
+.admin-code-actions .ant-btn {
+  padding-inline: 4px;
+}
+
 .admin-primary-card .ant-card-head,
 .admin-secondary-card .ant-card-head {
   min-height: 68px;
@@ -149,5 +185,19 @@
   .admin-primary-card .ant-card-head,
   .admin-secondary-card .ant-card-head {
     min-height: 58px;
+  }
+
+  .admin-customer-codes-card .ant-card-head-wrapper {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .admin-customer-codes-card .ant-card-extra {
+    width: 100%;
+    margin-inline-start: 0;
+  }
+
+  .admin-customer-codes-card .ant-card-body {
+    padding-inline: 12px;
   }
 }

@@ -67,3 +67,6 @@ deploy/control-plane/updates/
 backend_customer.log
 frontend_run.log
 _diag_*.py
+
+# Shared-server bootstrap artifacts (machine-specific binaries and configs)
+/work/server-deploy-xmt/

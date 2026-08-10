@@ -80,8 +80,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 $forbiddenTrackedFiles = @(
     $trackedFiles | Where-Object {
-        $_ -eq ".env" -or
-        ($_.StartsWith(".env.") -and $_ -ne ".env.example") -or
+        $trackedFileName = [System.IO.Path]::GetFileName([string]$_)
+        $trackedFileName.Equals(".env", [System.StringComparison]::OrdinalIgnoreCase) -or
+        (
+            $trackedFileName.StartsWith(".env.", [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not $trackedFileName.Equals(".env.example", [System.StringComparison]::OrdinalIgnoreCase)
+        ) -or
         $_ -match "(^|/)(data|outputs|uploads|models)/" -or
         $_ -match "\.(db|sqlite|sqlite3|mp4|mov|mp3|wav)$" -or
         $_ -match "^forge_rss_analysis/"

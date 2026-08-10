@@ -67,6 +67,7 @@ function CustomerCodesCard() {
   const [extendDays, setExtendDays] = useState<number>(7);
   const [extendPriceCredits, setExtendPriceCredits] = useState<number>(9.9);
   const [extending, setExtending] = useState(false);
+  const [generatedCodes, setGeneratedCodes] = useState<CustomerCodeItem[]>([]);
   const [form] = Form.useForm();
 
   const fetchCodes = useCallback(async () => {
@@ -99,27 +100,7 @@ function CustomerCodesCard() {
       setGenerateOpen(false);
       form.resetFields();
       void fetchCodes();
-      // 展示激活码
-      Modal.success({
-        title: "激活码已生成（请复制发给客户）",
-        width: 480,
-        content: (
-          <div>
-            {created.map((item) => (
-              <div key={item.code} style={{ marginBottom: 8 }}>
-                <Text code copyable style={{ fontSize: 16 }}>
-                  {item.code}
-                </Text>
-                <Text type="secondary" style={{ marginLeft: 8 }}>
-                  {item.name} · {item.valid_days ? `${item.valid_days}天` : "长期"}
-                  {item.valid_days ? ` / ${item.package_price_credits}积分` : ""}
-                  {` · 内容余额 ${item.balance} 积分`}
-                </Text>
-              </div>
-            ))}
-          </div>
-        ),
-      });
+      setGeneratedCodes(created);
     } catch (err) {
       toast.error((err as Error).message || "生成失败");
     } finally {
@@ -189,7 +170,7 @@ function CustomerCodesCard() {
 
   return (
     <Card
-      className="admin-secondary-card"
+      className="admin-secondary-card admin-customer-codes-card"
       title={
         <span className="admin-section-title">
           <TeamOutlined />
@@ -211,20 +192,46 @@ function CustomerCodesCard() {
         使用期从客户第一次登录起算；积分单独计费，到期不会清空余额。
       </Text>
       <Table
+        className="admin-customer-codes-table"
         size="small"
         rowKey="code"
         loading={loading}
         dataSource={items}
-        pagination={{ pageSize: 10, hideOnSinglePage: true }}
+        tableLayout="fixed"
+        scroll={{ x: 520 }}
+        pagination={{
+          pageSize: 10,
+          hideOnSinglePage: true,
+          showSizeChanger: false,
+          showTotal: (total) => `共 ${total} 个客户`,
+        }}
         columns={[
           {
-            title: "激活码",
-            dataIndex: "code",
-            render: (value: string) => <Text code copyable>{value}</Text>,
+            title: "激活码 / 客户",
+            width: 185,
+            render: (_, item) => (
+              <Space direction="vertical" size={0} style={{ width: "100%" }}>
+                <Text
+                  code
+                  copyable
+                  ellipsis={{ tooltip: item.code }}
+                  style={{ maxWidth: "100%" }}
+                >
+                  {item.code}
+                </Text>
+                <Text
+                  type="secondary"
+                  ellipsis={{ tooltip: item.name }}
+                  style={{ maxWidth: "100%" }}
+                >
+                  {item.name}
+                </Text>
+              </Space>
+            ),
           },
-          { title: "客户", dataIndex: "name" },
           {
             title: "套餐 / 有效期",
+            width: 135,
             render: (_, item) => (
               <Space direction="vertical" size={0}>
                 <Text>
@@ -244,12 +251,14 @@ function CustomerCodesCard() {
           {
             title: "积分",
             dataIndex: "balance",
+            width: 60,
             render: (value: string) => <Text strong>{value}</Text>,
           },
           {
             title: "操作",
+            width: 140,
             render: (_, item) => (
-              <Space size={0} wrap>
+              <Space className="admin-code-actions" size={0} wrap>
                 {item.valid_days !== null && (
                   <Button
                     size="small"
@@ -333,6 +342,31 @@ function CustomerCodesCard() {
       </Modal>
 
       <Modal
+        title="激活码已生成（请复制发给客户）"
+        width={480}
+        open={generatedCodes.length > 0}
+        okText="知道了"
+        cancelButtonProps={{ style: { display: "none" } }}
+        onOk={() => setGeneratedCodes([])}
+        onCancel={() => setGeneratedCodes([])}
+      >
+        <div>
+          {generatedCodes.map((item) => (
+            <div key={item.code} style={{ marginBottom: 8 }}>
+              <Text code copyable style={{ fontSize: 16 }}>
+                {item.code}
+              </Text>
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                {item.name} · {item.valid_days ? `${item.valid_days}天` : "长期"}
+                {item.valid_days ? ` / ${item.package_price_credits}积分` : ""}
+                {` · 内容余额 ${item.balance} 积分`}
+              </Text>
+            </div>
+          ))}
+        </div>
+      </Modal>
+
+      <Modal
         title={`延长使用期：${extendCode?.name ?? ""}`}
         open={Boolean(extendCode)}
         onOk={() => void submitExtend()}
@@ -382,7 +416,7 @@ function CustomerCodesCard() {
             max={1000000}
             value={adjustAmount}
             onChange={(value) => setAdjustAmount(value ?? 0)}
-            addonAfter="积分"
+            suffix="积分"
             style={{ width: "100%" }}
             autoFocus
           />

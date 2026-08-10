@@ -1,0 +1,36 @@
+[Unit]
+Description=VideoInsight Control Plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=videoinsight
+Group=videoinsight
+WorkingDirectory=/opt/videoinsight-control-plane/current/app
+EnvironmentFile=/opt/videoinsight-control-plane/config/control-plane.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=VIDEOINSIGHT_RUNTIME_ROOT=/opt/videoinsight-control-plane/runtime
+Environment=VIDEOINSIGHT_BACKUP_ROOT=/opt/videoinsight-control-plane/backups
+Environment=AUTH_SESSION_DATABASE_PATH=/opt/videoinsight-control-plane/runtime/data/video_intelligence.db
+ExecStart=/opt/videoinsight-control-plane/current/venv/bin/python -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+UMask=0077
+LimitNOFILE=65536
+LimitNPROC=128
+CPUQuota=100%
+MemoryLimit=1G
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=full
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

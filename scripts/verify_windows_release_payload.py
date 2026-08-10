@@ -5,12 +5,18 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import stat
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
 
 SENSITIVE_ENVIRONMENT_KEYS = (
+    "APP_SECRET_KEY",
+    "API_KEY",
+    "ADMIN_PASSWORD",
+    "POSTGRES_PASSWORD",
+    "VIDEOINSIGHT_WORKER_TOKEN",
     "DASHSCOPE_API_KEY",
     "ALIYUN_MODEL_STUDIO_WORKSPACE_ID",
     "ALIBABA_CLOUD_ACCESS_KEY_ID",
@@ -119,7 +125,15 @@ def _read_object(path: Path) -> dict[str, object]:
 
 def _configured_secrets(environment: Mapping[str, str]) -> dict[str, bytes]:
     patterns: dict[str, bytes] = {}
-    ignored = {"change-me", "changeme", "placeholder", "replace-me"}
+    ignored = {
+        "change-me",
+        "changeme",
+        "placeholder",
+        "replace-me",
+        "your-secret-key-change-this",
+        "change_me_at_least_16_characters",
+        "postgres",
+    }
     for key in SENSITIVE_ENVIRONMENT_KEYS:
         value = str(environment.get(key) or "").strip()
         if len(value) < 8 or value.casefold() in ignored:
@@ -130,9 +144,19 @@ def _configured_secrets(environment: Mapping[str, str]) -> dict[str, bytes]:
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
-    if not path.is_file() or path.stat().st_size > 1024 * 1024:
-        return values
-    for raw_line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise ReleasePayloadError(f"无法读取密钥配置：{path}") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ReleasePayloadError(f"密钥配置不是普通文件：{path}")
+    if metadata.st_size > 1024 * 1024:
+        raise ReleasePayloadError(f"密钥配置超过 1 MiB：{path}")
+    try:
+        content = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as exc:
+        raise ReleasePayloadError(f"无法读取密钥配置：{path}") from exc
+    for raw_line in content.splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -241,9 +265,12 @@ def verify_release_payload(
     scan_patterns: dict[str, tuple[bytes, ...]] = {
         "PRIVATE_KEY": (
             b"-----BEGIN PRIVATE KEY-----",
+            b"-----BEGIN ENCRYPTED PRIVATE KEY-----",
             b"-----BEGIN RSA PRIVATE KEY-----",
+            b"-----BEGIN DSA PRIVATE KEY-----",
             b"-----BEGIN EC PRIVATE KEY-----",
             b"-----BEGIN OPENSSH PRIVATE KEY-----",
+            b"PuTTY-User-Key-File:",
         )
     }
     for key, utf8_value in configured.items():
@@ -254,8 +281,7 @@ def verify_release_payload(
         )
     matches = _scan_files(files, scan_patterns)
     leaked = [
-        f"{key}:{path.relative_to(root).as_posix()}"
-        for key, path in matches.items()
+        f"{key}:{path.relative_to(root).as_posix()}" for key, path in matches.items()
     ]
     if leaked:
         raise ReleasePayloadError(
@@ -277,12 +303,11 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--secret-env-file", action="append", type=Path, default=[])
     args = parser.parse_args()
-    secret_sources = {
-        f"{path.parent.name}-{path.name}": _parse_env_file(path.resolve())
-        for path in args.secret_env_file
-        if path.is_file()
-    }
     try:
+        secret_sources = {
+            f"{path.parent.name}-{path.name}": _parse_env_file(path)
+            for path in args.secret_env_file
+        }
         evidence = verify_release_payload(
             args.package_root,
             control_plane_url=args.control_plane_url,

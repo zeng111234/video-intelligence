@@ -100,10 +100,47 @@ def test_release_payload_rejects_runtime_data_and_configured_secret(tmp_path):
         )
 
 
-def test_release_payload_rejects_private_key_content(tmp_path):
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("APP_SECRET_KEY", "app-secret-value"),
+        ("API_KEY", "generic-api-secret"),
+        ("ADMIN_PASSWORD", "admin-password-secret"),
+        ("POSTGRES_PASSWORD", "postgres-password-secret"),
+        ("VIDEOINSIGHT_WORKER_TOKEN", "worker-token-secret"),
+    ],
+)
+def test_release_payload_scans_application_and_admin_secrets(tmp_path, key, value):
     root = _payload(tmp_path)
-    (root / "resources" / "unexpected.pem").write_text(
-        "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n",
+    (root / "resources" / "app.asar").write_bytes(
+        b"ordinary-prefix-" + value.encode("utf-8") + b"-ordinary-suffix"
+    )
+
+    with pytest.raises(verify.ReleasePayloadError, match=key):
+        verify.verify_release_payload(
+            root,
+            control_plane_url="https://video.company.com",
+            version="0.2.1",
+            environment={key: value},
+        )
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN DSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "PuTTY-User-Key-File:",
+    ],
+)
+def test_release_payload_rejects_private_key_content(tmp_path, marker):
+    root = _payload(tmp_path)
+    (root / "resources" / "unexpected.txt").write_text(
+        f"{marker}\nnot-a-real-key\n",
         encoding="ascii",
     )
     with pytest.raises(verify.ReleasePayloadError, match="PRIVATE_KEY"):
@@ -128,3 +165,23 @@ def test_release_payload_compares_additional_ignored_env_secrets(tmp_path):
                 "root-env": {"COPYWRITING_API_KEY": "local-env-secret"}
             },
         )
+
+
+def test_env_secret_input_over_limit_fails_closed(tmp_path):
+    env_file = tmp_path / ".env"
+    with env_file.open("wb") as stream:
+        stream.seek(1024 * 1024)
+        stream.write(b"x")
+
+    with pytest.raises(verify.ReleasePayloadError, match="超过 1 MiB"):
+        verify._parse_env_file(env_file)
+
+
+def test_explicit_missing_or_nonregular_secret_input_fails_closed(tmp_path):
+    with pytest.raises(verify.ReleasePayloadError, match="无法读取"):
+        verify._parse_env_file(tmp_path / "missing.env")
+
+    directory = tmp_path / "env-directory"
+    directory.mkdir()
+    with pytest.raises(verify.ReleasePayloadError, match="不是普通文件"):
+        verify._parse_env_file(directory)

@@ -2,6 +2,8 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 internal static class OfflineInstallerBootstrap
@@ -9,15 +11,21 @@ internal static class OfflineInstallerBootstrap
     [STAThread]
     private static int Main()
     {
+        string temporaryParent = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "Temp"
+        );
         string temporaryRoot = Path.Combine(
-            Path.GetTempPath(),
+            temporaryParent,
             "VideoInsight-installer-" + Guid.NewGuid().ToString("N")
         );
 
         try
         {
             Log("bootstrap started");
+            EnsureSafeExistingPath(temporaryParent);
             Directory.CreateDirectory(temporaryRoot);
+            EnsureSafeExistingPath(temporaryRoot);
             string payloadPath = WriteResource(
                 "VideoInsight.Payload",
                 Path.Combine(temporaryRoot, "payload.zip")
@@ -35,6 +43,10 @@ internal static class OfflineInstallerBootstrap
                 Path.Combine(temporaryRoot, "verify_windows_install.ps1")
             );
             string version = ReadTextResource("VideoInsight.Version").Trim();
+            if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+$"))
+            {
+                throw new InvalidOperationException("安装包版本信息无效。");
+            }
             Log("resources extracted");
 
             if (!File.Exists(payloadPath) || !File.Exists(installScriptPath))
@@ -53,9 +65,12 @@ internal static class OfflineInstallerBootstrap
                 {
                     throw new InvalidOperationException("无法启动安装程序。");
                 }
-                string output = installer.StandardOutput.ReadToEnd();
-                string errorOutput = installer.StandardError.ReadToEnd();
+                Task<string> outputTask = installer.StandardOutput.ReadToEndAsync();
+                Task<string> errorTask = installer.StandardError.ReadToEndAsync();
                 installer.WaitForExit();
+                Task.WaitAll(outputTask, errorTask);
+                string output = outputTask.Result;
+                string errorOutput = errorTask.Result;
                 Log("install script exit " + installer.ExitCode);
                 if (installer.ExitCode != 0)
                 {
@@ -78,7 +93,8 @@ internal static class OfflineInstallerBootstrap
         {
             Log("bootstrap failed: " + error);
             MessageBox.Show(
-                "安装失败：" + error.Message,
+                "安装没有完成，程序已停止并尽可能恢复原版本。\n" +
+                "请把安装日志交给技术人员处理，不需要输入任何命令。",
                 "VideoInsight 安装失败",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error
@@ -89,10 +105,7 @@ internal static class OfflineInstallerBootstrap
         {
             try
             {
-                if (Directory.Exists(temporaryRoot))
-                {
-                    Directory.Delete(temporaryRoot, true);
-                }
+                DeleteTemporaryRootSafely(temporaryRoot);
             }
             catch
             {
@@ -111,7 +124,9 @@ internal static class OfflineInstallerBootstrap
                 "data",
                 "logs"
             );
+            EnsureSafeExistingPath(Path.GetDirectoryName(logDirectory));
             Directory.CreateDirectory(logDirectory);
+            EnsureSafeExistingPath(logDirectory);
             File.AppendAllText(
                 Path.Combine(logDirectory, "installer-bootstrap.log"),
                 DateTime.Now.ToString("s") + " " + message + Environment.NewLine
@@ -124,13 +139,14 @@ internal static class OfflineInstallerBootstrap
 
     private static ProcessStartInfo CreatePowerShellStartInfo()
     {
-        string systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+        string systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         if (string.IsNullOrWhiteSpace(systemRoot))
         {
-            systemRoot = @"C:\Windows";
+            throw new InvalidOperationException("无法从 Windows 已知目录读取系统 PowerShell。 ");
         }
         string system32 = Path.Combine(systemRoot, "System32");
         string powershell = Path.Combine(system32, "WindowsPowerShell", "v1.0", "powershell.exe");
+        EnsureSafeExistingPath(powershell);
         ProcessStartInfo startInfo = new ProcessStartInfo();
         startInfo.FileName = powershell;
         startInfo.UseShellExecute = false;
@@ -156,9 +172,15 @@ internal static class OfflineInstallerBootstrap
             {
                 throw new InvalidOperationException("缺少安装资源：" + resourceName);
             }
-            using (FileStream target = new FileStream(destination, FileMode.Create, FileAccess.Write))
+            using (FileStream target = new FileStream(
+                destination,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None
+            ))
             {
                 source.CopyTo(target);
+                target.Flush(true);
             }
         }
         return destination;
@@ -177,5 +199,58 @@ internal static class OfflineInstallerBootstrap
                 return reader.ReadToEnd();
             }
         }
+    }
+
+    private static void EnsureSafeExistingPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException("安装路径无效。");
+        }
+        string fullPath = Path.GetFullPath(path);
+        string root = Path.GetPathRoot(fullPath);
+        string cursor = root;
+        string relative = fullPath.Substring(root.Length);
+        foreach (string segment in relative.Split(
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+            StringSplitOptions.RemoveEmptyEntries
+        ))
+        {
+            cursor = Path.Combine(cursor, segment);
+            if (!Directory.Exists(cursor) && !File.Exists(cursor))
+            {
+                break;
+            }
+            FileAttributes attributes = File.GetAttributes(cursor);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException("安装路径不能经过链接或目录联接。");
+            }
+        }
+    }
+
+    private static void DeleteTemporaryRootSafely(string temporaryRoot)
+    {
+        if (!Directory.Exists(temporaryRoot))
+        {
+            return;
+        }
+        DirectoryInfo root = new DirectoryInfo(temporaryRoot);
+        if ((root.Attributes & FileAttributes.ReparsePoint) != 0)
+        {
+            return;
+        }
+        foreach (FileSystemInfo entry in root.GetFileSystemInfos())
+        {
+            if ((entry.Attributes & FileAttributes.ReparsePoint) != 0 || entry is DirectoryInfo)
+            {
+                return;
+            }
+        }
+        foreach (FileInfo file in root.GetFiles())
+        {
+            file.Delete();
+        }
+        root.Delete(false);
     }
 }

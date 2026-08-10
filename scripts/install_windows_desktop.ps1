@@ -13,8 +13,238 @@ $programsRoot = $null
 $uninstallKey = $null
 $previousUninstall = $null
 $newVersionActivated = $false
+$installationCommitted = $false
 $desktopShortcut = $null
 $startMenuDir = $null
+$startMenuProgramsRoot = $null
+$startMenuShortcut = $null
+$startMenuDirCreated = $false
+$shortcutBackupRoot = $null
+$touchedShortcutPaths = @()
+$shortcutBackups = @{}
+
+function Test-InstallationRollbackRequired {
+    param([Parameter(Mandatory = $true)][bool]$InstallationCommitted)
+    return -not $InstallationCommitted
+}
+
+function Remove-PostCommitBackupSafely {
+    param(
+        [AllowEmptyString()][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path)) {
+        return $true
+    }
+    try {
+        Assert-NoReparsePointsInTree -RootPath $Path -Label $Label
+        Invoke-WithSingleRetry `
+            -Description "清理 $Label" `
+            -Action { Remove-DirectoryTreeWithoutFollowingReparse -RootPath $Path -Label $Label }
+        return $true
+    }
+    catch {
+        Write-Warning "$Label 暂未清理；已验收的新版本和卸载登记会继续保留。"
+        return $false
+    }
+}
+
+function Assert-NewerInstallerVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$NewVersion,
+        [AllowEmptyString()][string]$InstalledVersion = "",
+        [Parameter(Mandatory = $true)][bool]$HasExistingInstall
+    )
+    $stableVersionPattern = '^[0-9]+\.[0-9]+\.[0-9]+$'
+    if ($NewVersion -notmatch $stableVersionPattern) {
+        throw "安装包版本号无效：$NewVersion"
+    }
+    $hasValidInstalledVersion = -not [string]::IsNullOrWhiteSpace($InstalledVersion) -and $InstalledVersion -match $stableVersionPattern
+    if ($hasValidInstalledVersion) {
+        if ([version]$NewVersion -le [version]$InstalledVersion) {
+            throw "已安装版本为 $InstalledVersion；只允许安装更高版本，不能重复安装或降级。"
+        }
+        return
+    }
+    if ($HasExistingInstall) {
+        throw "检测到已有安装目录，但已安装版本登记缺失或无效；为防止误覆盖，已停止安装。"
+    }
+}
+
+function Get-ValidatedExecutableStableVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExecutablePath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        throw "$Label 缺少可核对版本的 EXE。"
+    }
+    Assert-NoReparsePoint -Path $ExecutablePath -Label $Label
+    $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExecutablePath)
+    $stableVersionPattern = '^\s*([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.0)?\s*$'
+    $fileMatch = [regex]::Match([string]$versionInfo.FileVersion, $stableVersionPattern)
+    $productMatch = [regex]::Match([string]$versionInfo.ProductVersion, $stableVersionPattern)
+    if (-not $fileMatch.Success -or -not $productMatch.Success) {
+        throw "$Label 的 FileVersion 或 ProductVersion 无效；已停止覆盖。"
+    }
+    $fileVersion = "{0}.{1}.{2}" -f `
+        $fileMatch.Groups[1].Value, $fileMatch.Groups[2].Value, $fileMatch.Groups[3].Value
+    $productVersion = "{0}.{1}.{2}" -f `
+        $productMatch.Groups[1].Value, $productMatch.Groups[2].Value, $productMatch.Groups[3].Value
+    if ($fileVersion -ne $productVersion) {
+        throw "$Label 的 FileVersion 与 ProductVersion 不一致；已停止覆盖。"
+    }
+    return $fileVersion
+}
+
+function Get-ValidatedInstalledApplicationVersion {
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallRoot,
+        [AllowEmptyString()][string]$RegisteredVersion = ""
+    )
+    $installRootAttributes = Get-ExistingPathAttributesForInstall -LiteralPath $InstallRoot
+    if ($null -eq $installRootAttributes) {
+        return $RegisteredVersion
+    }
+    if (($installRootAttributes -band [System.IO.FileAttributes]::Directory) -eq 0) {
+        throw "现有安装路径不是目录；已停止覆盖。"
+    }
+    Assert-NoReparsePointsInTree -RootPath $InstallRoot -Label "现有安装目录"
+    $installedExecutable = Join-Path $InstallRoot "VideoInsight.exe"
+    $fileVersion = Get-ValidatedExecutableStableVersion `
+        -ExecutablePath $installedExecutable `
+        -Label "现有 VideoInsight.exe"
+    if (
+        $RegisteredVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+        [string]$RegisteredVersion -ne $fileVersion
+    ) {
+        throw "现有应用实际版本 $fileVersion 与卸载登记版本不一致；已停止覆盖。"
+    }
+    return $fileVersion
+}
+
+function Get-ExistingPathAttributesForInstall {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+    $exists = [System.IO.File]::Exists($LiteralPath) -or [System.IO.Directory]::Exists($LiteralPath)
+    if (-not $exists) {
+        $parentPath = [System.IO.Path]::GetDirectoryName($LiteralPath)
+        if (-not [string]::IsNullOrWhiteSpace($parentPath) -and [System.IO.Directory]::Exists($parentPath)) {
+            $leafName = [System.IO.Path]::GetFileName($LiteralPath)
+            foreach ($entryPath in [System.IO.Directory]::EnumerateFileSystemEntries($parentPath)) {
+                if ([string]::Equals([System.IO.Path]::GetFileName($entryPath), $leafName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $exists = $true
+                    break
+                }
+            }
+        }
+    }
+    if (-not $exists) { return $null }
+    try { return [System.IO.File]::GetAttributes($LiteralPath) }
+    catch { throw "无法安全检查安装路径（可能是失效链接）：$LiteralPath" }
+}
+
+function Assert-NoReparsePoint {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $attributes = Get-ExistingPathAttributesForInstall -LiteralPath $Path
+    if ($null -eq $attributes) { return }
+    if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Label 不能是链接或联接点：$Path"
+    }
+}
+
+function Assert-NoReparsePointsInAncestors {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $root = [System.IO.Path]::GetPathRoot($resolvedPath).TrimEnd('\', '/')
+    $relativePath = $resolvedPath.Substring($root.Length)
+    $currentPath = $root + [System.IO.Path]::DirectorySeparatorChar
+    foreach ($part in @($relativePath -split '[\\/]' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        $currentPath = Join-Path $currentPath $part
+        $attributes = Get-ExistingPathAttributesForInstall -LiteralPath $currentPath
+        if ($null -eq $attributes) { break }
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Label 或其祖先不能是链接或联接点：$currentPath"
+        }
+    }
+}
+
+function Assert-NoReparsePointsInTree {
+    param(
+        [Parameter(Mandatory = $true)][string]$RootPath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $RootPath)) {
+        return
+    }
+    Assert-NoReparsePoint -Path $RootPath -Label $Label
+    $rootItem = Get-Item -LiteralPath $RootPath -Force
+    if (-not $rootItem.PSIsContainer) {
+        return
+    }
+    $pendingDirectories = New-Object 'System.Collections.Generic.Stack[string]'
+    $pendingDirectories.Push($rootItem.FullName)
+    while ($pendingDirectories.Count -gt 0) {
+        $currentDirectory = $pendingDirectories.Pop()
+        foreach ($entryPath in [System.IO.Directory]::EnumerateFileSystemEntries($currentDirectory)) {
+            $attributes = [System.IO.File]::GetAttributes($entryPath)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Label 包含链接或联接点：$entryPath"
+            }
+            if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                $pendingDirectories.Push($entryPath)
+            }
+        }
+    }
+}
+
+function Remove-DirectoryTreeWithoutFollowingReparse {
+    param(
+        [Parameter(Mandatory = $true)][string]$RootPath,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not (Test-Path -LiteralPath $RootPath)) { return }
+    Assert-NoReparsePointsInTree -RootPath $RootPath -Label $Label
+    if (-not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        throw "$Label 不是目录，拒绝递归清理：$RootPath"
+    }
+    $pending = New-Object 'System.Collections.Generic.Stack[string]'
+    $directories = New-Object 'System.Collections.Generic.List[string]'
+    $pending.Push([System.IO.Path]::GetFullPath($RootPath))
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        $currentAttributes = [System.IO.File]::GetAttributes($current)
+        if (($currentAttributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Label 在清理期间变成链接：$current"
+        }
+        $directories.Add($current)
+        foreach ($entry in [System.IO.Directory]::EnumerateFileSystemEntries($current)) {
+            $attributes = [System.IO.File]::GetAttributes($entry)
+            if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Label 在清理期间包含链接：$entry"
+            }
+            if (($attributes -band [System.IO.FileAttributes]::Directory) -ne 0) {
+                $pending.Push($entry)
+            }
+            else {
+                [System.IO.File]::SetAttributes($entry, [System.IO.FileAttributes]::Normal)
+                [System.IO.File]::Delete($entry)
+            }
+        }
+    }
+    foreach ($directory in @($directories | Sort-Object { $_.Length } -Descending)) {
+        $attributes = [System.IO.File]::GetAttributes($directory)
+        if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "$Label 在清理期间变成链接：$directory"
+        }
+        [System.IO.Directory]::Delete($directory, $false)
+    }
+}
 
 function Assert-ChildPath {
     param(
@@ -48,18 +278,53 @@ function Invoke-WithSingleRetry {
     }
 }
 
+function Test-ProcessPathWithinInstallRoot {
+    param(
+        [AllowEmptyString()][string]$ProcessPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedInstallRoot
+    )
+    if ([string]::IsNullOrWhiteSpace($ProcessPath)) {
+        throw "无法读取 VideoInsight 进程路径，请人工关闭软件后重试。"
+    }
+    $installPrefix = [System.IO.Path]::GetFullPath($ExpectedInstallRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+    $resolvedProcessPath = [System.IO.Path]::GetFullPath($ProcessPath)
+    return $resolvedProcessPath.StartsWith($installPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Stop-VideoInsightProcesses {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedInstallRoot
+    )
     $processes = @(Get-Process -Name VideoInsight, VideoInsightBackend -ErrorAction SilentlyContinue)
     if ($processes.Count -eq 0) {
         return
     }
 
-    $processes | Stop-Process -Force
+    $ownedProcesses = @()
+    foreach ($process in $processes) {
+        try {
+            $processPath = [string]$process.Path
+        }
+        catch {
+            throw "无法读取 VideoInsight 进程路径，请人工关闭软件后重试。"
+        }
+        if (Test-ProcessPathWithinInstallRoot -ProcessPath $processPath -ExpectedInstallRoot $ExpectedInstallRoot) {
+            $ownedProcesses += $process
+        }
+    }
+    if ($ownedProcesses.Count -eq 0) {
+        return
+    }
+
+    $ownedProcesses | Stop-Process -Force
     try {
-        $processes | Wait-Process -Timeout 15 -ErrorAction Stop
+        $ownedProcesses | Wait-Process -Timeout 15 -ErrorAction Stop
     }
     catch {
-        $remaining = @(Get-Process -Name VideoInsight, VideoInsightBackend -ErrorAction SilentlyContinue)
+        $remaining = @(
+            $ownedProcesses |
+                Where-Object { Get-Process -Id $_.Id -ErrorAction SilentlyContinue }
+        )
         if ($remaining.Count -gt 0) {
             throw "VideoInsight 仍在后台运行，请关闭软件后重新安装。"
         }
@@ -75,7 +340,9 @@ function Restore-UninstallRegistration {
         return
     }
     if (-not $PreviousValues) {
-        Remove-Item -LiteralPath $RegistryPath -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $RegistryPath) {
+            Remove-Item -LiteralPath $RegistryPath -Recurse -Force -ErrorAction Stop
+        }
         return
     }
     New-Item -Path $RegistryPath -Force | Out-Null
@@ -106,30 +373,65 @@ try {
     $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
     $programsRoot = Join-Path $localAppData "Programs"
     $installRoot = Join-Path $programsRoot "VideoInsight"
+    $startMenuProgramsRoot = [Environment]::GetFolderPath("Programs")
+    $startMenuDir = Join-Path $startMenuProgramsRoot "VideoInsight"
+    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
+    $startMenuShortcut = Join-Path $startMenuDir "VideoInsight.lnk"
+    $trustedPowerShell = Join-Path $PSHOME "powershell.exe"
+    if (-not (Test-Path -LiteralPath $trustedPowerShell -PathType Leaf)) {
+        throw "找不到受信任的 Windows PowerShell。"
+    }
+    Assert-NoReparsePoint -Path $trustedPowerShell -Label "Windows PowerShell"
     Assert-ChildPath -Parent $programsRoot -Child $installRoot
+    Assert-ChildPath -Parent $startMenuProgramsRoot -Child $startMenuDir
+    foreach ($protectedRoot in @($programsRoot, $installRoot, $startMenuProgramsRoot, $startMenuDir, $desktopShortcut, $startMenuShortcut)) {
+        Assert-NoReparsePointsInAncestors -Path $protectedRoot -Label "安装目标"
+    }
+    Assert-NoReparsePoint -Path $programsRoot -Label "程序目录"
+    Assert-NoReparsePoint -Path $installRoot -Label "现有安装目录"
+    Assert-NoReparsePoint -Path $startMenuProgramsRoot -Label "开始菜单目录"
+    Assert-NoReparsePoint -Path $startMenuDir -Label "VideoInsight 开始菜单目录"
+    Assert-NoReparsePoint -Path $desktopShortcut -Label "桌面快捷方式"
+    Assert-NoReparsePoint -Path $startMenuShortcut -Label "开始菜单快捷方式"
     $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
     if (Test-Path -LiteralPath $uninstallKey) {
         $previousUninstall = Get-ItemProperty -LiteralPath $uninstallKey
     }
+    $hasExistingInstall = Test-Path -LiteralPath $installRoot
+    $validatedInstalledVersion = Get-ValidatedInstalledApplicationVersion `
+        -InstallRoot $installRoot `
+        -RegisteredVersion ([string]$previousUninstall.DisplayVersion)
+    Assert-NewerInstallerVersion `
+        -NewVersion $Version `
+        -InstalledVersion $validatedInstalledVersion `
+        -HasExistingInstall $hasExistingInstall
 
     New-Item -ItemType Directory -Path $programsRoot -Force | Out-Null
     $stage = Join-Path $programsRoot (".VideoInsight-install-" + [guid]::NewGuid().ToString("N"))
     $backupRoot = Join-Path $programsRoot (".VideoInsight-backup-" + [guid]::NewGuid().ToString("N"))
     Assert-ChildPath -Parent $programsRoot -Child $stage
     Assert-ChildPath -Parent $programsRoot -Child $backupRoot
+    Assert-NoReparsePointsInAncestors -Path $stage -Label "新版本暂存目录"
+    Assert-NoReparsePointsInAncestors -Path $backupRoot -Label "旧版本备份目录"
 
     $phase = "解压安装文件"
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Expand-Archive -LiteralPath $payload -DestinationPath $stage -Force
-    if (-not (Test-Path -LiteralPath (Join-Path $stage "VideoInsight.exe"))) {
-        throw "安装包内容不完整：缺少 VideoInsight.exe"
+    Assert-NoReparsePointsInTree -RootPath $stage -Label "新版本暂存目录"
+    $stagedExecutable = Join-Path $stage "VideoInsight.exe"
+    $stagedVersion = Get-ValidatedExecutableStableVersion `
+        -ExecutablePath $stagedExecutable `
+        -Label "新 payload VideoInsight.exe"
+    if ($stagedVersion -ne $Version) {
+        throw "新 payload 的实际 EXE 版本 $stagedVersion 与安装包版本 $Version 不一致。"
     }
 
     $phase = "关闭旧版后台进程"
-    Stop-VideoInsightProcesses
+    Stop-VideoInsightProcesses -ExpectedInstallRoot $installRoot
 
     if (Test-Path -LiteralPath $installRoot) {
         $phase = "保留旧版本"
+        Assert-NoReparsePointsInTree -RootPath $installRoot -Label "现有安装目录"
         Invoke-WithSingleRetry `
             -Description "移动旧版本" `
             -Action { Move-Item -LiteralPath $installRoot -Destination $backupRoot }
@@ -159,11 +461,23 @@ try {
 
     $phase = "创建快捷方式"
     $shell = New-Object -ComObject WScript.Shell
-    $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
-    $startMenuDir = Join-Path ([Environment]::GetFolderPath("Programs")) "VideoInsight"
-    New-Item -ItemType Directory -Path $startMenuDir -Force | Out-Null
-    $startMenuShortcut = Join-Path $startMenuDir "VideoInsight.lnk"
-    foreach ($shortcutPath in @($desktopShortcut, $startMenuShortcut)) {
+    $startMenuDirCreated = -not (Test-Path -LiteralPath $startMenuDir)
+    if ($startMenuDirCreated) {
+        New-Item -ItemType Directory -Path $startMenuDir | Out-Null
+    }
+    $shortcutBackupRoot = Join-Path $programsRoot (".VideoInsight-shortcuts-" + [guid]::NewGuid().ToString("N"))
+    Assert-ChildPath -Parent $programsRoot -Child $shortcutBackupRoot
+    New-Item -ItemType Directory -Path $shortcutBackupRoot | Out-Null
+    $shortcutPaths = @($desktopShortcut, $startMenuShortcut)
+    for ($shortcutIndex = 0; $shortcutIndex -lt $shortcutPaths.Count; $shortcutIndex++) {
+        $shortcutPath = $shortcutPaths[$shortcutIndex]
+        if (Test-Path -LiteralPath $shortcutPath) {
+            Assert-NoReparsePoint -Path $shortcutPath -Label "既有快捷方式"
+            $shortcutBackupPath = Join-Path $shortcutBackupRoot ("shortcut-$shortcutIndex.lnk")
+            Copy-Item -LiteralPath $shortcutPath -Destination $shortcutBackupPath
+            $shortcutBackups[$shortcutPath] = $shortcutBackupPath
+        }
+        $touchedShortcutPaths += $shortcutPath
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = Join-Path $installRoot "VideoInsight.exe"
         $shortcut.WorkingDirectory = $installRoot
@@ -174,7 +488,7 @@ try {
     $phase = "注册卸载信息"
     New-Item -Path $uninstallKey -Force | Out-Null
     $uninstallScript = Join-Path $installRoot "Uninstall-VideoInsight.ps1"
-    $uninstallCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $uninstallScript + '"'
+    $uninstallCommand = '"' + $trustedPowerShell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $uninstallScript + '"'
     New-ItemProperty -Path $uninstallKey -Name DisplayName -Value "VideoInsight" -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $Version -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name Publisher -Value "VideoInsight" -PropertyType String -Force | Out-Null
@@ -191,50 +505,58 @@ try {
     if (-not (Test-Path -LiteralPath $installedVerifier -PathType Leaf)) {
         throw "安装包缺少自动验收工具，不能确认新版本可用。"
     }
-    $verificationPowerShell = Join-Path $PSHOME "powershell.exe"
-    if (-not (Test-Path -LiteralPath $verificationPowerShell -PathType Leaf)) {
-        $verificationPowerShell = "powershell.exe"
-    }
+    $verificationPowerShell = $trustedPowerShell
     & $verificationPowerShell `
         -NoProfile `
         -ExecutionPolicy Bypass `
         -File $installedVerifier `
-        -ExpectedVersion $Version `
-        -RequireNoDeveloperTools
+        -ExpectedVersion $Version
     if ($LASTEXITCODE -ne 0) {
         throw "自动验收未全部通过，已停止启用新版本。"
     }
+    $installationCommitted = $true
 
-    if (Test-Path -LiteralPath $backupRoot) {
-        try {
-            Invoke-WithSingleRetry `
-                -Description "清理旧版本" `
-                -Action { Remove-Item -LiteralPath $backupRoot -Recurse -Force }
-            $backupRoot = $null
-        }
-        catch {
-            # 新版本已成功启动；旧版本备份的延迟清理不应让安装显示失败。
-        }
+    $oldBackupRemoved = Remove-PostCommitBackupSafely `
+        -Path $backupRoot `
+        -Label "旧版本备份目录"
+    if ($oldBackupRemoved) {
+        $backupRoot = $null
+    }
+    $shortcutBackupRemoved = Remove-PostCommitBackupSafely `
+        -Path $shortcutBackupRoot `
+        -Label "快捷方式备份目录"
+    if ($shortcutBackupRemoved) {
+        $shortcutBackupRoot = $null
     }
 
     if (-not $Quiet) {
-        Add-Type -AssemblyName PresentationFramework
-        [System.Windows.MessageBox]::Show(
-            "VideoInsight 已安装并启动。桌面快捷方式已经创建。`n后续覆盖安装会保留客户数据。",
-            "VideoInsight 安装完成"
-        ) | Out-Null
+        try {
+            Add-Type -AssemblyName PresentationFramework
+            [System.Windows.MessageBox]::Show(
+                "VideoInsight 已安装并启动。桌面快捷方式已经创建。`n后续覆盖安装会保留客户数据。",
+                "VideoInsight 安装完成"
+            ) | Out-Null
+        }
+        catch {
+            Write-Warning "完成提示未能显示；已验收的新版本和卸载登记会继续保留。"
+        }
     }
 }
 catch {
     $originalError = $_.Exception.Message
+    if (-not (Test-InstallationRollbackRequired -InstallationCommitted $installationCommitted)) {
+        Write-Warning "$phase 的后置处理未完成：$originalError；已验收的新版本和卸载登记会继续保留。"
+        return
+    }
     $rollbackError = ""
     try {
         if ($newVersionActivated -or ($backupRoot -and (Test-Path -LiteralPath $backupRoot))) {
-            Stop-VideoInsightProcesses
+            Stop-VideoInsightProcesses -ExpectedInstallRoot $installRoot
         }
         if ($backupRoot -and (Test-Path -LiteralPath $backupRoot)) {
             if ($installRoot -and (Test-Path -LiteralPath $installRoot)) {
-                Remove-Item -LiteralPath $installRoot -Recurse -Force
+                Assert-NoReparsePointsInTree -RootPath $installRoot -Label "失败的新版本目录"
+                Remove-DirectoryTreeWithoutFollowingReparse -RootPath $installRoot -Label "失败的新版本目录"
             }
             Move-Item -LiteralPath $backupRoot -Destination $installRoot
             $backupRoot = $null
@@ -247,22 +569,43 @@ catch {
             }
         }
         elseif ($newVersionActivated -and $installRoot -and (Test-Path -LiteralPath $installRoot)) {
-            Remove-Item -LiteralPath $installRoot -Recurse -Force
-            if ($desktopShortcut) {
-                Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue
-            }
-            if ($startMenuDir -and (Test-Path -LiteralPath $startMenuDir)) {
-                Remove-Item -LiteralPath $startMenuDir -Recurse -Force
-            }
-            Restore-UninstallRegistration -RegistryPath $uninstallKey -PreviousValues $null
+            Assert-NoReparsePointsInTree -RootPath $installRoot -Label "失败的新版本目录"
+            Remove-DirectoryTreeWithoutFollowingReparse -RootPath $installRoot -Label "失败的新版本目录"
+            Restore-UninstallRegistration -RegistryPath $uninstallKey -PreviousValues $previousUninstall
         }
     }
     catch {
-        $rollbackError = "；自动恢复旧版本也失败：$($_.Exception.Message)"
+        $rollbackError += "；自动恢复应用或卸载登记失败：$($_.Exception.Message)"
+    }
+    try {
+        foreach ($shortcutPath in $touchedShortcutPaths) {
+            if (Test-Path -LiteralPath $shortcutPath) {
+                Assert-NoReparsePoint -Path $shortcutPath -Label "失败安装创建的快捷方式"
+                Remove-Item -LiteralPath $shortcutPath -Force
+            }
+            if ($shortcutBackups.ContainsKey($shortcutPath)) {
+                [System.IO.File]::Copy($shortcutBackups[$shortcutPath], $shortcutPath, $false)
+            }
+        }
+        if ($startMenuDirCreated -and (Test-Path -LiteralPath $startMenuDir -PathType Container)) {
+            Assert-NoReparsePoint -Path $startMenuDir -Label "本次创建的开始菜单目录"
+            if (@(Get-ChildItem -LiteralPath $startMenuDir -Force).Count -eq 0) {
+                Remove-Item -LiteralPath $startMenuDir -Force
+            }
+        }
+        if ($shortcutBackupRoot -and (Test-Path -LiteralPath $shortcutBackupRoot)) {
+            Assert-NoReparsePointsInTree -RootPath $shortcutBackupRoot -Label "快捷方式备份目录"
+            Remove-DirectoryTreeWithoutFollowingReparse -RootPath $shortcutBackupRoot -Label "快捷方式备份目录"
+            $shortcutBackupRoot = $null
+        }
+    }
+    catch {
+        $rollbackError += "；自动恢复快捷方式失败：$($_.Exception.Message)"
     }
     if ($stage -and (Test-Path -LiteralPath $stage)) {
         try {
-            Remove-Item -LiteralPath $stage -Recurse -Force
+            Assert-NoReparsePointsInTree -RootPath $stage -Label "新版本暂存目录"
+            Remove-DirectoryTreeWithoutFollowingReparse -RootPath $stage -Label "新版本暂存目录"
         }
         catch {
         }

@@ -52,9 +52,10 @@ def _default_file_upload_transport(
 ) -> tuple[bytes, str]:
     """Use a file handle so training media is not loaded into process memory."""
     try:
-        with path.open("rb") as source, httpx.Client(
-            timeout=timeout, follow_redirects=False
-        ) as client:
+        with (
+            path.open("rb") as source,
+            httpx.Client(timeout=timeout, follow_redirects=False) as client,
+        ):
             response = client.post(url, files={"file": (filename, source, mime_type)})
             response.raise_for_status()
             return response.content, response.headers.get(
@@ -1335,7 +1336,9 @@ class ShuyingLegacyAvatarProvider:
         self.transport = transport or _default_transport
         self.download_transport = download_transport or _default_no_redirect_transport
         self.audio_renderer = audio_renderer or self._render_edge_tts
-        self.file_upload_transport = file_upload_transport or _default_file_upload_transport
+        self.file_upload_transport = (
+            file_upload_transport or _default_file_upload_transport
+        )
         self.avatars = self._parse_assets(avatars_json, AvatarAssetKind.AVATAR)
         self.voices = self._parse_assets(voices_json, AvatarAssetKind.VOICE)
         self.audio_mode = audio_mode.strip().casefold() or "gateway_voice"
@@ -1358,7 +1361,9 @@ class ShuyingLegacyAvatarProvider:
             os.getenv("VIDEOINSIGHT_RUNTIME_ROOT", str(PROJECT_ROOT))
         ).expanduser()
         self.assets_manifest_path = (
-            manifest_path if manifest_path.is_absolute() else runtime_root / manifest_path
+            manifest_path
+            if manifest_path.is_absolute()
+            else runtime_root / manifest_path
         ).resolve()
         explicit_model_upload_url = model_upload_url.strip()
         self.model_upload_url = (
@@ -1450,12 +1455,16 @@ class ShuyingLegacyAvatarProvider:
                         item.get("preview_type")
                         or (
                             "video"
-                            if str(item.get("preview_url") or "").casefold().split("?", 1)[0].endswith((".mp4", ".mov", ".webm"))
+                            if str(item.get("preview_url") or "")
+                            .casefold()
+                            .split("?", 1)[0]
+                            .endswith((".mp4", ".mov", ".webm"))
                             else "image"
                         )
                     ),
                     status=str(item.get("status") or "ready"),
-                    status_message=str(item.get("status_message") or "").strip() or None,
+                    status_message=str(item.get("status_message") or "").strip()
+                    or None,
                     source_type=str(item.get("source_type") or "built_in"),
                     shared=bool(item.get("shared", False)),
                 )
@@ -1479,9 +1488,38 @@ class ShuyingLegacyAvatarProvider:
 
     def is_shared_asset(self, asset_id: str) -> bool:
         return any(
-            item.asset_id == asset_id and item.authorized and item.shared
+            item.asset_id == asset_id
+            and item.authorized
+            and item.shared
+            and item.status == "ready"
             for item in self._manifest_assets()
         )
+
+    def has_ready_shared_asset(
+        self,
+        *,
+        asset_id: str,
+        kind: AvatarAssetKind,
+        provider_asset_id: str,
+    ) -> bool:
+        """Check a bundled shared asset without refreshing or training it."""
+
+        for record in self._load_custom_assets():
+            try:
+                item = AvatarAsset.model_validate(record)
+            except ValueError:
+                continue
+            if (
+                item.asset_id == asset_id
+                and item.kind == kind
+                and str(record.get("provider_asset_id") or "").strip()
+                == provider_asset_id
+                and item.authorized
+                and item.shared
+                and item.status == "ready"
+            ):
+                return True
+        return False
 
     def _missing_configuration(self) -> list[str]:
         missing = []
@@ -1720,7 +1758,10 @@ class ShuyingLegacyAvatarProvider:
             asset = AvatarAsset.model_validate(record)
         except ValueError as exc:
             raise AvatarProviderError("待训练声音样本记录无效。") from exc
-        if asset.kind != AvatarAssetKind.VOICE or asset.status != "pending_configuration":
+        if (
+            asset.kind != AvatarAssetKind.VOICE
+            or asset.status != "pending_configuration"
+        ):
             raise AvatarProviderError("该声音不处于可提交训练状态。")
         raw_sample_path = str(record.get("sample_path") or "").strip()
         sample_path = Path(raw_sample_path)
@@ -1911,7 +1952,9 @@ class ShuyingLegacyAvatarProvider:
             if not isinstance(data, dict):
                 return asset
             status = self._training_status(data.get("status"))
-            preview_url = str(data.get("coverUrl") or data.get("videoUrl") or "").strip()
+            preview_url = str(
+                data.get("coverUrl") or data.get("videoUrl") or ""
+            ).strip()
             return asset.model_copy(
                 update={
                     "status": status,
@@ -2101,9 +2144,6 @@ class ShuyingLegacyAvatarProvider:
                 "videoName": provider_video_name,
                 "modeid": self._provider_avatar_id(request.avatar_id),
                 "audioUrl": audio_url,
-                "aspect_ratio": request.aspect_ratio,
-                "resolution": request.resolution,
-                "background": request.background,
             },
             submit_operation=True,
         )
@@ -2166,7 +2206,11 @@ class ShuyingLegacyAvatarProvider:
             return audio_url or None
         if isinstance(result, str):
             audio_url = result.strip()
-            return audio_url if self._is_safe_https_url(audio_url, allow_path=True) else None
+            return (
+                audio_url
+                if self._is_safe_https_url(audio_url, allow_path=True)
+                else None
+            )
         return None
 
     def _voice_pending_snapshot(
@@ -2302,10 +2346,7 @@ class ShuyingLegacyAvatarProvider:
             provider_status = 0
         video_url = str(data.get("videoUrl") or "").strip()
         idempotency_key = self.job_idempotency.get(job_id, "")
-        duration_ms = self._optional_positive_int(data.get("duration"))
-        settled_seconds = (
-            max(1, math.ceil(duration_ms / 1000)) if duration_ms is not None else None
-        )
+        settled_seconds = self._provider_duration_seconds(data.get("duration"))
 
         if provider_status == 3 and video_url:
             self.result_urls[job_id] = video_url
@@ -2321,18 +2362,34 @@ class ShuyingLegacyAvatarProvider:
                 result_mime="video/mp4",
                 result_size_bytes=self._optional_positive_int(data.get("videoSize")),
             )
-        if provider_status in {-1, 8}:
+        terminal_statuses = {
+            -1: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
+            4: (AvatarProviderStatus.FAILED, "公司云端合成失败"),
+            5: (AvatarProviderStatus.FAILED, "公司云端任务已归档"),
+            6: (AvatarProviderStatus.CANCELLED, "公司云端任务已取消"),
+            7: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
+            8: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
+        }
+        terminal = terminal_statuses.get(provider_status)
+        if terminal is not None:
+            status, stage = terminal
             return AvatarJobSnapshot(
                 job_id=job_id,
                 idempotency_key=idempotency_key,
-                status=AvatarProviderStatus.FAILED,
+                status=status,
                 progress=100,
-                stage="公司云端生成失败",
+                stage=stage,
                 provider_job_id=job_id,
                 estimated_cost_cny=self.estimated_cost_cny,
                 estimated_seconds=self.estimated_seconds,
                 error_kind=ProviderErrorKind.SERVICE,
-                error_message=str(data.get("message") or "供应商生成失败。"),
+                error_message=str(
+                    data.get("err_msg")
+                    or data.get("failreason")
+                    or data.get("message")
+                    or data.get("msg")
+                    or stage
+                ),
             )
         return AvatarJobSnapshot(
             job_id=job_id,
@@ -2570,6 +2627,19 @@ class ShuyingLegacyAvatarProvider:
         except (TypeError, ValueError):
             return None
         return parsed if parsed >= 0 else None
+
+    @staticmethod
+    def _provider_duration_seconds(value: Any) -> int | None:
+        """Round the provider's duration-in-seconds up for settlement."""
+        if isinstance(value, bool):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(parsed) or parsed <= 0:
+            return None
+        return math.ceil(parsed)
 
     @staticmethod
     def _is_safe_https_url(value: str, *, allow_path: bool = True) -> bool:

@@ -2,9 +2,11 @@
 
 这套服务器只负责激活码、账号、积分、充值、定价和真实收费供应商。爬虫、浏览器登录、素材下载、预览及适合本机完成的处理仍在客户电脑上运行；爬虫不扣积分。客户安装包不包含公司供应商密钥。
 
+> 当前正式域名 `xmt.syszr.cn` 已运行在共享服务器的 Nginx + 原生 systemd 环境中。该服务器只能使用 [`native-systemd/README.md`](native-systemd/README.md) 的升级、验证和回滚流程；下面的 Docker/Caddy 首次部署说明只适用于一台全新的独占服务器，不能在当前共享服务器执行。
+
 从开发电脑准备上传文件时，先确定一个从未用于交付的新版本号，再运行 `scripts/build_control_plane_bundle.ps1 -Version "0.2.1"`（示例版本仅供说明，实际必须与本次正式版本一致）。它只生成一个小型服务器部署 ZIP，并把本机清单中已授权、训练完成的共享形象和声音编号安全带入首次部署；不会携带训练样本、触发重新训练或产生供应商费用。ZIP 不包含 `.env`、供应商密钥、数据库、日志、媒体、备份或 Windows 安装包；在服务器解压后进入 `deploy/control-plane` 即可按下方步骤部署。
 
-## 第一次部署（只需一次）
+## 全新独占服务器的 Docker/Caddy 首次部署（当前 xmt 服务器禁用）
 
 1. 准备一个已解析到公司服务器公网 IP 的域名，例如 `video-api.company.com`。
 2. 只上传 `build_control_plane_bundle.ps1` 生成的 `VideoInsight-control-plane-<版本号>.zip`，不要上传整个开发目录；在服务器解压后进入 `deploy/control-plane`，复制 `.env.example` 为 `.env`。
@@ -69,7 +71,7 @@ DNS 与 HTTPS 证书生效后，再运行一次完整的外部验收：
 服务器健康检查及整套验收通过后，最终构建只需把公开域名传给统一脚本：
 
 ```powershell
-.\scripts\build_final_windows_release.ps1 -ControlPlaneUrl "https://video-api.company.com" -Version "0.2.1"
+.\scripts\build_final_windows_release.ps1 -ControlPlaneUrl "https://video-api.company.com" -Version "0.2.7" -PaidAcceptanceReport ".\build\paid-release-acceptance-0.2.7.json"
 ```
 
-示例中的 `0.2.1` 必须替换为本次从未生成过、且与服务器部署 ZIP 一致的新版本号。该命令只会写入公开服务器地址，不会写入任何密钥。脚本只生成一个给客户首次安装的 EXE，同时在 `deploy/control-plane/updates/` 生成同版本更新文件。把该目录同步到公司服务器后，已安装客户端会在下次启动时检查版本；只有发现更高版本并经客户确认，才会下载一次、校验大小和 SHA256 后覆盖安装。本次 Goal 会在所有验证完成后只运行一次最终构建。
+示例中的 `0.2.7` 必须替换为本次从未生成过、且与服务器部署 ZIP 一致的新版本号；付费报告必须是同一域名和版本在最近 24 小时内完成的四项真实能力验收。该命令只会写入公开服务器地址，不会写入任何密钥。脚本只生成一个给客户首次安装的 EXE，同时在 `deploy/control-plane/updates/` 生成同版本更新文件。把该目录同步到公司服务器后，已安装客户端会在下次启动时检查版本；只有发现更高版本并经客户确认，才会下载一次、校验大小和 SHA256 后覆盖安装。本次 Goal 会在所有验证完成后只运行一次最终构建。

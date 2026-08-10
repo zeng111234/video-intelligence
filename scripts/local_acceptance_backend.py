@@ -80,11 +80,13 @@ def _configure_environment(runtime_root: Path) -> None:
 
 
 def _seed_disposable_accounts() -> None:
+    from database.migrations.runner import MigrationRunner
     from project.backend.app.core.config import DATABASE_PATH
     from project.backend.app.core.security import hash_password
     from src.models import AdminAccount, CustomerCode
     from src.repositories.sqlite import SQLiteRepository
 
+    MigrationRunner(DATABASE_PATH).upgrade()
     repository = SQLiteRepository(DATABASE_PATH)
     now = datetime.now().astimezone()
     if repository.get_customer_code(QA_CUSTOMER_CODE) is None:

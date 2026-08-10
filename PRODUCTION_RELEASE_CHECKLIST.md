@@ -6,22 +6,33 @@
 
 2026-08-10 已在隔离的本机控制层与桌面客户端中通过客户登录、服务器余额、本机工作台、管理员只读页面、单机客户绑定以及“大树1”形象/声音页面验收；没有真实供应商调用。下列正式 HTTPS、跨电脑、写操作、付费和最终 EXE 条目仍必须逐项完成，不能用本机证据代替。
 
+## 零、正式版本状态机（不可跳过）
+
+- `deploy/control-plane/release_versions.json` 是正式版本的唯一登记表。构建机必须先同步并提交该文件，工作区不干净、登记表未跟踪或状态不匹配时一律停止。
+- 第一次运行控制层打包脚本会在创建 ZIP **之前**烧录候选版本，将其加入 `used_versions` 并置为 `server_state=building`。打包失败也禁止再用同一个版本号；必须记录失败原因并启用下一个版本。
+- 控制层 ZIP 成功后，登记表必须记录精确的源提交与 ZIP SHA256，并置为 `server_state=ready`。先单独提交这次登记表变化，再上传且只上传这个哈希完全一致的 ZIP；不得改名旧包冒充新版本，也不得同版重新打包。
+- Windows 阶段只接受同一条 `release_in_progress`。脚本会把 `windows_state` 依次从 `pending` 改为 `building`、再改为 `attempted`；每次状态变化都必须单独提交并重新运行。只有干净且已经提交的 `attempted` 状态才允许创建 EXE，异常中断或失败后同版本不得重做。
+- 每个正式版本只指定一台 Windows 构建机和一名操作者。`attempted` 登记提交是审计状态，不是授权另一台机器同时开工；更换构建机必须放弃当前版本并启用下一候选版本。
+- EXE 生成后，登记表只绑定这一个安装包 SHA256。更新发布只能复制完全相同的文件；成功后才写入 `completed_releases`、清空进行中版本并产生下一个候选版本。
+- 交付客户前必须提交最终 `complete` 登记记录。另一台构建机或多人协作前还必须先获得授权并同步这几个登记提交；本机提交不能代替远端同步，脚本也不会自行推送代码。
+
 ## 一、公司服务器
 
-- [ ] 选定从未使用的新版本号，在开发电脑运行 `scripts/build_control_plane_bundle.ps1 -Version "<新版本号>"`；只上传生成的控制层 ZIP，不上传整个开发目录或任何旧安装包。该版本号必须与最终 EXE 一致。
+- [ ] 登记表处于 `schema_version=2`、无进行中版本且工作区干净；运行 `scripts/build_control_plane_bundle.ps1 -Version "<登记的候选版本>"`。只上传脚本输出的控制层 ZIP，不上传整个开发目录或任何旧安装包；版本必须与最终 EXE 一致。
+- [ ] 打包成功后先核对 `release_in_progress.server_state=ready`、`source_commit` 和 `control_plane_sha256`，再单独提交登记表；服务器只接收这个精确 SHA256。
 - [ ] 解压后确认 `bootstrap/avatar_assets/shuying_cloud.json` 中包含已训练完成的“大树1”形象和声音，且不包含训练样本、密钥或本机绝对路径。
 - [ ] 已准备一个公司控制的 HTTPS 域名，并解析到服务器。
 - [ ] 已将 `deploy/control-plane/.env.example` 复制为服务器 `.env`，逐项填写；未把 `.env` 发到聊天、Git 或客户电脑。
 - [ ] `ALLOWED_HOSTS` 包含正式域名，生产环境关闭接口文档，供应商地址使用 HTTPS。
 - [ ] 云转写与云剪辑按需要分别启用：`ASR_MODE=cloud` 只代表云转写，`VIDEO_EDITOR_PROVIDER_MODE=aliyun` 只代表云剪辑；未计划上线的收费能力保持沙箱模式。
-- [ ] 在 Linux 公司服务器运行 `deploy/control-plane/deploy.sh` 后，`/health` 与 `/ready` 均正常。
-- [ ] DNS 与 HTTPS 证书生效后运行 `deploy/control-plane/verify_live.sh`；HTTPS 跳转、安全响应头、数据库、权限隔离、无效登录和更新清单全部通过。该验收不创建内容、不扣积分、不调用供应商。
+- [ ] 当前 `xmt.syszr.cn` 服务器已有 Nginx 和其他系统，必须按 `deploy/control-plane/native-systemd/README.md` 执行 `preflight.sh`、`upgrade.sh`、`verify.sh`；只允许改 `/opt/videoinsight-control-plane`、`videoinsight-control-plane.service` 和本域名自己的代理/更新目录，禁止运行 Docker/Caddy 版 `deploy.sh`。
+- [ ] DNS 与 HTTPS 证书生效后，从开发电脑运行 `deploy/control-plane/verify_control_plane.py --base-url "https://xmt.syszr.cn" --expected-version "<本次版本>" --require-authenticated --require-production-configuration`；HTTPS、安全响应头、数据库、权限隔离、有效/无效登录和四项供应商配置全部通过。该验收不创建内容、不扣积分、不调用供应商。
 - [ ] 管理员使用至少 12 位独立密码登录，并立即更换部署时的临时密码。
 - [ ] 已创建一枚内部测试激活码，积分很少，仅用于无付费功能的登录验收。
 - [ ] 从公司网络之外访问正式域名，在桌面端完成内部测试激活码登录、余额、退出登录和管理员只读登录；不把账号或密码写入命令参数、截图、聊天或 Git。
 - [ ] 同一客户端先后登录普通客户和管理员：普通业务请求仍显示并扣客户积分，管理接口只接受管理员；分别退出后对应旧会话立即失效，另一个角色不被误清理。
 - [ ] 重启客户端但暂不登录，确认已有转写、发布和智能创作队列保持原状态；重新登录本机绑定客户后才恢复处理。
-- [ ] 已执行一次备份，并在非生产目录完成真实恢复演练；确认恢复前快照存在、旧登录会话已撤销、备份外多余文件不会残留。
+- [ ] 原生升级前的停机 SQLite 快照已生成；另在非生产目录使用 `backup_control_plane.py` / `restore_control_plane.py` 完成真实恢复演练，确认恢复前快照存在、旧登录会话已撤销、备份外多余文件不会残留。Docker 版 `backup.sh` / `restore.sh` 不适用于当前服务器。
 
 ## 二、收费能力
 
@@ -35,14 +46,15 @@
 
 - [ ] 前后端全量测试、类型检查、构建、部署配置检查、敏感信息扫描和本地页面验收全部通过。
 - [ ] `npm audit --omit=dev` 为 0；开发工具链剩余公告已记录且不进入客户包，未在临交付时使用 `npm audit fix --force` 盲升主版本。
-- [ ] 确认没有使用现有示例域名 `0.2.0`，选择一个从未生成过的新版本号；最终脚本会拒绝覆盖同版本安装包。
+- [ ] 当前正式候选版本由登记表决定，不手工复用、回退或覆盖任何版本；控制层已经烧录并提交为 `ready`，服务器运行版本及 ZIP SHA256 与登记表完全一致。
+- [ ] 按脚本提示完成 `pending -> building -> attempted` 两次登记表单独提交；只有第三次运行才会进入在线验收和唯一 EXE 构建。任何失败都先查看登记状态，不复制旧包或删除记录后重跑。
 - [ ] 使用正式域名只运行一次：
 
-  `./scripts/build_final_windows_release.ps1 -ControlPlaneUrl "https://你的正式域名" -Version "0.2.1"`
+  `./scripts/build_final_windows_release.ps1 -ControlPlaneUrl "https://你的正式域名" -Version "0.2.7" -PaidAcceptanceReport ".\build\paid-release-acceptance-0.2.7.json"`
 
-  该脚本会先执行无付费在线检查、干净工作区完整门禁和包内密钥扫描；密钥扫描会比对本机进程环境及 Git 忽略的 `.env` 配置但不打印值，任一步不通过都不会生成最终安装包。
+  该脚本会先执行无付费在线检查，并核验最近 24 小时内、与同一域名和版本绑定的四项最低成本真实付费报告，再运行干净工作区完整门禁和包内密钥扫描；密钥扫描会比对本机进程环境及 Git 忽略的 `.env` 配置但不打印值，任一步不通过都不会生成最终安装包。
 
-- [ ] 核对 `project/frontend/release/SHA256SUMS.txt`，把哈希保存到公司交付记录。
+- [ ] 核对最终交付目录中的唯一 EXE、`SHA256SUMS.txt` 和登记表 `installer_sha256` 三者一致，把哈希保存到公司交付记录；不得从 Electron 的中间 `release` 目录选文件发送。
 - [ ] 在一台干净 Windows 电脑上只双击安装包，确认自动验收完成，不要求客户输入 PowerShell 命令。
 - [ ] 在已有旧版的内部电脑上断开公司服务后执行一次覆盖安装：确认新版验收失败、安装器恢复旧程序和旧卸载版本、旧版可重新启动，本机客户数据没有删除；随后恢复网络再执行正常升级。
 - [ ] 使用内部测试激活码验证登录、余额、退出登录和权限隔离；不点击任何真实付费按钮。
@@ -51,12 +63,12 @@
 ## 四、更新与运营
 
 - [ ] `deploy/control-plane/updates/` 只保留当前正式更新文件，服务器没有开启目录浏览。
-- [ ] 同步更新目录后再次运行 `verify_live.sh`，确认公网清单的版本、文件名、大小和 SHA256 与唯一最终安装包一致；不得只验证本机构建目录。
-- [ ] 新版本必须先通过同一套验收，再运行 `publish_windows_update.ps1`；客户端会在用户确认后下载一次。
+- [ ] 同步更新目录后再次运行严格在线检查，并直接读取公网 `/desktop-updates/latest.json`，确认版本、文件名、大小和 SHA256 与唯一最终安装包一致；不得只验证本机构建目录，也不得在当前原生服务器运行 Docker 版 `verify_live.sh`。
+- [ ] 新版本必须先通过同一套验收，再运行 `publish_windows_update.ps1`；该脚本只接受登记表中 `windows_state=built` 且哈希相同的唯一 EXE，成功后登记为 `complete`，客户端会在用户确认后下载一次。
 - [ ] 每天自动备份、定期异地复制并执行恢复演练；确认服务器上的数据库/备份仅部署账号可读，异地副本由公司备份系统加密，且不进入 Git、聊天或公开网盘。
 - [ ] 充值、积分调整、管理员操作和供应商任务都有审计记录。
 - [ ] 未购买代码签名证书时，已向试用客户如实说明 SmartScreen 风险；公开销售前重新评估签名成本。
 
-## 当前仍需人工提供
+## 当前仍需人工确认
 
-正式域名、公司服务器登录权限、生产 `.env` 值、供应商合法账号与密钥、首个管理员密码。这些值只在公司服务器上填写；Codex 不应把它们写进源码或安装包。
+正式域名和服务器已经确定；生产密钥、首个管理员密码及验收激活码只能通过服务器受保护配置或当前进程环境注入，不得写进源码、命令参数、截图、聊天或安装包。真实供应商验收必须继续受 5 积分总上限约束；真实平台发布仍未授权，不能把“生成完成”宣称为“平台已发布”。

@@ -1,0 +1,116 @@
+# 原生 systemd 安全发布路径
+
+这组脚本只允许操作以下对象：
+
+- `/opt/videoinsight-control-plane`
+- `/etc/systemd/system/videoinsight-control-plane.service`
+- `videoinsight-control-plane.service`
+
+它不会调用 Docker、Compose、Caddy、Nginx，也不会启停或修改任何其他服务。反向代理和证书继续由服务器现有系统管理，本目录不负责它们。
+
+正式付费验收还依赖服务器已有的 `ffprobe` 和 `ffmpeg`，发布脚本只读检查它们，不会安装、下载或修改系统媒体工具。新 unit 把服务 `PATH` 固定为 `/usr/local/bin:/usr/bin:/bin`，避免 root 登录环境与 systemd 服务环境不一致。
+
+## 固定目录
+
+```text
+/opt/videoinsight-control-plane/
+  config/control-plane.env
+  incoming/VideoInsight-control-plane-<版本>.zip
+  python/3.12.13/bin/python3.12
+  wheelhouse/*.whl
+  tools/native-systemd/wheelhouse.sha256
+  releases/<版本>/app/
+  releases/<版本>/venv/
+  current -> releases/<版本>
+  runtime/data/
+  backups/
+  state/
+```
+
+`config/control-plane.env` 必须是 `root:videoinsight` 且权限 `0640`；`runtime` 父目录必须是 `root:root` 且组/其他用户不可写，只有 `runtime/data` 属于显式服务 UID/GID 且权限 `0700`；`backups` 必须是 `root:root` 且权限 `0700`。`preflight.sh` 和 `verify.sh` 会在同一文件系统内递归检查 `runtime/data`：每层目录和每个普通文件都必须属于显式服务 UID/GID，组/其他用户权限位必须为零，并且设备号必须与 data 根一致。任一符号链接、子挂载、跨文件系统项、设备、错误属主或宽松权限都会失败；备份和恢复删除旧目录前也会独立做同样的 fail-closed 检查。服务进程不需要写备份目录，停机快照和恢复只由 root 发布脚本执行。
+
+`ffprobe` 和 `ffmpeg` 必须由管理员事先通过已审查的 CentOS 7 离线介质放入上述固定 `PATH`；不得在正式服务器临时联网安装，也不得猜测包版本。二进制解析后的真实文件和从其父目录到 `/` 的每层祖先都必须是 `root:root`，且组/其他用户不可写；二进制和祖先还必须允许 `videoinsight` 服务用户执行或遍历。`preflight.sh` 在解包、停机和任何付费动作前检查并打印两个解析后的绝对路径，`verify.sh` 会再次检查和记录；缺失、符号链接逃逸、错误属主、宽松权限或服务不可达都会 fail-closed。上传发布包前应在目标 CentOS 7 主机离线执行并保留以下只读证据：
+
+```bash
+PATH=/usr/local/bin:/usr/bin:/bin command -v ffprobe ffmpeg
+readlink -f "$(PATH=/usr/local/bin:/usr/bin:/bin command -v ffprobe)"
+readlink -f "$(PATH=/usr/local/bin:/usr/bin:/bin command -v ffmpeg)"
+bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
+```
+
+新 unit 使用 `current/app` 作为工作目录，并通过 `current/venv/bin/python -m uvicorn` 启动。这样代码与依赖属于同一个不可覆盖的版本，避免“新代码配旧 venv”的混跑。
+
+## 首次从旧布局迁移并升级
+
+不要先手工改 `current`，也不要先单独重启新 unit。`upgrade.sh` 会在新版本的 `app` 和离线 venv 都准备完成后才停机，并在同一个事务中完成停机快照、unit 替换和原子链接切换。
+
+1. 只把正式构建生成的 ZIP 上传到固定 `incoming` 路径，属主设为 `root:root`，且组和其他用户不可写。
+2. 第一次迁移时，把同一已验证工作区中的 `deploy/control-plane/native-systemd` 目录单独打成工具包，并上传到固定的 `/opt/videoinsight-control-plane/tools/native-systemd`。该目录只含脚本、校验器、wheelhouse 哈希清单、unit 和说明，不含密钥；服务器上设为 `root:root`，目录不可由组或其他用户写入，并保留仓库中的 LF 换行。旧版 `current/app` 尚无这些工具，不能假装从那里执行。
+3. 在开发电脑记录工具包 SHA256，上传后只计算一次服务器文件的 SHA256 并人工核对；不一致就停止，不要在服务器重新打包。`upgrade.sh` 还会在停机事务前逐文件比较外置工具目录与新 ZIP 内的 `deploy/control-plane/native-systemd`，文件缺失、额外文件或任一内容不同都会拒绝升级。
+4. 在开发电脑记录部署 ZIP 的 SHA256；不要在服务器上重新生成“期望哈希”。
+5. 在服务器只读查询服务 UID/GID：
+
+   ```bash
+   id -u videoinsight
+   id -g videoinsight
+   ```
+
+6. 先执行无写入前置检查，再升级。下面 UID/GID 只是当前服务器示例，执行前仍需与 `id` 输出核对：
+
+   ```bash
+   cd /opt/videoinsight-control-plane/tools/native-systemd
+   bash preflight.sh 996 994
+   bash upgrade.sh 0.2.7 '<开发电脑记录的 SHA256>' 996 994
+   bash verify.sh 0.2.7 996 994
+   ```
+
+`upgrade.sh` 只接受 `x.y.z` 稳定版本，并在解包或停机前要求新版本严格高于当前版本；同版重放和降级都必须改用下面的受控 `rollback.sh`，不能把旧 ZIP 改名冒充新版本。它还会拒绝已存在的版本目录、错误哈希、包内版本标识不一致、不安全 ZIP、非离线依赖、UID/GID 不一致、非固定 unit、越界符号链接和并发发布。ZIP 内每个普通成员都会分块扫描私钥/PuTTY 标记，跨分块标记也会命中，不会因为单个成员超过 32 MiB 而跳过。旧 unit 只能使用固定的 `[Unit]`、`[Service]`、`[Install]` 指令、值和计数；额外依赖、命令、环境、凭据、挂载、能力或未知指令均拒绝。依赖安装固定在版本暂存目录内（包括 `TMPDIR`），禁用用户 site、pip 配置和缓存，强制 `--no-index --only-binary=:all: --require-hashes` 使用包内 `requirements.lock`；`preflight.sh` 同时核对受跟踪的 `wheelhouse.sha256` 与 wheelhouse 的精确文件集合和每个 SHA256，因此不能通过替换同名 wheel 或临时塞包改变依赖。全程不会联网下载。
+
+发布目录树在进入 `releases/<版本>` 前会同步全部普通文件和目录；`release`、`current`、unit、unit 备份和 legacy 描述的关键 rename 都在前后同步固定父目录。任何提交边界的落盘失败都会被事务视为失败并进入恢复路径，不会在健康检查通过后才把未落盘的元数据当成成功。
+
+健康检查只请求 `127.0.0.1:18080`，并从受保护的 `control-plane.env` 读取域名作为 Host；curl 显式使用 `--disable --noproxy '*'`，不会受 root 的 `.curlrc` 或代理环境影响。每个健康阶段只有初次检查和一次重试。它不会调用真实供应商。
+
+## 自动回滚
+
+升级停机后使用本次已校验的新 release 中的备份脚本生成停机快照，并在清单写入源版本；不会调用 legacy/旧 release 的备份或恢复脚本。备份通过 data 根目录文件描述符逐层 `O_NOFOLLOW` 打开附加文件，SQLite Online Backup 在 Linux 上也只从已固定并复核 inode 的 `/proc/self/fd/<fd>` 打开源库，不会在校验后重新信任原数据库路径；目标 ZIP 用原子 no-clobber 链接创建，并发同名文件只会让备份失败，不会被覆盖。ZIP 在返回成功前会同步归档文件和备份父目录。新版本、unit 或健康检查任一步失败时，新 release 的恢复脚本会先在 `runtime` 同一文件系统内构建完整候选数据目录，完成 manifest 和数据库完整性检查；候选根保持 `root:root`，所有后代只经由 `dirfd`、`O_NOFOLLOW`、`fstat`、`fchmod`、`fchown`、`fsync` 处理，最后才移交候选根所有权，随后不再按路径递归候选树而直接执行同文件系统目录切换。目录切换各阶段也同步 `runtime` 父目录。复制、空间、权限或提交前落盘错误发生时原 `runtime/data` 保持原样，候选不会成为服务数据。候选和父目录成功落盘即为提交点；提交后的旧目录删除或最终父目录落盘若异常，会保持完整的新 `runtime/data` 并输出 `WARNING`，不会谎报成“失败但已换数据”。随后脚本会：
+
+1. 只停止 `videoinsight-control-plane.service`；
+2. 恢复停机数据快照；
+3. 原样恢复升级前的 `current` 链接（包括旧的 `.../app` 布局）；
+4. 恢复升级前的 unit 并执行 `daemon-reload`；
+5. 启动旧控制层并进行初次检查加一次重试。
+
+若数据、链接或 unit 任一恢复失败，脚本会保持本服务停止并输出 `CRITICAL`，不会带着不完整状态继续运行。恢复数据库会按现有安全策略注销旧会话。
+
+## 成功发布后的人工回滚
+
+仅在确认目标旧版本目录及其“升级前停机快照”同时存在时执行：
+
+```bash
+bash rollback.sh 0.2.7 'videoinsight-control-plane-pre-upgrade-0.2.8-时间-PID.zip' 996 994
+```
+
+`rollback.sh` 会先为当前版本再做一份安全快照；若旧版本恢复失败，会自动恢复回滚前代码和数据。新布局目标还必须在停机前通过版本、venv 以及 native 工具完整内容比对，避免回滚成功后无法再运行固定验证工具。不要手工删除或覆盖 `releases` 内的版本。版本内容错误时使用新的版本号向前修复。
+
+### 首次迁移后回 legacy 版本
+
+首次从 `current -> releases/<旧版本>/app` 的 legacy 布局升级前，`upgrade.sh` 会先要求旧 unit 的 `WorkingDirectory` 精确使用可解析到旧 app 的 `current`（或等价的硬编码 `<旧版本>/app`，明确拒绝会落到 `app/app` 的 `current/app`），并要求唯一 `ExecStart` 精确使用同一旧版本的 `venv/bin/python -m uvicorn` 和固定控制层应用入口；例如 current 指向 `0.2.4/app` 但 unit 硬编码 `0.2.3` 时，会在解包、停机和快照前拒绝。legacy 健康接口没有版本字段时，只把 ready/ok 与上述 current/unit/解释器固定路径审计组合视为受审旧基线。成功升级后，`upgrade.sh` 会在 `state/legacy-rollbacks/<停机快照名>.json` 保存 `root:root`、`0600` 的受控描述，绑定源版本、原 current 链接、原 unit 备份、停机快照及二者 SHA256。保留升级输出中的“legacy 人工回滚描述”路径。需要回 legacy 时仍使用同一条四参数命令，例如：
+
+```bash
+bash rollback.sh 0.2.6 'videoinsight-control-plane-pre-upgrade-0.2.7-时间-PID.zip' 996 994
+```
+
+目标没有新布局时，脚本只接受固定 `state/legacy-rollbacks/<快照名>.json`，并要求描述中的源版本等于 `0.2.6`、新版本等于当前版本、快照和原 unit 哈希仍一致。它使用当前新版本的备份/恢复工具恢复目标数据，再原样恢复描述绑定的 legacy current 和原 unit；不会执行目标旧版脚本，也不会复制或猜测旧 venv。若 legacy 启动失败，会恢复回滚前的新 unit、current 和安全快照，并以新版本健康检查确认；恢复链任一步失败则保持本服务停止。
+
+## 单独安装 unit
+
+`install_unit.sh` 只适用于 `current -> releases/<版本>` 且该版本已有 `app` 与 `venv` 的新布局。它会备份旧 unit、原子替换并执行 `daemon-reload`，但不会重启任何服务。旧布局迁移必须使用 `upgrade.sh`，不能用此脚本跳过事务。
+
+## 仍需人工保留的证据
+
+- 上传前 ZIP 的本机 SHA256 与文件大小；
+- `upgrade.sh` 输出的停机快照、旧 unit 备份路径；
+- 首次迁移时工具包的本机/服务器 SHA256，以及 `legacy 人工回滚描述` 路径；
+- `verify.sh` 的通过输出；
+- 反向代理侧的外部 HTTPS 验收由独立步骤完成，本脚本不碰现有站点配置；
+- wheelhouse、`wheelhouse.sha256` 和工具目录必须继续保持 `root:root` 且不可由组或其他用户写入。更换依赖时应根据完整的新 wheelhouse 重新生成并审查 `requirements.txt`、`requirements.lock` 与 `wheelhouse.sha256`，不能往旧目录临时塞包。

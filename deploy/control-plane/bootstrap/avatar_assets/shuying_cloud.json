@@ -1,0 +1,30 @@
+{
+  "assets": [
+    {
+      "asset_id": "shuying-avatar-21920",
+      "kind": "avatar",
+      "name": "大树1",
+      "preview_url": "https://shuyingkj.oss-cn-shanghai.aliyuncs.com/6a69d6139e275.mp4",
+      "authorized": true,
+      "preview_type": "video",
+      "status": "ready",
+      "status_message": "已训练完成，可直接使用；无需重新训练。",
+      "source_type": "custom",
+      "shared": true,
+      "provider_asset_id": "21920"
+    },
+    {
+      "asset_id": "shuying-voice-7869",
+      "kind": "voice",
+      "name": "大树1",
+      "preview_url": null,
+      "authorized": true,
+      "preview_type": "audio",
+      "status": "ready",
+      "status_message": "已训练完成，可直接使用；无需重新训练。",
+      "source_type": "custom_clone",
+      "shared": true,
+      "provider_asset_id": "7869"
+    }
+  ]
+}
