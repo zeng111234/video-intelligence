@@ -74,7 +74,7 @@ if ($dirtyEntries.Count -gt 0) {
     Write-Warning "Running against a dirty working tree. This result is for development only."
 }
 
-$trackedFiles = @(& git ls-files)
+$trackedFiles = @(& git -c core.quotepath=false ls-files)
 if ($LASTEXITCODE -ne 0) {
     throw "Unable to list tracked files."
 }

@@ -145,6 +145,7 @@ def _inject_and_commit(root: Path, marker: str, replacement: str) -> None:
 
 def test_release_check_rejects_env_names_case_insensitively() -> None:
     source = RELEASE_CHECK_SCRIPT.read_text(encoding="utf-8-sig")
+    assert "git -c core.quotepath=false ls-files" in source
     assert "$trackedFileName = [System.IO.Path]::GetFileName" in source
     assert (
         '$trackedFileName.StartsWith(".env.", '
@@ -154,6 +155,37 @@ def test_release_check_rejects_env_names_case_insensitively() -> None:
         '$trackedFileName.Equals(".env.example", '
         "[System.StringComparison]::OrdinalIgnoreCase)" in source
     )
+
+
+def test_release_check_handles_unicode_tracked_paths_and_rejects_env(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repo"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(RELEASE_CHECK_SCRIPT, scripts / RELEASE_CHECK_SCRIPT.name)
+    _write(root / "中文目录" / ".ENV.production", "secret\n")
+    _run("git", "init", "-q", cwd=root)
+    _run("git", "config", "user.email", "release-test@example.invalid", cwd=root)
+    _run("git", "config", "user.name", "Release Test", cwd=root)
+    _run("git", "add", ".", cwd=root)
+    _run("git", "commit", "-qm", "fixture", cwd=root)
+
+    result = _run(
+        "powershell.exe",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(scripts / RELEASE_CHECK_SCRIPT.name),
+        cwd=root,
+        check=False,
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "[BLOCKED] Local secrets" in output
+    assert "Illegal characters in path" not in output
 
 
 def test_bundle_burns_version_and_binds_zip_to_commit_and_hash(tmp_path: Path) -> None:
