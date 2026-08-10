@@ -1,5 +1,11 @@
 name: videoinsight-control-plane
 
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${CONTAINER_LOG_MAX_SIZE:-10m}"
+    max-file: "${CONTAINER_LOG_MAX_FILES:-3}"
+
 services:
   init-runtime:
     build:
@@ -17,6 +23,10 @@ services:
       - ./backups:/app/backups
     healthcheck:
       disable: true
+    cpus: "0.25"
+    mem_limit: "256m"
+    pids_limit: 64
+    logging: *default-logging
     restart: "no"
 
   control-plane:
@@ -36,6 +46,10 @@ services:
     depends_on:
       init-runtime:
         condition: service_completed_successfully
+    cpus: "${CONTROL_PLANE_CPU_LIMIT:-1.0}"
+    mem_limit: "${CONTROL_PLANE_MEMORY_LIMIT:-1024m}"
+    pids_limit: 128
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - private
@@ -56,6 +70,10 @@ services:
       - ./caddy-data:/data
       - ./caddy-config:/config
       - ./updates:/srv/updates:ro
+    cpus: "${CADDY_CPU_LIMIT:-0.25}"
+    mem_limit: "${CADDY_MEMORY_LIMIT:-256m}"
+    pids_limit: 64
+    logging: *default-logging
     restart: unless-stopped
     networks:
       - private

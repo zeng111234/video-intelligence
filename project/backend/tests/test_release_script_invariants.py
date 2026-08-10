@@ -156,6 +156,30 @@ def test_final_release_requires_a_new_explicit_stable_version():
     assert rejected.returncode != 0
 
 
+def test_control_plane_compose_protects_a_shared_small_server():
+    compose = (
+        REPOSITORY_ROOT / "deploy" / "control-plane" / "docker-compose.yml"
+    ).read_text(encoding="utf-8")
+    env_example = (
+        REPOSITORY_ROOT / "deploy" / "control-plane" / ".env.example"
+    ).read_text(encoding="utf-8")
+
+    for variable in (
+        "CONTROL_PLANE_CPU_LIMIT",
+        "CONTROL_PLANE_MEMORY_LIMIT",
+        "CADDY_CPU_LIMIT",
+        "CADDY_MEMORY_LIMIT",
+        "CONTAINER_LOG_MAX_SIZE",
+        "CONTAINER_LOG_MAX_FILES",
+    ):
+        assert f"${{{variable}:-" in compose
+        assert f"{variable}=" in env_example
+
+    assert compose.count("pids_limit:") == 3
+    assert "x-default-logging: &default-logging" in compose
+    assert compose.count("logging: *default-logging") == 3
+
+
 def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     install_script = (
         REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
