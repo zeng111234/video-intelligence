@@ -1,16 +1,26 @@
 {
-  "schema_version": 2,
-  "used_versions": [
-    "0.2.0",
-    "0.2.1",
-    "0.2.2",
-    "0.2.3",
-    "0.2.4",
-    "0.2.5",
-    "0.2.6",
-    "0.2.7"
-  ],
-  "current_candidate": "0.2.8",
-  "release_in_progress": null,
-  "completed_releases": []
+    "schema_version":  2,
+    "used_versions":  [
+                          "0.2.0",
+                          "0.2.1",
+                          "0.2.2",
+                          "0.2.3",
+                          "0.2.4",
+                          "0.2.5",
+                          "0.2.6",
+                          "0.2.7",
+                          "0.2.8"
+                      ],
+    "current_candidate":  null,
+    "release_in_progress":  {
+                                "version":  "0.2.8",
+                                "source_commit":  "077cd904bd1249a252dae3d1d740dae87f5e508e",
+                                "server_state":  "ready",
+                                "control_plane_sha256":  "b38ddc3f95ea0485de123bf47ec87769a209936e34087af0ba95ae4b0a933f43",
+                                "windows_state":  "pending",
+                                "installer_sha256":  null
+                            },
+    "completed_releases":  [
+
+                           ]
 }
