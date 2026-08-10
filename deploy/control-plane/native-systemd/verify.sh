@@ -18,8 +18,11 @@ readonly SERVICE_GID="$3"
 require_version "$EXPECTED_VERSION"
 require_root
 bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
+validate_trusted_execution_dependencies
 readonly TRUSTED_FFPROBE="$(validate_trusted_media_tool ffprobe)"
 readonly TRUSTED_FFMPEG="$(validate_trusted_media_tool ffmpeg)"
+validate_trusted_media_tool_execution ffprobe "$TRUSTED_FFPROBE"
+validate_trusted_media_tool_execution ffmpeg "$TRUSTED_FFMPEG"
 validate_unit_effective_config
 
 readonly CURRENT_TARGET="$(current_target_path)"
@@ -59,7 +62,7 @@ raise SystemExit(0 if result == ("ok",) else 1)
 PY
 
 printf '原生 systemd 发布验收通过：%s\n' "$EXPECTED_VERSION"
-printf '付费验收媒体门禁可用：ffprobe=%s ffmpeg=%s\n' \
+printf '付费验收媒体门禁与固定 SHA256 可用：ffprobe=%s ffmpeg=%s\n' \
   "$TRUSTED_FFPROBE" "$TRUSTED_FFMPEG"
 printf '服务仅监听本机 127.0.0.1:18080；健康检查使用配置域名 Host。\n'
 printf '未访问外网、未调用供应商、未检查或修改其他服务。\n'

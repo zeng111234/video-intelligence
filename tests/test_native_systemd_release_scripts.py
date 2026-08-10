@@ -16,6 +16,7 @@ import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 NATIVE_ROOT = REPOSITORY_ROOT / "deploy" / "control-plane" / "native-systemd"
+MEDIA_TOOLS_MANIFEST = NATIVE_ROOT / "media-tools.sha256"
 SHELL_SCRIPTS = (
     "common.sh",
     "preflight.sh",
@@ -72,8 +73,42 @@ def _bash() -> str:
     return executable
 
 
+def _executable_fixture() -> Path:
+    candidates = (
+        Path(r"C:\Program Files\Git\usr\bin\true.exe"),
+        Path(_bash()),
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise AssertionError("No executable fixture is available")
+
+
+def _posix_path(path: Path) -> str:
+    result = subprocess.run(
+        [_bash(), "-c", 'cygpath -u "$1"', "native-test", str(path)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.strip()
+
+
 def _run_common_function(
     function_call: str, *arguments: str
+) -> subprocess.CompletedProcess[str]:
+    return _run_common_file_function(
+        NATIVE_ROOT / "common.sh", function_call, *arguments
+    )
+
+
+def _run_common_file_function(
+    common_path: Path, function_call: str, *arguments: str
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -81,7 +116,7 @@ def _run_common_function(
             "-c",
             f'source "$1"; {function_call}',
             "native-test",
-            str(NATIVE_ROOT / "common.sh"),
+            str(common_path),
             *arguments,
         ],
         cwd=REPOSITORY_ROOT,
@@ -145,7 +180,10 @@ def test_unit_uses_one_version_root_and_cent_os_7_compatible_limits() -> None:
     assert "CPUQuota=100%" in unit
     assert "MemoryLimit=1G" in unit
     assert "MemoryMax=" not in unit
-    assert "Environment=PATH=/usr/local/bin:/usr/bin:/bin" in unit
+    assert (
+        "Environment=PATH=/opt/videoinsight-control-plane/tools/media/bin:"
+        "/usr/local/bin:/usr/bin:/bin"
+    ) in unit
     assert "NoNewPrivileges=true" in unit
     assert "ProtectSystem=full" in unit
     assert "CapabilityBoundingSet=" in unit
@@ -195,6 +233,8 @@ def test_preflight_supports_legacy_current_but_rejects_scope_escape() -> None:
     assert 'env_gid" == "$SERVICE_GID' in preflight
     assert "8#$env_mode & 0037" in preflight
     assert "配置不得覆盖固定的 systemd 服务 PATH" in preflight
+    assert "VIDEOINSIGHT_MEDIA_ROOT|VIDEOINSIGHT_SERVICE_PATH" in preflight
+    assert '"$VIDEOINSIGHT_MEDIA_ROOT"' in preflight
     assert 'validate_secure_file "$VIDEOINSIGHT_OFFLINE_PYTHON" 0' in preflight
     assert 'backup_gid" == "0' in preflight
     assert "8#$backup_mode & 0077" in preflight
@@ -243,9 +283,24 @@ def test_preflight_supports_legacy_current_but_rejects_scope_escape() -> None:
     assert "systemctl is-active --quiet" in preflight
     assert "validate_trusted_media_tool ffprobe" in preflight
     assert "validate_trusted_media_tool ffmpeg" in preflight
-    assert 'readonly VIDEOINSIGHT_SERVICE_PATH="/usr/local/bin:/usr/bin:/bin"' in common
+    assert "validate_trusted_media_tool_execution ffprobe" in preflight
+    assert "validate_trusted_media_tool_execution ffmpeg" in preflight
+    assert "validate_trusted_execution_dependencies" in preflight
+    assert 'require_command "$fixed_command"' in preflight
+    assert (
+        'readonly VIDEOINSIGHT_MEDIA_ROOT="$VIDEOINSIGHT_ROOT/tools/media/bin"'
+        in common
+    )
+    assert (
+        'readonly VIDEOINSIGHT_SERVICE_PATH="$VIDEOINSIGHT_MEDIA_ROOT:'
+        '/usr/local/bin:/usr/bin:/bin"' in common
+    )
     assert 'PATH="$VIDEOINSIGHT_SERVICE_PATH" command -v "$name"' in common
     assert 'Environment=PATH="$VIDEOINSIGHT_SERVICE_PATH"' in common
+    assert '[[ "$candidate" == "$expected" ]]' in common
+    assert 'validate_media_tools_manifest' in common
+    assert 'sha256sum -- "$candidate"' in common
+    assert "固定媒体工具目录必须精确包含" in common
     assert "--value" not in common
 
 
@@ -413,7 +468,11 @@ def test_unit_directive_audit_requires_fixed_service_path(tmp_path: Path) -> Non
     unit = tmp_path / "missing-path.service"
     unit.write_text(
         _read("videoinsight-control-plane.service").replace(
-            "Environment=PATH=/usr/local/bin:/usr/bin:/bin\n", ""
+            (
+                "Environment=PATH=/opt/videoinsight-control-plane/tools/media/bin:"
+                "/usr/local/bin:/usr/bin:/bin\n"
+            ),
+            "",
         ),
         encoding="utf-8",
         newline="\n",
@@ -587,7 +646,222 @@ def test_verify_requires_new_layout_unit_database_identity_and_permissions() -> 
     assert "8#$database_mode & 0077" in script
     assert "validate_trusted_media_tool ffprobe" in script
     assert "validate_trusted_media_tool ffmpeg" in script
+    assert "validate_trusted_media_tool_execution ffprobe" in script
+    assert "validate_trusted_media_tool_execution ffmpeg" in script
+    assert "validate_trusted_execution_dependencies" in script
     assert "未访问外网、未调用供应商" in script
+
+
+def test_media_tool_execution_gate_clears_environment_and_fixes_identity() -> None:
+    common = _read("common.sh")
+
+    assert 'readonly VIDEOINSIGHT_SYSTEM_ENV="/usr/bin/env"' in common
+    assert 'readonly VIDEOINSIGHT_SYSTEM_TIMEOUT="/usr/bin/timeout"' in common
+    assert 'readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/sbin/runuser"' in common
+    assert 'validate_trusted_executable_path "$candidate" /' in common
+    assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent' in common
+    assert 'PATH="/usr/bin:/usr/sbin:/bin"' in common
+    assert '"$VIDEOINSIGHT_SYSTEM_TIMEOUT" --signal=KILL 10' in common
+    assert '"$VIDEOINSIGHT_SYSTEM_RUNUSER" --user "$VIDEOINSIGHT_SERVICE_USER"' in common
+    assert '--group "$VIDEOINSIGHT_SERVICE_GROUP" --' in common
+    assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent' in common
+    assert 'PATH="$VIDEOINSIGHT_SERVICE_PATH"' in common
+    assert '"$candidate" -hide_banner -version' in common
+    assert "--preserve-environment" not in common
+
+
+def test_media_tools_manifest_is_tracked_exact_and_bound_to_reviewed_binaries() -> None:
+    lines = MEDIA_TOOLS_MANIFEST.read_text(encoding="utf-8").splitlines()
+    pattern = re.compile(r"^([0-9a-f]{64})  (ffmpeg|ffprobe)$")
+    parsed: dict[str, str] = {}
+    for line in lines:
+        match = pattern.fullmatch(line)
+        assert match is not None
+        digest, name = match.groups()
+        assert name not in parsed
+        parsed[name] = digest
+
+    assert list(parsed) == ["ffmpeg", "ffprobe"]
+    assert parsed == {
+        "ffmpeg": "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99",
+        "ffprobe": "4f231a1960d83e403d08f7971e271707bec278a9ae18e21b8b5b03186668450d",
+    }
+    tracked = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "--error-unmatch",
+            str(MEDIA_TOOLS_MANIFEST.relative_to(REPOSITORY_ROOT)),
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert tracked.returncode == 0, "media-tools.sha256 必须被 Git 跟踪后才能发布"
+
+
+def test_media_tools_manifest_parser_accepts_the_reviewed_exact_pair() -> None:
+    function_call = r"""
+stat() {
+  if [[ "$2" == '%g' ]]; then
+    printf '0\n'
+  else
+    printf '644 0\n'
+  fi
+}
+validate_media_tools_manifest
+"""
+
+    result = _run_common_function(function_call)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_media_tool_gate_accepts_exact_files_with_matching_hashes(
+    tmp_path: Path,
+) -> None:
+    control_root = tmp_path / "control"
+    media_root = control_root / "tools" / "media" / "bin"
+    media_root.mkdir(parents=True)
+    ffmpeg = media_root / "ffmpeg"
+    ffprobe = media_root / "ffprobe"
+    shutil.copy2(_executable_fixture(), ffmpeg)
+    shutil.copy2(_executable_fixture(), ffprobe)
+    native_root = tmp_path / "native-systemd"
+    native_root.mkdir()
+    common = native_root / "common.sh"
+    source = _read("common.sh").replace(
+        'readonly VIDEOINSIGHT_ROOT="/opt/videoinsight-control-plane"',
+        f'readonly VIDEOINSIGHT_ROOT="{_posix_path(control_root)}"',
+    )
+    source = source.replace(
+        'readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/sbin/runuser"',
+        'readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/bin/true"',
+    )
+    common.write_text(source, encoding="utf-8", newline="\n")
+    (native_root / "media-tools.sha256").write_text(
+        f"{hashlib.sha256(ffmpeg.read_bytes()).hexdigest()}  ffmpeg\n"
+        f"{hashlib.sha256(ffprobe.read_bytes()).hexdigest()}  ffprobe\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    function_call = r"""
+stat() {
+  case "$2" in
+    '%a %u') printf '755 0\n' ;;
+    '%g') printf '0\n' ;;
+    *) printf '755 0 0\n' ;;
+  esac
+}
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
+validate_trusted_media_tool ffmpeg
+validate_trusted_media_tool ffprobe
+validate_trusted_media_tool_execution ffmpeg "$VIDEOINSIGHT_MEDIA_ROOT/ffmpeg"
+validate_trusted_media_tool_execution ffprobe "$VIDEOINSIGHT_MEDIA_ROOT/ffprobe"
+"""
+
+    result = _run_common_file_function(common, function_call)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines() == [
+        _posix_path(ffmpeg),
+        _posix_path(ffprobe),
+    ]
+
+
+@pytest.mark.parametrize("failure", ("hash", "extra", "execution"))
+def test_media_tool_gate_rejects_hash_mismatch_extra_entry_or_execution_failure(
+    tmp_path: Path, failure: str
+) -> None:
+    control_root = tmp_path / "control"
+    media_root = control_root / "tools" / "media" / "bin"
+    media_root.mkdir(parents=True)
+    ffmpeg = media_root / "ffmpeg"
+    ffprobe = media_root / "ffprobe"
+    shutil.copy2(_executable_fixture(), ffmpeg)
+    shutil.copy2(_executable_fixture(), ffprobe)
+    if failure == "extra":
+        (media_root / "unexpected").write_bytes(b"unexpected")
+    native_root = tmp_path / "native-systemd"
+    native_root.mkdir()
+    common = native_root / "common.sh"
+    source = _read("common.sh").replace(
+        'readonly VIDEOINSIGHT_ROOT="/opt/videoinsight-control-plane"',
+        f'readonly VIDEOINSIGHT_ROOT="{_posix_path(control_root)}"',
+    )
+    execution_fixture = "/usr/bin/false" if failure == "execution" else "/usr/bin/true"
+    source = source.replace(
+        'readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/sbin/runuser"',
+        f'readonly VIDEOINSIGHT_SYSTEM_RUNUSER="{execution_fixture}"',
+    )
+    common.write_text(source, encoding="utf-8", newline="\n")
+    ffmpeg_hash = hashlib.sha256(ffmpeg.read_bytes()).hexdigest()
+    if failure == "hash":
+        ffmpeg_hash = "0" * 64
+    (native_root / "media-tools.sha256").write_text(
+        f"{ffmpeg_hash}  ffmpeg\n"
+        f"{hashlib.sha256(ffprobe.read_bytes()).hexdigest()}  ffprobe\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    function_call = r"""
+stat() {
+  case "$2" in
+    '%a %u') printf '755 0\n' ;;
+    '%g') printf '0\n' ;;
+    *) printf '755 0 0\n' ;;
+  esac
+}
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
+candidate=$(validate_trusted_media_tool ffmpeg)
+if [[ "$2" == 'execution' ]]; then
+  validate_trusted_media_tool_execution ffmpeg "$candidate"
+fi
+"""
+
+    result = _run_common_file_function(common, function_call, failure)
+
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    (
+        "0" * 64 + "  ffmpeg\n",
+        "0" * 64 + "  ffmpeg\n" + "1" * 64 + "  ffmpeg\n",
+        "0" * 64 + "  ffmpeg\n" + "1" * 64 + "  unexpected\n",
+        "0" * 63 + "  ffmpeg\n" + "1" * 64 + "  ffprobe\n",
+    ),
+)
+def test_media_tools_manifest_parser_rejects_incomplete_duplicate_or_malformed_entries(
+    tmp_path: Path, manifest: str
+) -> None:
+    native_root = tmp_path / "native-systemd"
+    native_root.mkdir()
+    common = native_root / "common.sh"
+    shutil.copy2(NATIVE_ROOT / "common.sh", common)
+    (native_root / "media-tools.sha256").write_text(
+        manifest, encoding="utf-8", newline="\n"
+    )
+    function_call = r"""
+stat() {
+  if [[ "$2" == '%g' ]]; then
+    printf '0\n'
+  else
+    printf '644 0\n'
+  fi
+}
+validate_media_tools_manifest
+"""
+
+    result = _run_common_file_function(common, function_call)
+
+    assert result.returncode != 0
 
 
 @pytest.mark.parametrize(
@@ -617,6 +891,9 @@ stat() {
   fi
   printf '%s 0 0\n' "$mode"
 }
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
 validate_trusted_executable_path "$tool"
 """
 
@@ -631,6 +908,9 @@ def test_trusted_media_tool_accepts_root_owned_nonwritable_path() -> None:
 stat() {
   printf '755 0 0\n'
 }
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
 tool=$(readlink -f -- "$(cygpath -u "$2")")
 validate_trusted_executable_path "$tool"
 """
@@ -638,6 +918,54 @@ validate_trusted_executable_path "$tool"
     result = _run_common_function(function_call, str(tool))
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_trusted_media_tool_accepts_service_group_0750_ancestor() -> None:
+    tool = Path(_bash())
+    function_call = r"""
+tool=$(readlink -f -- "$(cygpath -u "$2")")
+group_ancestor=$(dirname -- "$tool")
+stat() {
+  local path="${!#}"
+  if [[ "$path" == "$group_ancestor" ]]; then
+    printf '750 0 994\n'
+  else
+    printf '755 0 0\n'
+  fi
+}
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
+validate_trusted_executable_path "$tool"
+"""
+
+    result = _run_common_function(function_call, str(tool))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_trusted_media_tool_rejects_root_group_0750_ancestor() -> None:
+    tool = Path(_bash())
+    function_call = r"""
+tool=$(readlink -f -- "$(cygpath -u "$2")")
+blocked_ancestor=$(dirname -- "$tool")
+stat() {
+  local path="${!#}"
+  if [[ "$path" == "$blocked_ancestor" ]]; then
+    printf '750 0 0\n'
+  else
+    printf '755 0 0\n'
+  fi
+}
+getent() {
+  printf 'videoinsight:x:994:\n'
+}
+validate_trusted_executable_path "$tool"
+"""
+
+    result = _run_common_function(function_call, str(tool))
+
+    assert result.returncode != 0
 
 
 def test_manual_rollback_has_safety_snapshot_and_restores_failed_rollback() -> None:

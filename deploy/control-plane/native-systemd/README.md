@@ -8,7 +8,7 @@
 
 它不会调用 Docker、Compose、Caddy、Nginx，也不会启停或修改任何其他服务。反向代理和证书继续由服务器现有系统管理，本目录不负责它们。
 
-正式付费验收还依赖服务器已有的 `ffprobe` 和 `ffmpeg`，发布脚本只读检查它们，不会安装、下载或修改系统媒体工具。新 unit 把服务 `PATH` 固定为 `/usr/local/bin:/usr/bin:/bin`，避免 root 登录环境与 systemd 服务环境不一致。
+正式付费验收依赖隔离在控制层目录内的 `ffprobe` 和 `ffmpeg`。发布脚本只读检查它们，不会安装、下载或修改系统全局媒体工具。新 unit 把服务 `PATH` 固定为 `/opt/videoinsight-control-plane/tools/media/bin:/usr/local/bin:/usr/bin:/bin`，并要求两个名称都精确解析到隔离目录，避免 root 登录环境、系统全局目录与 systemd 服务环境不一致。
 
 ## 固定目录
 
@@ -19,6 +19,9 @@
   python/3.12.13/bin/python3.12
   wheelhouse/*.whl
   tools/native-systemd/wheelhouse.sha256
+  tools/native-systemd/media-tools.sha256
+  tools/media/bin/ffmpeg
+  tools/media/bin/ffprobe
   releases/<版本>/app/
   releases/<版本>/venv/
   current -> releases/<版本>
@@ -29,12 +32,16 @@
 
 `config/control-plane.env` 必须是 `root:videoinsight` 且权限 `0640`；`runtime` 父目录必须是 `root:root` 且组/其他用户不可写，只有 `runtime/data` 属于显式服务 UID/GID 且权限 `0700`；`backups` 必须是 `root:root` 且权限 `0700`。`preflight.sh` 和 `verify.sh` 会在同一文件系统内递归检查 `runtime/data`：每层目录和每个普通文件都必须属于显式服务 UID/GID，组/其他用户权限位必须为零，并且设备号必须与 data 根一致。任一符号链接、子挂载、跨文件系统项、设备、错误属主或宽松权限都会失败；备份和恢复删除旧目录前也会独立做同样的 fail-closed 检查。服务进程不需要写备份目录，停机快照和恢复只由 root 发布脚本执行。
 
-`ffprobe` 和 `ffmpeg` 必须由管理员事先通过已审查的 CentOS 7 离线介质放入上述固定 `PATH`；不得在正式服务器临时联网安装，也不得猜测包版本。二进制解析后的真实文件和从其父目录到 `/` 的每层祖先都必须是 `root:root`，且组/其他用户不可写；二进制和祖先还必须允许 `videoinsight` 服务用户执行或遍历。`preflight.sh` 在解包、停机和任何付费动作前检查并打印两个解析后的绝对路径，`verify.sh` 会再次检查和记录；缺失、符号链接逃逸、错误属主、宽松权限或服务不可达都会 fail-closed。上传发布包前应在目标 CentOS 7 主机离线执行并保留以下只读证据：
+`ffprobe` 和 `ffmpeg` 必须由管理员在启用服务前取得并核验，再放入 `/opt/videoinsight-control-plane/tools/media/bin`；服务进程和发布脚本不得联网安装。为避免客户电脑上行流量，首次准备允许管理员把固定来源归档直接下载到本服务自己的 `incoming` 目录，先核对供应商 MD5 和归档 SHA256，再提取两个受审文件；不得放入 `/usr/local/bin` 或 `/usr/bin`，也不得猜测包版本。建议使用不依赖额外私有动态库的已审查 Linux x86_64 构建。二进制必须是两个直接普通文件，不能是符号链接；固定目录不得包含任何额外条目。
+
+开发电脑必须先对两个最终二进制计算 SHA256，再把小写哈希写入随源码跟踪的 `media-tools.sha256`。服务器只能核对这个受审清单，禁止上传后在服务器重新生成“期望哈希”。当前受审来源是 `https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz`，归档名 `ffmpeg-release-amd64-static.tar.xz`，FFmpeg 版本 `7.0.2`，归档 SHA256 `abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67`，供应商 MD5 `7fa72b652e19bf84c9461e332ea1cdf3`，许可为 GPLv3。归档内最终 `ffmpeg` 与 `ffprobe` 的固定 SHA256 以本目录的清单为唯一运行门禁；任何版本或哈希变化都必须作为新的受审发布变更处理。
+
+二进制、隔离目录及其到 `/` 的每层祖先必须由 `root` 持有，且组/其他用户不可写；组只允许 `root` 或固定 `videoinsight` 组。`root:root` 条目必须给其他用户执行/遍历权限，`root:videoinsight` 条目必须给固定服务组执行/遍历权限，因此控制层根目录可以安全使用 `root:videoinsight 0750`；其下 `tools`、`media` 和 `bin` 仍必须是 `root:root`。`preflight.sh` 在解包、停机和任何付费动作前检查文件集合、路径、属主、权限和 SHA256，同时逐个确认 `/usr/bin/env`、`/usr/bin/timeout`、`/usr/sbin/runuser` 是 root 持有、组/其他不可写、可执行且不经过符号链接的固定系统文件。随后以固定绝对路径启动 10 秒硬超时，并用 `runuser` 以固定 `videoinsight:videoinsight` 身份执行两个精确候选的 `-hide_banner -version`；外层和工具子进程都通过 `/usr/bin/env -i` 清空环境，只重新设置固定 PATH 和不可用 HOME，不继承代理、登录 HOME、`LD_*` 或其他 root 环境，也不优先信任 `/usr/local`。`verify.sh` 会再独立完成同一组依赖、哈希和服务身份执行检查并记录；缺失、额外文件、符号链接、路径逃逸、错误属主、宽松权限、哈希变化、ABI/执行失败、超时或服务不可达都会 fail-closed。上传发布包前应在目标 CentOS 7 主机执行并保留以下只读证据：
 
 ```bash
-PATH=/usr/local/bin:/usr/bin:/bin command -v ffprobe ffmpeg
-readlink -f "$(PATH=/usr/local/bin:/usr/bin:/bin command -v ffprobe)"
-readlink -f "$(PATH=/usr/local/bin:/usr/bin:/bin command -v ffmpeg)"
+PATH=/opt/videoinsight-control-plane/tools/media/bin:/usr/local/bin:/usr/bin:/bin command -v ffprobe ffmpeg
+readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffprobe
+readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
 bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
 ```
 

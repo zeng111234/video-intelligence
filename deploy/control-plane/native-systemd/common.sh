@@ -14,13 +14,18 @@ readonly VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_ROOT/backups"
 readonly VIDEOINSIGHT_ENV_FILE="$VIDEOINSIGHT_ROOT/config/control-plane.env"
 readonly VIDEOINSIGHT_OFFLINE_PYTHON="$VIDEOINSIGHT_ROOT/python/3.12.13/bin/python3.12"
 readonly VIDEOINSIGHT_WHEELHOUSE="$VIDEOINSIGHT_ROOT/wheelhouse"
-readonly VIDEOINSIGHT_SERVICE_PATH="/usr/local/bin:/usr/bin:/bin"
+readonly VIDEOINSIGHT_MEDIA_ROOT="$VIDEOINSIGHT_ROOT/tools/media/bin"
+readonly VIDEOINSIGHT_SERVICE_PATH="$VIDEOINSIGHT_MEDIA_ROOT:/usr/local/bin:/usr/bin:/bin"
+readonly VIDEOINSIGHT_SYSTEM_ENV="/usr/bin/env"
+readonly VIDEOINSIGHT_SYSTEM_TIMEOUT="/usr/bin/timeout"
+readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/sbin/runuser"
 
 native_script_dir() {
   CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
 }
 
 readonly VIDEOINSIGHT_WHEELHOUSE_MANIFEST="$(native_script_dir)/wheelhouse.sha256"
+readonly VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST="$(native_script_dir)/media-tools.sha256"
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -83,17 +88,33 @@ require_command() {
 
 validate_trusted_executable_path() {
   local candidate="$1"
-  local resolved mode owner group current
+  local allowed_root="${2:-/}"
+  local resolved resolved_allowed mode owner group current service_gid execute_mask
   [[ "$candidate" == /* ]] || die "受信任工具路径必须是绝对路径：$candidate"
   resolved=$(readlink -f -- "$candidate") || die "受信任工具路径无法解析：$candidate"
+  resolved_allowed=$(readlink -f -- "$allowed_root") || \
+    die "受信任工具允许根目录无法解析：$allowed_root"
+  [[ "$resolved" == "$candidate" ]] || die "受信任工具路径不得经过符号链接：$candidate"
+  [[ "$resolved_allowed" == "$allowed_root" && -d "$resolved_allowed" && \
+      ! -L "$resolved_allowed" ]] || \
+    die "受信任工具允许根目录不是规范普通目录：$allowed_root"
+  if [[ "$resolved_allowed" != "/" ]]; then
+    [[ "$resolved" == "$resolved_allowed/"* ]] || \
+      die "受信任工具越过固定媒体目录：$resolved"
+  fi
   [[ "$resolved" == /* && -f "$resolved" && ! -L "$resolved" && -x "$resolved" ]] || \
     die "受信任工具不是可执行普通文件：$candidate"
+  service_gid=$(getent group "$VIDEOINSIGHT_SERVICE_GROUP" | cut -d: -f3)
+  [[ "$service_gid" =~ ^[0-9]+$ ]] || die "固定服务组不存在或 GID 无效。"
   read -r mode owner group < <(stat -c '%a %u %g' -- "$resolved")
-  [[ "$owner" == "0" && "$group" == "0" ]] || \
-    die "受信任工具必须属于 root:root：$resolved"
+  [[ "$owner" == "0" ]] || die "受信任工具必须由 root 持有：$resolved"
+  [[ "$group" == "0" || "$group" == "$service_gid" ]] || \
+    die "受信任工具只能属于 root 或固定服务组：$resolved"
   (( (8#$mode & 0022) == 0 )) || \
     die "受信任工具不能由组或其他用户写入：$resolved"
-  (( (8#$mode & 0001) != 0 )) || \
+  execute_mask=0001
+  [[ "$group" != "$service_gid" ]] || execute_mask=0010
+  (( (8#$mode & 8#$execute_mask) != 0 )) || \
     die "受信任工具必须允许固定服务用户执行：$resolved"
 
   current=$(dirname -- "$resolved")
@@ -101,16 +122,56 @@ validate_trusted_executable_path() {
     [[ -d "$current" && ! -L "$current" ]] || \
       die "受信任工具祖先不是普通目录：$current"
     read -r mode owner group < <(stat -c '%a %u %g' -- "$current")
-    [[ "$owner" == "0" && "$group" == "0" ]] || \
-      die "受信任工具祖先必须属于 root:root：$current"
+    [[ "$owner" == "0" ]] || die "受信任工具祖先必须由 root 持有：$current"
+    [[ "$group" == "0" || "$group" == "$service_gid" ]] || \
+      die "受信任工具祖先只能属于 root 或固定服务组：$current"
     (( (8#$mode & 0022) == 0 )) || \
       die "受信任工具祖先不能由组或其他用户写入：$current"
-    (( (8#$mode & 0001) != 0 )) || \
+    execute_mask=0001
+    [[ "$group" != "$service_gid" ]] || execute_mask=0010
+    (( (8#$mode & 8#$execute_mask) != 0 )) || \
       die "固定服务用户无法遍历受信任工具祖先：$current"
     [[ "$current" == "/" ]] && break
     current=$(dirname -- "$current")
   done
   printf '%s\n' "$resolved"
+}
+
+validate_media_tools_manifest() {
+  validate_root_file "$VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST"
+  local line line_count=0 name hash
+  local manifest_pattern='^([0-9a-f]{64})  (ffmpeg|ffprobe)$'
+  local ffmpeg_hash="" ffprobe_hash=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_count=$((line_count + 1))
+    [[ "$line" =~ $manifest_pattern ]] || \
+      die "媒体工具 SHA256 清单格式无效。"
+    hash="${BASH_REMATCH[1]}"
+    name="${BASH_REMATCH[2]}"
+    case "$name" in
+      ffmpeg)
+        [[ -z "$ffmpeg_hash" ]] || die "媒体工具 SHA256 清单包含重复 ffmpeg。"
+        ffmpeg_hash="$hash"
+        ;;
+      ffprobe)
+        [[ -z "$ffprobe_hash" ]] || die "媒体工具 SHA256 清单包含重复 ffprobe。"
+        ffprobe_hash="$hash"
+        ;;
+    esac
+  done < "$VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST"
+  [[ "$line_count" -eq 2 && -n "$ffmpeg_hash" && -n "$ffprobe_hash" ]] || \
+    die "媒体工具 SHA256 清单必须精确包含 ffmpeg 和 ffprobe。"
+}
+
+validate_trusted_execution_dependencies() {
+  local candidate
+  for candidate in \
+    "$VIDEOINSIGHT_SYSTEM_ENV" \
+    "$VIDEOINSIGHT_SYSTEM_TIMEOUT" \
+    "$VIDEOINSIGHT_SYSTEM_RUNUSER"; do
+    [[ $(validate_trusted_executable_path "$candidate" /) == "$candidate" ]] || \
+      die "服务身份执行依赖不是固定受信任文件：$candidate"
+  done
 }
 
 validate_trusted_media_tool() {
@@ -119,12 +180,58 @@ validate_trusted_media_tool() {
     ffmpeg|ffprobe) ;;
     *) die "未允许的媒体校验工具名：$name" ;;
   esac
-  local candidate
+  validate_media_tools_manifest
+  [[ -d "$VIDEOINSIGHT_MEDIA_ROOT" && ! -L "$VIDEOINSIGHT_MEDIA_ROOT" ]] || \
+    die "固定媒体工具目录不存在或是符号链接。"
+  [[ $(readlink -f -- "$VIDEOINSIGHT_MEDIA_ROOT") == "$VIDEOINSIGHT_MEDIA_ROOT" ]] || \
+    die "固定媒体工具目录路径不规范。"
+  local actual_files
+  actual_files=$(find "$VIDEOINSIGHT_MEDIA_ROOT" -mindepth 1 -maxdepth 1 \
+    -type f -printf '%f\n' | LC_ALL=C sort)
+  [[ "$actual_files" == $'ffmpeg\nffprobe' ]] || \
+    die "固定媒体工具目录必须精确包含 ffmpeg 和 ffprobe 两个普通文件。"
+  if find "$VIDEOINSIGHT_MEDIA_ROOT" -mindepth 1 -maxdepth 1 ! -type f \
+    -print -quit | grep -q .; then
+    die "固定媒体工具目录包含非普通文件。"
+  fi
+  local candidate expected expected_hash actual_hash
+  expected="$VIDEOINSIGHT_MEDIA_ROOT/$name"
   candidate=$(PATH="$VIDEOINSIGHT_SERVICE_PATH" command -v "$name") || \
     die "固定服务 PATH 缺少受信任媒体校验工具：$name"
-  [[ "$candidate" == /* ]] || \
-    die "固定服务 PATH 将媒体工具解析为非文件命令：$name"
-  validate_trusted_executable_path "$candidate"
+  [[ "$candidate" == "$expected" ]] || \
+    die "固定服务 PATH 未解析到隔离媒体工具：$name"
+  candidate=$(validate_trusted_executable_path "$candidate" "$VIDEOINSIGHT_MEDIA_ROOT")
+  expected_hash=$(sed -n "s/^\([0-9a-f]\{64\}\)  $name$/\1/p" \
+    "$VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST")
+  [[ "$expected_hash" =~ ^[0-9a-f]{64}$ ]] || \
+    die "媒体工具缺少唯一固定 SHA256：$name"
+  actual_hash=$(sha256sum -- "$candidate" | cut -d ' ' -f1)
+  [[ "$actual_hash" == "$expected_hash" ]] || \
+    die "媒体工具 SHA256 与受跟踪清单不一致：$name"
+  printf '%s\n' "$candidate"
+}
+
+validate_trusted_media_tool_execution() {
+  local name="$1"
+  local candidate="$2"
+  local expected="$VIDEOINSIGHT_MEDIA_ROOT/$name"
+  case "$name" in
+    ffmpeg|ffprobe) ;;
+    *) die "未允许执行的媒体校验工具名：$name" ;;
+  esac
+  [[ "$candidate" == "$expected" && -f "$candidate" && ! -L "$candidate" ]] || \
+    die "媒体工具执行候选不是已校验的精确普通文件：$name"
+  [[ $(readlink -f -- "$candidate") == "$expected" ]] || \
+    die "媒体工具执行候选路径在哈希校验后发生变化：$name"
+  "$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent PATH="/usr/bin:/usr/sbin:/bin" \
+    "$VIDEOINSIGHT_SYSTEM_TIMEOUT" --signal=KILL 10 \
+      "$VIDEOINSIGHT_SYSTEM_RUNUSER" --user "$VIDEOINSIGHT_SERVICE_USER" \
+          --group "$VIDEOINSIGHT_SERVICE_GROUP" -- \
+          "$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent \
+            PATH="$VIDEOINSIGHT_SERVICE_PATH" \
+            "$candidate" -hide_banner -version \
+            </dev/null >/dev/null 2>&1 || \
+    die "固定服务身份无法在 10 秒内执行受信任媒体工具：$name"
 }
 
 fsync_path() {
@@ -296,7 +403,13 @@ validate_root_directory() {
 validate_control_root() {
   [[ -d "$VIDEOINSIGHT_ROOT" && ! -L "$VIDEOINSIGHT_ROOT" ]] || \
     die "固定控制层根目录不存在或是符号链接。"
-  validate_root_directory "$VIDEOINSIGHT_ROOT"
+  validate_secure_directory "$VIDEOINSIGHT_ROOT" 0
+  local control_group service_group
+  control_group=$(stat -c '%g' -- "$VIDEOINSIGHT_ROOT")
+  service_group=$(getent group "$VIDEOINSIGHT_SERVICE_GROUP" | cut -d: -f3)
+  [[ "$control_group" == "0" || \
+      ( -n "$service_group" && "$control_group" == "$service_group" ) ]] || \
+    die "固定控制层根目录只能属于 root 或固定服务组。"
   [[ $(readlink -f -- "$VIDEOINSIGHT_ROOT") == "$VIDEOINSIGHT_ROOT" ]] || \
     die "固定控制层根目录路径不规范。"
 }
