@@ -7,9 +7,10 @@
     "0.2.3",
     "0.2.4",
     "0.2.5",
-    "0.2.6"
+    "0.2.6",
+    "0.2.7"
   ],
-  "current_candidate": "0.2.7",
+  "current_candidate": "0.2.8",
   "release_in_progress": null,
   "completed_releases": []
 }
