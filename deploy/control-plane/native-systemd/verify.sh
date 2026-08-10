@@ -1,5 +1,8 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+readonly PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
@@ -17,8 +20,9 @@ readonly SERVICE_GID="$3"
 
 require_version "$EXPECTED_VERSION"
 require_root
-bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
+/bin/bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
 validate_trusted_execution_dependencies
+validate_offline_python_runtime
 readonly TRUSTED_FFPROBE="$(validate_trusted_media_tool ffprobe)"
 readonly TRUSTED_FFMPEG="$(validate_trusted_media_tool ffmpeg)"
 validate_trusted_media_tool_execution ffprobe "$TRUSTED_FFPROBE"
@@ -38,7 +42,7 @@ validate_tools_match_release "$CURRENT_APP/deploy/control-plane/native-systemd"
 validate_service_tree "$VIDEOINSIGHT_RUNTIME_ROOT/data" "$SERVICE_UID" "$SERVICE_GID"
 
 CONTROL_PLANE_ENV_FILE="$VIDEOINSIGHT_ENV_FILE" \
-  bash "$CURRENT_APP/deploy/control-plane/validate_env.sh"
+  /bin/bash "$CURRENT_APP/deploy/control-plane/validate_env.sh"
 systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE" || die "控制层未运行。"
 health_check "$EXPECTED_VERSION" || \
   die "本机健康检查失败（初次检查加一次重试）。"
@@ -49,7 +53,7 @@ read -r database_mode database_uid database_gid < <(stat -c '%a %u %g' -- "$DATA
 [[ "$database_uid" == "$SERVICE_UID" && "$database_gid" == "$SERVICE_GID" ]] || \
   die "运行数据库 UID/GID 不正确。"
 (( (8#$database_mode & 0077) == 0 )) || die "运行数据库向组或其他用户开放。"
-PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" - "$DATABASE_PATH" <<'PY'
+run_trusted_offline_python - "$DATABASE_PATH" <<'PY'
 import sqlite3
 import sys
 

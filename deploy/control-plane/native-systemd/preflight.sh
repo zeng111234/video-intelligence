@@ -1,18 +1,22 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+readonly PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
 usage() {
-  printf '用法：%s <服务 UID> <服务 GID>\n' "$0" >&2
+  printf '用法：%s <服务 UID> <服务 GID> [--legacy-prepared]\n' "$0" >&2
   exit 2
 }
 
-[[ $# -eq 2 ]] || usage
+[[ $# -eq 2 || ( $# -eq 3 && "$3" == "--legacy-prepared" ) ]] || usage
 readonly SERVICE_UID="$1"
 readonly SERVICE_GID="$2"
+readonly LEGACY_PREPARED_MODE="${3:-}"
 
 require_root
 for command_name in cmp curl cut find getent grep id readlink sed sha256sum sleep sort \
@@ -27,6 +31,7 @@ for fixed_command in \
 done
 validate_service_identity "$SERVICE_UID" "$SERVICE_GID"
 validate_trusted_execution_dependencies
+validate_offline_python_runtime
 
 validate_control_root
 real_path_under "$SCRIPT_DIR" "$VIDEOINSIGHT_ROOT" || die "发布工具目录越过控制层根目录。"
@@ -95,7 +100,7 @@ if grep -Eq '^[[:space:]]*(PATH|VIDEOINSIGHT_MEDIA_ROOT|VIDEOINSIGHT_SERVICE_PAT
 fi
 validate_secure_file "$VIDEOINSIGHT_OFFLINE_PYTHON" 0
 [[ -x "$VIDEOINSIGHT_OFFLINE_PYTHON" ]] || die "离线 Python 不可执行。"
-PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" -c \
+run_trusted_offline_python -c \
   'import sys; raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)' || \
   die "离线 Python 必须是 3.12。"
 
@@ -133,9 +138,26 @@ while IFS= read -r -d '' python_link; do
     die "离线 Python 包含越界符号链接。"
 done < <(find "$VIDEOINSIGHT_ROOT/python" -xdev -type l -print0)
 
+readonly CURRENT_TARGET="$(current_target_path)"
 readonly CURRENT_RELEASE="$(current_release_root)"
 release_app_path "$CURRENT_RELEASE" >/dev/null
-validate_existing_unit_scope
+if [[ "$CURRENT_TARGET" == "$CURRENT_RELEASE" ]]; then
+  [[ -z "$LEGACY_PREPARED_MODE" ]] || \
+    die "--legacy-prepared 只允许精确 legacy app 布局。"
+  validate_existing_unit_scope
+elif [[ "$CURRENT_TARGET" == "$CURRENT_RELEASE/app" ]]; then
+  adoption_fields=()
+  if [[ "$LEGACY_PREPARED_MODE" == "--legacy-prepared" ]]; then
+    mapfile -t adoption_fields < <(validate_legacy_adoption_record prepared)
+  else
+    mapfile -t adoption_fields < <(validate_active_legacy_adoption)
+  fi
+  [[ ${#adoption_fields[@]} -eq 11 && \
+      "${adoption_fields[0]}" == "$(basename -- "$CURRENT_RELEASE")" ]] || \
+    die "legacy current 与 active adoption application 不一致。"
+else
+  die "current 既不是新布局版本根目录，也不是 active adoption legacy app。"
+fi
 systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE" || die "控制层当前未运行。"
 
 printf '受信任付费验收媒体工具与固定 SHA256：ffprobe=%s ffmpeg=%s\n' \

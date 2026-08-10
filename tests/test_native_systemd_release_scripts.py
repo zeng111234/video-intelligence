@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
@@ -19,6 +20,7 @@ NATIVE_ROOT = REPOSITORY_ROOT / "deploy" / "control-plane" / "native-systemd"
 MEDIA_TOOLS_MANIFEST = NATIVE_ROOT / "media-tools.sha256"
 SHELL_SCRIPTS = (
     "common.sh",
+    "normalize_legacy_unit.sh",
     "preflight.sh",
     "install_unit.sh",
     "upgrade.sh",
@@ -44,6 +46,20 @@ def _archive_validator():
 def _legacy_descriptor():
     path = NATIVE_ROOT / "legacy_rollback_descriptor.py"
     spec = spec_from_file_location("native_legacy_rollback_descriptor", path)
+    assert spec is not None and spec.loader is not None
+    module = module_from_spec(spec)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
+    return module
+
+
+def _legacy_adoption_descriptor():
+    path = NATIVE_ROOT / "legacy_adoption_descriptor.py"
+    spec = spec_from_file_location("native_legacy_adoption_descriptor", path)
     assert spec is not None and spec.loader is not None
     module = module_from_spec(spec)
     previous = sys.dont_write_bytecode
@@ -114,7 +130,10 @@ def _run_common_file_function(
         [
             _bash(),
             "-c",
-            f'source "$1"; {function_call}',
+            (
+                "PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; readonly PATH; "
+                f'source "$1"; {function_call}'
+            ),
             "native-test",
             str(common_path),
             *arguments,
@@ -144,10 +163,110 @@ def test_native_systemd_scripts_parse_as_bash() -> None:
         assert result.returncode == 0, f"{name}: {result.stdout}{result.stderr}"
 
 
+def test_native_shells_pin_interpreter_and_path_before_external_commands(
+    tmp_path: Path,
+) -> None:
+    entry_scripts = tuple(name for name in SHELL_SCRIPTS if name != "common.sh")
+    for name in SHELL_SCRIPTS:
+        script = _read(name)
+        assert script.startswith("#!/bin/bash\nset -Eeuo pipefail\n")
+        assert "#!/usr/bin/env bash" not in script
+        if name == "common.sh":
+            assert '"${PATH:-}" != "$VIDEOINSIGHT_SYSTEM_PATH"' in script
+            assert "( PATH=/videoinsight-untrusted-path )" in script
+            continue
+        path_assignment = script.index("PATH=/usr/sbin:/usr/bin:/sbin:/bin")
+        assert path_assignment < script.index("SCRIPT_DIR=")
+        assert script.index("export PATH", path_assignment) < script.index(
+            "readonly PATH", path_assignment
+        )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "executed.txt"
+    for command in ("bash", "dirname", "awk"):
+        fake = fake_bin / command
+        fake.write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$0" >> "$VIDEOINSIGHT_TEST_MARKER"\nexit 99\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        fake.chmod(0o755)
+    polluted_environment = os.environ.copy()
+    polluted_environment["PATH"] = _posix_path(fake_bin)
+    polluted_environment["VIDEOINSIGHT_TEST_MARKER"] = _posix_path(marker)
+    for name in entry_scripts:
+        result = subprocess.run(
+            [_bash(), str(NATIVE_ROOT / name)],
+            cwd=REPOSITORY_ROOT,
+            env=polluted_environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 2, name + result.stdout + result.stderr
+
+    fixed_gate = subprocess.run(
+        [
+            _bash(),
+            "-c",
+            (
+                'PATH="$2"; export PATH; '
+                "PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH; readonly PATH; "
+                'source "$1"; bash -c :; dirname / >/dev/null; '
+                "awk 'BEGIN { exit 0 }'"
+            ),
+            "native-test",
+            str(NATIVE_ROOT / "common.sh"),
+            _posix_path(fake_bin),
+        ],
+        cwd=REPOSITORY_ROOT,
+        env=polluted_environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert fixed_gate.returncode == 0, fixed_gate.stdout + fixed_gate.stderr
+    assert not marker.exists()
+
+
 def test_linux_release_files_are_pinned_to_lf_in_git() -> None:
     attributes = (REPOSITORY_ROOT / ".gitattributes").read_text(encoding="utf-8")
 
     assert "*.sh text eol=lf" in attributes
+    assert "*.service text eol=lf" in attributes
+    assert "deploy/control-plane/native-systemd/*.sha256 text eol=lf" in attributes
+    manifests = (
+        "wheelhouse.sha256",
+        "media-tools.sha256",
+        "offline-python-tree.sha256",
+    )
+    for name in manifests:
+        assert b"\r" not in (NATIVE_ROOT / name).read_bytes()
+    relative_paths = [
+        (NATIVE_ROOT / name).relative_to(REPOSITORY_ROOT).as_posix()
+        for name in manifests
+    ]
+    result = subprocess.run(
+        ["git", "check-attr", "text", "eol", "--", *relative_paths],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for relative in relative_paths:
+        assert f"{relative}: text: set" in result.stdout
+        assert f"{relative}: eol: lf" in result.stdout
     assert "*.service text eol=lf" in attributes
     tracked = subprocess.run(
         ["git", "ls-files", "--error-unmatch", ".gitattributes"],
@@ -227,6 +346,7 @@ def test_preflight_supports_legacy_current_but_rejects_scope_escape() -> None:
     assert 'if [[ $(basename -- "$target") == "app" ]]' in common
     assert 'real_path_under "$resolved" "$VIDEOINSIGHT_RELEASES_ROOT"' in common
     assert "validate_existing_unit_scope" in preflight
+    assert "validate_active_legacy_adoption" in preflight
     assert "validate_service_identity" in preflight
     assert 'real_path_under "$SCRIPT_DIR" "$VIDEOINSIGHT_ROOT"' in preflight
     assert 'validate_secure_file "$VIDEOINSIGHT_ENV_FILE" 0' in preflight
@@ -295,10 +415,10 @@ def test_preflight_supports_legacy_current_but_rejects_scope_escape() -> None:
         'readonly VIDEOINSIGHT_SERVICE_PATH="$VIDEOINSIGHT_MEDIA_ROOT:'
         '/usr/local/bin:/usr/bin:/bin"' in common
     )
-    assert 'PATH="$VIDEOINSIGHT_SERVICE_PATH" command -v "$name"' in common
+    assert "resolve_command_in_explicit_path" in common
     assert 'Environment=PATH="$VIDEOINSIGHT_SERVICE_PATH"' in common
     assert '[[ "$candidate" == "$expected" ]]' in common
-    assert 'validate_media_tools_manifest' in common
+    assert "validate_media_tools_manifest" in common
     assert 'sha256sum -- "$candidate"' in common
     assert "固定媒体工具目录必须精确包含" in common
     assert "--value" not in common
@@ -318,7 +438,8 @@ def test_upgrade_is_immutable_offline_and_transactional() -> None:
     assert "stat.S_ISLNK" in validator
     assert "member.flag_bits & 0x1" in validator
     assert "MAX_UNCOMPRESSED_BYTES" in validator
-    assert '"$VIDEOINSIGHT_OFFLINE_PYTHON" -m venv --copies' in script
+    assert 'run_trusted_offline_python_in_tmp "$STAGING_TMP" -m venv --copies' in script
+    assert "run_trusted_staging_python" in script
     assert "--no-index" in script
     assert "--only-binary=:all:" in script
     assert '--find-links "$VIDEOINSIGHT_WHEELHOUSE"' in script
@@ -329,10 +450,11 @@ def test_upgrade_is_immutable_offline_and_transactional() -> None:
         'printf \'%s\\n\' "$VERSION" > "$STAGING_APP/release_version.txt"' not in script
     )
     assert "validate_tools_match_release" in script
-    assert 'TMPDIR="$STAGING_TMP"' in script
-    assert "PIP_CONFIG_FILE=/dev/null" in script
-    assert "PIP_NO_CACHE_DIR=1" in script
-    assert "PYTHONNOUSERSITE=1" in script
+    assert 'run_trusted_staging_python "$STAGING_DIR/venv/bin/python"' in script
+    common = _read("common.sh")
+    assert "PIP_CONFIG_FILE=/dev/null" in common
+    assert "PIP_NO_CACHE_DIR=1" in common
+    assert '"$python_path" -B -I -X utf8' in common
     assert "--require-hashes" in script
     assert "requirements.lock" in script
     assert 'fsync_tree "$STAGING_DIR"' in script
@@ -349,16 +471,17 @@ def test_upgrade_is_immutable_offline_and_transactional() -> None:
     comparison = script.index(
         'version_is_strictly_greater "$VERSION" "$PREVIOUS_VERSION"'
     )
-    legacy_binding = script.index(
-        'validate_legacy_unit_binding "$PREVIOUS_RELEASE_ROOT"'
-    )
+    legacy_binding = script.index("validate_active_legacy_adoption")
     extraction = script.index('"$SCRIPT_DIR/validate_release_archive.py"', comparison)
-    stop_service = script.index('systemctl stop "$VIDEOINSIGHT_SERVICE"', extraction)
+    stop_service = script.index(
+        'stop_control_plane_fail_closed "升级切换前', extraction
+    )
     assert legacy_binding < comparison < extraction < stop_service
-    assert 'PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON"' in script
+    assert "run_trusted_offline_python" in script
+    assert 'PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON"' not in script
 
     prepare = script.index('durable_rename "$STAGING_DIR" "$RELEASE_DIR"')
-    stop = script.index('systemctl stop "$VIDEOINSIGHT_SERVICE"', prepare)
+    stop = script.index('stop_control_plane_fail_closed "升级切换前', prepare)
     snapshot = script.index("backup_control_plane.py", stop)
     install_unit = script.index(
         'install -o root -g root -m 0644 -- "$UNIT_TEMPLATE"', snapshot
@@ -372,6 +495,8 @@ def test_upgrade_is_immutable_offline_and_transactional() -> None:
     assert 'durable_rename "$UNIT_TEMP" "$VIDEOINSIGHT_UNIT_PATH"' in script
     assert "systemctl daemon-reload" in script
     assert "rollback_transaction" in script
+    assert script.count("validate_active_legacy_adoption") >= 2
+    assert "strict bridge 与 active adoption 恢复校验失败" in script
     assert "CRITICAL:" in script
     assert 'case "$STAGING_DIR" in' in script
     assert 'rm -rf -- "$STAGING_DIR"' in script
@@ -527,66 +652,193 @@ def test_unit_directive_audit_rejects_shell_exec_start(tmp_path: Path) -> None:
     assert result.returncode != 0
 
 
-def test_legacy_unit_binding_rejects_current_and_interpreter_version_mismatch(
+def test_legacy_bridge_is_exact_strict_and_rejects_interpreter_tampering(
     tmp_path: Path,
 ) -> None:
-    expected_release = "/opt/videoinsight-control-plane/releases/0.2.4"
-    unit = tmp_path / "legacy-mismatch.service"
-    unit.write_text(
-        _read("videoinsight-control-plane.service")
-        .replace(
-            "WorkingDirectory=/opt/videoinsight-control-plane/current/app",
-            f"WorkingDirectory={expected_release}/app",
-        )
-        .replace(
-            "ExecStart=/opt/videoinsight-control-plane/current/venv/bin/python",
-            "ExecStart=/opt/videoinsight-control-plane/releases/0.2.3/venv/bin/python",
-        ),
-        encoding="utf-8",
-        newline="\n",
+    unit = tmp_path / "legacy-bridge.service"
+    function_call = r"""
+unit=$(cygpath -u "$2")
+rm -f -- "$unit"
+write_legacy_bridge_unit "$unit" 0.2.6 0.2.4
+sha256sum -- "$unit"
+"""
+    generated = _run_common_function(function_call, str(unit))
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    digest = generated.stdout.split()[0]
+    assert digest == "839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84"
+    content = unit.read_text(encoding="utf-8")
+    assert "WorkingDirectory=/opt/videoinsight-control-plane/current\n" in content
+    assert (
+        "ExecStart=/opt/videoinsight-control-plane/releases/0.2.4/venv/bin/python "
+        "-m uvicorn project.backend.app.control_plane:app"
+    ) in content
+    assert "CPUQuota=100%" in content
+    assert "MemoryLimit=1G" in content
+    assert (
+        "Environment=PATH=/opt/videoinsight-control-plane/tools/media/bin:" in content
     )
 
-    result = _run_common_function(
-        'validate_legacy_unit_file_binding "$2" "$3"',
-        str(unit),
-        expected_release,
-    )
-
-    assert result.returncode != 0
-    assert "ExecStart" in result.stderr
-
-    unit.write_text(
-        unit.read_text(encoding="utf-8")
-        .replace(
-            f"WorkingDirectory={expected_release}/app",
-            "WorkingDirectory=/opt/videoinsight-control-plane/current",
-        )
-        .replace(
-            "/releases/0.2.3/venv/bin/python",
-            "/releases/0.2.4/venv/bin/python",
-        ),
-        encoding="utf-8",
-        newline="\n",
-    )
-    accepted = _run_common_function(
-        'validate_legacy_unit_file_binding "$2" "$3"',
-        str(unit),
-        expected_release,
-    )
+    validator_call = r"""
+unit=$(cygpath -u "$2")
+stat() {
+  if [[ "$2" == '%a %u' ]]; then
+    printf '644 0\n'
+  elif [[ "$2" == '%g' ]]; then
+    printf '0\n'
+  else
+    printf '644 0 0\n'
+  fi
+}
+validate_legacy_bridge_unit_file "$unit" 0.2.6 0.2.4 "$3" 0
+"""
+    accepted = _run_common_function(validator_call, str(unit), digest)
     assert accepted.returncode == 0, accepted.stdout + accepted.stderr
 
-    invalid_current_app = unit.read_text(encoding="utf-8").replace(
-        "WorkingDirectory=/opt/videoinsight-control-plane/current",
-        "WorkingDirectory=/opt/videoinsight-control-plane/current/app",
+    unit.write_text(
+        content.replace(
+            "/releases/0.2.4/venv/bin/python", "/releases/0.2.3/venv/bin/python"
+        ),
+        encoding="utf-8",
+        newline="\n",
     )
-    unit.write_text(invalid_current_app, encoding="utf-8", newline="\n")
-    rejected_current_app = _run_common_function(
-        'validate_legacy_unit_file_binding "$2" "$3"',
-        str(unit),
-        expected_release,
+    tampered_digest = hashlib.sha256(unit.read_bytes()).hexdigest()
+    rejected = _run_common_function(validator_call, str(unit), tampered_digest)
+    assert rejected.returncode != 0
+    assert "ExecStart" in rejected.stderr
+
+
+def test_effective_exec_start_parser_accepts_systemd_219_and_rejects_ambiguity() -> (
+    None
+):
+    expected_path = "/opt/videoinsight-control-plane/releases/0.2.4/venv/bin/uvicorn"
+    expected_argv = (
+        f"{expected_path} project.backend.app.control_plane:app --host 127.0.0.1 "
+        "--port 18080 --workers 1 --proxy-headers --forwarded-allow-ips "
+        "127.0.0.1"
     )
-    assert rejected_current_app.returncode != 0
-    assert "WorkingDirectory" in rejected_current_app.stderr
+    active = (
+        f"{{ path={expected_path} ; argv[]={expected_argv} ; ignore_errors=no ; "
+        "start_time=[Mon 2026-08-10 20:36:14 CST] ; stop_time=[n/a] ; "
+        "pid=3498 ; code=(null) ; status=0/0 }"
+    )
+    inactive = (
+        f"{{ path={expected_path} ; argv[]={expected_argv} ; ignore_errors=no ; "
+        "start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    )
+    call = 'validate_effective_exec_start_record "$2" "$3" "$4"'
+    for fixture in (active, inactive):
+        accepted = _run_common_function(call, fixture, expected_path, expected_argv)
+        assert accepted.returncode == 0, accepted.stdout + accepted.stderr
+
+    invalid = (
+        active.replace(
+            "127.0.0.1 ; ignore_errors", "127.0.0.1 --extra ; ignore_errors"
+        ),
+        active + " " + inactive,
+        active.replace(f"path={expected_path}", f"path={expected_path}-other", 1),
+        "prefix " + active,
+        active + " suffix",
+        active.replace(" ; ignore_errors=no", " ; argv[]=second ; ignore_errors=no"),
+        active.replace(
+            " ; ignore_errors=no", " --ignore_errors=no ; ignore_errors=yes"
+        ),
+        active + "\n",
+    )
+    for fixture in invalid:
+        rejected = _run_common_function(call, fixture, expected_path, expected_argv)
+        assert rejected.returncode != 0, fixture
+
+
+def test_fail_closed_stop_kills_only_fixed_service_and_requires_inactive() -> None:
+    fallback_success = _run_common_function(
+        r"""
+state=active
+systemctl() {
+  case "$1" in
+    stop) return 1 ;;
+    is-active)
+      printf '%s\n' "$state"
+      [[ "$state" == inactive ]] && return 3
+      return 0
+      ;;
+    show) printf 'MainPID=0\n'; return 0 ;;
+    kill)
+      [[ "$4" == "$VIDEOINSIGHT_SERVICE" ]] || return 98
+      state=inactive
+      return 0
+      ;;
+    *) return 97 ;;
+  esac
+}
+stop_control_plane_fail_closed "测试停止"
+"""
+    )
+    assert fallback_success.returncode == 0, (
+        fallback_success.stdout + fallback_success.stderr
+    )
+
+    stop_failed_but_inactive = _run_common_function(
+        r"""
+systemctl() {
+  case "$1" in
+    stop) return 1 ;;
+    is-active) printf 'inactive\n'; return 3 ;;
+    show) printf 'MainPID=0\n'; return 0 ;;
+    kill) return 99 ;;
+    *) return 97 ;;
+  esac
+}
+stop_control_plane_fail_closed "测试停止"
+"""
+    )
+    assert stop_failed_but_inactive.returncode == 0
+    assert "已复核" in stop_failed_but_inactive.stderr
+
+    stubborn = _run_common_function(
+        r"""
+systemctl() {
+  case "$1" in
+    stop) return 1 ;;
+    is-active) printf 'active\n'; return 0 ;;
+    show) printf 'MainPID=3498\n'; return 0 ;;
+    kill)
+      [[ "$4" == "$VIDEOINSIGHT_SERVICE" ]] || return 98
+      return 1
+      ;;
+    *) return 97 ;;
+  esac
+}
+stop_control_plane_fail_closed "测试停止"
+"""
+    )
+    assert stubborn.returncode != 0
+    assert "CRITICAL" in stubborn.stderr
+    assert "未确认停止" in stubborn.stderr
+
+    deactivating = _run_common_function(
+        r"""
+systemctl() {
+  case "$1" in
+    stop) return 1 ;;
+    is-active) printf 'deactivating\n'; return 3 ;;
+    show) printf 'MainPID=3498\n'; return 0 ;;
+    kill) return 1 ;;
+    *) return 97 ;;
+  esac
+}
+stop_control_plane_fail_closed "测试停止"
+"""
+    )
+    assert deactivating.returncode != 0
+    assert "state=deactivating" in deactivating.stderr
+
+
+def test_all_transaction_recovery_paths_use_verified_fail_closed_stop() -> None:
+    for name in ("normalize_legacy_unit.sh", "upgrade.sh", "rollback.sh"):
+        script = _read(name)
+        assert "stop_control_plane_fail_closed" in script
+        assert 'systemctl stop "$VIDEOINSIGHT_SERVICE"' not in script
+        assert "恢复健康失败后的停止" in script
 
 
 @pytest.mark.parametrize(
@@ -662,7 +914,9 @@ def test_media_tool_execution_gate_clears_environment_and_fixes_identity() -> No
     assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent' in common
     assert 'PATH="/usr/bin:/usr/sbin:/bin"' in common
     assert '"$VIDEOINSIGHT_SYSTEM_TIMEOUT" --signal=KILL 10' in common
-    assert '"$VIDEOINSIGHT_SYSTEM_RUNUSER" --user "$VIDEOINSIGHT_SERVICE_USER"' in common
+    assert (
+        '"$VIDEOINSIGHT_SYSTEM_RUNUSER" --user "$VIDEOINSIGHT_SERVICE_USER"' in common
+    )
     assert '--group "$VIDEOINSIGHT_SERVICE_GROUP" --' in common
     assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i HOME=/nonexistent' in common
     assert 'PATH="$VIDEOINSIGHT_SERVICE_PATH"' in common
@@ -991,6 +1245,10 @@ def test_manual_rollback_has_safety_snapshot_and_restores_failed_rollback() -> N
         'validate_tools_match_release "$TARGET_APP/deploy/control-plane/native-systemd"'
     ) < script.index("TRANSACTION_STARTED=1")
     assert "legacy_rollback_descriptor.py" in script
+    assert "validate_legacy_adoption_record record" in script
+    assert "validate_legacy_bridge_unit_file" in script
+    assert "validate_active_legacy_adoption" in script
+    assert "原宽松 unit 仅作取证、不会恢复" in script
     assert 'health_check ""' in script
     assert "CURRENT_UNIT_SAFETY" in script
     assert "open_native_release_lock" in script
@@ -1113,7 +1371,7 @@ def test_offline_requirement_lock_and_wheelhouse_manifest_are_exact() -> None:
         assert actual == manifest
 
 
-def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
+def test_legacy_descriptor_v2_binds_adoption_snapshot_and_strict_bridge_hashes(
     tmp_path: Path,
 ) -> None:
     descriptor_module = _legacy_descriptor()
@@ -1122,6 +1380,7 @@ def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
     app = root / "releases" / "0.2.6" / "app"
     unit_backups = root / "state" / "unit-backups"
     descriptor_root = root / "state" / "legacy-rollbacks"
+    adoption = root / "state" / "legacy-adoption.json"
     app.mkdir(parents=True)
     backup_root.mkdir()
     unit_backups.mkdir(parents=True)
@@ -1132,6 +1391,20 @@ def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
     unit = unit_backups / unit_name
     snapshot.write_bytes(b"snapshot")
     unit.write_bytes(b"unit")
+    bridge_sha = hashlib.sha256(unit.read_bytes()).hexdigest()
+    adoption.write_text(
+        json.dumps(
+            {
+                "format": "videoinsight-native-legacy-adoption-v1",
+                "status": "active",
+                "application_version": "0.2.6",
+                "interpreter_version": "0.2.4",
+                "original_current_link": str(app),
+                "bridge_unit_sha256": bridge_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
     descriptor = descriptor_root / f"{snapshot_name}.json"
 
     descriptor_module.create_descriptor(
@@ -1139,11 +1412,15 @@ def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
         root=root,
         source_version="0.2.6",
         upgraded_to_version="0.2.7",
-        original_current_link="releases/0.2.6/app",
-        unit_backup_name=unit_name,
+        interpreter_version="0.2.4",
+        original_current_link=str(app),
+        bridge_unit_backup_name=unit_name,
         snapshot_name=snapshot_name,
         snapshot_sha256=hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-        unit_backup_sha256=hashlib.sha256(unit.read_bytes()).hexdigest(),
+        bridge_unit_backup_sha256=bridge_sha,
+        bridge_unit_sha256=bridge_sha,
+        adoption_descriptor_name="legacy-adoption.json",
+        adoption_descriptor_sha256=hashlib.sha256(adoption.read_bytes()).hexdigest(),
     )
 
     assert descriptor_module.validate_descriptor(
@@ -1153,10 +1430,10 @@ def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
         expected_source_version="0.2.6",
         expected_upgraded_to_version="0.2.7",
         expected_snapshot_name=snapshot_name,
-    ) == ("releases/0.2.6/app", unit_name)
+    ) == (str(app), unit_name, "legacy-adoption.json", "0.2.6", "0.2.4", bridge_sha)
 
-    snapshot.write_bytes(b"tampered")
-    with pytest.raises(ValueError, match="快照哈希"):
+    unit.write_bytes(b"tampered bridge")
+    with pytest.raises(ValueError, match="bridge unit 备份哈希"):
         descriptor_module.validate_descriptor(
             descriptor,
             root=root,
@@ -1165,6 +1442,392 @@ def test_legacy_descriptor_binds_versions_link_snapshot_and_unit_hashes(
             expected_upgraded_to_version="0.2.7",
             expected_snapshot_name=snapshot_name,
         )
+    unit.write_bytes(b"unit")
+    adoption.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="adoption 描述哈希"):
+        descriptor_module.validate_descriptor(
+            descriptor,
+            root=root,
+            backup_root=backup_root,
+            expected_source_version="0.2.6",
+            expected_upgraded_to_version="0.2.7",
+            expected_snapshot_name=snapshot_name,
+        )
+
+
+def test_legacy_adoption_summaries_use_exact_algorithms_and_detect_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _legacy_adoption_descriptor()
+    assert module.EXPECTED_INTERPRETER_LINKS == {
+        "bin/python": "/opt/videoinsight-control-plane/python/3.12.13/bin/python3",
+        "bin/python3": "python",
+        "bin/python3.12": "python",
+        "lib64": "lib",
+    }
+    control_root = tmp_path / "control"
+    app = control_root / "releases" / "0.2.6" / "app"
+    venv = control_root / "releases" / "0.2.4" / "venv"
+    (app / "nested").mkdir(parents=True)
+    (venv / "bin").mkdir(parents=True)
+    (app / "b.txt").write_bytes(b"b")
+    (app / "nested" / "a.txt").write_bytes(b"a")
+    (venv / "bin" / "python").write_bytes(b"python")
+    monkeypatch.setattr(module, "_mounted_paths", lambda: set())
+    monkeypatch.setattr(
+        module,
+        "_validate_root_policy",
+        lambda root, **_kwargs: root.lstat(),
+    )
+    monkeypatch.setattr(
+        module, "_validate_entry_policy", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(module, "EXPECTED_INTERPRETER_LINKS", {})
+
+    app_count, app_digest = module.application_tree_summary(
+        app, control_root=control_root, service_uid=996, service_gid=994
+    )
+    expected_app = hashlib.sha256()
+    root_metadata = app.lstat()
+    expected_app.update(
+        (
+            f"d\t.\t{stat.S_IMODE(root_metadata.st_mode):04o}\t"
+            f"{root_metadata.st_uid}\t{root_metadata.st_gid}\t\n"
+        ).encode()
+    )
+    for path in sorted(
+        app.rglob("*"),
+        key=lambda item: item.relative_to(app).as_posix(),
+    ):
+        metadata = path.lstat()
+        kind = "d" if path.is_dir() else "f"
+        value = "" if kind == "d" else hashlib.sha256(path.read_bytes()).hexdigest()
+        expected_app.update(
+            (
+                f"{kind}\t{path.relative_to(app).as_posix()}\t"
+                f"{stat.S_IMODE(metadata.st_mode):04o}\t{metadata.st_uid}\t"
+                f"{metadata.st_gid}\t{value}\n"
+            ).encode()
+        )
+    assert (app_count, app_digest) == (2, expected_app.hexdigest())
+
+    venv_count, venv_digest = module.interpreter_tree_summary(
+        venv,
+        control_root=control_root,
+        service_uid=996,
+        service_gid=994,
+        offline_python=venv / "bin" / "python",
+    )
+    expected_venv = hashlib.sha256()
+    venv_metadata = venv.lstat()
+    expected_venv.update(
+        (
+            f"d\t.\t{stat.S_IMODE(venv_metadata.st_mode):04o}\t"
+            f"{venv_metadata.st_uid}\t{venv_metadata.st_gid}\t\n"
+        ).encode()
+    )
+    for path in sorted(
+        venv.rglob("*"), key=lambda item: item.relative_to(venv).as_posix()
+    ):
+        metadata = path.lstat()
+        kind = "d" if path.is_dir() else "f"
+        value = "" if kind == "d" else hashlib.sha256(path.read_bytes()).hexdigest()
+        expected_venv.update(
+            (
+                f"{kind}\t{path.relative_to(venv).as_posix()}\t"
+                f"{stat.S_IMODE(metadata.st_mode):04o}\t{metadata.st_uid}\t"
+                f"{metadata.st_gid}\t{value}\n"
+            ).encode()
+        )
+    assert (venv_count, venv_digest) == (2, expected_venv.hexdigest())
+
+    (app / "b.txt").write_bytes(b"changed")
+    assert (
+        module.application_tree_summary(
+            app, control_root=control_root, service_uid=996, service_gid=994
+        )[1]
+        != app_digest
+    )
+
+
+def test_legacy_tree_rejects_writable_version_parent_and_mount_before_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _legacy_adoption_descriptor()
+    control_root = tmp_path / "control"
+    app = control_root / "releases" / "0.2.6" / "app"
+    app.mkdir(parents=True)
+    original_lstat = Path.lstat
+    writable_parent = app.parent
+
+    def controlled_lstat(path: Path) -> os.stat_result:
+        metadata = original_lstat(path)
+        permissions = 0o777 if path == writable_parent else 0o755
+        values = list(metadata)
+        values[0] = stat.S_IFMT(metadata.st_mode) | permissions
+        return os.stat_result(values)
+
+    monkeypatch.setattr(Path, "lstat", controlled_lstat)
+    with pytest.raises(ValueError, match="祖先"):
+        module._validate_root_policy(
+            app, control_root=control_root, service_gid=994, mounted=set()
+        )
+
+    walked = False
+
+    def unexpected_walk(_self: Path, _pattern: str):
+        nonlocal walked
+        walked = True
+        return iter(())
+
+    monkeypatch.setattr(Path, "rglob", unexpected_walk)
+    monkeypatch.setattr(module, "_mounted_paths", lambda: {str(app / "nested")})
+    with pytest.raises(ValueError, match="挂载"):
+        module.application_tree_summary(
+            app,
+            control_root=control_root,
+            service_uid=996,
+            service_gid=994,
+        )
+    assert not walked
+
+
+def test_normalize_legacy_unit_is_one_time_exact_and_failure_closed() -> None:
+    script = _read("normalize_legacy_unit.sh")
+    assert 'readonly AUDITED_APPLICATION_VERSION="0.2.6"' in script
+    assert 'readonly AUDITED_INTERPRETER_VERSION="0.2.4"' in script
+    assert "98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994" in script
+    assert "839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84" in script
+    assert "81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6" in script
+    assert "bfd8ba051af78d812c9b39c1679b7843c14196cea77ee7457b8599e8797368da" in script
+    assert "copy-evidence" in script
+    assert "O_EXCL" in _read("legacy_adoption_descriptor.py")
+    assert "restore_original_unit" in script
+    assert "服务保持停止" in script
+    assert "validate_active_legacy_adoption" in script
+    assert 'expected_exec_path="$INTERPRETER_ROOT/bin/uvicorn"' in script
+    assert "validate_effective_exec_start_record" in script
+    assert '"$working_directory" == "$VIDEOINSIGHT_CURRENT"' in script
+    assert '"#!$INTERPRETER_PYTHON"' in script
+    assert '/bin/bash "$SCRIPT_DIR/preflight.sh"' in script
+    assert "systemctl restart" not in script
+
+
+def test_normalize_persists_prepared_before_bridge_and_recovers_all_states() -> None:
+    script = _read("normalize_legacy_unit.sh")
+    prepared_create = script.index("create-prepared")
+    prepared_publish = script.index(
+        'durable_rename "$DESCRIPTOR_TEMP" "$VIDEOINSIGHT_LEGACY_ADOPTION_DESCRIPTOR"'
+    )
+    transaction = script.index("TRANSACTION_STARTED=1")
+    bridge_publish = script.index(
+        'durable_rename "$UNIT_TEMP" "$VIDEOINSIGHT_UNIT_PATH"', transaction
+    )
+    promotion = script.index("promote_adoption_descriptor", bridge_publish)
+    assert prepared_create < prepared_publish < transaction < bridge_publish < promotion
+    assert 'if [[ "$installed_unit_sha256" == "$ORIGINAL_UNIT_SHA256" ]]' in script
+    assert 'elif [[ "$installed_unit_sha256" == "$BRIDGE_UNIT_SHA256" ]]' in script
+    assert "prepared adoption 遇到原 unit/strict bridge 之外的混合状态" in script
+    assert "一次性 legacy adoption 已完整处于 active 状态" in script
+    assert "stop_control_plane_fail_closed" in script
+    assert "--legacy-prepared" in script
+    assert (
+        '"$exit_status" == "active" && "$installed_sha" == "$BRIDGE_UNIT_SHA256"'
+        in script
+    )
+    assert "active adoption 已持久化，退出恢复保持 strict bridge 不变" in script
+
+
+def test_offline_python_gate_is_manifest_bound_isolated_and_before_lock(
+    tmp_path: Path,
+) -> None:
+    common = _read("common.sh")
+    manifest = _read("offline-python-tree.sha256").splitlines()
+    assert manifest == [
+        "0065c5f252098d75602d2b92a0046568a818a3f2f8ba713b71ca3a3045c0fe4f  "
+        "videoinsight-offline-python-tree-v1",
+        "4949  descendants",
+        "3683  regular-files",
+        "1048  symlinks",
+    ]
+    lock_body = common.split("open_native_release_lock() {", 1)[1].split("}", 1)[0]
+    assert lock_body.index("validate_offline_python_runtime") < lock_body.index(
+        "prepare_secure_state"
+    )
+    assert "/proc/self/mountinfo" in common
+    assert "NF < 5 { exit 2 }" in common
+    assert "gsub(/\\\\040/" in common
+    assert "sitecustomize.py|usercustomize.py" in common
+    assert '"$uid" == "0" && "$device" == "$root_device"' in common
+    assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i' in common
+    assert '"$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8' in common
+    assert "PYTHONPATH=" not in common
+    assert _read("preflight.sh").count("validate_offline_python_runtime") == 1
+    assert _read("verify.sh").count("validate_offline_python_runtime") == 1
+
+    fake_common = tmp_path / "common.sh"
+    python_path = _posix_path(Path(sys.executable))
+    fake_common.write_text(
+        common.replace(
+            'readonly VIDEOINSIGHT_OFFLINE_PYTHON="$VIDEOINSIGHT_ROOT/python/3.12.13/bin/python3.12"',
+            f'readonly VIDEOINSIGHT_OFFLINE_PYTHON="{python_path}"',
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    result = _run_common_file_function(
+        fake_common,
+        """
+VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+export PYTHONPATH=/tmp/poison
+run_trusted_offline_python -c '
+import os, sys
+assert "PYTHONPATH" not in os.environ
+assert sys.flags.isolated == 1
+assert sys.flags.no_site == 1
+assert sys.flags.dont_write_bytecode == 1
+assert sys.flags.utf8_mode == 1
+'
+""",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_shells_never_execute_offline_python_outside_trusted_wrappers() -> None:
+    direct_pattern = re.compile(r'"\$VIDEOINSIGHT_OFFLINE_PYTHON"\s+-[A-Za-z]')
+    occurrences: list[tuple[str, str]] = []
+    for name in SHELL_SCRIPTS:
+        for line in _read(name).splitlines():
+            if direct_pattern.search(line):
+                occurrences.append((name, line.strip()))
+    assert occurrences == [
+        (
+            "common.sh",
+            '"$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"',
+        ),
+        (
+            "common.sh",
+            '"$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"',
+        ),
+        (
+            "common.sh",
+            '"$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"',
+        ),
+    ]
+
+
+def test_adoption_descriptor_rejects_extra_fields_and_inactive_status(
+    tmp_path: Path,
+) -> None:
+    module = _legacy_adoption_descriptor()
+    root = tmp_path / "control"
+    root.mkdir()
+    descriptor = tmp_path / "adoption.json"
+    module.create_descriptor(
+        descriptor,
+        root=root,
+        application_version="0.2.6",
+        interpreter_version="0.2.4",
+        original_current_link=str(root.resolve() / "releases" / "0.2.6" / "app"),
+        original_unit_sha256="1" * 64,
+        original_unit_backup_name="videoinsight-control-plane.service.legacy-evidence-"
+        + "1" * 64,
+        bridge_unit_sha256="2" * 64,
+        offline_python_sha256="3" * 64,
+        application_file_count=175,
+        application_tree_sha256="4" * 64,
+        interpreter_tree_entry_count=1594,
+        interpreter_tree_sha256="5" * 64,
+    )
+    payload = json.loads(descriptor.read_text(encoding="utf-8"))
+    payload["status"] = "inactive"
+    descriptor.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="prepared/active"):
+        module._load_record(descriptor)
+    payload["status"] = "active"
+    payload["unexpected"] = True
+    descriptor.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="额外字段"):
+        module._load_record(descriptor)
+
+
+def test_adoption_prepared_promotion_is_no_clobber_and_changes_only_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _legacy_adoption_descriptor()
+    root = tmp_path / "control"
+    root.mkdir()
+    prepared = tmp_path / "prepared.json"
+    active = tmp_path / "active.json"
+    module.create_descriptor(
+        prepared,
+        root=root,
+        application_version="0.2.6",
+        interpreter_version="0.2.4",
+        original_current_link=str(root.resolve() / "releases" / "0.2.6" / "app"),
+        original_unit_sha256="1" * 64,
+        original_unit_backup_name="videoinsight-control-plane.service.legacy-evidence-"
+        + "1" * 64,
+        bridge_unit_sha256="2" * 64,
+        offline_python_sha256="3" * 64,
+        application_file_count=175,
+        application_tree_sha256="4" * 64,
+        interpreter_tree_entry_count=1594,
+        interpreter_tree_sha256="5" * 64,
+    )
+    monkeypatch.setattr(
+        module, "_validate_record_paths", lambda *_args, **_kwargs: None
+    )
+    module.promote_descriptor(
+        prepared,
+        active,
+        root=root,
+        unit_path=tmp_path / "unit",
+        offline_python=tmp_path / "python",
+        service_uid=996,
+        service_gid=994,
+    )
+    prepared_payload = json.loads(prepared.read_text(encoding="utf-8"))
+    active_payload = json.loads(active.read_text(encoding="utf-8"))
+    assert prepared_payload["status"] == "prepared"
+    assert active_payload.pop("status") == "active"
+    prepared_payload.pop("status")
+    assert active_payload == prepared_payload
+
+    active.write_text("sentinel", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        module.promote_descriptor(
+            prepared,
+            active,
+            root=root,
+            unit_path=tmp_path / "unit",
+            offline_python=tmp_path / "python",
+            service_uid=996,
+            service_gid=994,
+        )
+    assert active.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_adoption_evidence_copy_uses_one_source_fd_and_never_clobbers(
+    tmp_path: Path,
+) -> None:
+    module = _legacy_adoption_descriptor()
+    source = tmp_path / "unit"
+    destination = tmp_path / "evidence"
+    source.write_bytes(b"fixed original unit")
+    expected = hashlib.sha256(source.read_bytes()).hexdigest()
+    module.copy_evidence(source, destination, expected)
+    assert destination.read_bytes() == source.read_bytes()
+
+    destination.write_bytes(b"sentinel")
+    with pytest.raises(FileExistsError):
+        module.copy_evidence(source, destination, expected)
+    assert destination.read_bytes() == b"sentinel"
+
+    destination.unlink()
+    with pytest.raises(ValueError, match="SHA256"):
+        module.copy_evidence(source, destination, "0" * 64)
+    assert not destination.exists()
 
 
 def _write_valid_archive(
@@ -1242,6 +1905,31 @@ def test_archive_validator_extracts_a_safe_bundle(tmp_path: Path) -> None:
     assert (target / "project/backend/app/control_plane.py").read_text() == "safe"
     assert (target / "deploy/control-plane/requirements.txt").is_file()
     assert (target / "release_version.txt").read_bytes() == b"0.2.7"
+
+
+@pytest.mark.parametrize(
+    "required_native_file",
+    (
+        "legacy_adoption_descriptor.py",
+        "normalize_legacy_unit.sh",
+        "media-tools.sha256",
+        "offline-python-tree.sha256",
+    ),
+)
+def test_archive_validator_requires_all_adoption_and_runtime_gate_files(
+    tmp_path: Path, required_native_file: str
+) -> None:
+    validator = _archive_validator()
+    archive = tmp_path / "release.zip"
+    target = tmp_path / "target"
+    target.mkdir()
+    _write_valid_archive(
+        archive,
+        omit_name=f"deploy/control-plane/native-systemd/{required_native_file}",
+    )
+    with pytest.raises(ValueError, match="缺少控制层必要文件"):
+        validator.extract_validated_archive(archive, target, "0.2.7")
+    assert not any(target.iterdir())
 
 
 @pytest.mark.parametrize(

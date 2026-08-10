@@ -1,6 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+readonly PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh

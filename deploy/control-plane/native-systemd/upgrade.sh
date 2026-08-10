@@ -1,6 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+readonly PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
@@ -32,6 +35,9 @@ PREVIOUS_VERSION=""
 PREVIOUS_UNIT_BACKUP=""
 SNAPSHOT_NAME=""
 LEGACY_LAYOUT=0
+LEGACY_INTERPRETER_VERSION=""
+LEGACY_BRIDGE_UNIT_SHA256=""
+LEGACY_ADOPTION_DESCRIPTOR_SHA256=""
 LEGACY_DESCRIPTOR_TEMP=""
 LEGACY_DESCRIPTOR_FINAL=""
 TRANSACTION_STARTED=0
@@ -66,11 +72,7 @@ safe_remove_staging() {
 
 restore_snapshot() {
   [[ -n "$SNAPSHOT_NAME" && -f "$VIDEOINSIGHT_BACKUP_ROOT/$SNAPSHOT_NAME" ]] || return 1
-  VIDEOINSIGHT_RUNTIME_ROOT="$VIDEOINSIGHT_RUNTIME_ROOT" \
-  VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_BACKUP_ROOT" \
-  VIDEOINSIGHT_SERVICE_UID="$SERVICE_UID" \
-  VIDEOINSIGHT_SERVICE_GID="$SERVICE_GID" \
-    PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+  run_trusted_offline_python_for_service "$SERVICE_UID" "$SERVICE_GID" \
     "$RELEASE_APP/deploy/control-plane/restore_control_plane.py" \
     "$SNAPSHOT_NAME" "$PREVIOUS_VERSION"
 }
@@ -78,10 +80,9 @@ restore_snapshot() {
 rollback_transaction() {
   set +e
   printf '升级未通过，开始恢复升级前状态。\n' >&2
-  if ! systemctl stop "$VIDEOINSIGHT_SERVICE" || \
-    systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE"; then
+  if ! stop_control_plane_fail_closed "升级失败恢复前停止控制层"; then
     printf 'CRITICAL: 无法确认本服务已停止，未执行数据、链接或 unit 恢复。\n' >&2
-    return
+    return 1
   fi
 
   local rollback_ok=1
@@ -110,14 +111,24 @@ rollback_transaction() {
     rollback_ok=0
   fi
 
+  if [[ "$rollback_ok" -eq 1 && "$LEGACY_LAYOUT" -eq 1 ]] && \
+    ! validate_active_legacy_adoption >/dev/null; then
+    printf 'CRITICAL: strict bridge 与 active adoption 恢复校验失败，服务保持停止。\n' >&2
+    rollback_ok=0
+  fi
+
   if [[ "$rollback_ok" -eq 1 ]]; then
     if systemctl start "$VIDEOINSIGHT_SERVICE" && health_check ""; then
       printf '升级前代码、unit 和停机数据快照已恢复。\n' >&2
     else
-      printf 'CRITICAL: 旧控制层恢复后仍未就绪，请保持停止并人工检查。\n' >&2
-      systemctl stop "$VIDEOINSIGHT_SERVICE"
+      printf 'CRITICAL: 旧控制层恢复后仍未就绪，执行 fail-closed 停止。\n' >&2
+      if stop_control_plane_fail_closed "升级恢复健康失败后的停止"; then
+        printf '已复核唯一目标服务为 inactive，请人工检查。\n' >&2
+      fi
+      rollback_ok=0
     fi
   fi
+  return $(( rollback_ok == 1 ? 0 : 1 ))
 }
 
 finish() {
@@ -141,7 +152,7 @@ for command_name in chown chmod cmp curl cut date find flock getent grep id inst
   require_command "$command_name"
 done
 open_native_release_lock
-bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
+/bin/bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
 
 PREVIOUS_CURRENT_TARGET=$(current_target_path)
 PREVIOUS_RELEASE_ROOT=$(current_release_root)
@@ -154,16 +165,24 @@ if [[ "$PREVIOUS_CURRENT_TARGET" == "$PREVIOUS_RELEASE_ROOT" ]]; then
   validate_release_version_file "$PREVIOUS_RELEASE_ROOT" "$PREVIOUS_VERSION"
 else
   [[ "$PREVIOUS_CURRENT_TARGET" == "$PREVIOUS_RELEASE_ROOT/app" ]] || \
-    die "旧 current 既不是版本根目录，也不是受控 legacy app。"
+    die "旧 current 既不是版本根目录，也不是 active adoption legacy app。"
   LEGACY_LAYOUT=1
-  validate_legacy_unit_binding "$PREVIOUS_RELEASE_ROOT"
+  legacy_adoption_fields=()
+  mapfile -t legacy_adoption_fields < <(validate_active_legacy_adoption)
+  [[ ${#legacy_adoption_fields[@]} -eq 11 && \
+      "${legacy_adoption_fields[0]}" == "$PREVIOUS_VERSION" && \
+      "${legacy_adoption_fields[2]}" == "$PREVIOUS_CURRENT_LINK" ]] || \
+    die "legacy active adoption 与当前 application/current 不一致。"
+  LEGACY_INTERPRETER_VERSION="${legacy_adoption_fields[1]}"
+  LEGACY_BRIDGE_UNIT_SHA256="${legacy_adoption_fields[5]}"
+  LEGACY_ADOPTION_DESCRIPTOR_SHA256="${legacy_adoption_fields[6]}"
 fi
 version_is_strictly_greater "$VERSION" "$PREVIOUS_VERSION" || \
   die "新版本必须严格高于当前版本 $PREVIOUS_VERSION。"
 health_check "" || die "当前控制层未就绪，拒绝在未知基线上升级。"
 if [[ "$LEGACY_LAYOUT" -eq 1 ]]; then
-  printf 'legacy 健康接口无版本字段；已将 current、unit、解释器和固定应用入口审计绑定到 %s。\n' \
-    "$PREVIOUS_VERSION"
+  printf 'legacy 健康接口无版本字段；active adoption 已精确绑定 application=%s interpreter=%s 和 strict bridge。\n' \
+    "$PREVIOUS_VERSION" "$LEGACY_INTERPRETER_VERSION"
 fi
 
 [[ ! -e "$RELEASE_DIR" && ! -L "$RELEASE_DIR" ]] || \
@@ -178,32 +197,29 @@ actual_sha256=$(sha256sum -- "$ARCHIVE" | cut -d' ' -f1)
 [[ "${actual_sha256,,}" == "${EXPECTED_SHA256,,}" ]] || die "部署 ZIP 的 SHA256 不一致。"
 
 install -d -o root -g root -m 0700 -- "$STAGING_APP"
-PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+run_trusted_offline_python \
   "$SCRIPT_DIR/validate_release_archive.py" \
   "$ARCHIVE" "$STAGING_APP" "$VERSION"
 validate_tools_match_release "$STAGING_APP/deploy/control-plane/native-systemd"
 
 CONTROL_PLANE_ENV_FILE="$VIDEOINSIGHT_ENV_FILE" \
-  bash "$STAGING_APP/deploy/control-plane/validate_env.sh"
+  /bin/bash "$STAGING_APP/deploy/control-plane/validate_env.sh"
 
 install -d -o root -g root -m 0700 -- "$STAGING_TMP"
-TMPDIR="$STAGING_TMP" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 \
-PYTHONDONTWRITEBYTECODE=1 \
-PYTHONNOUSERSITE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" -m venv --copies \
+run_trusted_offline_python_in_tmp "$STAGING_TMP" -m venv --copies \
   "$STAGING_DIR/venv"
-TMPDIR="$STAGING_TMP" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 \
-PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PIP_NO_INDEX=1 \
-  "$STAGING_DIR/venv/bin/python" -m pip install \
+run_trusted_staging_python "$STAGING_DIR/venv/bin/python" "$STAGING_DIR" \
+  "$STAGING_TMP" -m pip install \
   --disable-pip-version-check \
   --no-index \
   --only-binary=:all: \
   --find-links "$VIDEOINSIGHT_WHEELHOUSE" \
   --require-hashes \
   --requirement "$STAGING_APP/deploy/control-plane/requirements.lock"
-PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-  "$STAGING_DIR/venv/bin/python" -m pip check
-PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 \
-  "$STAGING_DIR/venv/bin/python" -c 'import fastapi, httpx, pydantic, uvicorn'
+run_trusted_staging_python "$STAGING_DIR/venv/bin/python" "$STAGING_DIR" \
+  "$STAGING_TMP" -m pip check
+run_trusted_staging_python "$STAGING_DIR/venv/bin/python" "$STAGING_DIR" \
+  "$STAGING_TMP" -c 'import fastapi, httpx, pydantic, uvicorn'
 rm -rf -- "$STAGING_TMP"
 
 chown -R root:root -- "$STAGING_DIR"
@@ -227,15 +243,12 @@ if [[ "$LEGACY_LAYOUT" -eq 1 ]]; then
 fi
 
 TRANSACTION_STARTED=1
-systemctl stop "$VIDEOINSIGHT_SERVICE"
-if systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE"; then
+if ! stop_control_plane_fail_closed "升级切换前停止控制层"; then
   die "控制层未能停止，未切换版本。"
 fi
 
 SNAPSHOT_NAME="videoinsight-control-plane-pre-upgrade-$VERSION-$(date -u +%Y%m%dT%H%M%SZ)-$$.zip"
-VIDEOINSIGHT_RUNTIME_ROOT="$VIDEOINSIGHT_RUNTIME_ROOT" \
-VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_BACKUP_ROOT" \
-  PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+run_trusted_offline_python \
   "$RELEASE_APP/deploy/control-plane/backup_control_plane.py" \
   "$SNAPSHOT_NAME" "$PREVIOUS_VERSION"
 [[ -f "$VIDEOINSIGHT_BACKUP_ROOT/$SNAPSHOT_NAME" ]] || die "停机快照未生成。"
@@ -248,12 +261,15 @@ if [[ "$LEGACY_LAYOUT" -eq 1 ]]; then
   [[ ! -e "$LEGACY_DESCRIPTOR_TEMP" && ! -L "$LEGACY_DESCRIPTOR_TEMP" && \
       ! -e "$LEGACY_DESCRIPTOR_FINAL" && ! -L "$LEGACY_DESCRIPTOR_FINAL" ]] || \
     die "legacy 回滚描述路径已存在。"
-  PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+  run_trusted_offline_python \
     "$RELEASE_APP/deploy/control-plane/native-systemd/legacy_rollback_descriptor.py" \
     create "$LEGACY_DESCRIPTOR_TEMP" "$VIDEOINSIGHT_ROOT" \
     "$PREVIOUS_VERSION" "$VERSION" "$PREVIOUS_CURRENT_LINK" \
     "$(basename -- "$PREVIOUS_UNIT_BACKUP")" "$SNAPSHOT_NAME" \
-    "$snapshot_sha256" "$unit_backup_sha256"
+    "$snapshot_sha256" "$unit_backup_sha256" \
+    "$(basename -- "$VIDEOINSIGHT_LEGACY_ADOPTION_DESCRIPTOR")" \
+    "$LEGACY_ADOPTION_DESCRIPTOR_SHA256" "$LEGACY_INTERPRETER_VERSION" \
+    "$LEGACY_BRIDGE_UNIT_SHA256"
   chown root:root -- "$LEGACY_DESCRIPTOR_TEMP"
   chmod 0600 -- "$LEGACY_DESCRIPTOR_TEMP"
   validate_root_file "$LEGACY_DESCRIPTOR_TEMP"

@@ -20,6 +20,7 @@
   wheelhouse/*.whl
   tools/native-systemd/wheelhouse.sha256
   tools/native-systemd/media-tools.sha256
+  tools/native-systemd/offline-python-tree.sha256
   tools/media/bin/ffmpeg
   tools/media/bin/ffprobe
   releases/<版本>/app/
@@ -42,14 +43,14 @@
 PATH=/opt/videoinsight-control-plane/tools/media/bin:/usr/local/bin:/usr/bin:/bin command -v ffprobe ffmpeg
 readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffprobe
 readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
-bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
+/bin/bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
 ```
 
 新 unit 使用 `current/app` 作为工作目录，并通过 `current/venv/bin/python -m uvicorn` 启动。这样代码与依赖属于同一个不可覆盖的版本，避免“新代码配旧 venv”的混跑。
 
 ## 首次从旧布局迁移并升级
 
-不要先手工改 `current`，也不要先单独重启新 unit。`upgrade.sh` 会在新版本的 `app` 和离线 venv 都准备完成后才停机，并在同一个事务中完成停机快照、unit 替换和原子链接切换。
+不要先手工改 `current`，也不要直接用 `upgrade.sh` 接受服务器遗留的宽松 unit。真实旧基线是一个精确的混合组合：`current` 绝对链接指向 `0.2.6/app`，而唯一解释器来自 `0.2.4/venv/bin/python` 并解析到固定离线 Python。必须先运行一次性的 `normalize_legacy_unit.sh`，把这一组已经离线取证的内容收养为 strict bridge；它不是通用导入器，也不接受版本范围或其他摘要。
 
 1. 只把正式构建生成的 ZIP 上传到固定 `incoming` 路径，属主设为 `root:root`，且组和其他用户不可写。
 2. 第一次迁移时，把同一已验证工作区中的 `deploy/control-plane/native-systemd` 目录单独打成工具包，并上传到固定的 `/opt/videoinsight-control-plane/tools/native-systemd`。该目录只含脚本、校验器、wheelhouse 哈希清单、unit 和说明，不含密钥；服务器上设为 `root:root`，目录不可由组或其他用户写入，并保留仓库中的 LF 换行。旧版 `current/app` 尚无这些工具，不能假装从那里执行。
@@ -62,16 +63,30 @@ bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
    id -g videoinsight
    ```
 
-6. 先执行无写入前置检查，再升级。下面 UID/GID 只是当前服务器示例，执行前仍需与 `id` 输出核对：
+6. 工具、媒体二进制、目录权限和 UID/GID 准备完成后，先执行一次性 adoption。下面命令中的版本、链接、文件数和所有 SHA256 都是已审计固定值；只能整条原样使用，服务 UID/GID 仍须与 `id` 输出核对：
 
    ```bash
    cd /opt/videoinsight-control-plane/tools/native-systemd
-   bash preflight.sh 996 994
-   bash upgrade.sh 0.2.7 '<开发电脑记录的 SHA256>' 996 994
-   bash verify.sh 0.2.7 996 994
+   /bin/bash normalize_legacy_unit.sh \
+     0.2.6 0.2.4 /opt/videoinsight-control-plane/releases/0.2.6/app \
+     98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994 \
+     839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84 \
+     021044895e95be79dc2f110367607e684119afbc8ce75f6f0eec94844e0acec7 \
+     175 81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6 \
+     1594 bfd8ba051af78d812c9b39c1679b7843c14196cea77ee7457b8599e8797368da \
+     996 994
+   /bin/bash preflight.sh 996 994
+   /bin/bash upgrade.sh 0.2.9 '<开发电脑记录的 SHA256>' 996 994
+   /bin/bash verify.sh 0.2.9 996 994
    ```
 
-`upgrade.sh` 只接受 `x.y.z` 稳定版本，并在解包或停机前要求新版本严格高于当前版本；同版重放和降级都必须改用下面的受控 `rollback.sh`，不能把旧 ZIP 改名冒充新版本。它还会拒绝已存在的版本目录、错误哈希、包内版本标识不一致、不安全 ZIP、非离线依赖、UID/GID 不一致、非固定 unit、越界符号链接和并发发布。ZIP 内每个普通成员都会分块扫描私钥/PuTTY 标记，跨分块标记也会命中，不会因为单个成员超过 32 MiB 而跳过。旧 unit 只能使用固定的 `[Unit]`、`[Service]`、`[Install]` 指令、值和计数；额外依赖、命令、环境、凭据、挂载、能力或未知指令均拒绝。依赖安装固定在版本暂存目录内（包括 `TMPDIR`），禁用用户 site、pip 配置和缓存，强制 `--no-index --only-binary=:all: --require-hashes` 使用包内 `requirements.lock`；`preflight.sh` 同时核对受跟踪的 `wheelhouse.sha256` 与 wheelhouse 的精确文件集合和每个 SHA256，因此不能通过替换同名 wheel 或临时塞包改变依赖。全程不会联网下载。
+`normalize_legacy_unit.sh` 在任何替换前同时核对原 current 文本、原 unit 哈希、离线 Python 哈希，以及 application/interpreter 两棵树从根开始的类型、POSIX 相对路径、权限、UID/GID、文件内容或符号链接原始目标。两树及版本祖先必须同设备、无独立挂载、root 持有且不可由组或其他用户修改；固定服务身份必须能遍历目录和读取文件。application 禁止符号链接，interpreter 只允许审计固定的 4 个链接。原宽松 unit 使用单一 `O_NOFOLLOW` 源文件描述符与 `O_EXCL` no-clobber 目标保存在 `state/legacy-adoption/`，只作取证；生成的 bridge 则完整包含固定 User/Group、媒体 PATH、`CPUQuota=100%`、`MemoryLimit=1G` 和其他 strict 指令。
+
+在 bridge 替换前，脚本会先持久化 `status=prepared` 描述；若断电发生在 unit rename 后、active 发布前，重跑只接受精确的 original+prepared 或 bridge+prepared 组合并继续，其他混合或篡改状态只停止本服务并 fail closed。成功后原子晋升为 `state/legacy-adoption.json` 的 `active` 状态；完整 active 重跑是幂等操作。失败时只操作本服务，若恢复或健康检查失败就保持停止。
+
+任何 root 级 Python 调用前都会先用固定系统工具核对 `offline-python-tree.sha256`：精确 4949 个后代、3683 个普通文件、1048 个内部符号链接及 tree-v1 聚合 SHA256。运行时、祖先和全部非链接条目必须 root 持有、组和其他用户不可写、同设备且无子挂载；链接不得失效或越界。之后脚本只通过清空环境的 wrapper，以 `-B -I -S -X utf8` 执行固定离线 Python；staging venv 的 pip/check/import 是唯一保留 site-packages 的路径，但仍使用空环境、`-B -I -X utf8`、固定 TMPDIR、no-index 和哈希锁。
+
+`upgrade.sh` 只接受 `x.y.z` 稳定版本，并在解包或停机前要求新版本严格高于当前版本；同版重放和降级都必须改用下面的受控 `rollback.sh`，不能把旧 ZIP 改名冒充新版本。它还会拒绝已存在的版本目录、错误哈希、包内版本标识不一致、不安全 ZIP、非离线依赖、UID/GID 不一致、非固定 unit、越界符号链接和并发发布。ZIP 内每个普通成员都会分块扫描私钥/PuTTY 标记，跨分块标记也会命中，不会因为单个成员超过 32 MiB 而跳过。legacy 只接受 active adoption 描述绑定的 strict bridge，不再解析或放宽原 unit。依赖安装固定在版本暂存目录内（包括 `TMPDIR`），禁用用户 site、pip 配置和缓存，强制 `--no-index --only-binary=:all: --require-hashes` 使用包内 `requirements.lock`；`preflight.sh` 同时核对受跟踪的 `wheelhouse.sha256` 与 wheelhouse 的精确文件集合和每个 SHA256，因此不能通过替换同名 wheel 或临时塞包改变依赖。全程不会联网下载。
 
 发布目录树在进入 `releases/<版本>` 前会同步全部普通文件和目录；`release`、`current`、unit、unit 备份和 legacy 描述的关键 rename 都在前后同步固定父目录。任何提交边界的落盘失败都会被事务视为失败并进入恢复路径，不会在健康检查通过后才把未落盘的元数据当成成功。
 
@@ -94,20 +109,20 @@ bash /opt/videoinsight-control-plane/tools/native-systemd/preflight.sh 996 994
 仅在确认目标旧版本目录及其“升级前停机快照”同时存在时执行：
 
 ```bash
-bash rollback.sh 0.2.7 'videoinsight-control-plane-pre-upgrade-0.2.8-时间-PID.zip' 996 994
+/bin/bash rollback.sh 0.2.7 'videoinsight-control-plane-pre-upgrade-0.2.8-时间-PID.zip' 996 994
 ```
 
 `rollback.sh` 会先为当前版本再做一份安全快照；若旧版本恢复失败，会自动恢复回滚前代码和数据。新布局目标还必须在停机前通过版本、venv 以及 native 工具完整内容比对，避免回滚成功后无法再运行固定验证工具。不要手工删除或覆盖 `releases` 内的版本。版本内容错误时使用新的版本号向前修复。
 
 ### 首次迁移后回 legacy 版本
 
-首次从 `current -> releases/<旧版本>/app` 的 legacy 布局升级前，`upgrade.sh` 会先要求旧 unit 的 `WorkingDirectory` 精确使用可解析到旧 app 的 `current`（或等价的硬编码 `<旧版本>/app`，明确拒绝会落到 `app/app` 的 `current/app`），并要求唯一 `ExecStart` 精确使用同一旧版本的 `venv/bin/python -m uvicorn` 和固定控制层应用入口；例如 current 指向 `0.2.4/app` 但 unit 硬编码 `0.2.3` 时，会在解包、停机和快照前拒绝。legacy 健康接口没有版本字段时，只把 ready/ok 与上述 current/unit/解释器固定路径审计组合视为受审旧基线。成功升级后，`upgrade.sh` 会在 `state/legacy-rollbacks/<停机快照名>.json` 保存 `root:root`、`0600` 的受控描述，绑定源版本、原 current 链接、原 unit 备份、停机快照及二者 SHA256。保留升级输出中的“legacy 人工回滚描述”路径。需要回 legacy 时仍使用同一条四参数命令，例如：
+首次从 active adoption legacy 布局升级成功后，`upgrade.sh` 会在 `state/legacy-rollbacks/<停机快照名>.json` 保存 `root:root 0600` 的 v2 描述，精确绑定 active adoption 文件及其 SHA256、`0.2.6` application、`0.2.4` interpreter、原 current、strict bridge 备份及停机快照。保留升级输出中的“legacy 人工回滚描述”路径。需要回 legacy 时仍使用同一条四参数命令，例如：
 
 ```bash
-bash rollback.sh 0.2.6 'videoinsight-control-plane-pre-upgrade-0.2.7-时间-PID.zip' 996 994
+/bin/bash rollback.sh 0.2.6 'videoinsight-control-plane-pre-upgrade-0.2.7-时间-PID.zip' 996 994
 ```
 
-目标没有新布局时，脚本只接受固定 `state/legacy-rollbacks/<快照名>.json`，并要求描述中的源版本等于 `0.2.6`、新版本等于当前版本、快照和原 unit 哈希仍一致。它使用当前新版本的备份/恢复工具恢复目标数据，再原样恢复描述绑定的 legacy current 和原 unit；不会执行目标旧版脚本，也不会复制或猜测旧 venv。若 legacy 启动失败，会恢复回滚前的新 unit、current 和安全快照，并以新版本健康检查确认；恢复链任一步失败则保持本服务停止。
+目标没有新布局时，脚本只接受上述 adoption v2 描述，并再次计算 active adoption、快照和 strict bridge 备份哈希。它使用当前新版本的备份/恢复工具恢复目标数据，再恢复描述绑定的 legacy current 与 strict bridge；永远不会恢复原宽松 unit，也不会执行目标旧版脚本或复制/猜测旧 venv。若 legacy 启动失败，会恢复回滚前的新 unit、current 和安全快照并确认新版本健康；恢复链任一步失败则保持本服务停止。
 
 ## 单独安装 unit
 

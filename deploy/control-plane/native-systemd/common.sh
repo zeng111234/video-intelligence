@@ -1,5 +1,15 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
+
+readonly VIDEOINSIGHT_SYSTEM_PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+if [[ "${PATH:-}" != "$VIDEOINSIGHT_SYSTEM_PATH" ]] || \
+  ( PATH=/videoinsight-untrusted-path ) 2>/dev/null; then
+  printf 'ERROR: native-systemd 入口必须先固定并只读化 PATH。\n' >&2
+  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    return 1
+  fi
+  exit 1
+fi
 
 readonly VIDEOINSIGHT_ROOT="/opt/videoinsight-control-plane"
 readonly VIDEOINSIGHT_SERVICE="videoinsight-control-plane.service"
@@ -19,6 +29,8 @@ readonly VIDEOINSIGHT_SERVICE_PATH="$VIDEOINSIGHT_MEDIA_ROOT:/usr/local/bin:/usr
 readonly VIDEOINSIGHT_SYSTEM_ENV="/usr/bin/env"
 readonly VIDEOINSIGHT_SYSTEM_TIMEOUT="/usr/bin/timeout"
 readonly VIDEOINSIGHT_SYSTEM_RUNUSER="/usr/sbin/runuser"
+readonly VIDEOINSIGHT_SYSTEM_SYNC="/usr/bin/sync"
+readonly VIDEOINSIGHT_LEGACY_ADOPTION_DESCRIPTOR="$VIDEOINSIGHT_ROOT/state/legacy-adoption.json"
 
 native_script_dir() {
   CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd
@@ -26,6 +38,9 @@ native_script_dir() {
 
 readonly VIDEOINSIGHT_WHEELHOUSE_MANIFEST="$(native_script_dir)/wheelhouse.sha256"
 readonly VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST="$(native_script_dir)/media-tools.sha256"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST="$(native_script_dir)/offline-python-tree.sha256"
+
+VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=0
 
 die() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -84,6 +99,58 @@ require_sha256() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "缺少系统命令：$1"
+}
+
+stop_control_plane_fail_closed() {
+  local context="${1:-控制层 fail-closed 停止}"
+  local initial_stop_rc=0 active_rc active_state main_pid_record
+  if systemctl stop "$VIDEOINSIGHT_SERVICE"; then
+    :
+  else
+    initial_stop_rc=$?
+  fi
+  if active_state=$(systemctl is-active "$VIDEOINSIGHT_SERVICE" 2>/dev/null); then
+    active_rc=0
+  else
+    active_rc=$?
+  fi
+  main_pid_record=""
+  if [[ "$active_rc" -eq 3 && \
+        ( "$active_state" == "inactive" || "$active_state" == "failed" ) ]]; then
+    main_pid_record=$(systemctl show --property=MainPID "$VIDEOINSIGHT_SERVICE" \
+      2>/dev/null) || main_pid_record=""
+  fi
+  if [[ "$active_rc" -ne 3 || \
+        ( "$active_state" != "inactive" && "$active_state" != "failed" ) || \
+        "$main_pid_record" != "MainPID=0" ]]; then
+    systemctl kill --kill-who=all --signal=KILL "$VIDEOINSIGHT_SERVICE" \
+      >/dev/null 2>&1 || true
+    systemctl stop "$VIDEOINSIGHT_SERVICE" >/dev/null 2>&1 || true
+    if active_state=$(systemctl is-active "$VIDEOINSIGHT_SERVICE" 2>/dev/null); then
+      active_rc=0
+    else
+      active_rc=$?
+    fi
+    main_pid_record=""
+    if [[ "$active_rc" -eq 3 && \
+          ( "$active_state" == "inactive" || "$active_state" == "failed" ) ]]; then
+      main_pid_record=$(systemctl show --property=MainPID "$VIDEOINSIGHT_SERVICE" \
+        2>/dev/null) || main_pid_record=""
+    fi
+  fi
+  if [[ "$active_rc" -ne 3 || \
+        ( "$active_state" != "inactive" && "$active_state" != "failed" ) || \
+        "$main_pid_record" != "MainPID=0" ]]; then
+    printf 'CRITICAL: %s失败；唯一目标服务未确认停止（state=%s rc=%s %s）。\n' \
+      "$context" "${active_state:-<empty>}" "$active_rc" \
+      "${main_pid_record:-MainPID=<unknown>}" >&2
+    return 1
+  fi
+  if [[ "$initial_stop_rc" -ne 0 ]]; then
+    printf 'WARNING: systemctl stop 返回 %s，但已复核唯一目标服务为 inactive。\n' \
+      "$initial_stop_rc" >&2
+  fi
+  return 0
 }
 
 validate_trusted_executable_path() {
@@ -168,10 +235,254 @@ validate_trusted_execution_dependencies() {
   for candidate in \
     "$VIDEOINSIGHT_SYSTEM_ENV" \
     "$VIDEOINSIGHT_SYSTEM_TIMEOUT" \
-    "$VIDEOINSIGHT_SYSTEM_RUNUSER"; do
+    "$VIDEOINSIGHT_SYSTEM_RUNUSER" \
+    "$VIDEOINSIGHT_SYSTEM_SYNC"; do
     [[ $(validate_trusted_executable_path "$candidate" /) == "$candidate" ]] || \
       die "服务身份执行依赖不是固定受信任文件：$candidate"
   done
+}
+
+validate_effective_exec_start_record() {
+  local serialized="$1"
+  local expected_path="$2"
+  local expected_argv="$3"
+  local record_pattern='^\{ path=([^ ;]+) ; argv\[\]=([^;]+) ; ignore_errors=no ; start_time=\[[^]]*\] ; stop_time=\[[^]]*\] ; pid=([0-9]+) ; code=([^ ;]+) ; status=([^ ;]+) \}$'
+  [[ -n "$serialized" && "$serialized" != *$'\n'* && "$serialized" != *$'\r'* ]] || \
+    die "systemd 实际 ExecStart 必须是单行非空记录。"
+  [[ "$expected_path" == /* && \
+      ( "$expected_argv" == "$expected_path" || \
+        "$expected_argv" == "$expected_path "* ) ]] || \
+    die "受控 ExecStart 的 path/argv 绑定无效。"
+  [[ "$serialized" =~ $record_pattern ]] || \
+    die "systemd 实际 ExecStart 不是唯一且结构完整的单条记录。"
+  [[ "${BASH_REMATCH[1]}" == "$expected_path" && \
+      "${BASH_REMATCH[2]}" == "$expected_argv" ]] || \
+    die "systemd 实际 ExecStart path 或完整 argv 与受控 unit 不一致。"
+}
+
+validate_offline_python_runtime() {
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 0 ]] || return 0
+  local runtime_root="$VIDEOINSIGHT_ROOT/python/3.12.13"
+  [[ -d "$runtime_root" && ! -L "$runtime_root" && \
+      $(readlink -f -- "$runtime_root") == "$runtime_root" ]] || \
+    die "离线 Python 根目录不是规范普通目录。"
+  validate_root_file "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST"
+  validate_trusted_execution_dependencies
+  validate_trusted_executable_path "$VIDEOINSIGHT_OFFLINE_PYTHON" / >/dev/null
+
+  local manifest_lines=()
+  mapfile -t manifest_lines < "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST"
+  [[ ${#manifest_lines[@]} -eq 4 ]] || die "离线 Python tree-v1 清单必须精确为 4 行。"
+  local expected_digest expected_descendants expected_files expected_links
+  [[ "${manifest_lines[0]}" =~ ^([0-9a-f]{64})\ \ videoinsight-offline-python-tree-v1$ ]] || \
+    die "离线 Python tree-v1 清单摘要行无效。"
+  expected_digest="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[1]}" =~ ^([0-9]+)\ \ descendants$ ]] || \
+    die "离线 Python tree-v1 清单条目数行无效。"
+  expected_descendants="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[2]}" =~ ^([0-9]+)\ \ regular-files$ ]] || \
+    die "离线 Python tree-v1 清单文件数行无效。"
+  expected_files="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[3]}" =~ ^([0-9]+)\ \ symlinks$ ]] || \
+    die "离线 Python tree-v1 清单链接数行无效。"
+  expected_links="${BASH_REMATCH[1]}"
+
+  [[ -r /proc/self/mountinfo ]] || die "无法读取系统挂载信息。"
+  local runtime_mount
+  runtime_mount=$(awk -v root="$runtime_root" \
+    'function decode(value) {
+       gsub(/\\040/, " ", value)
+       gsub(/\\011/, "\t", value)
+       gsub(/\\012/, "\n", value)
+       gsub(/\\134/, sprintf("%c", 92), value)
+       return value
+     }
+     NF < 5 { exit 2 }
+     { mount_point=decode($5) }
+     mount_point == root || index(mount_point, root "/") == 1 { print "found"; exit }' \
+    /proc/self/mountinfo) || die "离线 Python 挂载边界校验失败。"
+  if [[ -n "$runtime_mount" ]]; then
+    die "离线 Python 运行时包含独立挂载或子挂载。"
+  fi
+  local actual_descendants actual_files actual_links
+  actual_descendants=$(find "$runtime_root" -mindepth 1 -printf . | wc -c | tr -d '[:space:]')
+  actual_files=$(find "$runtime_root" -mindepth 1 -type f -printf . | wc -c | tr -d '[:space:]')
+  actual_links=$(find "$runtime_root" -mindepth 1 -type l -printf . | wc -c | tr -d '[:space:]')
+  [[ "$actual_descendants" == "$expected_descendants" && \
+      "$actual_files" == "$expected_files" && \
+      "$actual_links" == "$expected_links" ]] || \
+    die "离线 Python 运行时条目、文件或符号链接数量与 tree-v1 清单不一致。"
+
+  local root_mode root_uid root_gid root_device service_gid actual_digest
+  read -r root_mode root_uid root_gid root_device < <(stat -c '%a %u %g %d' -- "$runtime_root")
+  service_gid=$(getent group "$VIDEOINSIGHT_SERVICE_GROUP" | cut -d: -f3)
+  [[ "$root_uid" == "0" && "$service_gid" =~ ^[0-9]+$ ]] || \
+    die "离线 Python 根目录或固定服务组无效。"
+  (( (8#$root_mode & 0022) == 0 )) || \
+    die "离线 Python 根目录可由组或其他用户修改。"
+  if [[ "$root_gid" == "$service_gid" ]]; then
+    (( (8#$root_mode & 0010) != 0 )) || die "固定服务身份无法遍历离线 Python 根目录。"
+  else
+    (( (8#$root_mode & 0001) != 0 )) || die "固定服务身份无法遍历离线 Python 根目录。"
+  fi
+
+  actual_digest=$(
+    {
+      printf 'd\t.\t%04o\t%s\t%s\t\n' "$((8#$root_mode))" "$root_uid" "$root_gid"
+      local relative path mode uid gid device kind value target_lines resolved
+      while IFS= read -r -d '' relative; do
+        if LC_ALL=C printf '%s' "$relative" | grep -q '[[:cntrl:]]'; then
+          die "离线 Python 路径包含控制字符。"
+        fi
+        path="$runtime_root/$relative"
+        read -r mode uid gid device < <(stat -c '%a %u %g %d' -- "$path")
+        [[ "$uid" == "0" && "$device" == "$root_device" ]] || \
+          die "离线 Python 条目不是 root 持有或跨越文件系统：$relative"
+        if [[ -L "$path" ]]; then
+          kind="l"
+          target_lines=$(readlink -- "$path" | wc -l | tr -d '[:space:]')
+          [[ "$target_lines" == "1" ]] || die "离线 Python 符号链接目标包含换行。"
+          value=$(readlink -- "$path")
+          if LC_ALL=C printf '%s' "$value" | grep -q '[[:cntrl:]]'; then
+            die "离线 Python 符号链接目标包含控制字符。"
+          fi
+          resolved=$(readlink -f -- "$path") || die "离线 Python 包含失效符号链接。"
+          [[ "$resolved" == "$runtime_root" || "$resolved" == "$runtime_root/"* ]] || \
+            die "离线 Python 符号链接越过固定运行时根目录。"
+        elif [[ -f "$path" ]]; then
+          kind="f"
+          (( (8#$mode & 0022) == 0 )) || \
+            die "离线 Python 文件可由组或其他用户修改：$relative"
+          if [[ "$gid" == "$service_gid" ]]; then
+            (( (8#$mode & 0040) != 0 )) || die "固定服务身份无法读取离线 Python 文件。"
+          else
+            (( (8#$mode & 0004) != 0 )) || die "固定服务身份无法读取离线 Python 文件。"
+          fi
+          case "${relative##*/}" in
+            sitecustomize.py|usercustomize.py) die "离线 Python 运行时包含自定义 site 启动代码。" ;;
+          esac
+          value=$(sha256sum -- "$path" | cut -d' ' -f1)
+        elif [[ -d "$path" ]]; then
+          kind="d"
+          (( (8#$mode & 0022) == 0 )) || \
+            die "离线 Python 目录可由组或其他用户修改：$relative"
+          if [[ "$gid" == "$service_gid" ]]; then
+            (( (8#$mode & 0010) != 0 )) || die "固定服务身份无法遍历离线 Python 目录。"
+          else
+            (( (8#$mode & 0001) != 0 )) || die "固定服务身份无法遍历离线 Python 目录。"
+          fi
+          value=""
+        else
+          die "离线 Python 运行时包含特殊文件：$relative"
+        fi
+        printf '%s\t%s\t%04o\t%s\t%s\t%s\n' \
+          "$kind" "$relative" "$((8#$mode))" "$uid" "$gid" "$value"
+      done < <(CDPATH= cd -- "$runtime_root" && \
+        find . -mindepth 1 -printf '%P\0' | LC_ALL=C sort -z)
+    } | sha256sum | cut -d' ' -f1
+  ) || die "离线 Python tree-v1 纯系统工具校验失败。"
+  [[ "$actual_digest" == "$expected_digest" ]] || \
+    die "离线 Python tree-v1 聚合 SHA256 不一致。"
+  VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+}
+
+run_trusted_offline_python() {
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 1 ]] || \
+    die "拒绝在完整离线 Python 运行时门禁前执行 Python。"
+  local environment=(
+    HOME=/nonexistent
+    LANG=C
+    LC_ALL=C
+    PATH=/usr/bin:/bin
+    "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT"
+    "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT"
+  )
+  "$VIDEOINSIGHT_SYSTEM_ENV" -i "${environment[@]}" \
+    "$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"
+}
+
+run_trusted_offline_python_for_service() {
+  local service_uid="$1"
+  local service_gid="$2"
+  shift 2
+  [[ "$service_uid" =~ ^[0-9]+$ && "$service_gid" =~ ^[0-9]+$ ]] || \
+    die "传给离线 Python 的服务 UID/GID 无效。"
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 1 ]] || \
+    die "拒绝在完整离线 Python 运行时门禁前执行 Python。"
+  "$VIDEOINSIGHT_SYSTEM_ENV" -i \
+    HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT" \
+    "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT" \
+    "VIDEOINSIGHT_SERVICE_UID=$service_uid" \
+    "VIDEOINSIGHT_SERVICE_GID=$service_gid" \
+    "$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"
+}
+
+run_trusted_offline_python_in_tmp() {
+  local trusted_tmp="$1"
+  shift
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 1 ]] || \
+    die "拒绝在完整离线 Python 运行时门禁前执行 Python。"
+  validate_secure_directory "$trusted_tmp" 0
+  real_path_under "$trusted_tmp" "$VIDEOINSIGHT_ROOT" || \
+    die "离线 Python 临时目录越过固定控制层根目录。"
+  "$VIDEOINSIGHT_SYSTEM_ENV" -i \
+    HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    "TMPDIR=$trusted_tmp" \
+    "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT" \
+    "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT" \
+    "$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8 "$@"
+}
+
+run_trusted_staging_python() {
+  local python_path="$1"
+  local staging_root="$2"
+  local trusted_tmp="$3"
+  shift 3
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 1 ]] || \
+    die "拒绝在完整离线 Python 运行时门禁前执行 staging Python。"
+  [[ -d "$staging_root" && ! -L "$staging_root" && \
+      $(readlink -f -- "$staging_root") == "$staging_root" ]] || \
+    die "staging Python 根目录无效。"
+  validate_secure_directory "$staging_root" 0
+  validate_secure_directory "$trusted_tmp" 0
+  real_path_under "$trusted_tmp" "$staging_root" || die "staging Python 临时目录越界。"
+  [[ -f "$python_path" && ! -L "$python_path" && -x "$python_path" ]] || \
+    die "staging Python 不是可执行普通文件。"
+  validate_secure_file "$python_path" 0
+  real_path_under "$python_path" "$staging_root" || die "staging Python 路径越界。"
+  local current mode owner
+  current=$(dirname -- "$python_path")
+  while :; do
+    [[ -d "$current" && ! -L "$current" ]] || die "staging Python 祖先不是普通目录。"
+    read -r mode owner < <(stat -c '%a %u' -- "$current")
+    [[ "$owner" == "0" ]] || die "staging Python 祖先必须由 root 持有。"
+    (( (8#$mode & 0022) == 0 )) || die "staging Python 祖先可由组或其他用户修改。"
+    [[ "$current" != "$staging_root" ]] || break
+    current=$(dirname -- "$current")
+  done
+  "$VIDEOINSIGHT_SYSTEM_ENV" -i \
+    HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    "TMPDIR=$trusted_tmp" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 \
+    PIP_NO_INDEX=1 \
+    "$python_path" -B -I -X utf8 "$@"
+}
+
+resolve_command_in_explicit_path() {
+  local name="$1"
+  local explicit_path="$2"
+  [[ "$name" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
+  local directories=() directory candidate
+  IFS=: read -r -a directories <<< "$explicit_path"
+  for directory in "${directories[@]}"; do
+    [[ "$directory" == /* ]] || return 1
+    candidate="$directory/$name"
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 validate_trusted_media_tool() {
@@ -196,7 +507,7 @@ validate_trusted_media_tool() {
   fi
   local candidate expected expected_hash actual_hash
   expected="$VIDEOINSIGHT_MEDIA_ROOT/$name"
-  candidate=$(PATH="$VIDEOINSIGHT_SERVICE_PATH" command -v "$name") || \
+  candidate=$(resolve_command_in_explicit_path "$name" "$VIDEOINSIGHT_SERVICE_PATH") || \
     die "固定服务 PATH 缺少受信任媒体校验工具：$name"
   [[ "$candidate" == "$expected" ]] || \
     die "固定服务 PATH 未解析到隔离媒体工具：$name"
@@ -237,58 +548,25 @@ validate_trusted_media_tool_execution() {
 fsync_path() {
   local path="$1"
   [[ -e "$path" && ! -L "$path" ]] || die "无法落盘不存在或为符号链接的路径：$path"
-  PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" - "$path" <<'PY'
-import os
-import sys
-
-path = sys.argv[1]
-flags = os.O_RDONLY
-if os.path.isdir(path):
-    flags |= getattr(os, "O_DIRECTORY", 0)
-descriptor = os.open(path, flags)
-try:
-    os.fsync(descriptor)
-finally:
-    os.close(descriptor)
-PY
+  validate_trusted_executable_path "$VIDEOINSIGHT_SYSTEM_SYNC" / >/dev/null
+  "$VIDEOINSIGHT_SYSTEM_SYNC" -f -- "$path" || die "路径 fsync 失败：$path"
 }
 
 fsync_tree() {
   local root="$1"
   [[ -d "$root" && ! -L "$root" ]] || die "无法落盘非普通目录树：$root"
-  PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" - "$root" <<'PY'
-import os
-import stat
-import sys
-
-root = os.path.realpath(sys.argv[1])
-
-
-def fsync_entry(path: str, *, directory: bool) -> None:
-    metadata = os.lstat(path)
-    if stat.S_ISLNK(metadata.st_mode):
-        resolved = os.path.realpath(path)
-        if os.path.commonpath((root, resolved)) != root:
-            raise OSError(f"release tree symlink escapes its root: {path}")
-        return
-    expected = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
-    if not expected:
-        raise OSError(f"release tree contains a non-regular entry: {path}")
-    flags = os.O_RDONLY | (getattr(os, "O_DIRECTORY", 0) if directory else 0)
-    descriptor = os.open(path, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-for current, directories, files in os.walk(root, topdown=False, followlinks=False):
-    for filename in files:
-        fsync_entry(os.path.join(current, filename), directory=False)
-    for dirname in directories:
-        fsync_entry(os.path.join(current, dirname), directory=True)
-    fsync_entry(current, directory=True)
-PY
+  validate_trusted_executable_path "$VIDEOINSIGHT_SYSTEM_SYNC" / >/dev/null
+  if find "$root" -xdev ! -type d ! -type f ! -type l -print -quit | grep -q .; then
+    die "发布树包含无法安全 fsync 的特殊文件。"
+  fi
+  local link resolved
+  while IFS= read -r -d '' link; do
+    resolved=$(readlink -f -- "$link") || die "发布树包含失效符号链接。"
+    [[ "$resolved" == "$root" || "$resolved" == "$root/"* ]] || \
+      die "发布树符号链接越过根目录。"
+  done < <(find "$root" -xdev -type l -print0)
+  find "$root" -xdev -type f -exec "$VIDEOINSIGHT_SYSTEM_SYNC" -f -- {} +
+  find "$root" -xdev -depth -type d -exec "$VIDEOINSIGHT_SYSTEM_SYNC" -f -- {} +
 }
 
 durable_rename() {
@@ -454,6 +732,7 @@ prepare_secure_state_directory() {
 }
 
 open_native_release_lock() {
+  validate_offline_python_runtime
   prepare_secure_state
   local lock_path="$VIDEOINSIGHT_ROOT/state/native-release.lock"
   if [[ -e "$lock_path" || -L "$lock_path" ]]; then
@@ -757,6 +1036,7 @@ validate_unit_effective_config() {
     die "已安装 unit 与发布模板不一致。"
 
   local fragment drop_ins working_directory service_user service_group exec_start configured_exec_start
+  local configured_exec_path
   fragment=$(systemctl show --property=FragmentPath "$VIDEOINSIGHT_SERVICE" | sed -n 's/^FragmentPath=//p')
   drop_ins=$(systemctl show --property=DropInPaths "$VIDEOINSIGHT_SERVICE" | sed -n 's/^DropInPaths=//p')
   working_directory=$(systemctl show --property=WorkingDirectory "$VIDEOINSIGHT_SERVICE" | sed -n 's/^WorkingDirectory=//p')
@@ -764,14 +1044,15 @@ validate_unit_effective_config() {
   service_group=$(systemctl show --property=Group "$VIDEOINSIGHT_SERVICE" | sed -n 's/^Group=//p')
   exec_start=$(systemctl show --property=ExecStart "$VIDEOINSIGHT_SERVICE" | sed -n 's/^ExecStart=//p')
   configured_exec_start=$(sed -n 's/^ExecStart=//p' "$VIDEOINSIGHT_UNIT_PATH")
+  configured_exec_path="${configured_exec_start%% *}"
 
   [[ "$fragment" == "$VIDEOINSIGHT_UNIT_PATH" ]] || die "systemd 实际加载了其他 unit。"
   [[ -z "$drop_ins" ]] || die "存在未审计的 systemd drop-in，已停止发布。"
   [[ "$working_directory" == "$VIDEOINSIGHT_CURRENT/app" ]] || die "WorkingDirectory 未指向 current/app。"
   [[ "$service_user" == "$VIDEOINSIGHT_SERVICE_USER" ]] || die "systemd User 不正确。"
   [[ "$service_group" == "$VIDEOINSIGHT_SERVICE_GROUP" ]] || die "systemd Group 不正确。"
-  [[ "$exec_start" == *"$configured_exec_start"* ]] || \
-    die "systemd 实际 ExecStart 与受控 unit 不一致。"
+  validate_effective_exec_start_record "$exec_start" "$configured_exec_path" \
+    "$configured_exec_start"
 }
 
 validate_existing_unit_scope() {
@@ -779,6 +1060,7 @@ validate_existing_unit_scope() {
     die "控制层 unit 不在唯一允许路径。"
   validate_unit_file_safety "$VIDEOINSIGHT_UNIT_PATH" 0
   local fragment drop_ins working_directory service_user service_group exec_start configured_exec_start
+  local configured_exec_path
   fragment=$(systemctl show --property=FragmentPath "$VIDEOINSIGHT_SERVICE" | sed -n 's/^FragmentPath=//p')
   drop_ins=$(systemctl show --property=DropInPaths "$VIDEOINSIGHT_SERVICE" | sed -n 's/^DropInPaths=//p')
   working_directory=$(systemctl show --property=WorkingDirectory "$VIDEOINSIGHT_SERVICE" | sed -n 's/^WorkingDirectory=//p')
@@ -786,51 +1068,152 @@ validate_existing_unit_scope() {
   service_group=$(systemctl show --property=Group "$VIDEOINSIGHT_SERVICE" | sed -n 's/^Group=//p')
   exec_start=$(systemctl show --property=ExecStart "$VIDEOINSIGHT_SERVICE" | sed -n 's/^ExecStart=//p')
   configured_exec_start=$(sed -n 's/^ExecStart=//p' "$VIDEOINSIGHT_UNIT_PATH")
+  configured_exec_path="${configured_exec_start%% *}"
 
   [[ "$fragment" == "$VIDEOINSIGHT_UNIT_PATH" ]] || die "systemd 实际加载了其他 unit。"
   [[ -z "$drop_ins" ]] || die "存在未审计的 systemd drop-in。"
   [[ "$working_directory" == "$VIDEOINSIGHT_ROOT"/* ]] || die "现有 WorkingDirectory 越过控制层根目录。"
   [[ "$service_user" == "$VIDEOINSIGHT_SERVICE_USER" ]] || die "现有 systemd User 不正确。"
   [[ "$service_group" == "$VIDEOINSIGHT_SERVICE_GROUP" ]] || die "现有 systemd Group 不正确。"
-  [[ "$exec_start" == *"$configured_exec_start"* ]] || \
-    die "现有 systemd 实际 ExecStart 与受控 unit 不一致。"
+  validate_effective_exec_start_record "$exec_start" "$configured_exec_path" \
+    "$configured_exec_start"
   grep -Fx "EnvironmentFile=$VIDEOINSIGHT_ENV_FILE" "$VIDEOINSIGHT_UNIT_PATH" >/dev/null || \
     die "现有 unit 未使用固定配置文件。"
 }
 
-validate_legacy_unit_file_binding() {
-  local unit_path="$1"
-  local expected_release_root="$2"
-  [[ "$expected_release_root" =~ ^/opt/videoinsight-control-plane/releases/[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
-    die "legacy 预期版本根目录格式无效。"
-  validate_unit_file_directives "$unit_path" 0
-
-  local configured_working_directory expected_exec_start
-  configured_working_directory=$(sed -n 's/^WorkingDirectory=//p' "$unit_path")
-  [[ "$configured_working_directory" == "$VIDEOINSIGHT_CURRENT" || \
-      "$configured_working_directory" == "$expected_release_root/app" ]] || \
-    die "legacy unit WorkingDirectory 未绑定 current 解析出的旧版本。"
-  expected_exec_start="ExecStart=$expected_release_root/venv/bin/python -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
-  [[ $(grep -Fxc -- "$expected_exec_start" "$unit_path") -eq 1 ]] || \
-    die "legacy unit ExecStart 解释器或应用入口未绑定 current 解析出的旧版本。"
+write_legacy_bridge_unit() {
+  local output="$1"
+  local application_version="$2"
+  local interpreter_version="$3"
+  require_stable_version "$application_version"
+  require_stable_version "$interpreter_version"
+  [[ ! -e "$output" && ! -L "$output" ]] || die "legacy bridge unit 临时路径已存在。"
+  ( umask 077
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=VideoInsight Control Plane' \
+      'After=network-online.target' \
+      'Wants=network-online.target' \
+      '' \
+      '[Service]' \
+      'Type=simple' \
+      "User=$VIDEOINSIGHT_SERVICE_USER" \
+      "Group=$VIDEOINSIGHT_SERVICE_GROUP" \
+      "WorkingDirectory=$VIDEOINSIGHT_CURRENT" \
+      "EnvironmentFile=$VIDEOINSIGHT_ENV_FILE" \
+      'Environment=PYTHONDONTWRITEBYTECODE=1' \
+      'Environment=PYTHONUNBUFFERED=1' \
+      "Environment=PATH=$VIDEOINSIGHT_SERVICE_PATH" \
+      "Environment=VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT" \
+      "Environment=VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT" \
+      "Environment=AUTH_SESSION_DATABASE_PATH=$VIDEOINSIGHT_RUNTIME_ROOT/data/video_intelligence.db" \
+      "ExecStart=$VIDEOINSIGHT_RELEASES_ROOT/$interpreter_version/venv/bin/python -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1" \
+      'Restart=on-failure' \
+      'RestartSec=5' \
+      'TimeoutStartSec=60' \
+      'TimeoutStopSec=30' \
+      'UMask=0077' \
+      'LimitNOFILE=65536' \
+      'LimitNPROC=128' \
+      'CPUQuota=100%' \
+      'MemoryLimit=1G' \
+      'NoNewPrivileges=true' \
+      'PrivateTmp=true' \
+      'PrivateDevices=true' \
+      'ProtectHome=true' \
+      'ProtectSystem=full' \
+      'CapabilityBoundingSet=' \
+      '' \
+      '[Install]' \
+      'WantedBy=multi-user.target' > "$output"
+  )
 }
 
-validate_legacy_unit_binding() {
-  local expected_release_root="$1"
-  release_app_path "$expected_release_root" >/dev/null
-  validate_release_python "$expected_release_root"
-  validate_existing_unit_scope
-  validate_legacy_unit_file_binding "$VIDEOINSIGHT_UNIT_PATH" "$expected_release_root"
+validate_legacy_bridge_unit_file() {
+  local unit_path="$1"
+  local application_version="$2"
+  local interpreter_version="$3"
+  local expected_sha256="$4"
+  local require_current="${5:-1}"
+  require_stable_version "$application_version"
+  require_stable_version "$interpreter_version"
+  require_sha256 "$expected_sha256"
+  [[ "$require_current" == "0" || "$require_current" == "1" ]] || \
+    die "legacy bridge current 校验模式无效。"
+  validate_unit_file_safety "$unit_path"
+  [[ $(sha256sum -- "$unit_path" | cut -d' ' -f1) == "${expected_sha256,,}" ]] || \
+    die "legacy bridge unit SHA256 与 adoption 描述不一致。"
+  [[ $(grep -Fxc -- "WorkingDirectory=$VIDEOINSIGHT_CURRENT" "$unit_path") -eq 1 ]] || \
+    die "legacy bridge WorkingDirectory 未精确绑定 current application。"
+  local expected_exec_start
+  expected_exec_start="ExecStart=$VIDEOINSIGHT_RELEASES_ROOT/$interpreter_version/venv/bin/python -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+  [[ $(grep -Fxc -- "$expected_exec_start" "$unit_path") -eq 1 ]] || \
+    die "legacy bridge ExecStart 未精确绑定 adoption interpreter。"
+  if [[ "$require_current" == "1" ]]; then
+    [[ $(readlink -f -- "$VIDEOINSIGHT_CURRENT") == \
+        "$VIDEOINSIGHT_RELEASES_ROOT/$application_version/app" ]] || \
+      die "legacy bridge current 未精确绑定 adoption application。"
+  fi
+}
 
-  local working_directory exec_start expected_exec_start
+validate_legacy_bridge_effective_config() {
+  local application_version="$1"
+  local interpreter_version="$2"
+  local expected_sha256="$3"
+  validate_legacy_bridge_unit_file "$VIDEOINSIGHT_UNIT_PATH" \
+    "$application_version" "$interpreter_version" "$expected_sha256"
+  local fragment drop_ins working_directory service_user service_group exec_start
+  local expected_exec_path expected_exec_start
+  fragment=$(systemctl show --property=FragmentPath "$VIDEOINSIGHT_SERVICE" | sed -n 's/^FragmentPath=//p')
+  drop_ins=$(systemctl show --property=DropInPaths "$VIDEOINSIGHT_SERVICE" | sed -n 's/^DropInPaths=//p')
   working_directory=$(systemctl show --property=WorkingDirectory "$VIDEOINSIGHT_SERVICE" | sed -n 's/^WorkingDirectory=//p')
+  service_user=$(systemctl show --property=User "$VIDEOINSIGHT_SERVICE" | sed -n 's/^User=//p')
+  service_group=$(systemctl show --property=Group "$VIDEOINSIGHT_SERVICE" | sed -n 's/^Group=//p')
   exec_start=$(systemctl show --property=ExecStart "$VIDEOINSIGHT_SERVICE" | sed -n 's/^ExecStart=//p')
-  expected_exec_start="$expected_release_root/venv/bin/python -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
-  [[ "$working_directory" == "$VIDEOINSIGHT_CURRENT" || \
-      "$working_directory" == "$expected_release_root/app" ]] || \
-    die "systemd 实际 legacy WorkingDirectory 与 current 旧版本不一致。"
-  [[ "$exec_start" == *"$expected_exec_start"* ]] || \
-    die "systemd 实际 legacy ExecStart 与 current 旧版本不一致。"
+  expected_exec_path="$VIDEOINSIGHT_RELEASES_ROOT/$interpreter_version/venv/bin/python"
+  expected_exec_start="$expected_exec_path -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+  [[ "$fragment" == "$VIDEOINSIGHT_UNIT_PATH" ]] || die "systemd 实际加载了其他 unit。"
+  [[ -z "$drop_ins" ]] || die "legacy bridge 存在未审计的 systemd drop-in。"
+  [[ "$working_directory" == "$VIDEOINSIGHT_CURRENT" ]] || \
+    die "systemd 实际 legacy bridge WorkingDirectory 不正确。"
+  [[ "$service_user" == "$VIDEOINSIGHT_SERVICE_USER" && \
+      "$service_group" == "$VIDEOINSIGHT_SERVICE_GROUP" ]] || \
+    die "systemd 实际 legacy bridge 服务身份不正确。"
+  validate_effective_exec_start_record "$exec_start" "$expected_exec_path" \
+    "$expected_exec_start"
+}
+
+validate_legacy_adoption_record() {
+  local mode="${1:-record}"
+  [[ "$mode" == "record" || "$mode" == "active" || "$mode" == "prepared" ]] || \
+    die "legacy adoption 校验模式无效。"
+  validate_root_file "$VIDEOINSIGHT_LEGACY_ADOPTION_DESCRIPTOR"
+  local command="validate-record"
+  [[ "$mode" != "active" ]] || command="validate-active"
+  [[ "$mode" != "prepared" ]] || command="validate-prepared"
+  local output fields=()
+  output=$(run_trusted_offline_python \
+    "$(native_script_dir)/legacy_adoption_descriptor.py" "$command" \
+    "$VIDEOINSIGHT_LEGACY_ADOPTION_DESCRIPTOR" "$VIDEOINSIGHT_ROOT" \
+    "$VIDEOINSIGHT_UNIT_PATH" "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+    "$SERVICE_UID" "$SERVICE_GID") || \
+    die "legacy adoption 描述或绑定证据校验失败。"
+  mapfile -t fields <<< "$output"
+  [[ ${#fields[@]} -eq 11 ]] || die "legacy adoption 描述输出无效。"
+  validate_root_directory "$VIDEOINSIGHT_ROOT/state/legacy-adoption"
+  validate_root_file "$VIDEOINSIGHT_ROOT/state/legacy-adoption/${fields[3]}"
+  printf '%s\n' "${fields[@]}"
+}
+
+validate_active_legacy_adoption() {
+  local output
+  output=$(validate_legacy_adoption_record active) || \
+    die "legacy 布局缺少完整且 active 的 adoption 描述。"
+  local fields=()
+  mapfile -t fields <<< "$output"
+  [[ ${#fields[@]} -eq 11 ]] || die "legacy adoption 描述输出无效。"
+  validate_legacy_bridge_effective_config "${fields[0]}" "${fields[1]}" "${fields[5]}"
+  printf '%s\n' "${fields[@]}"
 }
 
 control_plane_domain() {
@@ -854,7 +1237,7 @@ health_check() {
     health_payload=$(curl --disable --noproxy '*' --fail --silent --show-error --max-time 5 --header "Host: $domain" \
       "$VIDEOINSIGHT_LOCAL_URL/health") || continue
     if printf '%s\n%s' "$ready_payload" "$health_payload" | \
-      PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" -c '
+      run_trusted_offline_python -c '
 import json
 import sys
 

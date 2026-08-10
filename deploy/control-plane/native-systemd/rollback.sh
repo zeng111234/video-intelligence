@@ -1,6 +1,9 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -Eeuo pipefail
 umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+readonly PATH
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=common.sh
@@ -38,11 +41,7 @@ SUCCESS=0
 restore_with() {
   local snapshot_name="$1"
   local expected_source_version="$2"
-  VIDEOINSIGHT_RUNTIME_ROOT="$VIDEOINSIGHT_RUNTIME_ROOT" \
-  VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_BACKUP_ROOT" \
-  VIDEOINSIGHT_SERVICE_UID="$SERVICE_UID" \
-  VIDEOINSIGHT_SERVICE_GID="$SERVICE_GID" \
-    PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+  run_trusted_offline_python_for_service "$SERVICE_UID" "$SERVICE_GID" \
     "$ORIGINAL_APP/deploy/control-plane/restore_control_plane.py" \
     "$snapshot_name" "$expected_source_version"
 }
@@ -50,10 +49,9 @@ restore_with() {
 rollback_failed_rollback() {
   set +e
   printf '回滚未通过，开始恢复回滚前状态。\n' >&2
-  if ! systemctl stop "$VIDEOINSIGHT_SERVICE" || \
-    systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE"; then
+  if ! stop_control_plane_fail_closed "回滚失败恢复前停止控制层"; then
     printf 'CRITICAL: 无法确认本服务已停止，未执行数据或链接恢复。\n' >&2
-    return
+    return 1
   fi
   local recovery_ok=1
   if [[ "$DATA_CHANGED" -eq 1 ]]; then
@@ -82,10 +80,14 @@ rollback_failed_rollback() {
     if systemctl start "$VIDEOINSIGHT_SERVICE" && health_check "$ORIGINAL_VERSION"; then
       printf '已恢复回滚前版本和数据。\n' >&2
     else
-      printf 'CRITICAL: 回滚前版本未恢复就绪，服务保持停止。\n' >&2
-      systemctl stop "$VIDEOINSIGHT_SERVICE"
+      printf 'CRITICAL: 回滚前版本未恢复就绪，执行 fail-closed 停止。\n' >&2
+      if stop_control_plane_fail_closed "回滚恢复健康失败后的停止"; then
+        printf '已复核唯一目标服务为 inactive。\n' >&2
+      fi
+      recovery_ok=0
     fi
   fi
+  return $(( recovery_ok == 1 ? 0 : 1 ))
 }
 
 finish() {
@@ -114,7 +116,7 @@ for command_name in chmod chown cmp curl date find flock getent grep id install 
   require_command "$command_name"
 done
 open_native_release_lock
-bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
+/bin/bash "$SCRIPT_DIR/preflight.sh" "$SERVICE_UID" "$SERVICE_GID"
 validate_unit_effective_config
 
 ORIGINAL_RELEASE=$(current_release_root)
@@ -140,18 +142,27 @@ else
   legacy_descriptor="$VIDEOINSIGHT_ROOT/state/legacy-rollbacks/$TARGET_SNAPSHOT_NAME.json"
   validate_root_file "$legacy_descriptor"
   legacy_output=$(
-    PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+    run_trusted_offline_python \
       "$ORIGINAL_APP/deploy/control-plane/native-systemd/legacy_rollback_descriptor.py" \
       validate "$legacy_descriptor" "$VIDEOINSIGHT_ROOT" "$VIDEOINSIGHT_BACKUP_ROOT" \
       "$TARGET_VERSION" "$ORIGINAL_VERSION" "$TARGET_SNAPSHOT_NAME"
   ) || die "legacy 回滚描述校验失败。"
   mapfile -t legacy_fields <<< "$legacy_output"
-  [[ ${#legacy_fields[@]} -eq 2 ]] || die "legacy 回滚描述输出无效。"
+  [[ ${#legacy_fields[@]} -eq 6 ]] || die "legacy 回滚描述输出无效。"
   LEGACY_CURRENT_LINK="${legacy_fields[0]}"
   prepare_secure_state_directory "unit-backups"
   LEGACY_UNIT_BACKUP="$VIDEOINSIGHT_ROOT/state/unit-backups/${legacy_fields[1]}"
   validate_root_file "$LEGACY_UNIT_BACKUP"
-  validate_unit_file_safety "$LEGACY_UNIT_BACKUP"
+  adoption_fields=()
+  mapfile -t adoption_fields < <(validate_legacy_adoption_record record)
+  [[ ${#adoption_fields[@]} -eq 11 && \
+      "${adoption_fields[0]}" == "${legacy_fields[3]}" && \
+      "${adoption_fields[1]}" == "${legacy_fields[4]}" && \
+      "${adoption_fields[2]}" == "$LEGACY_CURRENT_LINK" && \
+      "${adoption_fields[5]}" == "${legacy_fields[5]}" ]] || \
+    die "legacy 回滚 v2 描述与 active adoption 记录不一致。"
+  validate_legacy_bridge_unit_file "$LEGACY_UNIT_BACKUP" \
+    "${legacy_fields[3]}" "${legacy_fields[4]}" "${legacy_fields[5]}" 0
   CURRENT_UNIT_SAFETY="$VIDEOINSIGHT_ROOT/state/unit-backups/videoinsight-control-plane.service.pre-legacy-rollback-$TARGET_VERSION-$(date -u +%Y%m%dT%H%M%SZ).$$"
   install -o root -g root -m 0600 -- "$VIDEOINSIGHT_UNIT_PATH" "$CURRENT_UNIT_SAFETY"
   validate_root_file "$CURRENT_UNIT_SAFETY"
@@ -161,15 +172,12 @@ fi
 health_check "$ORIGINAL_VERSION" || die "当前控制层未就绪。"
 
 TRANSACTION_STARTED=1
-systemctl stop "$VIDEOINSIGHT_SERVICE"
-if systemctl is-active --quiet "$VIDEOINSIGHT_SERVICE"; then
+if ! stop_control_plane_fail_closed "人工回滚前停止控制层"; then
   die "控制层未能停止，未开始回滚。"
 fi
 
 SAFETY_SNAPSHOT_NAME="videoinsight-control-plane-pre-rollback-$TARGET_VERSION-$(date -u +%Y%m%dT%H%M%SZ)-$$.zip"
-VIDEOINSIGHT_RUNTIME_ROOT="$VIDEOINSIGHT_RUNTIME_ROOT" \
-VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_BACKUP_ROOT" \
-  PYTHONDONTWRITEBYTECODE=1 "$VIDEOINSIGHT_OFFLINE_PYTHON" \
+run_trusted_offline_python \
   "$ORIGINAL_APP/deploy/control-plane/backup_control_plane.py" \
   "$SAFETY_SNAPSHOT_NAME" "$ORIGINAL_VERSION"
 [[ -f "$VIDEOINSIGHT_BACKUP_ROOT/$SAFETY_SNAPSHOT_NAME" ]] || \
@@ -185,7 +193,7 @@ if [[ "$LEGACY_ROLLBACK" -eq 1 ]]; then
   fsync_path "$UNIT_TEMP"
   durable_rename "$UNIT_TEMP" "$VIDEOINSIGHT_UNIT_PATH" "/etc/systemd/system"
   systemctl daemon-reload
-  ( validate_existing_unit_scope )
+  validate_active_legacy_adoption >/dev/null
 else
   atomic_switch_current "$TARGET_RELEASE"
 fi
@@ -200,6 +208,6 @@ SUCCESS=1
 printf '已回滚到 %s；所有旧登录会话按恢复策略失效。\n' "$TARGET_VERSION"
 printf '回滚前安全快照：%s\n' "$VIDEOINSIGHT_BACKUP_ROOT/$SAFETY_SNAPSHOT_NAME"
 if [[ "$LEGACY_ROLLBACK" -eq 1 ]]; then
-  printf '已按受控描述恢复 legacy current 与原 unit；未复制或猜测旧 venv。\n'
+  printf '已按 adoption v2 描述恢复 legacy current 与 strict bridge；原宽松 unit 仅作取证、不会恢复。\n'
 fi
 printf '未操作反向代理、容器或其他 systemd 服务。\n'
