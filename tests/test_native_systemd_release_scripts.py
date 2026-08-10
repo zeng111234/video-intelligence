@@ -1702,12 +1702,18 @@ assert sys.flags.utf8_mode == 1
 def test_readme_requires_target_bash_42_parse_gate_before_execution() -> None:
     readme = _read("README.md")
     assert "cd /opt/videoinsight-control-plane/tools/native-systemd || exit 1" in readme
+    assert "TARGET_VERSION='<正式构建生成的版本>'" in readme
     parse_gate = readme.index("for script in common.sh install_unit.sh")
     normalize = readme.index("/bin/bash normalize_legacy_unit.sh", parse_gate)
     assert '/bin/bash -n "$script" || exit 1' in readme[parse_gate:normalize]
     for name in SHELL_SCRIPTS:
         assert name in readme[parse_gate:normalize]
     assert "CentOS 7 自带 Bash 4.2" in readme
+    assert '/bin/bash upgrade.sh "$TARGET_VERSION"' in readme
+    assert '/bin/bash verify.sh "$TARGET_VERSION"' in readme
+    assert not re.search(
+        r"/bin/bash (?:upgrade|verify)\.sh [0-9]+\.[0-9]+\.[0-9]+", readme
+    )
 
 
 def test_shells_never_execute_offline_python_outside_trusted_wrappers() -> None:

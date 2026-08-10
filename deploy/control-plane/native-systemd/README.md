@@ -67,6 +67,7 @@ readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
 
    ```bash
    cd /opt/videoinsight-control-plane/tools/native-systemd || exit 1
+   TARGET_VERSION='<正式构建生成的版本>'
    for script in common.sh install_unit.sh normalize_legacy_unit.sh preflight.sh \
      rollback.sh upgrade.sh verify.sh; do
      /bin/bash -n "$script" || exit 1
@@ -80,8 +81,8 @@ readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
      1594 bfd8ba051af78d812c9b39c1679b7843c14196cea77ee7457b8599e8797368da \
      996 994
    /bin/bash preflight.sh 996 994
-   /bin/bash upgrade.sh 0.2.9 '<开发电脑记录的 SHA256>' 996 994
-   /bin/bash verify.sh 0.2.9 996 994
+   /bin/bash upgrade.sh "$TARGET_VERSION" '<开发电脑记录的 SHA256>' 996 994
+   /bin/bash verify.sh "$TARGET_VERSION" 996 994
    ```
 
 服务器必须在执行任何 shipped shell 前，用系统 `/bin/bash -n` 对上述 7 个文件逐个解析；任一文件失败就停止，不得继续 normalize、preflight、upgrade、rollback 或 verify。该门禁用于目标 CentOS 7 自带 Bash 4.2，开发机较新的 Bash 通过不能代替服务器解析通过。
