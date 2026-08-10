@@ -136,9 +136,21 @@ def _default_upload_transport(
         raise CloudProviderError("OSS 上传连接失败。", kind="connection") from exc
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code
-        kind = "authorization" if status in {401, 403} else "service"
+        detail = exc.response.text[:300]
+        already_exists = (
+            status == 409
+            and headers.get("x-oss-forbid-overwrite", "").casefold() == "true"
+            and "FileAlreadyExists" in detail
+        )
+        kind = (
+            "already_exists"
+            if already_exists
+            else "authorization"
+            if status in {401, 403}
+            else "service"
+        )
         raise CloudProviderError(
-            f"OSS 上传 HTTP {status}：{exc.response.text[:300] or '请求失败'}",
+            f"OSS 上传 HTTP {status}：{detail or '请求失败'}",
             kind=kind,
         ) from exc
 
@@ -445,6 +457,13 @@ class AliyunCloudObjectStore(CloudObjectStore):
                 connection_error = None
                 break
             except CloudProviderError as exc:
+                # The object key is unique to the persisted task.  If the first
+                # PutObject succeeded but its response was lost, OSS rejects
+                # the retry with FileAlreadyExists.  Reuse that exact object
+                # instead of trapping the task in an unrecoverable state.
+                if exc.kind == "already_exists":
+                    connection_error = None
+                    break
                 if exc.kind != "connection":
                     raise
                 connection_error = exc
@@ -602,6 +621,8 @@ class AliyunFunASRProvider(CloudASRProvider):
             is_mock=False,
             usage=dict(usage) if isinstance(usage, Mapping) else {},
             detail={
+                "code": output.get("code"),
+                "message": output.get("message"),
                 "task_metrics": output.get("task_metrics", {}),
                 "subtasks": [
                     {

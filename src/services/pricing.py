@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -38,10 +39,11 @@ _PRICE_CACHE: dict[str, Decimal] = {}
 
 
 def _pricing_repository():
-    """定价表所在仓库：与主应用一致（项目根 data/video_intelligence.db）。"""
+    """定价表所在仓库：与主应用使用同一个运行时数据库。"""
     from src.repositories import SQLiteRepository
 
-    root = Path(__file__).resolve().parent.parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
+    root = Path(os.getenv("VIDEOINSIGHT_RUNTIME_ROOT", str(project_root))).resolve()
     return SQLiteRepository(root / "data" / "video_intelligence.db")
 
 

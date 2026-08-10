@@ -4,11 +4,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_repository
+from project.backend.app.core.repository import get_repository
 from project.backend.app.core.security import (
+    check_auth_subject_allowed,
+    clear_auth_failures,
     get_admin_password,
     hash_password,
     issue_auth_token,
+    record_auth_failure,
     revoke_auth_token,
     verify_password,
 )
@@ -83,6 +86,14 @@ def _set_media_session_cookie(response: Response, name: str, token: str) -> None
     """只为无自定义请求头的媒体 GET 提供会话，写操作仍使用 header token。"""
     import os
 
+    other_name = (
+        "vi_admin_media_token"
+        if name == "vi_customer_media_token"
+        else "vi_customer_media_token"
+    )
+    # 同一浏览器切换身份时只保留当前角色，避免 <video>/<audio> 请求因
+    # 无法携带自定义 header 而误用上一个角色的本机媒体会话。
+    response.delete_cookie(other_name, path="/api/v1/")
     response.set_cookie(
         key=name,
         value=token,
@@ -118,15 +129,19 @@ def customer_login(
 ):
     """客户用激活码登录：校验激活码，首次登录自动开立积分账户并赠送初始积分。"""
     code = body.code.strip().upper()
+    check_auth_subject_allowed("customer", code)
     customer = repo.get_customer_code(code)
-    if customer is None:
-        raise HTTPException(status_code=401, detail="激活码不存在，请检查后重试。")
-    if not customer.enabled:
-        raise HTTPException(status_code=403, detail="该激活码已被禁用，请联系管理员。")
+    if customer is None or not customer.enabled:
+        record_auth_failure("customer", code)
+        raise HTTPException(
+            status_code=401,
+            detail="激活码不正确或暂不可用，请检查后重试。",
+        )
 
     # 客户登录：确保账户开立（首次开立时自动赠送 initial_credits，不重复赠送）
     credits = CreditsService(repo)
     balance = credits.ensure_account(owner=code)
+    clear_auth_failures("customer", code)
     token = issue_auth_token("customer", code)
     _set_media_session_cookie(response, "vi_customer_media_token", token)
     return CustomerLoginResponse(
@@ -147,8 +162,11 @@ def admin_login(
     username = body.username.strip()
     if not username:
         raise HTTPException(status_code=400, detail="请输入管理员账号。")
+    check_auth_subject_allowed("admin", username)
     token = admin_login_credentials(repo, username, body.password)
     if token is None:
+        record_auth_failure("admin", username)
         raise HTTPException(status_code=401, detail="管理员账号或密码不正确。")
+    clear_auth_failures("admin", username)
     _set_media_session_cookie(response, "vi_admin_media_token", token)
     return AdminLoginResponse(token=token, username=username)

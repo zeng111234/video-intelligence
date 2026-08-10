@@ -50,6 +50,7 @@ from src.services.publisher import PublishService
 from src.services.source import SourceService
 from src.services.heat import HeatService
 from src.services.media_resolution import MediaResolutionError, ResolvedMedia
+from src.services.transcription import TranscriptionError
 from src.services.video_source import DirectVideo
 from src.services.video_editor import VideoEditingService
 
@@ -356,8 +357,10 @@ class FakeMediaResolutionService:
     def __init__(self, error: MediaResolutionError | None = None) -> None:
         self.error = error
         self.attached_task_id: str | None = None
+        self.resolve_calls = 0
 
     def resolve_video(self, candidate: VideoCandidate, *, idempotency_key: str):
+        self.resolve_calls += 1
         if self.error:
             raise self.error
         attempt = MediaResolutionAttempt(
@@ -388,8 +391,10 @@ class FakeMediaResolutionService:
 class FakeTranscriptionService:
     def __init__(self, repository: MockRepository) -> None:
         self.repository = repository
+        self.last_kwargs = None
 
     def create_task(self, **kwargs) -> TranscriptionTask:
+        self.last_kwargs = kwargs
         now = datetime.now().astimezone()
         task = TranscriptionTask(
             task_id="transcript-pipeline-1",
@@ -418,6 +423,36 @@ class FakeTranscriptionService:
         )
         self.repository.save_task(task)
         return task
+
+
+class OutcomeUnknownTranscriptionService:
+    def __init__(self, repository: MockRepository) -> None:
+        self.repository = repository
+
+    def create_task(self, **kwargs) -> TranscriptionTask:
+        now = datetime.now().astimezone()
+        task = TranscriptionTask(
+            task_id="transcript-outcome-unknown",
+            title=kwargs["media_name"],
+            status=TaskStatus.OUTCOME_UNKNOWN,
+            progress=20,
+            created_at=now,
+            updated_at=now,
+            media_name=kwargs["media_name"],
+            media_type=kwargs["media_type"],
+            rights_confirmed=True,
+            rights_holder=kwargs["rights_holder"],
+            candidate_id=kwargs["candidate_id"],
+            stage="云端结果待确认",
+            model_name=kwargs["model_name"],
+            is_mock=False,
+        )
+        self.repository.save_task(task)
+        raise TranscriptionError(
+            "OSS 上传连接失败，结果未确认，请勿直接重复提交。",
+            code="provider_outcome_unknown",
+            task_id=task.task_id,
+        )
 
 
 class TestPipelineService:
@@ -542,6 +577,99 @@ class TestPipelineService:
         assert run.status == PipelineRunStatus.FAILED
         assert run.current_stage == PipelineStage.MEDIA_RESOLUTION
         assert "供应商未返回" in (run.error_message or "")
+
+    def test_transcription_retry_reuses_preserved_media_without_resolving_again(
+        self, tmp_path
+    ):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        source = tmp_path / "preserved.mp4"
+        source.write_bytes(b"preserved-video")
+        now = datetime.now().astimezone()
+        failed_task = TranscriptionTask(
+            task_id="transcript-preserved-source",
+            title="上次上传失败",
+            status=TaskStatus.FAILED,
+            progress=20,
+            created_at=now,
+            updated_at=now,
+            media_name="candidate.mp4",
+            media_type="video/mp4",
+            rights_confirmed=True,
+            candidate_id=candidate.video_id,
+            provider_status="failed",
+            outputs={"source_media_path": str(source)},
+        )
+        self.repo.save_task(failed_task)
+        attempt = MediaResolutionAttempt(
+            idempotency_key="pipeline-preserved-retry",
+            candidate_id=candidate.video_id,
+            platform=candidate.platform,
+            platform_item_id=candidate.platform_item_id or "",
+            provider="fixture_oneapi",
+            status=MediaResolutionStatus.SUCCEEDED,
+            billable_units=0.04,
+            api_call_count=1,
+        )
+        self.repo.save_media_resolution_attempt(attempt)
+        existing_run = self.svc.create_run(
+            keyword=candidate.title,
+            config={
+                "workflow": "production_batch_candidate",
+                "retry_source_transcription_task_id": failed_task.task_id,
+            },
+        )
+        media_svc = FakeMediaResolutionService()
+        transcription_svc = FakeTranscriptionService(self.repo)
+        self.svc.media_resolution_service = media_svc
+        self.svc.transcription_service = transcription_svc
+
+        run = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key=attempt.idempotency_key,
+            existing_run=existing_run,
+        )
+
+        assert run.status == PipelineRunStatus.PAUSED
+        assert run.current_stage == PipelineStage.HUMAN_REVIEW
+        assert media_svc.resolve_calls == 0
+        assert media_svc.attached_task_id == "transcript-pipeline-1"
+        assert transcription_svc.last_kwargs["media_bytes"] == b"preserved-video"
+        assert "retry_source_transcription_task_id" not in run.config
+        assert run.config["transcription_task_id"] == "transcript-pipeline-1"
+        resolution_step = next(
+            step
+            for step in run.stages
+            if step.stage == PipelineStage.MEDIA_RESOLUTION
+        )
+        assert resolution_step.outputs["source"] == "preserved_transcription_media"
+
+    def test_candidate_script_pipeline_pauses_when_cloud_outcome_is_unknown(self):
+        candidate = _pipeline_candidate()
+        self.repo.save_candidate(candidate)
+        self.svc.media_resolution_service = FakeMediaResolutionService()
+        self.svc.transcription_service = OutcomeUnknownTranscriptionService(self.repo)
+
+        run = self.svc.execute_candidate_script_pipeline(
+            candidate_id=candidate.video_id,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+            idempotency_key="pipeline-outcome-unknown",
+        )
+
+        transcription_stage = next(
+            stage for stage in run.stages if stage.stage == PipelineStage.TRANSCRIPTION
+        )
+        assert run.status == PipelineRunStatus.PAUSED
+        assert run.current_stage == PipelineStage.TRANSCRIPTION
+        assert run.config["transcription_task_id"] == "transcript-outcome-unknown"
+        assert run.config["outcome_unknown"] is True
+        assert run.config["recovery_blocked"] is True
+        assert transcription_stage.status == TaskStatus.OUTCOME_UNKNOWN
+        assert transcription_stage.task_id == "transcript-outcome-unknown"
+        assert "不会自动重复提交" in (run.error_message or "")
 
     def test_candidate_script_pipeline_blocks_non_douyin_before_paid_resolution(self):
         candidate = _pipeline_candidate().model_copy(

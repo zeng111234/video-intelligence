@@ -1,7 +1,10 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
+import { loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, ".", "VIDEOINSIGHT_");
+  const apiProxyTarget = env.VIDEOINSIGHT_API_PROXY_TARGET || "http://localhost:2001";
   return {
     plugins: [react()],
     server: {
@@ -10,7 +13,7 @@ export default defineConfig(() => {
       strictPort: true,
       proxy: {
         "/api": {
-          target: "http://localhost:2001",
+          target: apiProxyTarget,
           changeOrigin: true,
         },
       },
@@ -19,6 +22,9 @@ export default defineConfig(() => {
       port: 1001,
       host: "127.0.0.1",
       strictPort: true,
+    },
+    test: {
+      setupFiles: ["./src/test/setup.ts"],
     },
     build: {
       rollupOptions: {

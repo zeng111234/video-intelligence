@@ -132,6 +132,11 @@ class DisabledCopywritingEngine:
             "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行低置信口播修订。"
         )
 
+    def review_transcript_batch(self, **kwargs) -> dict[str, Any]:
+        raise LLMAdapterError(
+            "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行转写批量校对。"
+        )
+
     def select_best_spoken_script(self, **kwargs) -> dict[str, str]:
         raise LLMAdapterError(
             "AI 文案生成未配置 COPYWRITING_API_KEY，无法进行四稿择优。"
@@ -247,6 +252,27 @@ class SandboxCopywritingEngine:
         return {
             "corrected_text": candidates[0] if candidates else "",
             "note": "演示模式未执行真实低置信口播修订。",
+            "is_mock": True,
+        }
+
+    def review_transcript_batch(
+        self,
+        *,
+        segments: list[dict[str, Any]],
+        **kwargs,
+    ) -> dict[str, Any]:
+        # 沙箱不能可靠恢复听不清的原话，明确保留为待确认，避免伪造纠错。
+        return {
+            "corrections": [
+                {
+                    "index": int(item.get("index") or 0),
+                    "corrected_text": str(item.get("text") or ""),
+                    "note": "演示模式无法可靠恢复原话。",
+                    "requires_human_review": True,
+                }
+                for item in segments
+                if bool(item.get("needs_review"))
+            ],
             "is_mock": True,
         }
 
@@ -485,6 +511,83 @@ class OpenAICompatibleCopywritingEngine:
             "corrected_text": corrected_text,
             "note": note,
         }
+
+    def review_transcript_batch(
+        self,
+        *,
+        segments: list[dict[str, Any]],
+        context_hint: str = "",
+    ) -> dict[str, Any]:
+        """一次校对整段转写，只把无法可靠恢复的事实风险留给用户。"""
+        if not self.api_key:
+            raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
+        normalized = [
+            {
+                "index": int(item.get("index") or 0),
+                "text": str(item.get("text") or "").strip()[:500],
+                "confidence": item.get("confidence"),
+                "needs_review": bool(item.get("needs_review")),
+            }
+            for item in segments
+            if str(item.get("text") or "").strip()
+        ]
+        targets = [item for item in normalized if item["needs_review"]]
+        if not targets:
+            return {"corrections": []}
+        system_prompt = (
+            "你是短视频中文转写质检员。先结合整段上下文，保守修正低置信片段中的同音字、"
+            "断句和明显识别乱码；高置信片段只能作为上下文，不得改写。不能从文字可靠恢复原话时，"
+            "必须将 requires_human_review 设为 true 并保留原文，不得编造。金额、数字、日期、人名、"
+            "品牌、型号、效果和承诺只要无法从上下文唯一确定，也必须保留原文并交给人工确认。"
+            "只返回严格 JSON。"
+        )
+        user_prompt = "\n".join(
+            [
+                f"内容线索：{context_hint.strip()[:300] or '无'}",
+                "按 index 顺序的转写片段：",
+                json.dumps(normalized, ensure_ascii=False),
+                (
+                    'JSON 格式：{"corrections":[{"index":0,"corrected_text":"修正文本",'
+                    '"note":"不超过40字","requires_human_review":false}]}。'
+                    "corrections 只包含 needs_review=true 的片段，且每个目标 index 必须返回一次。"
+                ),
+            ]
+        )
+        content = self._chat_completion(system_prompt, user_prompt)
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("LLM 未返回有效的批量转写复核 JSON。") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("corrections"), list):
+            raise LLMAdapterError("LLM 未返回有效的批量转写复核对象。")
+        target_indexes = {item["index"] for item in targets}
+        corrections: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for item in payload["corrections"]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                index = int(item.get("index"))
+            except (TypeError, ValueError):
+                continue
+            corrected_text = str(item.get("corrected_text") or "").strip()
+            if index not in target_indexes or index in seen or not corrected_text:
+                continue
+            if len(corrected_text) > 500:
+                continue
+            seen.add(index)
+            corrections.append(
+                {
+                    "index": index,
+                    "corrected_text": corrected_text,
+                    "note": str(item.get("note") or "").strip()[:120],
+                    "requires_human_review": bool(item.get("requires_human_review")),
+                }
+            )
+        if seen != target_indexes:
+            raise LLMAdapterError("LLM 未完整返回所有低置信片段的校对结果。")
+        return {"corrections": corrections}
 
     def select_best_spoken_script(
         self,

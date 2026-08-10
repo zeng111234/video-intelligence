@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { adminLogin } from "../api/client";
+import { adminLogin, clearAdminSession } from "../api/client";
 import { useToast } from "../components/Toast";
 
 const ADMIN_TOKEN_KEY = "vi_admin_token";
@@ -15,7 +15,10 @@ export function getAdminToken(): string | null {
 }
 
 export function clearAdminToken(): void {
-  localStorage.removeItem(ADMIN_TOKEN_KEY);
+  // 不只清浏览器标记：同时通知本机后端和公司控制层撤销管理员会话，
+  // 避免“退出登录”后进程内仍保留付费授权身份直到自然过期。
+  clearAdminSession();
+  localStorage.removeItem("vi_admin_username");
   notifyTokenListeners();
 }
 

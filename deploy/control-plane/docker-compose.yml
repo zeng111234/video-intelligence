@@ -1,0 +1,65 @@
+name: videoinsight-control-plane
+
+services:
+  init-runtime:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/Dockerfile
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mkdir -p /app/runtime/data /app/backups &&
+        chown -R 10001:10001 /app/runtime/data /app/backups &&
+        chmod 700 /app/runtime/data /app/backups
+    volumes:
+      - ./data:/app/runtime/data
+      - ./backups:/app/backups
+    healthcheck:
+      disable: true
+    restart: "no"
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: deploy/control-plane/Dockerfile
+    env_file:
+      - ${CONTROL_PLANE_ENV_FILE:-.env}
+    environment:
+      VIDEOINSIGHT_RUNTIME_ROOT: /app/runtime
+      AUTH_SESSION_DATABASE_PATH: /app/runtime/data/video_intelligence.db
+    expose:
+      - "8080"
+    volumes:
+      - ./data:/app/runtime/data
+      - ./backups:/app/backups
+    depends_on:
+      init-runtime:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - private
+
+  caddy:
+    image: caddy:2.11.4-alpine
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    env_file:
+      - ${CONTROL_PLANE_ENV_FILE:-.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data
+      - ./caddy-config:/config
+      - ./updates:/srv/updates:ro
+    restart: unless-stopped
+    networks:
+      - private
+
+networks:
+  private:
+    driver: bridge

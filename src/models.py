@@ -593,6 +593,17 @@ class AvatarCapability(BaseModel):
     supports_voice_sample_upload: bool = False
 
 
+class AvatarBillingQuote(BaseModel):
+    """数字人成片的任务级预留报价，最终按供应商计费秒数结算。"""
+
+    price_per_minute_cny: float = Field(ge=0)
+    billing_unit_seconds: int = Field(default=1, ge=1)
+    reservation_seconds: int = Field(ge=1)
+    reservation_cost_cny: float = Field(ge=0)
+    reservation_credits: float = Field(ge=0)
+    settlement_note: str
+
+
 class AvatarProfile(BaseModel):
     """面向客户展示的数字人生成档位，而非底层模型名称。"""
 
@@ -618,6 +629,8 @@ class AvatarAsset(BaseModel):
     status: str = "ready"
     status_message: str | None = None
     source_type: str = "built_in"
+    # 只有公司服务器显式标记的已授权资产才可跨客户复用。
+    shared: bool = False
 
 
 class AvatarSubmitRequest(BaseModel):

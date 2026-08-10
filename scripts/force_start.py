@@ -27,12 +27,12 @@ if try_bind(port):
     print('Port is available, starting uvicorn...')
     os.environ['PYTHONPATH'] = PROJECT_ROOT
     os.chdir(BACKEND_DIR)
-    subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app', 
-                   '--host', '0.0.0.0', '--port', str(port)])
+    subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app',
+                   '--host', '127.0.0.1', '--port', str(port), '--no-proxy-headers'])
 else:
     print('Port still occupied. Trying to start on port 2001 anyway...')
     # The zombie socket might allow a new bind with SO_REUSEADDR
     os.environ['PYTHONPATH'] = PROJECT_ROOT
     os.chdir(BACKEND_DIR)
-    subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app', 
-                   '--host', '0.0.0.0', '--port', str(port)])
+    subprocess.run([sys.executable, '-m', 'uvicorn', 'app.main:app',
+                   '--host', '127.0.0.1', '--port', str(port), '--no-proxy-headers'])

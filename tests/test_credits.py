@@ -304,7 +304,9 @@ def test_transcription_cloud_task_blocked_when_insufficient(tmp_path) -> None:
     assert CreditsService(repository).get_balance() == Decimal("0")
 
 
-def test_video_editor_batch_debits_credits_on_confirmation(tmp_path) -> None:
+def test_video_editor_sandbox_is_free_and_live_batch_debits_on_confirmation(
+    tmp_path,
+) -> None:
     from src.adapters.video_editor_cloud import build_cloud_providers
     from src.services.video_editor_cloud import (
         CloudEditorConfiguration,
@@ -369,6 +371,29 @@ def test_video_editor_batch_debits_credits_on_confirmation(tmp_path) -> None:
         idempotency_key="credit-batch-1",
     )
     credits = CreditsService(repository)
+    assert credits.get_balance() == initial
+
+    # 用不联网的正式提供方替身保留真实计费边界覆盖；沙箱本身必须免费。
+    service.cloud_capabilities = lambda: {  # type: ignore[method-assign]
+        "provider_mode": "aliyun",
+        "provider_name": "live-billing-test-double",
+        "enabled": True,
+        "live_ready": True,
+        "missing_configuration": [],
+        "is_mock": False,
+    }
+    service._submit_cloud_analysis = lambda batch, _item: batch  # type: ignore[method-assign]
+    service.create_cloud_batch(
+        source_ids=[source_id],
+        target_platform="douyin",
+        output_profile="720p",
+        quote_id=quote["quote_id"],
+        billing_confirmation={
+            "confirmed": True,
+            "max_cost_cny": float(quote["estimated_max"]),
+        },
+        idempotency_key="credit-batch-live",
+    )
     assert credits.get_balance() < initial
     txns = credits.list_transactions()
     assert txns[0]["reason"] == "云端剪辑成片费用"
@@ -431,6 +456,15 @@ def test_video_editor_batch_blocked_when_insufficient_rolls_back_idempotency(
         output_profile="720p",
         target_platform="douyin",
     )
+    service.cloud_capabilities = lambda: {  # type: ignore[method-assign]
+        "provider_mode": "aliyun",
+        "provider_name": "live-billing-test-double",
+        "enabled": True,
+        "live_ready": True,
+        "missing_configuration": [],
+        "is_mock": False,
+    }
+    service._submit_cloud_analysis = lambda batch, _item: batch  # type: ignore[method-assign]
 
     with pytest.raises(VideoEditorWorkflowError, match="积分不足"):
         service.create_cloud_batch(
@@ -481,7 +515,8 @@ def test_avatar_submit_debits_credits() -> None:
                 enabled=True,
                 permission_status="authorized",
                 max_script_chars=240,
-                estimated_cost_cny=1.875,  # 2.5 元/分钟 × 45 秒
+                # 保留旧能力字段，验证提交计费不再沿用固定 45 秒报价。
+                estimated_cost_cny=1.875,
                 estimated_seconds=45,
             )
 
@@ -533,9 +568,10 @@ def test_avatar_submit_debits_credits() -> None:
         voice_name="音色",
     )
     credits = CreditsService(repository)
-    # 1.875 元 → 向上取整 1.88 积分
-    assert credits.get_balance() == initial - Decimal("1.88")
+    # 4 个非空白字符按 4 秒预留：2.5 × 4 / 60，向上取整为 0.17 积分。
+    assert credits.get_balance() == initial - Decimal("0.17")
     txns = credits.list_transactions()
+    assert Decimal(str(txns[0]["amount"])) == Decimal("-0.17")
     assert txns[0]["reason"] == "数字人视频生成费用"
     assert txns[0]["ref_type"] == "avatar"
     assert task.task_id
@@ -746,6 +782,30 @@ def test_copywriting_generate_blocked_when_insufficient() -> None:
     assert "积分不足" in (tasks[0].error_message or "")
 
 
+def test_centrally_billed_copywriting_never_uses_local_balance() -> None:
+    from src.adapters.llm import SandboxCopywritingEngine
+    from src.services.copywriting import CopywritingService
+    from src.services.credits import set_current_owner
+
+    class CentrallyBilledEngine(SandboxCopywritingEngine):
+        billing_centrally_managed = True
+        last_charged_credits = 0.08
+
+        def capabilities(self):
+            return {**super().capabilities(), "mode": "production"}
+
+    repository = MockRepository(candidates=[], tasks=[])
+    service = CopywritingService(repository, CentrallyBilledEngine())
+    set_current_owner("remote-customer")
+    initial = CreditsService(repository).get_balance()
+    try:
+        task = service.generate(content_brief="测试服务器统一计费")
+    finally:
+        set_current_owner("admin")
+    assert CreditsService(repository).get_balance("remote-customer") == initial
+    assert task.charged_credits == 0.08
+
+
 class _SourceStub:
     def repository(self):
         return None
@@ -760,26 +820,26 @@ class _TrendStub:
 
 
 # ---------------------------------------------------------------------------
-# 默认赠送：每个普通用户默认 400 积分（可通过 DEFAULT_CREDIT_BALANCE 调整）
+# 管理员默认积分（可通过 DEFAULT_CREDIT_BALANCE 调整）
 # ---------------------------------------------------------------------------
 
 
-def test_new_account_defaults_to_400(tmp_path) -> None:
-    """新积分账户默认余额 400，无需任何操作即可看到。"""
-    repository = SQLiteRepository(tmp_path / "default400.db")
+def test_new_admin_account_defaults_to_99999(tmp_path) -> None:
+    """新管理员积分账户默认余额 99999，无需任何操作即可看到。"""
+    repository = SQLiteRepository(tmp_path / "default99999.db")
     service = CreditsService(repository)
-    assert service.get_balance("admin") == Decimal("400")
+    assert service.get_balance("admin") == Decimal("99999")
 
 
 def test_first_adjust_opens_account_with_gift_transaction(tmp_path) -> None:
-    """首次充值/扣费时自动开户：余额 = 400 + 操作金额，流水含赠送记录。"""
+    """首次充值/扣费时自动开户：余额 = 99999 + 操作金额，流水含赠送记录。"""
     repository = SQLiteRepository(tmp_path / "gift.db")
     service = CreditsService(repository)
     balance = service.credit("10", "管理员充值", owner="admin")
-    assert balance == Decimal("410")
+    assert balance == Decimal("100009")
     txns = service.list_transactions("admin")
     assert len(txns) == 2
-    assert txns[1]["amount"] == "400"
+    assert txns[1]["amount"] == "99999"
     assert txns[1]["reason"] == "新用户默认赠送"
     assert txns[0]["amount"] == "10"
 
@@ -796,6 +856,6 @@ def test_default_balance_does_not_rewrite_existing_account(tmp_path) -> None:
     """已有账户（非赠送开户）余额不被默认值覆盖。"""
     repository = SQLiteRepository(tmp_path / "existing.db")
     service = CreditsService(repository)
-    service.credit("10", "管理员充值", owner="admin")  # 开户 + 充值 → 410
+    service.credit("10", "管理员充值", owner="admin")  # 开户 + 充值 → 100009
     reopened = CreditsService(SQLiteRepository(tmp_path / "existing.db"))
-    assert reopened.get_balance("admin") == Decimal("410")
+    assert reopened.get_balance("admin") == Decimal("100009")

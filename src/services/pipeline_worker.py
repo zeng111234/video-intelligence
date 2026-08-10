@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -47,6 +48,7 @@ class PipelineWorker:
         production_service=None,
         douyin_link_transcription_service=None,
         interval_seconds: float = 2.0,
+        can_process: Callable[[], bool] | None = None,
     ) -> None:
         self.repository = repository
         self.pipeline_service = pipeline_service
@@ -58,6 +60,7 @@ class PipelineWorker:
         self.production_service = production_service
         self.douyin_link_transcription_service = douyin_link_transcription_service
         self.interval_seconds = interval_seconds
+        self.can_process = can_process or (lambda: True)
         self._task: asyncio.Task | None = None
         # 该 worker 由依赖缓存复用，但 TestClient 和服务重启可能使用新的事件循环。
         # 因此事件对象必须在 start 时按当前循环创建，不能在构造函数中固定绑定。
@@ -93,6 +96,10 @@ class PipelineWorker:
                 pass
 
     def tick_once(self) -> None:
+        # 正式桌面端重启后，持久任务会早于客户重新登录被扫描。没有公司
+        # 会话时必须保持原状态，避免把可恢复任务误判失败或越过发布授权。
+        if not self.can_process():
+            return
         for run in self.repository.list_active_pipeline_runs():
             workflow = str(run.config.get("workflow") or "")
             try:

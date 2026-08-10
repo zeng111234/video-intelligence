@@ -13,7 +13,6 @@ import {
 } from "react-router-dom";
 
 import DashboardLayout from "./layouts/DashboardLayout";
-import DashboardPage from "./pages/DashboardPage";
 import CandidatesPage from "./pages/CandidatesPage";
 import PipelinePage from "./pages/PipelinePage";
 import ProductionPage from "./pages/ProductionPage";
@@ -59,7 +58,7 @@ function AppInner() {
   }
 
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter>
       <>
         <ErrorBoundary>
           <Routes>
@@ -67,9 +66,11 @@ function AppInner() {
             <Route element={<DashboardLayout />}>
               {/* 客户默认进入智能创作工作台 */}
               <Route path="/" element={<Navigate to="/pipeline" replace />} />
+              <Route path="/login" element={<Navigate to="/pipeline" replace />} />
 
               {/* 核心功能页面 - 保留现有页面 */}
-              <Route path="/dashboard" element={<DashboardPage />} />
+              {/* 旧数据概览已并入任务队列；保留收藏地址但不再请求失效接口。 */}
+              <Route path="/dashboard" element={<Navigate to="/production" replace />} />
               <Route path="/studio" element={<StudioPage />} />
               <Route path="/candidates" element={<CandidatesPage />} />
               <Route path="/pipeline" element={<PipelinePage />} />

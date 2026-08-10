@@ -293,8 +293,8 @@ function AdminAccountsCard() {
   }, [fetchAccounts]);
 
   const submitCreate = async () => {
-    if (!username.trim() || password.length < 6) {
-      toast.error("请填写账号（至少 6 位密码）");
+    if (!username.trim() || password.length < 12) {
+      toast.error("请填写账号（至少 12 位密码）");
       return;
     }
     setCreating(true);
@@ -312,7 +312,10 @@ function AdminAccountsCard() {
   };
 
   const submitReset = async () => {
-    if (!resetTarget || resetPassword.length < 6) return;
+    if (!resetTarget || resetPassword.length < 12) {
+      toast.error("新密码至少需要 12 位");
+      return;
+    }
     setResetting(true);
     try {
       await resetAdminPassword(resetTarget.username, resetPassword);
@@ -342,7 +345,7 @@ function AdminAccountsCard() {
       }
     >
       <Text type="secondary" className="admin-section-intro">
-        可创建多个管理员账号；新密码至少 6 位。
+        可创建多个管理员账号；新密码至少 12 位。
       </Text>
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
         <Space.Compact style={{ width: "100%" }}>
@@ -353,7 +356,7 @@ function AdminAccountsCard() {
             style={{ maxWidth: 220 }}
           />
           <Input.Password
-            placeholder="密码（至少 6 位）"
+            placeholder="密码（至少 12 位）"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             style={{ maxWidth: 220 }}
@@ -399,7 +402,7 @@ function AdminAccountsCard() {
         }}
       >
         <Input.Password
-          placeholder="新密码（至少 6 位）"
+          placeholder="新密码（至少 12 位）"
           value={resetPassword}
           onChange={(event) => setResetPassword(event.target.value)}
           autoFocus

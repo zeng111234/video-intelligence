@@ -85,6 +85,51 @@ def test_workspace_exposes_one_item_batch_actions_and_create_idempotency(
     assert paused_workspace.json()["allowed_actions"] == ["resume"]
 
 
+def test_batch_accepts_all_400_candidates_from_four_full_platform_results(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    production_service = ProductionService(repository, tmp_path / "production")
+    app.dependency_overrides[backend_deps.get_production_service] = (
+        lambda: production_service
+    )
+    app.dependency_overrides[backend_deps.get_pipeline_service] = (
+        lambda: pipeline_service
+    )
+    try:
+        with TestClient(app) as client:
+            profile = client.post(
+                "/api/v1/production/profiles",
+                json={"name": "全量自动创作配方"},
+            ).json()
+            response = client.post(
+                "/api/v1/production/batches",
+                headers={"Idempotency-Key": "workspace-full-result-set"},
+                json={
+                    "name": "400 条自动创作",
+                    "profile_id": profile["profile_id"],
+                    "items": [
+                        {
+                            "source_type": "script",
+                            "source_value": f"第 {index} 条已确认口播稿。",
+                        }
+                        for index in range(400)
+                    ],
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(
+            backend_deps.get_production_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_pipeline_service,
+            None,
+        )
+
+    assert response.status_code == 201, response.text
+    assert len(response.json()["items"]) == 400
+
+
 def test_workspace_configuration_is_saved_once_and_reused_for_preflight(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)

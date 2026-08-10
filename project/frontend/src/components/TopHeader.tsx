@@ -860,7 +860,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             className="profile-action-item"
             onClick={() => {
               setProfileOpen(false);
-              navigate("/materials");
+              navigate("/candidates");
             }}
           >
             <div className="profile-action-icon">📁</div>

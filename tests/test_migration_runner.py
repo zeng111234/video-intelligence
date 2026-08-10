@@ -249,7 +249,7 @@ class TestUpgrade:
         conn.commit()
         conn.close()
 
-        assert runner.upgrade() == 6
+        assert runner.upgrade() == 10
 
         conn = sqlite3.connect(str(runner._database_path))
         quarantined = conn.execute(
@@ -299,7 +299,7 @@ class TestUpgrade:
         conn.commit()
         conn.close()
 
-        assert runner.upgrade() == 6
+        assert runner.upgrade() == 10
 
         conn = sqlite3.connect(str(runner._database_path))
         warning = conn.execute(

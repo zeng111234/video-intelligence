@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from threading import Event
+from time import sleep
 from types import SimpleNamespace
 
 import pytest
 
+from src.adapters.video_editor_cloud import CloudProviderError
 from src.models import TaskStatus
 from src.repositories import MockRepository
 from src.services.cloud_transcription import (
@@ -137,6 +141,54 @@ def test_cloud_task_uses_one_provider_submission_and_never_loads_local_model(
     assert not Path(completed.outputs["source_media_path"]).exists()
 
 
+def test_same_cloud_task_is_processed_once_when_worker_and_request_race(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime()
+    upload_started = Event()
+    allow_upload = Event()
+    original_upload = runtime.upload
+
+    def blocking_upload(*args, **kwargs):
+        upload_started.set()
+        assert allow_upload.wait(timeout=2)
+        return original_upload(*args, **kwargs)
+
+    runtime.upload = blocking_upload
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(service.process_cloud_task, queued.task_id)
+        assert upload_started.wait(timeout=2)
+        second = executor.submit(service.process_cloud_task, queued.task_id)
+        sleep(0.05)
+        assert not second.done()
+        allow_upload.set()
+        results = [first.result(timeout=2), second.result(timeout=2)]
+
+    assert [item.status for item in results] == [
+        TaskStatus.SUCCEEDED,
+        TaskStatus.SUCCEEDED,
+    ]
+    assert runtime.submissions == 1
+
+
 def test_cloud_task_only_marks_explicit_low_confidence_segments(tmp_path: Path) -> None:
     repository = MockRepository(candidates=[], tasks=[])
     runtime = FakeCloudRuntime(confidence=0.62)
@@ -164,6 +216,105 @@ def test_cloud_task_only_marks_explicit_low_confidence_segments(tmp_path: Path) 
     assert completed.segments[0].confidence == 0.62
     assert completed.segments[0].needs_review is True
     assert completed.segments[0].quality_status == "pending"
+
+
+def test_cloud_low_confidence_segments_are_ai_reviewed_before_user_confirmation(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime(confidence=0.62)
+    seen: dict[str, object] = {}
+
+    def batch_reviewer(**kwargs):
+        seen.update(kwargs)
+        return {
+            "corrections": [
+                {
+                    "index": 0,
+                    "corrected_text": "公司云端识别的结果。",
+                    "note": "已修正断句。",
+                    "requires_human_review": False,
+                }
+            ]
+        }
+
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        transcript_batch_reviewer=batch_reviewer,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    completed = service.process_cloud_task(queued.task_id)
+
+    assert completed.stage == "AI 校对完成"
+    assert completed.auto_reviewed is True
+    assert completed.llm_review_count == 1
+    assert completed.uncertain_segment_count == 0
+    assert completed.segments[0].text == "公司云端识别的结果。"
+    assert completed.segments[0].needs_review is False
+    assert completed.segments[0].quality_status == "llm_rewritten"
+    assert completed.segments[0].alternatives == ["公司云端识别结果。"]
+    assert seen["segments"][0]["needs_review"] is True
+
+
+def test_cloud_ai_review_keeps_changed_amount_for_human_confirmation(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime(confidence=0.62)
+    runtime.fetch_result = lambda _snapshot: CloudTranscript(
+        provider_name="aliyun_fun_asr",
+        transcript="优惠9块。",
+        segments=[TranscriptSegment(start=0, end=1.2, text="优惠9块。", confidence=0.62)],
+        duration_seconds=8.5,
+        language="zh",
+    )
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        transcript_batch_reviewer=lambda **_kwargs: {
+            "corrections": [
+                {
+                    "index": 0,
+                    "corrected_text": "优惠90块。",
+                    "note": "按上下文修正。",
+                    "requires_human_review": False,
+                }
+            ]
+        },
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    completed = service.process_cloud_task(queued.task_id)
+
+    assert completed.segments[0].text == "优惠9块。"
+    assert completed.segments[0].needs_review is True
+    assert completed.segments[0].quality_status == "uncertain"
+    assert completed.uncertain_segment_count == 1
+    assert "已保留原文" in (completed.segments[0].quality_note or "")
 
 
 def test_cloud_task_with_provider_job_id_only_queries_existing_job(
@@ -198,6 +349,93 @@ def test_cloud_task_with_provider_job_id_only_queries_existing_job(
 
     completed = service.process_cloud_task(queued.task_id)
     assert completed.status == TaskStatus.SUCCEEDED
+    assert runtime.submissions == 0
+
+
+def test_cloud_task_explains_when_provider_finds_no_spoken_words(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime()
+
+    def fail_without_words(_asset, *, language: str) -> ProviderJobSnapshot:
+        assert language == "zh"
+        return ProviderJobSnapshot(
+            provider_name="aliyun_fun_asr",
+            provider_job_id="aliyun-no-words",
+            provider_stage="transcription_failed",
+            status=ProviderJobStatus.FAILED,
+            detail={"code": "ASR_RESPONSE_HAVE_NO_WORDS"},
+        )
+
+    runtime.submit = fail_without_words
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    with pytest.raises(TranscriptionError, match="没有识别到人声"):
+        service.process_cloud_task(queued.task_id)
+
+    failed = repository.get_task(queued.task_id)
+    assert failed is not None
+    assert "没有识别到人声" in (failed.error_message or "")
+
+
+def test_cloud_task_upload_failure_is_retryable_before_provider_submission(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime()
+
+    def fail_upload(*_args, **_kwargs):
+        raise CloudProviderError(
+            "OSS 上传连接失败，结果未确认。",
+            kind="connection",
+            outcome_unknown=True,
+        )
+
+    runtime.upload = fail_upload
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    with pytest.raises(TranscriptionError):
+        service.process_cloud_task(queued.task_id)
+
+    failed = repository.get_task(queued.task_id)
+    assert failed is not None
+    assert failed.status == TaskStatus.FAILED
+    assert failed.provider_status == "failed"
+    assert failed.provider_job_id is None
+    assert failed.stage == "素材上传失败"
+    assert "尚未创建云端识别任务" in (failed.error_message or "")
+    assert Path(failed.outputs["source_media_path"]).is_file()
     assert runtime.submissions == 0
 
 

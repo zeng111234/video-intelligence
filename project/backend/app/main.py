@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 import sys
 from pathlib import Path
 
@@ -27,9 +28,17 @@ from project.backend.app.core.security import (  # noqa: E402
     verify_auth_token,
 )
 from src.services.credits import set_current_owner  # noqa: E402
+from project.backend.app.services.control_plane_client import (  # noqa: E402
+    active_upstream_customer_subject,
+    control_plane_enabled,
+    proxy_control_plane_request,
+    should_proxy_to_control_plane,
+)
+from project.backend.app.core.desktop_owner import desktop_owner_matches  # noqa: E402
 
 from project.backend.app.api.v1.auth import router as auth_router  # noqa: E402
 from project.backend.app.api.v1.customer_admin import router as customer_admin_router  # noqa: E402
+from project.backend.app.api.v1.desktop_server_status import router as desktop_server_status_router  # noqa: E402
 from project.backend.app.api.v1.candidates import router as candidates_router  # noqa: E402
 from project.backend.app.api.v1.transcriptions import router as transcriptions_router  # noqa: E402
 from project.backend.app.api.v1.pipelines import router as pipelines_router  # noqa: E402
@@ -58,6 +67,33 @@ _IS_PRODUCTION = os.getenv("APP_ENV", "development").lower() == "production"
 _ENABLE_DOCS = os.getenv("ENABLE_DOCS", "false" if _IS_PRODUCTION else "true").lower() == "true"
 
 logger = logging.getLogger(__name__)
+
+
+def _desktop_demo_mode() -> bool:
+    """Whether this process is an isolated desktop customer workspace.
+
+    A desktop workspace keeps its business data on that customer's computer.
+    Authentication and commercial authority may still live in the company
+    control plane.  Normal/server deployments remain deny-by-default until
+    every business record carries a tenant owner.
+    """
+
+    return any(
+        os.getenv(name, "").strip().casefold() in {"1", "true", "yes", "on"}
+        for name in ("VIDEOINSIGHT_DESKTOP_CLIENT", "VIDEOINSIGHT_DESKTOP_DEMO")
+    )
+
+
+def _desktop_worker_authorized(request: Request) -> bool:
+    if not _desktop_demo_mode() or not request.url.path.startswith(
+        "/api/v1/crawler/doubao-"
+    ):
+        return False
+    if not request.client or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+        return False
+    expected = os.getenv("VIDEOINSIGHT_WORKER_TOKEN", "").strip()
+    provided = request.headers.get("X-Desktop-Worker-Token", "").strip()
+    return bool(expected and provided and secrets.compare_digest(expected, provided))
 
 
 # ---------------------------------------------------------------------------
@@ -153,11 +189,24 @@ app.add_middleware(
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """API认证中间件：客户 token / 管理员 token / API Key（兼容）三选一。"""
+    if should_proxy_to_control_plane(request.url.path):
+        return await proxy_control_plane_request(request)
     # 公开端点
-    public_paths = {"/", "/health", "/docs", "/redoc", "/openapi.json"}
+    public_paths = {
+        "/",
+        "/health",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        # 固定的开源字体不含客户数据；CSS @font-face 无法添加登录请求头。
+        "/api/v1/video-editor/brand-title-font",
+    }
     # 媒体流端点的 <video>/<audio> 标签无法附加自定义 header，单独接受
-    # 管理员登录时写入的 HttpOnly Cookie；客户资源尚未具有 owner 字段，暂不开放。
-    is_media_stream = request.url.path.endswith("/media") or request.url.path.endswith("/download")
+    # 登录时写入的 HttpOnly Cookie；客户仅可读取当前电脑已绑定的本地工作区。
+    is_media_stream = (
+        request.url.path.endswith("/media")
+        or request.url.path.endswith("/download")
+    )
     if request.url.path in public_paths:
         return await call_next(request)
 
@@ -170,20 +219,37 @@ async def auth_middleware(request: Request, call_next):
         if is_media_stream:
             media_token = (
                 request.headers.get("X-Admin-Token")
+                or request.headers.get("X-Customer-Token")
                 or request.cookies.get("vi_admin_media_token")
+                or request.cookies.get("vi_customer_media_token")
             )
             record = verify_auth_token(media_token) if media_token else None
-            if not record or record["role"] != "admin":
+            connected_customer = bool(
+                record
+                and record["role"] == "customer"
+                and control_plane_enabled()
+                and desktop_owner_matches(str(record["subject"]))
+            )
+            allowed_roles = (
+                {"admin", "customer"}
+                if _desktop_demo_mode() or connected_customer
+                else {"admin"}
+            )
+            if not record or record["role"] not in allowed_roles:
                 return JSONResponse(
                     status_code=401,
                     content={
                         "error": True,
                         "code": 401,
-                        "message": "媒体预览需要管理员登录；客户工作区正在升级资源隔离。",
+                        "message": "请先登录这台电脑已绑定的客户账号，再预览本机素材。",
                     },
                 )
-            request.state.admin_username = record["subject"]
-            set_current_owner("admin")
+            if record["role"] == "admin":
+                request.state.admin_username = record["subject"]
+                set_current_owner("admin")
+            else:
+                request.state.customer_code = record["subject"]
+                set_current_owner(record["subject"])
             return await call_next(request)
         # 登录接口本身公开（客户/管理员登录、健康检查）
         if request.url.path.startswith("/api/v1/auth/"):
@@ -193,6 +259,23 @@ async def auth_middleware(request: Request, call_next):
                 return JSONResponse(status_code=e.status_code, content=e.detail)
             return await call_next(request)
         try:
+            if _desktop_worker_authorized(request):
+                if control_plane_enabled():
+                    worker_owner = active_upstream_customer_subject()
+                    if not worker_owner or not desktop_owner_matches(worker_owner):
+                        return JSONResponse(
+                            status_code=401,
+                            content={
+                                "message": "请先登录已绑定的客户账号，再继续本机任务。"
+                            },
+                        )
+                else:
+                    worker_owner = (
+                        os.getenv("VIDEOINSIGHT_DEMO_OWNER", "DEMO-0815").strip()
+                        or "DEMO-0815"
+                    )
+                set_current_owner(worker_owner)
+                return await call_next(request)
             # 1) 客户登录 token（普通用户身份）
             customer_token = request.headers.get("X-Customer-Token")
             if customer_token:
@@ -203,7 +286,20 @@ async def auth_middleware(request: Request, call_next):
                         "/api/v1/credits/recharge-request",
                         "/api/v1/credits/recharge-requests/mine",
                     }
-                    if request.url.path not in customer_safe_paths:
+                    is_desktop_business_path = (
+                        (
+                            _desktop_demo_mode()
+                            or (
+                                control_plane_enabled()
+                                and desktop_owner_matches(str(record["subject"]))
+                            )
+                        )
+                        and not request.url.path.startswith("/api/v1/admin")
+                    )
+                    if (
+                        request.url.path not in customer_safe_paths
+                        and not is_desktop_business_path
+                    ):
                         return JSONResponse(
                             status_code=403,
                             content={
@@ -234,7 +330,9 @@ async def auth_middleware(request: Request, call_next):
             # 3) 兼容旧 API Key（脚本/测试通道）
             await verify_api_key(request)
             await check_rate_limit(request)
-            set_current_owner("api_key")
+            # API Key 是历史管理员/自动化兼容通道，沿用管理员积分账户；
+            # 否则旧脚本会落入一个未开立、余额恒为 0 的幽灵账户。
+            set_current_owner("admin")
         except HTTPException as e:
             return JSONResponse(
                 status_code=e.status_code,
@@ -309,7 +407,11 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "service": "videoinsight-desktop-api",
+        "desktop_protocol": "2",
+    }
 
 
 @app.get("/api-key-info", include_in_schema=False)
@@ -416,6 +518,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 # 注册路由
 app.include_router(auth_router)
 app.include_router(customer_admin_router)
+app.include_router(desktop_server_status_router)
 app.include_router(candidates_router)
 app.include_router(transcriptions_router)
 app.include_router(pipelines_router)

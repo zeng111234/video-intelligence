@@ -790,6 +790,22 @@ def test_publish_worker_executes_xiaohongshu_preparation_instead_of_forcing_a_ma
     assert service.executed == ["xhs-queued"]
 
 
+def test_publish_worker_does_not_claim_queue_without_active_owner_session():
+    class FakePublishService:
+        def __init__(self) -> None:
+            self.listed = False
+
+        def list_tasks(self):
+            self.listed = True
+            return []
+
+    service = FakePublishService()
+    worker = PublishWorker(service, can_process=lambda: False)
+
+    assert worker.tick_once() is None
+    assert service.listed is False
+
+
 def test_publish_worker_claims_only_one_queued_task(tmp_path):
     repo = MockRepository()
     service = PublishService(

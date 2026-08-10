@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -272,6 +273,64 @@ def test_sqlite_restores_quotes_operations_jobs_and_batch(tmp_path: Path):
     assert restored.get_batch(created["batch_id"])["batch_id"] == created["batch_id"]
 
 
+def test_desktop_remote_editor_uses_server_billing_not_local_balance(tmp_path: Path):
+    class _RemoteProviders:
+        billing_centrally_managed = True
+
+        def __init__(self) -> None:
+            self.authorized_batches: list[str] = []
+
+        @staticmethod
+        def capability():
+            return {
+                "provider_mode": "aliyun",
+                "provider_name": "company_cloud_video_editor",
+                "enabled": True,
+                "live_ready": True,
+                "missing_configuration": [],
+                "is_mock": False,
+            }
+
+        def authorize_cost(self, *, batch_id, quote_payload, max_cost_cny):
+            assert quote_payload["estimated_total"]
+            assert Decimal(max_cost_cny) >= Decimal(quote_payload["estimated_max"])
+            self.authorized_batches.append(batch_id)
+            return {"charged_credits": "0.05"}
+
+    repository = SQLiteRepository(tmp_path / "remote-editor.db")
+    configuration = CloudEditorConfiguration(
+        provider_mode=CloudProviderMode.ALIYUN,
+        workspace_id="company-control-plane",
+        dashscope_api_key="remote",
+        oss_bucket="company-control-plane",
+        access_key_id="remote",
+        access_key_secret="remote",
+        mps_pipeline_id="remote",
+        mps_template_id_720p="remote",
+        mps_template_id_1080p="remote",
+    )
+    providers = _RemoteProviders()
+    service = VideoEditorWorkflowService(
+        repository,
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+        cloud_configuration=configuration,
+        cloud_providers=providers,
+    )
+    service._probe_media = lambda _path: {"duration_seconds": 60.0}  # type: ignore[method-assign]
+    service._submit_cloud_analysis = lambda batch, _item: batch  # type: ignore[method-assign]
+    source_id = _source(service)
+    quote = _quote(service, source_id)
+    local_balance_before = repository.get_credit_balance()
+
+    created = _create(service, source_id, quote, key="remote-billing")
+
+    assert providers.authorized_batches == [created["batch_id"]]
+    assert repository.get_credit_balance() == local_balance_before
+    assert created["billing_confirmation"]["authority"] == "company_control_plane"
+
+
 def test_real_cloud_confirmation_materializes_publish_handoff(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -347,6 +406,50 @@ def test_real_cloud_confirmation_materializes_publish_handoff(
     assert task is not None
     assert task.is_mock is False
     assert Path(task.result_path).is_file()
+
+
+def test_remote_desktop_can_request_owned_output_without_private_bucket(
+    tmp_path: Path,
+):
+    configuration = CloudEditorConfiguration(
+        provider_mode=CloudProviderMode.ALIYUN,
+        # The desktop runtime only carries a non-secret placeholder.  The
+        # control plane knows and validates the real private bucket.
+        oss_bucket="company-control-plane",
+    )
+    service = _service(tmp_path)
+    requested: list[tuple[str, int]] = []
+
+    class _RemoteObjectStore:
+        validates_output_ownership_remotely = True
+
+        @staticmethod
+        def presign_get_url(object_key: str, *, expires_seconds: int = 3600) -> str:
+            requested.append((object_key, expires_seconds))
+            return "https://private-bucket.oss-cn-beijing.aliyuncs.com/output.mp4"
+
+    service._cloud_configuration_override = configuration
+    service._cloud_providers_override = SimpleNamespace(
+        object_store=_RemoteObjectStore()
+    )
+    item = VideoEditorBatchItem(
+        source_id="source-1",
+        provider_payload={
+            "output_uri": (
+                "oss://private-bucket/"
+                "video-editor-output/edit-batch-owned/output/720p.mp4"
+            )
+        }
+    )
+
+    preview_url = service._cloud_preview_url(item)
+
+    assert preview_url == (
+        "https://private-bucket.oss-cn-beijing.aliyuncs.com/output.mp4"
+    )
+    assert requested == [
+        ("video-editor-output/edit-batch-owned/output/720p.mp4", 3600)
+    ]
 
 
 def test_real_cloud_output_can_download_before_publish_confirmation(tmp_path: Path):

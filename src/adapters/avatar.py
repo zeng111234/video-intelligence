@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -459,6 +460,15 @@ class SandboxAvatarProvider:
             raise AvatarProviderError(
                 "数字人任务不存在。", kind=ProviderErrorKind.VALIDATION
             )
+        if snapshot.status == AvatarProviderStatus.RUNNING:
+            snapshot = snapshot.model_copy(
+                update={
+                    "status": AvatarProviderStatus.SUCCEEDED,
+                    "progress": 100,
+                    "stage": "演示已完成；未调用真实服务，也未生成真实成片",
+                }
+            )
+            self.jobs[job_id] = snapshot
         return snapshot
 
     def find_job(self, idempotency_key: str) -> AvatarJobSnapshot | None:
@@ -1344,8 +1354,11 @@ class ShuyingLegacyAvatarProvider:
             Path("data") / "avatar_assets" / "shuying_cloud.json"
         )
         manifest_path = Path(raw_manifest_path)
+        runtime_root = Path(
+            os.getenv("VIDEOINSIGHT_RUNTIME_ROOT", str(PROJECT_ROOT))
+        ).expanduser()
         self.assets_manifest_path = (
-            manifest_path if manifest_path.is_absolute() else PROJECT_ROOT / manifest_path
+            manifest_path if manifest_path.is_absolute() else runtime_root / manifest_path
         ).resolve()
         explicit_model_upload_url = model_upload_url.strip()
         self.model_upload_url = (
@@ -1444,9 +1457,31 @@ class ShuyingLegacyAvatarProvider:
                     status=str(item.get("status") or "ready"),
                     status_message=str(item.get("status_message") or "").strip() or None,
                     source_type=str(item.get("source_type") or "built_in"),
+                    shared=bool(item.get("shared", False)),
                 )
             )
         return assets
+
+    def _manifest_assets(self) -> list[AvatarAsset]:
+        assets: list[AvatarAsset] = []
+        for record in self._load_custom_assets():
+            try:
+                assets.append(AvatarAsset.model_validate(record))
+            except ValueError:
+                continue
+        return assets
+
+    def _has_usable_asset(self, kind: AvatarAssetKind) -> bool:
+        return any(
+            item.kind == kind and item.authorized and item.status == "ready"
+            for item in [*self.avatars, *self.voices, *self._manifest_assets()]
+        )
+
+    def is_shared_asset(self, asset_id: str) -> bool:
+        return any(
+            item.asset_id == asset_id and item.authorized and item.shared
+            for item in self._manifest_assets()
+        )
 
     def _missing_configuration(self) -> list[str]:
         missing = []
@@ -1458,9 +1493,9 @@ class ShuyingLegacyAvatarProvider:
             missing.append("SHUYING_AVATAR_BASE_URL(必须为HTTPS)")
         if not self.api_code:
             missing.append("SHUYING_AVATAR_API_CODE")
-        if not any(item.authorized for item in self.avatars):
+        if not self._has_usable_asset(AvatarAssetKind.AVATAR):
             missing.append("SHUYING_AVATAR_AVATARS_JSON")
-        if not any(item.authorized for item in self.voices):
+        if not self._has_usable_asset(AvatarAssetKind.VOICE):
             missing.append("SHUYING_AVATAR_VOICES_JSON")
         if self.audio_mode not in {"gateway_voice", "edge_tts_upload"}:
             missing.append("SHUYING_AVATAR_AUDIO_MODE")
@@ -1731,10 +1766,16 @@ class ShuyingLegacyAvatarProvider:
 
     def _can_clone_voice(self) -> bool:
         return bool(
-            self.voice_base_url
-            and self.api_code
+            self._can_use_cloned_voice()
             and self.audio_upload_url
             and self.audio_allowed_hosts
+        )
+
+    def _can_use_cloned_voice(self) -> bool:
+        """Existing paid clone IDs need the voice gateway, not a new upload route."""
+        return bool(
+            self.voice_base_url
+            and self.api_code
             and self._is_safe_https_url(self.voice_base_url)
         )
 
@@ -1879,7 +1920,7 @@ class ShuyingLegacyAvatarProvider:
                     "preview_type": "image" if data.get("coverUrl") else "video",
                 }
             )
-        if asset.kind == AvatarAssetKind.VOICE and self._can_clone_voice():
+        if asset.kind == AvatarAssetKind.VOICE and self._can_use_cloned_voice():
             response = self._voice_form_request(
                 "/voice_clone_status_2",
                 {"speaker_id": provider_id, "type": 2},
@@ -2093,8 +2134,8 @@ class ShuyingLegacyAvatarProvider:
         self,
         request: AvatarSubmitRequest,
     ) -> tuple[str, str | None]:
-        if not self._can_clone_voice():
-            raise AvatarProviderError("声音克隆所需的上传配置未就绪。")
+        if not self._can_use_cloned_voice():
+            raise AvatarProviderError("已训练声音的合成线路尚未配置完成。")
         provider_id = request.voice_id.removeprefix("shuying-voice-")
         response = self._voice_form_request(
             "/voice_2",
@@ -2261,6 +2302,10 @@ class ShuyingLegacyAvatarProvider:
             provider_status = 0
         video_url = str(data.get("videoUrl") or "").strip()
         idempotency_key = self.job_idempotency.get(job_id, "")
+        duration_ms = self._optional_positive_int(data.get("duration"))
+        settled_seconds = (
+            max(1, math.ceil(duration_ms / 1000)) if duration_ms is not None else None
+        )
 
         if provider_status == 3 and video_url:
             self.result_urls[job_id] = video_url
@@ -2272,7 +2317,7 @@ class ShuyingLegacyAvatarProvider:
                 stage="公司云端生成成功",
                 provider_job_id=job_id,
                 estimated_cost_cny=self.estimated_cost_cny,
-                estimated_seconds=self.estimated_seconds,
+                estimated_seconds=settled_seconds,
                 result_mime="video/mp4",
                 result_size_bytes=self._optional_positive_int(data.get("videoSize")),
             )

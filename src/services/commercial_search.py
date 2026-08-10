@@ -43,12 +43,22 @@ MONTHLY_HARD_LIMIT_COST_CNY = 10.0
 def _monthly_cost_limit_cny() -> float:
     """供应商侧月度预算保护，不属于客户收费项目。"""
     return MONTHLY_HARD_LIMIT_COST_CNY
+
+
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
 # 规则版本同时是公共搜索缓存键的一部分。升级为“标题/话题直接命中”后，
 # 旧的宽召回结果不能继续作为本次搜索结果复用。
 RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v3"
+_NON_CACHEABLE_PUBLIC_SEARCH_CODES = frozenset(
+    {
+        "public_search_multi_column_unavailable",
+        "public_search_multi_column_unconfirmed",
+        "public_search_time_filter_unavailable",
+        "public_search_time_filter_unconfirmed",
+    }
+)
 _BUSINESS_INTENT_SUFFIXES = (
     "获客",
     "引流",
@@ -85,7 +95,9 @@ def normalized_keyword_text(value: str) -> str:
     )
 
 
-def title_matches_keyword(*, title: str, keyword: str, require_intent: bool = True) -> bool:
+def title_matches_keyword(
+    *, title: str, keyword: str, require_intent: bool = True
+) -> bool:
     """Match only the provider title/description text (including inline hashtags).
 
     ``require_intent=True``(默认)要求标题同时含关键词词根与业务意图词
@@ -108,22 +120,25 @@ def title_matches_keyword(*, title: str, keyword: str, require_intent: bool = Tr
             and (
                 not require_intent
                 or any(
-                    intent in normalized_title
-                    for intent in _BUSINESS_INTENT_SUFFIXES
+                    intent in normalized_title for intent in _BUSINESS_INTENT_SUFFIXES
                 )
             )
         )
     return False
 
 
-def item_matches_keyword(*, title: str, keyword: str, evidence: str | None = None) -> bool:
+def item_matches_keyword(
+    *, title: str, keyword: str, evidence: str | None = None
+) -> bool:
     """Accept an exact Hotspot topic match when a video title omits the topic.
 
     Topic-detail cards belong to an exact topic selected from the visible topic
     board.  Their titles can be intentionally short, so title-only filtering
     would discard valid candidates such as a video inside “餐饮获客”.
     """
-    return title_matches_keyword(title=title, keyword=keyword) or "严格话题=1" in (evidence or "")
+    return title_matches_keyword(title=title, keyword=keyword) or "严格话题=1" in (
+        evidence or ""
+    )
 
 
 def keyword_match_reason(keyword: str) -> str:
@@ -166,9 +181,7 @@ class CommercialSearchService:
         # without silently adding it to every legacy/sandbox batch.
         adapter_platforms = set(provider.capabilities().supported_platforms)
         unsupported = (
-            set(self.active_platforms)
-            - set(SUPPORTED_PLATFORMS)
-            - adapter_platforms
+            set(self.active_platforms) - set(SUPPORTED_PLATFORMS) - adapter_platforms
         )
         if unsupported:
             names = "、".join(sorted(item.value for item in unsupported))
@@ -308,7 +321,9 @@ class CommercialSearchService:
             tracking_authorized=bool(tracking_parent_batch_id),
             tracking_parent_batch_id=tracking_parent_batch_id,
             monitoring_policy=(
-                "adaptive_three_sample_v1" if schedule_recrawls else "manual_tracking_v1"
+                "adaptive_three_sample_v1"
+                if schedule_recrawls
+                else "manual_tracking_v1"
             ),
             sampling_offsets_hours=(
                 [0, ADAPTIVE_FIRST_RECRAWL_HOURS] if schedule_recrawls else [0]
@@ -367,7 +382,9 @@ class CommercialSearchService:
         self.repository.save_search_batch(batch)
         return batch
 
-    def start_batch_tracking(self, batch_id: str) -> tuple[SearchBatch, int, datetime | None]:
+    def start_batch_tracking(
+        self, batch_id: str
+    ) -> tuple[SearchBatch, int, datetime | None]:
         """Authorize exactly the next two real snapshots for a completed batch.
 
         The first search never creates a billable follow-up on its own.  This
@@ -379,7 +396,9 @@ class CommercialSearchService:
         if batch.status not in {SearchBatchStatus.SUCCEEDED, SearchBatchStatus.PARTIAL}:
             raise ValueError("仅成功或部分成功的批次可以开启走势追踪。")
         if batch.provider == "douyin_local_browser":
-            raise ValueError("热点宝近7天五榜为单次新增播放量排序，不支持复爬走势追踪。")
+            raise ValueError(
+                "热点宝近7天五榜为单次新增播放量排序，不支持复爬走势追踪。"
+            )
         now = self.clock()
         candidates = []
         for run_id in batch.platform_run_ids:
@@ -414,7 +433,9 @@ class CommercialSearchService:
                 checkpoint_id=f"sample-{hashlib.sha256(f'{batch.batch_id}|{candidate.video_id}|{due_at.isoformat()}'.encode()).hexdigest()[:12]}",
                 keyword=batch.keyword.casefold(),
                 candidate_id=candidate.video_id,
-                request_id=batch.platform_run_ids[0] if batch.platform_run_ids else batch.batch_id,
+                request_id=batch.platform_run_ids[0]
+                if batch.platform_run_ids
+                else batch.batch_id,
                 platform=candidate.platform,
                 provider_name=batch.provider,
                 published_window_days=batch.published_window_days,
@@ -457,7 +478,9 @@ class CommercialSearchService:
     ) -> list[SearchBatch]:
         capability = self.provider.capabilities()
         now = self.clock()
-        grouped: dict[tuple[str, Platform, str, int, str | None], list[SamplingCheckpoint]] = {}
+        grouped: dict[
+            tuple[str, Platform, str, int, str | None], list[SamplingCheckpoint]
+        ] = {}
         for checkpoint in self.repository.list_sampling_checkpoints():
             if checkpoint.status != SamplingStatus.PENDING:
                 continue
@@ -488,9 +511,13 @@ class CommercialSearchService:
             grouped.items(),
             key=lambda item: min(checkpoint.due_at for checkpoint in item[1]),
         )
-        for (keyword, _platform, _provider_name, window_days, tracking_batch_id), _checkpoints in ordered_groups[
-            : max(1, max_groups)
-        ]:
+        for (
+            keyword,
+            _platform,
+            _provider_name,
+            window_days,
+            tracking_batch_id,
+        ), _checkpoints in ordered_groups[: max(1, max_groups)]:
             batches.append(
                 self.execute(
                     keyword=keyword,
@@ -735,13 +762,17 @@ class CommercialSearchService:
                 invalid_count=validation_counts["invalid_count"],
                 irrelevant_count=validation_counts["irrelevant_count"],
                 duration_filtered_count=validation_counts["duration_filtered_count"],
-                incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
+                incremental_play_filtered_count=validation_counts[
+                    "incremental_play_filtered_count"
+                ],
                 low_incremental_items=page.low_incremental_items,
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 exhausted=not page.has_more,
                 # 热点宝五榜是“筛选后的榜单”，结果少于上限并不等同于供应商缺页。
-                partial=bool(provider_errors) or (
-                    capability.provider_name != "douyin_local_browser" and len(normalized) < count
+                partial=bool(provider_errors)
+                or (
+                    capability.provider_name != "douyin_local_browser"
+                    and len(normalized) < count
                 ),
                 permission_status=capability.permission_status,
                 publish_time=published_window_days,
@@ -776,7 +807,8 @@ class CommercialSearchService:
             )
             trends = (
                 []
-                if capability.provider_name == "douyin_local_browser" and not schedule_recrawls
+                if capability.provider_name == "douyin_local_browser"
+                and not schedule_recrawls
                 else self.trend_service.recompute(
                     keyword,
                     platform=platform,
@@ -815,7 +847,9 @@ class CommercialSearchService:
                 duplicate_count=validation_counts["duplicate_count"],
                 irrelevant_count=validation_counts["irrelevant_count"],
                 duration_filtered_count=validation_counts["duration_filtered_count"],
-                incremental_play_filtered_count=validation_counts["incremental_play_filtered_count"],
+                incremental_play_filtered_count=validation_counts[
+                    "incremental_play_filtered_count"
+                ],
                 relevance_rule_version=RELEVANCE_RULE_VERSION,
                 result_state=result_state,
                 crawl_stop_reason=page.crawl_stop_reason,
@@ -943,9 +977,12 @@ class CommercialSearchService:
             elif published_after is not None and item.published_at < published_after:
                 reason = "作品发布时间超出本次查询范围。"
                 counts["out_of_window_count"] += 1
-            elif item.source_url is not None and not CommercialSearchService._url_matches_platform(
-                str(item.source_url),
-                platform,
+            elif (
+                item.source_url is not None
+                and not CommercialSearchService._url_matches_platform(
+                    str(item.source_url),
+                    platform,
+                )
             ):
                 reason = "作品链接与平台不匹配。"
                 counts["invalid_count"] += 1
@@ -991,11 +1028,21 @@ class CommercialSearchService:
                     cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
                     eligibility_status=EligibilityStatus.AUTO_MATCHED,
                     evidence=item.evidence,
-                    official_hot=(provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:")),
-                    official_rank=(item.provider_rank if provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:") else None),
+                    official_hot=(
+                        provider == "douyin_local_browser"
+                        and (item.evidence or "").startswith("hotspot:")
+                    ),
+                    official_rank=(
+                        item.provider_rank
+                        if provider == "douyin_local_browser"
+                        and (item.evidence or "").startswith("hotspot:")
+                        else None
+                    ),
                     official_hot_value=(
                         float(item.metrics.plays)
-                        if provider == "douyin_local_browser" and (item.evidence or "").startswith("hotspot:") and item.metrics.plays is not None
+                        if provider == "douyin_local_browser"
+                        and (item.evidence or "").startswith("hotspot:")
+                        and item.metrics.plays is not None
                         else None
                     ),
                     data_quality_warnings=warnings,
@@ -1017,9 +1064,7 @@ class CommercialSearchService:
         """Describe why a run is empty without spending on another page."""
         if raw_item_count == 0:
             return (
-                "provider_payload_invalid"
-                if payload_diagnostic
-                else "provider_empty"
+                "provider_payload_invalid" if payload_diagnostic else "provider_empty"
             )
         if not normalized:
             if validation_counts["out_of_window_count"]:
@@ -1199,7 +1244,18 @@ class CommercialSearchService:
             since=now - timedelta(minutes=max(1, cache_ttl_minutes)),
             request_fingerprint=fingerprint,
         )
-        if cached and cached.request_fingerprint == fingerprint:
+        if (
+            cached
+            and cached.request_fingerprint == fingerprint
+            and not (
+                cached.status == PlatformRunStatus.PARTIAL
+                and cached.returned_count == 0
+            )
+            and not any(
+                error.code in _NON_CACHEABLE_PUBLIC_SEARCH_CODES
+                for error in cached.errors
+            )
+        ):
             return cached
         return None
 
@@ -1213,7 +1269,12 @@ class CommercialSearchService:
             weight * (value or 0)
             for weight, value in zip(
                 (1, 3, 4, 4),
-                (previous.likes, previous.comments, previous.shares, previous.favorites),
+                (
+                    previous.likes,
+                    previous.comments,
+                    previous.shares,
+                    previous.favorites,
+                ),
                 strict=True,
             )
         )
@@ -1234,7 +1295,11 @@ class CommercialSearchService:
     def _selected_platforms(
         self, platforms: tuple[Platform, ...] | None
     ) -> tuple[Platform, ...]:
-        selected = self.active_platforms if platforms is None else tuple(dict.fromkeys(platforms))
+        selected = (
+            self.active_platforms
+            if platforms is None
+            else tuple(dict.fromkeys(platforms))
+        )
         if not selected:
             raise ValueError("至少需要选择一个关键词搜索平台。")
         unsupported = set(selected) - set(self.active_platforms)
@@ -1263,7 +1328,9 @@ class CommercialSearchService:
                 "召回时间范围只支持不限、近 24 小时、近 3 天、近 7 天、近 30 天、近半年或近 10 个月。"
             )
         if hotspot_window_hours not in {None, 1, 24, 72, 168}:
-            raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
+            raise ValueError(
+                "热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。"
+            )
         if not 1 <= count <= 100:
             raise ValueError("每个平台获取数量必须为 1 到 100 条。")
         return normalized

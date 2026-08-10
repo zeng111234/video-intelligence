@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Text = $env:LOCAL_AVATAR_SCRIPT_TEXT,
     [string]$OutputPath = $env:LOCAL_AVATAR_AUDIO_OUTPUT_PATH,
     [string]$SpeechRate = $env:LOCAL_AVATAR_SPEECH_RATE

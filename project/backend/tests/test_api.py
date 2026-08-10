@@ -19,6 +19,7 @@ from project.backend.app.main import app  # noqa: E402
 from project.backend.app.api.v1 import crawler as crawler_api  # noqa: E402
 from project.backend.app.api.v1 import publish as publish_api  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
+from project.backend.app.core.security import issue_auth_token  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
     CopywritingProviderMode,
     CrawlerProviderMode,
@@ -75,7 +76,10 @@ PUBLISH_DOUYIN_CONNECTION_KEYS = (
 
 @pytest.fixture()
 def client():
-    return TestClient(app)
+    return TestClient(
+        app,
+        headers={"X-Admin-Token": issue_auth_token("admin", "pytest-admin")},
+    )
 
 
 @pytest.fixture()
@@ -815,7 +819,9 @@ class TestCrawlerBatches:
                         source_url=(
                             f"https://www.xiaohongshu.com/explore/{self.platform.value}-test-{index}"
                             if self.platform == Platform.XIAOHONGSHU
-                            else f"https://example.com/{self.platform.value}/test-{index}"
+                            else f"https://www.douyin.com/video/{self.platform.value}-test-{index}"
+                            if self.platform == Platform.DOUYIN
+                            else f"https://www.kuaishou.com/short-video/{self.platform.value}-test-{index}"
                         ),
                         title=f"{keyword} {self.platform.value}公开内容 {index + 1}",
                         author_id="test-author",
@@ -1315,12 +1321,12 @@ class TestCrawlerBatches:
         assert data["ranking_mode"] == "platform_default_search_then_table_sort"
         assert data["published_window_days"] == 180
         assert [item["platform_label"] for item in data["platforms"]] == [
-            "抖音官网搜索（最多30条）",
+            "抖音登录搜索（最多30条）",
             "小红书登录搜索",
             "快手浏览器搜索（平台默认综合排序）",
             "B站浏览器搜索（平台默认综合排序）",
         ]
-        assert data["provider_name"] == "抖音官网搜索 + 小红书登录搜索 + 快手/B站浏览器"
+        assert data["provider_name"] == "抖音登录搜索 + 小红书登录搜索 + 快手/B站浏览器"
         assert data["hotspot_ready"] is False
         assert data["hotspot_time_strategy"] == "douyin_official_search_only"
         assert data["cache_ttl_minutes"] == 10
@@ -1430,7 +1436,8 @@ class TestCrawlerBatches:
         assert "duration_seconds" in first_candidate
         assert "published_at_reliable" in first_candidate
         assert "heat_score" in first_candidate
-        assert len(first_candidate["trend_points"]) == 1
+        # B站公开详情会在搜索结果后补一次真实指标快照；其他平台仍只有首个快照。
+        assert len(first_candidate["trend_points"]) >= 1
         assert first_candidate["trend_points"][0]["effective_interactions"] >= 0
         first_run = detail["platform_runs"][0]
         assert first_run["relevant_count"] == first_run["returned_count"]

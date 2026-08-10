@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$AllowDirty
 )
@@ -39,6 +39,23 @@ function Test-PythonModuleAvailable {
     return $moduleExitCode -eq 0
 }
 
+function Test-PythonReleaseEnvironment {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath
+    )
+
+    if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+        return $false
+    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonPath -c "import fastapi, pandas, pytest, pytest_benchmark, streamlit" *> $null
+    $importExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    return $importExitCode -eq 0
+}
+
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw "Git is required for the release check."
 }
@@ -76,38 +93,28 @@ if ($forbiddenTrackedFiles.Count -gt 0) {
     exit 1
 }
 
-$pythonPath = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $pythonPath -PathType Leaf)) {
-    $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
-    if (-not $pythonCommand) {
-        throw "Python was not found. Run start.bat once to install project dependencies."
-    }
-    $pythonPath = $pythonCommand.Source
-}
-
 $systemPython = Get-Command python -ErrorAction SilentlyContinue
-$lintPythonPath = $pythonPath
-if (
-    -not (Test-PythonModuleAvailable -PythonPath $lintPythonPath -ModuleName "ruff") -and
-    $systemPython -and
-    (Test-PythonModuleAvailable -PythonPath $systemPython.Source -ModuleName "ruff")
-) {
-    $lintPythonPath = $systemPython.Source
+$pythonCandidates = @(
+    (Join-Path $repositoryRoot "venv\Scripts\python.exe"),
+    (Join-Path $repositoryRoot ".venv\Scripts\python.exe")
+)
+if ($systemPython) {
+    $pythonCandidates += $systemPython.Source
 }
-if (-not (Test-PythonModuleAvailable -PythonPath $lintPythonPath -ModuleName "ruff")) {
-    throw "Ruff was not found. Install requirements-dev.txt before the release check."
+$pythonCandidates = @($pythonCandidates | Select-Object -Unique)
+
+$testPythonPath = $pythonCandidates |
+    Where-Object { Test-PythonReleaseEnvironment -PythonPath $_ } |
+    Select-Object -First 1
+if (-not $testPythonPath) {
+    throw "No complete release-test Python environment was found. Install requirements-dev.txt into a dedicated development virtual environment."
 }
 
-$testPythonPath = $pythonPath
-if (
-    -not (Test-PythonModuleAvailable -PythonPath $testPythonPath -ModuleName "pytest") -and
-    $systemPython -and
-    (Test-PythonModuleAvailable -PythonPath $systemPython.Source -ModuleName "pytest")
-) {
-    $testPythonPath = $systemPython.Source
-}
-if (-not (Test-PythonModuleAvailable -PythonPath $testPythonPath -ModuleName "pytest")) {
-    throw "Pytest was not found. Install requirements-dev.txt before the release check."
+$lintPythonPath = $pythonCandidates |
+    Where-Object { Test-PythonModuleAvailable -PythonPath $_ -ModuleName "ruff" } |
+    Select-Object -First 1
+if (-not $lintPythonPath) {
+    throw "Ruff was not found. Install requirements-dev.txt before the release check."
 }
 
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
@@ -121,16 +128,22 @@ if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot "node_modules") -PathT
     throw "Frontend dependencies are missing. Run start.bat once before the release check."
 }
 
-$env:API_KEY = "release-check-api-key"
-$env:ADMIN_PASSWORD = "release-check-admin-password"
-
 Invoke-ReleaseStep "Git whitespace check" { & git diff --check }
+Invoke-ReleaseStep "Configured supplier secret scan" {
+    & $testPythonPath `
+        (Join-Path $repositoryRoot "scripts\scan_release_secrets.py") `
+        --repository-root $repositoryRoot
+}
 Invoke-ReleaseStep "Python lint" { & $lintPythonPath -m ruff check . }
-Invoke-ReleaseStep "Backend test suite" { & $testPythonPath -m pytest -q }
+Invoke-ReleaseStep "Python release test suite" {
+    & (Join-Path $repositoryRoot "scripts\run_release_python_tests.ps1") `
+        -PythonPath $testPythonPath
+}
 
 Push-Location -LiteralPath $frontendRoot
 try {
     Invoke-ReleaseStep "Frontend test suite" { & $npmCommand.Source test -- --run }
+    Invoke-ReleaseStep "Desktop update test suite" { & $npmCommand.Source run test:update }
     Invoke-ReleaseStep "TypeScript check" { & $npxCommand.Source tsc --noEmit }
     Invoke-ReleaseStep "Production frontend build" { & $npmCommand.Source run build }
 }

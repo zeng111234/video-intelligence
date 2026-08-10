@@ -13,42 +13,51 @@ from src.models import Platform, ProviderErrorKind, ProviderMode, ProviderSearch
 
 def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
     observed_at = datetime.fromisoformat("2026-07-23T12:00:00+08:00")
-    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
-        [
-            {
-                "href": "https://www.douyin.com/video/7538955201693994298?foo=1",
-                "text": "数字人口播实测：开头两秒怎么留人",
-                "aria": "",
-                "duration": 15,
-                "plays": 1201,
-                "likes": 120,
-                "comments": 12,
-                "shares": 3,
-                "favorites": 5,
-                "list_type": 1001,
-                "list_label": "视频总榜",
-                "window_hours": 168,
-            },
-            {
-                "href": "https://www.douyin.com/video/7538955201693994298",
-                "text": "重复卡片",
-                "aria": "",
-                "duration": 15,
-                "plays": 1201,
-            },
-        ],
-        "数字人",
-        observed_at,
-        10,
+    items, low_incremental_items, errors, filtered = (
+        LocalDouyinBrowserSearchProvider._to_items(
+            [
+                {
+                    "href": "https://www.douyin.com/video/7538955201693994298?foo=1",
+                    "text": "数字人口播实测：开头两秒怎么留人",
+                    "aria": "",
+                    "duration": 15,
+                    "plays": 1201,
+                    "likes": 120,
+                    "comments": 12,
+                    "shares": 3,
+                    "favorites": 5,
+                    "list_type": 1001,
+                    "list_label": "视频总榜",
+                    "window_hours": 168,
+                },
+                {
+                    "href": "https://www.douyin.com/video/7538955201693994298",
+                    "text": "重复卡片",
+                    "aria": "",
+                    "duration": 15,
+                    "plays": 1201,
+                },
+            ],
+            "数字人",
+            observed_at,
+            10,
+        )
     )
 
     assert errors == []
     assert low_incremental_items == []
-    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert filtered == {
+        "duration": 0,
+        "incremental_plays": 0,
+        "relevance": 0,
+        "quality": 0,
+    }
     assert len(items) == 1
     assert items[0].platform == Platform.DOUYIN
     assert items[0].platform_item_id == "7538955201693994298"
-    assert str(items[0].source_url) == "https://www.douyin.com/video/7538955201693994298"
+    assert (
+        str(items[0].source_url) == "https://www.douyin.com/video/7538955201693994298"
+    )
     assert items[0].metrics.plays == 1201
     assert items[0].metrics.comments == 12
     assert items[0].metrics.shares == 3
@@ -125,7 +134,7 @@ def test_public_search_metrics_preserve_returned_zero_and_missing_values():
     ) == (None, None, None, None, None)
     assert "播放量=1200" in items[0].evidence
     assert "评论数=12" in items[0].evidence
-    assert "公开搜索页未显示互动指标：播放、点赞、评论、分享、收藏。" in (
+    assert "抖音搜索页未显示互动指标：播放、点赞、评论、分享、收藏。" in (
         items[2].data_quality_warnings
     )
 
@@ -156,6 +165,14 @@ class _TextControl:
         if self.fails:
             raise RuntimeError("click failed")
         self.page.clicked.append(self.label)
+        if self.label == "筛选":
+            self.page.filter_menu_open = True
+        if self.label in self.page.time_filter_indexes and self.page.confirm_filter:
+            self.page.selected_time_index = self.page.time_filter_indexes[self.label]
+            if self.page.close_filter_on_option:
+                self.page.filter_menu_open = False
+        if self.label in {"单列", "多列"} and self.page.confirm_layout:
+            self.page.selected_layout = self.label
 
 
 class _TextMatches:
@@ -170,10 +187,26 @@ class _TextMatches:
 
 
 class _VisibleFilterPage:
-    def __init__(self, controls):
+    time_filter_indexes = {"不限": "0", "一天内": "1", "一周内": "2", "半年内": "3"}
+
+    def __init__(
+        self,
+        controls,
+        *,
+        confirm_filter=True,
+        confirm_layout=True,
+        close_filter_on_option=False,
+    ):
         self.clicked: list[str] = []
         self.pressed: list[str] = []
         self.waits: list[int] = []
+        self.confirm_filter = confirm_filter
+        self.confirm_layout = confirm_layout
+        self.close_filter_on_option = close_filter_on_option
+        self.filter_menu_open = False
+        self.selected_time_index: str | None = None
+        self.selected_layout = "单列"
+        self.layout_controls_ready = True
         self.controls = {
             label: [_TextControl(self, label, **settings) for settings in definitions]
             for label, definitions in controls.items()
@@ -181,15 +214,38 @@ class _VisibleFilterPage:
         self.keyboard = type(
             "Keyboard",
             (),
-            {"press": lambda keyboard, key: self.pressed.append(key)},
+            {"press": lambda keyboard, key: self._press(key)},
         )()
+
+    def _press(self, key):
+        self.pressed.append(key)
+        if key == "Escape":
+            self.filter_menu_open = False
 
     def get_by_text(self, label, *, exact):
         assert exact is True
         return _TextMatches(self.controls.get(label, []))
 
+    def locator(self, selector):
+        assert 'data-index1="1"' in selector
+        for label, option_index in self.time_filter_indexes.items():
+            if f'data-index2="{option_index}"' in selector:
+                return _TextMatches(self.controls.get(label, []))
+        return _TextMatches([])
+
     def wait_for_timeout(self, delay):
         self.waits.append(delay)
+
+    def evaluate(self, script, *args):
+        if "__PUBLIC_SEARCH_TIME_FILTER_MENU_VISIBLE__" in script:
+            return self.filter_menu_open
+        if "__PUBLIC_SEARCH_TIME_FILTER_SELECTED__" in script:
+            return self.selected_time_index == args[0]
+        if "__PUBLIC_SEARCH_MULTI_SELECTED__" in script:
+            return self.selected_layout == "多列"
+        if "__PUBLIC_SEARCH_LAYOUT_CONTROLS_READY__" in script:
+            return self.layout_controls_ready
+        raise AssertionError("unexpected page evaluation")
 
 
 @pytest.mark.parametrize(
@@ -216,9 +272,9 @@ def test_public_search_applies_only_the_exact_visible_time_filter(days, visible_
     assert outcome.warning is None
 
 
-def test_public_search_unlimited_does_not_open_filter():
+def test_public_search_unlimited_is_explicitly_applied_and_confirmed():
     observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
-    page = _VisibleFilterPage({"筛选": [{}]})
+    page = _VisibleFilterPage({"筛选": [{}], "不限": [{}]})
 
     outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
         page,
@@ -226,9 +282,174 @@ def test_public_search_unlimited_does_not_open_filter():
         observed_at=observed_at,
     )
 
-    assert page.clicked == []
-    assert outcome.receipt == "不限（未打开平台筛选）"
+    assert page.clicked == ["筛选", "不限"]
+    assert outcome.receipt == "已应用平台筛选：不限"
     assert outcome.warning is None
+
+
+def test_public_search_does_not_claim_filter_when_selected_state_is_unconfirmed():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage(
+        {"筛选": [{}], "一周内": [{}]},
+        confirm_filter=False,
+    )
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=7),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", "一周内"]
+    assert outcome.receipt == "平台筛选未应用；仅本地过滤"
+    assert outcome.error_code == "public_search_time_filter_unconfirmed"
+    assert "没有显示该发布时间条件为选中状态" in outcome.warning
+
+
+def test_public_search_waits_for_time_filter_options_to_render():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+
+    class DelayedFilterPage(_VisibleFilterPage):
+        menu_polls = 0
+
+        def evaluate(self, script, *args):
+            if (
+                "__PUBLIC_SEARCH_TIME_FILTER_MENU_VISIBLE__" in script
+                and self.filter_menu_open
+            ):
+                self.menu_polls += 1
+                if self.menu_polls < 3:
+                    return False
+            return super().evaluate(script, *args)
+
+    page = DelayedFilterPage({"筛选": [{}], "一周内": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=7),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", "一周内"]
+    assert page.waits[:2] == [100, 100]
+    assert outcome.warning is None
+
+
+def test_public_search_reopens_filter_once_when_first_panel_does_not_render(
+    monkeypatch,
+):
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage({"筛选": [{}], "一周内": [{}]})
+    render_attempts = iter((False, True))
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "_wait_for_public_search_time_filter_options",
+        lambda _page: next(render_attempts),
+    )
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=7),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", "筛选", "一周内"]
+    assert outcome.warning is None
+
+
+def test_public_search_reopens_filter_to_confirm_auto_closed_selection():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+    page = _VisibleFilterPage(
+        {"筛选": [{}], "一周内": [{}]},
+        close_filter_on_option=True,
+    )
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=observed_at - timedelta(days=7),
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", "一周内", "筛选"]
+    assert outcome.warning is None
+    assert outcome.receipt == "已应用平台筛选：一周内（7天）"
+
+
+def test_public_search_retries_one_stale_time_filter_control():
+    observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
+
+    class StaleFilterPage(_VisibleFilterPage):
+        option_locator_calls = 0
+
+        def locator(self, selector):
+            if 'data-index1="1"' in selector:
+                self.option_locator_calls += 1
+                if self.option_locator_calls == 1:
+                    return _TextMatches([_TextControl(self, "不限", fails=True)])
+            return super().locator(selector)
+
+    page = StaleFilterPage({"筛选": [{}], "不限": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._apply_public_search_time_filter(
+        page,
+        published_after=None,
+        observed_at=observed_at,
+    )
+
+    assert page.clicked == ["筛选", "筛选", "不限"]
+    assert page.option_locator_calls == 2
+    assert outcome.warning is None
+
+
+def test_public_search_selects_and_confirms_multi_column_layout():
+    page = _VisibleFilterPage({"多列": [{}], "单列": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
+
+    assert page.clicked == ["多列"]
+    assert outcome.mode == "multi_column"
+    assert outcome.warning is None
+
+
+def test_public_search_does_not_reclick_an_already_selected_multi_layout():
+    page = _VisibleFilterPage({"多列": [{}], "单列": [{}]})
+    page.selected_layout = "多列"
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
+
+    assert page.clicked == []
+    assert outcome.mode == "multi_column"
+
+
+def test_public_search_waits_for_layout_controls_after_navigation():
+    class DelayedLayoutPage(_VisibleFilterPage):
+        layout_polls = 0
+
+        def evaluate(self, script, *args):
+            if "__PUBLIC_SEARCH_LAYOUT_CONTROLS_READY__" in script:
+                self.layout_polls += 1
+                return self.layout_polls >= 3
+            return super().evaluate(script, *args)
+
+    page = DelayedLayoutPage({"多列": [{}], "单列": [{}]})
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
+
+    assert page.waits[:2] == [200, 200]
+    assert outcome.mode == "multi_column"
+
+
+def test_public_search_stops_when_multi_column_state_is_unconfirmed():
+    page = _VisibleFilterPage(
+        {"多列": [{}], "单列": [{}]},
+        confirm_layout=False,
+    )
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
+
+    assert outcome.mode == "unconfirmed"
+    assert outcome.error_code == "public_search_multi_column_unconfirmed"
+    assert "没有显示多列为选中状态" in outcome.warning
 
 
 def test_public_search_does_not_map_legacy_three_days_to_one_week():
@@ -285,13 +506,13 @@ def test_public_search_closes_filter_menu_when_requested_option_is_unavailable()
         observed_at=observed_at,
     )
 
-    assert page.clicked == ["筛选"]
-    assert page.pressed == ["Escape"]
+    assert page.clicked == ["筛选", "筛选"]
+    assert page.pressed == ["Escape", "Escape"]
     assert outcome.receipt == "平台筛选未应用；仅本地过滤"
     assert "已关闭筛选菜单并保留原筛选状态" in outcome.warning
 
 
-def test_public_search_uses_default_layout_then_filter_before_scrolling(
+def test_public_search_confirms_multi_layout_then_filter_before_scrolling(
     tmp_path,
     monkeypatch,
 ):
@@ -375,9 +596,19 @@ def test_public_search_uses_default_layout_then_filter_before_scrolling(
     monkeypatch.setattr(provider, "_random_delay_ms", lambda *_args: 1)
     monkeypatch.setattr(
         provider,
+        "_ensure_public_search_multi_column",
+        lambda _page: (
+            calls.append("layout")
+            or type("Layout", (), {"mode": "multi_column", "warning": None})()
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
         "_apply_public_search_time_filter",
-        lambda _page, **_kwargs: calls.append("time_filter")
-        or type("Outcome", (), {"receipt": "已应用", "warning": None})(),
+        lambda _page, **_kwargs: (
+            calls.append("time_filter")
+            or type("Outcome", (), {"receipt": "已应用", "warning": None})()
+        ),
     )
     monkeypatch.setattr(
         provider,
@@ -395,8 +626,7 @@ def test_public_search_uses_default_layout_then_filter_before_scrolling(
 
     assert rows == []
     assert errors == []
-    # 默认多列布局:不再点击“单列”按钮,直接走时间筛选与滚动采集
-    assert calls == ["time_filter", "scroll"]
+    assert calls == ["layout", "time_filter", "scroll"]
 
 
 def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkeypatch):
@@ -491,7 +721,7 @@ def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkey
     assert len(goto_calls) == 1
 
 
-def test_public_search_default_layout_marks_data_availability_without_fake_metrics():
+def test_public_search_multi_layout_marks_data_availability_without_fake_metrics():
     observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
     items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
         [
@@ -499,7 +729,7 @@ def test_public_search_default_layout_marks_data_availability_without_fake_metri
                 "item_id": "7538955201693994395",
                 "href": "https://www.douyin.com/video/7538955201693994395",
                 "title": "贴标机默认布局测试",
-                "search_layout": "default",
+                "search_layout": "multi_column",
                 "search_time_filter": "已应用平台筛选：一周内（7天）",
             }
         ],
@@ -512,12 +742,9 @@ def test_public_search_default_layout_marks_data_availability_without_fake_metri
     assert errors == []
     assert items[0].metrics.plays is None
     assert items[0].metrics.comments is None
-    assert "布局=默认卡片" in items[0].evidence
+    assert "布局=多列" in items[0].evidence
     assert "发布时间筛选=已应用平台筛选：一周内（7天）" in items[0].evidence
-    assert (
-        "抖音官网当前未提供可见的“单列”结果布局，已按默认卡片读取；"
-        "未显示的指标会保留为空。"
-    ) in items[0].data_quality_warnings
+    assert all("默认卡片" not in warning for warning in items[0].data_quality_warnings)
 
 
 def test_public_search_item_records_local_only_filter_without_fake_metrics():
@@ -552,25 +779,27 @@ def test_public_search_item_records_local_only_filter_without_fake_metrics():
 
 def test_public_search_discards_author_only_keyword_matches():
     observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
-    items, errors, filtered, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
-        [
-            {
-                "item_id": "7538955201693994401",
-                "href": "https://www.douyin.com/video/7538955201693994401",
-                "title": "贴标机源头厂家现场演示 #贴标机",
-                "author_name": "包装设备工厂",
-            },
-            {
-                "item_id": "7538955201693994402",
-                "href": "https://www.douyin.com/video/7538955201693994402",
-                "title": "积木零件检测设备演示",
-                "author_name": "即时打印贴标机小张",
-            },
-        ],
-        keyword="贴标机",
-        observed_at=observed_at,
-        published_after=None,
-        limit=30,
+    items, errors, filtered, _ = (
+        LocalDouyinBrowserSearchProvider._to_public_search_items(
+            [
+                {
+                    "item_id": "7538955201693994401",
+                    "href": "https://www.douyin.com/video/7538955201693994401",
+                    "title": "贴标机源头厂家现场演示 #贴标机",
+                    "author_name": "包装设备工厂",
+                },
+                {
+                    "item_id": "7538955201693994402",
+                    "href": "https://www.douyin.com/video/7538955201693994402",
+                    "title": "积木零件检测设备演示",
+                    "author_name": "即时打印贴标机小张",
+                },
+            ],
+            keyword="贴标机",
+            observed_at=observed_at,
+            published_after=None,
+            limit=30,
+        )
     )
 
     assert errors == []
@@ -610,7 +839,12 @@ def test_rendered_douyin_search_extractors_read_complete_react_statistics(extrac
         assert statistic in script
     assert "value !== undefined && value !== null && value !== ''" in script
     if extractor is LocalDouyinBrowserSearchProvider._extract_public_douyin_search_rows:
-        for statistic in ("aweme_statistics", "interact_info", "forward_count", "collect_cnt"):
+        for statistic in (
+            "aweme_statistics",
+            "interact_info",
+            "forward_count",
+            "collect_cnt",
+        ):
             assert statistic in script
         assert "metricFromDom" in script
         assert "播放量" in script
@@ -638,13 +872,17 @@ def test_browser_provider_reports_login_requirement_without_running_session(tmp_
     assert capability.max_page_size == 100
 
 
-def test_browser_provider_capabilities_do_not_probe_the_local_debug_port(tmp_path, monkeypatch):
+def test_browser_provider_capabilities_do_not_probe_the_local_debug_port(
+    tmp_path, monkeypatch
+):
     provider = LocalDouyinBrowserSearchProvider(
         enabled=True,
         profile_dir=tmp_path / "profile",
         debug_port=29995,
     )
-    monkeypatch.setattr(provider, "session_status", lambda: pytest.fail("capabilities must stay static"))
+    monkeypatch.setattr(
+        provider, "session_status", lambda: pytest.fail("capabilities must stay static")
+    )
 
     capability = provider.capabilities()
 
@@ -659,7 +897,9 @@ def test_browser_provider_reports_missing_playwright_dependency(tmp_path, monkey
         debug_port=29997,
     )
     monkeypatch.setattr(provider, "_browser_engine_available", lambda: False)
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        provider, "_browser_executable", lambda: tmp_path / "chrome.exe"
+    )
 
     capability = provider.capabilities()
     status = provider.session_status()
@@ -709,7 +949,9 @@ def test_login_button_reveals_existing_browser_when_session_is_running(
 
 
 def test_login_button_reveals_existing_waiting_login_window(tmp_path, monkeypatch):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile", debug_port=29990)
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile", debug_port=29990
+    )
     ready = BrowserSessionStatus(True, True, True, False, "waiting_login", "等待登录")
     revealed: list[int] = []
     monkeypatch.setattr(provider, "session_status", lambda: ready)
@@ -731,17 +973,19 @@ def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
         debug_port=29993,
     )
     launched: list[list[str]] = []
-    closed = BrowserSessionStatus(
-        True, False, True, False, "browser_closed", "未打开"
-    )
+    closed = BrowserSessionStatus(True, False, True, False, "browser_closed", "未打开")
     monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        provider, "_browser_executable", lambda: tmp_path / "chrome.exe"
+    )
     monkeypatch.setattr(
         "src.adapters.douyin_browser_search.subprocess.Popen",
         lambda args, **kwargs: launched.append(args),
     )
-    monkeypatch.setattr("src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.adapters.douyin_browser_search.time.sleep", lambda _seconds: None
+    )
 
     provider.start_login_browser()
 
@@ -750,19 +994,21 @@ def test_automatic_hotspot_start_stays_minimized(tmp_path, monkeypatch):
     assert "--new-window" not in launched[0]
 
 
-def test_public_douyin_login_browser_opens_official_site_not_hotspot(tmp_path, monkeypatch):
+def test_public_douyin_login_browser_opens_official_site_not_hotspot(
+    tmp_path, monkeypatch
+):
     provider = LocalDouyinPublicSearchProvider(
         enabled=True,
         profile_dir=tmp_path / "profile",
         debug_port=29992,
     )
     launched: list[list[str]] = []
-    closed = BrowserSessionStatus(
-        True, False, True, False, "browser_closed", "未打开"
-    )
+    closed = BrowserSessionStatus(True, False, True, False, "browser_closed", "未打开")
     monkeypatch.setattr(provider, "session_status", lambda: closed)
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
-    monkeypatch.setattr(provider, "_browser_executable", lambda: tmp_path / "chrome.exe")
+    monkeypatch.setattr(
+        provider, "_browser_executable", lambda: tmp_path / "chrome.exe"
+    )
     monkeypatch.setattr(
         "src.adapters.douyin_browser_search.subprocess.Popen",
         lambda args, **kwargs: launched.append(args),
@@ -840,7 +1086,7 @@ def test_running_public_douyin_browser_is_ready_for_one_search_attempt(
     assert status.login_required is False
     assert status.ready_to_crawl is True
     assert status.phase == "ready"
-    assert "实际搜索时会核验登录或安全验证" in status.message
+    assert "实际搜索时会核验登录状态或安全验证" in status.message
 
 
 def test_hotspot_keyword_is_typed_gradually_before_search():
@@ -937,7 +1183,9 @@ def test_hotspot_keeps_readable_cards_for_table_side_filtering():
         },
     ]
 
-    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(rows, "租房", observed_at, 100)
+    items, low_incremental_items, errors, filtered = (
+        LocalDouyinBrowserSearchProvider._to_items(rows, "租房", observed_at, 100)
+    )
 
     assert errors == []
     assert low_incremental_items == []
@@ -947,7 +1195,12 @@ def test_hotspot_keeps_readable_cards_for_table_side_filtering():
         "7538955201693994300",
         "7538955201693994301",
     ]
-    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert filtered == {
+        "duration": 0,
+        "incremental_plays": 0,
+        "relevance": 0,
+        "quality": 0,
+    }
     assert "视频总榜|高点赞率" in items[0].evidence
     assert items[1].duration_seconds is None
     assert "热点宝未返回视频时长。" in items[1].data_quality_warnings
@@ -978,8 +1231,8 @@ def test_hotspot_keeps_low_interaction_rows_in_the_main_result_table():
         },
     ]
 
-    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
-        rows, "租房", observed_at, 100
+    items, low_incremental_items, errors, filtered = (
+        LocalDouyinBrowserSearchProvider._to_items(rows, "租房", observed_at, 100)
     )
 
     assert [item.platform_item_id for item in items] == [
@@ -995,29 +1248,38 @@ def test_hotspot_keeps_low_interaction_rows_in_the_main_result_table():
 def test_exact_topic_keeps_videos_even_when_the_title_omits_the_keyword():
     observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
 
-    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
-        [{
-            "item_id": "7538955201693994310",
-            "href": "https://www.douyin.com/video/7538955201693994310",
-            "title": "老板别再靠打折拉新了",
-            "duration": 28,
-            "likes": 500,
-            "published_text": "2026-07-20T12:00:00+08:00",
-            "topic_exact": True,
-            "topic_name": "餐饮获客",
-            "source_kind": "topic_board",
-            "list_type": 2001,
-            "list_label": "话题榜",
-            "window_hours": 168,
-        }],
-        "餐饮获客",
-        observed_at,
-        3,
+    items, low_incremental_items, errors, filtered = (
+        LocalDouyinBrowserSearchProvider._to_items(
+            [
+                {
+                    "item_id": "7538955201693994310",
+                    "href": "https://www.douyin.com/video/7538955201693994310",
+                    "title": "老板别再靠打折拉新了",
+                    "duration": 28,
+                    "likes": 500,
+                    "published_text": "2026-07-20T12:00:00+08:00",
+                    "topic_exact": True,
+                    "topic_name": "餐饮获客",
+                    "source_kind": "topic_board",
+                    "list_type": 2001,
+                    "list_label": "话题榜",
+                    "window_hours": 168,
+                }
+            ],
+            "餐饮获客",
+            observed_at,
+            3,
+        )
     )
 
     assert errors == []
     assert low_incremental_items == []
-    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert filtered == {
+        "duration": 0,
+        "incremental_plays": 0,
+        "relevance": 0,
+        "quality": 0,
+    }
     assert [item.platform_item_id for item in items] == ["7538955201693994310"]
     assert "严格话题=1" in items[0].evidence
     assert "来源=topic_board" in items[0].evidence
@@ -1026,37 +1288,51 @@ def test_exact_topic_keeps_videos_even_when_the_title_omits_the_keyword():
 def test_douyin_search_keeps_exact_video_without_hotspot_incremental_plays():
     observed_at = datetime.fromisoformat("2026-07-28T12:00:00+08:00")
 
-    items, low_incremental_items, errors, filtered = LocalDouyinBrowserSearchProvider._to_items(
-        [{
-            "item_id": "7538955201693994311",
-            "href": "https://www.douyin.com/video/7538955201693994311",
-            "title": "餐饮获客的三个低成本方法",
-            "duration": 36,
-            "likes": 500,
-            "published_text": "2026-07-20T12:00:00+08:00",
-            "source_kind": "douyin_search",
-            "list_type": 3001,
-            "list_label": "抖音搜索",
-            "window_hours": 168,
-        }],
-        "餐饮获客",
-        observed_at,
-        3,
+    items, low_incremental_items, errors, filtered = (
+        LocalDouyinBrowserSearchProvider._to_items(
+            [
+                {
+                    "item_id": "7538955201693994311",
+                    "href": "https://www.douyin.com/video/7538955201693994311",
+                    "title": "餐饮获客的三个低成本方法",
+                    "duration": 36,
+                    "likes": 500,
+                    "published_text": "2026-07-20T12:00:00+08:00",
+                    "source_kind": "douyin_search",
+                    "list_type": 3001,
+                    "list_label": "抖音搜索",
+                    "window_hours": 168,
+                }
+            ],
+            "餐饮获客",
+            observed_at,
+            3,
+        )
     )
 
     assert errors == []
     assert low_incremental_items == []
-    assert filtered == {"duration": 0, "incremental_plays": 0, "relevance": 0, "quality": 0}
+    assert filtered == {
+        "duration": 0,
+        "incremental_plays": 0,
+        "relevance": 0,
+        "quality": 0,
+    }
     assert items[0].metrics.plays is None
     assert "抖音搜索" in items[0].evidence
 
 
 def test_douyin_search_collects_multiple_rendered_viewports(tmp_path, monkeypatch):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     rounds = [
         [{"item_id": "one", "title": "第一条"}],
         [{"item_id": "one", "title": "第一条"}, {"item_id": "two", "title": "第二条"}],
-        [{"item_id": "two", "title": "第二条"}, {"item_id": "three", "title": "第三条"}],
+        [
+            {"item_id": "two", "title": "第二条"},
+            {"item_id": "three", "title": "第三条"},
+        ],
         [{"item_id": "three", "title": "第三条"}],
         [{"item_id": "three", "title": "第三条"}],
     ]
@@ -1167,7 +1443,9 @@ def test_source_order_keeps_video_total_before_topic_and_search():
         },
     ]
 
-    items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(rows, "餐饮获客", observed_at, 3)
+    items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(
+        rows, "餐饮获客", observed_at, 3
+    )
 
     assert [item.platform_item_id for item in items] == [
         "7538955201693994315",
@@ -1179,15 +1457,17 @@ def test_source_order_keeps_video_total_before_topic_and_search():
 def test_hotspot_uses_visible_publication_time_when_available():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(
-        [{
-            "item_id": "7538955201693994298",
-            "href": "https://www.douyin.com/video/7538955201693994298",
-            "title": "租房避坑：签合同前先看这三点",
-            "duration": 33,
-            "plays": 5000,
-            "likes": 500,
-            "published_text": "2026-07-23T09:30:00+08:00",
-        }],
+        [
+            {
+                "item_id": "7538955201693994298",
+                "href": "https://www.douyin.com/video/7538955201693994298",
+                "title": "租房避坑：签合同前先看这三点",
+                "duration": 33,
+                "plays": 5000,
+                "likes": 500,
+                "published_text": "2026-07-23T09:30:00+08:00",
+            }
+        ],
         "租房",
         observed_at,
         10,
@@ -1200,13 +1480,15 @@ def test_hotspot_uses_visible_publication_time_when_available():
 def test_search_candidate_without_publication_time_is_retained_and_marked_unreliable():
     observed_at = datetime.fromisoformat("2026-07-24T12:00:00+08:00")
     items, _, _, _ = LocalDouyinBrowserSearchProvider._to_items(
-        [{
-            "item_id": "7538955201693994298",
-            "href": "https://www.douyin.com/video/7538955201693994298",
-            "title": "租房避坑：签合同前先看这三点",
-            "duration": 33,
+        [
+            {
+                "item_id": "7538955201693994298",
+                "href": "https://www.douyin.com/video/7538955201693994298",
+                "title": "租房避坑：签合同前先看这三点",
+                "duration": 33,
                 "likes": 500,
-        }],
+            }
+        ],
         "租房",
         observed_at,
         10,
@@ -1248,8 +1530,8 @@ def test_hotspot_search_passes_the_selected_statistical_window(
                 "href": "https://www.douyin.com/video/7538955201693994298",
                 "title": "数字人近况",
                 "duration": 15,
-                    "plays": 1201,
-                    "likes": 120,
+                "plays": 1201,
+                "likes": 120,
                 "list_type": 1001,
                 "list_label": "视频总榜",
                 "window_hours": window_hours,
@@ -1304,19 +1586,22 @@ def test_hotspot_search_keeps_low_incremental_items_in_the_main_result_table(
     monkeypatch.setattr(
         provider,
         "_collect_hotspot_rows",
-        lambda keyword, *, window_hours, observed_at, target_limit: ([
-            {
-                "item_id": "7538955201693994300",
-                "href": "https://www.douyin.com/video/7538955201693994300",
-                "title": "租房预算怎么做",
-                "duration": 20,
+        lambda keyword, *, window_hours, observed_at, target_limit: (
+            [
+                {
+                    "item_id": "7538955201693994300",
+                    "href": "https://www.douyin.com/video/7538955201693994300",
+                    "title": "租房预算怎么做",
+                    "duration": 20,
                     "plays": 800,
                     "likes": 120,
-                "list_type": 1001,
-                "list_label": "视频总榜",
-                "window_hours": window_hours,
-            }
-        ], []),
+                    "list_type": 1001,
+                    "list_label": "视频总榜",
+                    "window_hours": window_hours,
+                }
+            ],
+            [],
+        ),
     )
 
     page = provider.search(
@@ -1392,7 +1677,9 @@ def test_normal_hotspot_search_minimizes_the_dedicated_browser(tmp_path, monkeyp
 
 
 def test_collection_reuses_existing_douyin_tab_without_closing_it(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class ExistingPage:
         url = "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=general"
@@ -1417,7 +1704,9 @@ def test_collection_reuses_existing_douyin_tab_without_closing_it(tmp_path):
 
 
 def test_collection_never_reuses_a_login_or_oauth_tab(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class Page:
         def __init__(self, url):
@@ -1463,30 +1752,33 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
     monkeypatch.setattr(
         provider,
         "_collect_public_search_rows",
-        lambda keyword, **_: ([
-            {
-                "item_id": "7538955201693994321",
-                "href": "https://www.douyin.com/video/7538955201693994321",
-                "title": "贴标机常见掉标问题怎么排查",
-                "duration": 26,
-                "likes": 2,
-                "published_text": "2026-07-31",
-            },
-            {
-                "item_id": "7538955201693994322",
-                "href": "https://www.douyin.com/video/7538955201693994322",
-                "title": "贴标机使用前的三个检查点",
-                "duration": 22,
-                "published_text": "",
-            },
-            {
-                "item_id": "7538955201693994323",
-                "href": "https://www.douyin.com/video/7538955201693994323",
-                "title": "贴标机旧款操作说明",
-                "duration": 24,
-                "published_text": "2026-07-31",
-            },
-        ], []),
+        lambda keyword, **_: (
+            [
+                {
+                    "item_id": "7538955201693994321",
+                    "href": "https://www.douyin.com/video/7538955201693994321",
+                    "title": "贴标机常见掉标问题怎么排查",
+                    "duration": 26,
+                    "likes": 2,
+                    "published_text": "2026-07-31",
+                },
+                {
+                    "item_id": "7538955201693994322",
+                    "href": "https://www.douyin.com/video/7538955201693994322",
+                    "title": "贴标机使用前的三个检查点",
+                    "duration": 22,
+                    "published_text": "",
+                },
+                {
+                    "item_id": "7538955201693994323",
+                    "href": "https://www.douyin.com/video/7538955201693994323",
+                    "title": "贴标机旧款操作说明",
+                    "duration": 24,
+                    "published_text": "2026-07-31",
+                },
+            ],
+            [],
+        ),
     )
     monkeypatch.setattr(
         "src.adapters.douyin_browser_search.minimize_browser_window",
@@ -1513,13 +1805,15 @@ def test_public_provider_returns_rendered_candidates_without_hotspot_quality_gat
     assert page.items[0].evidence.startswith("douyin_public_search:")
     assert page.items[1].data_quality_warnings
     assert page.crawl_stop_reason == "target_reached"
-    assert page.crawl_stop_message == "已读取到目标 3 条公开搜索结果。"
+    assert page.crawl_stop_message == "已读取到目标 3 条登录搜索结果。"
     assert page.payload_diagnostic is None
     assert minimized_ports == [29986]
 
 
 def test_public_provider_accepts_up_to_100_candidates(tmp_path, monkeypatch):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
     monkeypatch.setattr(
         provider,
@@ -1594,7 +1888,9 @@ def test_public_search_filters_known_out_of_window_rows_before_returning_items()
 def test_public_search_scans_past_raw_target_until_qualified_target(
     tmp_path, monkeypatch
 ):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
     published_after = datetime.fromisoformat("2026-08-01T12:00:00+08:00")
     rounds = [
@@ -1728,7 +2024,8 @@ def test_public_provider_does_not_mark_raw_count_as_target_after_filtering(
         provider,
         "_collect_public_search_rows",
         lambda keyword, *, target_limit, scan_limit, **_: (
-            captured.update(target_limit=target_limit, scan_limit=scan_limit) or raw_rows,
+            captured.update(target_limit=target_limit, scan_limit=scan_limit)
+            or raw_rows,
             [
                 ProviderSearchError(
                     kind=ProviderErrorKind.VALIDATION,
@@ -1895,7 +2192,9 @@ def test_public_provider_reveals_only_confirmed_manual_review_pages(
 
 @pytest.mark.parametrize("marker", ["安全验证", "登录后即可搜索更多精彩视频"])
 def test_public_search_url_and_safety_stop_are_explicit(tmp_path, marker):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     assert provider._public_search_url("贴标机") == (
         "https://www.douyin.com/search/%E8%B4%B4%E6%A0%87%E6%9C%BA?type=general"
     )
@@ -1919,7 +2218,9 @@ def test_public_search_url_and_safety_stop_are_explicit(tmp_path, marker):
 
 
 def test_public_search_stops_on_visible_service_error(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class FrameLocator:
         def count(self):
@@ -1945,7 +2246,9 @@ def test_public_search_stops_on_visible_service_error(tmp_path):
 
 
 def test_public_search_stops_when_a_verification_iframe_is_present(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class Frame:
         def evaluate(self, script):
@@ -1973,7 +2276,9 @@ def test_public_search_stops_when_a_verification_iframe_is_present(tmp_path):
 
 
 def test_public_search_ignores_a_hidden_verification_iframe(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class Frame:
         def evaluate(self, _script):
@@ -2002,7 +2307,9 @@ def test_public_search_ignores_a_hidden_verification_iframe(tmp_path):
 
 
 def test_public_search_ignores_hidden_login_marker_text(tmp_path):
-    provider = LocalDouyinBrowserSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
 
     class FrameLocator:
         def count(self):
@@ -2023,7 +2330,9 @@ def test_public_search_ignores_hidden_login_marker_text(tmp_path):
 
 
 def test_public_search_collects_until_the_requested_count(tmp_path, monkeypatch):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     rounds = [
         [{"item_id": "one", "title": "第一条"}],
         [
@@ -2062,10 +2371,51 @@ def test_public_search_collects_until_the_requested_count(tmp_path, monkeypatch)
     assert len([call for call in calls if call[0] == "scroll"]) == 2
 
 
+def test_public_search_keeps_scrolling_while_the_internal_container_moves(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
+    rounds = [
+        [{"item_id": "one", "title": "第一条"}],
+        [{"item_id": "one", "title": "第一条"}],
+        [{"item_id": "one", "title": "第一条"}],
+        [
+            {"item_id": "one", "title": "第一条"},
+            {"item_id": "two", "title": "第二条"},
+        ],
+    ]
+
+    class Page:
+        def evaluate(self, _script):
+            return True
+
+        def wait_for_timeout(self, _delay):
+            pass
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rounds.pop(0),
+    )
+
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=2,
+    )
+
+    assert [row["item_id"] for row in rows] == ["one", "two"]
+    assert stop_error is None
+
+
 def test_public_search_reports_platform_end_after_visible_results_stop_loading(
     tmp_path, monkeypatch
 ):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     rounds = [[{"item_id": "one", "title": "第一条"}]] * 3
     calls: list[tuple[str, object]] = []
 
@@ -2100,7 +2450,9 @@ def test_public_search_reports_platform_end_after_visible_results_stop_loading(
 def test_public_search_reports_verification_that_appears_at_visible_end(
     tmp_path, monkeypatch
 ):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     checks = [
         None,
         None,
@@ -2121,10 +2473,14 @@ def test_public_search_reports_verification_that_appears_at_visible_end(
             raise result
 
     monkeypatch.setattr(provider, "_raise_for_public_search_block", check_for_block)
-    monkeypatch.setattr(provider, "_extract_public_douyin_search_rows", lambda _page: [])
+    monkeypatch.setattr(
+        provider, "_extract_public_douyin_search_rows", lambda _page: []
+    )
     monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 1)
 
-    rows, stop_error = provider._collect_public_douyin_search_rows(Page(), target_limit=5)
+    rows, stop_error = provider._collect_public_douyin_search_rows(
+        Page(), target_limit=5
+    )
 
     assert rows == []
     assert stop_error is not None
@@ -2135,7 +2491,9 @@ def test_public_search_reports_verification_that_appears_at_visible_end(
 def test_public_search_does_not_turn_page_when_scrolling_stagnates(
     tmp_path, monkeypatch
 ):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     rounds = [[{"item_id": "one", "title": "第一条"}]] * 3
 
     class Page:
@@ -2165,8 +2523,13 @@ def test_public_search_does_not_turn_page_when_scrolling_stagnates(
 
 
 def test_public_search_reports_verification_without_loading_more(tmp_path, monkeypatch):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
-    checks = [None, LicensedProviderError("需要人工验证", kind=ProviderErrorKind.AUTHORIZATION)]
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
+    checks = [
+        None,
+        LicensedProviderError("需要人工验证", kind=ProviderErrorKind.AUTHORIZATION),
+    ]
     calls: list[tuple[str, object]] = []
 
     class Page:
@@ -2202,7 +2565,9 @@ def test_public_search_reports_verification_without_loading_more(tmp_path, monke
 
 
 def test_public_search_reports_the_safety_loading_limit(tmp_path, monkeypatch):
-    provider = LocalDouyinPublicSearchProvider(enabled=True, profile_dir=tmp_path / "profile")
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
     rounds = [
         [{"item_id": "one", "title": "第一条"}],
         [
@@ -2364,9 +2729,7 @@ def test_scroll_and_wait_for_new_rows_returns_when_rows_appear(tmp_path, monkeyp
 
     page = Page()
     counts = iter([5, 5, 5, 9])
-    monkeypatch.setattr(
-        provider, "_random_delay_ms", lambda *_: 500
-    )
+    monkeypatch.setattr(provider, "_random_delay_ms", lambda *_: 500)
 
     result = provider._scroll_and_wait_for_new_rows(
         page, count_rows=lambda: next(counts), max_wait_ms=6_000
@@ -2458,9 +2821,7 @@ def test_public_search_payload_stream_format(tmp_path):
             obj = _json.loads(line)
         except Exception:
             continue
-        rows.extend(
-            provider._rows_from_public_search_payload(obj, keyword="餐饮获客")
-        )
+        rows.extend(provider._rows_from_public_search_payload(obj, keyword="餐饮获客"))
     assert len(rows) == 1
     row = rows[0]
     assert row["item_id"] == "7668630123502931252"
@@ -2477,9 +2838,7 @@ def test_title_matches_keyword_lax_accepts_root_without_intent():
     from src.services.commercial_search import title_matches_keyword
 
     title = "开一家餐饮店,新模式才是王道 #餐饮 #餐饮行业"
-    assert title_matches_keyword(
-        title=title, keyword="餐饮获客", require_intent=False
-    )
+    assert title_matches_keyword(title=title, keyword="餐饮获客", require_intent=False)
     # 默认(严格)仍然要求意图词
     assert not title_matches_keyword(title=title, keyword="餐饮获客")
     # 含意图词的标题在两种模式下都通过

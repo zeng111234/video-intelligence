@@ -8,10 +8,12 @@ from src.adapters.licensed import LicensedProviderError, SandboxLicensedSearchPr
 from src.models import (
     DataSource,
     Platform,
+    PlatformSearchRun,
     PlatformRunStatus,
     ProviderCapability,
     ProviderErrorKind,
     ProviderMode,
+    ProviderSearchError,
     ProviderSearchItem,
     ProviderSearchPage,
     ProviderUsage,
@@ -255,6 +257,119 @@ def test_ten_minute_cache_creates_zero_new_calls_and_no_new_matches() -> None:
     assert all(not repository.list_candidate_matches(run.run_id) for run in second_runs)
 
 
+def test_partial_zero_result_is_not_reused_as_a_successful_cache() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    service = _service(repository, provider, now)
+    fingerprint = service._fingerprint(
+        "fixture_vendor",
+        Platform.DOUYIN,
+        "二手车",
+        7,
+        None,
+        10,
+        "platform",
+        "all",
+    )
+    batch = SearchBatch(
+        keyword="二手车",
+        published_window_days=7,
+        requested_count_per_platform=10,
+        provider="fixture_vendor",
+        mode=ProviderMode.PRODUCTION,
+        created_at=now,
+    )
+    repository.save_search_batch(batch)
+    repository.save_platform_search_run(
+        PlatformSearchRun(
+            batch_id=batch.batch_id,
+            platform=Platform.DOUYIN,
+            provider="fixture_vendor",
+            mode=ProviderMode.PRODUCTION,
+            status=PlatformRunStatus.PARTIAL,
+            requested_count=10,
+            returned_count=0,
+            idempotency_key="partial-zero",
+            request_fingerprint=fingerprint,
+            started_at=now,
+            finished_at=now,
+        )
+    )
+
+    cached = service._cached_run(
+        provider="fixture_vendor",
+        platform=Platform.DOUYIN,
+        keyword="二手车",
+        published_window_days=7,
+        hotspot_window_hours=None,
+        count=10,
+        now=now,
+    )
+
+    assert cached is None
+
+
+def test_partial_result_with_unapplied_filter_is_not_cached() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    service = _service(repository, provider, now)
+    fingerprint = service._fingerprint(
+        "fixture_vendor",
+        Platform.DOUYIN,
+        "二手车",
+        7,
+        None,
+        10,
+        "platform",
+        "all",
+    )
+    batch = SearchBatch(
+        keyword="二手车",
+        published_window_days=7,
+        requested_count_per_platform=10,
+        provider="fixture_vendor",
+        mode=ProviderMode.PRODUCTION,
+        created_at=now,
+    )
+    repository.save_search_batch(batch)
+    repository.save_platform_search_run(
+        PlatformSearchRun(
+            batch_id=batch.batch_id,
+            platform=Platform.DOUYIN,
+            provider="fixture_vendor",
+            mode=ProviderMode.PRODUCTION,
+            status=PlatformRunStatus.PARTIAL,
+            requested_count=10,
+            returned_count=3,
+            errors=[
+                ProviderSearchError(
+                    kind=ProviderErrorKind.VALIDATION,
+                    code="public_search_time_filter_unavailable",
+                    message="平台筛选未应用。",
+                )
+            ],
+            idempotency_key="partial-filter",
+            request_fingerprint=fingerprint,
+            started_at=now,
+            finished_at=now,
+        )
+    )
+
+    cached = service._cached_run(
+        provider="fixture_vendor",
+        platform=Platform.DOUYIN,
+        keyword="二手车",
+        published_window_days=7,
+        hotspot_window_hours=None,
+        count=10,
+        now=now,
+    )
+
+    assert cached is None
+
+
 def test_force_refresh_within_sixty_seconds_is_blocked_across_batches() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
@@ -325,7 +440,9 @@ def test_unknown_outcome_blocks_later_retry_until_admin_resolution() -> None:
     assert len(provider.search_calls) == 3
 
 
-def test_free_local_browser_recovers_from_unknown_outcome_without_billing_lock() -> None:
+def test_free_local_browser_recovers_from_unknown_outcome_without_billing_lock() -> (
+    None
+):
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -354,9 +471,9 @@ def test_free_local_browser_recovers_from_unknown_outcome_without_billing_lock()
     )
 
     provider.error = None
-    second = _service(
-        repository, provider, now + timedelta(minutes=5)
-    ).execute(keyword="二手车", force_refresh=True)
+    second = _service(repository, provider, now + timedelta(minutes=5)).execute(
+        keyword="二手车", force_refresh=True
+    )
     assert all(
         run.status not in {PlatformRunStatus.BLOCKED, PlatformRunStatus.OUTCOME_UNKNOWN}
         for run in repository.list_platform_search_runs(second.batch_id)
@@ -464,7 +581,9 @@ def test_empty_provider_response_is_recorded_as_provider_empty() -> None:
     assert provider.search_calls == [Platform.DOUYIN]
 
 
-def test_platform_search_keeps_readable_nonliteral_candidates_for_table_filtering() -> None:
+def test_platform_search_keeps_readable_nonliteral_candidates_for_table_filtering() -> (
+    None
+):
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -781,7 +900,9 @@ def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> N
     assert provider.search_calls == [Platform.DOUYIN]
 
 
-def test_items_without_reliable_publish_time_are_not_presented_as_one_week_videos() -> None:
+def test_items_without_reliable_publish_time_are_not_presented_as_one_week_videos() -> (
+    None
+):
     now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -824,7 +945,9 @@ def test_items_without_reliable_publish_time_are_not_presented_as_one_week_video
     assert run.returned_count == 0
 
 
-def test_unlimited_monitoring_keeps_older_related_videos_and_schedules_three_points() -> None:
+def test_unlimited_monitoring_keeps_older_related_videos_and_schedules_three_points() -> (
+    None
+):
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -884,8 +1007,14 @@ def test_unlimited_monitoring_executes_only_due_zero_window_recrawls() -> None:
 
     assert len(executed) == 1
     checkpoints = repository.list_sampling_checkpoints("租房")
-    assert next(item for item in checkpoints if item.offset_hours == 2).status == SamplingStatus.OBSERVED
-    assert next(item for item in checkpoints if item.offset_hours in {4, 12}).status == SamplingStatus.PENDING
+    assert (
+        next(item for item in checkpoints if item.offset_hours == 2).status
+        == SamplingStatus.OBSERVED
+    )
+    assert (
+        next(item for item in checkpoints if item.offset_hours in {4, 12}).status
+        == SamplingStatus.PENDING
+    )
 
 
 def test_explicit_tracking_authorization_is_required_for_due_paid_recrawls() -> None:
@@ -962,7 +1091,9 @@ def test_low_engagement_search_result_is_not_labeled_hot() -> None:
     assert trends[0].effective_interactions == 112
 
 
-def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses() -> None:
+def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses() -> (
+    None
+):
     first_seen = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(first_seen)
@@ -980,9 +1111,9 @@ def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses()
     later_service.execute(keyword="二手车", published_window_days=1, force_refresh=True)
 
     checkpoints = repository.list_sampling_checkpoints("二手车")
-    assert [
-        item.status for item in checkpoints if item.offset_hours == 2
-    ] == [SamplingStatus.OBSERVED]
+    assert [item.status for item in checkpoints if item.offset_hours == 2] == [
+        SamplingStatus.OBSERVED
+    ]
     next_checkpoint = next(item for item in checkpoints if item.offset_hours in {4, 12})
     assert next_checkpoint.status == SamplingStatus.PENDING
 
@@ -999,11 +1130,15 @@ def test_commercial_search_schedules_window_specific_recrawls_and_marks_misses()
         has_more=True,
     )
     missed_service = _douyin_only_service(repository, provider, thirteen_hours_later)
-    missed_service.execute(keyword="二手车", published_window_days=1, force_refresh=True)
+    missed_service.execute(
+        keyword="二手车", published_window_days=1, force_refresh=True
+    )
 
     checkpoints = repository.list_sampling_checkpoints("二手车")
     assert [
-        item.status for item in checkpoints if item.offset_hours == next_checkpoint.offset_hours
+        item.status
+        for item in checkpoints
+        if item.offset_hours == next_checkpoint.offset_hours
     ] == [SamplingStatus.MISSED]
 
 

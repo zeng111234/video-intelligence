@@ -246,6 +246,51 @@ class TestOpenAICompatibleCopywritingEngine:
         assert "低置信片段" in sent["messages"][1]["content"]
 
     @patch("src.adapters.llm.urlopen")
+    def test_review_transcript_batch_returns_conservative_corrections(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"corrections":[{"index":1,'
+                                '"corrected_text":"今天的优惠是八十块。",'
+                                '"note":"已修正同音字。",'
+                                '"requires_human_review":false}]}'
+                            )
+                        }
+                    }
+                ]
+            }
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+        engine = OpenAICompatibleCopywritingEngine(api_key="sk-test")
+
+        result = engine.review_transcript_batch(
+            context_hint="促销口播",
+            segments=[
+                {"index": 0, "text": "今天有活动。", "confidence": 0.95, "needs_review": False},
+                {"index": 1, "text": "今天优惠八十快", "confidence": 0.54, "needs_review": True},
+            ],
+        )
+
+        assert result == {
+            "corrections": [
+                {
+                    "index": 1,
+                    "corrected_text": "今天的优惠是八十块。",
+                    "note": "已修正同音字。",
+                    "requires_human_review": False,
+                }
+            ]
+        }
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert "促销口播" in sent["messages"][1]["content"]
+
+    @patch("src.adapters.llm.urlopen")
     def test_review_spoken_script_returns_structured_review(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(

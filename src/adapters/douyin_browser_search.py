@@ -67,7 +67,7 @@ _HOTSPOT_MAX_SCROLL_ROUNDS = 8
 _HOTSPOT_MAX_RESULT_LIMIT = 100
 _HOTSPOT_CUSTOMER_RESULT_LIMIT = 3
 _PUBLIC_SEARCH_MAX_RESULT_LIMIT = 100
-_PUBLIC_SEARCH_MAX_SCROLL_ROUNDS = 8
+_PUBLIC_SEARCH_MAX_SCROLL_ROUNDS = 30
 _PUBLIC_SEARCH_MAX_STAGNANT_ROUNDS = 2
 _PUBLIC_SEARCH_MIN_RAW_SCAN_LIMIT = 100
 _PUBLIC_SEARCH_MAX_RAW_SCAN_LIMIT = 150
@@ -98,7 +98,7 @@ _HOTSPOT_ENTRY_URL = (
 )
 _PUBLIC_DOUYIN_ENTRY_URL = "https://www.douyin.com/"
 _HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v6_broad_recall"
-_PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v6_visible_time_filters"
+_PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v7_verified_multi_filters"
 _PUBLIC_SEARCH_LOGIN_MARKERS = (
     "安全验证",
     "扫码登录",
@@ -138,6 +138,13 @@ class BrowserSessionStatus:
 @dataclass(frozen=True)
 class _PublicSearchFilterOutcome:
     receipt: str
+    warning: str | None = None
+    error_code: str | None = None
+
+
+@dataclass(frozen=True)
+class _PublicSearchLayoutOutcome:
+    mode: str
     warning: str | None = None
     error_code: str | None = None
 
@@ -211,7 +218,11 @@ class LocalDouyinBrowserSearchProvider:
             try:
                 with urlopen(self._debug_pages_url(), timeout=1.5) as response:  # noqa: S310 - localhost only
                     pages = json.loads(response.read().decode("utf-8"))
-                page_urls = [str(item.get("url") or "") for item in pages if isinstance(item, dict)]
+                page_urls = [
+                    str(item.get("url") or "")
+                    for item in pages
+                    if isinstance(item, dict)
+                ]
             except (URLError, OSError, ValueError, json.JSONDecodeError):
                 page_urls = []
             joined_urls = " ".join(page_urls).casefold()
@@ -243,7 +254,12 @@ class LocalDouyinBrowserSearchProvider:
             )
         except (URLError, OSError, ValueError, json.JSONDecodeError):
             return BrowserSessionStatus(
-                True, False, True, False, "browser_closed", "请先打开热点宝专用浏览器并登录抖音；验证出现时系统会暂停。"
+                True,
+                False,
+                True,
+                False,
+                "browser_closed",
+                "请先打开热点宝专用浏览器并登录抖音；验证出现时系统会暂停。",
             )
 
     def open_login_browser(self) -> BrowserSessionStatus:
@@ -275,7 +291,11 @@ class LocalDouyinBrowserSearchProvider:
                     "`python -m pip install -r project/backend/requirements.txt`，然后重启后端。"
                 )
             elif any(item in {"Google Chrome", "Microsoft Edge"} for item in missing):
-                browser = "Google Chrome" if self.browser_channel == "chrome" else "Microsoft Edge"
+                browser = (
+                    "Google Chrome"
+                    if self.browser_channel == "chrome"
+                    else "Microsoft Edge"
+                )
                 message = (
                     f"未找到 {browser}。请安装该浏览器，或将 "
                     "DOUYIN_BROWSER_CHANNEL 改为已安装的浏览器后重启后端。"
@@ -318,9 +338,7 @@ class LocalDouyinBrowserSearchProvider:
                 ["--new-window", "--window-position=80,80", "--window-size=1100,800"]
             )
         else:
-            browser_args.extend(
-                ["--start-minimized", "--window-size=900,700"]
-            )
+            browser_args.extend(["--start-minimized", "--window-size=900,700"])
         browser_args.append(self.browser_entry_url)
         subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
             browser_args,
@@ -366,12 +384,18 @@ class LocalDouyinBrowserSearchProvider:
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
         if platform != Platform.DOUYIN:
-            raise LicensedProviderError("本机浏览器采集当前只支持抖音。", kind=ProviderErrorKind.VALIDATION)
+            raise LicensedProviderError(
+                "本机浏览器采集当前只支持抖音。", kind=ProviderErrorKind.VALIDATION
+            )
         if not 1 <= limit <= capability.max_page_size:
-            raise LicensedProviderError("每次最多保留 100 条热点宝合格结果。", kind=ProviderErrorKind.VALIDATION)
+            raise LicensedProviderError(
+                "每次最多保留 100 条热点宝合格结果。", kind=ProviderErrorKind.VALIDATION
+            )
         status = self.session_status()
         if not status.running:
-            raise LicensedProviderError(status.message, kind=ProviderErrorKind.AUTHORIZATION)
+            raise LicensedProviderError(
+                status.message, kind=ProviderErrorKind.AUTHORIZATION
+            )
 
         self._minimize_browser_for_background()
         window_hours = self._resolve_hotspot_window_hours(hotspot_window_hours)
@@ -418,12 +442,13 @@ class LocalDouyinBrowserSearchProvider:
         idempotency_key: str,
         hotspot_window_hours: int | None = None,
     ) -> ProviderSearchPage:
-        """Read a limited set of already-rendered Douyin public search cards.
+        """Search Douyin with the dedicated local, login-bearing profile.
 
         This is deliberately separate from ``search``: Hotspot ranking and
         ordinary Douyin search are two visible sources with different quality
-        signals.  The public source never reads network responses or tries to
-        bypass a login, verification, or rate-limit page.
+        signals.  The adapter may read the platform responses already produced
+        by that visible browser session, but never exports cookies, recreates
+        private signing, or bypasses a login, verification, or rate-limit page.
         """
         del hotspot_window_hours
         capability = self.capabilities()
@@ -434,12 +459,12 @@ class LocalDouyinBrowserSearchProvider:
             )
         if platform != Platform.DOUYIN:
             raise LicensedProviderError(
-                "抖音官网搜索当前只支持抖音。",
+                "抖音登录搜索当前只支持抖音。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         if not 1 <= limit <= _PUBLIC_SEARCH_MAX_RESULT_LIMIT:
             raise LicensedProviderError(
-                "抖音官网搜索每次最多保留 100 条候选。",
+                "抖音登录搜索每次最多保留 100 条候选。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         status = self.session_status()
@@ -507,7 +532,7 @@ class LocalDouyinBrowserSearchProvider:
         crawl_stop_message = None
         if len(items) >= limit:
             crawl_stop_reason = "target_reached"
-            crawl_stop_message = f"已读取到目标 {limit} 条公开搜索结果。"
+            crawl_stop_message = f"已读取到目标 {limit} 条登录搜索结果。"
         elif stop_error is not None:
             crawl_stop_message = stop_error.message
             if stop_error.code == "public_search_safety_limit":
@@ -526,14 +551,14 @@ class LocalDouyinBrowserSearchProvider:
         if not raw_rows:
             diagnostic = (
                 crawl_stop_message
-                or "抖音官网搜索未返回可读取的视频；可能没有公开结果、需要人工登录或出现安全限制。"
+                or "抖音登录搜索未返回可读取的视频；可能没有匹配结果、登录已失效或出现安全限制。"
             )
         elif not items:
             diagnostic = (
-                f"抖音官网搜索已读取候选，但其中 {published_filtered_count} 条"
+                f"抖音登录搜索已读取候选，但其中 {published_filtered_count} 条"
                 "发布时间不在本次范围内。"
                 if published_filtered_count
-                else "抖音官网搜索已读取候选，但其中没有可读标题或可用视频链接。"
+                else "抖音登录搜索已读取候选，但其中没有可读标题或可用视频链接。"
             )
         return ProviderSearchPage(
             platform=Platform.DOUYIN,
@@ -545,7 +570,11 @@ class LocalDouyinBrowserSearchProvider:
             billable_units=0,
             has_more=(
                 crawl_stop_reason == "safety_limit"
-                or (stop_error is None and len(items) < limit and len(raw_rows) > len(items))
+                or (
+                    stop_error is None
+                    and len(items) < limit
+                    and len(raw_rows) > len(items)
+                )
             ),
             raw_item_count=len(raw_rows),
             parsed_item_count=len(items),
@@ -580,7 +609,9 @@ class LocalDouyinBrowserSearchProvider:
         now = self.clock()
         return ProviderUsage(
             provider=self.provider_name,
-            period_started_at=now.replace(day=1, hour=0, minute=0, second=0, microsecond=0),
+            period_started_at=now.replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            ),
             period_ends_at=now,
             platform_queries=0,
             billable_units=0,
@@ -617,7 +648,10 @@ class LocalDouyinBrowserSearchProvider:
                 continue
             url = str(getattr(page, "url", "") or "")
             normalized_url = url.casefold()
-            if any(marker in normalized_url for marker in ("open.douyin.com", "oauth", "passport", "login")):
+            if any(
+                marker in normalized_url
+                for marker in ("open.douyin.com", "oauth", "passport", "login")
+            ):
                 continue
             reusable_pages.append((page, normalized_url))
 
@@ -668,6 +702,7 @@ class LocalDouyinBrowserSearchProvider:
                     page.set_default_timeout(int(self.timeout_seconds * 1000))
                     rows: list[dict[str, Any]] = []
                     errors: list[ProviderSearchError] = []
+
                     def ensure_visible_page(url: str) -> None:
                         response = page.goto(url, wait_until="domcontentloaded")
                         if response is not None and response.status in {403, 429}:
@@ -675,14 +710,19 @@ class LocalDouyinBrowserSearchProvider:
                                 f"热点宝返回 {response.status}，已停止采集并进入安全暂停。",
                                 kind=ProviderErrorKind.RATE_LIMIT,
                             )
-                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS))
+                        page.wait_for_timeout(
+                            self._random_delay_ms(*_HOTSPOT_PAGE_SETTLE_RANGE_MS)
+                        )
                         body_text = page.locator("body").inner_text(timeout=3_000)
                         if any(marker in body_text for marker in _LOGIN_MARKERS):
                             raise LicensedProviderError(
                                 "热点宝要求登录或安全验证，已暂停采集，请在专用浏览器中人工处理。",
                                 kind=ProviderErrorKind.AUTHORIZATION,
                             )
-                        if any(marker in body_text for marker in ("访问频繁", "操作频繁", "请求过于频繁")):
+                        if any(
+                            marker in body_text
+                            for marker in ("访问频繁", "操作频繁", "请求过于频繁")
+                        ):
                             raise LicensedProviderError(
                                 "热点宝提示访问频繁，已停止采集并进入安全暂停。",
                                 kind=ProviderErrorKind.RATE_LIMIT,
@@ -696,7 +736,9 @@ class LocalDouyinBrowserSearchProvider:
                         try:
                             ensure_visible_page(url)
                             self._fill_hotspot_keyword(page, keyword)
-                            page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                            page.wait_for_timeout(
+                                self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                            )
                             list_rows: dict[str, dict[str, Any]] = {}
                             stagnant_rounds = 0
                             previous_count = -1
@@ -708,11 +750,17 @@ class LocalDouyinBrowserSearchProvider:
                                 current_count = len(list_rows)
                                 if current_count >= _HOTSPOT_MAX_ROWS_PER_LIST:
                                     break
-                                stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
+                                stagnant_rounds = (
+                                    stagnant_rounds + 1
+                                    if current_count == previous_count
+                                    else 0
+                                )
                                 if stagnant_rounds >= 2:
                                     break
                                 previous_count = current_count
-                                page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
+                                page.evaluate(
+                                    f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})"
+                                )
                                 page.wait_for_timeout(
                                     self._random_delay_ms(
                                         *_HOTSPOT_SCROLL_REFRESH_RANGE_MS
@@ -763,10 +811,15 @@ class LocalDouyinBrowserSearchProvider:
                     try:
                         ensure_visible_page(topic_url)
                         self._fill_hotspot_keyword(page, keyword)
-                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                        page.wait_for_timeout(
+                            self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                        )
                         topics = [
-                            item for item in self._extract_hotspot_topic_rows(page)
-                            if title_matches_keyword(title=str(item.get("topic_name") or ""), keyword=keyword)
+                            item
+                            for item in self._extract_hotspot_topic_rows(page)
+                            if title_matches_keyword(
+                                title=str(item.get("topic_name") or ""), keyword=keyword
+                            )
                         ][:2]
                         for topic in topics:
                             topic_id = str(topic.get("topic_id") or "")
@@ -777,24 +830,30 @@ class LocalDouyinBrowserSearchProvider:
                                 + quote(topic_id, safe="")
                             )
                             for row in self._extract_topic_detail_rows(page):
-                                row.update({
-                                    "window_hours": window_hours,
-                                    "list_type": 2001,
-                                    "list_label": _HOTSPOT_LIST_LABELS[2001],
-                                    "source_kind": "topic_board",
-                                    "topic_exact": True,
-                                    "topic_name": str(topic.get("topic_name") or keyword),
-                                    "topic_id": topic_id,
-                                })
+                                row.update(
+                                    {
+                                        "window_hours": window_hours,
+                                        "list_type": 2001,
+                                        "list_label": _HOTSPOT_LIST_LABELS[2001],
+                                        "source_kind": "topic_board",
+                                        "topic_exact": True,
+                                        "topic_name": str(
+                                            topic.get("topic_name") or keyword
+                                        ),
+                                        "topic_id": topic_id,
+                                    }
+                                )
                                 rows.append(row)
                     except LicensedProviderError:
                         raise
                     except Exception as exc:
-                        errors.append(ProviderSearchError(
-                            kind=ProviderErrorKind.CONNECTION,
-                            message=f"热点宝话题榜读取失败，已跳过：{_safe_error(exc)}",
-                            retryable=False,
-                        ))
+                        errors.append(
+                            ProviderSearchError(
+                                kind=ProviderErrorKind.CONNECTION,
+                                message=f"热点宝话题榜读取失败，已跳过：{_safe_error(exc)}",
+                                retryable=False,
+                            )
+                        )
 
                     if has_enough_qualifying_rows():
                         return rows, errors
@@ -808,26 +867,32 @@ class LocalDouyinBrowserSearchProvider:
                             f"active_tab=hotspot_search&date_window={window_hours}&sub_type=3001"
                         )
                         self._fill_hotspot_keyword(page, keyword)
-                        page.wait_for_timeout(self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS))
+                        page.wait_for_timeout(
+                            self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
+                        )
                         for row in self._collect_scrolled_rows(
                             page,
                             self._extract_hotspot_rows,
                         ):
-                            row.update({
-                                "window_hours": window_hours,
-                                "list_type": 3001,
-                                "list_label": _HOTSPOT_LIST_LABELS[3001],
-                                "source_kind": "search_board",
-                            })
+                            row.update(
+                                {
+                                    "window_hours": window_hours,
+                                    "list_type": 3001,
+                                    "list_label": _HOTSPOT_LIST_LABELS[3001],
+                                    "source_kind": "search_board",
+                                }
+                            )
                             rows.append(row)
                     except LicensedProviderError:
                         raise
                     except Exception as exc:
-                        errors.append(ProviderSearchError(
-                            kind=ProviderErrorKind.CONNECTION,
-                            message=f"抖音搜索读取失败，已跳过：{_safe_error(exc)}",
-                            retryable=False,
-                        ))
+                        errors.append(
+                            ProviderSearchError(
+                                kind=ProviderErrorKind.CONNECTION,
+                                message=f"抖音搜索读取失败，已跳过：{_safe_error(exc)}",
+                                retryable=False,
+                            )
+                        )
 
                     return rows, errors
                 finally:
@@ -944,9 +1009,7 @@ class LocalDouyinBrowserSearchProvider:
                     )
                     if search_focused:
                         page.keyboard.type(keyword, delay=60)
-                        page.wait_for_timeout(
-                            self._random_delay_ms(400, 900)
-                        )
+                        page.wait_for_timeout(self._random_delay_ms(400, 900))
                         page.keyboard.press("Enter")
                     else:
                         # 兜底:找不到搜索框时回退 URL 直访
@@ -954,11 +1017,15 @@ class LocalDouyinBrowserSearchProvider:
                             self._public_search_url(keyword),
                             wait_until="domcontentloaded",
                         )
-                        if fallback_response is not None and fallback_response.status in {
-                            403,
-                            412,
-                            429,
-                        }:
+                        if (
+                            fallback_response is not None
+                            and fallback_response.status
+                            in {
+                                403,
+                                412,
+                                429,
+                            }
+                        ):
                             raise LicensedProviderError(
                                 (
                                     f"抖音官网返回 {fallback_response.status}，后台检索已停止；"
@@ -983,10 +1050,18 @@ class LocalDouyinBrowserSearchProvider:
                             )
                         )
                         return [], errors
-                    # 保持页面默认布局(多列)。数据已从搜索接口直接获取,
-                    # 不再依赖单列/多列布局切换;单列切换对受限账号可能
-                    # 引入额外重渲染与风控风险,按用户选择默认多列。
-                    layout_mode = "default"
+                    layout = self._ensure_public_search_multi_column(page)
+                    if layout.warning:
+                        errors.append(
+                            ProviderSearchError(
+                                kind=ProviderErrorKind.VALIDATION,
+                                code=layout.error_code,
+                                message=layout.warning,
+                                retryable=False,
+                            )
+                        )
+                        return [], errors
+                    layout_mode = layout.mode
                     time_filter = self._apply_public_search_time_filter(
                         page,
                         published_after=published_after,
@@ -1039,7 +1114,7 @@ class LocalDouyinBrowserSearchProvider:
                 playwright_manager.stop()
         raise LicensedProviderError(
             (
-                "抖音官网搜索页打开或读取失败；为避免重复请求，本次未再次打开搜索页。"
+                "抖音登录搜索页打开或读取失败；为避免重复请求，本次未再次打开搜索页。"
                 if navigation_started
                 else "连接本机 Chrome 失败，已自动重试一次。"
             ),
@@ -1052,7 +1127,11 @@ class LocalDouyinBrowserSearchProvider:
         # The official general results view is the single entry point that
         # exposes the visible 多列/单列/筛选 controls. Extraction below still
         # accepts only canonical /video/ cards from the rendered page.
-        return "https://www.douyin.com/search/" + quote(keyword.strip(), safe="") + "?type=general"
+        return (
+            "https://www.douyin.com/search/"
+            + quote(keyword.strip(), safe="")
+            + "?type=general"
+        )
 
     @staticmethod
     def _is_public_search_api_url(url: str) -> bool:
@@ -1185,7 +1264,7 @@ class LocalDouyinBrowserSearchProvider:
             _PUBLIC_SEARCH_RATE_LIMIT_MARKERS,
         ):
             raise LicensedProviderError(
-                "抖音官网搜索提示访问频繁，后台检索已停止；当前没有可处理的登录或安全验证，请稍后再搜索。",
+                "抖音登录搜索提示访问频繁，后台检索已停止；当前没有可处理的登录或安全验证，请稍后再搜索。",
                 kind=ProviderErrorKind.RATE_LIMIT,
                 code="public_search_rate_limited",
             )
@@ -1274,8 +1353,6 @@ class LocalDouyinBrowserSearchProvider:
             published_after,
             observed_at,
         )
-        if requested_days == 0:
-            return _PublicSearchFilterOutcome("不限（未打开平台筛选）")
         if requested_days is None:
             return _PublicSearchFilterOutcome(
                 "平台筛选未应用；仅本地过滤",
@@ -1287,43 +1364,108 @@ class LocalDouyinBrowserSearchProvider:
             )
 
         option_labels = {
+            0: ("不限",),
             1: ("一天内", "1天内", "近一天", "近1天", "最近一天", "24小时内"),
             7: ("一周内", "7天内", "近一周", "近7天", "最近一周"),
             180: ("半年内", "近半年", "最近半年", "6个月内", "近6个月", "180天内"),
         }[requested_days]
-        button_status, _ = LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
-            page,
-            ("筛选",),
-        )
-        if button_status != "clicked":
-            restore_note = ""
-            if button_status == "failed":
-                restored = LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(page)
-                restore_note = (
-                    "已关闭可能打开的筛选菜单并保留原筛选状态。"
-                    if restored
-                    else "未能确认筛选菜单仍为原状态。"
+        option_index = {0: "0", 1: "1", 7: "2", 180: "3"}[requested_days]
+        if not LocalDouyinBrowserSearchProvider._public_search_time_filter_menu_visible(
+            page
+        ):
+            button_status, _ = (
+                LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+                    page,
+                    ("筛选",),
                 )
-            return _PublicSearchFilterOutcome(
-                "平台筛选未应用；仅本地过滤",
-                (
-                    f"抖音官网的“筛选”控件{LocalDouyinBrowserSearchProvider._public_control_status_text(button_status)}；"
-                    "平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
-                    f"{restore_note}"
-                ),
-                "public_search_time_filter_unavailable",
             )
+            if button_status != "clicked":
+                restore_note = ""
+                if button_status == "failed":
+                    restored = LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(
+                        page
+                    )
+                    restore_note = (
+                        "已关闭可能打开的筛选菜单并保留原筛选状态。"
+                        if restored
+                        else "未能确认筛选菜单仍为原状态。"
+                    )
+                return _PublicSearchFilterOutcome(
+                    "平台筛选未应用；仅本地过滤",
+                    (
+                        f"抖音官网的“筛选”控件{LocalDouyinBrowserSearchProvider._public_control_status_text(button_status)}；"
+                        "平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
+                        f"{restore_note}"
+                    ),
+                    "public_search_time_filter_unavailable",
+                )
+            if not LocalDouyinBrowserSearchProvider._wait_for_public_search_time_filter_options(
+                page
+            ):
+                LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(page)
+                page.wait_for_timeout(300)
+                reopen_status, _ = (
+                    LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+                        page,
+                        ("筛选",),
+                    )
+                )
+                reopened = reopen_status == "clicked" and (
+                    LocalDouyinBrowserSearchProvider._wait_for_public_search_time_filter_options(
+                        page
+                    )
+                )
+                if not reopened:
+                    restored = LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(
+                        page
+                    )
+                    return _PublicSearchFilterOutcome(
+                        "平台筛选未应用；仅本地过滤",
+                        (
+                            "已打开抖音官网筛选，但发布时间选项没有在等待时间内显示；"
+                            "平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
+                            + (
+                                "筛选菜单已关闭。"
+                                if restored
+                                else "未能确认筛选菜单已关闭。"
+                            )
+                        ),
+                        "public_search_time_filter_unavailable",
+                    )
 
-        page.wait_for_timeout(250)
-        option_status, selected_label = (
-            LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+        selected_label = option_labels[0]
+        option_status = (
+            LocalDouyinBrowserSearchProvider._click_public_search_time_filter_option(
                 page,
-                option_labels,
+                option_index,
             )
         )
         if option_status != "clicked":
-            restored = LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(page)
-            restore_note = "已关闭筛选菜单并保留原筛选状态。" if restored else "未能确认筛选菜单已关闭。"
+            LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(page)
+            reopen_status, _ = (
+                LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+                    page,
+                    ("筛选",),
+                )
+            )
+            if reopen_status == "clicked" and (
+                LocalDouyinBrowserSearchProvider._wait_for_public_search_time_filter_options(
+                    page
+                )
+            ):
+                option_status = LocalDouyinBrowserSearchProvider._click_public_search_time_filter_option(
+                    page,
+                    option_index,
+                )
+        if option_status != "clicked":
+            restored = (
+                LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(page)
+            )
+            restore_note = (
+                "已关闭筛选菜单并保留原筛选状态。"
+                if restored
+                else "未能确认筛选菜单已关闭。"
+            )
             return _PublicSearchFilterOutcome(
                 "平台筛选未应用；仅本地过滤",
                 (
@@ -1335,9 +1477,223 @@ class LocalDouyinBrowserSearchProvider:
             )
 
         page.wait_for_timeout(600)
+        if not LocalDouyinBrowserSearchProvider._public_search_time_filter_menu_visible(
+            page
+        ):
+            reopen_status, _ = (
+                LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+                    page,
+                    ("筛选",),
+                )
+            )
+            if reopen_status == "clicked":
+                LocalDouyinBrowserSearchProvider._wait_for_public_search_time_filter_options(
+                    page
+                )
+        confirmed = (
+            LocalDouyinBrowserSearchProvider._public_search_time_filter_selected(
+                page,
+                option_index,
+            )
+        )
+        restored = LocalDouyinBrowserSearchProvider._close_public_search_filter_menu(
+            page
+        )
+        if not confirmed:
+            return _PublicSearchFilterOutcome(
+                "平台筛选未应用；仅本地过滤",
+                (
+                    f"已点击“{selected_label}”，但抖音官网没有显示该发布时间条件为选中状态；"
+                    "本次停止把它当作已应用，仅按页面可核验发布时间在本地过滤。"
+                    + ("筛选菜单已关闭。" if restored else "未能确认筛选菜单已关闭。")
+                ),
+                "public_search_time_filter_unconfirmed",
+            )
+        if requested_days == 0:
+            return _PublicSearchFilterOutcome("已应用平台筛选：不限")
         return _PublicSearchFilterOutcome(
             f"已应用平台筛选：{selected_label}（{requested_days}天）"
         )
+
+    @staticmethod
+    def _ensure_public_search_multi_column(page) -> _PublicSearchLayoutOutcome:
+        """Select and verify Douyin's multi-column result layout."""
+        if not LocalDouyinBrowserSearchProvider._wait_for_public_search_layout_controls(
+            page
+        ):
+            return _PublicSearchLayoutOutcome(
+                "unconfirmed",
+                "抖音搜索结果页没有在等待时间内显示“单列/多列”控件；为避免按错误布局采集，本次搜索已停止。",
+                "public_search_multi_column_unavailable",
+            )
+        if LocalDouyinBrowserSearchProvider._public_search_multi_column_selected(page):
+            return _PublicSearchLayoutOutcome("multi_column")
+        status, _ = LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
+            page,
+            ("多列",),
+        )
+        if status != "clicked":
+            return _PublicSearchLayoutOutcome(
+                "unconfirmed",
+                (
+                    "抖音官网的“多列”控件"
+                    f"{LocalDouyinBrowserSearchProvider._public_control_status_text(status)}；"
+                    "为避免按错误布局采集，本次搜索已停止。"
+                ),
+                "public_search_multi_column_unavailable",
+            )
+        page.wait_for_timeout(1_200)
+        confirmed = (
+            LocalDouyinBrowserSearchProvider._public_search_multi_column_selected(page)
+        )
+        if not confirmed:
+            return _PublicSearchLayoutOutcome(
+                "unconfirmed",
+                "已点击“多列”，但抖音官网没有显示多列为选中状态；为避免按错误布局采集，本次搜索已停止。",
+                "public_search_multi_column_unconfirmed",
+            )
+        return _PublicSearchLayoutOutcome("multi_column")
+
+    @staticmethod
+    def _public_search_multi_column_selected(page) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """() => {
+                      // __PUBLIC_SEARCH_MULTI_SELECTED__
+                      const visible = element => {
+                        const rect = element.getBoundingClientRect();
+                        const style = getComputedStyle(element);
+                        return rect.width > 0 && rect.height > 0
+                          && style.display !== 'none' && style.visibility !== 'hidden';
+                      };
+                      const exact = label => [...document.querySelectorAll('body *')]
+                        .filter(node => node.children.length === 0
+                          && String(node.textContent || '').trim() === label
+                          && visible(node))
+                        .at(-1);
+                      const alpha = node => {
+                        if (!node) return -1;
+                        const host = node.closest('div.CXCBYMD3') || node.parentElement || node;
+                        const color = getComputedStyle(host).color;
+                        const match = color.match(/rgba?\\([^,]+,[^,]+,[^,]+(?:,\\s*([0-9.]+))?\\)/);
+                        return match ? Number(match[1] ?? 1) : 0;
+                      };
+                      const multi = exact('多列');
+                      const single = exact('单列');
+                      return Boolean(multi && single && alpha(multi) > alpha(single) + 0.2);
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _public_search_layout_controls_ready(page) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """() => {
+                      // __PUBLIC_SEARCH_LAYOUT_CONTROLS_READY__
+                      const visible = element => {
+                        const rect = element.getBoundingClientRect();
+                        const style = getComputedStyle(element);
+                        return rect.width > 0 && rect.height > 0
+                          && style.display !== 'none' && style.visibility !== 'hidden';
+                      };
+                      const labels = new Set(
+                        [...document.querySelectorAll('body *')]
+                          .filter(node => node.children.length === 0 && visible(node))
+                          .map(node => String(node.textContent || '').trim())
+                      );
+                      return labels.has('多列') && labels.has('单列');
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait_for_public_search_layout_controls(
+        page, *, timeout_ms: int = 8_000
+    ) -> bool:
+        waited_ms = 0
+        while waited_ms < timeout_ms:
+            if LocalDouyinBrowserSearchProvider._public_search_layout_controls_ready(
+                page
+            ):
+                return True
+            page.wait_for_timeout(200)
+            waited_ms += 200
+        return False
+
+    @staticmethod
+    def _public_search_time_filter_menu_visible(page) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """() => {
+                      // __PUBLIC_SEARCH_TIME_FILTER_MENU_VISIBLE__
+                      return [...document.querySelectorAll('span[data-index1="1"]')]
+                        .some(node => {
+                          const rect = node.getBoundingClientRect();
+                          let current = node;
+                          while (current) {
+                            const style = getComputedStyle(current);
+                            if (style.display === 'none' || style.visibility === 'hidden') return false;
+                            current = current.parentElement;
+                          }
+                          return rect.width > 0 && rect.height > 0
+                            && rect.bottom > 0 && rect.right > 0
+                            && rect.top < window.innerHeight && rect.left < window.innerWidth;
+                        });
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _wait_for_public_search_time_filter_options(
+        page, *, timeout_ms: int = 5_000
+    ) -> bool:
+        waited_ms = 0
+        while waited_ms < timeout_ms:
+            if LocalDouyinBrowserSearchProvider._public_search_time_filter_menu_visible(
+                page
+            ):
+                return True
+            page.wait_for_timeout(100)
+            waited_ms += 100
+        return False
+
+    @staticmethod
+    def _public_search_time_filter_selected(page, option_index: str) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """index => {
+                      // __PUBLIC_SEARCH_TIME_FILTER_SELECTED__
+                      const options = [...document.querySelectorAll('span[data-index1="1"]')]
+                        .filter(node => {
+                          const rect = node.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0;
+                        });
+                      const target = options.find(node => node.dataset.index2 === index);
+                      if (!target) return false;
+                      if (target.getAttribute('aria-selected') === 'true'
+                          || target.dataset.active === 'true') return true;
+                      const background = getComputedStyle(target).backgroundColor;
+                      const alphaMatch = background.match(/rgba?\\([^,]+,[^,]+,[^,]+(?:,\\s*([0-9.]+))?\\)/);
+                      const backgroundAlpha = alphaMatch ? Number(alphaMatch[1] ?? 1) : 0;
+                      const minimumClassCount = Math.min(...options.map(node => node.classList.length));
+                      return backgroundAlpha > 0.01 || target.classList.length > minimumClassCount;
+                    }""",
+                    option_index,
+                )
+            )
+        except Exception:
+            return False
 
     @staticmethod
     def _public_search_filter_days(
@@ -1403,6 +1759,54 @@ class LocalDouyinBrowserSearchProvider:
         if found or failed:
             return "failed", None
         return "missing", None
+
+    @staticmethod
+    def _click_public_search_time_filter_option(page, option_index: str) -> str:
+        """Click only the 发布时间 option, not another same-named filter option."""
+        found = False
+        hidden = False
+        disabled = False
+        failed = False
+        try:
+            matches = page.locator(
+                f'span[data-index1="1"][data-index2="{option_index}"]'
+            )
+            count = matches.count()
+        except Exception:
+            return "failed"
+        found = count > 0
+        for index in range(count - 1, -1, -1):
+            control = matches.nth(index)
+            try:
+                if not control.is_visible() or not bool(
+                    control.evaluate(
+                        """node => {
+                          const rect = node.getBoundingClientRect();
+                          return rect.width > 0 && rect.height > 0
+                            && rect.bottom > 0 && rect.right > 0
+                            && rect.top < window.innerHeight && rect.left < window.innerWidth;
+                        }"""
+                    )
+                ):
+                    hidden = True
+                    continue
+                if (
+                    not control.is_enabled()
+                    or control.get_attribute("aria-disabled") == "true"
+                ):
+                    disabled = True
+                    continue
+                control.click()
+                return "clicked"
+            except Exception:
+                failed = True
+        if disabled:
+            return "disabled"
+        if hidden:
+            return "hidden"
+        if found or failed:
+            return "failed"
+        return "missing"
 
     @staticmethod
     def _close_public_search_filter_menu(page) -> bool:
@@ -1817,10 +2221,25 @@ class LocalDouyinBrowserSearchProvider:
         """Load rendered public-search cards until the goal or a safe stop condition."""
         target_limit = max(1, min(target_limit, _PUBLIC_SEARCH_MAX_RESULT_LIMIT))
         maximum_scan_limit = _PUBLIC_SEARCH_MAX_RAW_SCAN_LIMIT
-        scan_limit = max(target_limit, min(scan_limit or target_limit, maximum_scan_limit))
+        scan_limit = max(
+            target_limit, min(scan_limit or target_limit, maximum_scan_limit)
+        )
         rows_by_id: dict[str, dict[str, Any]] = {}
         stagnant_rounds = 0
         previous_count = -1
+        last_scroll_moved = False
+
+        def refresh_network_rows() -> int:
+            """Merge response rows while lazy loading is still in flight."""
+            for row in (network_rows or {}).values():
+                item_id = str(row.get("item_id") or "")
+                if (
+                    item_id
+                    and item_id not in rows_by_id
+                    and len(rows_by_id) < scan_limit
+                ):
+                    rows_by_id[item_id] = row
+            return len(rows_by_id)
 
         for round_index in range(_PUBLIC_SEARCH_MAX_SCROLL_ROUNDS):
             try:
@@ -1838,12 +2257,13 @@ class LocalDouyinBrowserSearchProvider:
             # 候选 id 与 播放/点赞/评论/转发 统计的可靠来源。
             for row in self._extract_public_douyin_search_rows(page):
                 item_id = str(row.get("item_id") or "")
-                if item_id and item_id not in rows_by_id and len(rows_by_id) < scan_limit:
+                if (
+                    item_id
+                    and item_id not in rows_by_id
+                    and len(rows_by_id) < scan_limit
+                ):
                     rows_by_id[item_id] = row
-            for row in (network_rows or {}).values():
-                item_id = str(row.get("item_id") or "")
-                if item_id and item_id not in rows_by_id and len(rows_by_id) < scan_limit:
-                    rows_by_id[item_id] = row
+            refresh_network_rows()
 
             current_count = len(rows_by_id)
             current_rows = list(rows_by_id.values())
@@ -1866,7 +2286,10 @@ class LocalDouyinBrowserSearchProvider:
                 stagnant_rounds + 1 if current_count == previous_count else 0
             )
             previous_count = current_count
-            if stagnant_rounds >= _PUBLIC_SEARCH_MAX_STAGNANT_ROUNDS:
+            if (
+                stagnant_rounds >= _PUBLIC_SEARCH_MAX_STAGNANT_ROUNDS
+                and not last_scroll_moved
+            ):
                 try:
                     # Verification can render while the final visible result
                     # round is settling. Recheck before calling this an end.
@@ -1882,7 +2305,7 @@ class LocalDouyinBrowserSearchProvider:
                     kind=ProviderErrorKind.VALIDATION,
                     code="public_search_platform_end",
                     message=(
-                        "抖音官网搜索低频模式已到达当前可见结果末尾，本次不再翻页，"
+                        "抖音登录搜索低频模式已到达当前可见结果末尾，本次不再翻页，"
                         f"本次得到 {current_qualified_count} 条可用候选（扫描 {current_count} 条），"
                         f"未达到目标 {target_limit} 条。"
                     ),
@@ -1891,9 +2314,13 @@ class LocalDouyinBrowserSearchProvider:
             if round_index + 1 >= _PUBLIC_SEARCH_MAX_SCROLL_ROUNDS:
                 break
             # 懒加载:滚动后需要等待刷新才有新内容。轮询等待新行出现,
-            # 而不是固定等几秒;单列模式布局卡片更高,天然需要更久。
+            # 而不是固定等几秒；默认多列页由内部结果容器承载滚动。
             self._scroll_and_wait_for_new_rows(
-                page, count_rows=lambda: len(rows_by_id)
+                page,
+                count_rows=refresh_network_rows,
+            )
+            last_scroll_moved = bool(
+                getattr(self, "_last_public_search_scroll_moved", False)
             )
 
         final_rows = list(rows_by_id.values())
@@ -1910,18 +2337,44 @@ class LocalDouyinBrowserSearchProvider:
         )
 
     def _scroll_and_wait_for_new_rows(
-        self, page, *, count_rows, max_wait_ms: int = 10_000
+        self, page, *, count_rows, max_wait_ms: int = 3_000
     ) -> bool:
         """滚动后轮询等待新行出现,而不是固定等几秒。
 
-        平台搜索结果采用懒加载:滚动到一定位置后需要等待刷新才会出现
-        新内容。每次滚动 500px 后,每 500ms 检查一次行数,直到出现
-        新行或超过 max_wait_ms。返回是否在等待期内出现新行。
+        平台搜索结果采用懒加载:多列页真正滚动的是内部结果容器而非
+        window。优先滚动当前页面内可见且滚动范围最大的容器，找不到
+        才回退到窗口；每 500ms 合并一次 DOM 和网络响应，直到出现新行。
         """
         before = count_rows()
         try:
-            page.evaluate(f"window.scrollBy(0, {_HOTSPOT_SCROLL_PIXELS})")
+            scroll_script = """() => {
+                  const visibleScrollable = [...document.querySelectorAll('*')]
+                    .filter(element => {
+                      const style = window.getComputedStyle(element);
+                      const rect = element.getBoundingClientRect();
+                      return ['auto', 'scroll'].includes(style.overflowY)
+                        && element.scrollHeight > element.clientHeight + 80
+                        && rect.width > 0 && rect.height > 0
+                        && rect.bottom > 0 && rect.right > 0
+                        && rect.top < window.innerHeight && rect.left < window.innerWidth;
+                    })
+                    .sort((left, right) =>
+                      (right.scrollHeight - right.clientHeight)
+                      - (left.scrollHeight - left.clientHeight)
+                    );
+                  const target = visibleScrollable[0];
+                  if (target) {
+                    const before = target.scrollTop;
+                    target.scrollBy(0, Math.max(__PIXELS__, target.clientHeight * 0.9));
+                    return target.scrollTop > before;
+                  }
+                  const before = window.scrollY;
+                  window.scrollBy(0, __PIXELS__);
+                  return window.scrollY > before;
+                }""".replace("__PIXELS__", str(_HOTSPOT_SCROLL_PIXELS))
+            self._last_public_search_scroll_moved = bool(page.evaluate(scroll_script))
         except Exception:
+            self._last_public_search_scroll_moved = False
             return False
         waited = 0
         while waited < max_wait_ms:
@@ -1943,7 +2396,7 @@ class LocalDouyinBrowserSearchProvider:
             kind=ProviderErrorKind.SERVICE,
             code="public_search_safety_limit",
             message=(
-                "抖音官网搜索已达到安全加载上限，"
+                "抖音登录搜索已达到安全加载上限，"
                 f"本次得到 {qualified_count} 条可用候选（扫描 {scanned_count}/{scan_limit} 条），"
                 f"未达到目标 {target_limit} 条。"
             ),
@@ -1970,7 +2423,9 @@ class LocalDouyinBrowserSearchProvider:
             current_count = len(rows_by_id)
             if current_count >= target_limit:
                 break
-            stagnant_rounds = stagnant_rounds + 1 if current_count == previous_count else 0
+            stagnant_rounds = (
+                stagnant_rounds + 1 if current_count == previous_count else 0
+            )
             if stagnant_rounds >= 2:
                 break
             previous_count = current_count
@@ -1990,17 +2445,35 @@ class LocalDouyinBrowserSearchProvider:
                 continue
             current = merged.get(item_id)
             if current is None:
-                current = {**row, "list_types": set(), "list_labels": set(), "source_kinds": set()}
+                current = {
+                    **row,
+                    "list_types": set(),
+                    "list_labels": set(),
+                    "source_kinds": set(),
+                }
                 merged[item_id] = current
             list_type = LocalDouyinBrowserSearchProvider._as_int(row.get("list_type"))
             if list_type:
                 current["list_types"].add(list_type)
             current["list_labels"].add(str(row.get("list_label") or ""))
             current["source_kinds"].add(str(row.get("source_kind") or ""))
-            current["topic_exact"] = bool(current.get("topic_exact")) or bool(row.get("topic_exact"))
-            for field in ("score", "plays", "likes", "fans", "duration", "comments", "shares", "favorites"):
+            current["topic_exact"] = bool(current.get("topic_exact")) or bool(
+                row.get("topic_exact")
+            )
+            for field in (
+                "score",
+                "plays",
+                "likes",
+                "fans",
+                "duration",
+                "comments",
+                "shares",
+                "favorites",
+            ):
                 value = row.get(field)
-                if value is not None and (current.get(field) is None or value > current[field]):
+                if value is not None and (
+                    current.get(field) is None or value > current[field]
+                ):
                     current[field] = value
             if current.get("like_rate") is None and row.get("like_rate") is not None:
                 current["like_rate"] = row["like_rate"]
@@ -2008,7 +2481,9 @@ class LocalDouyinBrowserSearchProvider:
         for row in merged.values():
             row["list_types"] = sorted(value for value in row["list_types"] if value)
             row["list_labels"] = sorted(value for value in row["list_labels"] if value)
-            row["source_kinds"] = sorted(value for value in row["source_kinds"] if value)
+            row["source_kinds"] = sorted(
+                value for value in row["source_kinds"] if value
+            )
             normalized.append(row)
         return normalized
 
@@ -2032,7 +2507,9 @@ class LocalDouyinBrowserSearchProvider:
         if likes is None or likes < _MIN_QUALIFYING_LIKES:
             return None
         if LocalDouyinBrowserSearchProvider._source_priority(row) == 0:
-            window_hours = LocalDouyinBrowserSearchProvider._as_int(row.get("window_hours"))
+            window_hours = LocalDouyinBrowserSearchProvider._as_int(
+                row.get("window_hours")
+            )
             if window_hours is None or window_hours <= 0:
                 return None
             daily_likes = likes / max(window_hours / 24, 1 / 24)
@@ -2093,7 +2570,7 @@ class LocalDouyinBrowserSearchProvider:
                 errors.append(
                     ProviderSearchError(
                         kind=ProviderErrorKind.VALIDATION,
-                        message="公开搜索作品链接缺少可读标题，已跳过。",
+                        message="抖音搜索作品链接缺少可读标题，已跳过。",
                         item_index=index,
                     )
                 )
@@ -2105,7 +2582,9 @@ class LocalDouyinBrowserSearchProvider:
             ):
                 filter_counts["relevance"] += 1
                 continue
-            duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
+            duration_seconds = LocalDouyinBrowserSearchProvider._as_int(
+                row.get("duration")
+            )
             published_at = LocalDouyinBrowserSearchProvider._parse_published_at(
                 row.get("published_text"), observed_at
             )
@@ -2147,23 +2626,16 @@ class LocalDouyinBrowserSearchProvider:
     ) -> ProviderSearchItem:
         warnings: list[str] = []
         layout_mode = str(row.get("search_layout") or "")
-        time_filter_receipt = str(
-            row.get("search_time_filter") or "平台筛选状态未记录"
-        )
+        time_filter_receipt = str(row.get("search_time_filter") or "平台筛选状态未记录")
         time_filter_warning = str(row.get("search_time_filter_warning") or "")
-        if layout_mode == "default":
-            warnings.append(
-                "抖音官网当前未提供可见的“单列”结果布局，已按默认卡片读取；"
-                "未显示的指标会保留为空。"
-            )
         if time_filter_warning:
             warnings.append(time_filter_warning)
         if published_at is None:
             published_at = observed_at
-            warnings.append("公开搜索页未显示可核验发布时间，已保留但需要人工确认。")
+            warnings.append("抖音搜索页未显示可核验发布时间，已保留但需要人工确认。")
         if duration_seconds is None or duration_seconds <= 0:
             duration_seconds = None
-            warnings.append("公开搜索页未返回视频时长。")
+            warnings.append("抖音搜索页未返回视频时长。")
         metrics = {
             "plays": LocalDouyinBrowserSearchProvider._as_int(row.get("plays")),
             "likes": LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
@@ -2183,9 +2655,7 @@ class LocalDouyinBrowserSearchProvider:
             if metrics[field] is None
         ]
         if missing_metrics:
-            warnings.append(
-                f"公开搜索页未显示互动指标：{'、'.join(missing_metrics)}。"
-            )
+            warnings.append(f"抖音搜索页未显示互动指标：{'、'.join(missing_metrics)}。")
         return ProviderSearchItem(
             platform=Platform.DOUYIN,
             platform_item_id=item_id,
@@ -2204,7 +2674,7 @@ class LocalDouyinBrowserSearchProvider:
             ),
             evidence=(
                 f"douyin_public_search:关键词={keyword};来源=browser_rendered;"
-                f"布局={'单列' if layout_mode == 'single_column' else '默认卡片' if layout_mode == 'default' else '未标记'};"
+                f"布局={'多列' if layout_mode == 'multi_column' else '单列' if layout_mode == 'single_column' else '未确认'};"
                 f"发布时间筛选={time_filter_receipt};"
                 f"发布时间={row.get('published_text') or '未返回'};"
                 f"time={'platform' if row.get('published_text') else 'unknown'};"
@@ -2276,10 +2746,16 @@ class LocalDouyinBrowserSearchProvider:
                     )
                 )
                 continue
-            duration_seconds = LocalDouyinBrowserSearchProvider._as_int(row.get("duration"))
-            quality = LocalDouyinBrowserSearchProvider._quality_details(row, observed_at)
+            duration_seconds = LocalDouyinBrowserSearchProvider._as_int(
+                row.get("duration")
+            )
+            quality = LocalDouyinBrowserSearchProvider._quality_details(
+                row, observed_at
+            )
             seen.add(item_id)
-            incremental_plays = LocalDouyinBrowserSearchProvider._as_int(row.get("plays"))
+            incremental_plays = LocalDouyinBrowserSearchProvider._as_int(
+                row.get("plays")
+            )
             items.append(
                 LocalDouyinBrowserSearchProvider._to_provider_item(
                     row=row,
@@ -2344,8 +2820,14 @@ class LocalDouyinBrowserSearchProvider:
                 likes=LocalDouyinBrowserSearchProvider._as_int(row.get("likes")),
                 comments=LocalDouyinBrowserSearchProvider._as_int(row.get("comments")),
                 shares=LocalDouyinBrowserSearchProvider._as_int(row.get("shares")),
-                favorites=LocalDouyinBrowserSearchProvider._as_int(row.get("favorites")),
-                confidence=(0.8 if row.get("topic_exact") or "video_board" in source_kinds else 0.6),
+                favorites=LocalDouyinBrowserSearchProvider._as_int(
+                    row.get("favorites")
+                ),
+                confidence=(
+                    0.8
+                    if row.get("topic_exact") or "video_board" in source_kinds
+                    else 0.6
+                ),
             ),
             evidence=(
                 f"hotspot:{'|'.join(list_labels) or '爆款榜'}:"
@@ -2423,19 +2905,28 @@ class LocalDouyinBrowserSearchProvider:
         if not self._browser_engine_available():
             missing.append("Playwright Python 依赖")
         if self._browser_executable() is None:
-            missing.append("Google Chrome" if self.browser_channel == "chrome" else "Microsoft Edge")
+            missing.append(
+                "Google Chrome"
+                if self.browser_channel == "chrome"
+                else "Microsoft Edge"
+            )
         return missing
 
     @staticmethod
     def _browser_engine_available() -> bool:
         try:
             import playwright.sync_api  # noqa: F401
+
             return True
         except ImportError:
             return False
 
     def _browser_executable(self) -> Path | None:
-        names = ["chrome", "chrome.exe"] if self.browser_channel == "chrome" else ["msedge", "msedge.exe"]
+        names = (
+            ["chrome", "chrome.exe"]
+            if self.browser_channel == "chrome"
+            else ["msedge", "msedge.exe"]
+        )
         for name in names:
             found = shutil.which(name)
             if found:
@@ -2462,7 +2953,7 @@ class LocalDouyinBrowserSearchProvider:
 
 
 class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
-    """A separately attributable, render-only adapter for Douyin public search."""
+    """A stable provider id for Douyin search through a login-bearing profile."""
 
     # Keep login-wall empty responses from the first adapter revision out of
     # the normal 10-minute cache after the user completes manual login.
@@ -2474,7 +2965,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
         missing = self._missing_prerequisites()
         return ProviderCapability(
             provider_name=self.provider_name,
-            display_name="本机 Chrome 抖音官网搜索",
+            display_name="本机 Chrome 抖音登录搜索",
             mode=ProviderMode.LOCAL_BROWSER,
             enabled=not missing,
             supported_platforms=[Platform.DOUYIN] if not missing else [],
@@ -2482,7 +2973,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
             supports_published_after=True,
             supports_metric_refresh=False,
             supports_usage=True,
-            permission_status="local_browser_public_search",
+            permission_status="local_browser_login_session",
             credential_alias="local-dedicated-browser-profile",
             missing_configuration=missing,
         )
@@ -2530,7 +3021,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
                 False,
                 True,
                 "ready",
-                "抖音官网搜索浏览器已启动；实际搜索时会核验登录或安全验证。",
+                "抖音登录搜索浏览器已启动；实际搜索时会核验登录状态或安全验证。",
             )
         return status
 

@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Modal } from "antd";
 import { BrowserRouter, MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import AiCopyPage from "./AiCopyPage";
 import { ToastProvider } from "../components/Toast";
@@ -30,7 +31,19 @@ function renderPage() {
   );
 }
 
+async function confirmCopyCost() {
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog.textContent).toContain("预计约 0.01 积分");
+  fireEvent.click(within(dialog).getByRole("button", { name: "确认费用并开始" }));
+}
+
 describe("AiCopyPage", () => {
+  afterEach(() => {
+    Modal.destroyAll();
+    cleanup();
+    document.body.innerHTML = "";
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
@@ -97,9 +110,11 @@ describe("AiCopyPage", () => {
     const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     expect(view.container.textContent?.replace(/\s/g, "")).toContain(
-      "平台服务价：输入0.0015、输出0.003积分/千Token",
+      "预计本次约0.01积分",
     );
     fireEvent.click(optimizeButton);
+    expect(rewriteCopywriting).not.toHaveBeenCalled();
+    await confirmCopyCost();
 
     await waitFor(() => expect(rewriteCopywriting).toHaveBeenCalledWith(expect.objectContaining({
       source_text: "原始文案",
@@ -111,6 +126,39 @@ describe("AiCopyPage", () => {
     expect(within(view.container).queryByText("发布标题、描述和话题")).toBeNull();
     expect(within(view.container).queryByRole("button", { name: "AI 生成发布信息" })).toBeNull();
     expect(within(view.container).queryByRole("button", { name: /带入多平台发布/ })).toBeNull();
+  });
+
+  it("states clearly that sandbox generation does not charge credits", async () => {
+    vi.mocked(getCopywritingCapabilities).mockResolvedValueOnce({
+      provider_name: "sandbox_copywriting",
+      display_name: "本地演示",
+      mode: "sandbox",
+      enabled: true,
+      model_name: "sandbox-template",
+      max_input_chars: 12000,
+      max_output_chars: 4000,
+      supports_variants: true,
+      max_variants: 5,
+      supported_platforms: ["douyin"],
+      missing_configuration: [],
+      billing_label: "演示",
+      input_price_credits_per_1k_tokens: "0.0015",
+      output_price_credits_per_1k_tokens: "0.003",
+      minimum_charge_credits: "0.01",
+      billing_rounding: "整次任务合计后向上进位保留两位小数",
+    });
+    const view = renderPage();
+
+    fireEvent.change(
+      within(view.container).getByPlaceholderText("粘贴已确认的转写稿、口播稿或原始文案..."),
+      { target: { value: "演示原稿" } },
+    );
+    expect(await within(view.container).findByText("本地演示 · 不扣积分")).toBeTruthy();
+    fireEvent.click(within(view.container).getByRole("button", { name: /开始去重改写/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("不会扣积分");
+    expect(within(dialog).getByRole("button", { name: "开始演示" })).toBeTruthy();
   });
 
   it("highlights suspected external names without blocking the generated copy", async () => {
@@ -140,6 +188,7 @@ describe("AiCopyPage", () => {
     const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(optimizeButton);
+    await confirmCopyCost();
 
     await waitFor(() => {
       const mark = view.container.querySelector("mark");
@@ -183,6 +232,7 @@ describe("AiCopyPage", () => {
     const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(optimizeButton);
+    await confirmCopyCost();
 
     expect(await within(view.container).findByText("这是自动优化后的最后版本。")).toBeTruthy();
     expect(within(view.container).queryByText("已使用自动优化后的最终版本")).toBeNull();

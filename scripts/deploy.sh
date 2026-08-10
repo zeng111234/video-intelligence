@@ -128,7 +128,7 @@ cat > start.sh << 'EOF'
 # 启动所有服务
 
 echo "启动后端服务..."
-python -m uvicorn project.backend.app.main:app --host 0.0.0.0 --port 2001 &
+python -m uvicorn project.backend.app.main:app --host 127.0.0.1 --port 2001 --no-proxy-headers &
 BACKEND_PID=$!
 
 echo "启动前端开发服务器..."
@@ -167,7 +167,7 @@ echo "启动方式："
 echo "  ./start.sh"
 echo ""
 echo "或手动启动："
-echo "  1. 后端: python -m uvicorn project.backend.app.main:app --host 0.0.0.0 --port 2001"
+echo "  1. 后端: python -m uvicorn project.backend.app.main:app --host 127.0.0.1 --port 2001 --no-proxy-headers"
 echo "  2. 前端: cd project/frontend && npm run dev"
 echo ""
 echo "访问地址："

@@ -243,8 +243,8 @@ class ProductionService:
         normalized_sources = self._normalize_source_items(candidate_ids or [], source_items or [])
         if not normalized_sources:
             raise ValueError("请至少添加一条候选、链接、选题或完整文案。")
-        if len(normalized_sources) > 50:
-            raise ValueError("单个批次最多包含 50 条内容。")
+        if len(normalized_sources) > 400:
+            raise ValueError("单个批次最多包含 400 条内容。")
         getter = getattr(self.repository, "get_candidate", None)
 
         batch = ProductionBatch(
@@ -676,7 +676,14 @@ class ProductionService:
                 "brief",
                 "script",
             }
-            copy_call_count = int(rewrite_required) + int(audit_required)
+            # 候选/分享链接最多预留一次整段转写 AI 校对，实际仅在云端
+            # 返回低置信片段时调用；预检按上限报价，避免隐藏额外费用。
+            transcript_review_reserved = item.source_type in {"candidate", "share_link"}
+            copy_call_count = (
+                int(rewrite_required)
+                + int(audit_required)
+                + int(transcript_review_reserved)
+            )
             if copy_call_count:
                 if copy_capability_error:
                     reasons.append(copy_capability_error)
@@ -813,6 +820,7 @@ class ProductionService:
                 "cost_known": item_cost_known,
                 "use_paid_fallback": use_paid_fallback,
                 "copy_call_count": copy_call_count,
+                "transcript_review_reserved": transcript_review_reserved,
                 "manual_script_audit": audit_required,
             })
         cost_issues: list[str] = []
@@ -1213,17 +1221,39 @@ class ProductionService:
                 and retry_stage == PipelineStage.AVATAR_GENERATION
                 and bool(run.avatar_task_id)
             )
+            retrying_transcription_upload = (
+                retry_stage == PipelineStage.TRANSCRIPTION
+            )
+            retry_config = {
+                **run.config,
+                "stage_retry_counts": retry_counts,
+            }
+            if retrying_transcription_upload:
+                transcription_task = self._transcription_task(run)
+                retry_config.pop("transcription_task_id", None)
+                retry_config.pop("outcome_unknown", None)
+                retry_config.pop("recovery_blocked", None)
+                retry_config.pop("recovery_reason", None)
+                if transcription_task is not None:
+                    retry_config["retry_source_transcription_task_id"] = (
+                        transcription_task.task_id
+                    )
             update = {
                 "status": (
                     PipelineRunStatus.RUNNING
                     if resume_existing_avatar
                     else PipelineRunStatus.PENDING
                 ),
-                "current_stage": retry_stage,
+                # Candidate media resolution is idempotent for this run.  Start
+                # from that safe entry so the worker creates one new ASR task
+                # instead of trying to resume an upload with no provider job.
+                "current_stage": (
+                    None if retrying_transcription_upload else retry_stage
+                ),
                 "error_message": None,
                 "finished_at": None,
                 "updated_at": now,
-                "config": {**run.config, "stage_retry_counts": retry_counts},
+                "config": retry_config,
             }
             if (
                 retry_stage == PipelineStage.AVATAR_GENERATION
@@ -1235,7 +1265,11 @@ class ProductionService:
                 queued,
                 action="batch_retry_queued",
                 stage=retry_stage,
-                message=f"已从 {stage_key} 安全恢复，已成功的付费阶段不会重提。",
+                message=(
+                    "已确认重新提交转写；将复用已解析素材并只创建一个新的云端识别任务。"
+                    if retrying_transcription_upload
+                    else f"已从 {stage_key} 安全恢复，已成功的付费阶段不会重提。"
+                ),
             )
             self.repository.save_pipeline_run(queued)
             items.append(item.model_copy(update={"status": ProductionBatchItemStatus.QUEUED, "error_message": None, "updated_at": now}))
@@ -1271,7 +1305,25 @@ class ProductionService:
             return PipelineStage.AVATAR_GENERATION, ""
         if run.current_stage == PipelineStage.COPYWRITING:
             return None, "文案阶段失败需回到文案确认，不自动重复调用生成服务。"
-        if run.current_stage in {PipelineStage.MEDIA_RESOLUTION, PipelineStage.TRANSCRIPTION}:
+        if run.current_stage == PipelineStage.TRANSCRIPTION:
+            transcription_task = self._transcription_task(run)
+            source_media_path = (
+                Path(str(transcription_task.outputs.get("source_media_path") or ""))
+                if transcription_task is not None
+                else None
+            )
+            if (
+                transcription_task is not None
+                and transcription_task.status == TaskStatus.FAILED
+                and not transcription_task.provider_job_id
+                and transcription_task.provider_status == "failed"
+                and source_media_path is not None
+                and source_media_path.is_file()
+                and bool(run.candidate_video_id)
+            ):
+                return PipelineStage.TRANSCRIPTION, ""
+            return None, "转写任务可能已经提交或素材不可恢复，不能自动重提。"
+        if run.current_stage == PipelineStage.MEDIA_RESOLUTION:
             return None, "媒体或转写阶段可能已经产生费用，不能自动重提。"
         if run.current_stage == PipelineStage.PUBLISHING:
             return None, "发布阶段不能由生产重试自动重提。"
@@ -2008,6 +2060,28 @@ class ProductionService:
                     "next_action": next_action,
                     "allowed_actions": allowed_actions,
                     "retry_allowed": retry_allowed,
+                    "recovery": (
+                        {
+                            "kind": "transcription_upload_retry",
+                            "estimated_cost_cny": transcript_task.estimated_cost_cny,
+                            "currency": "CNY",
+                            "attempts_used": int(
+                                (run.config.get("stage_retry_counts") or {}).get(
+                                    PipelineStage.TRANSCRIPTION.value
+                                )
+                                or 0
+                            )
+                            if run is not None
+                            else 0,
+                            "max_attempts": 1,
+                        }
+                        if retry_allowed
+                        and run is not None
+                        and self._safe_retry_stage(run)[0]
+                        == PipelineStage.TRANSCRIPTION
+                        and transcript_task is not None
+                        else None
+                    ),
                     # 浏览器不能直接播放服务端所在电脑的 Windows 路径；统一
                     # 返回受控的媒体接口，接口会验证文件存在后再提供 MP4。
                     "result_media_url": (
@@ -2025,14 +2099,28 @@ class ProductionService:
                                 sum(
                                     1
                                     for segment in transcript_task.segments
-                                    if segment.needs_review
-                                    or (
-                                        segment.confidence is not None
-                                        and segment.confidence < 0.7
-                                    )
+                                    if segment.confidence is not None
+                                    and segment.confidence < 0.7
                                 )
                                 if transcript_task is not None
                                 else 0
+                            ),
+                            "ai_corrected_count": (
+                                sum(
+                                    1
+                                    for segment in transcript_task.segments
+                                    if segment.quality_status == "llm_rewritten"
+                                )
+                                if transcript_task is not None
+                                else 0
+                            ),
+                            "auto_reviewed": bool(
+                                transcript_task and transcript_task.auto_reviewed
+                            ),
+                            "auto_review_error": (
+                                transcript_task.auto_review_error
+                                if transcript_task is not None
+                                else None
                             ),
                             "uncertain_segment_count": (
                                 transcript_task.uncertain_segment_count
@@ -2049,11 +2137,7 @@ class ProductionService:
                                         "quality_note": segment.quality_note,
                                     }
                                     for segment in transcript_task.segments
-                                    if segment.needs_review
-                                    or (
-                                        segment.confidence is not None
-                                        and segment.confidence < 0.7
-                                    )
+                                    if segment.needs_review and not segment.reviewed
                                 ]
                                 if transcript_task is not None
                                 else []

@@ -249,18 +249,26 @@ async def upload_and_transcribe(
         rights_holder = "匿名用户"
 
     try:
-        task = service.create_task(
-            media_name=file.filename,
-            media_type=file.content_type or "video/mp4",
-            media_bytes=media_bytes,
-            rights_confirmed=rights_confirmed,
-            rights_holder=rights_holder,
-            candidate_id=candidate_id.strip() or None,
-            model_name=model_name,
-            language=language,
-            hotwords=hotwords or None,
-            async_processing=ASR_MODE == ASRMode.CLOUD,
-        )
+        if ASR_MODE == ASRMode.SANDBOX and service.cloud_runtime is None:
+            task = service.create_mock_task(
+                media_name=file.filename,
+                media_type=file.content_type or "video/mp4",
+                rights_confirmed=rights_confirmed,
+                candidate_id=candidate_id.strip() or None,
+            )
+        else:
+            task = service.create_task(
+                media_name=file.filename,
+                media_type=file.content_type or "video/mp4",
+                media_bytes=media_bytes,
+                rights_confirmed=rights_confirmed,
+                rights_holder=rights_holder,
+                candidate_id=candidate_id.strip() or None,
+                model_name=model_name,
+                language=language,
+                hotwords=hotwords or None,
+                async_processing=service.cloud_runtime is not None,
+            )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -294,7 +302,7 @@ async def create_transcription_by_url(
             rights_confirmed=body.rights_confirmed,
             rights_holder=body.rights_holder.strip() or "API用户",
             model_name=body.model_name,
-            async_processing=ASR_MODE == ASRMode.CLOUD,
+            async_processing=service.cloud_runtime is not None,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -307,10 +315,10 @@ def get_asr_config(
     _admin: bool = Security(require_admin_token),
 ) -> dict[str, Any]:
     """返回当前 ASR 配置信息（仅管理员），供前端展示。"""
-    if ASR_MODE == ASRMode.CLOUD:
+    if service.cloud_runtime is not None:
         capability = service.cloud_runtime.capability()
         return {
-            "asr_mode": ASR_MODE.value,
+            "asr_mode": "cloud",
             "supports_upload": capability["enabled"],
             "description": "公司阿里云语音识别，不使用客户电脑 CPU。",
             **capability,
@@ -326,12 +334,49 @@ def get_asr_config(
     }
 
 
+@router.get("/capabilities", response_model=dict[str, Any])
+def get_customer_asr_capabilities(
+    service=Depends(get_transcription_service),
+) -> dict[str, Any]:
+    """只返回客户页面需要的计费边界，不暴露供应商密钥或内部配置名。"""
+    if service.cloud_runtime is not None:
+        capability = service.cloud_runtime.capability()
+        return {
+            "mode": "cloud",
+            "is_mock": False,
+            "supports_upload": bool(capability.get("enabled")),
+            "description": "公司云端语音识别，提交前需要确认费用。",
+        }
+    is_mock = ASR_MODE == ASRMode.SANDBOX
+    return {
+        "mode": ASR_MODE.value,
+        "is_mock": is_mock,
+        "supports_upload": ASR_MODE in {ASRMode.SANDBOX, ASRMode.LOCAL, ASRMode.CLOUD},
+        "description": (
+            "本地演示，不调用真实云服务、不扣积分。"
+            if is_mock
+            else "识别方式已由管理员配置。"
+        ),
+    }
+
+
 @router.post("/authorization", response_model=dict[str, Any])
 def authorize_cloud_asr(
     body: ASRAuthorizationRequest,
     service=Depends(get_transcription_service),
     _admin: bool = Security(require_admin_token),
 ):
+    remote_authorize = getattr(service.cloud_runtime, "authorize_provider", None)
+    if callable(remote_authorize):
+        if not body.confirmed:
+            raise HTTPException(status_code=400, detail="必须明确确认费用授权。")
+        try:
+            return remote_authorize(
+                confirmed=True,
+                per_task_cap_cny=body.per_task_cap_cny,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     if ASR_MODE != ASRMode.CLOUD or service.cloud_runtime is None:
         raise HTTPException(
             status_code=400,

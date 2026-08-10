@@ -127,6 +127,13 @@ class FakeAvatarProvider:
         return b"\x00\x00\x00\x18ftypmp42test-video", "video/mp4"
 
 
+class UnknownCostAvatarProvider(FakeAvatarProvider):
+    def capabilities(self) -> AvatarCapability:
+        return super().capabilities().model_copy(
+            update={"estimated_cost_cny": None, "estimated_seconds": None}
+        )
+
+
 class RecoverableVoiceProvider(FakeAvatarProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -264,6 +271,21 @@ def test_internal_provider_retries_get_once_but_never_repeats_submit() -> None:
     assert post_calls == 1
 
 
+def test_avatar_service_uses_task_quote_when_capability_has_no_fixed_cost() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = UnknownCostAvatarProvider()
+    service = AvatarService(repository, provider)
+
+    task = service.submit(
+        _request(), avatar_name="授权形象", voice_name="授权音色"
+    )
+
+    assert len(provider.submitted_requests) == 1
+    assert task.estimated_cost_cny is not None
+    assert task.estimated_seconds is not None
+    assert repository.list_tasks()
+
+
 def test_avatar_service_persists_real_task_and_refreshes_status() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FakeAvatarProvider()
@@ -281,6 +303,29 @@ def test_avatar_service_persists_real_task_and_refreshes_status() -> None:
     refreshed = service.refresh_task(task.task_id)
     assert refreshed.status == TaskStatus.SUCCEEDED
     assert refreshed.provider_status == AvatarProviderStatus.SUCCEEDED
+
+
+def test_remote_avatar_billing_never_debits_desktop_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FakeAvatarProvider()
+    provider.billing_centrally_managed = True
+    service = AvatarService(repository, provider)
+
+    def fail_local_debit(*_args, **_kwargs):
+        raise AssertionError("桌面端不应执行数字人扣费")
+
+    monkeypatch.setattr("src.services.credits.CreditsService.debit", fail_local_debit)
+
+    task = service.submit(
+        _request("avatar-remote-billing"),
+        avatar_name="授权形象",
+        voice_name="授权音色",
+    )
+
+    assert task.status == TaskStatus.QUEUED
+    assert len(provider.submitted_requests) == 1
 
 
 def test_avatar_service_assigns_video_names_and_passes_final_name_to_provider() -> None:

@@ -20,6 +20,7 @@ const mockCustomerLogin = vi.mocked(customerLogin);
 describe("LoginPage", () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState({}, "", "/login");
     mockCustomerLogin.mockReset();
   });
 
@@ -36,6 +37,16 @@ describe("LoginPage", () => {
     );
     expect(screen.getByPlaceholderText(/激活码/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /进入工作台/ })).toBeTruthy();
+  });
+
+  it("prefills an activation code supplied by the desktop entry", () => {
+    window.history.replaceState({}, "", "/login?activation=demo-0815");
+    render(
+      <ToastProvider>
+        <LoginPage />
+      </ToastProvider>,
+    );
+    expect((screen.getByPlaceholderText(/激活码/) as HTMLInputElement).value).toBe("DEMO-0815");
   });
 
   it("submits uppercase code and stores session on success", async () => {
@@ -74,7 +85,25 @@ describe("LoginPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /进入工作台/ }));
     await waitFor(() => {
-      expect(screen.getByText("激活码无效，请检查后重试")).toBeTruthy();
+      expect(screen.getByText("激活码不存在，请检查后重试。")).toBeTruthy();
+    });
+  });
+
+  it("distinguishes a company-service outage from an invalid activation code", async () => {
+    mockCustomerLogin.mockRejectedValue(
+      new Error("暂时无法连接公司服务，本地内容已保留，请稍后再试。"),
+    );
+    render(
+      <ToastProvider>
+        <LoginPage />
+      </ToastProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText(/激活码/), {
+      target: { value: "ABCD1234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /进入工作台/ }));
+    await waitFor(() => {
+      expect(screen.getByText(/暂时无法连接公司服务/)).toBeTruthy();
     });
   });
 });

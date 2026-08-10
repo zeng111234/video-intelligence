@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
+const runtimeRoot = process.env.VIDEOINSIGHT_RUNTIME_ROOT || projectRoot;
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   args.set(process.argv[index], process.argv[index + 1]);
@@ -14,7 +15,8 @@ const apiBase = args.get("--api") || "http://127.0.0.1:2001/api/v1/crawler";
 const debugPort = Number(args.get("--debug-port") || "9225");
 const pollMs = Number(args.get("--poll-ms") || "2500");
 const workerId = `doubao-browser-${process.pid}`;
-const profileDir = resolve(projectRoot, "data", "browser_profiles", "doubao-worker");
+const workerToken = process.env.VIDEOINSIGHT_WORKER_TOKEN || "";
+const profileDir = resolve(runtimeRoot, "data", "browser_profiles", "doubao-worker");
 const douyinShortRe = /https:\/\/v\.douyin\.com\/[A-Za-z0-9_-]+\/?/;
 
 function sleep(ms) {
@@ -23,7 +25,10 @@ function sleep(ms) {
 
 async function api(path, options = {}) {
   const response = await fetch(`${apiBase}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(workerToken ? { "X-Desktop-Worker-Token": workerToken } : {}),
+    },
     ...options,
   });
   if (!response.ok) {
@@ -75,7 +80,7 @@ async function ensureChrome() {
       "about:blank",
     ],
     {
-      cwd: projectRoot,
+      cwd: runtimeRoot,
       detached: true,
       stdio: "ignore",
     },

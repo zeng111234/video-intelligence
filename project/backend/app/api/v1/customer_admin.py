@@ -8,7 +8,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Security
 from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_repository
+from project.backend.app.core.repository import get_repository
 from project.backend.app.core.security import hash_password, require_admin_token, revoke_auth_tokens
 from src.models import AdminAccount, CustomerCode
 from src.repositories.sqlite import SQLiteRepository
@@ -16,9 +16,11 @@ from src.services.credits import CreditsService
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin-customers"])
 
-# 激活码字符集：去掉易混淆字符（0/O/1/I/L）
+# 激活码字符集：去掉易混淆字符（0/O/1/I/L）。16 个随机字符约 80 位熵，
+# 用四段显示便于人工输入；既有 8 位激活码仍可继续登录。
 _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-CODE_LENGTH = 8
+CODE_RANDOM_LENGTH = 16
+CODE_GROUP_LENGTH = 4
 
 
 class GenerateCodesRequest(BaseModel):
@@ -38,11 +40,11 @@ class CustomerCodeResponse(BaseModel):
 
 class CreateAdminRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-zA-Z0-9_]+$")
-    password: str = Field(..., min_length=6, max_length=256)
+    password: str = Field(..., min_length=12, max_length=256)
 
 
 class ResetPasswordRequest(BaseModel):
-    password: str = Field(..., min_length=6, max_length=256)
+    password: str = Field(..., min_length=12, max_length=256)
 
 
 class AdminAccountResponse(BaseModel):
@@ -51,7 +53,11 @@ class AdminAccountResponse(BaseModel):
 
 
 def _generate_code() -> str:
-    return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CODE_LENGTH))
+    raw = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(CODE_RANDOM_LENGTH))
+    return "-".join(
+        raw[index : index + CODE_GROUP_LENGTH]
+        for index in range(0, len(raw), CODE_GROUP_LENGTH)
+    )
 
 
 def _customer_response(

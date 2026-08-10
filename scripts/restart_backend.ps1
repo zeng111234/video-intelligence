@@ -49,7 +49,7 @@ if (-not (Test-Path -LiteralPath $pythonCommand)) {
 
 Write-Host "[INFO] Starting FastAPI backend..."
 Start-Process -FilePath $pythonCommand `
-    -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "2001") `
+    -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001", "--no-proxy-headers") `
     -WorkingDirectory $backendDir `
     -WindowStyle Hidden
 

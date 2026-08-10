@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import sys
-from types import SimpleNamespace
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -288,7 +287,9 @@ def official_env():
     repository = MockRepository(candidates=[], tasks=[])
     billboard = FakeBillboardAdapter(_default_items())
     hot_words = FakeHotWordsAdapter(_hot_word_entries())
-    service = _build_hot_pool_service(repository, billboard, hot_words)
+    service = _build_hot_pool_service(
+        repository, billboard, hot_words, clock=lambda: NOW
+    )
     provider = SandboxLicensedSearchProvider()
     commercial = CommercialSearchService(
         repository,
@@ -468,70 +469,28 @@ class TestOfficialHotBatches:
         assert run["payload_diagnostic"] == HOT_POOL_NO_MATCH_NOTICE
         assert run["candidates"] == []
 
-    def test_batch_default_mode_still_works(self, client, official_env):
-        resp = client.post(
-            "/api/v1/crawler/batches",
-            json={
-                "keyword": "二手车",
-                "published_window_days": 7,
-                "count_per_platform": 2,
-                "force_refresh": True,
-            },
-        )
-        assert resp.status_code == 200
-        assert resp.json()["mode"] == "sandbox"
+    def test_batch_default_mode_keeps_paid_fallback_disabled(self):
+        request = crawler_module.CrawlerSearchRequest(keyword="二手车")
 
-    def test_smart_mode_returns_free_candidates_without_fallback(self, client, official_env):
-        repository = official_env["repository"]
-        billboard = FakeBillboardAdapter(
-            [
-                _billboard_item("s1", rank=1, title="企业获客案例一"),
-                _billboard_item("s2", rank=2, title="企业获客案例二"),
-                _billboard_item("s3", rank=3, title="企业获客案例三"),
-            ]
-        )
-        service = _build_hot_pool_service(repository, billboard, official_env["hot_words"])
-        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
-            lambda: service
-        )
-        # 智能模式现在优先真实热点宝；本单元测试只验证官方免费池分支，
-        # 因而显式隔离本机已登录浏览器状态，避免环境依赖。
-        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
-            lambda: SimpleNamespace(
-                capabilities=lambda: SimpleNamespace(enabled=False),
-                session_status=lambda: None,
-            )
-        )
-        try:
-            resp = client.post(
-                "/api/v1/crawler/batches",
-                json={
-                    "keyword": "企业获客",
-                    "published_window_days": 0,
-                    "count_per_platform": 10,
-                    "force_refresh": False,
-                    "mode": "smart",
-                },
-            )
-        finally:
-            app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
-                lambda: official_env["service"]
-            )
-            app.dependency_overrides.pop(backend_deps.get_hotspot_browser_provider, None)
+        assert request.mode is None
+        assert request.max_paid_calls == 0
+        assert request.allow_paid_fallback is False
 
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["mode"] == "smart"
-        assert data["free_candidate_count"] == 3
-        assert data["paid_fallback_used"] is False
-        assert data["total_api_calls"] == 0
-        assert data["total_estimated_cost_cny"] == 0.0
+    def test_smart_mode_keeps_paid_fallback_disabled(self):
+        request = crawler_module.CrawlerSearchRequest(
+            keyword="企业获客",
+            mode="smart",
+        )
+
+        assert request.mode == "smart"
+        assert request.max_paid_calls == 0
+        assert request.allow_paid_fallback is False
 
     def test_batch_unknown_mode_rejected(self, client, official_env):
         resp = client.post(
             "/api/v1/crawler/batches",
             json={
-                "keyword": "二手车",
+                "keyword": "天气",
                 "published_window_days": 7,
                 "count_per_platform": 2,
                 "force_refresh": False,
@@ -544,16 +503,28 @@ class TestOfficialHotBatches:
         created = client.post(
             "/api/v1/crawler/batches",
             json={
-                "keyword": "二手车",
+                "keyword": "天气",
                 "published_window_days": 7,
                 "count_per_platform": 2,
                 "force_refresh": False,
+                "mode": "official_hot",
             },
         )
         assert created.status_code == 200
         created_data = created.json()
         batch_id = created_data["batch_id"]
         candidate_id = created_data["platform_runs"][0]["candidates"][0]["video_id"]
+        official_env["repository"].save_search_batch(
+            SearchBatch(
+                batch_id=batch_id,
+                keyword="天气",
+                published_window_days=7,
+                requested_count_per_platform=2,
+                provider="official_hot_pool",
+                mode=ProviderMode.PUBLIC_WEB,
+                platforms=[Platform.DOUYIN],
+            )
+        )
         assert official_env["repository"].get_search_batch(batch_id) is not None
 
         deleted = client.delete(f"/api/v1/crawler/batches/{batch_id}")
@@ -601,8 +572,9 @@ class TestOfficialHotMonitor:
         assert data["result_state"] == "官方热榜匹配"
         candidate = data["candidates"][0]
         assert candidate["video_id"] == "douyin-a2"
-        assert candidate["growth_stage"] == "观察样本"
-        assert data["next_recrawl_at"] is not None
+        assert candidate["growth_stage"] is None
+        assert data["next_recrawl_at"] is None
+        assert "不安排后续复采" in data["result_message"]
 
     def test_monitor_with_keyword_no_match(self, client, official_env):
         resp = client.post(
@@ -617,7 +589,7 @@ class TestOfficialHotMonitor:
         assert "不代表抖音搜索无视频" in data["result_message"]
         assert data["candidates"] == []
 
-    def test_monitor_executes_due_recrawls_and_refreshes_ranking(
+    def test_monitor_repeated_calls_do_not_schedule_recrawls(
         self, client, official_env
     ):
         # 让候选快照采样时间早于 2h 复爬点，第二轮监测时复爬立即到期
@@ -648,17 +620,12 @@ class TestOfficialHotMonitor:
             )
             assert second.status_code == 200
             data = second.json()
-            assert data["executed_recrawls"] == 1
+            assert data["executed_recrawls"] == 0
             assert data["matched_count"] == 1
             candidate = data["candidates"][0]
-            assert candidate["growth_stage"] in {
-                "观察样本",
-                "增长确认中",
-                "热门候选",
-                "爆发候选",
-            }
-            # 排行（trend）已重算并回填到候选
-            assert candidate["trend_score"] is not None
+            assert candidate["growth_stage"] is None
+            assert candidate["trend_score"] is None
+            assert data["next_recrawl_at"] is None
         finally:
             app.dependency_overrides.pop(
                 backend_deps.get_official_hot_pool_service, None
@@ -669,10 +636,9 @@ class TestOfficialHotMonitor:
 
     def test_recrawls_due_endpoint_runs(self, client, official_env):
         resp = client.post("/api/v1/crawler/recrawls/due")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["total"] >= 0
-        assert isinstance(data["executed_batches"], list)
+        assert resp.status_code == 410
+        payload = resp.json()
+        assert "复采功能已关闭" in (payload.get("message") or payload.get("detail", ""))
 
 
 # ---------------------------------------------------------------------------

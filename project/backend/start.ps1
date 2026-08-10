@@ -14,4 +14,4 @@ if ($LASTEXITCODE -ne 0) {
 $pythonCommand = Join-Path $root ".venv\Scripts\python.exe"
 Write-Host "Project root: $root" -ForegroundColor Cyan
 Write-Host "Starting FastAPI on port 2001..." -ForegroundColor Green
-& $pythonCommand -m uvicorn app.main:app --host 0.0.0.0 --port 2001 --reload
+& $pythonCommand -m uvicorn app.main:app --host 127.0.0.1 --port 2001 --reload --no-proxy-headers

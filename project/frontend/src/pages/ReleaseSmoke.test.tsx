@@ -49,10 +49,7 @@ import {
 
 function renderPage(page: React.ReactNode, path = "/") {
   return render(
-    <MemoryRouter
-      initialEntries={[path]}
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
+    <MemoryRouter initialEntries={[path]}>
       <ToastProvider>{page}</ToastProvider>
     </MemoryRouter>,
   );
@@ -146,10 +143,7 @@ describe("release page smoke checks", () => {
 
   it("preserves search and hash when the legacy studio route redirects", async () => {
     render(
-      <MemoryRouter
-        initialEntries={["/studio?batch=batch-1#review"]}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
+      <MemoryRouter initialEntries={["/studio?batch=batch-1#review"]}>
         <Routes>
           <Route path="/studio" element={<StudioPage />} />
           <Route path="/pipeline" element={<LocationDisplay />} />

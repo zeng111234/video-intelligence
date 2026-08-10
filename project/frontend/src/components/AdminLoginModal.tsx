@@ -39,8 +39,7 @@ export default function AdminLoginModal() {
       }}
     >
       <Text type="secondary">
-        系统管理页与客户充值需要管理员账号登录（默认账号 admin，密码在 .env 的
-        ADMIN_PASSWORD）。登录后 12 小时内有效。
+        系统管理和客户充值仅限公司管理员；请使用管理员账号和密码登录。
       </Text>
       <div style={{ marginTop: 12 }}>
         <Input

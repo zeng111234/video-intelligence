@@ -50,7 +50,7 @@ def test_customer_accounts_are_isolated(tmp_path):
     service.credit("10", "管理员充值", owner="admin")
     assert service.get_balance("CUSTOMER-A") == Decimal("100")
     assert service.get_balance("CUSTOMER-B") == Decimal("50")
-    assert service.get_balance("admin") == Decimal("410")  # 400 默认 + 10
+    assert service.get_balance("admin") == Decimal("100009")  # 99999 默认 + 10
     # 客户 A 扣费不影响 B
     service.debit("30", "数字人费用", owner="CUSTOMER-A")
     assert service.get_balance("CUSTOMER-A") == Decimal("70")

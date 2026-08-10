@@ -7,11 +7,16 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from project.backend.app.core.deps import get_pipeline_service, get_production_service
+from project.backend.app.core.deps import (
+    get_pipeline_service,
+    get_production_service,
+    get_transcription_service,
+)
 from src.services.production import (
     DEFAULT_PRODUCTION_TEMPLATE_ID,
     IdempotencyConflictError,
 )
+from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/production", tags=["production"])
 
@@ -31,8 +36,8 @@ class ProfileCreateRequest(BaseModel):
 class BatchCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     profile_id: str = Field(..., min_length=1)
-    candidate_ids: list[str] = Field(default_factory=list, max_length=50)
-    items: list["BatchSourceItem"] = Field(default_factory=list, max_length=50)
+    candidate_ids: list[str] = Field(default_factory=list, max_length=400)
+    items: list["BatchSourceItem"] = Field(default_factory=list, max_length=400)
 
 
 class BatchSourceItem(BaseModel):
@@ -125,6 +130,10 @@ class BatchReviewRequest(BaseModel):
     stage: str = Field(..., pattern="^(transcript|script|output|publish)$")
     reviewer: str = Field(..., min_length=1, max_length=80)
     items: list[BatchReviewItem] = Field(..., min_length=1, max_length=50)
+
+
+class TranscriptAIReviewRequest(BaseModel):
+    run_id: str = Field(..., min_length=1)
 
 
 def _profile_response(profile) -> dict[str, Any]:
@@ -329,6 +338,34 @@ def review_batch_items(
             results.append({"run_id": item.run_id, "ok": False, "error": str(exc)})
     refreshed = service.sync_batch(batch_id) or batch
     return {"batch": _batch_response(refreshed, service), "results": results}
+
+
+@router.post("/batches/{batch_id}/transcript-ai-review")
+def review_batch_transcript_with_ai(
+    batch_id: str,
+    body: TranscriptAIReviewRequest,
+    service=Depends(get_production_service),
+    transcription_service=Depends(get_transcription_service),
+):
+    batch = service.get_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="生产批次不存在。")
+    item = next((item for item in batch.items if item.run_id == body.run_id), None)
+    if item is None:
+        raise HTTPException(status_code=404, detail="该任务不属于当前批次。")
+    if not bool(batch.execution_config.get("paid_actions_confirmed")):
+        raise HTTPException(status_code=400, detail="请先确认本批次预计费用。")
+    run = service.repository.get_pipeline_run(body.run_id)
+    task_id = str((run.config if run else {}).get("transcription_task_id") or "")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="当前任务没有可校对的转写结果。")
+    try:
+        reviewed = transcription_service.review_completed_cloud_task(task_id)
+    except TranscriptionError as exc:
+        raise HTTPException(status_code=400, detail=exc.user_message) from exc
+    if reviewed.auto_review_error and not reviewed.auto_reviewed:
+        raise HTTPException(status_code=503, detail=reviewed.auto_review_error)
+    return service.workspace(batch_id)
 
 
 @router.post("/batches/{batch_id}/preflight")

@@ -40,6 +40,7 @@ import {
   deleteTask,
   exportTranscription,
   getTranscription,
+  getTranscriptionCapabilities,
   listTranscriptions,
   reconnectTranscription,
   retryTranscription,
@@ -219,6 +220,7 @@ export default function TranscriptionPage() {
   const [deletingTaskId, setDeletingTaskId] = useState<string | null>(null);
   const [activeSegmentIndex, setActiveSegmentIndex] = useState(0);
   const [revisionDirty, setRevisionDirty] = useState(false);
+  const [isSandboxAsr, setIsSandboxAsr] = useState(false);
 
   const candidateFromQuery = searchParams.get("candidate")?.trim() || "";
   const candidateTitleFromQuery = searchParams.get("title")?.trim() || "";
@@ -318,6 +320,12 @@ export default function TranscriptionPage() {
   }, [refresh]);
 
   useEffect(() => {
+    void getTranscriptionCapabilities()
+      .then((capability) => setIsSandboxAsr(capability.is_mock))
+      .catch(() => setIsSandboxAsr(false));
+  }, []);
+
+  useEffect(() => {
     if (isNewIntakeEntry) {
       setSelected(null);
       setSelectedTaskId(null);
@@ -378,7 +386,7 @@ export default function TranscriptionPage() {
       return;
     }
     if (!fileUploadConfirmed) {
-      toast.warning("请先确认处理权和本次云端转写费用");
+      toast.warning(isSandboxAsr ? "请先确认文件处理权" : "请先确认处理权和本次云端转写费用");
       return;
     }
     setSubmitting(true);
@@ -776,7 +784,9 @@ export default function TranscriptionPage() {
                     >
                       <p><UploadOutlined style={{ fontSize: 28 }} /></p>
                       <p>选择 MP4/MOV 文件</p>
-                      <p className="ant-upload-hint">选择后先确认处理权和费用，再开始转写。</p>
+                      <p className="ant-upload-hint">
+                        {isSandboxAsr ? "选择后确认处理权，再开始免费演示。" : "选择后先确认处理权和费用，再开始转写。"}
+                      </p>
                     </Upload.Dragger>
                     {pendingUploadFile && (
                       <Space direction="vertical" style={{ width: "100%" }} size={12}>
@@ -788,7 +798,9 @@ export default function TranscriptionPage() {
                           action={<Button type="link" onClick={() => { setPendingUploadFile(null); setFileUploadConfirmed(false); }}>移除</Button>}
                         />
                         <Checkbox checked={fileUploadConfirmed} onChange={(event) => setFileUploadConfirmed(event.target.checked)}>
-                          我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 {cnyToCredits(0.2)} 积分。
+                          {isSandboxAsr
+                            ? "我确认拥有该文件的处理权；本地演示不调用真实云服务，也不扣积分。"
+                            : `我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 ${cnyToCredits(0.2)} 积分。`}
                         </Checkbox>
                         <Button
                           type="primary"
@@ -796,7 +808,7 @@ export default function TranscriptionPage() {
                           disabled={!fileUploadConfirmed}
                           onClick={handleFileUpload}
                         >
-                          确认权利并开始云端转写
+                          {isSandboxAsr ? "确认权利并开始免费演示" : "确认权利并开始云端转写"}
                         </Button>
                       </Space>
                     )}

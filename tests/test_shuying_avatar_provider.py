@@ -156,6 +156,106 @@ def test_submit_maps_custom_avatar_to_its_provider_model_id(tmp_path):
     assert b"shuying-avatar-21920" not in calls[1][3]
 
 
+def test_shared_ready_manifest_assets_enable_existing_paid_pair_without_retraining(
+    tmp_path, monkeypatch
+):
+    calls: list[str] = []
+
+    def transport(method, url, headers, body, timeout):
+        calls.append(url)
+        if url.endswith("/voice_2"):
+            return json.dumps({"code": 1, "data": "tts-existing-1"}).encode(), "application/json"
+        if url.endswith("/voice_tts_info"):
+            return (
+                json.dumps(
+                    {
+                        "code": 1,
+                        "data": {"ossurl": "https://media.example.com/existing.mp3"},
+                    }
+                ).encode(),
+                "application/json",
+            )
+        if url.endswith("/video"):
+            return json.dumps({"code": 1, "data": {"videoId": "video-existing-1"}}).encode(), "application/json"
+        raise AssertionError(f"unexpected URL: {url}")
+
+    runtime_root = tmp_path / "runtime"
+    manifest = runtime_root / "data" / "avatar_assets" / "shuying_cloud.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "assets": [
+                    {
+                        "asset_id": "shuying-avatar-21920",
+                        "kind": "avatar",
+                        "name": "大树1",
+                        "authorized": True,
+                        "status": "ready",
+                        "source_type": "custom",
+                        "shared": True,
+                        "provider_asset_id": "21920",
+                    },
+                    {
+                        "asset_id": "shuying-voice-7869",
+                        "kind": "voice",
+                        "name": "大树1",
+                        "authorized": True,
+                        "status": "ready",
+                        "source_type": "custom_clone",
+                        "shared": True,
+                        "provider_asset_id": "7869",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIDEOINSIGHT_RUNTIME_ROOT", str(runtime_root))
+    provider = ShuyingLegacyAvatarProvider(
+        base_url="https://avatar-gateway.example.com/aif",
+        api_code="test-api-code",
+        avatars_json="[]",
+        voices_json="[]",
+        result_allowed_hosts="media.example.com",
+        assets_manifest_path="data/avatar_assets/shuying_cloud.json",
+        enabled=True,
+        transport=transport,
+    )
+
+    capability = provider.capabilities()
+    assets = provider.list_assets()
+
+    assert provider.assets_manifest_path == manifest.resolve()
+    assert capability.enabled is True
+    assert capability.supports_voice_cloning is False
+    assert provider._can_use_cloned_voice() is True
+    assert {item.asset_id for item in assets} == {
+        "shuying-avatar-21920",
+        "shuying-voice-7869",
+    }
+    assert all(item.shared for item in assets)
+    assert provider.is_shared_asset("shuying-voice-7869") is True
+
+    snapshot = provider.submit(
+        _request().model_copy(
+            update={
+                "avatar_id": "shuying-avatar-21920",
+                "voice_id": "shuying-voice-7869",
+                "idempotency_key": "reuse-paid-assets-0001",
+            }
+        )
+    )
+    assert snapshot.job_id == "video-existing-1"
+    assert [url.rsplit("/", 1)[-1] for url in calls] == [
+        "voice_2",
+        "voice_tts_info",
+        "video",
+    ]
+    assert not any("voice_clone" in url or url.endswith("/model") for url in calls)
+
+
 def test_submit_can_render_upload_audio_before_video():
     calls: list[tuple[str, str, dict[str, str], bytes | None, float]] = []
 
@@ -304,6 +404,7 @@ def test_status_maps_success_and_download_checks_allowed_host():
                         "synthesisStatus": 3,
                         "videoUrl": "https://media.example.com/result.mp4",
                         "videoSize": 1234,
+                        "duration": 1067,
                     },
                 }
             ).encode(),
@@ -326,6 +427,7 @@ def test_status_maps_success_and_download_checks_allowed_host():
     assert snapshot.status == AvatarProviderStatus.SUCCEEDED
     assert snapshot.result_mime == "video/mp4"
     assert snapshot.result_size_bytes == 1234
+    assert snapshot.estimated_seconds == 2
     assert payload[4:8] == b"ftyp"
     assert mime_type == "video/mp4"
 

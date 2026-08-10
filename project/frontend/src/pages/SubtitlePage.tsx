@@ -104,7 +104,7 @@ export default function SubtitlePage() {
                   ]} />
                 </Col>
               </Row>
-              <Input value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} addonBefore="权利主体" maxLength={100} />
+              <Input aria-label="权利主体" value={rightsHolder} onChange={(event) => setRightsHolder(event.target.value)} prefix="权利主体" maxLength={100} />
               <Text type="secondary">选择文件即确认拥有处理权，并允许上传到公司私有云进行识别。</Text>
               <Upload.Dragger
                 accept=".mp4,.mov"

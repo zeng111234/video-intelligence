@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
-from fastapi import Depends
 from functools import lru_cache
 from pathlib import Path
 
@@ -19,7 +19,6 @@ from project.backend.app.core.config import _load_env_files  # noqa: E402
 
 _load_env_files()
 
-from src.repositories.sqlite import SQLiteRepository  # noqa: E402
 from src.adapters.licensed import (  # noqa: E402
     DisabledLicensedSearchProvider,
     SandboxLicensedSearchProvider,
@@ -60,8 +59,6 @@ from src.services.pipeline import PipelineService  # noqa: E402
 from src.services.production import ProductionService  # noqa: E402
 from src.services.feedback import FeedbackService  # noqa: E402
 from src.services.pipeline_worker import PipelineWorker  # noqa: E402
-from src.services.copywriting import CopywritingService  # noqa: E402
-from src.services.credits import CreditsService  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
 from src.services.publish_worker import PublishWorker  # noqa: E402
@@ -70,18 +67,12 @@ from src.services.heat import HeatService  # noqa: E402
 from src.services.keyword_trend import KeywordTrendService  # noqa: E402
 from src.services.hot_pool import OfficialHotPoolService  # noqa: E402
 from src.services.source import SourceService  # noqa: E402
-from src.adapters.llm import (  # noqa: E402
-    DisabledCopywritingEngine,
-    OpenAICompatibleCopywritingEngine,
-    SandboxCopywritingEngine,
-)
 from src.adapters.video_editor import SandboxVideoEditor  # noqa: E402
 from src.adapters.avatar import build_avatar_provider  # noqa: E402
 from src.adapters.publishers.sandbox import build_publisher  # noqa: E402
 from src.models import Platform, PublishPlatform  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
-    DATABASE_PATH,
-    PROJECT_ROOT,
+    RUNTIME_ROOT,
     ASRMode,
     ASR_MODE,
     CRAWLER_PROVIDER_MODE,
@@ -115,11 +106,47 @@ from project.backend.app.core.config import (  # noqa: E402
     BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
     BILIBILI_BROWSER_DISCOVERY_DEBUG_PORT,
 )
+from project.backend.app.core.repository import (  # noqa: E402
+    get_credits_service,
+    get_repository,
+)
+from project.backend.app.core.copywriting import (  # noqa: E402
+    get_copywriting_engine,
+    get_copywriting_service,
+)
 
 
-@lru_cache
-def get_repository() -> SQLiteRepository:
-    return SQLiteRepository(str(DATABASE_PATH))
+def _desktop_background_work_authorized() -> bool:
+    """Pause persistent desktop queues until the bound customer is logged in."""
+
+    from project.backend.app.core.desktop_owner import desktop_owner_matches
+    from project.backend.app.services.control_plane_client import (
+        active_upstream_customer_session,
+        active_upstream_customer_subject,
+        control_plane_enabled,
+    )
+
+    if not control_plane_enabled():
+        return True
+    subject = active_upstream_customer_subject()
+    return bool(
+        subject
+        and active_upstream_customer_session()
+        and desktop_owner_matches(subject)
+    )
+
+__all__ = [
+    "COPYWRITING_API_KEY",
+    "COPYWRITING_BASE_URL",
+    "COPYWRITING_ESTIMATED_REQUEST_COST_CNY",
+    "COPYWRITING_MODE",
+    "COPYWRITING_MODEL",
+    "CopywritingProviderMode",
+    "get_copywriting_engine",
+    "get_copywriting_service",
+    "get_credits_service",
+    "get_repository",
+]
 
 
 @lru_cache
@@ -378,26 +405,56 @@ def get_transcription_service() -> TranscriptionService:
     model_loader = _build_asr_model_loader()
     copywriting_engine = get_copywriting_engine()
     capabilities = copywriting_engine.capabilities()
+    remote_copywriting = bool(getattr(copywriting_engine, "is_remote", False))
     review_method = (
         getattr(copywriting_engine, "review_transcript_candidates", None)
-        if capabilities.get("mode") == "production" and capabilities.get("enabled")
+        if remote_copywriting
+        or (capabilities.get("mode") == "production" and capabilities.get("enabled"))
+        else None
+    )
+    batch_review_method = (
+        getattr(copywriting_engine, "review_transcript_batch", None)
+        if remote_copywriting
+        or (capabilities.get("mode") == "production" and capabilities.get("enabled"))
         else None
     )
     cloud_runtime = None
     cloud_storage_directory = None
-    if ASR_MODE == ASRMode.CLOUD:
+    desktop_control_plane = False
+    if os.getenv("VIDEOINSIGHT_DESKTOP_CLIENT", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        from project.backend.app.services.control_plane_client import (
+            control_plane_enabled,
+        )
+
+        desktop_control_plane = control_plane_enabled()
+    if desktop_control_plane:
+        from project.backend.app.services.remote_asr import RemoteAliyunASRRuntime
+
+        cloud_runtime = RemoteAliyunASRRuntime()
+        cloud_storage_directory = (
+            RUNTIME_ROOT / "data" / "production" / "transcription_media"
+        )
+    elif ASR_MODE == ASRMode.CLOUD:
         cloud_runtime = AliyunFunASRRuntime(
             authorization_store=ASRAuthorizationStore(
-                PROJECT_ROOT / "data" / "production" / "asr_authorization.json"
+                RUNTIME_ROOT / "data" / "production" / "asr_authorization.json"
             )
         )
         cloud_storage_directory = (
-            PROJECT_ROOT / "data" / "production" / "transcription_media"
+            RUNTIME_ROOT / "data" / "production" / "transcription_media"
         )
     return TranscriptionService(
         get_repository(),
         model_loader=model_loader,
         transcript_reviewer=review_method if callable(review_method) else None,
+        transcript_batch_reviewer=(
+            batch_review_method if callable(batch_review_method) else None
+        ),
         cloud_runtime=cloud_runtime,
         cloud_storage_directory=cloud_storage_directory,
     )
@@ -405,7 +462,10 @@ def get_transcription_service() -> TranscriptionService:
 
 @lru_cache
 def get_transcription_worker() -> TranscriptionWorker:
-    return TranscriptionWorker(get_transcription_service())
+    return TranscriptionWorker(
+        get_transcription_service(),
+        can_process=_desktop_background_work_authorized,
+    )
 
 
 @lru_cache
@@ -463,44 +523,6 @@ def get_douyin_link_transcription_service() -> DouyinLinkTranscriptionService:
 
 
 # ---------------------------------------------------------------------------
-# 文案改写服务
-# ---------------------------------------------------------------------------
-
-
-@lru_cache
-def get_copywriting_engine():
-    """获取 AI 文案引擎。
-
-    FastAPI 正式页面不自动回退到沙箱：未配置 Key 时返回 disabled 引擎。
-    """
-    if COPYWRITING_MODE == CopywritingProviderMode.SANDBOX:
-        return SandboxCopywritingEngine()
-    if COPYWRITING_API_KEY:
-        return OpenAICompatibleCopywritingEngine(
-            api_key=COPYWRITING_API_KEY,
-            base_url=COPYWRITING_BASE_URL,
-            model=COPYWRITING_MODEL,
-            estimated_cost_cny=COPYWRITING_ESTIMATED_REQUEST_COST_CNY,
-        )
-    return DisabledCopywritingEngine(
-        base_url=COPYWRITING_BASE_URL,
-        model=COPYWRITING_MODEL,
-    )
-
-
-@lru_cache
-def get_copywriting_service() -> CopywritingService:
-    return CopywritingService(get_repository(), get_copywriting_engine())
-
-
-def get_credits_service(
-    repo: SQLiteRepository = Depends(get_repository),
-) -> CreditsService:
-    # 不缓存：积分账户按请求身份（客户/管理员）归属，且测试按仓库覆盖生效
-    return CreditsService(repo)
-
-
-# ---------------------------------------------------------------------------
 # 视频剪辑服务
 # ---------------------------------------------------------------------------
 
@@ -522,7 +544,7 @@ def get_video_editing_service() -> VideoEditingService:
     return VideoEditingService(
         get_repository(),
         get_video_editor(),
-        output_directory=PROJECT_ROOT / "data" / "video_edits",
+        output_directory=RUNTIME_ROOT / "data" / "video_edits",
     )
 
 
@@ -553,15 +575,28 @@ def get_publish_service() -> PublishService:
 
 @lru_cache
 def get_publish_worker() -> PublishWorker:
-    return PublishWorker(get_publish_service())
+    return PublishWorker(
+        get_publish_service(),
+        can_process=_desktop_background_work_authorized,
+    )
 
 
 @lru_cache
 def get_avatar_service() -> AvatarService:
+    from project.backend.app.services.control_plane_client import (
+        control_plane_enabled,
+    )
+
+    if control_plane_enabled():
+        from project.backend.app.services.remote_avatar import RemoteAvatarProvider
+
+        provider = RemoteAvatarProvider()
+    else:
+        provider = build_avatar_provider()
     return AvatarService(
         get_repository(),
-        build_avatar_provider(),
-        result_directory=PROJECT_ROOT / "data" / "avatar_results",
+        provider,
+        result_directory=RUNTIME_ROOT / "data" / "avatar_results",
     )
 
 
@@ -587,7 +622,7 @@ def get_pipeline_service() -> PipelineService:
 def get_production_service() -> ProductionService:
     return ProductionService(
         get_repository(),
-        storage_directory=PROJECT_ROOT / "data" / "production",
+        storage_directory=RUNTIME_ROOT / "data" / "production",
         media_resolution_service=get_media_resolution_service(),
         link_transcription_service=get_douyin_link_transcription_service(),
         copywriting_service=get_copywriting_service(),
@@ -599,7 +634,7 @@ def get_production_service() -> ProductionService:
 
 @lru_cache
 def get_feedback_service() -> FeedbackService:
-    return FeedbackService(get_repository(), PROJECT_ROOT / "data" / "production")
+    return FeedbackService(get_repository(), RUNTIME_ROOT / "data" / "production")
 
 
 @lru_cache
@@ -614,6 +649,7 @@ def get_pipeline_worker() -> PipelineWorker:
         template_service=get_template_service(),
         production_service=get_production_service(),
         douyin_link_transcription_service=get_douyin_link_transcription_service(),
+        can_process=_desktop_background_work_authorized,
     )
 
 
@@ -627,7 +663,7 @@ def get_template_service():
     """获取模板管理服务实例。"""
     from src.services.template_service import TemplateService
 
-    return TemplateService(templates_dir=str(PROJECT_ROOT / "data" / "templates"))
+    return TemplateService(templates_dir=str(RUNTIME_ROOT / "data" / "templates"))
 
 
 # ---------------------------------------------------------------------------

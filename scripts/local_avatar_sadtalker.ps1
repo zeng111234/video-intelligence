@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$SourceImage = $env:LOCAL_AVATAR_AVATAR_PATH,
     [string]$DrivenAudio = $env:LOCAL_AVATAR_AUDIO_PATH,
     [string]$OutputPath = $env:LOCAL_AVATAR_OUTPUT_PATH,

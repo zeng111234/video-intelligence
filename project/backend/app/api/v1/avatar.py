@@ -23,10 +23,12 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from project.backend.app.core.deps import get_avatar_service
-from src.adapters.avatar import AvatarProviderError, PROJECT_ROOT, ShuyingLegacyAvatarProvider
+from project.backend.app.core.config import RUNTIME_ROOT
+from src.adapters.avatar import AvatarProviderError, ShuyingLegacyAvatarProvider
 from src.models import (
     AvatarAsset,
     AvatarAssetKind,
+    AvatarBillingQuote,
     AvatarCapability,
     AvatarProviderStatus,
     AvatarSubmitRequest,
@@ -73,6 +75,11 @@ class AvatarJobCreate(BaseModel):
     publish_mode: str = "manual"
     target_platforms: list[str] = Field(default_factory=list)
     idempotency_key: str = Field(default_factory=lambda: f"avatar-{uuid4().hex[:12]}")
+
+
+class AvatarBillingQuoteRequest(BaseModel):
+    script_text: str = Field(..., min_length=1, max_length=2000)
+    speech_rate: float = Field(1.0, ge=0.8, le=1.2)
 
 
 class LegacyAvatarGenerateRequest(BaseModel):
@@ -140,6 +147,20 @@ def get_capabilities(service: AvatarService = Depends(get_avatar_service)):
 @router.get("/assets", response_model=list[AvatarAsset])
 def list_assets(service: AvatarService = Depends(get_avatar_service)):
     return service.list_assets()
+
+
+@router.post("/quote", response_model=AvatarBillingQuote)
+def quote_avatar_job(
+    body: AvatarBillingQuoteRequest,
+    service: AvatarService = Depends(get_avatar_service),
+):
+    try:
+        return service.billing_quote(
+            script_text=body.script_text,
+            speech_rate=body.speech_rate,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/assets/upload", response_model=AvatarAsset)
@@ -235,7 +256,8 @@ def train_cloud_avatar(
     try:
         _validate_cloud_avatar_video(path)
         provider = service.provider
-        if not isinstance(provider, ShuyingLegacyAvatarProvider):
+        create_cloud_avatar = getattr(provider, "create_cloud_avatar", None)
+        if not callable(create_cloud_avatar):
             raise HTTPException(status_code=503, detail="当前数字人供应商不支持云形象训练。")
         # 训练收费：校验通过后扣积分（余额不足阻止；与数字人生成扣费一致）
         _debit_training_credits(
@@ -244,7 +266,7 @@ def train_cloud_avatar(
             "云形象（脸部）训练费用",
             ref_id=f"face-{display_name}",
         )
-        return provider.create_cloud_avatar(
+        return create_cloud_avatar(
             name=display_name, training_video_path=path, filename=file.filename or "training.mp4"
         )
     except AvatarProviderError as exc:
@@ -279,7 +301,9 @@ def train_cloud_voice(
     try:
         _validate_cloud_voice_sample(path)
         provider = service.provider
-        if not isinstance(provider, ShuyingLegacyAvatarProvider):
+        create_voice_clone = getattr(provider, "create_voice_clone", None)
+        store_pending_voice_sample = getattr(provider, "store_pending_voice_sample", None)
+        if not callable(create_voice_clone) or not callable(store_pending_voice_sample):
             raise HTTPException(status_code=503, detail="当前数字人供应商不支持声音克隆。")
         mime_type = mimetypes.guess_type(file.filename or "")[0] or "audio/mpeg"
         # 训练收费：校验通过后扣积分（余额不足阻止；与数字人生成扣费一致）
@@ -290,13 +314,13 @@ def train_cloud_voice(
             ref_id=f"voice-{display_name}",
         )
         if capability.supports_voice_cloning:
-            return provider.create_voice_clone(
+            return create_voice_clone(
                 name=display_name,
                 sample_path=path,
                 filename=file.filename or "voice-sample.mp3",
                 mime_type=mime_type,
             )
-        return provider.store_pending_voice_sample(
+        return store_pending_voice_sample(
             name=display_name,
             sample_path=path,
             filename=file.filename or "voice-sample.mp3",
@@ -315,10 +339,11 @@ def resume_voice_clone(
 ):
     """Submit a legacy saved voice sample exactly once after the clone route is fixed."""
     provider = service.provider
-    if not isinstance(provider, ShuyingLegacyAvatarProvider):
+    resume = getattr(provider, "resume_pending_voice_clone", None)
+    if not callable(resume):
         raise HTTPException(status_code=503, detail="当前数字人供应商不支持声音克隆。")
     try:
-        return provider.resume_pending_voice_clone(asset_id)
+        return resume(asset_id)
     except AvatarProviderError as exc:
         status_code = 503 if exc.kind.value == "authorization" else 502
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
@@ -349,6 +374,12 @@ def get_asset_media(
         if record is None:
             raise HTTPException(status_code=404, detail="素材不存在。")
         path = _asset_record_path(manifest_path, record)
+    elif callable(getattr(provider, "download_asset_media", None)):
+        try:
+            payload, media_type = provider.download_asset_media(asset_id)
+        except AvatarProviderError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return Response(content=payload, media_type=media_type)
     else:
         raise HTTPException(status_code=404, detail="素材不存在。")
 
@@ -369,10 +400,11 @@ def get_voice_preview(
     service: AvatarService = Depends(get_avatar_service),
 ):
     provider = service.provider
-    if not isinstance(provider, ShuyingLegacyAvatarProvider):
+    render_preview = getattr(provider, "render_voice_preview", None)
+    if not callable(render_preview):
         raise HTTPException(status_code=404, detail="当前声音没有可用的试听样本。")
     try:
-        audio = provider.render_voice_preview(asset_id)
+        audio = render_preview(asset_id)
     except AvatarProviderError as exc:
         status_code = 404 if exc.kind.value == "validation" else 502
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
@@ -578,6 +610,8 @@ def _asset_names(
 
 
 def _debit_training_credits(service: AvatarService, credits: int, reason: str, ref_id: str) -> None:
+    if bool(getattr(service.provider, "billing_centrally_managed", False)):
+        return
     """提交训练前扣积分；余额不足直接拒绝（与数字人生成扣费一致）。"""
     if credits <= 0:
         return
@@ -606,7 +640,7 @@ def _stage_cloud_upload(
             status_code=400,
             detail=f"{label}格式不支持，请上传 {'、'.join(sorted(allowed_extensions))}。",
         )
-    upload_root = (PROJECT_ROOT / "data" / "avatar_uploads").resolve()
+    upload_root = (RUNTIME_ROOT / "data" / "avatar_uploads").resolve()
     upload_root.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         prefix="cloud-training-", suffix=suffix, dir=upload_root, delete=False
@@ -711,7 +745,7 @@ def _local_assets_manifest_path() -> Path:
         raise HTTPException(status_code=503, detail="本地素材清单未配置。")
     path = Path(raw_path)
     if not path.is_absolute():
-        path = PROJECT_ROOT / path
+        path = RUNTIME_ROOT / path
     return path.resolve()
 
 

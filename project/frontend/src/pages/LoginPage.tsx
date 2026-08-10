@@ -10,7 +10,10 @@ const { Title, Text } = Typography;
 
 export default function LoginPage() {
   const { loggingIn, doLogin } = useCustomerLogin();
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(() => {
+    const activation = new URLSearchParams(window.location.search).get("activation");
+    return activation?.trim().toUpperCase() ?? "";
+  });
   const [error, setError] = useState("");
 
   const submit = async () => {
@@ -20,8 +23,8 @@ export default function LoginPage() {
       return;
     }
     setError("");
-    const ok = await doLogin(trimmed);
-    if (!ok) setError("激活码无效，请检查后重试");
+    const result = await doLogin(trimmed);
+    if (!result.ok) setError(result.error || "暂时无法登录，请稍后重试");
   };
 
   return (
@@ -51,7 +54,7 @@ export default function LoginPage() {
         </div>
         <Input
           size="large"
-          placeholder="激活码（如 ABCD1234）"
+          placeholder="激活码（如 ABCD-EFGH-JKMP-QRST）"
           value={code}
           onChange={(event) => {
             setCode(event.target.value.toUpperCase());

@@ -768,7 +768,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     vi.mocked(getCrawlerBatch).mockResolvedValue({
       ...freeMultiPlatformBatch,
       platforms: ["douyin", "kuaishou", "bilibili"],
-      error: "抖音官网搜索浏览器已启动；实际搜索时会核验登录或安全验证。",
+      error: "抖音登录搜索浏览器已启动；实际搜索时会核验登录状态或安全验证。",
       platform_runs: freeMultiPlatformBatch.platform_runs.filter((run) => run.platform !== "douyin"),
     });
     renderPage();
@@ -853,7 +853,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
           ...item,
           spoken_material_message: "仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。",
           spoken_seed_message: "标题信息不足以支撑原创文案：偏广告展示。",
-          data_quality_warnings: ["公开搜索页未显示可核验发布时间，已保留但需要人工确认。"],
+          data_quality_warnings: ["抖音搜索页未显示可核验发布时间，已保留但需要人工确认。"],
         } : item),
       })),
     });
@@ -870,7 +870,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByText("素材说明")).toBeNull();
     expect(screen.queryByText("仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。")).toBeNull();
     expect(screen.queryByText("标题信息不足以支撑原创文案：偏广告展示。")).toBeNull();
-    expect(screen.queryByText("公开搜索页未显示可核验发布时间，已保留但需要人工确认。")).toBeNull();
+    expect(screen.queryByText("抖音搜索页未显示可核验发布时间，已保留但需要人工确认。")).toBeNull();
   });
 
   it("keeps detected and undetected copy candidates in one flat material table", async () => {
@@ -926,7 +926,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     await screen.findByText("企业获客");
     fireEvent.click(screen.getByRole("button", { name: /详情/ }));
 
-    expect(await screen.findByText("抖音官网搜索")).toBeTruthy();
+    expect(await screen.findByText("抖音登录搜索")).toBeTruthy();
     expect(screen.queryByText("浏览器爆款榜")).toBeNull();
     expect(screen.getAllByText("48秒").length).toBeGreaterThan(0);
     expect(screen.queryByText(/找素材不会自动检测文案/)).toBeNull();

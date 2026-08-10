@@ -485,6 +485,26 @@ def test_fun_asr_query_stops_after_one_retry():
     assert caught.value.outcome_unknown is True
 
 
+def test_fun_asr_failed_snapshot_keeps_top_level_reason():
+    def transport(*_args):
+        return {
+            "output": {
+                "task_id": "asr-no-words",
+                "task_status": "FAILED",
+                "code": "ASR_RESPONSE_HAVE_NO_WORDS",
+                "message": "ASR_RESPONSE_HAVE_NO_WORDS",
+                "results": [{"subtask_status": "FAILED"}],
+            }
+        }
+
+    provider = AliyunFunASRProvider(_aliyun_config(), transport=transport)
+    snapshot = provider.query("asr-no-words")
+
+    assert snapshot.status == ProviderJobStatus.FAILED
+    assert snapshot.detail["code"] == "ASR_RESPONSE_HAVE_NO_WORDS"
+    assert snapshot.detail["message"] == "ASR_RESPONSE_HAVE_NO_WORDS"
+
+
 def test_fun_asr_fetch_requeries_persisted_snapshot_and_retries_download_once():
     calls: list[str] = []
 
@@ -1297,6 +1317,36 @@ def test_oss_upload_stops_after_one_retry(tmp_path: Path):
 
     assert calls == 2
     assert caught.value.outcome_unknown is True
+
+
+def test_oss_upload_reuses_the_task_object_after_a_lost_success_response(
+    tmp_path: Path,
+):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    calls = 0
+
+    def transport(*_args):
+        nonlocal calls
+        calls += 1
+        raise CloudProviderError(
+            "OSS 上传 HTTP 409：FileAlreadyExists",
+            kind="already_exists",
+        )
+
+    store = AliyunCloudObjectStore(
+        _aliyun_config(),
+        transport=transport,
+    )
+
+    asset = store.upload(
+        source,
+        "asr-input/transcript-fixed/source.mp4",
+        media_type="video/mp4",
+    )
+
+    assert calls == 1
+    assert asset.object_key == "asr-input/transcript-fixed/source.mp4"
 
 
 def test_mps_submit_connection_failure_is_outcome_unknown_without_retry():

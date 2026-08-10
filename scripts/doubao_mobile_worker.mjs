@@ -10,6 +10,7 @@ const apiBase = args.get("--api") || "http://127.0.0.1:2001/api/v1/crawler";
 const pollMs = Number(args.get("--poll-ms") || "2500");
 const appiumBase = process.env.DOUBAO_MOBILE_APPIUM_URL || "http://127.0.0.1:4723";
 const adbPath = process.env.ADB_PATH || "adb";
+const workerToken = process.env.VIDEOINSIGHT_WORKER_TOKEN || "";
 const doubaoPackage = process.env.DOUBAO_ANDROID_PACKAGE || "";
 const workerId = `doubao-mobile-${process.pid}`;
 const douyinShortRe = /https:\/\/v\.douyin\.com\/[A-Za-z0-9_-]+\/?/;
@@ -38,7 +39,10 @@ function runAdb(adbArgs, timeoutMs = 20000) {
 
 async function api(path, options = {}) {
   const response = await fetch(`${apiBase}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(workerToken ? { "X-Desktop-Worker-Token": workerToken } : {}),
+    },
     ...options,
   });
   if (!response.ok) {

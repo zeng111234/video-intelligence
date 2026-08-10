@@ -102,6 +102,8 @@ class CopywritingService:
         """真实模型调用前确认客户至少能支付最小计费单位。"""
         if capability.get("mode") != "production":
             return
+        if bool(getattr(self.engine, "billing_centrally_managed", False)):
+            return
         from src.services.credits import (
             CreditsService,
             get_current_owner,
@@ -155,6 +157,11 @@ class CopywritingService:
         """成功后按实际 Token 扣费，返回本次实际收取积分。"""
         if capability.get("mode") != "production":
             return 0.0
+        if bool(getattr(self.engine, "billing_centrally_managed", False)):
+            try:
+                return max(0.0, float(getattr(self.engine, "last_charged_credits", 0)))
+            except (TypeError, ValueError):
+                return 0.0
         from src.services.credits import CreditsService, cny_to_credits, get_current_owner
 
         raw_cost = self.token_cost_cny(token_usage)

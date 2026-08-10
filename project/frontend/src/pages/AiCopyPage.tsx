@@ -109,6 +109,10 @@ function splitCopySegments(text: string) {
   return grouped;
 }
 
+function roundCreditsUp(value: number, minimum: number) {
+  return Math.ceil(Math.max(value, minimum) * 100 - Number.EPSILON) / 100;
+}
+
 function buildComparisonRows(source: string, result: string, attentionTerms: string[], complianceStatus?: string | null) {
   const sourceSegments = splitCopySegments(source);
   const resultSegments = splitCopySegments(result);
@@ -167,11 +171,28 @@ export default function AiCopyPage() {
     callToAction.trim(),
   );
   const enabled = capability?.enabled === true;
+  const isSandbox = capability?.mode === "sandbox";
   const disabledMessage = capabilityError
     ? capabilityError
     : capability && !capability.enabled
       ? `未配置 ${capability.missing_configuration.join("、") || "模型密钥"}，请在本机私密配置中设置后重启后端。`
       : "";
+  const sourceDocument = mode === "rewrite"
+    ? sourceText
+    : [contentBrief, sellingPoints, callToAction].map((item) => item.trim()).filter(Boolean).join("\n");
+  const estimatedCredits = useMemo(() => {
+    const inputRate = Number(capability?.input_price_credits_per_1k_tokens ?? "0.0015");
+    const outputRate = Number(capability?.output_price_credits_per_1k_tokens ?? "0.003");
+    const minimum = Number(capability?.minimum_charge_credits ?? "0.01");
+    const estimatedInputTokens = Math.max(sourceDocument.trim().length, 1);
+    const estimatedOutputTokens = mode === "rewrite"
+      ? Math.max(sourceText.trim().length, 1)
+      : Math.max(contentBrief.trim().length, 600);
+    return roundCreditsUp(
+      estimatedInputTokens / 1000 * inputRate + estimatedOutputTokens / 1000 * outputRate,
+      minimum,
+    );
+  }, [capability, contentBrief, mode, sourceDocument, sourceText]);
 
   useEffect(() => {
     if (handledHandoffKeyRef.current === location.key) return;
@@ -327,6 +348,26 @@ export default function AiCopyPage() {
     toast,
   ]);
 
+  const requestSubmit = useCallback(() => {
+    if (!inputReady) {
+      toast.warning(mode === "generate" ? "请输入内容概要" : "请输入原始文案");
+      return;
+    }
+    if (!enabled) {
+      toast.error("AI 文案模型未配置，无法真实生成");
+      return;
+    }
+    Modal.confirm({
+      title: mode === "generate" ? "确认生成口播文案？" : "确认开始去重改写？",
+      content: isSandbox
+        ? "当前为本地演示模式，不会扣积分；确认后生成演示结果。"
+        : `预计约 ${estimatedCredits.toFixed(2)} 积分，最终按实际 Token 用量结算；确认后才会调用 AI 文案服务。`,
+      okText: isSandbox ? "开始演示" : "确认费用并开始",
+      cancelText: "暂不生成",
+      onOk: handleSubmit,
+    });
+  }, [enabled, estimatedCredits, handleSubmit, inputReady, isSandbox, mode, toast]);
+
   const handleLoadHistory = async (item: CopywritingSummaryResponse) => {
     setHistoryLoading(true);
     try {
@@ -383,9 +424,6 @@ export default function AiCopyPage() {
 
   const activeText = variants[0] || "";
   const attentionTerms = lastResponse?.attention_terms ?? [];
-  const sourceDocument = mode === "rewrite"
-    ? sourceText
-    : [contentBrief, sellingPoints, callToAction].map((item) => item.trim()).filter(Boolean).join("\n");
   const comparisonRows = useMemo(
     () => buildComparisonRows(sourceDocument, activeText, attentionTerms, lastResponse?.compliance_status),
     [activeText, attentionTerms, lastResponse?.compliance_status, sourceDocument],
@@ -436,7 +474,7 @@ export default function AiCopyPage() {
         />
         <Space size={4} wrap>
           {activeText ? (
-            <Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={handleSubmit}>重新改写</Button>
+            <Button type="text" icon={<ReloadOutlined />} loading={loading} onClick={requestSubmit}>重新改写</Button>
           ) : (
             <Button type="text" icon={<FileAddOutlined />} onClick={handleNewCopy}>新建文案</Button>
           )}
@@ -537,17 +575,28 @@ export default function AiCopyPage() {
               )}
 
               <div className="ai-copy-compose-actions">
-                <Text type="secondary">
-                  平台服务价：输入 {capability?.input_price_credits_per_1k_tokens ?? "0.0015"}、
-                  输出 {capability?.output_price_credits_per_1k_tokens ?? "0.003"} 积分/千 Token；
-                  整次合计后向上进位到 0.01 积分
-                </Text>
+                <div className="ai-copy-cost-estimate">
+                  {isSandbox ? (
+                    <>
+                      <Text strong>本地演示 · 不扣积分</Text>
+                      <Text type="secondary">只验证流程和页面，不会调用真实收费服务</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Text strong>预计本次约 {estimatedCredits.toFixed(2)} 积分</Text>
+                      <Text type="secondary">
+                        输入 {capability?.input_price_credits_per_1k_tokens ?? "0.0015"}、
+                        输出 {capability?.output_price_credits_per_1k_tokens ?? "0.003"} 积分/千 Token；最终按实际用量结算
+                      </Text>
+                    </>
+                  )}
+                </div>
                 <Button
                   type="primary"
                   icon={<EditOutlined />}
                   size="large"
                   loading={loading}
-                  onClick={handleSubmit}
+                  onClick={requestSubmit}
                   disabled={!inputReady || !enabled}
                 >
                   {mode === "generate" ? "生成口播文案" : "开始去重改写"}

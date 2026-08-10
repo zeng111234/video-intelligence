@@ -10,6 +10,7 @@ import { LockOutlined } from "@ant-design/icons";
 import { useToast } from "../components/Toast";
 import CustomerAdminSection from "../components/CustomerAdminSection";
 import PricingSection from "../components/PricingSection";
+import ServerStatusSection from "../components/ServerStatusSection";
 import { useAdminLogin } from "../hooks/useAdminAuth";
 import "./AdminPage.css";
 
@@ -17,6 +18,7 @@ export default function AdminPage() {
   const toast = useToast();
   const { token: adminToken, doLogin, loggingIn } = useAdminLogin();
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginUsername, setLoginUsername] = useState("admin");
   // 未登录时不显示任何管理内容（普通用户看不到）
   const isAdmin = Boolean(adminToken);
 
@@ -26,7 +28,11 @@ export default function AdminPage() {
       toast.error("请输入管理密码");
       return;
     }
-    const ok = await doLogin(loginPassword.trim());
+    if (!loginUsername.trim()) {
+      toast.error("请输入管理员账号");
+      return;
+    }
+    const ok = await doLogin(loginPassword.trim(), loginUsername.trim());
     if (ok) {
       setLoginPassword("");
       toast.success("管理员登录成功，已加载系统管理数据");
@@ -43,8 +49,13 @@ export default function AdminPage() {
         <Card title="管理员登录">
           <Space direction="vertical" size={12} style={{ width: "100%" }}>
             <Typography.Text type="secondary">
-              系统管理页仅管理员可见。请使用管理密码登录（密码在 .env 的 ADMIN_PASSWORD 配置）。
+              系统管理页仅管理员可见，请使用公司管理员账号和密码登录。
             </Typography.Text>
+            <Input
+              placeholder="管理员账号"
+              value={loginUsername}
+              onChange={(event) => setLoginUsername(event.target.value)}
+            />
             <Input.Password
               prefix={<LockOutlined />}
               placeholder="请输入管理密码"
@@ -75,6 +86,7 @@ export default function AdminPage() {
           先处理需要你确认的事，再管理客户和账号。
         </Typography.Text>
       </header>
+      <ServerStatusSection />
       <CustomerAdminSection />
       <PricingSection />
     </main>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Modal } from "antd";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,7 +29,9 @@ import {
   previewCrawlerBatch,
   preflightProductionBatch,
   recordManualPublishResult,
+  retryProductionBatchFailed,
   reviewProductionBatchItems,
+  reviewProductionTranscriptWithAI,
   saveProductionWorkspaceConfiguration,
   startCrawlerBrowserDiscovery,
   startProductionBatch,
@@ -77,6 +79,7 @@ vi.mock("../api/client", async () => {
     resumeProductionBatch: vi.fn(),
     retryProductionBatchFailed: vi.fn(),
     reviewProductionBatchItems: vi.fn(),
+    reviewProductionTranscriptWithAI: vi.fn(),
     saveProductionWorkspaceConfiguration: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
     startProductionBatch: vi.fn(),
@@ -290,6 +293,8 @@ const transcriptWorkspace: ProductionWorkspace = {
         reviewed: false,
         draft_text: "原始转写需要复核",
         low_confidence_count: 2,
+        ai_corrected_count: 1,
+        auto_reviewed: true,
         uncertain_segment_count: 1,
         low_confidence_segments: [{
           start: 3,
@@ -489,15 +494,23 @@ describe("PipelinePage customer workspace", () => {
     vi.clearAllMocks();
   });
 
-  it("shows an actionable configuration card instead of only a toast", async () => {
+  it("keeps first-time person setup compact and does not block material search", async () => {
     vi.mocked(listProductionProfiles).mockResolvedValue({ items: [] });
 
     renderPage();
 
-    expect(await screen.findByText("先补齐 IP 配方")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "保存 IP 配方" })).toBeTruthy();
-    expect(screen.getByPlaceholderText("配方名称")).toBeTruthy();
-    expect(screen.getAllByRole("combobox")).toHaveLength(2);
+    expect(await screen.findByText("创作人物与声音")).toBeTruthy();
+    expect(screen.getByText("找素材不受影响；制作成片前再选择已授权的形象和声音。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "找素材" })).toBeTruthy();
+    expect(screen.queryByPlaceholderText("配方名称")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "去设置" }));
+    const profileDialog = await screen.findByRole("dialog", { name: "新增出镜人" });
+    fireEvent.click(within(profileDialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "新增出镜人" })).toBeNull();
+      expect(screen.queryByRole("dialog", { name: "创作设置" })).toBeNull();
+    });
   });
 
   it("does not offer the removed topic brief entry", async () => {
@@ -990,6 +1003,7 @@ describe("PipelinePage customer workspace", () => {
 
     expect(await screen.findByText("换一个更具体的词再试试。")).toBeTruthy();
     expect(previewCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+      published_window_days: 0,
       count_per_platform: 30,
       target_main_count: 30,
       hotspot_result_limit: 30,
@@ -1060,6 +1074,27 @@ describe("PipelinePage customer workspace", () => {
     manualCandidates.forEach((item) => {
       expect(screen.getByRole("button", { name: new RegExp(item.title) })).toBeTruthy();
     });
+    expect(screen.getAllByText("点赞 4,000 · 评论 100 · 分享 30 · 收藏 80")).toHaveLength(3);
+  });
+
+  it("shows unavailable interaction metrics truthfully instead of turning them into zero", async () => {
+    const partialMetricsCandidate = {
+      ...candidate,
+      video_id: "partial-metrics-candidate",
+      title: "只返回部分互动数据的素材",
+      comments: null,
+      shares: null,
+      favorites: null,
+    };
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch([partialMetricsCandidate]));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "餐饮老板获客" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("点赞 4,000 · 评论 未返回 · 分享 未返回 · 收藏 未返回")).toBeTruthy();
   });
 
   it("ranks hotter materials ahead of a zero-like supplier top result", async () => {
@@ -1133,7 +1168,7 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByRole("button", { name: /供应商第一但零赞/ }).textContent).toContain("#2");
   });
 
-  it("keeps two reserve materials idle behind the first four automatic candidates", async () => {
+  it("includes every usable material in automatic creation", async () => {
     const automaticPool = [1, 2, 3, 4, 5, 6].map((rank) => ({
       ...candidate,
       video_id: `auto-candidate-${rank}`,
@@ -1170,9 +1205,72 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findAllByText("口播候选 4 条＋候补 2 条")).toHaveLength(2);
-    expect(screen.getAllByText(/候补参考 · 已有可用口播/)).toHaveLength(2);
+    expect(await screen.findAllByText("自动创作口播 6 条")).toHaveLength(2);
+    expect(screen.queryByText(/候补参考 · 已有可用口播/)).toBeNull();
     expect(screen.getByText("0 条画面参考不参与 ASR")).toBeTruthy();
+  });
+
+  it("uses the same material filters as the crawler page", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: "筛选" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "发布时间筛选" }));
+    fireEvent.click(await screen.findByText("半年内"));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "每平台素材数量" }));
+    fireEvent.click(await screen.findByText("100 条"));
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    await waitFor(() => expect(previewCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+      published_window_days: 180,
+      count_per_platform: 100,
+      target_main_count: 100,
+      hotspot_result_limit: 100,
+    })));
+  });
+
+  it("clears stale materials when a filter changes and requires a new search", async () => {
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "贴标机",
+      published_window_days: 0,
+      hotspot_window_hours: 168,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "smart",
+      provider_name: "免费素材来源",
+      ranking_mode: "strict",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [],
+      estimated_total_cost_cny: 0,
+      blocked: false,
+    });
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch([candidate]));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "贴标机" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+    expect(await screen.findByText("本次找到的全部素材（1）")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "发布时间筛选" }));
+    fireEvent.click(await screen.findByText("一周内"));
+
+    expect(screen.queryByText("本次找到的全部素材（1）")).toBeNull();
+    expect(screen.getByRole("button", { name: "找素材" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+    await waitFor(() => expect(previewCrawlerBatch).toHaveBeenLastCalledWith(
+      expect.objectContaining({ published_window_days: 7 }),
+    ));
   });
 
   it("keeps likely machine showcases out of the automatic spoken pool", async () => {
@@ -1217,7 +1315,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findAllByText("口播候选 1 条")).toHaveLength(2);
+    expect(await screen.findAllByText("自动创作口播 1 条")).toHaveLength(2);
     expect(screen.getByText("4 条画面参考不参与 ASR")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^#\d+ 贴标机 B站/ })).toBeNull();
     expect(screen.getByRole("button", { name: /首先切标鼓角度不对/ })).toBeTruthy();
@@ -1329,8 +1427,9 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    const editor = await screen.findByLabelText("最终转写文本");
-    expect(screen.getByText("低置信片段 2")).toBeTruthy();
+    const editor = await screen.findByLabelText("AI 校对后的转写");
+    expect(screen.getByText("AI 已校对 1 处")).toBeTruthy();
+    expect(screen.getByText("仍需确认 1 处")).toBeTruthy();
     expect(screen.getByText(/00:03–00:06/)).toBeTruthy();
     expect(screen.getByText(/置信度 42% · 背景噪声/)).toBeTruthy();
     fireEvent.change(editor, { target: { value: "人工确认后的最终转写" } });
@@ -1345,6 +1444,31 @@ describe("PipelinePage customer workspace", () => {
         }),
       );
     });
+  });
+
+  it("offers one AI batch review for a legacy cloud transcript instead of asking for manual cleanup", async () => {
+    const legacyWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      items: [{
+        ...transcriptWorkspace.items[0],
+        reviews: {
+          ...transcriptWorkspace.items[0].reviews,
+          transcript: {
+            ...transcriptWorkspace.items[0].reviews.transcript,
+            auto_reviewed: false,
+            ai_corrected_count: 0,
+          },
+        },
+      }],
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [productionBatch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(legacyWorkspace);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+
+    expect(await screen.findByText("这条转写还没经过 AI 校对")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "让 AI 先校对" })).toBeTruthy();
+    expect(reviewProductionTranscriptWithAI).not.toHaveBeenCalled();
   });
 
   it("prefills a creative plan and saves it with the approved script", async () => {
@@ -1416,10 +1540,10 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    expect(await screen.findByLabelText("最终转写文本")).toBeTruthy();
+    expect(await screen.findByLabelText("AI 校对后的转写")).toBeTruthy();
     expect(screen.getByRole("button", { name: "确认转写并生成去重口播稿" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "保存 IP 配方" })).toBeNull();
-    expect(screen.getByText("老板口播 IP")).toBeTruthy();
+    expect(screen.getByText("老板口播 IP", { exact: false })).toBeTruthy();
   });
 
   it("continues a restored preflight task without asking the customer to select the material again", async () => {
@@ -1734,10 +1858,77 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    expect((await screen.findAllByText("结果待核对")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("转写结果待核对")).toBeTruthy();
     expect(screen.getByText(/供应商结果未知/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "继续" })).toBeNull();
     expect(screen.queryByRole("button", { name: "安全重试" })).toBeNull();
+
+    const currentStageButton = screen.getByRole("button", { name: /03 查看成片并发布/ });
+    expect(currentStageButton.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(currentStageButton);
+    expect(currentStageButton.getAttribute("aria-expanded")).toBe("false");
+
+    const materialFold = screen.getByRole("button", { name: /所选素材（1）/ });
+    const costFold = screen.getByRole("button", { name: /费用与提交/ });
+    const taskFold = screen.getByRole("button", { name: /待处理任务 1/ });
+    expect(materialFold.getAttribute("aria-expanded")).toBe("true");
+    expect(costFold.getAttribute("aria-expanded")).toBe("false");
+    expect(taskFold.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(materialFold);
+    expect(materialFold.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(costFold);
+    expect(costFold.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("任务状态")).toBeTruthy();
+    fireEvent.click(taskFold);
+    expect(taskFold.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("button", { name: /查看进度：单条创作 · 测试/ })).toBeTruthy();
+  });
+
+  it("requires a fresh cost confirmation when upload failed before ASR submission", async () => {
+    const retryWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      batch: { ...productionBatch, status: "failed", is_paused: false },
+      status: "failed",
+      current_stage: "transcript",
+      next_action: "retry",
+      allowed_actions: ["retry"],
+      retry_allowed: true,
+      items: [{
+        ...transcriptWorkspace.items[0],
+        stage: "transcript",
+        status: "failed",
+        current_stage: "transcription",
+        error_message: "素材上传连接失败，尚未创建云端识别任务。",
+        next_action: "retry",
+        allowed_actions: ["retry"],
+        retry_allowed: true,
+        recovery: {
+          kind: "transcription_upload_retry",
+          estimated_cost_cny: 0.0062,
+          currency: "CNY",
+          attempts_used: 0,
+          max_attempts: 1,
+        },
+      }],
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [retryWorkspace.batch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(retryWorkspace);
+    vi.mocked(retryProductionBatchFailed).mockResolvedValue(retryWorkspace.batch);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+
+    expect(await screen.findByText("素材上传失败")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "确认重新识别" }));
+    expect(retryProductionBatchFailed).not.toHaveBeenCalled();
+    expect((await screen.findAllByText("确认重新提交云端转写？")).length).toBeGreaterThan(0);
+    expect(screen.getByText(/¥0.0062/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "暂不付费" })).toBeTruthy();
+
+    const confirmationButtons = screen.getAllByRole("button", { name: "确认重新识别" });
+    fireEvent.click(confirmationButtons[confirmationButtons.length - 1]);
+
+    await waitFor(() => expect(retryProductionBatchFailed).toHaveBeenCalledWith("production-batch-1"));
   });
 
   it("uses the public media address and explains a delayed avatar without a fake percentage", async () => {
@@ -1789,7 +1980,7 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    await screen.findByLabelText("最终转写文本");
+    await screen.findByLabelText("AI 校对后的转写");
     const initialCalls = vi.mocked(getProductionBatchWorkspace).mock.calls.length;
     await waitFor(
       () => expect(getProductionBatchWorkspace).toHaveBeenCalledTimes(initialCalls + 1),

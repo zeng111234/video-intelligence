@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_copywriting_service
+from project.backend.app.core.copywriting import get_copywriting_service
 
 router = APIRouter(prefix="/api/v1/copywriting", tags=["copywriting"])
 

@@ -42,6 +42,7 @@ import {
   createProductShowcaseJob,
   deleteTask,
   downloadAvatarJobMedia,
+  getAvatarBillingQuote,
   getAvatarCapabilities,
   getAvatarJob,
   getVideoEditorJob,
@@ -119,6 +120,7 @@ export default function AvatarPage() {
   const [jobs, setJobs] = useState<AvatarJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [quoting, setQuoting] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [uploadingVoice, setUploadingVoice] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -198,7 +200,6 @@ export default function AvatarPage() {
     () => profiles.find((item) => item.profile_id === profileId) || profiles[0],
     [profileId, profiles],
   );
-
   const serviceUnavailable = Boolean(capability && !capability.enabled);
   const selectedProfileUnavailable = Boolean(selectedProfile && !selectedProfile.enabled);
   const supportsLocalUpload = capability?.provider_name === "local_avatar";
@@ -336,7 +337,7 @@ export default function AvatarPage() {
     if (playbackUrl) URL.revokeObjectURL(playbackUrl);
   }, [playbackUrl]);
 
-  const handleSubmit = useCallback(async () => {
+  const submitAvatarJob = useCallback(async () => {
     if (!capability?.enabled) {
       toast.warning("数字人服务尚未可用，请先配置供应商。");
       return;
@@ -403,6 +404,69 @@ export default function AvatarPage() {
     selectedAvatarReady,
     selectedVoice,
     selectedVoiceReady,
+  ]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!capability?.enabled) {
+      toast.warning("数字人服务尚未可用，请先配置供应商。");
+      return;
+    }
+    if (!scriptText.trim()) {
+      toast.warning("请输入口播文案。");
+      return;
+    }
+    if (!avatarId || !voiceId || !selectedAvatarReady || !selectedVoiceReady) {
+      toast.warning("请先选择可用的形象和声音。");
+      return;
+    }
+    if (capability.mode === "sandbox") {
+      Modal.confirm({
+        title: "确认创建演示任务？",
+        content: "演示任务不会产生真实成片或真实费用。",
+        okText: "创建演示任务",
+        cancelText: "暂不生成",
+        onOk: submitAvatarJob,
+      });
+      return;
+    }
+    setQuoting(true);
+    try {
+      const quote = await getAvatarBillingQuote({
+        scriptText: scriptText.trim(),
+        speechRate,
+      });
+      Modal.confirm({
+        title: "确认费用预留",
+        content: (
+          <Space direction="vertical" size={6}>
+            <Text>
+              本次先冻结最多 {quote.reservation_credits.toFixed(2)} 积分
+              （按 {quote.reservation_seconds} 秒保守上限）。
+            </Text>
+            <Text type="secondary">
+              成片后按实际时长向上取整到整秒结算，多余积分自动退回；不会重复结算。
+            </Text>
+          </Space>
+        ),
+        okText: "确认费用并开始生成",
+        cancelText: "暂不生成",
+        onOk: submitAvatarJob,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "暂时无法预估数字人费用");
+    } finally {
+      setQuoting(false);
+    }
+  }, [
+    avatarId,
+    capability,
+    scriptText,
+    selectedAvatarReady,
+    selectedVoiceReady,
+    speechRate,
+    submitAvatarJob,
+    toast,
+    voiceId,
   ]);
 
   const handleRetryVideo = useCallback((job: AvatarJob) => {
@@ -855,11 +919,21 @@ export default function AvatarPage() {
                 )}
               </div>
 
+              <div className="avatar-cost-preview">
+                <Text type="secondary">计费方式</Text>
+                <Text strong>
+                  {capability?.mode === "sandbox"
+                    ? "0 积分（演示）"
+                    : "按实际成片时长整秒结算"}
+                </Text>
+                <Text type="secondary">提交前显示冻结上限，完成后多余自动退回</Text>
+              </div>
+
               <div className="avatar-output-settings">
-                <div className="avatar-fixed-output">
-                  <Text type="secondary">固定输出</Text>
-                  <Text strong>9:16 · 1080P</Text>
-                </div>
+                  <div className="avatar-fixed-output">
+                    <Text type="secondary">固定输出</Text>
+                    <Text strong>9:16 · 1080P</Text>
+                  </div>
                 <div className="avatar-speech-rate">
                   <Text strong>语速</Text>
                   <Radio.Group
@@ -880,7 +954,7 @@ export default function AvatarPage() {
                 <Button
                   type="primary"
                   icon={<RocketOutlined />}
-                  loading={submitting}
+                  loading={submitting || quoting}
                   disabled={
                     serviceUnavailable ||
                     selectedProfileUnavailable ||
@@ -1586,6 +1660,25 @@ export default function AvatarPage() {
         .avatar-inline-note {
           display: block;
           margin-top: 8px;
+        }
+
+        .avatar-cost-preview {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          border: 1px solid #d9f0e4;
+          border-radius: 8px;
+          background: #f6fffa;
+        }
+
+        .avatar-cost-preview.is-unknown {
+          border-color: #ffe0a3;
+          background: #fffaf0;
+        }
+
+        .avatar-cost-preview .ant-typography:last-child {
+          margin-left: auto;
         }
 
         .avatar-output-settings {

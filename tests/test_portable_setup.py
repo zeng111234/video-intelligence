@@ -82,5 +82,5 @@ def test_frontend_test_tools_match_vite_5_and_node_18() -> None:
     dev_dependencies = manifest["devDependencies"]
 
     assert dev_dependencies["vite"] == "5.4.21"
-    assert dev_dependencies["vitest"] == "3.2.4"
+    assert dev_dependencies["vitest"] == "3.2.7"
     assert dev_dependencies["jsdom"] == "24.1.3"

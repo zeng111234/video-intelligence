@@ -1,4 +1,4 @@
-# === UTF-8 编码验证脚本 ===
+﻿# === UTF-8 编码验证脚本 ===
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 

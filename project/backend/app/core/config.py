@@ -9,8 +9,11 @@ from pathlib import Path
 
 # config.py 在 project/backend/app/core/ 下，需要 5 层 parent 才能到仓库根
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
-DATABASE_PATH = PROJECT_ROOT / "data" / "video_intelligence.db"
-ENV_PATH = PROJECT_ROOT / ".env"
+RUNTIME_ROOT = Path(
+    os.getenv("VIDEOINSIGHT_RUNTIME_ROOT", str(PROJECT_ROOT))
+).expanduser().resolve()
+DATABASE_PATH = RUNTIME_ROOT / "data" / "video_intelligence.db"
+ENV_PATH = RUNTIME_ROOT / ".env"
 BACKEND_ENV_PATH = PROJECT_ROOT / "project" / "backend" / ".env"
 STREAMLIT_SECRETS_PATH = PROJECT_ROOT / ".streamlit" / "secrets.toml"
 
@@ -92,7 +95,14 @@ def _legacy_streamlit_secret(key: str) -> str:
 
 
 def _secret(key: str, default: str = "") -> str:
-    return _env(key) or _legacy_streamlit_secret(key) or default
+    # An explicitly present environment variable is authoritative even when
+    # it is empty.  Desktop-client launchers use an empty value to guarantee
+    # that supplier credentials stay on the company control plane; falling
+    # through to a legacy local secrets file would silently defeat that
+    # security boundary.
+    if key in os.environ:
+        return os.environ[key].strip() or default
+    return _legacy_streamlit_secret(key) or default
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +273,7 @@ DOUYIN_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
 DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
     _env(
         "DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "douyin"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "douyin"),
     )
 )
 DOUYIN_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
@@ -277,7 +287,7 @@ XIAOHONGSHU_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
 XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
     _env(
         "XIAOHONGSHU_BROWSER_DISCOVERY_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "xiaohongshu"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "xiaohongshu"),
     )
 )
 XIAOHONGSHU_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
@@ -292,7 +302,7 @@ XIAOHONGSHU_PUBLIC_SEARCH_ENABLED: bool = _env_flag(
 XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR: Path = Path(
     _env(
         "XIAOHONGSHU_PUBLIC_SEARCH_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "xiaohongshu_public"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "xiaohongshu_public"),
     )
 )
 XIAOHONGSHU_PUBLIC_SEARCH_DEBUG_PORT: int = _env_int(
@@ -307,7 +317,7 @@ XIAOHONGSHU_LOGIN_BROWSER_ENABLED: bool = _env_flag(
 XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR: Path = Path(
     _env(
         "XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "xiaohongshu_login"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "xiaohongshu_login"),
     )
 )
 XIAOHONGSHU_LOGIN_BROWSER_DEBUG_PORT: int = _env_int(
@@ -319,7 +329,7 @@ KUAISHOU_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
 KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
     _env(
         "KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "kuaishou"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "kuaishou"),
     )
 )
 KUAISHOU_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(
@@ -331,7 +341,7 @@ BILIBILI_BROWSER_DISCOVERY_ENABLED: bool = _env_flag(
 BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR: Path = Path(
     _env(
         "BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR",
-        str(PROJECT_ROOT / "data" / "browser_profiles" / "bilibili"),
+        str(RUNTIME_ROOT / "data" / "browser_profiles" / "bilibili"),
     )
 )
 BILIBILI_BROWSER_DISCOVERY_DEBUG_PORT: int = _env_int(

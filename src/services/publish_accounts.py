@@ -23,7 +23,10 @@ from uuid import uuid4
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PUBLISH_ACCOUNT_ROOT = PROJECT_ROOT / "data" / "publish_accounts"
+RUNTIME_ROOT = Path(
+    os.environ.get("VIDEOINSIGHT_RUNTIME_ROOT", str(PROJECT_ROOT))
+).expanduser().resolve()
+PUBLISH_ACCOUNT_ROOT = RUNTIME_ROOT / "data" / "publish_accounts"
 PROFILE_ROOT = (
     Path(os.environ.get("LOCALAPPDATA", str(PROJECT_ROOT / "data")))
     / "VideoInsight"

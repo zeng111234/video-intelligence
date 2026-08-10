@@ -1,4 +1,4 @@
-# === UTF-8 编码保障 ===
+﻿# === UTF-8 编码保障 ===
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 

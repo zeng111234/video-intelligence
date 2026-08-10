@@ -924,9 +924,10 @@ export default function KeywordCrawlerPage() {
               </Button>
             )}
             <Input
+              aria-label="权利主体"
               value={rightsHolder}
               onChange={(event) => setRightsHolder(event.target.value)}
-              addonBefore="权利主体"
+              prefix="权利主体"
               placeholder="填写授权主体或公司名称"
             />
             <Text type="secondary">
@@ -1042,7 +1043,7 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
   if (stopMessage) return stopMessage;
   if (run.error) {
     if (run.provider.startsWith("douyin_public_browser")) {
-      return `抖音官网搜索已暂停：${run.error}。`;
+      return `抖音登录搜索已暂停：${run.error}。`;
     }
     return `${run.platform_label}本次没有完成：${run.error}`;
   }
@@ -1101,7 +1102,7 @@ function UnifiedPlatformResults({
     .filter((platform) => !runs.some((run) => run.platform === platform));
   const missingPlatformSummary = (platform: string) => {
     if (platform === "douyin") {
-      return `抖音本批未执行（旧批次无法补回）；重新找素材会尝试抖音官网。${batch.error ? `当时提示：${batch.error}` : ""}`;
+      return `抖音本批未执行（旧批次无法补回）；重新找素材会尝试抖音登录搜索。${batch.error ? `当时提示：${batch.error}` : ""}`;
     }
     return `${materialPlatformLabel(platform)}已选中但本次未完成搜索：${batch.error || "请检查登录或验证。"}`;
   };
@@ -1361,7 +1362,7 @@ function MaterialCandidatePreview({
       <Space wrap size={8}>
         <Text type="secondary">{candidate.author_name || "作者未返回"}</Text>
         <Tag color="blue">{candidate.platform_label || candidate.platform}</Tag>
-        {candidate.evidence?.startsWith("douyin_public_search:") && <Tag color="cyan">抖音官网搜索</Tag>}
+        {candidate.evidence?.startsWith("douyin_public_search:") && <Tag color="cyan">抖音登录搜索</Tag>}
         {keywordMatch && <Tag color="green">{keywordMatch}</Tag>}
         {status && <Tag color={status.color}>{status.label}</Tag>}
       </Space>
@@ -1855,7 +1856,7 @@ function CandidateListItem({
               {item.system_rank && <Tag color="geekblue">系统 #{item.system_rank}</Tag>}
               {isHotspotLeaderboard && <Tag color="magenta">浏览器爆款榜</Tag>}
               {isHotspotLeaderboard && item.hotspot_list_labels && item.hotspot_list_labels.length > 0 && <Tag color="purple">{item.hotspot_list_labels.join(" / ")}</Tag>}
-              {isDouyinPublicSearch && <Tag color="cyan">抖音官网搜索</Tag>}
+              {isDouyinPublicSearch && <Tag color="cyan">抖音登录搜索</Tag>}
               {item.relevance_basis && (
                 <Tag color="green">{keywordMatchLabel(item.relevance_reason) || "命中关键词"}</Tag>
               )}

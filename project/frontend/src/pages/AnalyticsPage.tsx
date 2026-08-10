@@ -106,6 +106,8 @@ export default function AnalyticsPage() {
   const trends = data?.trends || [];
   const competitors = data?.competitors || [];
   const contentDistribution = data?.contentDistribution || [];
+  const engagementRate = overview?.engagementRate ?? 0;
+  const engagementRateCredible = engagementRate >= 0 && engagementRate <= 100;
 
   /** 柱状图数据 */
   const barData = trends.map((t) => ({
@@ -177,6 +179,15 @@ export default function AnalyticsPage() {
         message="数据口径"
         description="深度分析不再使用固定统计、随机增长率或预置竞品数据；当前展示来自本地候选库和已记录快照。"
       />
+      {!engagementRateCredible && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+          message="互动率数据待核对"
+          description="当前快照中的互动数与播放量口径不一致，系统已停止展示异常百分比；请刷新素材指标后再查看。"
+        />
+      )}
 
       {/* 核心指标卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
@@ -205,8 +216,8 @@ export default function AnalyticsPage() {
           <Card hoverable>
             <Statistic
               title="互动率"
-              value={overview?.engagementRate || 0}
-              suffix="%"
+              value={engagementRateCredible ? engagementRate : "待核对"}
+              suffix={engagementRateCredible ? "%" : undefined}
               prefix={<HeartOutlined style={{ color: "var(--warning)" }} />}
               valueStyle={{ color: "var(--warning)" }}
             />

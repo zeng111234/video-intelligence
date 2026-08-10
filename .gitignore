@@ -46,6 +46,21 @@ Thumbs.db
 # New project scaffold
 project/frontend/node_modules/
 project/frontend/dist/
+project/frontend/desktop/backend/
+project/frontend/desktop/electron-dist/
+project/frontend/desktop/release-config.json
+project/frontend/desktop/icon.ico
+project/frontend/desktop/icon.png
+project/frontend/release/
+build/
+
+# Company control-plane runtime and secrets
+deploy/control-plane/.env
+deploy/control-plane/data/
+deploy/control-plane/backups/
+deploy/control-plane/caddy-data/
+deploy/control-plane/caddy-config/
+deploy/control-plane/updates/
 
 # Local agent diagnostics and runtime logs
 .reasonix/

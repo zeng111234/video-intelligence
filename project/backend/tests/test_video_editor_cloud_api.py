@@ -65,6 +65,10 @@ def _workflow(
 
 def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
     workflow, source_id = _workflow(tmp_path)
+    debit_calls: list[dict] = []
+    workflow._debit_credits = lambda *args, **kwargs: debit_calls.append(  # type: ignore[method-assign]
+        {"args": args, "kwargs": kwargs}
+    )
     app.dependency_overrides[video_editor_api.get_workflow_service] = (
         lambda: workflow
     )
@@ -109,6 +113,7 @@ def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
             )
             assert created_response.status_code == 200
             created = created_response.json()
+            assert debit_calls == []
             item = created["items"][0]
             assert item["status"] == "awaiting_subtitle_review"
 

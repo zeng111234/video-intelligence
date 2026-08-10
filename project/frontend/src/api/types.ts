@@ -94,6 +94,28 @@ export interface AsrCapabilityResponse {
   description?: string;
 }
 
+export interface ServerCapabilityState {
+  enabled?: boolean;
+  live_ready?: boolean;
+  mode?: string;
+  missing_configuration?: string[];
+}
+
+export interface ServerStatusResponse {
+  service: string;
+  crawler: {
+    location: string;
+    billable: boolean;
+    server_provider_disabled: boolean;
+  };
+  copywriting: ServerCapabilityState & {
+    estimated_cost_configured?: boolean;
+  };
+  transcription: ServerCapabilityState;
+  video_editor: ServerCapabilityState;
+  avatar: ServerCapabilityState;
+}
+
 export interface PipelineStage {
   stage: string;
   status: string;
@@ -299,6 +321,9 @@ export interface ProductionWorkspaceReview {
   draft_text?: string;
   approved_text?: string;
   low_confidence_count?: number;
+  ai_corrected_count?: number;
+  auto_reviewed?: boolean;
+  auto_review_error?: string | null;
   uncertain_segment_count?: number;
   low_confidence_segments?: Array<{
     start: number | null;
@@ -393,6 +418,13 @@ export interface ProductionWorkspaceItem extends ProductionBatchItem {
   publish: ProductionWorkspacePublish;
   result_media_url?: string | null;
   processing?: ProductionWorkspaceProcessing | null;
+  recovery?: {
+    kind: "transcription_upload_retry" | string;
+    estimated_cost_cny: number | null;
+    currency: "CNY" | string;
+    attempts_used: number;
+    max_attempts: number;
+  } | null;
 }
 
 export interface ProductionWorkspace {
@@ -688,7 +720,7 @@ export interface CrawlerSearchRequest {
   hotspot_window_hours?: 1 | 24 | 72 | 168;
   count_per_platform: number;
   force_refresh: boolean;
-  /** smart 使用已选平台的公开搜索，不接 OneAPI。 */
+  /** smart 使用已选平台的本机浏览器搜索，不接 OneAPI。 */
   mode?: "official_hot" | "smart";
   /** 用户明确给出的相关赛道词；不会由系统自动扩词。 */
   related_terms?: string[];
@@ -1308,6 +1340,15 @@ export interface AvatarCapability {
   supports_cloud_avatar_training: boolean;
   supports_voice_cloning: boolean;
   supports_voice_sample_upload: boolean;
+}
+
+export interface AvatarBillingQuote {
+  price_per_minute_cny: number;
+  billing_unit_seconds: number;
+  reservation_seconds: number;
+  reservation_cost_cny: number;
+  reservation_credits: number;
+  settlement_note: string;
 }
 
 export interface AvatarProfile {

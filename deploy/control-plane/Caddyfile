@@ -1,0 +1,27 @@
+{$CONTROL_PLANE_DOMAIN} {
+    encode zstd gzip
+
+    request_body {
+        max_size 513MB
+    }
+
+    handle_path /desktop-updates/* {
+        root * /srv/updates
+        header Cache-Control "no-store"
+        file_server
+    }
+
+    handle {
+        reverse_proxy control-plane:8080
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+        -Server
+    }
+}

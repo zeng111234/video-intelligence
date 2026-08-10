@@ -8,6 +8,7 @@ import TranscriptionPage from "./TranscriptionPage";
 import { ToastProvider } from "../components/Toast";
 import {
   createCrawlerLinkTranscription,
+  getTranscriptionCapabilities,
   listComplianceDrafts,
   listTranscriptions,
   listVoiceoverDrafts,
@@ -26,6 +27,12 @@ vi.mock("../api/client", () => ({
   exportTranscription: vi.fn(),
   fallbackCrawlerLinkTranscription: vi.fn(),
   getCrawlerLinkTranscriptionCapabilities: vi.fn().mockResolvedValue(null),
+  getTranscriptionCapabilities: vi.fn().mockResolvedValue({
+    mode: "cloud",
+    is_mock: false,
+    supports_upload: true,
+    description: "公司云端语音识别",
+  }),
   getTranscription: vi.fn(),
   listComplianceDrafts: vi.fn(),
   listTranscriptions: vi.fn(),
@@ -119,6 +126,12 @@ describe("TranscriptionPage", () => {
     vi.mocked(listVoiceoverDrafts).mockResolvedValue([]);
     vi.mocked(listComplianceDrafts).mockResolvedValue([]);
     vi.mocked(saveTranscriptionRevision).mockResolvedValue({ revision_id: "revision-test" });
+    vi.mocked(getTranscriptionCapabilities).mockResolvedValue({
+      mode: "cloud",
+      is_mock: false,
+      supports_upload: true,
+      description: "公司云端语音识别",
+    });
   });
 
   afterEach(() => {
@@ -273,6 +286,28 @@ describe("TranscriptionPage", () => {
       "zh",
       "candidate-42",
     ]);
+  });
+
+  it("labels sandbox file transcription as free and non-cloud", async () => {
+    vi.mocked(getTranscriptionCapabilities).mockResolvedValue({
+      mode: "sandbox",
+      is_mock: true,
+      supports_upload: true,
+      description: "本地演示，不扣积分",
+    });
+    render(
+      <MemoryRouter initialEntries={["/transcription?entry=upload"]}>
+        <ToastProvider><TranscriptionPage /></ToastProvider>
+      </MemoryRouter>,
+    );
+
+    const file = new File(["video"], "demo.mp4", { type: "video/mp4" });
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    expect(await screen.findByText(/本地演示不调用真实云服务，也不扣积分/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "确认权利并开始免费演示" })).toBeTruthy();
+    expect(screen.queryByText(/同意本次公司云端转写按实际时长收费/)).toBeNull();
   });
 
   it("does not mark every cloud segment for review when confidence is unavailable", async () => {

@@ -1,0 +1,37 @@
+# Deny by default: the control-plane image needs only these server sources.
+**
+
+!project/
+project/**
+!project/__init__.py
+!project/backend/
+!project/backend/__init__.py
+!project/backend/app/
+!project/backend/app/**
+
+!src/
+!src/**
+
+!database/
+!database/**
+
+!deploy/
+deploy/**
+!deploy/control-plane/
+!deploy/control-plane/requirements.txt
+!deploy/control-plane/authorize_asr.py
+!deploy/control-plane/backup_control_plane.py
+!deploy/control-plane/restore_control_plane.py
+!deploy/control-plane/verify_control_plane.py
+
+# Secrets, runtime state and generated caches must never reach BuildKit.
+**/.env
+**/.env.*
+**/data/**
+**/backups/**
+**/caddy-data/**
+**/caddy-config/**
+**/__pycache__/**
+**/*.py[cod]
+**/.pytest_cache/**
+**/.ruff_cache/**

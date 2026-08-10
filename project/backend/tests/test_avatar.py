@@ -4,12 +4,14 @@ from fastapi.testclient import TestClient
 import pytest
 
 from project.backend.app.core.deps import get_avatar_service
+from project.backend.app.core.security import issue_auth_token
 from project.backend.app.main import app
 from src.adapters.avatar import (
     LocalCommandAvatarProvider,
     SandboxAvatarProvider,
     ShuyingLegacyAvatarProvider,
 )
+from src.models import AvatarSubmitRequest
 from src.repositories.mock import MockRepository
 from src.services.avatar import AvatarService
 
@@ -81,6 +83,40 @@ def test_create_and_get_job():
         get_resp = client.get(f"/api/v1/avatar/jobs/{created['task_id']}")
         assert get_resp.status_code == 200
         assert get_resp.json()["task_id"] == created["task_id"]
+        assert get_resp.json()["status"] == "succeeded"
+        assert get_resp.json()["progress"] == 100
+        assert get_resp.json()["result_url"] is None
+        assert "未生成真实成片" in get_resp.json()["stage"]
+
+
+def test_sandbox_job_reaches_truthful_terminal_state_after_backend_restart():
+    repository = MockRepository()
+    first_service = AvatarService(repository, SandboxAvatarProvider())
+    task = first_service.submit(
+        AvatarSubmitRequest(
+            script_text="演示任务重启恢复。",
+            avatar_id="sandbox-avatar-public-01",
+            voice_id="sandbox-voice-cn-female-01",
+            profile_id="default",
+            aspect_ratio="9:16",
+            resolution="1080x1920",
+            rights_holder="测试客户",
+            script_rights_confirmed=True,
+            avatar_rights_confirmed=True,
+            voice_rights_confirmed=True,
+            idempotency_key="sandbox-restart-recovery-1",
+        ),
+        avatar_name="演示公共数字人",
+        voice_name="演示中文女声",
+    )
+
+    restarted_service = AvatarService(repository, SandboxAvatarProvider())
+    recovered = restarted_service.refresh_task(task.task_id)
+
+    assert recovered.status.value == "succeeded"
+    assert recovered.progress == 100
+    assert recovered.result_path is None
+    assert "未生成真实成片" in recovered.stage
 
 
 def test_create_job_uses_keyword_and_auto_increments_name():
@@ -139,7 +175,10 @@ def test_media_is_not_available_for_sandbox_job():
             },
         ).json()
 
-        resp = client.get(f"/api/v1/avatar/jobs/{created['task_id']}/media")
+        resp = client.get(
+            f"/api/v1/avatar/jobs/{created['task_id']}/media",
+            headers={"X-Admin-Token": issue_auth_token("admin", "pytest-admin")},
+        )
 
     assert resp.status_code == 400
 
@@ -232,7 +271,10 @@ def test_local_asset_upload_accepts_browser_recording_webm(monkeypatch, tmp_path
                 },
                 files={"file": ("recording.webm", b"webm-bytes", "audio/webm")},
             )
-            media_resp = client.get(resp.json()["preview_url"])
+            media_resp = client.get(
+                resp.json()["preview_url"],
+                headers={"X-Admin-Token": issue_auth_token("admin", "pytest-admin")},
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -268,7 +310,10 @@ def test_pending_cloud_voice_sample_can_be_previewed(tmp_path):
 
     try:
         with TestClient(app) as client:
-            resp = client.get(asset.preview_url)
+            resp = client.get(
+                asset.preview_url,
+                headers={"X-Admin-Token": issue_auth_token("admin", "pytest-admin")},
+            )
     finally:
         app.dependency_overrides.clear()
 

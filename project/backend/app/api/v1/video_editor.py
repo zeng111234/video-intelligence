@@ -239,11 +239,25 @@ def get_workflow_service(
     transcription_service=Depends(get_transcription_service),
     copywriting_service=Depends(get_copywriting_service),
 ) -> VideoEditorWorkflowService:
+    cloud_configuration = None
+    cloud_providers = None
+    from project.backend.app.services.control_plane_client import (
+        control_plane_enabled,
+    )
+
+    if control_plane_enabled():
+        from project.backend.app.services.remote_video_editor import (
+            get_remote_video_editor_runtime,
+        )
+
+        cloud_configuration, cloud_providers = get_remote_video_editor_runtime()
     return VideoEditorWorkflowService(
         repository,
         video_editing_service,
         transcription_service,
         copywriting_service,
+        cloud_configuration=cloud_configuration,
+        cloud_providers=cloud_providers,
     )
 
 

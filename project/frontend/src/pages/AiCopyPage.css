@@ -135,6 +135,17 @@
   min-width: 190px;
 }
 
+.ai-copy-cost-estimate {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text-primary);
+}
+
+.ai-copy-cost-estimate .ant-typography-secondary {
+  color: #667085;
+}
+
 .ai-copy-review-panel {
   display: flex;
   min-height: 0;

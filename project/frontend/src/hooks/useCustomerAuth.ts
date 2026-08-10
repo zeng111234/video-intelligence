@@ -60,7 +60,7 @@ export function useCustomerLogin() {
   const [loggingIn, setLoggingIn] = useState(false);
 
   const doLogin = useCallback(
-    async (code: string): Promise<boolean> => {
+    async (code: string): Promise<{ ok: boolean; error?: string }> => {
       setLoggingIn(true);
       try {
         const resp = await customerLogin(code);
@@ -69,10 +69,11 @@ export function useCustomerLogin() {
         localStorage.setItem(CUSTOMER_CODE_KEY, resp.code);
         notifyCustomerListeners();
         toast.success(`欢迎，${resp.name}`);
-        return true;
+        return { ok: true };
       } catch (err) {
-        toast.error((err as Error).message || "激活码登录失败");
-        return false;
+        const message = (err as Error).message || "激活码登录失败";
+        toast.error(message);
+        return { ok: false, error: message };
       } finally {
         setLoggingIn(false);
       }

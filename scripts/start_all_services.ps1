@@ -23,7 +23,7 @@ $services = @(
         Port = 2001
         HealthUrl = "http://localhost:2001/health"
         StartCommand = $pythonCommand
-        StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001")
+        StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001", "--no-proxy-headers")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
         EnvVars = @{ PYTHONPATH = $projectRoot }

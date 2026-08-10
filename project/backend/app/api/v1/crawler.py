@@ -97,7 +97,7 @@ INTERACTION_HEAT_FLOOR = 100.0
 BILIBILI_PLAY_HEAT_FLOOR = 100
 KUAISHOU_PUBLISHED_WINDOW_DAYS = 30
 BILIBILI_PUBLISHED_WINDOW_DAYS = 7
-# 常规“找素材”只检索抖音官网搜索页，不再启动或补足热点宝。
+# 常规“找素材”复用抖音专用登录浏览器，不再启动或补足热点宝。
 DOUYIN_PUBLIC_SEARCH_PUBLISHED_WINDOW_DAYS = 0
 DOUYIN_PUBLIC_SEARCH_RESULT_LIMIT = 100
 HOTSPOT_CACHE_TTL_MINUTES = 60
@@ -180,7 +180,7 @@ class CrawlerSearchRequest(BaseModel):
     )
     # 热点宝的统计周期独立；这里仅是公开素材的发布时间筛选。
     published_window_days: int = Field(
-        7,
+        0,
         description="0=不限；1=一天内；7=一周内；180=半年内；历史批次兼容旧的 3/30/300 天。",
     )
     hotspot_window_hours: Literal[1, 24, 72, 168] = Field(
@@ -1661,7 +1661,7 @@ def _preview_free_multi_platform_batch(
         platform_items.append(
             CrawlerPlatformPreview(
                 platform=Platform.DOUYIN.value,
-                platform_label="抖音官网搜索（最多30条）",
+                platform_label="抖音登录搜索（最多30条）",
                 cache_hit=public_preview.cache_hit,
                 estimated_api_calls=0,
                 platform_unit_price_cny=0.0,
@@ -1672,7 +1672,7 @@ def _preview_free_multi_platform_batch(
                     else (
                         public_preview.blocked_reason
                         or (public_status.message if public_status else None)
-                        or "抖音官网搜索浏览器未连接。"
+                        or "抖音登录搜索浏览器未连接。"
                     )
                 ),
             )
@@ -1738,8 +1738,8 @@ def _preview_free_multi_platform_batch(
         count_per_platform=requested_count,
         force_refresh=body.force_refresh,
         mode="smart",
-        provider_mode=ProviderMode.PUBLIC_WEB.value,
-        provider_name="抖音官网搜索 + 小红书登录搜索 + 快手/B站浏览器",
+        provider_mode=ProviderMode.LOCAL_BROWSER.value,
+        provider_name="抖音登录搜索 + 小红书登录搜索 + 快手/B站浏览器",
         ranking_mode="platform_default_search_then_table_sort",
         monthly_query_count=0,
         monthly_estimated_cost_cny=0.0,
@@ -1755,14 +1755,14 @@ def _preview_free_multi_platform_batch(
         blocked=all(item.blocked_reason for item in platform_items),
         free_pool_status="ready",
         free_pool_message=(
-            "只使用抖音官网、小红书登录搜索、快手和B站搜索结果；"
+            "只使用抖音登录搜索、小红书登录搜索、快手和B站浏览器搜索结果；"
             "按本次发布时间条件保留可核验内容，遇到登录或安全验证立即停止；不调用热点宝或 OneAPI。"
         ),
         paid_fallback_required=False,
         paid_fallback_blocked_reason="本次固定使用免费来源，不会调用热点宝或 OneAPI。",
         trend_tracking_enabled=False,
         hotspot_ready=False,
-        hotspot_message="本次只使用抖音官网搜索，不使用热点宝。",
+        hotspot_message="本次只使用抖音登录搜索，不使用热点宝。",
         hotspot_time_strategy="douyin_official_search_only",
         target_main_count=requested_count,
         paid_call_cap=0,
@@ -2188,7 +2188,7 @@ def _execute_free_multi_platform_batch(
         try:
             public_status = _start_browser_for_search(douyin_public_provider)
         except LicensedProviderError as exc:
-            errors.append(f"抖音官网搜索：{exc}")
+            errors.append(f"抖音登录搜索：{exc}")
     def execute_browser_source(
         service,
         provider,
@@ -2309,7 +2309,7 @@ def _execute_free_multi_platform_batch(
             kuaishou_sort=body.kuaishou_sort,
             kuaishou_duration_bucket=body.kuaishou_duration_bucket,
             provider="free_multi_platform",
-            mode=ProviderMode.PUBLIC_WEB,
+            mode=ProviderMode.LOCAL_BROWSER,
             platforms=list(selected_platforms),
             status=SearchBatchStatus.FAILED,
             error="；".join(errors) or "免费来源暂时没有返回候选。",
@@ -2386,7 +2386,7 @@ def _execute_free_multi_platform_batch(
             "kuaishou_sort": body.kuaishou_sort,
             "kuaishou_duration_bucket": body.kuaishou_duration_bucket,
             "provider": "free_multi_platform",
-            "mode": ProviderMode.PUBLIC_WEB,
+            "mode": ProviderMode.LOCAL_BROWSER,
             "status": status,
             "platforms": list(selected_platforms),
             "platform_run_ids": [run.run_id for run in all_runs],
@@ -2409,7 +2409,7 @@ def _execute_free_multi_platform_batch(
         update={
             "free_candidate_count": total_candidates,
             "paid_fallback_used": False,
-            "paid_fallback_blocked_reason": "本次固定只使用抖音官网、小红书登录搜索、快手和B站的免费来源；不调用热点宝或 OneAPI。",
+            "paid_fallback_blocked_reason": "本次固定只使用抖音登录搜索、小红书登录搜索、快手和B站浏览器搜索；不调用热点宝或 OneAPI。",
             "trend_tracking_enabled": False,
         }
     )
@@ -3851,20 +3851,28 @@ def start_doubao_browser_worker():
     script = project_root / "scripts" / "doubao_browser_worker.mjs"
     if not script.exists():
         raise HTTPException(status_code=500, detail="本地豆包执行器脚本不存在。")
-    log_dir = project_root / "data" / "logs"
+    log_dir = backend_config.RUNTIME_ROOT / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "doubao-browser-worker.log"
+    node_executable = os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    backend_origin = os.getenv(
+        "VIDEOINSIGHT_BACKEND_ORIGIN", "http://127.0.0.1:2001"
+    ).rstrip("/")
     command = [
-        "node",
+        node_executable,
         str(script),
         "--api",
-        "http://127.0.0.1:2001/api/v1/crawler",
+        f"{backend_origin}/api/v1/crawler",
     ]
+    worker_environment = os.environ.copy()
+    if os.getenv("VIDEOINSIGHT_NODE_AS_ELECTRON", "").casefold() == "true":
+        worker_environment["ELECTRON_RUN_AS_NODE"] = "1"
     try:
         with log_path.open("ab") as log_file:
             subprocess.Popen(
                 command,
-                cwd=str(project_root),
+                cwd=str(backend_config.RUNTIME_ROOT),
+                env=worker_environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -4137,20 +4145,28 @@ def start_doubao_mobile_worker():
     script = project_root / "scripts" / "doubao_mobile_worker.mjs"
     if not script.exists():
         raise HTTPException(status_code=500, detail="本地安卓豆包执行器脚本不存在。")
-    log_dir = project_root / "data" / "logs"
+    log_dir = backend_config.RUNTIME_ROOT / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "doubao-mobile-worker.log"
+    node_executable = os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    backend_origin = os.getenv(
+        "VIDEOINSIGHT_BACKEND_ORIGIN", "http://127.0.0.1:2001"
+    ).rstrip("/")
     command = [
-        "node",
+        node_executable,
         str(script),
         "--api",
-        "http://127.0.0.1:2001/api/v1/crawler",
+        f"{backend_origin}/api/v1/crawler",
     ]
+    worker_environment = os.environ.copy()
+    if os.getenv("VIDEOINSIGHT_NODE_AS_ELECTRON", "").casefold() == "true":
+        worker_environment["ELECTRON_RUN_AS_NODE"] = "1"
     try:
         with log_path.open("ab") as log_file:
             subprocess.Popen(
                 command,
-                cwd=str(project_root),
+                cwd=str(backend_config.RUNTIME_ROOT),
+                env=worker_environment,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL,
@@ -4662,7 +4678,6 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         item.evidence
     )
     duration_seconds = getattr(item, "duration_seconds", None) or evidence_duration_seconds
-    is_incremental_hotspot = "来源=video_board" in (item.evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(item.evidence)
     spoken_seed = _spoken_seed_quality(
         title=item.title,
@@ -4686,10 +4701,12 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         confidence=item.metrics.confidence,
         provider_hot_rank=item.provider_rank,
         plays=item.metrics.plays,
-        new_plays=item.metrics.plays if is_incremental_hotspot else None,
+        # 这个转换器只用于 low_incremental_items；这些项目本身就是视频榜
+        # 的新增量参考，不能因旧证据字符串缺少“来源=video_board”而丢掉数值。
+        new_plays=item.metrics.plays,
         likes=item.metrics.likes,
         heat_score=_interaction_heat_or_none(item),
-        new_likes=item.metrics.likes if is_incremental_hotspot else None,
+        new_likes=item.metrics.likes,
         likes_per_day=likes_per_day,
         quality_source=quality_source,
         duration_seconds=duration_seconds,
@@ -4722,7 +4739,7 @@ def _hotspot_evidence_details(
     if evidence.startswith("douyin_public_search:"):
         duration_match = re.search(r"时长秒=(\d+)", evidence)
         return (
-            ["抖音官网搜索"],
+            ["抖音登录搜索"],
             int(duration_match.group(1)) if duration_match else None,
             None,
         )

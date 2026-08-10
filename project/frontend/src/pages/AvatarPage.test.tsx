@@ -10,6 +10,7 @@ import { ToastProvider } from "../components/Toast";
 import type { AvatarJob } from "../api/types";
 import {
   createAvatarJob,
+  getAvatarBillingQuote,
   getAvatarCapabilities,
   listAvatarAssets,
   listAvatarJobs,
@@ -22,6 +23,7 @@ vi.mock("../api/client", () => ({
   createProductShowcaseJob: vi.fn(),
   deleteTask: vi.fn(),
   downloadAvatarJobMedia: vi.fn(),
+  getAvatarBillingQuote: vi.fn(),
   getAvatarCapabilities: vi.fn(),
   getAvatarJob: vi.fn(),
   getVideoEditorJob: vi.fn(),
@@ -106,13 +108,21 @@ describe("AvatarPage avatar library", () => {
       permission_status: "authorized",
       max_script_chars: 2000,
       supported_aspect_ratios: ["9:16"],
-      estimated_cost_cny: null,
-      estimated_seconds: null,
+      estimated_cost_cny: 2.5,
+      estimated_seconds: 60,
       missing_configuration: [],
       profiles: [],
       supports_cloud_avatar_training: true,
       supports_voice_cloning: true,
       supports_voice_sample_upload: true,
+    });
+    vi.mocked(getAvatarBillingQuote).mockResolvedValue({
+      price_per_minute_cny: 2.5,
+      billing_unit_seconds: 1,
+      reservation_seconds: 9,
+      reservation_cost_cny: 0.375,
+      reservation_credits: 0.38,
+      settlement_note: "完成后按实际整秒结算，多余自动退回。",
     });
     vi.mocked(listAvatarAssets).mockResolvedValue([
       {
@@ -365,7 +375,7 @@ describe("AvatarPage avatar library", () => {
     expect(within(view.container).queryByText("目标平台")).toBeNull();
     expect(within(view.container).queryByText(/自动发布/)).toBeNull();
     expect(within(view.container).queryByText("供应商：公司数影云数字人")).toBeNull();
-    expect(within(view.container).queryByText(/预计费用：/)).toBeNull();
+    expect(within(view.container).getByText("按实际成片时长整秒结算")).toBeTruthy();
 
     fireEvent.change(
       within(view.container).getByPlaceholderText("输入数字人要说的内容，数字人会按文案自然播完。"),
@@ -374,12 +384,54 @@ describe("AvatarPage avatar library", () => {
     fireEvent.click(
       within(view.container).getByRole("button", { name: /生成数字人视频/ }),
     );
+    expect(createAvatarJob).not.toHaveBeenCalled();
+    const confirmDialog = await screen.findByRole("dialog");
+    expect(confirmDialog.textContent).toContain("最多 0.38 积分");
+    expect(confirmDialog.textContent).toContain("按 9 秒保守上限");
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "确认费用并开始生成" }));
 
     await waitFor(() => expect(createAvatarJob).toHaveBeenCalledTimes(1));
     const request = vi.mocked(createAvatarJob).mock.calls[0][0];
     expect(request.profile_id).toBe("default");
     expect("target_platforms" in request).toBe(false);
     expect("publish_mode" in request).toBe(false);
+  });
+
+  it("blocks a real supplier submission when the task quote is unavailable", async () => {
+    vi.mocked(getAvatarCapabilities).mockResolvedValueOnce({
+      provider_name: "shuying_legacy_cloud",
+      display_name: "公司数影云数字人",
+      mode: "production",
+      enabled: true,
+      permission_status: "authorized",
+      max_script_chars: 2000,
+      supported_aspect_ratios: ["9:16"],
+      estimated_cost_cny: null,
+      estimated_seconds: null,
+      missing_configuration: [],
+      profiles: [],
+      supports_cloud_avatar_training: true,
+      supports_voice_cloning: true,
+      supports_voice_sample_upload: true,
+    });
+    vi.mocked(getAvatarBillingQuote).mockRejectedValueOnce(
+      new Error("暂时无法预估数字人费用"),
+    );
+    const view = renderPage();
+
+    await within(view.container).findByText("按实际成片时长整秒结算");
+    fireEvent.change(
+      within(view.container).getByPlaceholderText(
+        "输入数字人要说的内容，数字人会按文案自然播完。",
+      ),
+      { target: { value: "测试数字人口播文案" } },
+    );
+    fireEvent.click(
+      within(view.container).getByRole("button", { name: /生成数字人视频/ }),
+    );
+    expect(await screen.findAllByText("暂时无法预估数字人费用")).not.toHaveLength(0);
+    expect(createAvatarJob).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("reports a provider rejection as failed instead of submitted", async () => {
@@ -425,6 +477,8 @@ describe("AvatarPage avatar library", () => {
     fireEvent.click(
       within(view.container).getByRole("button", { name: /生成数字人视频/ }),
     );
+    const confirmDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(confirmDialog).getByRole("button", { name: "确认费用并开始生成" }));
 
     expect(
       await screen.findAllByText("系统繁忙，请联系平台运营商！"),

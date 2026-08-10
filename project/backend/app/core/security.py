@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from functools import lru_cache
@@ -18,7 +20,11 @@ logger = logging.getLogger(__name__)
 
 # API Key 配置
 API_KEY_HEADER_NAME = "X-API-Key"
-API_KEY_FILE = Path(__file__).resolve().parent.parent.parent.parent.parent / "data" / ".api_key"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+_RUNTIME_ROOT = Path(
+    os.getenv("VIDEOINSIGHT_RUNTIME_ROOT", str(_PROJECT_ROOT))
+).expanduser().resolve()
+API_KEY_FILE = _RUNTIME_ROOT / "data" / ".api_key"
 
 
 def _generate_api_key() -> str:
@@ -208,37 +214,93 @@ async def verify_api_key(request: Request) -> bool:
 
 # 速率限制（简单实现）
 class RateLimiter:
-    """简单的速率限制器。"""
+    """进程内滑动窗口限流器；线程安全，供单进程桌面与控制层使用。"""
 
     def __init__(self, requests_per_minute: int = 60):
         self.requests_per_minute = requests_per_minute
         self.requests: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
     def is_allowed(self, client_id: str) -> bool:
         """检查客户端是否在速率限制内。"""
         now = time.time()
         minute_ago = now - 60
+        with self._lock:
+            recent = [
+                timestamp
+                for timestamp in self.requests.get(client_id, [])
+                if timestamp > minute_ago
+            ]
+            if len(recent) >= self.requests_per_minute:
+                self.requests[client_id] = recent
+                return False
+            recent.append(now)
+            self.requests[client_id] = recent
+            return True
 
-        if client_id not in self.requests:
-            self.requests[client_id] = []
+    def clear(self) -> None:
+        with self._lock:
+            self.requests.clear()
 
-        # 清理过期记录
-        self.requests[client_id] = [
-            t for t in self.requests[client_id] if t > minute_ago
-        ]
 
-        # 检查是否超限
-        if len(self.requests[client_id]) >= self.requests_per_minute:
-            return False
+class AuthFailureLimiter:
+    """按登录身份摘要锁定连续失败，避免针对某个客户持续猜码。"""
 
-        # 记录本次请求
-        self.requests[client_id].append(now)
-        return True
+    def __init__(self, max_failures: int = 5, window_seconds: int = 15 * 60):
+        self.max_failures = max_failures
+        self.window_seconds = window_seconds
+        self.failures: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _subject_key(role: str, subject: str) -> str:
+        normalized = f"{role.strip().casefold()}:{subject.strip().casefold()}"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def is_blocked(self, role: str, subject: str) -> bool:
+        now = time.time()
+        cutoff = now - self.window_seconds
+        key = self._subject_key(role, subject)
+        with self._lock:
+            recent = [
+                timestamp
+                for timestamp in self.failures.get(key, [])
+                if timestamp > cutoff
+            ]
+            if recent:
+                self.failures[key] = recent
+            else:
+                self.failures.pop(key, None)
+            return len(recent) >= self.max_failures
+
+    def record_failure(self, role: str, subject: str) -> None:
+        now = time.time()
+        cutoff = now - self.window_seconds
+        key = self._subject_key(role, subject)
+        with self._lock:
+            recent = [
+                timestamp
+                for timestamp in self.failures.get(key, [])
+                if timestamp > cutoff
+            ]
+            recent.append(now)
+            self.failures[key] = recent
+
+    def clear_subject(self, role: str, subject: str) -> None:
+        key = self._subject_key(role, subject)
+        with self._lock:
+            self.failures.pop(key, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self.failures.clear()
 
 
 # 全局速率限制器实例
 rate_limiter = RateLimiter(requests_per_minute=120)
 auth_rate_limiter = RateLimiter(requests_per_minute=10)
+auth_global_rate_limiter = RateLimiter(requests_per_minute=300)
+auth_failure_limiter = AuthFailureLimiter(max_failures=5, window_seconds=15 * 60)
 
 
 async def check_rate_limit(request: Request) -> bool:
@@ -259,6 +321,11 @@ async def check_rate_limit(request: Request) -> bool:
 async def check_auth_rate_limit(request: Request) -> bool:
     """登录接口使用独立限流，避免撞库消耗普通 API 配额。"""
     client_ip = request.client.host if request.client else "unknown"
+    if not auth_global_rate_limiter.is_allowed("all-login-attempts"):
+        raise HTTPException(
+            status_code=429,
+            detail={"error": True, "code": 429, "message": "登录请求较多，请稍后再试。"},
+        )
     if not auth_rate_limiter.is_allowed(client_ip):
         raise HTTPException(
             status_code=429,
@@ -267,23 +334,116 @@ async def check_auth_rate_limit(request: Request) -> bool:
     return True
 
 
+def check_auth_subject_allowed(role: str, subject: str) -> None:
+    """在查询账号前检查摘要失败桶，不在内存或日志保存明文激活码。"""
+    if auth_failure_limiter.is_blocked(role, subject):
+        raise HTTPException(
+            status_code=429,
+            detail="登录尝试过于频繁，请 15 分钟后再试。",
+        )
+
+
+def record_auth_failure(role: str, subject: str) -> None:
+    auth_failure_limiter.record_failure(role, subject)
+
+
+def clear_auth_failures(role: str, subject: str) -> None:
+    auth_failure_limiter.clear_subject(role, subject)
+
+
 # ---------------------------------------------------------------------------
 # 登录 token 体系：管理员与客户统一存储（token -> 角色+身份+过期时间）
 # ---------------------------------------------------------------------------
 
 ADMIN_PASSWORD_ENV = "ADMIN_PASSWORD"
-ADMIN_TOKEN_TTL_SECONDS = 12 * 60 * 60  # 登录有效 12 小时
+ADMIN_TOKEN_TTL_SECONDS = 12 * 60 * 60  # 默认登录有效 12 小时
 CUSTOMER_TOKEN_TTL_SECONDS = 12 * 60 * 60
 _auth_tokens: dict[str, dict] = {}  # token -> {role, subject, expires_at}
 _auth_tokens_lock = threading.Lock()
 
 
-def issue_auth_token(role: str, subject: str) -> str:
-    """签发登录 token（role: admin/customer；subject: 用户名/激活码）。"""
-    token = secrets.token_urlsafe(24)
-    expires_at = time.time() + (
+def _auth_session_store() -> str:
+    """Return the configured session backend.
+
+    Desktop/demo builds keep the existing in-memory behavior.  The company
+    control plane sets AUTH_SESSION_STORE=sqlite so sessions survive process
+    restarts without ever persisting plaintext bearer tokens.
+    """
+
+    return os.getenv("AUTH_SESSION_STORE", "memory").strip().casefold()
+
+
+def _auth_database_path() -> Path:
+    configured = os.getenv("AUTH_SESSION_DATABASE_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    from project.backend.app.core.config import DATABASE_PATH
+
+    return Path(DATABASE_PATH)
+
+
+def _token_ttl_seconds(role: str) -> int:
+    default = (
         CUSTOMER_TOKEN_TTL_SECONDS if role == "customer" else ADMIN_TOKEN_TTL_SECONDS
     )
+    key = "CUSTOMER_TOKEN_TTL_SECONDS" if role == "customer" else "ADMIN_TOKEN_TTL_SECONDS"
+    try:
+        return max(300, min(int(os.getenv(key, str(default))), 7 * 24 * 60 * 60))
+    except ValueError:
+        return default
+
+
+def _session_connection() -> sqlite3.Connection:
+    connection = sqlite3.connect(str(_auth_database_path()), timeout=10)
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 10000")
+    return connection
+
+
+def _persistent_session_record(token: str) -> dict | None:
+    token_hash = _hash_key(token)
+    now = time.time()
+    try:
+        with _session_connection() as connection:
+            row = connection.execute(
+                """
+                SELECT role, subject, expires_at
+                FROM auth_sessions
+                WHERE token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+            if row is None:
+                return None
+            if float(row[2]) <= now:
+                connection.execute(
+                    "DELETE FROM auth_sessions WHERE token_hash = ?", (token_hash,)
+                )
+                return None
+            return {"role": str(row[0]), "subject": str(row[1])}
+    except sqlite3.OperationalError:
+        logger.exception("持久登录会话存储不可用")
+        return None
+
+
+def issue_auth_token(role: str, subject: str) -> str:
+    """签发登录 token（role: admin/customer；subject: 用户名/激活码）。"""
+    if role not in {"admin", "customer"} or not subject.strip():
+        raise ValueError("登录会话角色或身份无效。")
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    expires_at = now + _token_ttl_seconds(role)
+    if _auth_session_store() == "sqlite":
+        with _session_connection() as connection:
+            connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now,))
+            connection.execute(
+                """
+                INSERT INTO auth_sessions(token_hash, role, subject, created_at, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (_hash_key(token), role, subject.strip(), now, expires_at),
+            )
+        return token
     with _auth_tokens_lock:
         _auth_tokens[token] = {
             "role": role,
@@ -301,6 +461,10 @@ def issue_auth_token(role: str, subject: str) -> str:
 
 def verify_auth_token(token: str) -> dict | None:
     """校验登录 token；有效返回 {role, subject}，否则返回 None。"""
+    if not token:
+        return None
+    if _auth_session_store() == "sqlite":
+        return _persistent_session_record(token)
     with _auth_tokens_lock:
         record = _auth_tokens.get(token)
         if record is None:
@@ -313,12 +477,33 @@ def verify_auth_token(token: str) -> dict | None:
 
 def revoke_auth_token(token: str) -> None:
     """退出登录：使 token 立即失效。"""
+    if _auth_session_store() == "sqlite":
+        if not token:
+            return
+        try:
+            with _session_connection() as connection:
+                connection.execute(
+                    "DELETE FROM auth_sessions WHERE token_hash = ?", (_hash_key(token),)
+                )
+        except sqlite3.OperationalError:
+            logger.exception("注销持久登录会话失败")
+        return
     with _auth_tokens_lock:
         _auth_tokens.pop(token, None)
 
 
 def revoke_auth_tokens(role: str, subject: str) -> None:
     """禁用激活码或重置密码时，使该身份全部已签发会话立即失效。"""
+    if _auth_session_store() == "sqlite":
+        try:
+            with _session_connection() as connection:
+                connection.execute(
+                    "DELETE FROM auth_sessions WHERE role = ? AND subject = ?",
+                    (role, subject),
+                )
+        except sqlite3.OperationalError:
+            logger.exception("批量注销持久登录会话失败")
+        return
     with _auth_tokens_lock:
         for token, record in list(_auth_tokens.items()):
             if record["role"] == role and record["subject"] == subject:
@@ -334,16 +519,6 @@ def get_admin_password() -> str:
 
 def admin_password_configured() -> bool:
     return bool(get_admin_password())
-
-
-def login_admin(password: str) -> str | None:
-    """兼容旧单密码登录：校验 ADMIN_PASSWORD，成功签发 admin token。"""
-    expected = get_admin_password()
-    if not expected:
-        return None
-    if not secrets.compare_digest(password.encode(), expected.encode()):
-        return None
-    return issue_auth_token("admin", "admin")
 
 
 def verify_admin_token(token: str) -> bool:

@@ -1380,6 +1380,88 @@ def test_retry_failed_uses_safe_stage_and_blocks_unknown_or_confirmed_publish(
     assert "已经确认发布" in retried.items[2].blocked_reasons[0]
 
 
+def test_retry_failed_allows_one_explicit_retry_when_asr_upload_never_submitted(
+    tmp_path,
+):
+    candidate = _candidate("candidate-upload-failed")
+    repository = MockRepository(candidates=[candidate], tasks=[])
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="转写上传恢复配方")
+    batch = service.create_batch(
+        name="转写上传恢复批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    source = tmp_path / "preserved.mp4"
+    source.write_bytes(b"video")
+    now = datetime.now().astimezone()
+    failed_task = TranscriptionTask(
+        task_id="transcription-upload-failed",
+        title="上传失败转写",
+        status=TaskStatus.FAILED,
+        progress=20,
+        created_at=now,
+        updated_at=now,
+        media_name="candidate.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        provider_name="aliyun_fun_asr",
+        provider_status="failed",
+        provider_job_id=None,
+        estimated_cost_cny=0.0062,
+        outputs={"source_media_path": str(source)},
+        error_message="素材上传连接失败，尚未创建云端识别任务。",
+    )
+    repository.save_task(failed_task)
+    run = pipeline_service.update_stage(
+        run,
+        PipelineStage.TRANSCRIPTION,
+        TaskStatus.FAILED,
+        task_id=failed_task.task_id,
+        error_message=failed_task.error_message,
+    )
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "config": {
+                    **run.config,
+                    "source": "production_batch",
+                    "transcription_task_id": failed_task.task_id,
+                }
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    workspace = service.workspace(batch.batch_id)
+    assert workspace["next_action"] == "retry"
+    assert workspace["items"][0]["recovery"] == {
+        "kind": "transcription_upload_retry",
+        "estimated_cost_cny": 0.0062,
+        "currency": "CNY",
+        "attempts_used": 0,
+        "max_attempts": 1,
+    }
+
+    retried = service.retry_failed(
+        batch.batch_id,
+        pipeline_service=pipeline_service,
+    )
+
+    assert retried.items[0].status == ProductionBatchItemStatus.QUEUED
+    queued = repository.get_pipeline_run(run.run_id)
+    assert queued is not None
+    assert queued.status == PipelineRunStatus.PENDING
+    assert queued.current_stage is None
+    assert "transcription_task_id" not in queued.config
+    assert queued.config["retry_source_transcription_task_id"] == failed_task.task_id
+    assert queued.config["stage_retry_counts"]["transcription"] == 1
+
+
 def test_retry_repairs_a_legacy_avatar_attempt_that_never_reached_provider(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
@@ -1724,6 +1806,7 @@ def test_workspace_cost_quote_unblocks_unknown_copywriting_cost(tmp_path):
     assert preflight["estimated_cost_cny"] == 0.1
     assert preflight["items"][0]["manual_script_audit"] is True
     assert preflight["items"][0]["copy_call_count"] == 2
+    assert preflight["items"][0]["transcript_review_reserved"] is False
 
 
 def test_bundled_compute_treats_unknown_provider_prices_as_included(tmp_path):

@@ -55,6 +55,38 @@ def test_keyword_master_selects_candidate_and_creates_persisted_child_run():
     assert child.status.value == "pending"
 
 
+def test_pipeline_worker_keeps_pending_run_untouched_until_owner_session_is_ready():
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    run = pipeline_service.start_keyword_auto_run(
+        keyword="AI",
+        candidate_count=1,
+        profile={"avatar_id": "a", "voice_id": "v", "edit_template_id": "t"},
+        rights_holder="测试公司",
+        publish_platforms=["douyin"],
+    )
+    searched: list[str] = []
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=SimpleNamespace(
+            execute=lambda **_: searched.append("called")
+        ),
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        can_process=lambda: False,
+    )
+
+    worker.tick_once()
+
+    unchanged = repository.get_pipeline_run(run.run_id)
+    assert unchanged is not None
+    assert unchanged.status == PipelineRunStatus.PENDING
+    assert searched == []
+
+
 def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick():
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)

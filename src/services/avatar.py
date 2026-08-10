@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 import os
 from pathlib import Path
 import shutil
@@ -13,6 +14,7 @@ from src.contracts import AvatarProvider, TaskRepository
 from src.models import (
     AvatarAsset,
     AvatarAssetKind,
+    AvatarBillingQuote,
     AvatarCapability,
     AvatarJobSnapshot,
     AvatarProviderStatus,
@@ -47,13 +49,140 @@ class AvatarService:
         )
 
     def capabilities(self) -> AvatarCapability:
-        return self.provider.capabilities()
+        capability = self.provider.capabilities()
+        if bool(getattr(self.provider, "billing_centrally_managed", False)):
+            return capability
+        if capability.mode.value != "production":
+            return capability
+        seconds = int(capability.estimated_seconds or 0)
+        if seconds <= 0:
+            return capability
+        from src.services.pricing import get_price
+
+        customer_cost = float(get_price("avatar_per_minute_cny")) * seconds / 60
+        return capability.model_copy(
+            update={"estimated_cost_cny": round(customer_cost, 4)}
+        )
 
     def list_assets(self) -> list[AvatarAsset]:
         capability = self.capabilities()
         if not capability.enabled:
             return []
         return [asset for asset in self.provider.list_assets() if asset.authorized]
+
+    def billing_quote(self, *, script_text: str, speech_rate: float) -> AvatarBillingQuote:
+        """返回本次任务的预留上限；最终费用仍以成片整秒结算。"""
+
+        capability = self.capabilities()
+        if not capability.enabled:
+            raise ValueError("数字人供应商尚不可用，不能预估费用。")
+        if capability.mode.value == "sandbox":
+            from src.services.avatar_billing import build_avatar_billing_quote
+
+            return build_avatar_billing_quote(
+                script_text=script_text,
+                speech_rate=speech_rate,
+                price_per_minute_cny=Decimal("0"),
+            )
+        quote = getattr(self.provider, "quote", None)
+        if callable(quote):
+            try:
+                return quote(script_text=script_text, speech_rate=speech_rate)
+            except AvatarProviderError as exc:
+                raise ValueError(str(exc)) from exc
+        from src.services.avatar_billing import build_avatar_billing_quote
+        from src.services.pricing import get_price
+
+        return build_avatar_billing_quote(
+            script_text=script_text,
+            speech_rate=speech_rate,
+            price_per_minute_cny=get_price("avatar_per_minute_cny"),
+        )
+
+    def _reserve_local_billing(
+        self, *, request: AvatarSubmitRequest, quote: AvatarBillingQuote
+    ) -> bool:
+        if bool(getattr(self.provider, "billing_centrally_managed", False)):
+            return False
+        reserve = getattr(self.repository, "reserve_avatar_billing", None)
+        if not callable(reserve):
+            return False
+        from src.services.credits import get_current_owner
+
+        try:
+            reserve(
+                owner=get_current_owner(),
+                idempotency_key=request.idempotency_key,
+                price_per_minute_cny=Decimal(str(quote.price_per_minute_cny)),
+                billing_unit_seconds=quote.billing_unit_seconds,
+                reserved_seconds=quote.reservation_seconds,
+                reserved_credits=Decimal(str(quote.reservation_credits)),
+            )
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return True
+
+    def _release_local_billing(self, idempotency_key: str) -> None:
+        release = getattr(self.repository, "release_avatar_billing", None)
+        if not callable(release):
+            return
+        from src.services.credits import get_current_owner
+
+        release(owner=get_current_owner(), idempotency_key=idempotency_key)
+
+    def _apply_local_billing_snapshot(
+        self, snapshot: AvatarJobSnapshot
+    ) -> AvatarJobSnapshot:
+        if bool(getattr(self.provider, "billing_centrally_managed", False)):
+            return snapshot
+        get_record = getattr(self.repository, "get_avatar_billing", None)
+        bind = getattr(self.repository, "bind_avatar_billing_job", None)
+        settle = getattr(self.repository, "settle_avatar_billing", None)
+        if not callable(get_record):
+            return snapshot
+        from src.services.credits import get_current_owner
+
+        owner = get_current_owner()
+        record = get_record(
+            owner=owner,
+            idempotency_key=snapshot.idempotency_key or None,
+            provider_job_id=None if snapshot.idempotency_key else snapshot.job_id,
+        )
+        if record is None:
+            return snapshot
+        if snapshot.idempotency_key and snapshot.job_id and callable(bind):
+            bind(
+                owner=owner,
+                idempotency_key=snapshot.idempotency_key,
+                provider_job_id=snapshot.job_id,
+            )
+        if (
+            snapshot.status == AvatarProviderStatus.SUCCEEDED
+            and int(snapshot.estimated_seconds or 0) > 0
+            and callable(settle)
+        ):
+            record = settle(
+                owner=owner,
+                idempotency_key=str(record["idempotency_key"]),
+                final_seconds=int(snapshot.estimated_seconds),
+            )
+            final_credits = Decimal(str(record["final_credits"]))
+            return snapshot.model_copy(
+                update={
+                    "estimated_cost_cny": float(final_credits),
+                    "estimated_seconds": int(record["final_seconds"]),
+                    "stage": (
+                        f"{snapshot.stage}；按 {record['final_seconds']} 秒结算 "
+                        f"{final_credits} 积分"
+                    ),
+                }
+            )
+        return snapshot.model_copy(
+            update={
+                "estimated_cost_cny": float(Decimal(str(record["reserved_credits"]))),
+                "estimated_seconds": int(record["reserved_seconds"]),
+            }
+        )
 
     def submit(
         self,
@@ -65,6 +194,10 @@ class AvatarService:
         capability = self.capabilities()
         if not capability.enabled:
             raise ValueError("数字人供应商尚不可用，不能提交生成任务。")
+        quote = self.billing_quote(
+            script_text=request.script_text,
+            speech_rate=request.speech_rate,
+        )
         if len(request.script_text) > capability.max_script_chars:
             raise ValueError(
                 f"当前供应商单次最多支持 {capability.max_script_chars} 个字符。"
@@ -131,27 +264,23 @@ class AvatarService:
                 idempotency_key=request.idempotency_key,
                 provider_name=capability.provider_name,
                 stage="正在提交",
-                estimated_cost_cny=capability.estimated_cost_cny,
-                estimated_seconds=capability.estimated_seconds,
+                estimated_cost_cny=quote.reservation_credits,
+                estimated_seconds=quote.reservation_seconds,
                 is_mock=capability.mode.value == "sandbox",
             )
-            # 费用已知（>0）才扣积分；余额不足阻止提交（任务尚未落库，重试不受幂等拦截）。
-            # 管理员可在定价设置中调整"数字人生成（元/分钟）"；未设置时用供应商估算。
-            from src.services.pricing import DEFAULT_PRICING, get_price
-
-            estimated_cost = capability.estimated_cost_cny
-            pricing_minute = get_price("avatar_per_minute_cny")
-            if pricing_minute != DEFAULT_PRICING["avatar_per_minute_cny"]:
-                seconds = capability.estimated_seconds or 0
-                estimated_cost = float(pricing_minute) * seconds / 60
-            if estimated_cost:
+            reserved_locally = self._reserve_local_billing(request=request, quote=quote)
+            # 兼容测试仓库与旧插件；正式 SQLite 会走上面的可退款预留账本。
+            if (
+                quote.reservation_credits > 0
+                and not reserved_locally
+                and not bool(getattr(self.provider, "billing_centrally_managed", False))
+            ):
                 from src.services.credits import (
                     CreditsService,
                     InsufficientCreditsError,
-                    cny_to_credits,
                 )
 
-                credits = cny_to_credits(estimated_cost)
+                credits = Decimal(str(quote.reservation_credits))
                 if credits > 0:
                     try:
                         CreditsService(self.repository).debit(
@@ -166,6 +295,8 @@ class AvatarService:
         try:
             snapshot = self.provider.submit(request)
         except AvatarProviderError as exc:
+            if not exc.outcome_unknown:
+                self._release_local_billing(request.idempotency_key)
             status = (
                 AvatarProviderStatus.OUTCOME_UNKNOWN
                 if exc.outcome_unknown
@@ -193,6 +324,7 @@ class AvatarService:
             self.repository.save_task(failed)
             return failed
 
+        snapshot = self._apply_local_billing_snapshot(snapshot)
         updated = self._apply_snapshot(task, snapshot)
         self.repository.save_task(updated)
         return updated
@@ -269,6 +401,22 @@ class AvatarService:
             else:
                 snapshot = self.provider.get_job(task.backend_job_id or task.task_id)
         except AvatarProviderError as exc:
+            if task.is_mock and exc.kind == ProviderErrorKind.VALIDATION:
+                # Sandbox 状态只存在内存中；服务重启后可以安全收口演示任务，
+                # 但必须明确没有真实成片，不能长期伪装成“处理中”。
+                updated = task.model_copy(
+                    update={
+                        "status": TaskStatus.SUCCEEDED,
+                        "provider_status": AvatarProviderStatus.SUCCEEDED,
+                        "progress": 100,
+                        "stage": "演示已完成；未调用真实服务，也未生成真实成片",
+                        "updated_at": datetime.now().astimezone(),
+                        "error_message": None,
+                        "error_kind": None,
+                    }
+                )
+                self.repository.save_task(updated)
+                return updated
             updated = task.model_copy(
                 update={
                     "updated_at": datetime.now().astimezone(),
@@ -279,6 +427,7 @@ class AvatarService:
             self.repository.save_task(updated)
             return updated
 
+        snapshot = self._apply_local_billing_snapshot(snapshot)
         updated = self._apply_snapshot(task, snapshot)
         self.repository.save_task(updated)
         return updated

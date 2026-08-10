@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 
 from src.models import PublishTask, TaskStatus
 from src.services.publisher import PublishService
@@ -14,9 +15,16 @@ logger = logging.getLogger(__name__)
 class PublishWorker:
     """Runs at most one browser publish preparation at a time on this PC."""
 
-    def __init__(self, publish_service: PublishService, *, interval_seconds: float = 2.0) -> None:
+    def __init__(
+        self,
+        publish_service: PublishService,
+        *,
+        interval_seconds: float = 2.0,
+        can_process: Callable[[], bool] | None = None,
+    ) -> None:
         self.publish_service = publish_service
         self.interval_seconds = interval_seconds
+        self.can_process = can_process or (lambda: True)
         self._task: asyncio.Task | None = None
         # Cached workers can be restarted under a different event loop (for
         # example by consecutive FastAPI TestClient lifespans).  Create the
@@ -57,6 +65,8 @@ class PublishWorker:
                 pass
 
     def tick_once(self) -> PublishTask | None:
+        if not self.can_process():
+            return None
         queued = sorted(
             (task for task in self.publish_service.list_tasks() if task.status == TaskStatus.QUEUED),
             key=lambda task: task.created_at,

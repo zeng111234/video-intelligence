@@ -27,6 +27,37 @@
   gap: 24px;
 }
 
+.admin-server-status-card {
+  margin-bottom: 24px;
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+
+.admin-server-status-card .ant-card-head {
+  min-height: 56px;
+}
+
+.admin-server-status-card .ant-card-body {
+  padding: 16px 22px;
+}
+
+.admin-server-status-details {
+  margin-top: 8px;
+}
+
+.admin-server-status-details .ant-collapse-header {
+  padding: 8px 0 0 !important;
+  color: var(--text-secondary) !important;
+}
+
+.admin-server-status-details .ant-collapse-content-box {
+  padding: 10px 0 0 !important;
+}
+
+.admin-server-warning {
+  color: var(--warning);
+}
+
 .admin-secondary-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);

@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 import subprocess
 import tempfile
+from threading import Lock
 from time import monotonic, sleep
 from typing import Any, Callable
 from uuid import uuid4
@@ -75,6 +76,7 @@ class TranscriptionService:
         model_loader=load_asr_model,
         command_runner=subprocess.run,
         transcript_reviewer: Callable[..., dict[str, Any]] | None = None,
+        transcript_batch_reviewer: Callable[..., dict[str, Any]] | None = None,
         cloud_runtime=None,
         cloud_storage_directory: str | Path | None = None,
         cloud_poll_interval_seconds: float = 5.0,
@@ -84,6 +86,7 @@ class TranscriptionService:
         self.model_loader = model_loader
         self.command_runner = command_runner
         self.transcript_reviewer = transcript_reviewer
+        self.transcript_batch_reviewer = transcript_batch_reviewer
         self.cloud_runtime = cloud_runtime
         self.cloud_storage_directory = (
             Path(cloud_storage_directory)
@@ -92,6 +95,11 @@ class TranscriptionService:
         )
         self.cloud_poll_interval_seconds = cloud_poll_interval_seconds
         self.cloud_timeout_seconds = cloud_timeout_seconds
+        # The API path can process a cloud task synchronously while the
+        # background worker is polling the same persisted queue.  Striped
+        # locks keep one task from being submitted twice without growing an
+        # unbounded lock dictionary over the lifetime of the service.
+        self._cloud_task_locks = tuple(Lock() for _ in range(32))
 
     def _debit_credits(
         self,
@@ -331,13 +339,19 @@ class TranscriptionService:
         media_path.write_bytes(media_bytes)
         try:
             duration = self._probe(media_path)
-            estimated_cost = self.cloud_runtime.ensure_authorized(duration)
-            self._debit_credits(
-                estimated_cost,
-                reason="云端转写费用",
-                ref_type="transcription",
-                ref_id=task_id,
-            )
+            if getattr(self.cloud_runtime, "billing_centrally_managed", False):
+                estimated_cost = self.cloud_runtime.ensure_authorized(
+                    duration,
+                    operation_key=task_id,
+                )
+            else:
+                estimated_cost = self.cloud_runtime.ensure_authorized(duration)
+                self._debit_credits(
+                    estimated_cost,
+                    reason="云端转写费用",
+                    ref_type="transcription",
+                    ref_id=task_id,
+                )
         except Exception:
             media_path.unlink(missing_ok=True)
             try:
@@ -379,6 +393,65 @@ class TranscriptionService:
         return self.process_cloud_task(task.task_id, on_progress=on_progress)
 
     def process_cloud_task(
+        self,
+        task_id: str,
+        *,
+        on_progress: Callable[[TranscriptionTask], None] | None = None,
+    ) -> TranscriptionTask:
+        lock_index = hashlib.sha256(task_id.encode("utf-8")).digest()[0] % len(
+            self._cloud_task_locks
+        )
+        with self._cloud_task_locks[lock_index]:
+            return self._process_cloud_task_locked(
+                task_id,
+                on_progress=on_progress,
+            )
+
+    def review_completed_cloud_task(self, task_id: str) -> TranscriptionTask:
+        """为升级前已完成的云端结果补做一次幂等 AI 校对。"""
+        lock_index = hashlib.sha256(task_id.encode("utf-8")).digest()[0] % len(
+            self._cloud_task_locks
+        )
+        with self._cloud_task_locks[lock_index]:
+            task = self.repository.get_task(task_id)
+            if not isinstance(task, TranscriptionTask):
+                raise TranscriptionError("转写任务不存在。", code="task_not_found")
+            if task.provider_name != "aliyun_fun_asr" or task.status != TaskStatus.SUCCEEDED:
+                raise TranscriptionError(
+                    "只有已完成的阿里云转写可以补做 AI 校对。",
+                    code="task_not_reviewable",
+                )
+            if task.auto_reviewed or not any(
+                segment.needs_review and not segment.reviewed
+                for segment in task.segments
+            ):
+                return task
+            segments, auto_review = self._auto_review_cloud_segments(
+                list(task.segments),
+                context_hint=task.title,
+            )
+            uncertain_count = int(auto_review["uncertain_segment_count"])
+            updated = task.model_copy(
+                update={
+                    "segments": segments,
+                    "stage": (
+                        f"AI 已校对，有 {uncertain_count} 处事实需确认"
+                        if auto_review["auto_reviewed"] and uncertain_count
+                        else "AI 校对完成"
+                        if auto_review["auto_reviewed"]
+                        else f"有 {uncertain_count} 段待确认"
+                    ),
+                    "auto_reviewed": bool(auto_review["auto_reviewed"]),
+                    "uncertain_segment_count": uncertain_count,
+                    "llm_review_count": int(auto_review["llm_review_count"]),
+                    "auto_review_error": auto_review["auto_review_error"],
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            self.repository.save_task(updated)
+            return updated
+
+    def _process_cloud_task_locked(
         self,
         task_id: str,
         *,
@@ -490,8 +563,18 @@ class TranscriptionService:
                 self._save_task(task, on_progress)
 
             if snapshot.status == ProviderJobStatus.FAILED:
+                provider_detail = (
+                    snapshot.detail if isinstance(snapshot.detail, dict) else {}
+                )
+                provider_code = str(provider_detail.get("code") or "").strip()
+                failure_message = (
+                    "音轨里没有识别到人声，请换成包含清晰讲话的视频后重试；"
+                    "本次素材和任务记录已保留。"
+                    if provider_code == "ASR_RESPONSE_HAVE_NO_WORDS"
+                    else "阿里云语音识别明确失败，素材已保留，可手动重试。"
+                )
                 raise TranscriptionError(
-                    "阿里云语音识别明确失败，素材已保留，可手动重试。",
+                    failure_message,
                     code="cloud_asr_failed",
                     task_id=task.task_id,
                 )
@@ -532,14 +615,31 @@ class TranscriptionService:
                 if item.text.strip()
             ]
             self._validate_segments(segments)
-            uncertain_segment_count = sum(
-                1 for segment in segments if segment.needs_review
-            )
+            auto_review = {
+                "auto_reviewed": False,
+                "uncertain_segment_count": sum(
+                    1 for segment in segments if segment.needs_review
+                ),
+                "llm_review_count": 0,
+                "auto_review_error": None,
+            }
+            if self.transcript_batch_reviewer is not None and any(
+                segment.needs_review for segment in segments
+            ):
+                segments, auto_review = self._auto_review_cloud_segments(
+                    segments,
+                    context_hint=task.title,
+                )
+            uncertain_segment_count = int(auto_review["uncertain_segment_count"])
             completed = task.model_copy(
                 update={
                     "status": TaskStatus.SUCCEEDED,
                     "stage": (
-                        f"有 {uncertain_segment_count} 段待确认"
+                        f"AI 已校对，有 {uncertain_segment_count} 处事实需确认"
+                        if auto_review["auto_reviewed"] and uncertain_segment_count
+                        else "AI 校对完成"
+                        if auto_review["auto_reviewed"]
+                        else f"有 {uncertain_segment_count} 段待确认"
                         if uncertain_segment_count
                         else "识别完成"
                     ),
@@ -552,9 +652,10 @@ class TranscriptionService:
                     or task.language
                     or "zh",
                     "uncertain_segment_count": uncertain_segment_count,
-                    "auto_reviewed": False,
+                    "auto_reviewed": bool(auto_review["auto_reviewed"]),
                     "secondary_asr_count": 0,
-                    "llm_review_count": 0,
+                    "llm_review_count": int(auto_review["llm_review_count"]),
+                    "auto_review_error": auto_review["auto_review_error"],
                     "elapsed_seconds": round(monotonic() - started, 2),
                     "updated_at": datetime.now().astimezone(),
                 }
@@ -564,7 +665,11 @@ class TranscriptionService:
             return completed
         except Exception as exc:
             code = getattr(exc, "code", "")
-            outcome_unknown = (
+            upload_failed_before_submission = (
+                not task.provider_job_id
+                and task.provider_status == "uploading"
+            )
+            outcome_unknown = not upload_failed_before_submission and (
                 bool(getattr(exc, "outcome_unknown", False))
                 or code
                 in {
@@ -581,14 +686,22 @@ class TranscriptionService:
                         else TaskStatus.FAILED
                     ),
                     "stage": (
-                        "结果待确认" if outcome_unknown else "云端识别失败"
+                        "结果待确认"
+                        if outcome_unknown
+                        else "素材上传失败"
+                        if upload_failed_before_submission
+                        else "云端识别失败"
                     ),
                     "provider_status": (
                         "outcome_unknown"
                         if outcome_unknown
                         else "failed"
                     ),
-                    "error_message": str(exc),
+                    "error_message": (
+                        "素材上传连接失败，尚未创建云端识别任务；素材已保留，确认费用后可重试一次。"
+                        if upload_failed_before_submission
+                        else str(exc)
+                    ),
                     "elapsed_seconds": round(monotonic() - started, 2),
                     "updated_at": datetime.now().astimezone(),
                 }
@@ -852,6 +965,128 @@ class TranscriptionService:
                     continue
                 return None, "低置信口播修订不可用，已使用本地识别最佳结果。"
         return None, "低置信口播修订不可用，已使用本地识别最佳结果。"
+
+    @staticmethod
+    def _sensitive_transcript_tokens(value: str) -> set[str]:
+        pattern = re.compile(
+            r"(?:\d+(?:\.\d+)?|[零〇一二三四五六七八九十百千万两]+)"
+            r"(?:元|块|%|％|号|岁|年|月|日|次|公里|斤|万|千|百)?"
+        )
+        return {match.group(0) for match in pattern.finditer(value)}
+
+    def _call_transcript_batch_reviewer(
+        self,
+        *,
+        segments: list[dict[str, Any]],
+        context_hint: str,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if self.transcript_batch_reviewer is None:
+            return None, "AI 自动校对未配置，原转写已保留。"
+        for attempt in range(2):
+            try:
+                result = self.transcript_batch_reviewer(
+                    segments=segments,
+                    context_hint=context_hint,
+                )
+                if not isinstance(result, dict) or not isinstance(
+                    result.get("corrections"), list
+                ):
+                    raise ValueError("无效的 AI 批量校对结果")
+                return result, None
+            except Exception as exc:
+                retryable = bool(getattr(exc, "retryable", False)) or isinstance(
+                    exc, (ConnectionError, TimeoutError)
+                )
+                if attempt == 0 and retryable:
+                    continue
+                return None, "AI 自动校对暂不可用，原转写已保留。"
+        return None, "AI 自动校对暂不可用，原转写已保留。"
+
+    def _auto_review_cloud_segments(
+        self,
+        segments: list[TranscriptSegment],
+        *,
+        context_hint: str,
+    ) -> tuple[list[TranscriptSegment], dict[str, Any]]:
+        payload = [
+            {
+                "index": index,
+                "text": segment.text,
+                "confidence": segment.confidence,
+                "needs_review": segment.needs_review,
+            }
+            for index, segment in enumerate(segments)
+        ]
+        decision, review_error = self._call_transcript_batch_reviewer(
+            segments=payload,
+            context_hint=context_hint,
+        )
+        by_index = {
+            int(item["index"]): item
+            for item in (decision or {}).get("corrections", [])
+            if isinstance(item, dict) and isinstance(item.get("index"), int)
+        }
+        reviewed: list[TranscriptSegment] = []
+        uncertain_count = 0
+        llm_review_count = 0
+        for index, segment in enumerate(segments):
+            if not segment.needs_review:
+                reviewed.append(segment)
+                continue
+            correction = by_index.get(index)
+            if correction is None:
+                uncertain_count += 1
+                reviewed.append(
+                    segment.model_copy(
+                        update={
+                            "quality_status": "uncertain",
+                            "quality_note": review_error or "AI 无法可靠恢复该处原话。",
+                            "alternatives": [segment.text],
+                        }
+                    )
+                )
+                continue
+            llm_review_count += 1
+            proposed_text = str(correction.get("corrected_text") or "").strip()
+            sensitive_changed = self._sensitive_transcript_tokens(
+                proposed_text
+            ) != self._sensitive_transcript_tokens(segment.text)
+            requires_human_review = bool(
+                correction.get("requires_human_review")
+            ) or sensitive_changed
+            corrected_text = segment.text if sensitive_changed else proposed_text
+            if not corrected_text:
+                corrected_text = segment.text
+                requires_human_review = True
+            if requires_human_review:
+                uncertain_count += 1
+            note = str(correction.get("note") or "").strip()
+            if sensitive_changed:
+                note = "AI 检测到金额、数字或日期可能被改变，已保留原文。"
+            elif requires_human_review:
+                note = note or "AI 已先校对，但该处事实无法从上下文唯一确定。"
+            else:
+                note = note or "AI 已结合上下文完成保守校对。"
+            reviewed.append(
+                segment.model_copy(
+                    update={
+                        "text": corrected_text,
+                        "needs_review": requires_human_review,
+                        "quality_status": (
+                            "uncertain" if requires_human_review else "llm_rewritten"
+                        ),
+                        "quality_source": "llm_context",
+                        "quality_note": note[:120],
+                        "alternatives": [segment.text],
+                    }
+                )
+            )
+        return reviewed, {
+            "auto_reviewed": decision is not None,
+            "uncertain_segment_count": uncertain_count,
+            "llm_review_count": llm_review_count,
+            "auto_review_error": review_error,
+        }
 
     def _auto_review_segments(
         self,

@@ -19,14 +19,14 @@ from pydantic import BaseModel, Field
 
 from project.backend.app.core import config as backend_config
 from project.backend.app.core import deps as backend_deps
-from project.backend.app.core.config import PROJECT_ROOT
+from project.backend.app.core.config import RUNTIME_ROOT
 from project.backend.app.core.deps import get_publish_service, get_repository
 from project.backend.app.core.security import require_admin_token
 from src.services.publish_accounts import PublishAccountError, publish_account_manager
 
 router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
 
-PUBLISH_ASSET_DIR = PROJECT_ROOT / "data" / "publish_assets"
+PUBLISH_ASSET_DIR = RUNTIME_ROOT / "data" / "publish_assets"
 
 
 def _edit_asset_copy_source(task: Any, repository: Any) -> tuple[str | None, str | None]:

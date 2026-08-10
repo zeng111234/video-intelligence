@@ -43,8 +43,8 @@ from src.models import (
 
 
 def _default_credit_balance() -> Decimal:
-    """新积分账户的默认赠送余额（元/积分，可在项目根 .env 调整）。"""
-    return Decimal(os.getenv("DEFAULT_CREDIT_BALANCE", "400"))
+    """管理员积分账户的默认余额（元/积分，可在项目根 .env 调整）。"""
+    return Decimal(os.getenv("DEFAULT_CREDIT_BALANCE", "99999"))
 
 
 class SQLiteRepository:
@@ -160,6 +160,25 @@ class SQLiteRepository:
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS avatar_billing_reservations (
+                owner TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                provider_job_id TEXT,
+                price_per_minute_cny TEXT NOT NULL,
+                billing_unit_seconds INTEGER NOT NULL DEFAULT 1,
+                reserved_seconds INTEGER NOT NULL,
+                reserved_credits TEXT NOT NULL,
+                final_seconds INTEGER,
+                final_credits TEXT,
+                state TEXT NOT NULL CHECK (state IN ('reserved', 'settled', 'released')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (owner, idempotency_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_avatar_billing_provider_job
+            ON avatar_billing_reservations(owner, provider_job_id);
 
             CREATE TABLE IF NOT EXISTS recharge_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1766,6 +1785,263 @@ class SQLiteRepository:
             (owner, int(limit)),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def reserve_avatar_billing(
+        self,
+        *,
+        owner: str,
+        idempotency_key: str,
+        price_per_minute_cny: Decimal,
+        billing_unit_seconds: int,
+        reserved_seconds: int,
+        reserved_credits: Decimal,
+    ) -> dict:
+        """原子冻结数字人成片上限，同一请求只冻结一次。"""
+
+        self.ensure_credit_account(owner)
+        now = datetime.now().astimezone().isoformat()
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            existing = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            if existing is not None:
+                connection.commit()
+                return dict(existing)
+            balance_row = connection.execute(
+                "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
+            ).fetchone()
+            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            new_balance = balance - Decimal(str(reserved_credits))
+            if new_balance < 0:
+                raise ValueError(
+                    f"积分不足，当前余额 {balance}，本次需要冻结 {reserved_credits}"
+                )
+            connection.execute(
+                "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
+                (str(new_balance), now, owner),
+            )
+            connection.execute(
+                """
+                INSERT INTO credit_transactions(
+                    owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                ) VALUES (?, ?, ?, ?, 'avatar_reserve', ?, ?)
+                """,
+                (
+                    owner,
+                    str(-Decimal(str(reserved_credits))),
+                    str(new_balance),
+                    "数字人成片费用预留（完成后按实际整秒结算）",
+                    idempotency_key,
+                    now,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO avatar_billing_reservations(
+                    owner, idempotency_key, price_per_minute_cny,
+                    billing_unit_seconds, reserved_seconds, reserved_credits,
+                    state, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', ?, ?)
+                """,
+                (
+                    owner,
+                    idempotency_key,
+                    str(price_per_minute_cny),
+                    int(billing_unit_seconds),
+                    int(reserved_seconds),
+                    str(reserved_credits),
+                    now,
+                    now,
+                ),
+            )
+            connection.commit()
+            row = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            return dict(row)
+        except Exception:
+            connection.rollback()
+            raise
+
+    def bind_avatar_billing_job(
+        self, *, owner: str, idempotency_key: str, provider_job_id: str
+    ) -> None:
+        now = datetime.now().astimezone().isoformat()
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE avatar_billing_reservations
+                SET provider_job_id = ?, updated_at = ?
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (provider_job_id, now, owner, idempotency_key),
+            )
+
+    def get_avatar_billing(
+        self,
+        *,
+        owner: str,
+        idempotency_key: str | None = None,
+        provider_job_id: str | None = None,
+    ) -> dict | None:
+        if idempotency_key:
+            row = self.connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+        elif provider_job_id:
+            row = self.connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND provider_job_id = ?
+                """,
+                (owner, provider_job_id),
+            ).fetchone()
+        else:
+            raise ValueError("必须提供数字人请求标识或供应商任务编号。")
+        return dict(row) if row is not None else None
+
+    def settle_avatar_billing(
+        self, *, owner: str, idempotency_key: str, final_seconds: int
+    ) -> dict:
+        """按整秒完成最终结算；重复刷新只返回同一结算结果。"""
+
+        from src.services.avatar_billing import credits_for_seconds
+
+        now = datetime.now().astimezone().isoformat()
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            if row is None:
+                raise ValueError("数字人费用预留记录不存在。")
+            if row["state"] in {"settled", "released"}:
+                connection.commit()
+                return dict(row)
+            final_credits = credits_for_seconds(
+                Decimal(str(row["price_per_minute_cny"])), int(final_seconds)
+            )
+            reserved_credits = Decimal(str(row["reserved_credits"]))
+            delta = reserved_credits - final_credits
+            balance_row = connection.execute(
+                "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
+            ).fetchone()
+            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            new_balance = balance + delta
+            if new_balance < 0:
+                raise ValueError(
+                    f"实际费用超过预留金额，当前余额 {balance}，还需补充 {abs(delta)} 积分"
+                )
+            if delta != 0:
+                reason = "数字人成片费用结算退款" if delta > 0 else "数字人成片费用结算补扣"
+                connection.execute(
+                    "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
+                    (str(new_balance), now, owner),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO credit_transactions(
+                        owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                    ) VALUES (?, ?, ?, ?, 'avatar_settlement', ?, ?)
+                    """,
+                    (owner, str(delta), str(new_balance), reason, idempotency_key, now),
+                )
+            connection.execute(
+                """
+                UPDATE avatar_billing_reservations
+                SET final_seconds = ?, final_credits = ?, state = 'settled', updated_at = ?
+                WHERE owner = ? AND idempotency_key = ? AND state = 'reserved'
+                """,
+                (int(final_seconds), str(final_credits), now, owner, idempotency_key),
+            )
+            connection.commit()
+            settled = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            return dict(settled)
+        except Exception:
+            connection.rollback()
+            raise
+
+    def release_avatar_billing(self, *, owner: str, idempotency_key: str) -> dict | None:
+        """供应商明确未受理时全额释放预留；结果未知时禁止调用。"""
+
+        now = datetime.now().astimezone().isoformat()
+        connection = self.connection
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            if row is None or row["state"] != "reserved":
+                connection.commit()
+                return dict(row) if row is not None else None
+            refund = Decimal(str(row["reserved_credits"]))
+            balance_row = connection.execute(
+                "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
+            ).fetchone()
+            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            new_balance = balance + refund
+            connection.execute(
+                "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
+                (str(new_balance), now, owner),
+            )
+            connection.execute(
+                """
+                INSERT INTO credit_transactions(
+                    owner, amount, balance_after, reason, ref_type, ref_id, created_at
+                ) VALUES (?, ?, ?, '数字人供应商未受理，释放预留积分',
+                          'avatar_release', ?, ?)
+                """,
+                (owner, str(refund), str(new_balance), idempotency_key, now),
+            )
+            connection.execute(
+                """
+                UPDATE avatar_billing_reservations
+                SET final_seconds = 0, final_credits = '0', state = 'released', updated_at = ?
+                WHERE owner = ? AND idempotency_key = ? AND state = 'reserved'
+                """,
+                (now, owner, idempotency_key),
+            )
+            connection.commit()
+            released = connection.execute(
+                """
+                SELECT * FROM avatar_billing_reservations
+                WHERE owner = ? AND idempotency_key = ?
+                """,
+                (owner, idempotency_key),
+            ).fetchone()
+            return dict(released)
+        except Exception:
+            connection.rollback()
+            raise
 
     # ------------------------------------------------------------------
     # 客户激活码

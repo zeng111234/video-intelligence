@@ -1521,7 +1521,10 @@ class VideoEditorWorkflowService:
     def cloud_capabilities(self) -> dict[str, Any]:
         from src.services.video_editor_cloud import get_cloud_capability
 
-        configuration, _ = self._cloud_runtime()
+        configuration, providers = self._cloud_runtime()
+        remote_capability = getattr(providers, "capability", None)
+        if callable(remote_capability):
+            return remote_capability()
         return get_cloud_capability(configuration).model_dump(mode="json")
 
     def create_cloud_preflight(
@@ -1552,7 +1555,7 @@ class VideoEditorWorkflowService:
         if duration_seconds <= 0:
             raise VideoEditorWorkflowError("素材时长无效，暂不能生成费用报价。")
 
-        configuration, _ = self._cloud_runtime()
+        configuration, providers = self._cloud_runtime()
         try:
             quote = create_cost_quote(
                 input_duration_seconds=duration_seconds,
@@ -1575,7 +1578,12 @@ class VideoEditorWorkflowService:
             created_at=quote.issued_at.isoformat(),
             payload=quote_payload,
         )
-        capability = get_cloud_capability(configuration).model_dump(mode="json")
+        remote_capability = getattr(providers, "capability", None)
+        capability = (
+            remote_capability()
+            if callable(remote_capability)
+            else get_cloud_capability(configuration).model_dump(mode="json")
+        )
         blocking_reasons = (
             [
                 "生产云配置不完整，请先补齐缺失配置后重新预检。",
@@ -1668,7 +1676,7 @@ class VideoEditorWorkflowService:
         ):
             raise VideoEditorWorkflowError("素材、平台或清晰度已变化，请重新确认费用。")
 
-        configuration, _ = self._cloud_runtime()
+        configuration, providers = self._cloud_runtime()
         try:
             quote = CostQuote.model_validate(stored_quote["payload"])
             validate_cost_quote(
@@ -1727,18 +1735,6 @@ class VideoEditorWorkflowService:
                 "同一请求正在处理或结果待确认；系统不会重复提交付费任务。"
             )
 
-        # 报价确认已通过且幂等锁已取得：按报价扣积分，余额不足则回滚幂等锁并阻止。
-        try:
-            self._debit_credits(
-                quote.estimated_total,
-                reason="云端剪辑成片费用",
-                ref_type="video_editor",
-                ref_id=quote_id,
-            )
-        except InsufficientCreditsError as exc:
-            self.repository.delete_video_editor_operation(idempotency_key)
-            raise VideoEditorWorkflowError(exc.message) from exc
-
         item = VideoEditorBatchItem(
             source_id=source_id,
             title=source["title"],
@@ -1772,6 +1768,69 @@ class VideoEditorWorkflowService:
             is_mock=bool(capability["is_mock"]),
             items=[item],
         )
+
+        # 演示提供方只能生成本地体验方案，不调用付费供应商，也绝不能扣积分。
+        # 服务器控制层模式下，正式提供方才先在公司服务器扣费再上传素材。
+        if bool(capability["is_mock"]):
+            pass
+        elif bool(getattr(providers, "billing_centrally_managed", False)):
+            authorize_cost = getattr(providers, "authorize_cost", None)
+            if not callable(authorize_cost):
+                self.repository.delete_video_editor_operation(idempotency_key)
+                raise VideoEditorWorkflowError("公司云端计费服务暂不可用。")
+            try:
+                authorization = authorize_cost(
+                    batch_id=batch.batch_id,
+                    quote_payload=quote.model_dump(mode="json"),
+                    max_cost_cny=str(max_cost),
+                )
+                batch = batch.model_copy(
+                    update={
+                        "billing_confirmation": {
+                            **batch.billing_confirmation,
+                            "authority": "company_control_plane",
+                            "charged_credits": str(
+                                authorization.get("charged_credits", "")
+                            ),
+                        }
+                    }
+                )
+            except Exception as exc:
+                if not bool(getattr(exc, "outcome_unknown", False)):
+                    self.repository.delete_video_editor_operation(idempotency_key)
+                    raise VideoEditorWorkflowError(str(exc)) from exc
+                item = item.model_copy(
+                    update={
+                        "status": "outcome_unknown",
+                        "provider_stage": "billing_outcome_unknown",
+                        "error_message": str(exc),
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                batch = batch.model_copy(update={"items": [item]})
+                self.repository.save_video_editor_batch(batch)
+                payload = self._batch_payload(batch)
+                self.repository.complete_video_editor_operation(
+                    idempotency_key=idempotency_key,
+                    state="outcome_unknown",
+                    resource_id=batch.batch_id,
+                    response=self._safe_cloud_operation_response(payload),
+                    error_message=str(exc),
+                    updated_at=datetime.now().astimezone().isoformat(),
+                )
+                return payload
+        else:
+            try:
+                self._debit_credits(
+                    quote.estimated_total,
+                    reason="云端剪辑成片费用",
+                    ref_type="video_editor",
+                    ref_id=quote_id,
+                )
+            except InsufficientCreditsError as exc:
+                self.repository.delete_video_editor_operation(idempotency_key)
+                raise VideoEditorWorkflowError(exc.message) from exc
+
         self.repository.save_video_editor_batch(batch)
         try:
             batch = self._submit_cloud_analysis(batch, item)
@@ -3552,10 +3611,15 @@ class VideoEditorWorkflowService:
         if parsed.scheme != "oss":
             return None
         configuration, providers = self._cloud_runtime()
-        if parsed.netloc != configuration.oss_bucket:
-            return None
         presign = getattr(providers.object_store, "presign_get_url", None)
         if not callable(presign):
+            return None
+        validates_remotely = getattr(
+            providers.object_store,
+            "validates_output_ownership_remotely",
+            False,
+        )
+        if not validates_remotely and parsed.netloc != configuration.oss_bucket:
             return None
         object_key = unquote(parsed.path.lstrip("/"))
         return str(presign(object_key, expires_seconds=3600))

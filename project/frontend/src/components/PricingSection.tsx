@@ -3,6 +3,19 @@ import { Button, Card, InputNumber, Space, Table, Tag, Typography } from "antd";
 import { listPricing, updatePricing, type PricingItem } from "../api/client";
 import { useToast } from "./Toast";
 
+function pricePrecision(item: PricingItem) {
+  const values = [item.default, item.value];
+  return Math.max(...values.map((value) => {
+    const fraction = value.split(".")[1]?.replace(/0+$/, "") || "";
+    return fraction.length;
+  }));
+}
+
+function priceStep(item: PricingItem) {
+  const precision = pricePrecision(item);
+  return precision > 0 ? Number(`0.${"0".repeat(precision - 1)}1`) : 1;
+}
+
 /** 定价设置：管理员可调全部收费价格，改完即时生效（客户按新价扣费）。 */
 export default function PricingSection() {
   const toast = useToast();
@@ -80,8 +93,8 @@ export default function PricingSection() {
                   <InputNumber
                     style={{ width: 140 }}
                     min={0}
-                    step={0.01}
-                    precision={item.value.includes(".") ? 4 : 0}
+                    step={priceStep(item)}
+                    precision={pricePrecision(item)}
                     value={Number(drafts[item.key] ?? item.value)}
                     onChange={(value) =>
                       setDrafts((current) => ({

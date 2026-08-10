@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Security
 from pydantic import BaseModel, Field
 
-from project.backend.app.core.deps import get_credits_service, get_repository
+from project.backend.app.core.repository import get_credits_service, get_repository
 from project.backend.app.core.security import (
     admin_password_configured,
     require_admin_token,

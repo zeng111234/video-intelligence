@@ -423,21 +423,23 @@ chore: 构建/工具相关
 - 启用热重载
 - 调试模式开启
 
-### 生产环境
-1. 配置 PostgreSQL 数据库
-2. 设置环境变量
-3. 构建前端：`npm run build`
-4. 启动后端：`uvicorn app.main:app --host 0.0.0.0 --port 2001`
-5. 配置反向代理（Nginx）
+### 客户交付架构
 
-### Docker 部署（可选）
+- Windows 客户端负责爬虫、浏览器登录、素材下载、预览及适合本机完成的处理；爬虫不扣积分。
+- 公司控制层负责激活码、客户账号、积分、充值审批、定价、正式供应商密钥和所有可能收费的真实供应商调用。
+- 客户端只通过公司 HTTPS 域名访问控制层，不包含永久供应商密钥或商业积分权威。
 
-当前仓库根目录不提供 Dockerfile，部署以脚本方式为主：
+### 公司服务器
 
-- **Windows**：双击根目录 `start.bat`
-- **Linux/macOS**：运行 `scripts/deploy.sh`
-- 生产环境部署清单见 `doc/deployment-checklist.md`
-- 正式交付前运行 `scripts/check_release.ps1`；交付范围和高副作用验收边界见 `doc/release-gate.md`
+正式控制层位于 `deploy/control-plane/`，提供 Docker Compose、Caddy 自动 HTTPS、配置校验、健康检查、备份、恢复和桌面更新托管。首次部署按 `deploy/control-plane/README.md` 操作；最终交付门槛见 `PRODUCTION_RELEASE_CHECKLIST.md`。
+
+正式域名和服务器 `.env` 填好且全量验收通过后，才运行一次：
+
+```powershell
+.\scripts\build_final_windows_release.ps1 -ControlPlaneUrl "https://你的正式域名" -Version "0.2.1"
+```
+
+示例版本必须替换为从未生成过的新版本号；`0.2.0` 及更早版本会被正式构建脚本拒绝。该命令生成唯一的客户安装包和更新清单。不要把 `.env`、数据库、日志、客户媒体、备份或正式密钥打进安装包。
 
 
 ## 常见问题
@@ -477,6 +479,6 @@ A: 检查数据库配置，确保 PostgreSQL 服务已启动。开发环境默�
 
 ---
 
-**最后更新**: 2026-08-06  
-**版本**: 2.0.0  
+**最后更新**: 2026-08-10
+**版本**: 正式交付候选（最终版本号待正式域名验收后生成）
 **维护者**: Crow5 开发团队

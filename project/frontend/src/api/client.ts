@@ -8,6 +8,7 @@ import type {
   AnalyticsResponse,
   AvatarAsset,
   AvatarCapability,
+  AvatarBillingQuote,
   AvatarJob,
   AvatarJobCreateRequest,
   CandidateListResponse,
@@ -74,6 +75,7 @@ import type {
   PublishAccount,
   StepKindsResponse,
   SubtitleStatusResponse,
+  ServerStatusResponse,
   TaskListResponse,
   TemplateCreateRequest,
   TemplateListResponse,
@@ -102,6 +104,13 @@ const BASE = "/api/v1";
 // 客户/管理员登录 token（localStorage），请求时按身份携带
 const CUSTOMER_TOKEN_KEY = "vi_customer_token";
 const ADMIN_TOKEN_KEY = "vi_admin_token";
+
+function createIdempotencyKey(prefix: string): string {
+  const randomPart = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${randomPart}`;
+}
 
 function getStoredToken(key: string): string | null {
   try {
@@ -153,18 +162,60 @@ export function clearAdminSession(): void {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function buildAuthenticatedHeaders(
+  path: string,
+  init: RequestInit | undefined,
+  options: { json: boolean; idempotencyPrefix: string },
+): Headers {
   const customerToken = getCustomerToken();
   const adminToken = getAdminToken();
   const headers = new Headers(init?.headers);
-  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  // 客户 token 优先；管理操作由后端按 X-Admin-Token 单独校验
-  if (customerToken && !headers.has("X-Customer-Token")) {
-    headers.set("X-Customer-Token", customerToken);
+  if (options.json && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
-  if (adminToken && !headers.has("X-Admin-Token")) {
-    headers.set("X-Admin-Token", adminToken);
+  const pathname = path.split("?", 1)[0];
+  const adminOnlyPath =
+    pathname.startsWith("/admin") ||
+    pathname === "/credits/adjust" ||
+    (pathname.startsWith("/credits/recharge-requests") && !pathname.endsWith("/mine"));
+  const explicitRole = headers.has("X-Customer-Token") || headers.has("X-Admin-Token");
+  if (!path.startsWith("/auth/") && !explicitRole) {
+    if (adminOnlyPath && adminToken) {
+      headers.set("X-Admin-Token", adminToken);
+    } else if (customerToken) {
+      headers.set("X-Customer-Token", customerToken);
+    } else if (adminToken) {
+      headers.set("X-Admin-Token", adminToken);
+    }
   }
+  const method = (init?.method || "GET").toUpperCase();
+  if (
+    !["GET", "HEAD", "OPTIONS"].includes(method)
+    && !path.startsWith("/auth/")
+    && !headers.has("Idempotency-Key")
+  ) {
+    headers.set("Idempotency-Key", createIdempotencyKey(options.idempotencyPrefix));
+  }
+  return headers;
+}
+
+function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
+  const headers = buildAuthenticatedHeaders(path, init, {
+    json: false,
+    idempotencyPrefix: "desktop-file",
+  });
+  return fetch(`${BASE}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildAuthenticatedHeaders(path, init, {
+    json: true,
+    idempotencyPrefix: "desktop",
+  });
   const method = (init?.method || "GET").toUpperCase();
   const canRetry = method === "GET";
   const run = () =>
@@ -190,42 +241,36 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
     if (resp.status === 401) {
-      const body = await resp.json().catch(() => ({}));
-      const errorMessage =
-        typeof body?.message === "string"
-          ? body.message
-          : typeof body?.detail === "string"
-            ? body.detail
-            : "";
-      if (errorMessage.includes("管理员登录已过期") || errorMessage.includes("管理员账号或密码")) {
-        // 管理员凭证过期（如后端重启后内存凭证失效）：清除后刷新，
-        // 由登录页/管理入口引导重新登录
+      if (headers.has("X-Admin-Token")) {
+        // 双身份并存时按本次实际发送的角色清理，不能误把客户踢下线。
         clearAdminSession();
         window.location.reload();
         throw new Error("管理员登录已过期，请重新登录。");
       }
-      if (customerToken && !path.startsWith("/auth/")) {
+      if (headers.has("X-Customer-Token") && !path.startsWith("/auth/")) {
         // 客户登录过期：清会话，由登录页兜底
         clearCustomerSession();
         window.location.reload();
       }
-      const detail = typeof body.detail === "string"
-        ? body.detail
-        : typeof body.detail?.message === "string"
-          ? body.detail.message
-          : undefined;
-      const statusMessages: Record<number, string> = {
-        400: "请求参数错误",
-        404: "请求的资源不存在",
-        500: "服务器内部错误",
-        502: "后端服务未响应",
-        503: "服务暂时不可用",
-      };
-      throw new Error(
-        detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
-      );
     }
+    const detail = typeof body.detail === "string"
+      ? body.detail
+      : typeof body.detail?.message === "string"
+        ? body.detail.message
+        : undefined;
+    const statusMessages: Record<number, string> = {
+      400: "请求参数错误",
+      403: "当前账号没有权限执行此操作",
+      404: "请求的资源不存在",
+      500: "服务器内部错误",
+      502: "后端服务未响应",
+      503: "服务暂时不可用",
+    };
+    throw new Error(
+      detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
+    );
   }
   // 删除接口以 204 表示已完成且不返回 JSON。继续解析响应体会把成功误判为失败，
   // 从而阻断调用方即时更新页面列表。
@@ -287,6 +332,15 @@ export function getTranscription(taskId: string): Promise<TranscriptionResponse>
 
 export function listTranscriptions(): Promise<TranscriptionResponse[]> {
   return request("/transcriptions");
+}
+
+export function getTranscriptionCapabilities(): Promise<{
+  mode: string;
+  is_mock: boolean;
+  supports_upload: boolean;
+  description: string;
+}> {
+  return request("/transcriptions/capabilities");
 }
 
 export function getAsrConfig(): Promise<AsrCapabilityResponse> {
@@ -376,7 +430,7 @@ export async function exportTranscription(
   taskId: string,
   format: "txt" | "json" | "srt" | "ass",
 ): Promise<Blob> {
-  const resp = await fetch(`${BASE}/transcriptions/${taskId}/export?format=${format}`);
+  const resp = await authenticatedFetch(`/transcriptions/${taskId}/export?format=${format}`);
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "导出失败");
@@ -400,7 +454,7 @@ export async function uploadAndTranscribe(
   formData.append("language", language);
   if (candidateId) formData.append("candidate_id", candidateId);
 
-  const resp = await fetch(`${BASE}/transcriptions/upload`, {
+  const resp = await authenticatedFetch("/transcriptions/upload", {
     method: "POST",
     body: formData,
   });
@@ -602,6 +656,16 @@ export function preflightProductionBatch(batchId: string, params: {
   });
 }
 
+export function reviewProductionTranscriptWithAI(
+  batchId: string,
+  runId: string,
+): Promise<ProductionWorkspace> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/transcript-ai-review`, {
+    method: "POST",
+    body: JSON.stringify({ run_id: runId }),
+  });
+}
+
 export function startProductionBatch(batchId: string, params: {
   rightsHolder: string;
   rightsConfirmed: boolean;
@@ -786,6 +850,10 @@ export function listTasks(): Promise<TaskListResponse> {
 
 export function getAdminStatus(): Promise<AdminStatusResponse> {
   return request("/admin/status");
+}
+
+export function getServerStatus(): Promise<ServerStatusResponse> {
+  return request("/admin/server-status");
 }
 
 /* ---- 积分账户 ---- */
@@ -1216,6 +1284,7 @@ export function rewriteCopywriting(params: {
 }): Promise<CopywritingResponse> {
   return request("/copywriting/rewrite", {
     method: "POST",
+    headers: { "Idempotency-Key": createIdempotencyKey("copy-rewrite") },
     body: JSON.stringify(params),
   });
 }
@@ -1241,6 +1310,7 @@ export function generateCopywriting(
 ): Promise<CopywritingResponse> {
   return request("/copywriting/generate", {
     method: "POST",
+    headers: { "Idempotency-Key": createIdempotencyKey("copy-generate") },
     body: JSON.stringify(params),
   });
 }
@@ -1366,7 +1436,7 @@ export async function uploadPublishAsset(file: File): Promise<PublishAsset> {
   formData.append("file", file);
   formData.append("rights_confirmed", "true");
 
-  const resp = await fetch(`${BASE}/publish/assets/upload`, {
+  const resp = await authenticatedFetch("/publish/assets/upload", {
     method: "POST",
     body: formData,
   });
@@ -1400,6 +1470,7 @@ export function generatePublishMetadata(params: {
 }): Promise<PublishMetadataResponse> {
   return request("/copywriting/publish-metadata", {
     method: "POST",
+    headers: { "Idempotency-Key": createIdempotencyKey("copy-metadata") },
     body: JSON.stringify(params),
   });
 }
@@ -1482,6 +1553,19 @@ export function getAvatarCapabilities(): Promise<AvatarCapability> {
   return request("/avatar/capabilities");
 }
 
+export function getAvatarBillingQuote(params: {
+  scriptText: string;
+  speechRate: number;
+}): Promise<AvatarBillingQuote> {
+  return request("/avatar/quote", {
+    method: "POST",
+    body: JSON.stringify({
+      script_text: params.scriptText,
+      speech_rate: params.speechRate,
+    }),
+  });
+}
+
 export function listAvatarAssets(): Promise<AvatarAsset[]> {
   return request("/avatar/assets");
 }
@@ -1498,7 +1582,7 @@ export async function uploadAvatarAsset(params: {
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", "本人/公司已授权");
 
-  const resp = await fetch(`${BASE}/avatar/assets/upload`, {
+  const resp = await authenticatedFetch("/avatar/assets/upload", {
     method: "POST",
     body: formData,
   });
@@ -1518,7 +1602,7 @@ async function uploadCloudAvatarMaterial(
   formData.append("name", params.name);
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", "本人/公司已授权");
-  const resp = await fetch(`${BASE}${endpoint}`, { method: "POST", body: formData });
+  const resp = await authenticatedFetch(endpoint, { method: "POST", body: formData });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "上传云端训练素材失败");
@@ -1557,7 +1641,7 @@ export function retryAvatarVideoSubmission(taskId: string): Promise<AvatarJob> {
 }
 
 export async function downloadAvatarJobMedia(taskId: string): Promise<Blob> {
-  const resp = await fetch(`${BASE}/avatar/jobs/${taskId}/media`);
+  const resp = await authenticatedFetch(`/avatar/jobs/${taskId}/media`);
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "下载数字人成片失败");
@@ -1742,7 +1826,10 @@ export async function uploadVideoEditorSources(
   files.forEach((file) => formData.append("files", file));
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", rightsHolder);
-  const resp = await fetch(`${BASE}/video-editor/uploads`, { method: "POST", body: formData });
+  const resp = await authenticatedFetch("/video-editor/uploads", {
+    method: "POST",
+    body: formData,
+  });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "素材上传失败");
@@ -1760,7 +1847,10 @@ export async function uploadVideoEditorVisualAsset(params: {
   formData.append("file", params.file);
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", params.rightsHolder);
-  const resp = await fetch(`${BASE}/video-editor/visual-assets`, { method: "POST", body: formData });
+  const resp = await authenticatedFetch("/video-editor/visual-assets", {
+    method: "POST",
+    body: formData,
+  });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "图片上传失败");
@@ -1811,7 +1901,10 @@ export async function uploadVideoEditorBgm(params: {
   formData.append("source_url", params.sourceUrl || "");
   formData.append("license_url", params.licenseUrl || "");
   formData.append("content_id_risk", params.contentIdRisk || "unknown");
-  const resp = await fetch(`${BASE}/video-editor/bgm`, { method: "POST", body: formData });
+  const resp = await authenticatedFetch("/video-editor/bgm", {
+    method: "POST",
+    body: formData,
+  });
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.detail || body.message || "背景音乐上传失败");

@@ -90,7 +90,7 @@ def test_public_douyin_evidence_keeps_its_source_label_and_duration() -> None:
         "douyin_public_search:关键词=贴标机;来源=browser_rendered;时长秒=48"
     )
 
-    assert labels == ["抖音官网搜索"]
+    assert labels == ["抖音登录搜索"]
     assert duration_seconds == 48
     assert window_hours is None
 

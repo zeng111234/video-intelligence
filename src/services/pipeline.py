@@ -18,6 +18,7 @@ from src.models import (
     PipelineEvent,
     PipelineStage,
     CopywritingTask,
+    MediaResolutionStatus,
     PipelineStepResult,
     Platform,
     PublishPlatform,
@@ -28,9 +29,10 @@ from src.models import (
     TranscriptionTask,
     VideoEditConfig,
 )
-from src.services.media_resolution import MediaResolutionError
+from src.services.media_resolution import MediaResolutionError, ResolvedMedia
 from src.services.publish_metadata import publish_draft_fingerprint, validated_publish_draft
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES, TranscriptionError
+from src.services.video_source import DirectVideo
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +413,63 @@ class PipelineService:
     def list_runs(self, limit: int = 20) -> list[PipelineRun]:
         return self.repository.list_pipeline_runs(limit)
 
+    def _preserved_media_for_transcription_retry(
+        self,
+        *,
+        run: PipelineRun,
+        candidate,
+        idempotency_key: str,
+    ) -> ResolvedMedia | None:
+        """Reuse media saved before a cloud-ASR submission failure."""
+
+        source_task_id = str(
+            run.config.get("retry_source_transcription_task_id") or ""
+        ).strip()
+        if not source_task_id:
+            return None
+
+        source_task = self.repository.get_task(source_task_id)
+        source_path = (
+            Path(str(source_task.outputs.get("source_media_path") or ""))
+            if isinstance(source_task, TranscriptionTask)
+            else None
+        )
+        previous = self.repository.find_media_resolution_by_idempotency_key(
+            idempotency_key
+        )
+        valid_source = (
+            isinstance(source_task, TranscriptionTask)
+            and source_task.status == TaskStatus.FAILED
+            and not source_task.provider_job_id
+            and source_task.provider_status == "failed"
+            and source_task.candidate_id == candidate.video_id
+            and source_path is not None
+            and source_path.is_file()
+        )
+        valid_resolution = (
+            previous is not None
+            and previous.status == MediaResolutionStatus.SUCCEEDED
+            and previous.candidate_id == candidate.video_id
+        )
+        if not valid_source or not valid_resolution:
+            raise MediaResolutionError(
+                "已保存的素材无法安全恢复，请返回素材后重新确认。"
+            )
+
+        media_size = source_path.stat().st_size
+        if media_size <= 0 or media_size > MAX_PROVIDER_MEDIA_BYTES:
+            raise MediaResolutionError(
+                "已保存的素材为空或超出转写大小限制，请返回素材后重新确认。"
+            )
+        return ResolvedMedia(
+            attempt=previous,
+            video=DirectVideo(
+                name=source_task.media_name,
+                media_type=source_task.media_type,
+                content=source_path.read_bytes(),
+            ),
+        )
+
     def execute_candidate_script_pipeline(
         self,
         *,
@@ -505,7 +564,11 @@ class PipelineService:
                 TaskStatus.RUNNING,
                 outputs={"candidate_id": candidate.video_id},
             )
-            resolved = self.media_resolution_service.resolve_video(
+            resolved = self._preserved_media_for_transcription_retry(
+                run=run,
+                candidate=candidate,
+                idempotency_key=idempotency_key,
+            ) or self.media_resolution_service.resolve_video(
                 candidate,
                 idempotency_key=idempotency_key,
             )
@@ -518,7 +581,11 @@ class PipelineService:
                     "resolution_id": resolved.attempt.resolution_id,
                     "provider": resolved.attempt.provider,
                     "billable_units": str(resolved.attempt.billable_units or 0.0),
-                    "source": "provider_or_direct_url",
+                    "source": (
+                        "preserved_transcription_media"
+                        if run.config.get("retry_source_transcription_task_id")
+                        else "provider_or_direct_url"
+                    ),
                 },
             )
         except MediaResolutionError as exc:
@@ -561,20 +628,73 @@ class PipelineService:
                     "review_state": "unapproved_asr",
                 },
             )
+            next_config = dict(run.config)
+            next_config.pop("retry_source_transcription_task_id", None)
+            next_config["transcription_task_id"] = transcription.task_id
             run = run.model_copy(
                 update={
-                    "config": {
-                        **run.config,
-                        "transcription_task_id": transcription.task_id,
-                    }
+                    "config": next_config
                 }
             )
             self.repository.save_pipeline_run(run)
         except TranscriptionError as exc:
+            transcription_task = (
+                self.repository.get_task(exc.task_id) if exc.task_id else None
+            )
+            if isinstance(transcription_task, TranscriptionTask):
+                next_config = dict(run.config)
+                next_config.pop("retry_source_transcription_task_id", None)
+                next_config["transcription_task_id"] = transcription_task.task_id
+                run = run.model_copy(update={"config": next_config})
+                self.repository.save_pipeline_run(run)
+            if (
+                isinstance(transcription_task, TranscriptionTask)
+                and transcription_task.status == TaskStatus.OUTCOME_UNKNOWN
+            ):
+                safe_message = (
+                    "云端转写请求的结果暂时无法确认，素材和任务记录已保留；"
+                    "系统不会自动重复提交或重复扣费。"
+                )
+                run = self.update_stage(
+                    run,
+                    PipelineStage.TRANSCRIPTION,
+                    TaskStatus.OUTCOME_UNKNOWN,
+                    task_id=transcription_task.task_id,
+                    outputs={
+                        "task_id": transcription_task.task_id,
+                        "provider_status": "outcome_unknown",
+                        "review_state": "provider_result_unconfirmed",
+                    },
+                    error_message=safe_message,
+                )
+                run = run.model_copy(
+                    update={
+                        "status": PipelineRunStatus.PAUSED,
+                        "current_stage": PipelineStage.TRANSCRIPTION,
+                        "error_message": safe_message,
+                        "config": {
+                            **run.config,
+                            "transcription_task_id": transcription_task.task_id,
+                            "outcome_unknown": True,
+                            "recovery_blocked": True,
+                            "recovery_reason": "provider_result_unconfirmed",
+                        },
+                    }
+                )
+                run = self._event(
+                    run,
+                    action="transcription_outcome_unknown",
+                    stage=PipelineStage.TRANSCRIPTION,
+                    message=safe_message,
+                    details={"task_id": transcription_task.task_id},
+                )
+                self.repository.save_pipeline_run(run)
+                return run
             run = self.update_stage(
                 run,
                 PipelineStage.TRANSCRIPTION,
                 TaskStatus.FAILED,
+                task_id=exc.task_id,
                 error_message=exc.user_message,
             )
             return self.complete_run(run, success=False, error_message=exc.user_message)

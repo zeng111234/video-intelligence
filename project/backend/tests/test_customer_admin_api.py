@@ -54,7 +54,8 @@ def test_generate_codes_and_customer_login(client):
     assert resp.status_code == 200
     codes = resp.json()
     assert len(codes) == 2
-    assert all(len(item["code"]) == 8 for item in codes)
+    assert all(len(item["code"].replace("-", "")) == 16 for item in codes)
+    assert all([len(group) for group in item["code"].split("-")] == [4, 4, 4, 4] for item in codes)
     assert all(item["balance"] == "300" for item in codes)
     # 客户用新激活码登录
     login = test_client.post(
@@ -99,7 +100,7 @@ def test_list_and_toggle_codes(client):
         json={"code": code},
         headers=TEST_API_HEADERS,
     )
-    assert login.status_code == 403
+    assert login.status_code == 401
 
 
 def test_admin_accounts_management(client):
