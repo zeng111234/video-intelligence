@@ -10,6 +10,9 @@ import { useToast } from "../components/Toast";
 const CUSTOMER_TOKEN_KEY = "vi_customer_token";
 const CUSTOMER_NAME_KEY = "vi_customer_name";
 const CUSTOMER_CODE_KEY = "vi_customer_code";
+const CUSTOMER_VALID_DAYS_KEY = "vi_customer_valid_days";
+const CUSTOMER_PACKAGE_PRICE_CREDITS_KEY = "vi_customer_package_price_credits";
+const CUSTOMER_ACCESS_EXPIRES_AT_KEY = "vi_customer_access_expires_at";
 
 export function getCustomerCode(): string | null {
   try {
@@ -22,6 +25,31 @@ export function getCustomerCode(): string | null {
 export function getCustomerName(): string | null {
   try {
     return localStorage.getItem(CUSTOMER_NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getCustomerValidDays(): number | null {
+  try {
+    const value = localStorage.getItem(CUSTOMER_VALID_DAYS_KEY);
+    return value ? Number(value) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getCustomerAccessExpiresAt(): string | null {
+  try {
+    return localStorage.getItem(CUSTOMER_ACCESS_EXPIRES_AT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function getCustomerPackagePriceCredits(): string | null {
+  try {
+    return localStorage.getItem(CUSTOMER_PACKAGE_PRICE_CREDITS_KEY);
   } catch {
     return null;
   }
@@ -67,6 +95,20 @@ export function useCustomerLogin() {
         localStorage.setItem(CUSTOMER_TOKEN_KEY, resp.token);
         localStorage.setItem(CUSTOMER_NAME_KEY, resp.name);
         localStorage.setItem(CUSTOMER_CODE_KEY, resp.code);
+        if (resp.valid_days) {
+          localStorage.setItem(CUSTOMER_VALID_DAYS_KEY, String(resp.valid_days));
+        } else {
+          localStorage.removeItem(CUSTOMER_VALID_DAYS_KEY);
+        }
+        localStorage.setItem(
+          CUSTOMER_PACKAGE_PRICE_CREDITS_KEY,
+          resp.package_price_credits,
+        );
+        if (resp.access_expires_at) {
+          localStorage.setItem(CUSTOMER_ACCESS_EXPIRES_AT_KEY, resp.access_expires_at);
+        } else {
+          localStorage.removeItem(CUSTOMER_ACCESS_EXPIRES_AT_KEY);
+        }
         notifyCustomerListeners();
         toast.success(`欢迎，${resp.name}`);
         return { ok: true };

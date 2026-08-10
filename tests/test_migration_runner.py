@@ -186,6 +186,58 @@ class TestUpgrade:
         result = runner.upgrade(target_version=current)
         assert result == current
 
+    def test_upgrade_adds_customer_access_package_columns_without_losing_codes(
+        self, tmp_db
+    ):
+        """旧激活码升级后保持长期有效，并获得套餐字段默认值。"""
+        conn = sqlite3.connect(str(tmp_db))
+        conn.execute(
+            """
+            CREATE TABLE customer_codes (
+                code TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                initial_credits TEXT NOT NULL DEFAULT '400',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO customer_codes(
+                code, name, enabled, initial_credits, created_at, updated_at
+            ) VALUES ('LEGACY-CODE', '旧客户', 1, '400', '2026-08-01', '2026-08-01')
+            """
+        )
+        conn.execute("PRAGMA user_version = 10")
+        conn.commit()
+        conn.close()
+
+        from database.migrations.runner import MigrationRunner
+
+        assert MigrationRunner(tmp_db).upgrade() == 11
+        conn = sqlite3.connect(str(tmp_db))
+        row = conn.execute(
+            """
+            SELECT code, valid_days, package_price_credits,
+                   activated_at, access_expires_at
+            FROM customer_codes
+            """
+        ).fetchone()
+        columns = {
+            item[1] for item in conn.execute("PRAGMA table_info(customer_codes)")
+        }
+        conn.close()
+
+        assert row == ("LEGACY-CODE", None, "0", None, None)
+        assert {
+            "valid_days",
+            "package_price_credits",
+            "activated_at",
+            "access_expires_at",
+        }.issubset(columns)
+
     def test_upgrade_creates_indexes(self, runner):
         """升级应创建索引。"""
         runner.upgrade()
@@ -249,7 +301,7 @@ class TestUpgrade:
         conn.commit()
         conn.close()
 
-        assert runner.upgrade() == 10
+        assert runner.upgrade() == 11
 
         conn = sqlite3.connect(str(runner._database_path))
         quarantined = conn.execute(
@@ -299,7 +351,7 @@ class TestUpgrade:
         conn.commit()
         conn.close()
 
-        assert runner.upgrade() == 10
+        assert runner.upgrade() == 11
 
         conn = sqlite3.connect(str(runner._database_path))
         warning = conn.execute(

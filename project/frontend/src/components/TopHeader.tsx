@@ -44,7 +44,12 @@ import {
   clearCustomerSession,
   getCustomerToken,
 } from "../api/client";
-import { getCustomerName } from "../hooks/useCustomerAuth";
+import {
+  getCustomerAccessExpiresAt,
+  getCustomerName,
+  getCustomerPackagePriceCredits,
+  getCustomerValidDays,
+} from "../hooks/useCustomerAuth";
 import type { CreditBalanceResponse } from "../api/types";
 
 const { Text } = Typography;
@@ -237,6 +242,27 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       (typeof localStorage !== "undefined" ? localStorage.getItem("vi_admin_username") : null) ||
       "管理员";
     return adminName;
+  }, []);
+
+  const customerAccess = useMemo(() => {
+    const validDays = getCustomerValidDays();
+    const packagePriceCredits = getCustomerPackagePriceCredits();
+    const expiresAt = getCustomerAccessExpiresAt();
+    return {
+      label: validDays
+        ? `${validDays}天 / ${packagePriceCredits ?? "0"}积分`
+        : "长期使用",
+      expiresAt: expiresAt
+        ? new Date(expiresAt).toLocaleString("zh-CN", {
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })
+        : null,
+    };
   }, []);
 
   return (
@@ -809,7 +835,9 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           </div>
           <div className="profile-user-info">
             <div className="profile-name">{displayName}</div>
-            <div className="profile-role">{isAdmin ? "管理员" : "客户账号"}</div>
+            <div className="profile-role">
+              {isAdmin ? "管理员" : `客户账号 · ${customerAccess.label}`}
+            </div>
           </div>
         </div>
 
@@ -817,6 +845,9 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
         <div className="profile-credits-card">
           <div className="profile-credits-label">积分余额</div>
           <div className="profile-credits-value">{credits?.balance ?? "—"}</div>
+          {!isAdmin && customerAccess.expiresAt && (
+            <Text type="secondary">使用期至 {customerAccess.expiresAt}</Text>
+          )}
           <Button
             type="primary"
             size="small"

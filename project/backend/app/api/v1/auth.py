@@ -1,6 +1,8 @@
 """客户激活码登录与管理员多账号登录。"""
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -32,6 +34,10 @@ class CustomerLoginResponse(BaseModel):
     code: str
     name: str
     balance: str
+    valid_days: int | None = None
+    package_price_credits: str = "0"
+    activated_at: str | None = None
+    access_expires_at: str | None = None
 
 
 class AdminLoginRequest(BaseModel):
@@ -138,17 +144,41 @@ def customer_login(
             detail="激活码不正确或暂不可用，请检查后重试。",
         )
 
+    now = datetime.now().astimezone()
+    if customer.valid_days is not None and customer.activated_at is None:
+        customer = repo.activate_customer_code(code, now)
+        assert customer is not None
+    if customer.access_expires_at is not None and customer.access_expires_at <= now:
+        raise HTTPException(
+            status_code=403,
+            detail="使用期限已结束，请联系管理员续期。剩余积分不会清零。",
+        )
+
     # 客户登录：确保账户开立（首次开立时自动赠送 initial_credits，不重复赠送）
     credits = CreditsService(repo)
     balance = credits.ensure_account(owner=code)
     clear_auth_failures("customer", code)
-    token = issue_auth_token("customer", code)
+    token = issue_auth_token(
+        "customer",
+        code,
+        not_after=customer.access_expires_at.timestamp()
+        if customer.access_expires_at
+        else None,
+    )
     _set_media_session_cookie(response, "vi_customer_media_token", token)
     return CustomerLoginResponse(
         token=token,
         code=code,
         name=customer.name,
         balance=str(balance),
+        valid_days=customer.valid_days,
+        package_price_credits=str(customer.package_price_credits),
+        activated_at=customer.activated_at.isoformat()
+        if customer.activated_at
+        else None,
+        access_expires_at=customer.access_expires_at.isoformat()
+        if customer.access_expires_at
+        else None,
     )
 
 

@@ -145,6 +145,43 @@ class MockRepository:
                 update={"enabled": enabled, "updated_at": datetime.now().astimezone()}
             )
 
+    def activate_customer_code(
+        self, code: str, activated_at: datetime
+    ) -> CustomerCode | None:
+        found = self._customer_codes.get(code)
+        if found is None or found.valid_days is None or found.activated_at:
+            return found
+        updated = found.model_copy(
+            update={
+                "activated_at": activated_at,
+                "access_expires_at": activated_at + timedelta(days=found.valid_days),
+                "updated_at": activated_at,
+            }
+        )
+        self._customer_codes[code] = updated
+        return updated
+
+    def extend_customer_code_access(
+        self, code: str, days: int, package_price_credits: Decimal, now: datetime
+    ) -> CustomerCode | None:
+        found = self._customer_codes.get(code)
+        if found is None or found.valid_days is None:
+            return found
+        expires_at = found.access_expires_at
+        if found.activated_at is not None:
+            base = expires_at if expires_at and expires_at > now else now
+            expires_at = base + timedelta(days=days)
+        updated = found.model_copy(
+            update={
+                "valid_days": days,
+                "package_price_credits": package_price_credits,
+                "access_expires_at": expires_at,
+                "updated_at": now,
+            }
+        )
+        self._customer_codes[code] = updated
+        return updated
+
     def delete_customer_code(self, code: str) -> None:
         self._customer_codes.pop(code, None)
 

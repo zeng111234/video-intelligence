@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -45,8 +45,20 @@ def client(tmp_path, monkeypatch: pytest.MonkeyPatch):
                 created_at=now,
                 updated_at=now,
             ),
+            CustomerCode(
+                code="EXPIRED-1",
+                name="已到期客户",
+                initial_credits="25",
+                valid_days=7,
+                package_price_credits="9.9",
+                activated_at=now - timedelta(days=8),
+                access_expires_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=8),
+                updated_at=now - timedelta(days=1),
+            ),
         ]
     )
+    repository.ensure_credit_account("EXPIRED-1")
 
     app.dependency_overrides[backend_deps.get_repository] = lambda: repository
     try:
@@ -80,6 +92,22 @@ def test_customer_login_success_and_opens_credit_account(client):
         headers=TEST_API_HEADERS,
     )
     assert resp2.json()["balance"] == "400"
+    assert data["valid_days"] is None
+    assert data["package_price_credits"] == "0"
+    assert data["access_expires_at"] is None
+
+
+def test_expired_customer_cannot_login_but_keeps_content_balance(client):
+    """使用期结束后拒绝登录，但已购内容积分不清零。"""
+    test_client, repo = client
+    response = test_client.post(
+        "/api/v1/auth/customer-login",
+        json={"code": "EXPIRED-1"},
+        headers=TEST_API_HEADERS,
+    )
+    assert response.status_code == 403
+    assert "使用期限已结束" in response.json()["message"]
+    assert repo.get_credit_balance("EXPIRED-1") == 25
 
 
 def test_local_admin_server_status_is_truthful_before_company_server(client):

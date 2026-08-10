@@ -25,7 +25,11 @@ CODE_GROUP_LENGTH = 4
 
 class GenerateCodesRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=50, description="客户名/备注")
-    initial_credits: Decimal = Field(Decimal("400"), ge=0, description="初始赠送积分")
+    initial_credits: Decimal = Field(Decimal("0"), ge=0, description="初始赠送积分")
+    valid_days: int | None = Field(7, ge=1, le=3650, description="首次激活后的可用天数")
+    package_price_credits: Decimal = Field(
+        Decimal("9.9"), ge=0, description="该使用套餐的售价积分"
+    )
     count: int = Field(1, ge=1, le=50, description="生成数量")
 
 
@@ -35,7 +39,17 @@ class CustomerCodeResponse(BaseModel):
     enabled: bool
     initial_credits: str
     balance: str
+    valid_days: int | None
+    package_price_credits: str
+    activated_at: str | None
+    access_expires_at: str | None
+    access_status: str
     created_at: str
+
+
+class ExtendCodeAccessRequest(BaseModel):
+    days: int = Field(..., ge=1, le=3650, description="增加的使用天数")
+    package_price_credits: Decimal = Field(..., ge=0, description="本次续期套餐售价积分")
 
 
 class CreateAdminRequest(BaseModel):
@@ -65,12 +79,30 @@ def _customer_response(
 ) -> CustomerCodeResponse:
     # 生成/查询时确保账户开立：余额立即可见（首次自动赠送 initial_credits）
     balance = CreditsService(repo).ensure_account(owner=code.code)
+    now = datetime.now().astimezone()
+    if not code.enabled:
+        access_status = "disabled"
+    elif code.valid_days is None:
+        access_status = "lifetime"
+    elif code.activated_at is None:
+        access_status = "unused"
+    elif code.access_expires_at and code.access_expires_at <= now:
+        access_status = "expired"
+    else:
+        access_status = "active"
     return CustomerCodeResponse(
         code=code.code,
         name=code.name,
         enabled=code.enabled,
         initial_credits=str(code.initial_credits),
         balance=str(balance),
+        valid_days=code.valid_days,
+        package_price_credits=str(code.package_price_credits),
+        activated_at=code.activated_at.isoformat() if code.activated_at else None,
+        access_expires_at=code.access_expires_at.isoformat()
+        if code.access_expires_at
+        else None,
+        access_status=access_status,
         created_at=code.created_at.isoformat(),
     )
 
@@ -81,7 +113,7 @@ def generate_codes(
     repo: SQLiteRepository = Depends(get_repository),
     _admin: bool = Security(require_admin_token),
 ):
-    """生成一批激活码（含初始积分）；返回生成的激活码与余额。"""
+    """生成一批带使用期和独立内容积分余额的激活码。"""
     now = datetime.now().astimezone()
     codes: list[CustomerCode] = []
     existing = {c.code for c in repo.list_customer_codes()}
@@ -95,6 +127,8 @@ def generate_codes(
                 code=candidate,
                 name=body.name.strip(),
                 initial_credits=body.initial_credits,
+                valid_days=body.valid_days,
+                package_price_credits=body.package_price_credits,
                 created_at=now,
                 updated_at=now,
             )
@@ -126,6 +160,30 @@ def toggle_code(
     if customer.enabled:
         revoke_auth_tokens("customer", customer.code)
     updated = repo.get_customer_code(code)
+    return _customer_response(updated, repo)
+
+
+@router.post("/codes/{code}/extend", response_model=CustomerCodeResponse)
+def extend_code_access(
+    code: str,
+    body: ExtendCodeAccessRequest,
+    repo: SQLiteRepository = Depends(get_repository),
+    _admin: bool = Security(require_admin_token),
+):
+    """管理员确认收款后延长使用期；不会自动增加或扣除积分。"""
+    customer = repo.get_customer_code(code)
+    if customer is None:
+        raise HTTPException(status_code=404, detail="激活码不存在。")
+    if customer.valid_days is None:
+        raise HTTPException(status_code=400, detail="长期激活码无需续期。")
+    updated = repo.extend_customer_code_access(
+        customer.code,
+        body.days,
+        body.package_price_credits,
+        datetime.now().astimezone(),
+    )
+    assert updated is not None
+    revoke_auth_tokens("customer", customer.code)
     return _customer_response(updated, repo)
 
 

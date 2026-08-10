@@ -134,6 +134,9 @@ export function clearCustomerSession(): void {
     localStorage.removeItem(CUSTOMER_TOKEN_KEY);
     localStorage.removeItem("vi_customer_name");
     localStorage.removeItem("vi_customer_code");
+    localStorage.removeItem("vi_customer_valid_days");
+    localStorage.removeItem("vi_customer_package_price_credits");
+    localStorage.removeItem("vi_customer_access_expires_at");
   } catch {
     // 忽略存储异常
   }
@@ -956,12 +959,19 @@ export interface CustomerCodeItem {
   enabled: boolean;
   initial_credits: string;
   balance: string;
+  valid_days: number | null;
+  package_price_credits: string;
+  activated_at: string | null;
+  access_expires_at: string | null;
+  access_status: "unused" | "active" | "expired" | "disabled" | "lifetime";
   created_at: string;
 }
 
 export function generateCustomerCodes(params: {
   name: string;
   initial_credits: string;
+  valid_days: number | null;
+  package_price_credits: string;
   count: number;
 }): Promise<CustomerCodeItem[]> {
   return request("/admin/codes/generate", {
@@ -1060,6 +1070,17 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
     hotspot_browser: caps.hotspot_browser ?? null,
     platform_browsers: caps.platform_browsers ?? [],
   };
+}
+
+export function extendCustomerCodeAccess(
+  code: string,
+  days: number,
+  packagePriceCredits: string,
+): Promise<CustomerCodeItem> {
+  return request(`/admin/codes/${encodeURIComponent(code)}/extend`, {
+    method: "POST",
+    body: JSON.stringify({ days, package_price_credits: packagePriceCredits }),
+  });
 }
 
 export function getCrawlerBrowserDiscoveryCapabilities(

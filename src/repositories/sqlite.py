@@ -143,6 +143,10 @@ class SQLiteRepository:
                 name TEXT NOT NULL,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 initial_credits TEXT NOT NULL DEFAULT '400',
+                valid_days INTEGER,
+                package_price_credits TEXT NOT NULL DEFAULT '0',
+                activated_at TEXT,
+                access_expires_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -2053,14 +2057,22 @@ class SQLiteRepository:
                 self.connection.execute(
                     """
                     INSERT INTO customer_codes(
-                        code, name, enabled, initial_credits, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        code, name, enabled, initial_credits, valid_days,
+                        package_price_credits, activated_at, access_expires_at,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         code.code,
                         code.name,
                         1 if code.enabled else 0,
                         str(code.initial_credits),
+                        code.valid_days,
+                        str(code.package_price_credits),
+                        code.activated_at.isoformat() if code.activated_at else None,
+                        code.access_expires_at.isoformat()
+                        if code.access_expires_at
+                        else None,
                         code.created_at.isoformat(),
                         code.updated_at.isoformat(),
                     ),
@@ -2069,7 +2081,9 @@ class SQLiteRepository:
     def get_customer_code(self, code: str) -> CustomerCode | None:
         row = self.connection.execute(
             """
-            SELECT code, name, enabled, initial_credits, created_at, updated_at
+            SELECT code, name, enabled, initial_credits, valid_days,
+                   package_price_credits, activated_at, access_expires_at,
+                   created_at, updated_at
             FROM customer_codes WHERE code = ?
             """,
             (code,),
@@ -2081,6 +2095,14 @@ class SQLiteRepository:
             name=row["name"],
             enabled=bool(row["enabled"]),
             initial_credits=Decimal(str(row["initial_credits"])),
+            valid_days=int(row["valid_days"]) if row["valid_days"] is not None else None,
+            package_price_credits=Decimal(str(row["package_price_credits"])),
+            activated_at=datetime.fromisoformat(row["activated_at"])
+            if row["activated_at"]
+            else None,
+            access_expires_at=datetime.fromisoformat(row["access_expires_at"])
+            if row["access_expires_at"]
+            else None,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
@@ -2088,7 +2110,9 @@ class SQLiteRepository:
     def list_customer_codes(self) -> list[CustomerCode]:
         rows = self.connection.execute(
             """
-            SELECT code, name, enabled, initial_credits, created_at, updated_at
+            SELECT code, name, enabled, initial_credits, valid_days,
+                   package_price_credits, activated_at, access_expires_at,
+                   created_at, updated_at
             FROM customer_codes ORDER BY created_at DESC
             """
         ).fetchall()
@@ -2098,6 +2122,16 @@ class SQLiteRepository:
                 name=row["name"],
                 enabled=bool(row["enabled"]),
                 initial_credits=Decimal(str(row["initial_credits"])),
+                valid_days=int(row["valid_days"])
+                if row["valid_days"] is not None
+                else None,
+                package_price_credits=Decimal(str(row["package_price_credits"])),
+                activated_at=datetime.fromisoformat(row["activated_at"])
+                if row["activated_at"]
+                else None,
+                access_expires_at=datetime.fromisoformat(row["access_expires_at"])
+                if row["access_expires_at"]
+                else None,
                 created_at=datetime.fromisoformat(row["created_at"]),
                 updated_at=datetime.fromisoformat(row["updated_at"]),
             )
@@ -2112,6 +2146,57 @@ class SQLiteRepository:
                 """,
                 (1 if enabled else 0, datetime.now().astimezone().isoformat(), code),
             )
+
+    def activate_customer_code(
+        self, code: str, activated_at: datetime
+    ) -> CustomerCode | None:
+        customer = self.get_customer_code(code)
+        if customer is None or customer.valid_days is None or customer.activated_at:
+            return customer
+        expires_at = activated_at + timedelta(days=customer.valid_days)
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE customer_codes
+                SET activated_at = ?, access_expires_at = ?, updated_at = ?
+                WHERE code = ? AND activated_at IS NULL
+                """,
+                (
+                    activated_at.isoformat(),
+                    expires_at.isoformat(),
+                    activated_at.isoformat(),
+                    code,
+                ),
+            )
+        return self.get_customer_code(code)
+
+    def extend_customer_code_access(
+        self, code: str, days: int, package_price_credits: Decimal, now: datetime
+    ) -> CustomerCode | None:
+        customer = self.get_customer_code(code)
+        if customer is None or customer.valid_days is None:
+            return customer
+        next_expires_at = customer.access_expires_at
+        if customer.activated_at is not None:
+            base = next_expires_at if next_expires_at and next_expires_at > now else now
+            next_expires_at = base + timedelta(days=days)
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE customer_codes
+                SET valid_days = ?, package_price_credits = ?,
+                    access_expires_at = ?, updated_at = ?
+                WHERE code = ?
+                """,
+                (
+                    days,
+                    str(package_price_credits),
+                    next_expires_at.isoformat() if next_expires_at else None,
+                    now.isoformat(),
+                    code,
+                ),
+            )
+        return self.get_customer_code(code)
 
     def delete_customer_code(self, code: str) -> None:
         with self.connection:

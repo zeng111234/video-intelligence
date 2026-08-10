@@ -4,6 +4,24 @@ from database.migrations.runner import MigrationRunner
 from project.backend.app.core import security
 
 
+def test_memory_auth_session_never_outlives_customer_access(monkeypatch):
+    """客户会话过期时间不得晚于激活码使用期。"""
+    monkeypatch.setenv("AUTH_SESSION_STORE", "memory")
+    security._auth_tokens.clear()
+    monkeypatch.setattr(security.time, "time", lambda: 1_000.0)
+
+    token = security.issue_auth_token(
+        "customer", "WEEKLY-CUSTOMER", not_after=1_005.0
+    )
+    assert security.verify_auth_token(token) == {
+        "role": "customer",
+        "subject": "WEEKLY-CUSTOMER",
+    }
+
+    monkeypatch.setattr(security.time, "time", lambda: 1_006.0)
+    assert security.verify_auth_token(token) is None
+
+
 def test_sqlite_auth_session_survives_memory_reset_and_can_be_revoked(
     tmp_path, monkeypatch
 ):

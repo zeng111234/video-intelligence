@@ -25,6 +25,7 @@ import {
 import {
   adjustCredits,
   createAdminAccount,
+  extendCustomerCodeAccess,
   generateCustomerCodes,
   listAdminAccounts,
   listCustomerCodes,
@@ -62,6 +63,10 @@ function CustomerCodesCard() {
   const [adjustCode, setAdjustCode] = useState<CustomerCodeItem | null>(null);
   const [adjustAmount, setAdjustAmount] = useState<number>(100);
   const [adjusting, setAdjusting] = useState(false);
+  const [extendCode, setExtendCode] = useState<CustomerCodeItem | null>(null);
+  const [extendDays, setExtendDays] = useState<number>(7);
+  const [extendPriceCredits, setExtendPriceCredits] = useState<number>(9.9);
+  const [extending, setExtending] = useState(false);
   const [form] = Form.useForm();
 
   const fetchCodes = useCallback(async () => {
@@ -85,7 +90,9 @@ function CustomerCodesCard() {
     try {
       const created = await generateCustomerCodes({
         name: values.name.trim(),
-        initial_credits: String(values.initial_credits ?? 400),
+        initial_credits: String(values.initial_credits ?? 0),
+        valid_days: values.valid_days ?? 7,
+        package_price_credits: String(values.package_price_credits ?? 9.9),
         count: values.count ?? 1,
       });
       toast.success(`已生成 ${created.length} 个激活码`);
@@ -104,7 +111,9 @@ function CustomerCodesCard() {
                   {item.code}
                 </Text>
                 <Text type="secondary" style={{ marginLeft: 8 }}>
-                  {item.name} · {item.balance} 积分
+                  {item.name} · {item.valid_days ? `${item.valid_days}天` : "长期"}
+                  {item.valid_days ? ` / ${item.package_price_credits}积分` : ""}
+                  {` · 内容余额 ${item.balance} 积分`}
                 </Text>
               </div>
             ))}
@@ -147,6 +156,37 @@ function CustomerCodesCard() {
     }
   };
 
+  const submitExtend = async () => {
+    if (!extendCode || extendDays <= 0 || extendPriceCredits < 0) return;
+    setExtending(true);
+    try {
+      const updated = await extendCustomerCodeAccess(
+        extendCode.code,
+        extendDays,
+        String(extendPriceCredits),
+      );
+      toast.success(
+        `已为 ${updated.name} 延长 ${extendDays} 天，套餐价 ${extendPriceCredits} 积分；内容余额不变`,
+      );
+      setExtendCode(null);
+      setExtendDays(7);
+      setExtendPriceCredits(9.9);
+      void fetchCodes();
+    } catch (err) {
+      toast.error((err as Error).message || "续期失败");
+    } finally {
+      setExtending(false);
+    }
+  };
+
+  const accessStatus = (item: CustomerCodeItem) => {
+    if (item.access_status === "disabled") return <Tag color="error">已禁用</Tag>;
+    if (item.access_status === "expired") return <Tag color="error">已到期</Tag>;
+    if (item.access_status === "unused") return <Tag color="gold">待首次激活</Tag>;
+    if (item.access_status === "lifetime") return <Tag color="success">长期有效</Tag>;
+    return <Tag color="success">使用中</Tag>;
+  };
+
   return (
     <Card
       className="admin-secondary-card"
@@ -168,7 +208,7 @@ function CustomerCodesCard() {
       }
     >
       <Text type="secondary" className="admin-section-intro">
-        每个激活码对应一个客户账户；可生成、充值或停用。
+        使用期从客户第一次登录起算；积分单独计费，到期不会清空余额。
       </Text>
       <Table
         size="small"
@@ -184,21 +224,45 @@ function CustomerCodesCard() {
           },
           { title: "客户", dataIndex: "name" },
           {
-            title: "余额",
-            dataIndex: "balance",
-            render: (value: string) => <Text strong>{value} 积分</Text>,
+            title: "套餐 / 有效期",
+            render: (_, item) => (
+              <Space direction="vertical" size={0}>
+                <Text>
+                  {item.valid_days
+                    ? `${item.valid_days}天 / ${item.package_price_credits}积分`
+                    : "长期"}
+                </Text>
+                {accessStatus(item)}
+                {item.access_expires_at && (
+                  <Text type="secondary">
+                    至 {item.access_expires_at.replace("T", " ").slice(0, 16)}
+                  </Text>
+                )}
+              </Space>
+            ),
           },
           {
-            title: "状态",
-            dataIndex: "enabled",
-            render: (value: boolean) =>
-              value ? <Tag color="success">启用</Tag> : <Tag color="error">禁用</Tag>,
+            title: "积分",
+            dataIndex: "balance",
+            render: (value: string) => <Text strong>{value}</Text>,
           },
-          { title: "创建时间", dataIndex: "created_at", render: (v: string) => v.replace("T", " ").slice(0, 16) },
           {
             title: "操作",
             render: (_, item) => (
-              <Space size={4}>
+              <Space size={0} wrap>
+                {item.valid_days !== null && (
+                  <Button
+                    size="small"
+                    type="link"
+                    onClick={() => {
+                      setExtendCode(item);
+                      setExtendDays(item.valid_days ?? 7);
+                      setExtendPriceCredits(Number(item.package_price_credits));
+                    }}
+                  >
+                    {item.access_status === "unused" ? "调整套餐" : "续期"}
+                  </Button>
+                )}
                 <Button size="small" type="link" onClick={() => setAdjustCode(item)}>
                   充值
                 </Button>
@@ -224,7 +288,16 @@ function CustomerCodesCard() {
         confirmLoading={generating}
         onCancel={() => setGenerateOpen(false)}
       >
-        <Form form={form} layout="vertical" initialValues={{ initial_credits: 400, count: 1 }}>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{
+            valid_days: 7,
+            package_price_credits: 9.9,
+            initial_credits: 0,
+            count: 1,
+          }}
+        >
           <Form.Item
             name="name"
             label="客户名 / 备注"
@@ -232,13 +305,66 @@ function CustomerCodesCard() {
           >
             <Input placeholder="如：王老板 / 某某公司" maxLength={50} />
           </Form.Item>
-          <Form.Item name="initial_credits" label="初始赠送积分（1 积分 = 1 元）">
+          <Form.Item
+            name="valid_days"
+            label="可使用天数"
+            extra="从客户第一次登录开始计时；例如周卡填写 7。"
+          >
+            <InputNumber min={1} max={3650} suffix="天" style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="package_price_credits"
+            label="套餐价格（积分）"
+            extra="周卡默认 9.9 积分；这是使用权限价格，不会从内容余额再次扣除。"
+          >
+            <InputNumber min={0} max={100000} precision={2} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item
+            name="initial_credits"
+            label="赠送积分（可选）"
+            extra="套餐时长与积分相互独立；不赠送请保持 0。"
+          >
             <InputNumber min={0} max={100000} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="count" label="生成数量">
             <InputNumber min={1} max={50} style={{ width: "100%" }} />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`延长使用期：${extendCode?.name ?? ""}`}
+        open={Boolean(extendCode)}
+        onOk={() => void submitExtend()}
+        okText="确认续期"
+        confirmLoading={extending}
+        onCancel={() => setExtendCode(null)}
+      >
+        <Space direction="vertical" size={8} style={{ width: "100%" }}>
+          <Text type="secondary">
+            当前套餐 {extendCode?.valid_days ?? "—"} 天 / {extendCode?.package_price_credits ?? "—"}
+            积分；续期不会改动内容余额。
+          </Text>
+          <InputNumber
+            min={1}
+            max={3650}
+            value={extendDays}
+            onChange={(value) => setExtendDays(value ?? 0)}
+            suffix="天"
+            style={{ width: "100%" }}
+            autoFocus
+          />
+          <InputNumber
+            min={0}
+            max={100000}
+            precision={2}
+            value={extendPriceCredits}
+            onChange={(value) => setExtendPriceCredits(value ?? 0)}
+            suffix="积分"
+            placeholder="本次套餐价格"
+            style={{ width: "100%" }}
+          />
+        </Space>
       </Modal>
 
       <Modal

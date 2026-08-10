@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -44,11 +45,17 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
 
 
 def test_generate_codes_and_customer_login(client):
-    """生成激活码 -> 客户可用其登录并获得初始积分。"""
+    """7 天 / 9.9 积分套餐首次登录才起算，且不误扣内容积分。"""
     test_client, repo = client
     resp = test_client.post(
         "/api/v1/admin/codes/generate",
-        json={"name": "客户丙", "initial_credits": "300", "count": 2},
+        json={
+            "name": "客户丙",
+            "initial_credits": "0",
+            "valid_days": 7,
+            "package_price_credits": "9.9",
+            "count": 2,
+        },
         headers=_admin_headers(test_client),
     )
     assert resp.status_code == 200
@@ -56,14 +63,81 @@ def test_generate_codes_and_customer_login(client):
     assert len(codes) == 2
     assert all(len(item["code"].replace("-", "")) == 16 for item in codes)
     assert all([len(group) for group in item["code"].split("-")] == [4, 4, 4, 4] for item in codes)
-    assert all(item["balance"] == "300" for item in codes)
+    assert all(item["balance"] == "0" for item in codes)
+    assert all(item["valid_days"] == 7 for item in codes)
+    assert all(item["package_price_credits"] == "9.9" for item in codes)
+    assert all(item["access_status"] == "unused" for item in codes)
+    assert all(item["activated_at"] is None for item in codes)
+    assert all(item["access_expires_at"] is None for item in codes)
     # 客户用新激活码登录
-    login = test_client.post(
+    login_response = test_client.post(
+        "/api/v1/auth/customer-login",
+        json={"code": codes[0]["code"]},
+        headers=TEST_API_HEADERS,
+    )
+    assert login_response.status_code == 200
+    login = login_response.json()
+    assert login["balance"] == "0"
+    assert login["valid_days"] == 7
+    assert login["package_price_credits"] == "9.9"
+    assert login["activated_at"] is not None
+    assert login["access_expires_at"] is not None
+
+    first_expiry = login["access_expires_at"]
+    second_login = test_client.post(
         "/api/v1/auth/customer-login",
         json={"code": codes[0]["code"]},
         headers=TEST_API_HEADERS,
     ).json()
-    assert login["balance"] == "300"
+    assert second_login["access_expires_at"] == first_expiry
+    assert second_login["balance"] == "0"
+
+
+def test_extend_access_preserves_content_balance_and_revokes_old_session(client):
+    """续 7 天 / 9.9 积分只延长使用权，不改变内容余额。"""
+    test_client, _ = client
+    admin_headers = _admin_headers(test_client)
+    created = test_client.post(
+        "/api/v1/admin/codes/generate",
+        json={
+            "name": "客户续期",
+            "initial_credits": "25",
+            "valid_days": 7,
+            "package_price_credits": "9.9",
+            "count": 1,
+        },
+        headers=admin_headers,
+    ).json()[0]
+    code = created["code"]
+    login = test_client.post(
+        "/api/v1/auth/customer-login",
+        json={"code": code},
+        headers=TEST_API_HEADERS,
+    ).json()
+    old_expiry = datetime.fromisoformat(login["access_expires_at"])
+    old_token = login["token"]
+
+    renewed = test_client.post(
+        f"/api/v1/admin/codes/{code}/extend",
+        json={"days": 7, "package_price_credits": "9.9"},
+        headers=admin_headers,
+    )
+    assert renewed.status_code == 200
+    payload = renewed.json()
+    assert payload["package_price_credits"] == "9.9"
+    assert payload["balance"] == "25"
+    next_expiry = datetime.fromisoformat(payload["access_expires_at"])
+    assert next_expiry - old_expiry == timedelta(days=7)
+
+    stale = test_client.get("/api/v1/credits", headers={"X-Customer-Token": old_token})
+    assert stale.status_code == 401
+    next_login = test_client.post(
+        "/api/v1/auth/customer-login",
+        json={"code": code},
+        headers=TEST_API_HEADERS,
+    )
+    assert next_login.status_code == 200
+    assert next_login.json()["balance"] == "25"
 
 
 def test_list_and_toggle_codes(client):

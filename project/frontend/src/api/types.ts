@@ -1976,6 +1976,10 @@ export interface CustomerLoginResponse {
   code: string;
   name: string;
   balance: string;
+  valid_days: number | null;
+  package_price_credits: string;
+  activated_at: string | null;
+  access_expires_at: string | null;
 }
 
 export interface AdminLoginResponse {

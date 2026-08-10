@@ -56,6 +56,10 @@ describe("LoginPage", () => {
       code: "ABCD1234",
       name: "王老板",
       balance: "400",
+      valid_days: 7,
+      package_price_credits: "9.9",
+      activated_at: "2026-08-10T10:00:00+08:00",
+      access_expires_at: "2026-08-17T10:00:00+08:00",
     });
     render(
       <ToastProvider>
@@ -70,6 +74,11 @@ describe("LoginPage", () => {
       expect(mockCustomerLogin).toHaveBeenCalledWith("ABCD1234");
       expect(localStorage.getItem("vi_customer_token")).toBe("customer-token-1");
       expect(localStorage.getItem("vi_customer_name")).toBe("王老板");
+      expect(localStorage.getItem("vi_customer_valid_days")).toBe("7");
+      expect(localStorage.getItem("vi_customer_package_price_credits")).toBe("9.9");
+      expect(localStorage.getItem("vi_customer_access_expires_at")).toBe(
+        "2026-08-17T10:00:00+08:00",
+      );
     });
   });
 

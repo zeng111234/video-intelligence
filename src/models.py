@@ -894,6 +894,10 @@ class CustomerCode(BaseModel):
     name: str
     enabled: bool = True
     initial_credits: Decimal = Field(default=Decimal("400"), ge=0)
+    valid_days: int | None = Field(default=None, ge=1, le=3650)
+    package_price_credits: Decimal = Field(default=Decimal("0"), ge=0)
+    activated_at: datetime | None = None
+    access_expires_at: datetime | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 

@@ -426,13 +426,19 @@ def _persistent_session_record(token: str) -> dict | None:
         return None
 
 
-def issue_auth_token(role: str, subject: str) -> str:
+def issue_auth_token(
+    role: str, subject: str, *, not_after: float | None = None
+) -> str:
     """签发登录 token（role: admin/customer；subject: 用户名/激活码）。"""
     if role not in {"admin", "customer"} or not subject.strip():
         raise ValueError("登录会话角色或身份无效。")
     token = secrets.token_urlsafe(32)
     now = time.time()
     expires_at = now + _token_ttl_seconds(role)
+    if not_after is not None:
+        expires_at = min(expires_at, not_after)
+    if expires_at <= now:
+        raise ValueError("登录授权已到期。")
     if _auth_session_store() == "sqlite":
         with _session_connection() as connection:
             connection.execute("DELETE FROM auth_sessions WHERE expires_at <= ?", (now,))
