@@ -63,15 +63,10 @@ FORBIDDEN_EXTENSIONS = {
     ".p8",
     ".ppk",
 }
-PRIVATE_KEY_MARKERS = (
-    b"-----BEGIN PRIVATE KEY-----",
-    b"-----BEGIN ENCRYPTED PRIVATE KEY-----",
-    b"-----BEGIN RSA PRIVATE KEY-----",
-    b"-----BEGIN DSA PRIVATE KEY-----",
-    b"-----BEGIN EC PRIVATE KEY-----",
-    b"-----BEGIN OPENSSH PRIVATE KEY-----",
-    b"PuTTY-User-Key-File:",
-)
+PRIVATE_KEY_MARKERS = tuple(
+    b"-----BEGIN " + key_kind + b"PRIVATE KEY-----"
+    for key_kind in (b"", b"ENCRYPTED ", b"RSA ", b"DSA ", b"EC ", b"OPENSSH ")
+) + (b"PuTTY-" + b"User-Key-File:",)
 SECRET_SCAN_CHUNK_BYTES = 1024 * 1024
 SECRET_SCAN_OVERLAP_BYTES = max(map(len, PRIVATE_KEY_MARKERS)) - 1
 MAX_FILES = 5000

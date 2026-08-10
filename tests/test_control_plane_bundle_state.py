@@ -65,6 +65,22 @@ def _repository(tmp_path: Path, *, forbidden_marker: str | None = None) -> Path:
     for index in range(5):
         _write(root / "database" / f"migration_{index}.sql")
     _write(root / "deploy" / "control-plane" / "README.md")
+    validator_source = (
+        REPOSITORY_ROOT
+        / "deploy"
+        / "control-plane"
+        / "native-systemd"
+        / "validate_release_archive.py"
+    )
+    validator_target = (
+        root
+        / "deploy"
+        / "control-plane"
+        / "native-systemd"
+        / "validate_release_archive.py"
+    )
+    validator_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(validator_source, validator_target)
     if forbidden_marker:
         _write(
             root / "deploy" / "control-plane" / "unsafe.txt",
