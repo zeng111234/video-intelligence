@@ -66,7 +66,11 @@ readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
 6. 工具、媒体二进制、目录权限和 UID/GID 准备完成后，先执行一次性 adoption。下面命令中的版本、链接、文件数和所有 SHA256 都是已审计固定值；只能整条原样使用，服务 UID/GID 仍须与 `id` 输出核对：
 
    ```bash
-   cd /opt/videoinsight-control-plane/tools/native-systemd
+   cd /opt/videoinsight-control-plane/tools/native-systemd || exit 1
+   for script in common.sh install_unit.sh normalize_legacy_unit.sh preflight.sh \
+     rollback.sh upgrade.sh verify.sh; do
+     /bin/bash -n "$script" || exit 1
+   done
    /bin/bash normalize_legacy_unit.sh \
      0.2.6 0.2.4 /opt/videoinsight-control-plane/releases/0.2.6/app \
      98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994 \
@@ -79,6 +83,8 @@ readlink -f /opt/videoinsight-control-plane/tools/media/bin/ffmpeg
    /bin/bash upgrade.sh 0.2.9 '<开发电脑记录的 SHA256>' 996 994
    /bin/bash verify.sh 0.2.9 996 994
    ```
+
+服务器必须在执行任何 shipped shell 前，用系统 `/bin/bash -n` 对上述 7 个文件逐个解析；任一文件失败就停止，不得继续 normalize、preflight、upgrade、rollback 或 verify。该门禁用于目标 CentOS 7 自带 Bash 4.2，开发机较新的 Bash 通过不能代替服务器解析通过。
 
 `normalize_legacy_unit.sh` 在任何替换前同时核对原 current 文本、原 unit 哈希、离线 Python 哈希，以及 application/interpreter 两棵树从根开始的类型、POSIX 相对路径、权限、UID/GID、文件内容或符号链接原始目标。两树及版本祖先必须同设备、无独立挂载、root 持有且不可由组或其他用户修改；固定服务身份必须能遍历目录和读取文件。application 禁止符号链接，interpreter 只允许审计固定的 4 个链接。原宽松 unit 使用单一 `O_NOFOLLOW` 源文件描述符与 `O_EXCL` no-clobber 目标保存在 `state/legacy-adoption/`，只作取证；生成的 bridge 则完整包含固定 User/Group、媒体 PATH、`CPUQuota=100%`、`MemoryLimit=1G` 和其他 strict 指令。
 

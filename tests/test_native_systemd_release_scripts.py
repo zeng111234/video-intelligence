@@ -1657,8 +1657,14 @@ def test_offline_python_gate_is_manifest_bound_isolated_and_before_lock(
     assert "/proc/self/mountinfo" in common
     assert "NF < 5 { exit 2 }" in common
     assert "gsub(/\\\\040/" in common
-    assert "sitecustomize.py|usercustomize.py" in common
+    assert '"$leaf" == "sitecustomize.py"' in common
+    assert '"$leaf" == "usercustomize.py"' in common
     assert '"$uid" == "0" && "$device" == "$root_device"' in common
+    digest_body = common.split("actual_digest=$(", 1)[1].split(
+        ') || die "离线 Python tree-v1 纯系统工具校验失败。"', 1
+    )[0]
+    assert "case " not in digest_body
+    assert "esac" not in digest_body
     assert '"$VIDEOINSIGHT_SYSTEM_ENV" -i' in common
     assert '"$VIDEOINSIGHT_OFFLINE_PYTHON" -B -I -S -X utf8' in common
     assert "PYTHONPATH=" not in common
@@ -1691,6 +1697,17 @@ assert sys.flags.utf8_mode == 1
 """,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_readme_requires_target_bash_42_parse_gate_before_execution() -> None:
+    readme = _read("README.md")
+    assert "cd /opt/videoinsight-control-plane/tools/native-systemd || exit 1" in readme
+    parse_gate = readme.index("for script in common.sh install_unit.sh")
+    normalize = readme.index("/bin/bash normalize_legacy_unit.sh", parse_gate)
+    assert '/bin/bash -n "$script" || exit 1' in readme[parse_gate:normalize]
+    for name in SHELL_SCRIPTS:
+        assert name in readme[parse_gate:normalize]
+    assert "CentOS 7 自带 Bash 4.2" in readme
 
 
 def test_shells_never_execute_offline_python_outside_trusted_wrappers() -> None:

@@ -329,7 +329,7 @@ validate_offline_python_runtime() {
   actual_digest=$(
     {
       printf 'd\t.\t%04o\t%s\t%s\t\n' "$((8#$root_mode))" "$root_uid" "$root_gid"
-      local relative path mode uid gid device kind value target_lines resolved
+      local relative path mode uid gid device kind value target_lines resolved leaf
       while IFS= read -r -d '' relative; do
         if LC_ALL=C printf '%s' "$relative" | grep -q '[[:cntrl:]]'; then
           die "离线 Python 路径包含控制字符。"
@@ -358,9 +358,10 @@ validate_offline_python_runtime() {
           else
             (( (8#$mode & 0004) != 0 )) || die "固定服务身份无法读取离线 Python 文件。"
           fi
-          case "${relative##*/}" in
-            sitecustomize.py|usercustomize.py) die "离线 Python 运行时包含自定义 site 启动代码。" ;;
-          esac
+          leaf="${relative##*/}"
+          if [[ "$leaf" == "sitecustomize.py" || "$leaf" == "usercustomize.py" ]]; then
+            die "离线 Python 运行时包含自定义 site 启动代码。"
+          fi
           value=$(sha256sum -- "$path" | cut -d' ' -f1)
         elif [[ -d "$path" ]]; then
           kind="d"
