@@ -2614,6 +2614,94 @@ def test_authoritative_windows_payload_scan_rejects_exact_env_secret_values(
         assert allowed.returncode == 0, allowed.stderr
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
+    tmp_path: Path,
+):
+    final_script = REPOSITORY_ROOT / "scripts" / "build_final_windows_release.ps1"
+    repository = tmp_path / "fixture"
+    package = repository / "project" / "frontend" / "release" / "win-unpacked"
+    backend = package / "resources" / "backend"
+    desktop_config = package / "resources" / "config" / "release.json"
+    backend_config = backend / "_internal" / "config" / "desktop-control-plane.json"
+    trusted_ca = backend / "_internal" / "certifi" / "cacert.pem"
+    desktop_config.parent.mkdir(parents=True)
+    backend_config.parent.mkdir(parents=True)
+    trusted_ca.parent.mkdir(parents=True)
+    (package / "VideoInsight.exe").write_bytes(b"desktop")
+    (backend / "VideoInsightBackend.exe").write_bytes(b"backend")
+    origin = "https://release.fixture.invalid"
+    version = "0.2.7"
+    desktop_config.write_text(
+        json.dumps({"current_version": version, "control_plane_url": origin}),
+        encoding="utf-8",
+    )
+    backend_config.write_text(
+        json.dumps({"enabled": True, "control_plane_url": origin}),
+        encoding="utf-8",
+    )
+    trusted_ca.write_text(
+        "-----BEGIN CERTIFICATE-----\npublic-root-ca\n-----END CERTIFICATE-----\n",
+        encoding="ascii",
+    )
+    loader = _powershell_function_loader(
+        final_script,
+        (
+            "Get-ExistingPathAttributesForRelease",
+            "Assert-NoReparsePointsForReleasePath",
+            "Test-ByteSequenceInArray",
+            "Test-FileContainsBytePattern",
+            "Assert-WindowsReleasePayloadAuthoritative",
+        ),
+    )
+    escaped_repository = str(repository).replace("'", "''")
+    escaped_package = str(package).replace("'", "''")
+    command = loader + (
+        f"$repositoryRoot = '{escaped_repository}'; "
+        f"Assert-WindowsReleasePayloadAuthoritative -PackageRoot '{escaped_package}' "
+        f"-Origin '{origin}' -ExpectedVersion '{version}' -SecretEnvironmentFiles @()"
+    )
+    allowed = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert allowed.returncode == 0, allowed.stderr
+
+    untrusted_pem = package / "resources" / "other.pem"
+    untrusted_pem.write_text(trusted_ca.read_text(encoding="ascii"), encoding="ascii")
+    rejected_path = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert rejected_path.returncode != 0
+
+    untrusted_pem.unlink()
+    trusted_ca.write_text(
+        "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----\n",
+        encoding="ascii",
+    )
+    rejected_marker = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert rejected_marker.returncode != 0
+
+
 def test_final_release_requires_authenticated_production_configuration():
     final_script = (
         REPOSITORY_ROOT / "scripts" / "build_final_windows_release.ps1"
@@ -2721,6 +2809,9 @@ def test_final_release_requires_current_paid_acceptance_report():
     ).read_text(encoding="utf-8")
 
     assert "[Parameter(Mandatory = $true)][string]$PaidAcceptanceReport" in final_script
+    assert '[string]$ControlPlaneVersion = ""' in final_script
+    assert "-ExpectedVersion $ControlPlaneVersion" in final_script
+    assert final_script.count("-ExpectedVersion $ControlPlaneVersion") == 2
     assert "Resolve-Path -LiteralPath $PaidAcceptanceReport" in final_script
     assert "function Assert-PaidAcceptanceAuthoritativeProof" in final_script
     assert '"$Origin/api/v1/provider/release-acceptance/proof/$runId' in final_script

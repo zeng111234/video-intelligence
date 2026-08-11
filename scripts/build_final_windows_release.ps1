@@ -2,6 +2,7 @@
     [Parameter(Mandatory = $true)][string]$ControlPlaneUrl,
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$PaidAcceptanceReport,
+    [string]$ControlPlaneVersion = "",
     [string]$Notes = "稳定性与功能更新"
 )
 
@@ -808,11 +809,19 @@ function Assert-WindowsReleasePayloadAuthoritative {
         $relativePath = $packageFile.FullName.Substring($PackageRoot.TrimEnd('\', '/').Length + 1)
         $segments = @($relativePath -split '[\\/]')
         $parentSegments = if ($segments.Count -gt 1) { @($segments[0..($segments.Count - 2)]) } else { @() }
+        $isTrustedCertifiCaBundle = [string]::Equals(
+            $relativePath,
+            "resources\backend\_internal\certifi\cacert.pem",
+            [StringComparison]::OrdinalIgnoreCase
+        )
         if (
             @($parentSegments | Where-Object { $forbiddenDirectories -contains $_.ToLowerInvariant() }).Count -gt 0 -or
             $packageFile.Name -eq ".env" -or
             $packageFile.Name.StartsWith(".env.", [StringComparison]::OrdinalIgnoreCase) -or
-            $forbiddenExtensions -contains $packageFile.Extension.ToLowerInvariant()
+            (
+                $forbiddenExtensions -contains $packageFile.Extension.ToLowerInvariant() -and
+                -not $isTrustedCertifiCaBundle
+            )
         ) {
             throw "Windows 客户包包含不允许的密钥、运行数据或媒体文件：$relativePath"
         }
@@ -932,8 +941,14 @@ foreach ($windowsBuildOutputPath in $windowsBuildOutputPaths) {
         -CandidatePath $windowsBuildOutputPath
 }
 
+if ([string]::IsNullOrWhiteSpace($ControlPlaneVersion)) {
+    $ControlPlaneVersion = $Version
+}
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
     throw "正式版本号必须使用三段纯数字，例如 0.2.1。"
+}
+if ($ControlPlaneVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "正式控制层版本号必须使用三段纯数字，例如 0.2.1。"
 }
 if (-not (Test-Path -LiteralPath $releaseRegistryPath -PathType Leaf)) {
     throw "缺少受版本控制的正式版本登记表：$releaseRegistryPath"
@@ -1090,7 +1105,7 @@ Write-Output "[1/7] 验证正式公司服务（登录专用测试账号，不会
 try {
     Invoke-ControlPlaneAuthoritativeGate `
         -Origin $validatedControlPlaneOrigin `
-        -ExpectedVersion $Version `
+        -ExpectedVersion $ControlPlaneVersion `
         -ActivationCode $verificationActivationValue `
         -AdminUsername $verificationAdminUsernameValue `
         -AdminPassword $verificationAdminPasswordValue
@@ -1105,7 +1120,7 @@ Write-Output "[2/7] 验证最近 24 小时内的最低成本真实付费闭环"
 try {
     Assert-PaidAcceptanceAuthoritativeProof `
         -Origin $validatedControlPlaneOrigin `
-        -ExpectedVersion $Version `
+        -ExpectedVersion $ControlPlaneVersion `
         -ReportPath $resolvedPaidAcceptanceReport `
         -ActivationCode $paidAcceptanceValue
 }
