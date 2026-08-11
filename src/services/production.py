@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.adapters.avatar import AvatarProviderError
 from src.adapters.douyin_parser import DouyinParserError
 from src.contracts import TaskRepository
 from src.services.publish_metadata import (
@@ -34,6 +35,9 @@ from src.models import (
 )
 
 DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
+BUNDLED_DEFAULT_PROFILE_NAME = "大树1"
+BUNDLED_DEFAULT_AVATAR_ID = "shuying-avatar-21920"
+BUNDLED_DEFAULT_VOICE_ID = "shuying-voice-7869"
 
 
 class IdempotencyConflictError(ValueError):
@@ -74,6 +78,7 @@ class ProductionService:
         self.template_service = template_service
         self.publish_service = publish_service
         self._import_legacy_batches_once()
+        self._bootstrap_bundled_default_profile()
 
     @staticmethod
     def _load(path: Path, model_type):
@@ -100,6 +105,38 @@ class ProductionService:
         for batch in self._load(self._legacy_batches_path, ProductionBatch):
             if self.repository.get_production_batch(batch.batch_id) is None:
                 self.repository.save_production_batch(batch)
+
+    def _bootstrap_bundled_default_profile(self) -> None:
+        """首次启动时复用已购买的大树1资产，不覆盖任何客户配方。"""
+        if self._profiles_path.exists() or self.avatar_service is None:
+            return
+        try:
+            assets = {
+                item.asset_id: item for item in self.avatar_service.list_assets()
+            }
+        except AvatarProviderError:
+            return
+        avatar = assets.get(BUNDLED_DEFAULT_AVATAR_ID)
+        voice = assets.get(BUNDLED_DEFAULT_VOICE_ID)
+        if not all(
+            item is not None
+            and item.authorized
+            and item.shared
+            and item.status == "ready"
+            for item in (avatar, voice)
+        ):
+            return
+        if avatar.kind.value != "avatar" or voice.kind.value != "voice":
+            return
+        profile = ProductionProfile(
+            name=BUNDLED_DEFAULT_PROFILE_NAME,
+            description="已购买并授权的大树1形象与声音",
+            platform="douyin",
+            avatar_id=BUNDLED_DEFAULT_AVATAR_ID,
+            voice_id=BUNDLED_DEFAULT_VOICE_ID,
+            edit_template_id=DEFAULT_PRODUCTION_TEMPLATE_ID,
+        )
+        self._save(self._profiles_path, [profile])
 
     def list_profiles(self) -> list[ProductionProfile]:
         return sorted(
