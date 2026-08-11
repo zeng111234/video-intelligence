@@ -427,6 +427,7 @@ run_trusted_offline_python() {
     LANG=C
     LC_ALL=C
     PATH=/usr/bin:/bin
+    PYTHONDONTWRITEBYTECODE=1
     "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT"
     "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT"
   )
@@ -444,6 +445,7 @@ run_trusted_offline_python_for_service() {
     die "拒绝在完整离线 Python 运行时门禁前执行 Python。"
   "$VIDEOINSIGHT_SYSTEM_ENV" -i \
     HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
     "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT" \
     "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT" \
     "VIDEOINSIGHT_SERVICE_UID=$service_uid" \
@@ -461,6 +463,7 @@ run_trusted_offline_python_in_tmp() {
     die "离线 Python 临时目录越过固定控制层根目录。"
   "$VIDEOINSIGHT_SYSTEM_ENV" -i \
     HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
     "TMPDIR=$trusted_tmp" \
     "VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT" \
     "VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT" \
@@ -496,6 +499,7 @@ run_trusted_staging_python() {
   done
   "$VIDEOINSIGHT_SYSTEM_ENV" -i \
     HOME=/nonexistent LANG=C LC_ALL=C PATH=/usr/bin:/bin \
+    PYTHONDONTWRITEBYTECODE=1 \
     "TMPDIR=$trusted_tmp" PIP_CONFIG_FILE=/dev/null PIP_NO_CACHE_DIR=1 \
     PIP_NO_INDEX=1 \
     "$python_path" -B -I -X utf8 "$@"

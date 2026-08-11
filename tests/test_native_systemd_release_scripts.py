@@ -460,6 +460,17 @@ def test_upgrade_is_immutable_offline_and_transactional() -> None:
     assert "PIP_CONFIG_FILE=/dev/null" in common
     assert "PIP_NO_CACHE_DIR=1" in common
     assert '"$python_path" -B -I -X utf8' in common
+    for function_name, next_function in (
+        ("run_trusted_offline_python()", "run_trusted_offline_python_for_service()"),
+        (
+            "run_trusted_offline_python_for_service()",
+            "run_trusted_offline_python_in_tmp()",
+        ),
+        ("run_trusted_offline_python_in_tmp()", "run_trusted_staging_python()"),
+        ("run_trusted_staging_python()", "resolve_command_in_explicit_path()"),
+    ):
+        function = common.split(function_name, 1)[1].split(next_function, 1)[0]
+        assert "PYTHONDONTWRITEBYTECODE=1" in function
     assert "--require-hashes" in script
     assert "requirements.lock" in script
     assert 'fsync_tree "$STAGING_DIR"' in script
@@ -1912,7 +1923,8 @@ def test_offline_python_repair_transaction_is_fail_closed_and_reproducible() -> 
         'durable_rename "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" "$LEGACY_BACKUP"'
     )
     clean_to_live = main.index(
-        'durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"'
+        'durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"',
+        old_to_backup,
     )
     clean_gate = main.index("validate_repair_service_start_binding", clean_to_live)
     first_new_start = main.index('systemctl start "$VIDEOINSIGHT_SERVICE"', clean_gate)
@@ -1940,6 +1952,53 @@ def test_offline_python_repair_transaction_is_fail_closed_and_reproducible() -> 
     assert "固定服务保持停止" in restore
     assert "restore_legacy_runtime || true" in repair
     assert "active clean runtime 退出健康失败后的停止" in repair
+    assert (
+        'readonly ACTIVE_CONTAMINATED_BACKUP="$PYTHON_PARENT/'
+        '3.12.13.active-contaminated-runtime"' in repair
+    )
+    refresh = main.index('if [[ "$action" == "refresh-active" ]]')
+    refresh_archive = main.index("validate_official_archive", refresh)
+    refresh_stage = main.index("build_clean_stage", refresh_archive)
+    refresh_stop = main.index(
+        'stop_repair_service_fail_closed "active 污染 runtime 刷新前停止控制层"',
+        refresh_stage,
+    )
+    quarantine = main.index(
+        'durable_rename "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"', refresh_stop
+    )
+    refresh_install = main.index(
+        'if [[ "$action" == "refresh-install-clean" ]]', quarantine
+    )
+    refreshed_live = main.index(
+        'durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"',
+        refresh_install,
+    )
+    refreshed_binding = main.index(
+        "validate_repair_service_start_binding", refreshed_live
+    )
+    refreshed_start = main.index(
+        'systemctl start "$VIDEOINSIGHT_SERVICE"', refreshed_binding
+    )
+    refreshed_health = main.index('health_check ""', refreshed_start)
+    refreshed_clean_gate = main.index(
+        "revalidate_clean_runtime_after_service_health", refreshed_health
+    )
+    assert (
+        refresh_archive
+        < refresh_stage
+        < refresh_stop
+        < quarantine
+        < refresh_install
+        < refreshed_live
+        < refreshed_binding
+        < refreshed_start
+        < refreshed_health
+        < refreshed_clean_gate
+    )
+    finish = repair.split("finish() {", 1)[1].split("\n}\n\nmain()", 1)[0]
+    assert finish.index('[[ "$ACTIVE_REFRESH" -eq 1 ]]') < finish.index(
+        "restore_legacy_runtime"
+    )
 
 
 def test_offline_python_repair_binds_unit_and_trees_around_every_service_action() -> (
@@ -2240,6 +2299,18 @@ def test_offline_python_repair_crash_states_are_behaviorally_classified() -> Non
         (("prepared", "missing", "legacy", "clean"), "install-clean", 0),
         (("prepared", "clean", "legacy", "missing"), "finalize", 0),
         (("active", "clean", "legacy", "missing"), "done", 0),
+        (("active", "clean", "legacy", "missing", "present"), "done", 0),
+        (
+            ("active", "invalid", "legacy", "missing", "missing"),
+            "refresh-active",
+            0,
+        ),
+        (
+            ("active", "missing", "legacy", "clean", "present"),
+            "refresh-install-clean",
+            0,
+        ),
+        (("active", "invalid", "legacy", "missing", "present"), "invalid", 1),
         (("prepared", "legacy", "legacy", "clean"), "invalid", 1),
         (("active", "legacy", "missing", "clean"), "invalid", 1),
     )

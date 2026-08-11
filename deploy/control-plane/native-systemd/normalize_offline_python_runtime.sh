@@ -11,6 +11,7 @@ source "$SCRIPT_DIR/common.sh"
 
 readonly PYTHON_PARENT="$VIDEOINSIGHT_ROOT/python"
 readonly LEGACY_BACKUP="$PYTHON_PARENT/3.12.13.legacy-pyc-drift-3f3407b97c487aaf0dedd632590fd7731486675cf77000827918274bab07b8b0"
+readonly ACTIVE_CONTAMINATED_BACKUP="$PYTHON_PARENT/3.12.13.active-contaminated-runtime"
 readonly CLEAN_STAGE="$PYTHON_PARENT/.3.12.13.clean-runtime-stage"
 readonly EXTRACT_ROOT="$PYTHON_PARENT/.3.12.13.clean-runtime-extract"
 readonly REPAIR_DESCRIPTOR="$VIDEOINSIGHT_ROOT/state/offline-python-runtime-repair"
@@ -37,6 +38,7 @@ TRANSACTION_STARTED=0
 PREPARED_CREATED=0
 DESCRIPTOR_TEMP_CREATED=0
 SUCCESS=0
+ACTIVE_REFRESH=0
 REPAIR_SERVICE_BINDING_KIND=""
 
 usage() {
@@ -244,26 +246,55 @@ offline_python_tree_state() {
   fi
 }
 
+active_contaminated_backup_state() {
+  if [[ ! -e "$ACTIVE_CONTAMINATED_BACKUP" && \
+        ! -L "$ACTIVE_CONTAMINATED_BACKUP" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+  if [[ ! -d "$ACTIVE_CONTAMINATED_BACKUP" || \
+        -L "$ACTIVE_CONTAMINATED_BACKUP" || \
+        $(readlink -f -- "$ACTIVE_CONTAMINATED_BACKUP") != \
+          "$ACTIVE_CONTAMINATED_BACKUP" ]]; then
+    printf 'invalid\n'
+    return 1
+  fi
+  if ! ( validate_root_directory "$ACTIVE_CONTAMINATED_BACKUP" && \
+         reject_mount_at_or_below "$ACTIVE_CONTAMINATED_BACKUP" \
+           "active 污染 runtime 取证目录" ) >/dev/null 2>&1; then
+    printf 'invalid\n'
+    return 1
+  fi
+  printf 'present\n'
+}
+
 classify_repair_state() {
   local descriptor_state="$1"
   local runtime_state="$2"
   local backup_state="$3"
   local stage_state="$4"
-  case "$descriptor_state:$runtime_state:$backup_state:$stage_state" in
-    missing:legacy:missing:missing|missing:legacy:missing:clean)
+  local contaminated_state="${5:-missing}"
+  case "$descriptor_state:$runtime_state:$backup_state:$stage_state:$contaminated_state" in
+    missing:legacy:missing:missing:missing|missing:legacy:missing:clean:missing)
       printf 'prepare\n'
       ;;
-    prepared:legacy:missing:clean)
+    prepared:legacy:missing:clean:missing)
       printf 'replace\n'
       ;;
-    prepared:missing:legacy:clean)
+    prepared:missing:legacy:clean:missing)
       printf 'install-clean\n'
       ;;
-    prepared:clean:legacy:missing)
+    prepared:clean:legacy:missing:missing)
       printf 'finalize\n'
       ;;
-    active:clean:legacy:missing)
+    active:clean:legacy:missing:missing|active:clean:legacy:missing:present)
       printf 'done\n'
+      ;;
+    active:invalid:legacy:missing:missing)
+      printf 'refresh-active\n'
+      ;;
+    active:missing:legacy:clean:present)
+      printf 'refresh-install-clean\n'
       ;;
     *)
       printf 'invalid\n'
@@ -459,14 +490,21 @@ finish() {
   trap - EXIT
   set +e
   if [[ "$SUCCESS" -ne 1 && "$TRANSACTION_STARTED" -eq 1 ]]; then
-    local descriptor_state runtime_state backup_state stage_state action
+    local descriptor_state runtime_state backup_state stage_state
+    local contaminated_state action
     descriptor_state=$(repair_descriptor_state)
     runtime_state=$(offline_python_tree_state "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT")
     backup_state=$(offline_python_tree_state "$LEGACY_BACKUP")
     stage_state=$(offline_python_tree_state "$CLEAN_STAGE")
+    contaminated_state=$(active_contaminated_backup_state)
     action=$(classify_repair_state \
-      "$descriptor_state" "$runtime_state" "$backup_state" "$stage_state" 2>/dev/null)
-    if [[ "$action" == "done" ]]; then
+      "$descriptor_state" "$runtime_state" "$backup_state" "$stage_state" \
+      "$contaminated_state" 2>/dev/null)
+    if [[ "$ACTIVE_REFRESH" -eq 1 ]]; then
+      stop_repair_service_fail_closed \
+        "active runtime 刷新异常后的 fail-closed 停止" || true
+      printf 'CRITICAL: active runtime 刷新未完成；保留固定事务状态并保持服务停止。\n' >&2
+    elif [[ "$action" == "done" ]]; then
       if ( trap - EXIT
            fsync_path "$VIDEOINSIGHT_ROOT/state" && \
              validate_repair_service_start_binding && \
@@ -514,16 +552,20 @@ main() {
   validate_repair_service_unit_for_control
   discard_uncommitted_descriptor_temp
 
-  local descriptor_state runtime_state backup_state stage_state action
+  local descriptor_state runtime_state backup_state stage_state
+  local contaminated_state action
   descriptor_state=$(repair_descriptor_state)
   runtime_state=$(offline_python_tree_state "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT")
   backup_state=$(offline_python_tree_state "$LEGACY_BACKUP")
   stage_state=$(offline_python_tree_state "$CLEAN_STAGE")
+  contaminated_state=$(active_contaminated_backup_state) || contaminated_state="invalid"
   action=$(classify_repair_state \
-    "$descriptor_state" "$runtime_state" "$backup_state" "$stage_state" 2>/dev/null) || \
+    "$descriptor_state" "$runtime_state" "$backup_state" "$stage_state" \
+    "$contaminated_state" 2>/dev/null) || \
     action="invalid"
 
-  if [[ "$descriptor_state" == "invalid" || "$action" == "invalid" ]]; then
+  if [[ "$descriptor_state" == "invalid" || \
+        "$contaminated_state" == "invalid" || "$action" == "invalid" ]]; then
     stop_repair_service_fail_closed "离线 Python 修复混合状态后的停止" || true
     die "离线 Python 修复状态不是已审计的 prepared/active 组合。"
   fi
@@ -540,6 +582,60 @@ main() {
       stop_repair_service_fail_closed "离线 Python 解包残留混合状态后的停止" || true
       die "离线 Python 修复描述存在时出现未受审解包残留。"
     fi
+  fi
+
+  if [[ "$action" == "refresh-active" ]]; then
+    validate_official_archive
+    if [[ "$stage_state" == "invalid" ]]; then
+      [[ -d "$CLEAN_STAGE" && ! -L "$CLEAN_STAGE" ]] || \
+        die "active 刷新 clean stage 类型不安全。"
+      remove_fixed_tree "$CLEAN_STAGE"
+      stage_state="missing"
+    fi
+    if [[ "$stage_state" == "missing" ]]; then
+      build_clean_stage
+    else
+      validate_offline_python_tree \
+        "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST" \
+        videoinsight-offline-python-tree-v1 "active 刷新 clean stage"
+    fi
+    ACTIVE_REFRESH=1
+    TRANSACTION_STARTED=1
+    stop_repair_service_fail_closed "active 污染 runtime 刷新前停止控制层"
+    validate_root_directory "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"
+    reject_mount_at_or_below "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" \
+      "active 污染 runtime"
+    durable_rename "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" \
+      "$ACTIVE_CONTAMINATED_BACKUP" "$PYTHON_PARENT"
+    runtime_state="missing"
+    contaminated_state="present"
+    action="refresh-install-clean"
+  fi
+
+  if [[ "$action" == "refresh-install-clean" ]]; then
+    ACTIVE_REFRESH=1
+    TRANSACTION_STARTED=1
+    stop_repair_service_fail_closed "active clean runtime 安装前停止控制层"
+    [[ ! -e "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" && \
+       ! -L "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" ]] || \
+      die "active 刷新目标 runtime 已被占用。"
+    validate_offline_python_tree \
+      "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST" \
+      videoinsight-offline-python-tree-v1 "active 刷新 clean stage"
+    durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" \
+      "$PYTHON_PARENT"
+    validate_repair_service_start_binding
+    systemctl start "$VIDEOINSIGHT_SERVICE"
+    health_check "" || {
+      stop_repair_service_fail_closed \
+        "active clean runtime 刷新健康失败后的停止" || true
+      die "active clean runtime 刷新后服务未就绪。"
+    }
+    revalidate_clean_runtime_after_service_health
+    SUCCESS=1
+    printf 'active 污染 runtime 已由官方 clean runtime 原子替换。\n'
+    printf '污染 runtime 取证备份：%s\n' "$ACTIVE_CONTAMINATED_BACKUP"
+    return 0
   fi
 
   if [[ "$action" == "done" ]]; then
