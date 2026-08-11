@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -1096,6 +1096,41 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
             ] = self.config.mps_template_id(profile)
         _require_configuration(required)
 
+    def _mps_media_url(self, value: str) -> str:
+        """Return the exact OSS URL form accepted by MPS URL parameters.
+
+        Alibaba MPS requires HTTP (rather than HTTPS) for OpeningList,
+        MergeList, MergeConfigUrl, and Amix media URLs.  Keep the short-lived
+        signed OSS path/query intact while rejecting any unexpected host,
+        credentials, port, or fragment before changing only the scheme.
+        """
+
+        parts = urlsplit(value)
+        expected_host = (
+            f"{self.config.oss_bucket}.{self.config.oss_location}.aliyuncs.com"
+        ).casefold()
+        try:
+            port = parts.port
+        except ValueError as exc:
+            raise CloudProviderError(
+                "MPS 媒体地址端口无效。",
+                kind="validation",
+            ) from exc
+        if (
+            parts.scheme not in {"http", "https"}
+            or (parts.hostname or "").casefold() != expected_host
+            or parts.username is not None
+            or parts.password is not None
+            or port is not None
+            or not parts.path
+            or parts.fragment
+        ):
+            raise CloudProviderError(
+                "MPS 媒体地址不是当前 OSS Bucket 的受信任地址。",
+                kind="validation",
+            )
+        return urlunsplit(("http", parts.netloc, parts.path, parts.query, ""))
+
     def _build_rpc_request(
         self,
         action: str,
@@ -1193,7 +1228,7 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                 source_url = request.input_asset.provider_locator or request.input_asset.uri
                 merge_items = [
                     {
-                        "MergeURL": source_url,
+                        "MergeURL": self._mps_media_url(source_url),
                         "Start": f"{item.start:.3f}",
                         "Duration": f"{item.end - item.start:.3f}",
                     }
@@ -1202,7 +1237,7 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                 if len(remaining) <= 4:
                     output_payload[0]["MergeList"] = merge_items
                 elif request.merge_config_asset and request.merge_config_asset.provider_locator:
-                    output_payload[0]["MergeConfigUrl"] = (
+                    output_payload[0]["MergeConfigUrl"] = self._mps_media_url(
                         request.merge_config_asset.provider_locator
                     )
                 else:
@@ -1233,7 +1268,7 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                     kind="validation",
                 )
             output_payload[0]["OpeningList"] = [
-                {"OpenUrl": opening_url, "Start": "0"}
+                {"OpenUrl": self._mps_media_url(opening_url), "Start": "0"}
             ]
         if request.title_watermark_object_key:
             title_style = visual_style_spec(request.output_profile)["title"]
@@ -1274,7 +1309,7 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
             # result bounded by the edited source video.
             output_payload[0]["Amix"] = [
                 {
-                    "AmixURL": bgm_url,
+                    "AmixURL": self._mps_media_url(bgm_url),
                     "Map": "0:a:0",
                     "MixDurMode": "first",
                     "Start": "0",

@@ -963,6 +963,9 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
     assert watermark["Timeline"] == {"Start": "0", "Duration": "2.5"}
     assert outputs[0]["Clip"]["ConfigToClipFirstPart"] is True
     assert outputs[0]["MergeList"][0]["Start"] == "3.550"
+    assert outputs[0]["MergeList"][0]["MergeURL"].startswith(
+        "http://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
+    )
     with pytest.raises(CloudProviderError, match="人工确认"):
         provider.build_submit_request(_render_request(confirmed=False))
 
@@ -987,7 +990,13 @@ def test_mps_request_prepends_opening_and_offsets_title_timeline():
     outputs = json.loads(parse_qs(body.decode("utf-8"))["Outputs"][0])
 
     assert outputs[0]["OpeningList"] == [
-        {"OpenUrl": _opening_asset().provider_locator, "Start": "0"}
+        {
+            "OpenUrl": (
+                "http://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
+                "video-editor-input/demo/opening/number-focus.mp4?Signature=signed"
+            ),
+            "Start": "0",
+        }
     ]
     assert outputs[0]["WaterMarks"][0]["Timeline"]["Start"] == "1.400"
 
@@ -1006,12 +1015,30 @@ def test_mps_request_mixes_prepared_bgm_without_extending_video_duration():
 
     assert outputs[0]["Amix"] == [
         {
-            "AmixURL": _bgm_asset().provider_locator,
+            "AmixURL": (
+                "http://private-video-bucket.oss-cn-beijing.aliyuncs.com/"
+                "video-editor-input/demo/bgm/low-volume.m4a?Signature=signed"
+            ),
             "Map": "0:a:0",
             "MixDurMode": "first",
             "Start": "0",
         }
     ]
+
+
+def test_mps_rejects_media_url_outside_configured_oss_bucket():
+    provider = AliyunMPSRenderProvider(
+        _aliyun_config(),
+        transport=lambda *args: {},
+    )
+    untrusted = _opening_asset().model_copy(
+        update={"provider_locator": "https://example.com/opening.mp4?token=secret"}
+    )
+
+    with pytest.raises(CloudProviderError, match="受信任地址"):
+        provider.build_submit_request(
+            _render_request().model_copy(update={"opening_asset": untrusted})
+        )
 
 
 def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
