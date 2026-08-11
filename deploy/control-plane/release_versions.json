@@ -6,6 +6,7 @@
     "0.2.10",
     "0.2.11",
     "0.2.12",
+    "0.2.13",
     "0.2.2",
     "0.2.3",
     "0.2.4",
@@ -15,7 +16,14 @@
     "0.2.8",
     "0.2.9"
   ],
-  "current_candidate": "0.2.13",
-  "release_in_progress": null,
+  "current_candidate": null,
+  "release_in_progress": {
+    "version": "0.2.13",
+    "source_commit": "9c8de4e3246f3d19b1071172316909039845c25a",
+    "server_state": "ready",
+    "control_plane_sha256": "3bac800314d5b35ff1b4c06ac870171a653ade649815557a47b164ab2fc67a91",
+    "windows_state": "pending",
+    "installer_sha256": null
+  },
   "completed_releases": []
 }
