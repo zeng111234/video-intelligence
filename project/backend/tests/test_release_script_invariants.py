@@ -31,9 +31,13 @@ def _windows_powershell() -> str:
     return executable
 
 
-def _powershell_function_loader(script_path: Path, function_names: tuple[str, ...]) -> str:
+def _powershell_function_loader(
+    script_path: Path, function_names: tuple[str, ...]
+) -> str:
     escaped_path = str(script_path).replace("'", "''")
-    names = ",".join(f"'{name.replace(chr(39), chr(39) * 2)}'" for name in function_names)
+    names = ",".join(
+        f"'{name.replace(chr(39), chr(39) * 2)}'" for name in function_names
+    )
     return (
         "$tokens = $null; $errors = $null; "
         f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{escaped_path}', "
@@ -43,7 +47,7 @@ def _powershell_function_loader(script_path: Path, function_names: tuple[str, ..
         "$definition = $ast.Find({ param($node) "
         "$node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and "
         "$node.Name -eq $functionName }, $true); "
-        "if (-not $definition) { throw \"Missing function: $functionName\" }; "
+        'if (-not $definition) { throw "Missing function: $functionName" }; '
         "Invoke-Expression ([string]$definition.Extent.Text) "
         "}; "
     )
@@ -85,7 +89,9 @@ def _find_windows_stable_versioned_executable() -> tuple[Path, str]:
             versions.append(".".join(match.groups()))
         if len(versions) == 2 and versions[0] == versions[1]:
             return candidate, versions[0]
-    pytest.skip("A Windows executable with matching stable File/ProductVersion is required")
+    pytest.skip(
+        "A Windows executable with matching stable File/ProductVersion is required"
+    )
 
 
 def _commit_release_fixture(tmp_path: Path) -> None:
@@ -190,9 +196,7 @@ def _prepare_final_release_fixture(
     if latest_version is not None:
         manifest = registry.parent / "updates" / "latest.json"
         manifest.parent.mkdir()
-        manifest.write_text(
-            json.dumps({"version": latest_version}), encoding="utf-8"
-        )
+        manifest.write_text(json.dumps({"version": latest_version}), encoding="utf-8")
 
     release_python = tmp_path / ".venv" / "Scripts" / "python.exe"
     release_python.parent.mkdir(parents=True)
@@ -411,9 +415,7 @@ def test_published_updates_are_immutable_and_strictly_increasing(tmp_path: Path)
         metadata = json.loads(result.stdout.strip())
         prefixes = []
         for value in (metadata["file"], metadata["product"]):
-            match = re.match(
-                r"^\s*(\d+)\.(\d+)\.(\d+)(?:\.0)?\s*$", value or ""
-            )
+            match = re.match(r"^\s*(\d+)\.(\d+)\.(\d+)(?:\.0)?\s*$", value or "")
             if not match:
                 return None
             prefixes.append(tuple(int(part) for part in match.groups()))
@@ -442,7 +444,9 @@ def test_published_updates_are_immutable_and_strictly_increasing(tmp_path: Path)
         if not distinct_versions or item[0] != distinct_versions[-1][0]:
             distinct_versions.append(item)
     if len(distinct_versions) < 2:
-        pytest.skip("Two Windows executables with distinct embedded versions are required")
+        pytest.skip(
+            "Two Windows executables with distinct embedded versions are required"
+        )
     (_, first_version, first_source), (_, newer_version, newer_source) = (
         distinct_versions[0],
         distinct_versions[-1],
@@ -542,7 +546,10 @@ def test_published_updates_are_immutable_and_strictly_increasing(tmp_path: Path)
     assert duplicate.returncode != 0
     rollback = publish("0.0.0", first_source)
     assert rollback.returncode != 0
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))["version"] == first_version
+    assert (
+        json.loads(manifest_path.read_text(encoding="utf-8"))["version"]
+        == first_version
+    )
 
     write_registry(
         [first_version, newer_version],
@@ -622,9 +629,7 @@ def test_publish_lock_blocks_a_second_process_before_any_artifact_write(
         "[IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None); "
         "[Console]::Out.WriteLine('LOCKED'); [Console]::Out.Flush(); "
         "try { [Console]::In.ReadLine() | Out-Null } finally { "
-        "$stream.Dispose(); Remove-Item -LiteralPath '"
-        + escaped_lock
-        + "' -Force }"
+        "$stream.Dispose(); Remove-Item -LiteralPath '" + escaped_lock + "' -Force }"
     )
     holder = subprocess.Popen(
         [_windows_powershell(), "-NoProfile", "-Command", holder_command],
@@ -698,12 +703,14 @@ def test_publish_can_resume_exact_artifact_at_each_commit_boundary(
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     publish_script = scripts / "publish_windows_update.ps1"
-    original_script = (
-        REPOSITORY_ROOT / "scripts" / publish_script.name
-    ).read_text(encoding="utf-8-sig")
+    original_script = (REPOSITORY_ROOT / "scripts" / publish_script.name).read_text(
+        encoding="utf-8-sig"
+    )
     assert original_script.count(fault_marker) == 1
     publish_script.write_text(
-        original_script.replace(fault_marker, fault_marker + "\n    " + fault_statement),
+        original_script.replace(
+            fault_marker, fault_marker + "\n    " + fault_statement
+        ),
         encoding="utf-8-sig",
     )
     registry_path = tmp_path / "deploy" / "control-plane" / "release_versions.json"
@@ -793,9 +800,9 @@ def test_publish_never_overwrites_a_noncooperative_sentinel_after_precheck(
     scripts = tmp_path / "scripts"
     scripts.mkdir()
     publish_script = scripts / "publish_windows_update.ps1"
-    original_script = (
-        REPOSITORY_ROOT / "scripts" / publish_script.name
-    ).read_text(encoding="utf-8-sig")
+    original_script = (REPOSITORY_ROOT / "scripts" / publish_script.name).read_text(
+        encoding="utf-8-sig"
+    )
     if collision_target == "installer":
         marker = "[System.IO.File]::Move($temporaryInstaller, $publishedInstaller)"
         injected = (
@@ -965,10 +972,16 @@ def test_final_release_requires_a_new_explicit_stable_version(tmp_path: Path):
     assert "[Parameter(Mandatory = $true)][string]$Version" in final_script
     assert "release_versions.json" in final_script
     assert "[int]$Registry.schema_version -ne 2" in final_script
-    assert "@($usedVersions | Where-Object { $_ -eq $ExpectedVersion }).Count -ne 1" in final_script
+    assert (
+        "@($usedVersions | Where-Object { $_ -eq $ExpectedVersion }).Count -ne 1"
+        in final_script
+    )
     assert "[version]$ExpectedVersion -ne $highestUsedVersion" in final_script
     assert '[string]$releaseInProgress.server_state -ne "ready"' in final_script
-    assert '$windowsState -notin @("pending", "building", "attempted", "built")' in final_script
+    assert (
+        '$windowsState -notin @("pending", "building", "attempted", "built")'
+        in final_script
+    )
     assert '[string]$Version = "0.2.0"' not in final_script
     assert "[Parameter(Mandatory = $true)][string]$Version" in offline_script
     assert "Assert-OfflineBuildLifecycle" in offline_script
@@ -1197,7 +1210,9 @@ def test_ignored_python_cannot_receive_release_secrets_or_replace_authoritative_
         f"Path({str(sentinel)!r}).write_text(repr(dict(os.environ)), encoding='utf-8')\n",
         encoding="utf-8",
     )
-    verification_stub = tmp_path / "deploy" / "control-plane" / "verify_control_plane.py"
+    verification_stub = (
+        tmp_path / "deploy" / "control-plane" / "verify_control_plane.py"
+    )
     verification_stub.write_text(
         "print('FAKE_PYTHON_PASS_MUST_NOT_AUTHORIZE_RELEASE')\n",
         encoding="utf-8",
@@ -1260,7 +1275,9 @@ def test_dirty_or_untracked_verifier_never_receives_release_credentials(
     verifier_state: str,
 ):
     final_script, paid_report = _prepare_final_release_fixture(tmp_path)
-    verification_stub = tmp_path / "deploy" / "control-plane" / "verify_control_plane.py"
+    verification_stub = (
+        tmp_path / "deploy" / "control-plane" / "verify_control_plane.py"
+    )
     paid_stub = tmp_path / "scripts" / "run_paid_release_acceptance.py"
     paid_stub.write_text("raise SystemExit(0)\n", encoding="utf-8")
     if verifier_state == "dirty":
@@ -1343,21 +1360,25 @@ def test_control_plane_compose_protects_a_shared_small_server():
 
 
 def test_control_plane_bundle_keeps_release_registry_and_secret_file_gates():
-    script = (
-        REPOSITORY_ROOT / "scripts" / "build_control_plane_bundle.ps1"
-    ).read_text(encoding="utf-8")
+    script = (REPOSITORY_ROOT / "scripts" / "build_control_plane_bundle.ps1").read_text(
+        encoding="utf-8"
+    )
 
     version_registry = script.index("release_versions.json")
     used_version_gate = script.index("$used -contains $ExpectedVersion")
     candidate_gate = script.index("$candidateProperty.Value -ne $ExpectedVersion")
-    lifecycle_gate = script.index("Assert-FreshReleaseCandidate -Registry $releaseRegistry")
+    lifecycle_gate = script.index(
+        "Assert-FreshReleaseCandidate -Registry $releaseRegistry"
+    )
     release_check = script.index("check_release.ps1")
-    archive_creation = script.index("$archive = [System.IO.Compression.ZipArchive]::new(")
+    archive_creation = script.index(
+        "$archive = [System.IO.Compression.ZipArchive]::new("
+    )
     assert version_registry < lifecycle_gate < release_check < archive_creation
     assert used_version_gate < lifecycle_gate
     assert candidate_gate < lifecycle_gate < release_check
     assert "-AllowDirty" not in script
-    assert 'build\\control-plane-ready-$Version' in script
+    assert "build\\control-plane-ready-$Version" in script
     assert "$candidateBaseVersion" in script
     assert "$usedBaseVersions" in script
     output_reparse_gate = script.index(
@@ -1369,8 +1390,15 @@ def test_control_plane_bundle_keeps_release_registry_and_secret_file_gates():
     assert output_reparse_gate < output_creation < archive_creation
     committed_tree_gate = script.index("ls-tree -r $sourceCommit")
     committed_blob_read = script.index("cat-file blob $BlobSha")
-    archive_blob_write = script.index("$committedBlobBytes[$entry.Entry]", archive_creation)
-    assert committed_blob_read < committed_tree_gate < archive_creation < archive_blob_write
+    archive_blob_write = script.index(
+        "$committedBlobBytes[$entry.Entry]", archive_creation
+    )
+    assert (
+        committed_blob_read
+        < committed_tree_gate
+        < archive_creation
+        < archive_blob_write
+    )
     assert "$record.Mode -notin @('100644', '100755')" in script
     assert "release_versions.json'" in script
     assert "data/avatar_assets" not in script
@@ -1549,7 +1577,10 @@ def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     assert verification < committed < backup_cleanup < rollback_guard
     assert "自动验收未全部通过，已停止启用新版本" in install_script
     assert "Restore-UninstallRegistration" in install_script
-    assert "Remove-Item -LiteralPath $RegistryPath -Recurse -Force -ErrorAction Stop" in install_script
+    assert (
+        "Remove-Item -LiteralPath $RegistryPath -Recurse -Force -ErrorAction Stop"
+        in install_script
+    )
     assert "Remove-DirectoryTreeWithoutFollowingReparse" in install_script
     assert (
         "Move-Item -LiteralPath $backupRoot -Destination $installRoot" in install_script
@@ -1614,8 +1645,7 @@ def test_first_install_rollback_continues_when_uninstall_key_never_existed(
     touched_shortcut.write_text("new shortcut", encoding="utf-8")
     escaped_shortcut = str(touched_shortcut).replace("'", "''")
     missing_registry_key = (
-        "HKCU:\\Software\\VideoInsight-Rollback-Test-"
-        + os.urandom(8).hex()
+        "HKCU:\\Software\\VideoInsight-Rollback-Test-" + os.urandom(8).hex()
     )
     command = loader + (
         f"Restore-UninstallRegistration -RegistryPath '{missing_registry_key}' "
@@ -1647,7 +1677,7 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
     )
     guard_call = script_text.index("Assert-NewerInstallerVersion", registry_read)
     first_install_write = script_text.index(
-        'New-Item -ItemType Directory -Path $programsRoot', guard_call
+        "New-Item -ItemType Directory -Path $programsRoot", guard_call
     )
     assert registry_read < existing_install_probe < guard_call < first_install_write
     assert "([string]$previousUninstall.DisplayVersion)" in script_text
@@ -1815,10 +1845,13 @@ def test_installer_only_targets_processes_inside_install_root(tmp_path: Path):
 def test_uninstaller_preserves_external_processes_and_user_shortcuts(tmp_path: Path):
     uninstall_script = REPOSITORY_ROOT / "scripts" / "uninstall_windows_desktop.ps1"
     script_text = uninstall_script.read_text(encoding="utf-8")
-    assert "$cleanupPowerShell = Join-Path $PSHOME \"powershell.exe\"" in script_text
+    assert '$cleanupPowerShell = Join-Path $PSHOME "powershell.exe"' in script_text
     assert "Join-Path `$target 'Uninstall-VideoInsight.ps1'" in script_text
     assert "Join-Path `$target 'uninstall_windows_desktop.ps1'" not in script_text
-    assert "Remove-Item -LiteralPath '$escapedUninstallKey' -Recurse -Force -ErrorAction Stop" in script_text
+    assert (
+        "Remove-Item -LiteralPath '$escapedUninstallKey' -Recurse -Force -ErrorAction Stop"
+        in script_text
+    )
     assert "Remove-Item -LiteralPath $installRoot -Recurse" not in script_text
     assert "Remove-Item -LiteralPath $startMenuDir -Recurse" not in script_text
     directory_delete = script_text.index(
@@ -1929,9 +1962,9 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
         REPOSITORY_ROOT / "scripts" / "publish_windows_update.ps1"
     ).read_text(encoding="utf-8")
 
-    assert 'build\\final-windows-release-$Version' in final_script
+    assert "build\\final-windows-release-$Version" in final_script
     assert "-OutputDirectory $deliveryDirectory" in final_script
-    assert '$deliveryExecutables.Count -ne 1' in final_script
+    assert "$deliveryExecutables.Count -ne 1" in final_script
     assert "$customerInstaller.Length -ne $serviceInstaller.Length" in final_script
     assert "$customerHash -ne $serviceHash" in final_script
     assert "客户唯一发送路径" in final_script
@@ -1945,25 +1978,25 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
         "project\\frontend\\release",
     ):
         assert protected_output in final_script
-    output_reparse_gate = final_script.index(
-        "Assert-NoReparsePointsForReleasePath `"
-    )
+    output_reparse_gate = final_script.index("Assert-NoReparsePointsForReleasePath `")
 
     assert '[string]$OutputDirectory = ""' in offline_script
-    assert 'final-windows-release-$Version' in offline_script
+    assert "final-windows-release-$Version" in offline_script
     assert "$resolvedOutputDirectory -eq $resolvedBuildRoot" in offline_script
     assert "输出目录必须为空" in offline_script
-    assert '$deliveryExecutables.Count -ne 1' in offline_script
+    assert "$deliveryExecutables.Count -ne 1" in offline_script
     assert "AssemblyFileVersion" in offline_script
     assert "AssemblyInformationalVersion" in offline_script
-    reparse_scan = offline_script.index("Assert-NoReparsePointsInTree -RootPath $unpacked")
+    reparse_scan = offline_script.index(
+        "Assert-NoReparsePointsInTree -RootPath $unpacked"
+    )
     payload_creation = offline_script.index("CreateFromDirectory")
     assert reparse_scan < payload_creation
     assert "build 到交付目录之间不能包含链接或联接点" in offline_script
     assert "Assert-OfflineBuildLifecycle" in offline_script
     assert "FileMode]::CreateNew" in offline_script
     assert "[System.IO.File]::Move($partialOutput, $output)" in offline_script
-    assert 'Remove-Item -LiteralPath $workspace -Recurse' not in offline_script
+    assert "Remove-Item -LiteralPath $workspace -Recurse" not in offline_script
     offline_lock = offline_script.index(
         "$offlineLifecycleLease = Assert-OfflineBuildLifecycle"
     )
@@ -1984,15 +2017,25 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
     )
     failed_burn = offline_script.index("Set-OfflineArtifactFailed `", built_commit)
     assert one_time_compile_gate < offline_lock < embedded_version_gate
-    assert embedded_version_gate < output_commit < built_commit < failed_burn < lock_release
+    assert (
+        embedded_version_gate
+        < output_commit
+        < built_commit
+        < failed_burn
+        < lock_release
+    )
 
     assert "release_versions.json" in publish_script
     assert "$null -ne $releaseRegistry.current_candidate" in publish_script
     assert "[version]$Version -ne $highestUsedVersion" in publish_script
     assert "FileVersionInfo" in publish_script
     assert "$embeddedFileVersion -ne $Version" in publish_script
-    registry_lock = publish_script.index("$registryLock = New-Object System.IO.FileStream(")
-    registry_read = publish_script.index("$releaseRegistry = Get-Content", registry_lock)
+    registry_lock = publish_script.index(
+        "$registryLock = New-Object System.IO.FileStream("
+    )
+    registry_read = publish_script.index(
+        "$releaseRegistry = Get-Content", registry_lock
+    )
     publishing_state = publish_script.index('$inProgress.windows_state = "publishing"')
     update_directory_write = publish_script.index(
         "[System.IO.Directory]::CreateDirectory($updatesRoot)",
@@ -2002,7 +2045,9 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
         "Copy-InstallerToPartialCreateNew",
         update_directory_write,
     )
-    latest_commit = publish_script.index("Commit-LatestManifestAtomically", installer_partial)
+    latest_commit = publish_script.index(
+        "Commit-LatestManifestAtomically", installer_partial
+    )
     completed_ledger = publish_script.index(
         "$releaseRegistry.completed_releases =", latest_commit
     )
@@ -2010,10 +2055,13 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
     assert publishing_state < update_directory_write < installer_partial
     assert installer_partial < latest_commit < completed_ledger
     assert "[System.IO.File]::Replace" in publish_script
-    assert 'FileMode]::CreateNew' in publish_script
+    assert "FileMode]::CreateNew" in publish_script
     assert "$outputStream.Flush($true)" in publish_script
-    assert "[System.IO.File]::Move($temporaryInstaller, $publishedInstaller)" in publish_script
-    assert '.latest.{0}.tmp' in publish_script
+    assert (
+        "[System.IO.File]::Move($temporaryInstaller, $publishedInstaller)"
+        in publish_script
+    )
+    assert ".latest.{0}.tmp" in publish_script
     assert "更新清单路径已被目录占用" in publish_script
     registry_reparse_gate = publish_script.index(
         "Assert-NoReparsePointsForPublishPath `"
@@ -2038,12 +2086,20 @@ def test_final_release_uses_one_versioned_customer_delivery_installer():
     clean_gate = final_script.index("Assert-TrackedCleanReleaseInputs")
     online_verification = final_script.index('Write-Output "[1/7]')
     windows_build = final_script.index('Write-Output "[4/7]')
-    assert output_reparse_gate < clean_gate < registry_gate < online_verification < windows_build
+    assert (
+        output_reparse_gate
+        < clean_gate
+        < registry_gate
+        < online_verification
+        < windows_build
+    )
     assert manifest_gate < online_verification < windows_build
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
-def test_offline_installer_rejects_output_outside_build_before_packaging(tmp_path: Path):
+def test_offline_installer_rejects_output_outside_build_before_packaging(
+    tmp_path: Path,
+):
     result = subprocess.run(
         [
             _powershell(),
@@ -2182,7 +2238,9 @@ def test_offline_installer_recovers_exact_committed_artifact_before_rebuild(
         / "PRODUCTION_RELEASE_CHECKLIST.md",
     }
     for name, source in trusted_files.items():
-        shutil.copy2(source, scripts / name if name.endswith(".ps1") else repository / name)
+        shutil.copy2(
+            source, scripts / name if name.endswith(".ps1") else repository / name
+        )
         shutil.copy2(source, output / name)
     installer_name = f"VideoInsight-{version}-Setup.exe"
     installer = output / installer_name
@@ -2238,7 +2296,11 @@ def test_offline_installer_recovers_exact_committed_artifact_before_rebuild(
     escaped_output = str(output).replace("'", "''")
     escaped_installer = str(installer).replace("'", "''")
     escaped_registry = str(registry_path).replace("'", "''")
-    delivery_paths = [installer, *(output / name for name in trusted_files), output / "SHA256SUMS.txt"]
+    delivery_paths = [
+        installer,
+        *(output / name for name in trusted_files),
+        output / "SHA256SUMS.txt",
+    ]
     delivery_literal = ",".join(
         f"'{str(path).replace(chr(39), chr(39) * 2)}'" for path in delivery_paths
     )
@@ -2266,9 +2328,10 @@ def test_offline_installer_recovers_exact_committed_artifact_before_rebuild(
     assert "RECOVERED:True" in recovered.stdout
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     assert registry["release_in_progress"]["windows_state"] == "built"
-    assert registry["release_in_progress"]["installer_sha256"] == hashlib.sha256(
-        installer.read_bytes()
-    ).hexdigest()
+    assert (
+        registry["release_in_progress"]["installer_sha256"]
+        == hashlib.sha256(installer.read_bytes()).hexdigest()
+    )
 
     write_registry()
     (output / "verify_windows_install.ps1").write_text("tampered", encoding="utf-8")
@@ -2365,7 +2428,7 @@ def test_offline_started_marker_consumes_compile_right_before_any_artifact(
             f"-ExpectedVersion '{version}' -RegistryPath '{escaped_registry}' "
             f"-AttemptMarkerPath '{escaped_attempt}' "
             f"-OfflineStartedMarkerPath '{escaped_started}'; "
-            "try { Write-Output \"RECOVERY_ONLY:$($lease.RecoveryOnly)\"; "
+            'try { Write-Output "RECOVERY_ONLY:$($lease.RecoveryOnly)"; '
             + failure_statement
             + "} finally { $lease.Stream.Dispose(); "
             "Remove-Item -LiteralPath $lease.Path -Force }"
@@ -2415,11 +2478,7 @@ def test_offline_installer_ignores_poisoned_systemroot_for_csharp_compiler(
 ):
     fake_system_root = tmp_path / "poisoned-windows"
     fake_compiler = (
-        fake_system_root
-        / "Microsoft.NET"
-        / "Framework64"
-        / "v4.0.30319"
-        / "csc.exe"
+        fake_system_root / "Microsoft.NET" / "Framework64" / "v4.0.30319" / "csc.exe"
     )
     fake_compiler.parent.mkdir(parents=True)
     fake_compiler.write_text("sentinel", encoding="utf-8")
@@ -2542,9 +2601,7 @@ def test_authoritative_windows_payload_scan_rejects_exact_env_secret_values(
         (package / "resources" / "app.bin").write_text(
             public_placeholder, encoding="utf-8"
         )
-        secret_file.write_text(
-            f"{secret_key}={public_placeholder}\n", encoding="utf-8"
-        )
+        secret_file.write_text(f"{secret_key}={public_placeholder}\n", encoding="utf-8")
         allowed = subprocess.run(
             [_windows_powershell(), "-NoProfile", "-Command", command],
             capture_output=True,
@@ -2574,7 +2631,9 @@ def test_final_release_requires_authenticated_production_configuration():
         '"$Origin/api/v1/admin/server-status"',
     ):
         assert endpoint in final_script
-    assert '[string]$health.Payload.release_version -ne $ExpectedVersion' in final_script
+    assert (
+        "[string]$health.Payload.release_version -ne $ExpectedVersion" in final_script
+    )
     verification = final_script.index("Invoke-ControlPlaneAuthoritativeGate `")
     paid_gate = final_script.index(
         'Write-Output "[2/7] 验证最近 24 小时内的最低成本真实付费闭环"',
@@ -2601,7 +2660,9 @@ def test_final_release_requires_authenticated_production_configuration():
         "Assert-TrackedCleanReleaseInputs -RelativePaths $credentialBearingInputs",
         credential_input_gate,
     )
-    early_registry_gate = final_script.index("$preflightRegistry = Read-ReleaseRegistry")
+    early_registry_gate = final_script.index(
+        "$preflightRegistry = Read-ReleaseRegistry"
+    )
     paid_activation_requirement = final_script.index(
         'GetEnvironmentVariable($paidAcceptanceVariable, "Process")'
     )
@@ -2615,7 +2676,9 @@ def test_final_release_requires_authenticated_production_configuration():
     paid_report_verification = final_script.index(
         "Assert-PaidAcceptanceAuthoritativeProof `", paid_gate
     )
-    paid_local_cleanup = final_script.index("$paidAcceptanceValue = $null", paid_report_verification)
+    paid_local_cleanup = final_script.index(
+        "$paidAcceptanceValue = $null", paid_report_verification
+    )
     final_secret_cleanup = final_script.rindex(
         'SetEnvironmentVariable($name, $null, "Process")'
     )
@@ -2629,7 +2692,9 @@ def test_final_release_requires_authenticated_production_configuration():
         < paid_report_resolution
         < online_verification
     )
-    assert online_verification < paid_gate < paid_report_verification < paid_local_cleanup
+    assert (
+        online_verification < paid_gate < paid_report_verification < paid_local_cleanup
+    )
     assert paid_local_cleanup < release_gate
     assert paid_gate < final_secret_cleanup
     assert "脚本不会读取、打印或写入该值" in final_script
@@ -2671,8 +2736,66 @@ def test_final_release_requires_current_paid_acceptance_report():
         "expires_at",
     ):
         assert binding in final_script
-    assert '$expectedCapabilityNames = "asr,avatar,copywriting,video_editor"' in final_script
+    assert (
+        '$expectedCapabilityNames = "asr,avatar,copywriting,video_editor"'
+        in final_script
+    )
+    assert "function ConvertTo-CanonicalReleaseProofJson" in final_script
+    assert "ConvertTo-CanonicalReleaseProofJson $report.server_proof" in final_script
+    assert "ConvertTo-CanonicalReleaseProofJson $online" in final_script
+    assert "$report.server_proof | ConvertTo-Json" not in final_script
     assert "& $releasePython" not in final_script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_paid_proof_comparison_is_property_order_independent() -> None:
+    script_path = REPOSITORY_ROOT / "scripts" / "build_final_windows_release.ps1"
+    loader = _powershell_function_loader(
+        script_path,
+        (
+            "ConvertTo-CanonicalReleaseProofObject",
+            "ConvertTo-CanonicalReleaseProofJson",
+        ),
+    )
+    command = (
+        loader
+        + r"""
+$stored = [pscustomobject][ordered]@{
+    avatar_id = 'shuying-avatar-21920'
+    capabilities = [pscustomobject][ordered]@{
+        avatar = [pscustomobject][ordered]@{ result_sha256 = ('a' * 64); status = 'passed' }
+        asr = [pscustomobject][ordered]@{ result_sha256 = ('b' * 64); status = 'passed' }
+    }
+    ledger = [pscustomobject][ordered]@{ transaction_ids = @(7, 9); digest_sha256 = ('c' * 64) }
+    schema_version = 1
+}
+$online = [pscustomobject][ordered]@{
+    schema_version = 1
+    ledger = [pscustomobject][ordered]@{ digest_sha256 = ('c' * 64); transaction_ids = @(7, 9) }
+    capabilities = [pscustomobject][ordered]@{
+        asr = [pscustomobject][ordered]@{ status = 'passed'; result_sha256 = ('b' * 64) }
+        avatar = [pscustomobject][ordered]@{ status = 'passed'; result_sha256 = ('a' * 64) }
+    }
+    avatar_id = 'shuying-avatar-21920'
+}
+$storedJson = ConvertTo-CanonicalReleaseProofJson $stored
+$onlineJson = ConvertTo-CanonicalReleaseProofJson $online
+if ($storedJson -cne $onlineJson) { throw 'canonical proof mismatch' }
+Write-Output $storedJson
+"""
+    )
+    result = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    parsed = json.loads(result.stdout.strip())
+    assert list(parsed) == ["avatar_id", "capabilities", "ledger", "schema_version"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")

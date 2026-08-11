@@ -536,6 +536,41 @@ function Invoke-ControlPlaneAuthoritativeGate {
     }
 }
 
+function ConvertTo-CanonicalReleaseProofObject {
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $orderedDictionary = [ordered]@{}
+        foreach ($key in @($Value.Keys) | Sort-Object) {
+            $orderedDictionary[[string]$key] = ConvertTo-CanonicalReleaseProofObject $Value[$key]
+        }
+        return [pscustomobject]$orderedDictionary
+    }
+    if ($Value -is [pscustomobject]) {
+        $orderedObject = [ordered]@{}
+        foreach ($property in @($Value.PSObject.Properties) | Sort-Object Name) {
+            $orderedObject[$property.Name] = ConvertTo-CanonicalReleaseProofObject $property.Value
+        }
+        return [pscustomobject]$orderedObject
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $orderedItems = @(
+            foreach ($item in $Value) {
+                ConvertTo-CanonicalReleaseProofObject $item
+            }
+        )
+        Write-Output -NoEnumerate $orderedItems
+        return
+    }
+    return $Value
+}
+
+function ConvertTo-CanonicalReleaseProofJson {
+    param([Parameter(Mandatory = $true)][object]$Value)
+    return ConvertTo-CanonicalReleaseProofObject $Value |
+        ConvertTo-Json -Depth 30 -Compress
+}
+
 function Assert-PaidAcceptanceAuthoritativeProof {
     param(
         [Parameter(Mandatory = $true)][string]$Origin,
@@ -669,8 +704,8 @@ function Assert-PaidAcceptanceAuthoritativeProof {
     if ($null -eq $report.server_proof) {
         throw "真实付费验收报告缺少保存的服务器证明。"
     }
-    $storedProofJson = $report.server_proof | ConvertTo-Json -Depth 30 -Compress
-    $onlineProofJson = $online | ConvertTo-Json -Depth 30 -Compress
+    $storedProofJson = ConvertTo-CanonicalReleaseProofJson $report.server_proof
+    $onlineProofJson = ConvertTo-CanonicalReleaseProofJson $online
     if ($storedProofJson -ne $onlineProofJson) {
         throw "在线证明与报告保存的服务器证明不一致。"
     }
