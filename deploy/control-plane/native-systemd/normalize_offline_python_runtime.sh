@@ -29,6 +29,8 @@ readonly AUDITED_INTERPRETER_ROOT="$VIDEOINSIGHT_RELEASES_ROOT/$AUDITED_INTERPRE
 readonly AUDITED_ORIGINAL_CURRENT_LINK="$AUDITED_APPLICATION_ROOT"
 readonly AUDITED_ORIGINAL_UNIT_SHA256="98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994"
 readonly AUDITED_BRIDGE_UNIT_SHA256="839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84"
+readonly AUDITED_STANDARD_RELEASE_VERSION="0.2.13"
+readonly AUDITED_STANDARD_RELEASE_ROOT="$VIDEOINSIGHT_RELEASES_ROOT/$AUDITED_STANDARD_RELEASE_VERSION"
 readonly AUDITED_APPLICATION_FILE_COUNT="175"
 readonly AUDITED_APPLICATION_TREE_SHA256="81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6"
 readonly AUDITED_INTERPRETER_TREE_ENTRY_COUNT="1594"
@@ -113,9 +115,25 @@ validate_repair_service_unit_for_control() {
     validate_legacy_bridge_effective_config "$AUDITED_APPLICATION_VERSION" \
       "$AUDITED_INTERPRETER_VERSION" "$AUDITED_BRIDGE_UNIT_SHA256"
     REPAIR_SERVICE_BINDING_KIND="strict-bridge"
+  elif cmp -s -- "$SCRIPT_DIR/videoinsight-control-plane.service" \
+      "$VIDEOINSIGHT_UNIT_PATH"; then
+    validate_audited_standard_release_service_unit_binding
+    REPAIR_SERVICE_BINDING_KIND="standard-release"
   else
-    die "已安装 unit 不是受审原 unit 或 active strict bridge。"
+    die "已安装 unit 不是受审原 unit、active strict bridge 或精确 0.2.13 标准 unit。"
   fi
+}
+
+validate_audited_standard_release_service_unit_binding() {
+  local current_release
+  current_release=$(current_release_root)
+  [[ "$current_release" == "$AUDITED_STANDARD_RELEASE_ROOT" ]] || \
+    die "标准 unit 的 current 未精确绑定 0.2.13。"
+  validate_secure_directory "$current_release" 0
+  validate_release_python "$current_release"
+  validate_release_version_file "$current_release" \
+    "$AUDITED_STANDARD_RELEASE_VERSION"
+  validate_unit_effective_config
 }
 
 validate_audited_legacy_trees_for_restart() {
@@ -144,6 +162,8 @@ validate_repair_service_start_binding() {
   elif [[ "$REPAIR_SERVICE_BINDING_KIND" == "strict-bridge" ]]; then
     validate_active_legacy_adoption >/dev/null
     REPAIR_SERVICE_BINDING_KIND="strict-bridge-active"
+  elif [[ "$REPAIR_SERVICE_BINDING_KIND" == "standard-release" ]]; then
+    :
   else
     die "控制层启动绑定类型无效。"
   fi
@@ -154,11 +174,22 @@ stop_repair_service_fail_closed() {
   local previously_validated_kind="$REPAIR_SERVICE_BINDING_KIND"
   if ! ( trap - EXIT
          validate_repair_service_unit_for_control || exit $?
-         if [[ "$REPAIR_SERVICE_BINDING_KIND" == "strict-bridge" && \
-               "$previously_validated_kind" != "strict-bridge-active" ]]; then
+         if [[ "$previously_validated_kind" == "original" || \
+               "$previously_validated_kind" == "standard-release" ]]; then
+           [[ "$REPAIR_SERVICE_BINDING_KIND" == "$previously_validated_kind" ]] || \
+             exit 18
+         elif [[ "$REPAIR_SERVICE_BINDING_KIND" == "strict-bridge" && \
+                 "$previously_validated_kind" == "strict-bridge-active" ]]; then
            VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=0
            validate_offline_python_runtime || exit $?
            validate_active_legacy_adoption >/dev/null || exit $?
+         elif [[ "$REPAIR_SERVICE_BINDING_KIND" == "strict-bridge" && \
+                 "$previously_validated_kind" == "strict-bridge" ]]; then
+           VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=0
+           validate_offline_python_runtime || exit $?
+           validate_active_legacy_adoption >/dev/null || exit $?
+         else
+           exit 18
          fi
        ) \
       >/dev/null 2>&1; then

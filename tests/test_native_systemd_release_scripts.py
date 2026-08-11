@@ -2012,6 +2012,7 @@ def test_offline_python_repair_binds_unit_and_trees_around_every_service_action(
     for evidence in (
         original_sha,
         bridge_sha,
+        'AUDITED_STANDARD_RELEASE_VERSION="0.2.13"',
         "NeedDaemonReload",
         "PYTHONDONTWRITEBYTECODE=1",
         "81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6",
@@ -2022,6 +2023,8 @@ def test_offline_python_repair_binds_unit_and_trees_around_every_service_action(
     assert '[[ "$need_daemon_reload" == "no" ]]' in common
     assert '[[ "$effective_environment" == "$expected_environment" ]]' in repair
     assert '[[ "$effective_environment" == "$expected_environment" ]]' in common
+    assert "validate_audited_standard_release_service_unit_binding" in repair
+    assert "validate_unit_effective_config" in repair
 
     lock = main.index("open_native_release_lock_without_runtime_validation")
     first_binding = main.index("validate_repair_service_unit_for_control", lock)
@@ -2157,7 +2160,11 @@ validate_audited_original_service_unit_binding
 
 @pytest.mark.parametrize(
     ("binding_kind", "expected_marker"),
-    [("original", "original-trees"), ("strict-bridge", "active-adoption")],
+    [
+        ("original", "original-trees"),
+        ("strict-bridge", "active-adoption"),
+        ("standard-release", "standard-release"),
+    ],
 )
 def test_offline_python_repair_start_binding_accepts_only_audited_positive_paths(
     binding_kind: str, expected_marker: str
@@ -2177,7 +2184,7 @@ validate_audited_legacy_trees_for_restart() { MARKER=original-trees; }
 validate_active_legacy_adoption() { MARKER=active-adoption; }
 VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
 validate_repair_service_start_binding
-printf '%s\n' "$MARKER"
+printf '%s\n' "${MARKER:-standard-release}"
 """
     result = subprocess.run(
         [
@@ -2195,6 +2202,50 @@ printf '%s\n' "$MARKER"
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == expected_marker
+
+
+@pytest.mark.parametrize(("scenario", "expected_rc"), [("ok", 0), ("wrong", 1)])
+def test_offline_python_repair_standard_unit_binds_exact_deployed_release(
+    scenario: str, expected_rc: int
+) -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+scenario="$2"
+current_release_root() {
+  if [[ "$scenario" == "wrong" ]]; then
+    printf '%s\n' "$VIDEOINSIGHT_RELEASES_ROOT/0.2.12"
+  else
+    printf '%s\n' "$AUDITED_STANDARD_RELEASE_ROOT"
+  fi
+}
+validate_secure_directory() {
+  [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" && "$2" == "0" ]]
+}
+validate_release_python() { [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" ]]; }
+validate_release_version_file() {
+  [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" && \
+     "$2" == "$AUDITED_STANDARD_RELEASE_VERSION" ]]
+}
+validate_unit_effective_config() { VALIDATED_UNIT=1; }
+validate_audited_standard_release_service_unit_binding
+[[ "$VALIDATED_UNIT" == "1" ]]
+"""
+    result = subprocess.run(
+        [
+            _bash(),
+            "-c",
+            shell,
+            "repair-standard-binding-test",
+            str(script_path),
+            scenario,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert (result.returncode == 0) is (expected_rc == 0), result.stdout + result.stderr
 
 
 def test_offline_python_repair_unknown_unit_never_reaches_stop_primitive() -> None:
