@@ -30,6 +30,7 @@ EXPECTED_INTERPRETER_LINKS = {
     "bin/python3.12": "python",
     "lib64": "lib",
 }
+AUDITED_ROOT_ONLY_INTERPRETER_FILES = frozenset({".lock"})
 DESCRIPTOR_KEYS = {
     "format",
     "status",
@@ -218,6 +219,7 @@ def _validate_entry_policy(
     root_device: int,
     service_gid: int,
     mounted: set[str],
+    audited_root_only_files: frozenset[str] = frozenset(),
 ) -> None:
     _validate_record_text(relative, "legacy 树相对路径")
     if metadata.st_dev != root_device:
@@ -234,7 +236,13 @@ def _validate_entry_policy(
             raise ValueError("固定服务身份无法遍历 legacy 树目录。")
     elif stat.S_ISREG(metadata.st_mode):
         read_mask = _service_permission_mask(metadata, service_gid, stat.S_IROTH)
-        if not metadata.st_mode & read_mask:
+        is_audited_root_only_file = (
+            relative in audited_root_only_files
+            and metadata.st_gid == 0
+            and stat.S_IMODE(metadata.st_mode) == 0o600
+            and metadata.st_size == 0
+        )
+        if not metadata.st_mode & read_mask and not is_audited_root_only_file:
             raise ValueError("固定服务身份无法读取 legacy 树文件。")
 
 
@@ -343,6 +351,7 @@ def interpreter_tree_summary(
             root_device=root_metadata.st_dev,
             service_gid=service_gid,
             mounted=mounted,
+            audited_root_only_files=AUDITED_ROOT_ONLY_INTERPRETER_FILES,
         )
         if stat.S_ISREG(metadata.st_mode):
             kind = "f"

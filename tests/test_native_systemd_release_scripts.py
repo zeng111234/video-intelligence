@@ -1597,6 +1597,80 @@ def test_legacy_tree_rejects_writable_version_parent_and_mount_before_walk(
     assert not walked
 
 
+def test_interpreter_tree_allows_only_the_audited_empty_root_lock(
+    tmp_path: Path,
+) -> None:
+    module = _legacy_adoption_descriptor()
+
+    def root_only_metadata(path: Path) -> os.stat_result:
+        current = path.lstat()
+        return os.stat_result(
+            (
+                stat.S_IFREG | 0o600,
+                current.st_ino,
+                current.st_dev,
+                current.st_nlink,
+                0,
+                0,
+                current.st_size,
+                current.st_atime,
+                current.st_mtime,
+                current.st_ctime,
+            )
+        )
+
+    lock = tmp_path / ".lock"
+    lock.write_bytes(b"")
+    metadata = root_only_metadata(lock)
+
+    with pytest.raises(ValueError, match="无法读取"):
+        module._validate_entry_policy(
+            lock,
+            metadata,
+            relative=".lock",
+            root_device=metadata.st_dev,
+            service_gid=994,
+            mounted=set(),
+        )
+
+    module._validate_entry_policy(
+        lock,
+        metadata,
+        relative=".lock",
+        root_device=metadata.st_dev,
+        service_gid=994,
+        mounted=set(),
+        audited_root_only_files=module.AUDITED_ROOT_ONLY_INTERPRETER_FILES,
+    )
+
+    lock.write_bytes(b"not-empty")
+    metadata = root_only_metadata(lock)
+    with pytest.raises(ValueError, match="无法读取"):
+        module._validate_entry_policy(
+            lock,
+            metadata,
+            relative=".lock",
+            root_device=metadata.st_dev,
+            service_gid=994,
+            mounted=set(),
+            audited_root_only_files=module.AUDITED_ROOT_ONLY_INTERPRETER_FILES,
+        )
+
+    other = tmp_path / "secret"
+    other.write_bytes(b"")
+    other_metadata = root_only_metadata(other)
+    with pytest.raises(ValueError, match="无法读取"):
+        module._validate_entry_policy(
+            other,
+            other_metadata,
+            relative="secret",
+            root_device=other_metadata.st_dev,
+            service_gid=994,
+            mounted=set(),
+            audited_root_only_files=module.AUDITED_ROOT_ONLY_INTERPRETER_FILES,
+        )
+
+
 def test_normalize_legacy_unit_is_one_time_exact_and_failure_closed() -> None:
     script = _read("normalize_legacy_unit.sh")
     assert 'readonly AUDITED_APPLICATION_VERSION="0.2.6"' in script
