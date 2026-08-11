@@ -298,6 +298,37 @@ active_contaminated_backup_state() {
   printf 'present\n'
 }
 
+active_contaminated_evidence_path() {
+  local source_path="${1:-$ACTIVE_CONTAMINATED_BACKUP}"
+  local device inode modified_at
+  read -r device inode modified_at < <(stat -c '%d %i %Y' -- "$source_path") || \
+    die "无法读取既有 active 污染 runtime 取证身份。"
+  [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ && \
+      "$modified_at" =~ ^-?[0-9]+$ ]] || \
+    die "既有 active 污染 runtime 取证身份无效。"
+  printf '%s/%s.evidence-%s-%s-%s\n' \
+    "$PYTHON_PARENT" "${ACTIVE_CONTAMINATED_BACKUP##*/}" \
+    "$device" "$inode" "$modified_at"
+}
+
+archive_previous_active_contaminated_backup() {
+  [[ $(active_contaminated_backup_state) == "present" ]] || \
+    die "既有 active 污染 runtime 取证目录不安全。"
+  local evidence_path
+  evidence_path=$(active_contaminated_evidence_path)
+  [[ "$evidence_path" == "$PYTHON_PARENT/"* && \
+      $(dirname -- "$evidence_path") == "$PYTHON_PARENT" ]] || \
+    die "active 污染 runtime 历史取证路径越界。"
+  [[ ! -e "$evidence_path" && ! -L "$evidence_path" ]] || \
+    die "active 污染 runtime 历史取证目标已存在；拒绝覆盖。"
+  durable_rename "$ACTIVE_CONTAMINATED_BACKUP" "$evidence_path" \
+    "$PYTHON_PARENT"
+  validate_root_directory "$evidence_path"
+  reject_mount_at_or_below "$evidence_path" \
+    "active 污染 runtime 历史取证目录"
+  printf '既有 active 污染 runtime 已无覆盖归档：%s\n' "$evidence_path"
+}
+
 classify_repair_state() {
   local descriptor_state="$1"
   local runtime_state="$2"
@@ -589,6 +620,11 @@ main() {
   backup_state=$(offline_python_tree_state "$LEGACY_BACKUP")
   stage_state=$(offline_python_tree_state "$CLEAN_STAGE")
   contaminated_state=$(active_contaminated_backup_state) || contaminated_state="invalid"
+  if [[ "$descriptor_state:$runtime_state:$backup_state:$stage_state:$contaminated_state" == \
+        "active:invalid:legacy:missing:present" ]]; then
+    archive_previous_active_contaminated_backup
+    contaminated_state="missing"
+  fi
   action=$(classify_repair_state \
     "$descriptor_state" "$runtime_state" "$backup_state" "$stage_state" \
     "$contaminated_state" 2>/dev/null) || \

@@ -1956,6 +1956,17 @@ def test_offline_python_repair_transaction_is_fail_closed_and_reproducible() -> 
         'readonly ACTIVE_CONTAMINATED_BACKUP="$PYTHON_PARENT/'
         '3.12.13.active-contaminated-runtime"' in repair
     )
+    archive = repair.index("archive_previous_active_contaminated_backup()")
+    main_start = repair.index("main()")
+    classify = main.index("action=$(classify_repair_state")
+    archive_call = main.index("archive_previous_active_contaminated_backup")
+    assert archive < main_start
+    assert archive_call < classify
+    assert "stat -c '%d %i %Y'" in repair
+    assert '"${ACTIVE_CONTAMINATED_BACKUP##*/}"' in repair
+    assert "历史取证目标已存在；拒绝覆盖" in repair
+    assert 'durable_rename "$ACTIVE_CONTAMINATED_BACKUP" "$evidence_path"' in repair
+    assert 'contaminated_state="missing"' in main[archive_call:classify]
     refresh = main.index('if [[ "$action" == "refresh-active" ]]')
     refresh_archive = main.index("validate_official_archive", refresh)
     refresh_stage = main.index("build_clean_stage", refresh_archive)
@@ -2389,6 +2400,32 @@ def test_offline_python_repair_crash_states_are_behaviorally_classified() -> Non
         )
         assert result.returncode == expected_rc, result.stdout + result.stderr
         assert result.stdout.strip() == expected
+
+
+def test_active_contaminated_evidence_path_is_stable_and_scoped() -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+stat() {
+  printf '2049 7788 1786435200\n'
+}
+active_contaminated_evidence_path
+"""
+    result = subprocess.run(
+        [_bash(), "-c", shell, "repair-evidence-path-test", str(script_path)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == (
+        "/opt/videoinsight-control-plane/python/"
+        "3.12.13.active-contaminated-runtime.evidence-2049-7788-1786435200"
+    )
 
 
 def test_readme_requires_target_bash_42_parse_gate_before_execution() -> None:
