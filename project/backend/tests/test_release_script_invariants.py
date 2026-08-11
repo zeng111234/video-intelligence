@@ -2498,17 +2498,23 @@ def test_offline_installer_ignores_poisoned_systemroot_for_csharp_compiler(
         f"if ($compiler.StartsWith('{escaped_fake_root}', [StringComparison]::OrdinalIgnoreCase)) {{ "
         "throw 'Poisoned SystemRoot compiler was selected.' }; Write-Output $compiler"
     )
-    result = subprocess.run(
-        [_windows_powershell(), "-NoProfile", "-Command", command],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert str(fake_compiler).lower() not in result.stdout.lower()
+    powershells = [_windows_powershell()]
+    modern_powershell = shutil.which("pwsh.exe")
+    if modern_powershell:
+        powershells.append(modern_powershell)
+    for powershell in dict.fromkeys(powershells):
+        result = subprocess.run(
+            [powershell, "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert str(fake_compiler).lower() not in result.stdout.lower()
+        assert "Microsoft.NET" in result.stdout
     assert fake_compiler.read_text(encoding="utf-8") == "sentinel"
 
 

@@ -124,26 +124,30 @@ function Assert-NoReparsePointsInAbsoluteOfflinePath {
 }
 
 function Get-TrustedCSharpCompilerPath {
-    $runtimeDirectory = [System.Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
-    if ([string]::IsNullOrWhiteSpace($runtimeDirectory)) {
-        throw "无法从 Windows .NET 运行时确定 C# 编译器目录。"
+    $trustedWindowsDirectory = [Environment]::GetFolderPath(
+        [Environment+SpecialFolder]::Windows
+    )
+    if ([string]::IsNullOrWhiteSpace($trustedWindowsDirectory)) {
+        throw "无法从 Windows 系统目录确定 C# 编译器位置。"
     }
-    $compilerPath = [System.IO.Path]::GetFullPath((Join-Path $runtimeDirectory "csc.exe"))
+    $compilerCandidates = @(
+        (Join-Path $trustedWindowsDirectory "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
+        (Join-Path $trustedWindowsDirectory "Microsoft.NET\Framework\v4.0.30319\csc.exe")
+    )
+    $compilerPath = $null
+    foreach ($candidate in $compilerCandidates) {
+        $resolvedCandidate = [System.IO.Path]::GetFullPath($candidate)
+        Assert-NoReparsePointsInAbsoluteOfflinePath -CandidatePath $resolvedCandidate -Label "Windows .NET C# 编译器"
+        if (Test-Path -LiteralPath $resolvedCandidate -PathType Leaf) {
+            $compilerPath = $resolvedCandidate
+            break
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($compilerPath)) {
+        throw "缺少 Windows .NET 编译器。"
+    }
     Assert-NoReparsePointsInAbsoluteOfflinePath -CandidatePath $compilerPath -Label "Windows .NET C# 编译器"
-    if (-not (Test-Path -LiteralPath $compilerPath -PathType Leaf)) {
-        throw "缺少 Windows .NET 编译器：$compilerPath"
-    }
-    $runtimeDirectoryInfo = New-Object System.IO.DirectoryInfo($runtimeDirectory.TrimEnd('\', '/'))
-    $frameworkDirectoryInfo = $runtimeDirectoryInfo.Parent
-    $microsoftNetDirectoryInfo = if ($null -ne $frameworkDirectoryInfo) { $frameworkDirectoryInfo.Parent } else { $null }
-    $trustedWindowsDirectoryInfo = if ($null -ne $microsoftNetDirectoryInfo) { $microsoftNetDirectoryInfo.Parent } else { $null }
-    if (
-        $null -eq $trustedWindowsDirectoryInfo -or
-        $null -eq $microsoftNetDirectoryInfo -or
-        -not [string]::Equals($microsoftNetDirectoryInfo.Name, "Microsoft.NET", [System.StringComparison]::OrdinalIgnoreCase)
-    ) {
-        throw "Windows .NET 运行时目录不属于系统 Microsoft.NET：$runtimeDirectory"
-    }
+    $trustedWindowsDirectoryInfo = New-Object System.IO.DirectoryInfo($trustedWindowsDirectory.TrimEnd('\', '/'))
     $securityModulePath = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1"
     Assert-NoReparsePointsInAbsoluteOfflinePath -CandidatePath $securityModulePath -Label "Windows 签名验证模块"
     $originalSystemRoot = $env:SystemRoot
