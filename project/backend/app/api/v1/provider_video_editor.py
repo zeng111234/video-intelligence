@@ -25,6 +25,7 @@ from project.backend.app.core.server_video_editor import (
     ServerVideoEditorRuntime,
     get_server_video_editor_runtime,
 )
+from src.adapters.video_editor_cloud import CloudProviderError
 from src.services.credits import CreditsService, InsufficientCreditsError, cny_to_credits
 from src.services.video_editor_cloud import (
     CloudAsset,
@@ -144,6 +145,46 @@ def _refund_and_void_charge(
             ref_type="video_editor_refund",
             ref_id=batch_id,
         )
+
+
+def _refund_deterministic_render_failure(
+    *,
+    request: Request,
+    batch_id: str,
+    credits: CreditsService,
+) -> None:
+    owner = _owner(request)
+    void_id = f"billing:void:video:{batch_id}"
+    net_amount = sum(
+        (
+            Decimal(str(row["amount"]))
+            for row in credits.list_transactions(limit=1000)
+            if row.get("ref_id") == batch_id
+            and row.get("ref_type")
+            in {
+                "video_editor",
+                "video_editor_adjustment",
+                "video_editor_refund",
+            }
+        ),
+        Decimal("0"),
+    )
+    outstanding = max(Decimal("0"), -net_amount)
+    if outstanding > 0:
+        credits.credit(
+            outstanding,
+            "云端渲染确定未提交退款",
+            ref_type="video_editor_refund",
+            ref_id=batch_id,
+        )
+    # The control-plane middleware serializes this route's fixed idempotency key.
+    # Persist the refund before the void marker so a crash cannot leave the charge
+    # permanently voided without first returning the customer's money.
+    claim_provider_job(
+        provider_job_id=void_id,
+        owner=owner,
+        kind="billing_marker",
+    )
 
 
 def _quote_quantities(quote: CostQuote) -> tuple[Decimal, Decimal]:
@@ -493,6 +534,7 @@ def submit_render(
     body: RenderSubmitRequest,
     request: Request,
     runtime: ServerVideoEditorRuntime = Depends(get_server_video_editor_runtime),
+    credits: CreditsService = Depends(get_credits_service),
 ):
     _require_charge(request, body.batch_id)
     if request.headers.get("Idempotency-Key") != f"video-render-{body.batch_id}":
@@ -511,7 +553,33 @@ def submit_render(
         )
         snapshot = runtime.providers.render.submit(render_request)
     except ValueError as exc:
+        _refund_deterministic_render_failure(
+            request=request,
+            batch_id=body.batch_id,
+            credits=credits,
+        )
         raise HTTPException(status_code=422, detail="云端渲染参数无效。") from exc
+    except CloudProviderError as exc:
+        deterministic_failure = not exc.outcome_unknown and exc.kind in {
+            "authorization",
+            "configuration",
+            "rate_limit",
+            "validation",
+        }
+        if deterministic_failure:
+            _refund_deterministic_render_failure(
+                request=request,
+                batch_id=body.batch_id,
+                credits=credits,
+            )
+            raise HTTPException(
+                status_code=422,
+                detail="云端渲染被供应商明确拒绝，本次未提交且已退回剪辑积分。",
+            ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="云端渲染提交结果暂时无法确认，系统不会自动重复提交。",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=502,

@@ -6,6 +6,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 from project.backend.app.control_plane import app
@@ -15,6 +16,7 @@ from project.backend.app.core.security import _auth_tokens
 from project.backend.app.core.server_video_editor import (
     get_server_video_editor_runtime,
 )
+from src.adapters.video_editor_cloud import CloudProviderError
 from src.models import CustomerCode
 from src.repositories.sqlite import SQLiteRepository
 from src.services.credits import cny_to_credits
@@ -47,7 +49,22 @@ class _FakeObjectStore:
         return f"https://private-test-bucket.oss-cn-beijing.aliyuncs.com/{object_key}"
 
 
-def _runtime():
+class _RejectingRenderProvider:
+    def __init__(self, *, kind: str, outcome_unknown: bool) -> None:
+        self.kind = kind
+        self.outcome_unknown = outcome_unknown
+        self.submit_count = 0
+
+    def submit(self, _request):
+        self.submit_count += 1
+        raise CloudProviderError(
+            "supplier diagnostic must stay private",
+            kind=self.kind,
+            outcome_unknown=self.outcome_unknown,
+        )
+
+
+def _runtime(*, render=None):
     configuration = CloudEditorConfiguration(
         provider_mode=CloudProviderMode.ALIYUN,
         workspace_id="workspace",
@@ -62,7 +79,7 @@ def _runtime():
     store = _FakeObjectStore()
     return SimpleNamespace(
         configuration=configuration,
-        providers=SimpleNamespace(object_store=store),
+        providers=SimpleNamespace(object_store=store, render=render),
     )
 
 
@@ -284,6 +301,149 @@ def test_video_editor_invalid_upload_refunds_once_and_voids_charge(tmp_path):
             assert "已退回" in blocked.json()["message"]
             assert repository.get_credit_balance(customer_code) == Decimal("10")
             assert runtime.providers.object_store.upload_count == 0
+    finally:
+        app.dependency_overrides.clear()
+        _auth_tokens.clear()
+
+
+@pytest.mark.parametrize(
+    (
+        "kind",
+        "outcome_unknown",
+        "invalid_render_request",
+        "expected_status",
+        "expect_refund",
+        "expected_submit_count",
+        "expected_replay_status",
+    ),
+    [
+        ("authorization", False, False, 422, True, 1, 422),
+        ("connection", True, False, 502, False, 1, 409),
+        ("validation", False, True, 422, True, 0, 422),
+    ],
+)
+def test_video_editor_render_refunds_only_definitive_supplier_rejections(
+    tmp_path,
+    kind,
+    outcome_unknown,
+    invalid_render_request,
+    expected_status,
+    expect_refund,
+    expected_submit_count,
+    expected_replay_status,
+):
+    repository = SQLiteRepository(tmp_path / f"video-render-{kind}.db")
+    now = datetime.now().astimezone()
+    customer_code = f"VIDEO-{uuid4().hex[:10].upper()}"
+    repository.create_customer_codes(
+        [
+            CustomerCode(
+                code=customer_code,
+                name="剪辑渲染退款客户",
+                initial_credits="10",
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+    )
+    render = _RejectingRenderProvider(
+        kind=kind,
+        outcome_unknown=outcome_unknown,
+    )
+    runtime = _runtime(render=render)
+    app.dependency_overrides[get_repository] = lambda: repository
+    app.dependency_overrides[get_server_video_editor_runtime] = lambda: runtime
+    _auth_tokens.clear()
+    batch_id = f"edit-batch-{uuid4().hex[:12]}"
+    try:
+        with TestClient(app) as client:
+            token = client.post(
+                "/api/v1/auth/customer-login", json={"code": customer_code}
+            ).json()["token"]
+            quote = create_cost_quote(
+                input_duration_seconds=2,
+                output_duration_seconds=3.4,
+                output_profile="720p",
+            )
+            charge = client.post(
+                "/api/v1/provider/video-editor/authorize",
+                headers={
+                    "X-Customer-Token": token,
+                    "Idempotency-Key": f"video-charge-{batch_id}",
+                },
+                json={
+                    "batch_id": batch_id,
+                    "quote": quote.model_dump(mode="json"),
+                    "max_cost_cny": str(quote.estimated_max),
+                },
+            )
+            assert charge.status_code == 200
+            charged_balance = repository.get_credit_balance(customer_code)
+            assert charged_balance < Decimal("10")
+
+            input_key = f"video-editor-input/{batch_id}/input/main.mp4"
+            render_key = f"video-render-{batch_id}"
+            render_request = {
+                "input_asset": {
+                    "provider_name": "fake_store",
+                    "bucket": "private-test-bucket",
+                    "object_key": input_key,
+                    "uri": f"fake://{input_key}",
+                    "media_type": "video/mp4",
+                    "size_bytes": 100,
+                    "is_mock": False,
+                },
+                "output_object_key": (
+                    f"video-editor-output/{batch_id}/output/720p.mp4"
+                ),
+                "output_profile": "720p",
+                "edit_plan": {"duration_seconds": 2.0},
+                "review_confirmed": True,
+                "idempotency_key": render_key,
+            }
+            if invalid_render_request:
+                render_request = {"review_confirmed": True}
+            response = client.post(
+                "/api/v1/provider/video-editor/render/submit",
+                headers={
+                    "X-Customer-Token": token,
+                    "Idempotency-Key": render_key,
+                },
+                json={
+                    "batch_id": batch_id,
+                    "render_request": render_request,
+                },
+            )
+            assert response.status_code == expected_status, response.text
+            assert "supplier diagnostic" not in response.text
+            assert render.submit_count == expected_submit_count
+            replay = client.post(
+                "/api/v1/provider/video-editor/render/submit",
+                headers={
+                    "X-Customer-Token": token,
+                    "Idempotency-Key": render_key,
+                },
+                json={
+                    "batch_id": batch_id,
+                    "render_request": render_request,
+                },
+            )
+            assert replay.status_code == expected_replay_status, replay.text
+            assert render.submit_count == expected_submit_count
+            balance = repository.get_credit_balance(customer_code)
+            if expect_refund:
+                assert balance == Decimal("10")
+                assert any(
+                    row["ref_type"] == "video_editor_refund"
+                    and row["ref_id"] == batch_id
+                    for row in repository.list_credit_transactions(customer_code)
+                )
+            else:
+                assert balance == charged_balance
+                assert all(
+                    row["ref_type"] != "video_editor_refund"
+                    for row in repository.list_credit_transactions(customer_code)
+                )
     finally:
         app.dependency_overrides.clear()
         _auth_tokens.clear()
