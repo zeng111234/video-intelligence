@@ -23,6 +23,9 @@ readonly VIDEOINSIGHT_RUNTIME_ROOT="$VIDEOINSIGHT_ROOT/runtime"
 readonly VIDEOINSIGHT_BACKUP_ROOT="$VIDEOINSIGHT_ROOT/backups"
 readonly VIDEOINSIGHT_ENV_FILE="$VIDEOINSIGHT_ROOT/config/control-plane.env"
 readonly VIDEOINSIGHT_OFFLINE_PYTHON="$VIDEOINSIGHT_ROOT/python/3.12.13/bin/python3.12"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_ROOT="$VIDEOINSIGHT_ROOT/python/3.12.13"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_ARCHIVE_NAME="cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_ARCHIVE="$VIDEOINSIGHT_ROOT/incoming/$VIDEOINSIGHT_OFFLINE_PYTHON_ARCHIVE_NAME"
 readonly VIDEOINSIGHT_WHEELHOUSE="$VIDEOINSIGHT_ROOT/wheelhouse"
 readonly VIDEOINSIGHT_MEDIA_ROOT="$VIDEOINSIGHT_ROOT/tools/media/bin"
 readonly VIDEOINSIGHT_SERVICE_PATH="$VIDEOINSIGHT_MEDIA_ROOT:/usr/local/bin:/usr/bin:/bin"
@@ -39,6 +42,8 @@ native_script_dir() {
 readonly VIDEOINSIGHT_WHEELHOUSE_MANIFEST="$(native_script_dir)/wheelhouse.sha256"
 readonly VIDEOINSIGHT_MEDIA_TOOLS_MANIFEST="$(native_script_dir)/media-tools.sha256"
 readonly VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST="$(native_script_dir)/offline-python-tree.sha256"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_ARCHIVE_MANIFEST="$(native_script_dir)/offline-python-archive.sha256"
+readonly VIDEOINSIGHT_OFFLINE_PYTHON_LEGACY_MANIFEST="$(native_script_dir)/offline-python-legacy-drift-tree.sha256"
 
 VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=0
 
@@ -260,36 +265,12 @@ validate_effective_exec_start_record() {
     die "systemd 实际 ExecStart path 或完整 argv 与受控 unit 不一致。"
 }
 
-validate_offline_python_runtime() {
-  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 0 ]] || return 0
-  local runtime_root="$VIDEOINSIGHT_ROOT/python/3.12.13"
-  [[ -d "$runtime_root" && ! -L "$runtime_root" && \
-      $(readlink -f -- "$runtime_root") == "$runtime_root" ]] || \
-    die "离线 Python 根目录不是规范普通目录。"
-  validate_root_file "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST"
-  validate_trusted_execution_dependencies
-  validate_trusted_executable_path "$VIDEOINSIGHT_OFFLINE_PYTHON" / >/dev/null
-
-  local manifest_lines=()
-  mapfile -t manifest_lines < "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST"
-  [[ ${#manifest_lines[@]} -eq 4 ]] || die "离线 Python tree-v1 清单必须精确为 4 行。"
-  local expected_digest expected_descendants expected_files expected_links
-  [[ "${manifest_lines[0]}" =~ ^([0-9a-f]{64})\ \ videoinsight-offline-python-tree-v1$ ]] || \
-    die "离线 Python tree-v1 清单摘要行无效。"
-  expected_digest="${BASH_REMATCH[1]}"
-  [[ "${manifest_lines[1]}" =~ ^([0-9]+)\ \ descendants$ ]] || \
-    die "离线 Python tree-v1 清单条目数行无效。"
-  expected_descendants="${BASH_REMATCH[1]}"
-  [[ "${manifest_lines[2]}" =~ ^([0-9]+)\ \ regular-files$ ]] || \
-    die "离线 Python tree-v1 清单文件数行无效。"
-  expected_files="${BASH_REMATCH[1]}"
-  [[ "${manifest_lines[3]}" =~ ^([0-9]+)\ \ symlinks$ ]] || \
-    die "离线 Python tree-v1 清单链接数行无效。"
-  expected_links="${BASH_REMATCH[1]}"
-
-  [[ -r /proc/self/mountinfo ]] || die "无法读取系统挂载信息。"
+reject_mount_at_or_below() {
+  local root="$1"
+  local label="$2"
+  [[ -r /proc/self/mountinfo ]] || die "$label 无法读取系统挂载信息。"
   local runtime_mount
-  runtime_mount=$(awk -v root="$runtime_root" \
+  runtime_mount=$(awk -v root="$root" \
     'function decode(value) {
        gsub(/\\040/, " ", value)
        gsub(/\\011/, "\t", value)
@@ -300,10 +281,41 @@ validate_offline_python_runtime() {
      NF < 5 { exit 2 }
      { mount_point=decode($5) }
      mount_point == root || index(mount_point, root "/") == 1 { print "found"; exit }' \
-    /proc/self/mountinfo) || die "离线 Python 挂载边界校验失败。"
-  if [[ -n "$runtime_mount" ]]; then
-    die "离线 Python 运行时包含独立挂载或子挂载。"
-  fi
+    /proc/self/mountinfo) || die "$label 挂载边界校验失败。"
+  [[ -z "$runtime_mount" ]] || die "$label 自身或后代包含独立挂载。"
+}
+
+validate_offline_python_tree() {
+  local runtime_root="$1"
+  local manifest_path="$2"
+  local manifest_marker="$3"
+  local label="$4"
+  [[ "$runtime_root" == "$VIDEOINSIGHT_ROOT/python/"* ]] || \
+    die "$label 根目录越过固定离线 Python 父目录。"
+  [[ -d "$runtime_root" && ! -L "$runtime_root" && \
+      $(readlink -f -- "$runtime_root") == "$runtime_root" ]] || \
+    die "$label 根目录不是规范普通目录。"
+  validate_root_file "$manifest_path"
+
+  local manifest_lines=()
+  mapfile -t manifest_lines < "$manifest_path"
+  [[ ${#manifest_lines[@]} -eq 4 ]] || die "$label tree-v1 清单必须精确为 4 行。"
+  local expected_digest expected_descendants expected_files expected_links
+  [[ "${manifest_lines[0]}" =~ ^([0-9a-f]{64})\ \ ([a-z0-9-]+)$ && \
+      "${BASH_REMATCH[2]}" == "$manifest_marker" ]] || \
+    die "$label tree-v1 清单摘要行无效。"
+  expected_digest="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[1]}" =~ ^([0-9]+)\ \ descendants$ ]] || \
+    die "$label tree-v1 清单条目数行无效。"
+  expected_descendants="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[2]}" =~ ^([0-9]+)\ \ regular-files$ ]] || \
+    die "$label tree-v1 清单文件数行无效。"
+  expected_files="${BASH_REMATCH[1]}"
+  [[ "${manifest_lines[3]}" =~ ^([0-9]+)\ \ symlinks$ ]] || \
+    die "$label tree-v1 清单链接数行无效。"
+  expected_links="${BASH_REMATCH[1]}"
+
+  reject_mount_at_or_below "$runtime_root" "$label"
   local actual_descendants actual_files actual_links
   actual_descendants=$(find "$runtime_root" -mindepth 1 -printf . | wc -c | tr -d '[:space:]')
   actual_files=$(find "$runtime_root" -mindepth 1 -type f -printf . | wc -c | tr -d '[:space:]')
@@ -311,19 +323,19 @@ validate_offline_python_runtime() {
   [[ "$actual_descendants" == "$expected_descendants" && \
       "$actual_files" == "$expected_files" && \
       "$actual_links" == "$expected_links" ]] || \
-    die "离线 Python 运行时条目、文件或符号链接数量与 tree-v1 清单不一致。"
+    die "$label 条目、文件或符号链接数量与 tree-v1 清单不一致。"
 
   local root_mode root_uid root_gid root_device service_gid actual_digest
   read -r root_mode root_uid root_gid root_device < <(stat -c '%a %u %g %d' -- "$runtime_root")
   service_gid=$(getent group "$VIDEOINSIGHT_SERVICE_GROUP" | cut -d: -f3)
   [[ "$root_uid" == "0" && "$service_gid" =~ ^[0-9]+$ ]] || \
-    die "离线 Python 根目录或固定服务组无效。"
+    die "$label 根目录或固定服务组无效。"
   (( (8#$root_mode & 0022) == 0 )) || \
-    die "离线 Python 根目录可由组或其他用户修改。"
+    die "$label 根目录可由组或其他用户修改。"
   if [[ "$root_gid" == "$service_gid" ]]; then
-    (( (8#$root_mode & 0010) != 0 )) || die "固定服务身份无法遍历离线 Python 根目录。"
+    (( (8#$root_mode & 0010) != 0 )) || die "固定服务身份无法遍历$label 根目录。"
   else
-    (( (8#$root_mode & 0001) != 0 )) || die "固定服务身份无法遍历离线 Python 根目录。"
+    (( (8#$root_mode & 0001) != 0 )) || die "固定服务身份无法遍历$label 根目录。"
   fi
 
   actual_digest=$(
@@ -332,58 +344,78 @@ validate_offline_python_runtime() {
       local relative path mode uid gid device kind value target_lines resolved leaf
       while IFS= read -r -d '' relative; do
         if LC_ALL=C printf '%s' "$relative" | grep -q '[[:cntrl:]]'; then
-          die "离线 Python 路径包含控制字符。"
+          die "$label 路径包含控制字符。"
         fi
         path="$runtime_root/$relative"
         read -r mode uid gid device < <(stat -c '%a %u %g %d' -- "$path")
         [[ "$uid" == "0" && "$device" == "$root_device" ]] || \
-          die "离线 Python 条目不是 root 持有或跨越文件系统：$relative"
+          die "$label 条目不是 root 持有或跨越文件系统：$relative"
         if [[ -L "$path" ]]; then
           kind="l"
           target_lines=$(readlink -- "$path" | wc -l | tr -d '[:space:]')
-          [[ "$target_lines" == "1" ]] || die "离线 Python 符号链接目标包含换行。"
+          [[ "$target_lines" == "1" ]] || die "$label 符号链接目标包含换行。"
           value=$(readlink -- "$path")
           if LC_ALL=C printf '%s' "$value" | grep -q '[[:cntrl:]]'; then
-            die "离线 Python 符号链接目标包含控制字符。"
+            die "$label 符号链接目标包含控制字符。"
           fi
-          resolved=$(readlink -f -- "$path") || die "离线 Python 包含失效符号链接。"
+          resolved=$(readlink -f -- "$path") || die "$label 包含失效符号链接。"
           [[ "$resolved" == "$runtime_root" || "$resolved" == "$runtime_root/"* ]] || \
-            die "离线 Python 符号链接越过固定运行时根目录。"
+            die "$label 符号链接越过固定运行时根目录。"
         elif [[ -f "$path" ]]; then
           kind="f"
           (( (8#$mode & 0022) == 0 )) || \
-            die "离线 Python 文件可由组或其他用户修改：$relative"
+            die "$label 文件可由组或其他用户修改：$relative"
           if [[ "$gid" == "$service_gid" ]]; then
-            (( (8#$mode & 0040) != 0 )) || die "固定服务身份无法读取离线 Python 文件。"
+            (( (8#$mode & 0040) != 0 )) || die "固定服务身份无法读取$label 文件。"
           else
-            (( (8#$mode & 0004) != 0 )) || die "固定服务身份无法读取离线 Python 文件。"
+            (( (8#$mode & 0004) != 0 )) || die "固定服务身份无法读取$label 文件。"
           fi
           leaf="${relative##*/}"
           if [[ "$leaf" == "sitecustomize.py" || "$leaf" == "usercustomize.py" ]]; then
-            die "离线 Python 运行时包含自定义 site 启动代码。"
+            die "$label 包含自定义 site 启动代码。"
           fi
           value=$(sha256sum -- "$path" | cut -d' ' -f1)
         elif [[ -d "$path" ]]; then
           kind="d"
           (( (8#$mode & 0022) == 0 )) || \
-            die "离线 Python 目录可由组或其他用户修改：$relative"
+            die "$label 目录可由组或其他用户修改：$relative"
           if [[ "$gid" == "$service_gid" ]]; then
-            (( (8#$mode & 0010) != 0 )) || die "固定服务身份无法遍历离线 Python 目录。"
+            (( (8#$mode & 0010) != 0 )) || die "固定服务身份无法遍历$label 目录。"
           else
-            (( (8#$mode & 0001) != 0 )) || die "固定服务身份无法遍历离线 Python 目录。"
+            (( (8#$mode & 0001) != 0 )) || die "固定服务身份无法遍历$label 目录。"
           fi
           value=""
         else
-          die "离线 Python 运行时包含特殊文件：$relative"
+          die "$label 包含特殊文件：$relative"
         fi
         printf '%s\t%s\t%04o\t%s\t%s\t%s\n' \
           "$kind" "$relative" "$((8#$mode))" "$uid" "$gid" "$value"
       done < <(CDPATH= cd -- "$runtime_root" && \
         find . -mindepth 1 -printf '%P\0' | LC_ALL=C sort -z)
     } | sha256sum | cut -d' ' -f1
-  ) || die "离线 Python tree-v1 纯系统工具校验失败。"
+  ) || die "$label tree-v1 纯系统工具校验失败。"
   [[ "$actual_digest" == "$expected_digest" ]] || \
-    die "离线 Python tree-v1 聚合 SHA256 不一致。"
+    die "$label tree-v1 聚合 SHA256 不一致。"
+}
+
+validate_offline_python_runtime() {
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 0 ]] || return 0
+  if [[ -f "$VIDEOINSIGHT_OFFLINE_PYTHON_LEGACY_MANIFEST" && \
+        ! -L "$VIDEOINSIGHT_OFFLINE_PYTHON_LEGACY_MANIFEST" ]] && \
+     ( validate_offline_python_tree \
+         "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" \
+         "$VIDEOINSIGHT_OFFLINE_PYTHON_LEGACY_MANIFEST" \
+         videoinsight-offline-python-legacy-drift-tree-v1 \
+         "legacy pyc-drift 离线 Python" ) >/dev/null 2>&1; then
+    die "检测到已取证的 legacy pyc-drift runtime；必须先执行 normalize_offline_python_runtime.sh。"
+  fi
+  validate_offline_python_tree \
+    "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" \
+    "$VIDEOINSIGHT_OFFLINE_PYTHON_MANIFEST" \
+    videoinsight-offline-python-tree-v1 \
+    "离线 Python 运行时"
+  validate_trusted_execution_dependencies
+  validate_trusted_executable_path "$VIDEOINSIGHT_OFFLINE_PYTHON" / >/dev/null
   VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
 }
 
@@ -732,8 +764,7 @@ prepare_secure_state_directory() {
   fi
 }
 
-open_native_release_lock() {
-  validate_offline_python_runtime
+open_native_release_lock_without_runtime_validation() {
   prepare_secure_state
   local lock_path="$VIDEOINSIGHT_ROOT/state/native-release.lock"
   if [[ -e "$lock_path" || -L "$lock_path" ]]; then
@@ -748,6 +779,11 @@ open_native_release_lock() {
   fi
   exec 9>>"$lock_path"
   flock -n 9 || die "已有一个控制层发布事务正在执行。"
+}
+
+open_native_release_lock() {
+  validate_offline_python_runtime
+  open_native_release_lock_without_runtime_validation
 }
 
 validate_release_python() {
@@ -1164,6 +1200,7 @@ validate_legacy_bridge_effective_config() {
   validate_legacy_bridge_unit_file "$VIDEOINSIGHT_UNIT_PATH" \
     "$application_version" "$interpreter_version" "$expected_sha256"
   local fragment drop_ins working_directory service_user service_group exec_start
+  local effective_environment need_daemon_reload expected_environment
   local expected_exec_path expected_exec_start
   fragment=$(systemctl show --property=FragmentPath "$VIDEOINSIGHT_SERVICE" | sed -n 's/^FragmentPath=//p')
   drop_ins=$(systemctl show --property=DropInPaths "$VIDEOINSIGHT_SERVICE" | sed -n 's/^DropInPaths=//p')
@@ -1171,15 +1208,22 @@ validate_legacy_bridge_effective_config() {
   service_user=$(systemctl show --property=User "$VIDEOINSIGHT_SERVICE" | sed -n 's/^User=//p')
   service_group=$(systemctl show --property=Group "$VIDEOINSIGHT_SERVICE" | sed -n 's/^Group=//p')
   exec_start=$(systemctl show --property=ExecStart "$VIDEOINSIGHT_SERVICE" | sed -n 's/^ExecStart=//p')
+  effective_environment=$(systemctl show --property=Environment "$VIDEOINSIGHT_SERVICE" | sed -n 's/^Environment=//p')
+  need_daemon_reload=$(systemctl show --property=NeedDaemonReload "$VIDEOINSIGHT_SERVICE" | sed -n 's/^NeedDaemonReload=//p')
   expected_exec_path="$VIDEOINSIGHT_RELEASES_ROOT/$interpreter_version/venv/bin/python"
   expected_exec_start="$expected_exec_path -m uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+  expected_environment="PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PATH=$VIDEOINSIGHT_SERVICE_PATH VIDEOINSIGHT_RUNTIME_ROOT=$VIDEOINSIGHT_RUNTIME_ROOT VIDEOINSIGHT_BACKUP_ROOT=$VIDEOINSIGHT_BACKUP_ROOT AUTH_SESSION_DATABASE_PATH=$VIDEOINSIGHT_RUNTIME_ROOT/data/video_intelligence.db"
   [[ "$fragment" == "$VIDEOINSIGHT_UNIT_PATH" ]] || die "systemd 实际加载了其他 unit。"
   [[ -z "$drop_ins" ]] || die "legacy bridge 存在未审计的 systemd drop-in。"
+  [[ "$need_daemon_reload" == "no" ]] || \
+    die "legacy bridge 的磁盘 unit 与 systemd 已加载配置不一致。"
   [[ "$working_directory" == "$VIDEOINSIGHT_CURRENT" ]] || \
     die "systemd 实际 legacy bridge WorkingDirectory 不正确。"
   [[ "$service_user" == "$VIDEOINSIGHT_SERVICE_USER" && \
       "$service_group" == "$VIDEOINSIGHT_SERVICE_GROUP" ]] || \
     die "systemd 实际 legacy bridge 服务身份不正确。"
+  [[ "$effective_environment" == "$expected_environment" ]] || \
+    die "systemd 实际 legacy bridge Environment 与固定安全配置不一致。"
   validate_effective_exec_start_record "$exec_start" "$expected_exec_path" \
     "$expected_exec_start"
 }

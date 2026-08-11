@@ -3,14 +3,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import zipfile
 from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -20,6 +22,7 @@ NATIVE_ROOT = REPOSITORY_ROOT / "deploy" / "control-plane" / "native-systemd"
 MEDIA_TOOLS_MANIFEST = NATIVE_ROOT / "media-tools.sha256"
 SHELL_SCRIPTS = (
     "common.sh",
+    "normalize_offline_python_runtime.sh",
     "normalize_legacy_unit.sh",
     "preflight.sh",
     "install_unit.sh",
@@ -245,6 +248,8 @@ def test_linux_release_files_are_pinned_to_lf_in_git() -> None:
     manifests = (
         "wheelhouse.sha256",
         "media-tools.sha256",
+        "offline-python-archive.sha256",
+        "offline-python-legacy-drift-tree.sha256",
         "offline-python-tree.sha256",
     )
     for name in manifests:
@@ -1644,16 +1649,20 @@ def test_offline_python_gate_is_manifest_bound_isolated_and_before_lock(
     common = _read("common.sh")
     manifest = _read("offline-python-tree.sha256").splitlines()
     assert manifest == [
-        "0065c5f252098d75602d2b92a0046568a818a3f2f8ba713b71ca3a3045c0fe4f  "
+        "f4446ac8e57f0a85d2bd0851fc05acb0cd5e8137f6752df428116ddc8e4fab01  "
         "videoinsight-offline-python-tree-v1",
-        "4949  descendants",
-        "3683  regular-files",
+        "4728  descendants",
+        "3485  regular-files",
         "1048  symlinks",
     ]
     lock_body = common.split("open_native_release_lock() {", 1)[1].split("}", 1)[0]
     assert lock_body.index("validate_offline_python_runtime") < lock_body.index(
-        "prepare_secure_state"
+        "open_native_release_lock_without_runtime_validation"
     )
+    unvalidated_lock = common.split(
+        "open_native_release_lock_without_runtime_validation() {", 1
+    )[1].split("}", 1)[0]
+    assert "prepare_secure_state" in unvalidated_lock
     assert "/proc/self/mountinfo" in common
     assert "NF < 5 { exit 2 }" in common
     assert "gsub(/\\\\040/" in common
@@ -1661,7 +1670,7 @@ def test_offline_python_gate_is_manifest_bound_isolated_and_before_lock(
     assert '"$leaf" == "usercustomize.py"' in common
     assert '"$uid" == "0" && "$device" == "$root_device"' in common
     digest_body = common.split("actual_digest=$(", 1)[1].split(
-        ') || die "离线 Python tree-v1 纯系统工具校验失败。"', 1
+        '[[ "$actual_digest" == "$expected_digest" ]]', 1
     )[0]
     assert "case " not in digest_body
     assert "esac" not in digest_body
@@ -1699,16 +1708,507 @@ assert sys.flags.utf8_mode == 1
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_offline_python_archive_provenance_rebuilds_clean_tree_manifest() -> None:
+    archive_manifest = _read("offline-python-archive.sha256").splitlines()
+    expected_archive_sha = (
+        "506191be3ee7bd190a8834dcdc1b3bc70aab50608deccc711935aa007239cabd"
+    )
+    archive_name = (
+        "cpython-3.12.13+20260807-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    )
+    historical_url = (
+        "https://releases.astral.sh/github/python-build-standalone/releases/"
+        "download/20260807/cpython-3.12.13%2B20260807-x86_64-unknown-linux-"
+        "gnu-install_only_stripped.tar.gz"
+    )
+    assert archive_manifest == [
+        f"{expected_archive_sha}  {archive_name}",
+        "34163738  bytes",
+        f"{historical_url}  source",
+    ]
+    common = _read("common.sh")
+    repair = _read("normalize_offline_python_runtime.sh")
+    readme = _read("README.md")
+    for evidence in (archive_name, expected_archive_sha, historical_url, "34163738"):
+        assert evidence in common + repair
+        assert evidence in readme
+    assert "astral-sh/python-build-standalone" in readme
+    assert "GitHub tag `20260807`" in readme
+
+    source_archive = REPOSITORY_ROOT / "work" / "server-deploy-xmt" / archive_name
+    if not source_archive.is_file():
+        return
+    assert source_archive.stat().st_size == 34163738
+    archive_digest = hashlib.sha256()
+    with source_archive.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            archive_digest.update(chunk)
+    assert archive_digest.hexdigest() == expected_archive_sha
+
+    records: dict[str, tuple[str, int, str]] = {}
+    directories: set[str] = set()
+    link_destinations: list[str] = []
+    with tarfile.open(source_archive, "r:gz") as archive:
+        members = archive.getmembers()
+        assert len(members) == 4533
+        for member in members:
+            path = PurePosixPath(member.name)
+            assert path.parts[0] == "python"
+            relative = PurePosixPath(*path.parts[1:])
+            assert relative.parts and ".." not in relative.parts
+            relative_text = relative.as_posix()
+            assert relative_text not in records
+            for parent in relative.parents:
+                if parent == PurePosixPath("."):
+                    break
+                directories.add(parent.as_posix())
+            if member.isreg():
+                payload = archive.extractfile(member)
+                assert payload is not None
+                digest = hashlib.sha256()
+                while chunk := payload.read(1024 * 1024):
+                    digest.update(chunk)
+                records[relative_text] = (
+                    "f",
+                    member.mode & ~0o022,
+                    digest.hexdigest(),
+                )
+            elif member.issym():
+                assert not posixpath.isabs(member.linkname)
+                destination = posixpath.normpath(
+                    posixpath.join(relative.parent.as_posix(), member.linkname)
+                )
+                assert destination != ".." and not destination.startswith("../")
+                link_destinations.append(destination)
+                records[relative_text] = ("l", 0o777, member.linkname)
+            else:
+                raise AssertionError(f"unexpected archive member: {member.name}")
+    for directory in directories:
+        assert directory not in records
+        records[directory] = ("d", 0o755, "")
+    assert all(destination in records for destination in link_destinations)
+
+    aggregate = hashlib.sha256(b"d\t.\t0755\t0\t0\t\n")
+    for path in sorted(records, key=lambda value: value.encode("utf-8")):
+        kind, mode, value = records[path]
+        aggregate.update(f"{kind}\t{path}\t{mode:04o}\t0\t0\t{value}\n".encode("utf-8"))
+    assert len(records) == 4728
+    assert sum(kind == "f" for kind, _, _ in records.values()) == 3485
+    assert sum(kind == "l" for kind, _, _ in records.values()) == 1048
+    assert aggregate.hexdigest() == (
+        "f4446ac8e57f0a85d2bd0851fc05acb0cd5e8137f6752df428116ddc8e4fab01"
+    )
+
+
+def test_offline_python_repair_transaction_is_fail_closed_and_reproducible() -> None:
+    common = _read("common.sh")
+    repair = _read("normalize_offline_python_runtime.sh")
+    legacy_manifest = _read("offline-python-legacy-drift-tree.sha256").splitlines()
+    assert legacy_manifest == [
+        "3f3407b97c487aaf0dedd632590fd7731486675cf77000827918274bab07b8b0  "
+        "videoinsight-offline-python-legacy-drift-tree-v1",
+        "4949  descendants",
+        "3683  regular-files",
+        "1048  symlinks",
+    ]
+    assert "必须先执行 normalize_offline_python_runtime.sh" in common
+    assert "open_native_release_lock_without_runtime_validation" in repair
+    assert "open_native_release_lock\n" not in repair
+    assert "VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1" not in repair
+    assert repair.count("VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=0") >= 2
+    assert (
+        'readonly DESCRIPTOR_TEMP="$VIDEOINSIGHT_ROOT/state/'
+        '.offline-python-runtime-repair.new"' in repair
+    )
+    assert 'readonly SYSTEM_TAR="/usr/bin/tar"' in repair
+    assert "--strip-components=1" in repair
+    assert "--no-same-owner --no-same-permissions" in repair
+    assert "reject_mount_at_or_below" in repair
+    assert 'find "$EXTRACT_ROOT" -xdev -type d -exec chmod 0755' in repair
+    assert 'find "$EXTRACT_ROOT" -xdev -type f -exec chmod go-w' in repair
+    main = repair[repair.index("main()") :]
+    assert main.index("discard_uncommitted_descriptor_temp") < main.index(
+        "descriptor_state=$(repair_descriptor_state)"
+    )
+    assert main.index("validate_official_archive") < main.index("build_clean_stage")
+    prepared = main.index("write_repair_descriptor prepared")
+    prepare_branch = main.index('if [[ "$action" == "prepare" ]]')
+    transaction = main.index("TRANSACTION_STARTED=1", prepare_branch)
+    old_to_backup = main.index(
+        'durable_rename "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT" "$LEGACY_BACKUP"'
+    )
+    clean_to_live = main.index(
+        'durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"'
+    )
+    clean_gate = main.index("validate_repair_service_start_binding", clean_to_live)
+    first_new_start = main.index('systemctl start "$VIDEOINSIGHT_SERVICE"', clean_gate)
+    active = main.index("write_repair_descriptor active", first_new_start)
+    first_stop = main.index(
+        'stop_repair_service_fail_closed "离线 Python 原子替换前停止控制层"'
+    )
+    post_health_clean_gate = main.index(
+        "revalidate_clean_runtime_after_service_health", first_new_start
+    )
+    assert (
+        transaction < prepared < first_stop < old_to_backup < clean_to_live < clean_gate
+    )
+    assert clean_gate < first_new_start < post_health_clean_gate < active
+
+    restore = repair.split("restore_legacy_runtime() {", 1)[1].split(
+        "\n}\n\nfinish()", 1
+    )[0]
+    assert (
+        'durable_rename "$LEGACY_BACKUP" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"' in restore
+    )
+    assert "systemctl start" not in restore
+    assert "repair_health_check_without_python" not in restore
+    assert "validate_offline_python_runtime" not in restore
+    assert "固定服务保持停止" in restore
+    assert "restore_legacy_runtime || true" in repair
+    assert "active clean runtime 退出健康失败后的停止" in repair
+
+
+def test_offline_python_repair_binds_unit_and_trees_around_every_service_action() -> (
+    None
+):
+    common = _read("common.sh")
+    repair = _read("normalize_offline_python_runtime.sh")
+    main = repair[repair.index("main()") :]
+    original_sha = "98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994"
+    bridge_sha = "839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84"
+    for evidence in (
+        original_sha,
+        bridge_sha,
+        "NeedDaemonReload",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6",
+        "bfd8ba051af78d812c9b39c1679b7843c14196cea77ee7457b8599e8797368da",
+    ):
+        assert evidence in repair + common
+    assert '[[ "$need_daemon_reload" == "no" ]]' in repair
+    assert '[[ "$need_daemon_reload" == "no" ]]' in common
+    assert '[[ "$effective_environment" == "$expected_environment" ]]' in repair
+    assert '[[ "$effective_environment" == "$expected_environment" ]]' in common
+
+    lock = main.index("open_native_release_lock_without_runtime_validation")
+    first_binding = main.index("validate_repair_service_unit_for_control", lock)
+    temp_cleanup = main.index("discard_uncommitted_descriptor_temp")
+    first_state_read = main.index("descriptor_state=$(repair_descriptor_state)")
+    assert lock < first_binding < temp_cleanup < first_state_read
+
+    # The repair script has exactly one path to the common stop primitive. Every
+    # normal, recovery, mixed-state, and EXIT stop call must pass through the
+    # exact-unit revalidation wrapper first.
+    assert repair.count("stop_control_plane_fail_closed") == 1
+    assert 'stop_control_plane_fail_closed "$reason"' in repair
+    assert not re.search(r"^[ \t]*systemctl[ \t]+stop\b", repair, re.MULTILINE)
+    wrapper = repair.split("stop_repair_service_fail_closed() {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert wrapper.index("validate_repair_service_unit_for_control") < wrapper.index(
+        "stop_control_plane_fail_closed"
+    )
+
+    for start in re.finditer(
+        r'^[ \t]*systemctl start "\$VIDEOINSIGHT_SERVICE"', main, re.MULTILINE
+    ):
+        preceding = main[: start.start()]
+        assert preceding.rfind(
+            "validate_repair_service_start_binding"
+        ) > preceding.rfind("write_repair_descriptor active")
+
+    first_new_start = main.index(
+        'systemctl start "$VIDEOINSIGHT_SERVICE"',
+        main.index('durable_rename "$CLEAN_STAGE" "$VIDEOINSIGHT_OFFLINE_PYTHON_ROOT"'),
+    )
+    health = main.index('health_check ""', first_new_start)
+    post_health_gate = main.index(
+        "revalidate_clean_runtime_after_service_health", health
+    )
+    active = main.index("write_repair_descriptor active", post_health_gate)
+    assert first_new_start < health < post_health_gate < active
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_rc"),
+    [
+        ("ok", 0),
+        ("unit-sha", 1),
+        ("drop-in", 1),
+        ("daemon-reload", 1),
+        ("environment", 1),
+        ("exec-start", 1),
+    ],
+)
+def test_offline_python_repair_original_unit_binding_rejects_effective_drift(
+    scenario: str, expected_rc: int
+) -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+scenario="$2"
+validate_root_file() { :; }
+validate_audited_original_current_binding() { :; }
+sha256sum() {
+  if [[ "$scenario" == "unit-sha" ]]; then
+    printf '%064d  mocked\n' 0
+  else
+    printf '%s  mocked\n' "$AUDITED_ORIGINAL_UNIT_SHA256"
+  fi
+}
+readlink() {
+  if [[ "$1" == "--" ]]; then
+    printf '%s\n' "$AUDITED_ORIGINAL_CURRENT_LINK"
+  else
+    printf '%s\n' "$AUDITED_APPLICATION_ROOT"
+  fi
+}
+grep() { printf '1\n'; }
+sed() {
+  if [[ "$#" -eq 3 && "$3" == "$VIDEOINSIGHT_UNIT_PATH" ]]; then
+    printf '%s\n' "$AUDITED_INTERPRETER_ROOT/bin/uvicorn project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+    return 0
+  fi
+  while IFS= read -r line; do printf '%s\n' "${line#*=}"; done
+}
+systemctl() {
+  case "${2#--property=}" in
+    FragmentPath) printf 'FragmentPath=%s\n' "$VIDEOINSIGHT_UNIT_PATH" ;;
+    DropInPaths)
+      if [[ "$scenario" == "drop-in" ]]; then
+        printf 'DropInPaths=/etc/systemd/system/videoinsight-control-plane.service.d/evil.conf\n'
+      else
+        printf 'DropInPaths=\n'
+      fi
+      ;;
+    NeedDaemonReload)
+      [[ "$scenario" == "daemon-reload" ]] && value=yes || value=no
+      printf 'NeedDaemonReload=%s\n' "$value"
+      ;;
+    WorkingDirectory) printf 'WorkingDirectory=%s\n' "$VIDEOINSIGHT_CURRENT" ;;
+    User) printf 'User=%s\n' "$VIDEOINSIGHT_SERVICE_USER" ;;
+    Group) printf 'Group=%s\n' "$VIDEOINSIGHT_SERVICE_GROUP" ;;
+    Environment)
+      if [[ "$scenario" == "environment" ]]; then
+        printf 'Environment=PYTHONDONTWRITEBYTECODE=0\n'
+      else
+        printf 'Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 VIDEOINSIGHT_RUNTIME_ROOT=%s AUTH_SESSION_DATABASE_PATH=%s/data/video_intelligence.db\n' "$VIDEOINSIGHT_RUNTIME_ROOT" "$VIDEOINSIGHT_RUNTIME_ROOT"
+      fi
+      ;;
+    ExecStart)
+      if [[ "$scenario" == "exec-start" ]]; then
+        path=/bin/false
+        argv=/bin/false
+      else
+        path="$AUDITED_INTERPRETER_ROOT/bin/uvicorn"
+        argv="$path project.backend.app.control_plane:app --host 127.0.0.1 --port 18080 --workers 1 --proxy-headers --forwarded-allow-ips 127.0.0.1"
+      fi
+      printf 'ExecStart={ path=%s ; argv[]=%s ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\n' "$path" "$argv"
+      ;;
+  esac
+}
+validate_audited_original_service_unit_binding
+"""
+    result = subprocess.run(
+        [_bash(), "-c", shell, "repair-binding-test", str(script_path), scenario],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if expected_rc == 0:
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("binding_kind", "expected_marker"),
+    [("original", "original-trees"), ("strict-bridge", "active-adoption")],
+)
+def test_offline_python_repair_start_binding_accepts_only_audited_positive_paths(
+    binding_kind: str, expected_marker: str
+) -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+kind="$2"
+validate_offline_python_runtime() {
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 0 ]] || return 9
+  VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+}
+validate_repair_service_unit_for_control() {
+  REPAIR_SERVICE_BINDING_KIND="$kind"
+}
+validate_audited_legacy_trees_for_restart() { MARKER=original-trees; }
+validate_active_legacy_adoption() { MARKER=active-adoption; }
+VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+validate_repair_service_start_binding
+printf '%s\n' "$MARKER"
+"""
+    result = subprocess.run(
+        [
+            _bash(),
+            "-c",
+            shell,
+            "repair-start-binding-test",
+            str(script_path),
+            binding_kind,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.strip() == expected_marker
+
+
+def test_offline_python_repair_unknown_unit_never_reaches_stop_primitive() -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+validate_repair_service_unit_for_control() { return 17; }
+stop_control_plane_fail_closed() { printf 'STOP-CALLED\n'; return 0; }
+stop_repair_service_fail_closed test-reason
+"""
+    result = subprocess.run(
+        [_bash(), "-c", shell, "repair-stop-binding-test", str(script_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode != 0
+    assert "STOP-CALLED" not in result.stdout + result.stderr
+    assert "systemctl stop" in result.stderr
+
+
+@pytest.mark.parametrize(("tree_drift", "expected_rc"), [("0", 0), ("1", 1)])
+def test_offline_python_repair_recomputes_exact_legacy_trees_before_restart(
+    tree_drift: str, expected_rc: int
+) -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+tree_drift="$2"
+SERVICE_UID=123
+SERVICE_GID=456
+validate_root_file() { :; }
+run_trusted_offline_python() {
+  printf '175\n'
+  if [[ "$tree_drift" == "1" ]]; then
+    printf '%064d\n' 0
+  else
+    printf '%s\n' "$AUDITED_APPLICATION_TREE_SHA256"
+  fi
+  printf '1594\n%s\n' "$AUDITED_INTERPRETER_TREE_SHA256"
+}
+validate_audited_legacy_trees_for_restart
+"""
+    result = subprocess.run(
+        [
+            _bash(),
+            "-c",
+            shell,
+            "repair-tree-binding-test",
+            str(script_path),
+            tree_drift,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if expected_rc == 0:
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(("polluted", "expected_rc"), [("0", 0), ("1", 1)])
+def test_offline_python_repair_post_health_gate_clears_cached_validation(
+    polluted: str, expected_rc: int
+) -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    shell = r"""
+source "$1"
+polluted="$2"
+validate_offline_python_runtime() {
+  printf 'observed-flag=%s\n' "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED"
+  [[ "$VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED" -eq 0 ]] || return 8
+  [[ "$polluted" == "0" ]] || return 7
+  VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+}
+VIDEOINSIGHT_OFFLINE_PYTHON_VALIDATED=1
+revalidate_clean_runtime_after_service_health
+"""
+    result = subprocess.run(
+        [_bash(), "-c", shell, "repair-post-health-test", str(script_path), polluted],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert "observed-flag=0" in result.stdout
+    if expected_rc == 0:
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+
+
+def test_offline_python_repair_crash_states_are_behaviorally_classified() -> None:
+    script_path = NATIVE_ROOT / "normalize_offline_python_runtime.sh"
+    cases = (
+        (("missing", "legacy", "missing", "missing"), "prepare", 0),
+        (("missing", "legacy", "missing", "clean"), "prepare", 0),
+        (("prepared", "legacy", "missing", "clean"), "replace", 0),
+        (("prepared", "missing", "legacy", "clean"), "install-clean", 0),
+        (("prepared", "clean", "legacy", "missing"), "finalize", 0),
+        (("active", "clean", "legacy", "missing"), "done", 0),
+        (("prepared", "legacy", "legacy", "clean"), "invalid", 1),
+        (("active", "legacy", "missing", "clean"), "invalid", 1),
+    )
+    for arguments, expected, expected_rc in cases:
+        result = subprocess.run(
+            [
+                _bash(),
+                "-c",
+                'source "$1"; shift; classify_repair_state "$@"',
+                "repair-state-test",
+                str(script_path),
+                *arguments,
+            ],
+            cwd=REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == expected_rc, result.stdout + result.stderr
+        assert result.stdout.strip() == expected
+
+
 def test_readme_requires_target_bash_42_parse_gate_before_execution() -> None:
     readme = _read("README.md")
     assert "cd /opt/videoinsight-control-plane/tools/native-systemd || exit 1" in readme
     assert "TARGET_VERSION='<正式构建生成的版本>'" in readme
     parse_gate = readme.index("for script in common.sh install_unit.sh")
+    runtime_repair = readme.index(
+        "/bin/bash normalize_offline_python_runtime.sh", parse_gate
+    )
+    second_parse_gate = readme.index(
+        "for script in common.sh install_unit.sh", runtime_repair
+    )
     normalize = readme.index("/bin/bash normalize_legacy_unit.sh", parse_gate)
-    assert '/bin/bash -n "$script" || exit 1' in readme[parse_gate:normalize]
+    assert parse_gate < runtime_repair < second_parse_gate < normalize
+    assert '/bin/bash -n "$script" || exit 1' in readme[parse_gate:runtime_repair]
+    assert '/bin/bash -n "$script" || exit 1' in readme[second_parse_gate:normalize]
     for name in SHELL_SCRIPTS:
         assert name in readme[parse_gate:normalize]
-    assert "CentOS 7 自带 Bash 4.2" in readme
+    assert "Bash 4.2" in readme
     assert '/bin/bash upgrade.sh "$TARGET_VERSION"' in readme
     assert '/bin/bash verify.sh "$TARGET_VERSION"' in readme
     assert not re.search(
@@ -1934,8 +2434,11 @@ def test_archive_validator_extracts_a_safe_bundle(tmp_path: Path) -> None:
     "required_native_file",
     (
         "legacy_adoption_descriptor.py",
+        "normalize_offline_python_runtime.sh",
         "normalize_legacy_unit.sh",
         "media-tools.sha256",
+        "offline-python-archive.sha256",
+        "offline-python-legacy-drift-tree.sha256",
         "offline-python-tree.sha256",
     ),
 )
