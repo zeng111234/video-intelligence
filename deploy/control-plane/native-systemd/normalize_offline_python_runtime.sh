@@ -29,8 +29,6 @@ readonly AUDITED_INTERPRETER_ROOT="$VIDEOINSIGHT_RELEASES_ROOT/$AUDITED_INTERPRE
 readonly AUDITED_ORIGINAL_CURRENT_LINK="$AUDITED_APPLICATION_ROOT"
 readonly AUDITED_ORIGINAL_UNIT_SHA256="98e7841399dcb1cb5654225bbfde65735fe0dc8cc3b56c0bd2336ad6f116a994"
 readonly AUDITED_BRIDGE_UNIT_SHA256="839ad0602fd054d3d3d2eb5574c6184d4e6ceafa2d381d06f7a7a8dffe6aaf84"
-readonly AUDITED_STANDARD_RELEASE_VERSION="0.2.13"
-readonly AUDITED_STANDARD_RELEASE_ROOT="$VIDEOINSIGHT_RELEASES_ROOT/$AUDITED_STANDARD_RELEASE_VERSION"
 readonly AUDITED_APPLICATION_FILE_COUNT="175"
 readonly AUDITED_APPLICATION_TREE_SHA256="81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6"
 readonly AUDITED_INTERPRETER_TREE_ENTRY_COUNT="1594"
@@ -120,19 +118,20 @@ validate_repair_service_unit_for_control() {
     validate_audited_standard_release_service_unit_binding
     REPAIR_SERVICE_BINDING_KIND="standard-release"
   else
-    die "已安装 unit 不是受审原 unit、active strict bridge 或精确 0.2.13 标准 unit。"
+    die "已安装 unit 不是受审原 unit、active strict bridge 或受审标准发布 unit。"
   fi
 }
 
 validate_audited_standard_release_service_unit_binding() {
-  local current_release
+  local current_release current_version
   current_release=$(current_release_root)
-  [[ "$current_release" == "$AUDITED_STANDARD_RELEASE_ROOT" ]] || \
-    die "标准 unit 的 current 未精确绑定 0.2.13。"
+  current_version="${current_release##*/}"
+  [[ -n "$current_version" && "$current_release" == \
+      "$VIDEOINSIGHT_RELEASES_ROOT/$current_version" ]] || \
+    die "标准 unit 的 current 未精确绑定版本化发布目录。"
   validate_secure_directory "$current_release" 0
   validate_release_python "$current_release"
-  validate_release_version_file "$current_release" \
-    "$AUDITED_STANDARD_RELEASE_VERSION"
+  validate_release_version_file "$current_release" "$current_version"
   validate_unit_effective_config
 }
 

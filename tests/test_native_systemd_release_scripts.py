@@ -2012,7 +2012,7 @@ def test_offline_python_repair_binds_unit_and_trees_around_every_service_action(
     for evidence in (
         original_sha,
         bridge_sha,
-        'AUDITED_STANDARD_RELEASE_VERSION="0.2.13"',
+        'current_version="${current_release##*/}"',
         "NeedDaemonReload",
         "PYTHONDONTWRITEBYTECODE=1",
         "81c846d367b74d087fd845372f673a78011cdd0f48f2952c91a98f7e22ab2dc6",
@@ -2204,7 +2204,10 @@ printf '%s\n' "${MARKER:-standard-release}"
     assert result.stdout.strip() == expected_marker
 
 
-@pytest.mark.parametrize(("scenario", "expected_rc"), [("ok", 0), ("wrong", 1)])
+@pytest.mark.parametrize(
+    ("scenario", "expected_rc"),
+    [("0.2.13", 0), ("0.2.17", 0), ("mismatch", 1)],
+)
 def test_offline_python_repair_standard_unit_binds_exact_deployed_release(
     scenario: str, expected_rc: int
 ) -> None:
@@ -2213,19 +2216,20 @@ def test_offline_python_repair_standard_unit_binds_exact_deployed_release(
 source "$1"
 scenario="$2"
 current_release_root() {
-  if [[ "$scenario" == "wrong" ]]; then
-    printf '%s\n' "$VIDEOINSIGHT_RELEASES_ROOT/0.2.12"
-  else
-    printf '%s\n' "$AUDITED_STANDARD_RELEASE_ROOT"
-  fi
+  [[ "$scenario" == "mismatch" ]] && version=0.2.17 || version="$scenario"
+  printf '%s/%s\n' "$VIDEOINSIGHT_RELEASES_ROOT" "$version"
 }
 validate_secure_directory() {
-  [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" && "$2" == "0" ]]
+  [[ "$1" == "$VIDEOINSIGHT_RELEASES_ROOT/${1##*/}" && "$2" == "0" ]]
 }
-validate_release_python() { [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" ]]; }
+validate_release_python() {
+  [[ "$1" == "$VIDEOINSIGHT_RELEASES_ROOT/${1##*/}" ]]
+}
 validate_release_version_file() {
-  [[ "$1" == "$AUDITED_STANDARD_RELEASE_ROOT" && \
-     "$2" == "$AUDITED_STANDARD_RELEASE_VERSION" ]]
+  if [[ "$scenario" == "mismatch" ]]; then
+    return 1
+  fi
+  [[ "$1" == "$VIDEOINSIGHT_RELEASES_ROOT/$2" && "$2" == "$scenario" ]]
 }
 validate_unit_effective_config() { VALIDATED_UNIT=1; }
 validate_audited_standard_release_service_unit_binding
