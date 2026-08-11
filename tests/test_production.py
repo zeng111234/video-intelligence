@@ -78,34 +78,13 @@ def test_profile_uses_universal_template_when_customer_does_not_choose(tmp_path)
     assert service.list_profiles()[0].edit_template_id == DEFAULT_PRODUCTION_TEMPLATE_ID
 
 
-def _bundled_dashu_assets(*, voice_status: str = "ready") -> list[AvatarAsset]:
-    return [
-        AvatarAsset(
-            asset_id=BUNDLED_DEFAULT_AVATAR_ID,
-            kind=AvatarAssetKind.AVATAR,
-            name=BUNDLED_DEFAULT_PROFILE_NAME,
-            authorized=True,
-            shared=True,
-            status="ready",
-        ),
-        AvatarAsset(
-            asset_id=BUNDLED_DEFAULT_VOICE_ID,
-            kind=AvatarAssetKind.VOICE,
-            name=BUNDLED_DEFAULT_PROFILE_NAME,
-            authorized=True,
-            shared=True,
-            status=voice_status,
-        ),
-    ]
-
-
 def test_first_start_bootstraps_bundled_dashu_profile_without_accepting_rights(
     tmp_path,
 ):
     service = ProductionService(
         MockRepository(),
         tmp_path / "production",
-        avatar_service=SimpleNamespace(list_assets=lambda: _bundled_dashu_assets()),
+        bootstrap_bundled_default_profile=True,
     )
 
     profiles = service.list_profiles()
@@ -126,19 +105,16 @@ def test_existing_empty_profile_file_is_never_replaced_by_bundled_default(tmp_pa
     service = ProductionService(
         MockRepository(),
         storage,
-        avatar_service=SimpleNamespace(list_assets=lambda: _bundled_dashu_assets()),
+        bootstrap_bundled_default_profile=True,
     )
 
     assert service.list_profiles() == []
 
 
-def test_bundled_profile_is_not_created_until_both_assets_are_ready(tmp_path):
+def test_bundled_profile_is_not_created_outside_formal_desktop_mode(tmp_path):
     service = ProductionService(
         MockRepository(),
         tmp_path / "production",
-        avatar_service=SimpleNamespace(
-            list_assets=lambda: _bundled_dashu_assets(voice_status="training")
-        ),
     )
 
     assert service.list_profiles() == []

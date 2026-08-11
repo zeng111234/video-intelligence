@@ -620,6 +620,8 @@ def get_pipeline_service() -> PipelineService:
 
 @lru_cache
 def get_production_service() -> ProductionService:
+    from project.backend.app.services.control_plane_client import control_plane_enabled
+
     return ProductionService(
         get_repository(),
         storage_directory=RUNTIME_ROOT / "data" / "production",
@@ -629,6 +631,7 @@ def get_production_service() -> ProductionService:
         avatar_service=get_avatar_service(),
         template_service=get_template_service(),
         publish_service=get_publish_service(),
+        bootstrap_bundled_default_profile=control_plane_enabled(),
     )
 
 

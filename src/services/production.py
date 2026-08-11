@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from src.adapters.avatar import AvatarProviderError
 from src.adapters.douyin_parser import DouyinParserError
 from src.contracts import TaskRepository
 from src.services.publish_metadata import (
@@ -62,6 +61,7 @@ class ProductionService:
         avatar_service=None,
         template_service=None,
         publish_service=None,
+        bootstrap_bundled_default_profile: bool = False,
     ) -> None:
         self.repository = repository
         self.storage_directory = Path(storage_directory)
@@ -77,6 +77,7 @@ class ProductionService:
         self.avatar_service = avatar_service
         self.template_service = template_service
         self.publish_service = publish_service
+        self.bootstrap_bundled_default_profile = bootstrap_bundled_default_profile
         self._import_legacy_batches_once()
         self._bootstrap_bundled_default_profile()
 
@@ -107,26 +108,8 @@ class ProductionService:
                 self.repository.save_production_batch(batch)
 
     def _bootstrap_bundled_default_profile(self) -> None:
-        """首次启动时复用已购买的大树1资产，不覆盖任何客户配方。"""
-        if self._profiles_path.exists() or self.avatar_service is None:
-            return
-        try:
-            assets = {
-                item.asset_id: item for item in self.avatar_service.list_assets()
-            }
-        except AvatarProviderError:
-            return
-        avatar = assets.get(BUNDLED_DEFAULT_AVATAR_ID)
-        voice = assets.get(BUNDLED_DEFAULT_VOICE_ID)
-        if not all(
-            item is not None
-            and item.authorized
-            and item.shared
-            and item.status == "ready"
-            for item in (avatar, voice)
-        ):
-            return
-        if avatar.kind.value != "avatar" or voice.kind.value != "voice":
+        """正式桌面版首次启动时复用已购买资产，不覆盖任何客户配方。"""
+        if self._profiles_path.exists() or not self.bootstrap_bundled_default_profile:
             return
         profile = ProductionProfile(
             name=BUNDLED_DEFAULT_PROFILE_NAME,
