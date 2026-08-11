@@ -1233,7 +1233,7 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                     kind="validation",
                 )
             output_payload[0]["OpeningList"] = [
-                {"openUrl": opening_url, "Start": "0"}
+                {"OpenUrl": opening_url, "Start": "0"}
             ]
         if request.title_watermark_object_key:
             title_style = visual_style_spec(request.output_profile)["title"]
@@ -1322,6 +1322,11 @@ class AliyunMPSRenderProvider(CloudRenderProvider):
                 if isinstance(first, Mapping) and first.get("Success") is False:
                     raise CloudProviderError(
                         str(first.get("Message") or "MPS 创建转码任务失败。"),
+                        # SubmitJobs returns HTTP 200 even when an individual
+                        # JobResult is rejected.  Alibaba documents that no
+                        # JobId is generated in this branch, so the outcome is
+                        # known and the reserved editor credits are refundable.
+                        kind="validation",
                     )
                 job = first.get("Job") if isinstance(first, Mapping) else None
                 if isinstance(job, Mapping):

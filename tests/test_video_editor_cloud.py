@@ -987,7 +987,7 @@ def test_mps_request_prepends_opening_and_offsets_title_timeline():
     outputs = json.loads(parse_qs(body.decode("utf-8"))["Outputs"][0])
 
     assert outputs[0]["OpeningList"] == [
-        {"openUrl": _opening_asset().provider_locator, "Start": "0"}
+        {"OpenUrl": _opening_asset().provider_locator, "Start": "0"}
     ]
     assert outputs[0]["WaterMarks"][0]["Timeline"]["Start"] == "1.400"
 
@@ -1366,3 +1366,26 @@ def test_mps_submit_connection_failure_is_outcome_unknown_without_retry():
 
     assert calls == 1
     assert caught.value.outcome_unknown is True
+
+
+def test_mps_submit_explicit_job_rejection_is_known_validation_failure():
+    provider = AliyunMPSRenderProvider(
+        _aliyun_config(),
+        transport=lambda *_args: {
+            "JobResultList": {
+                "JobResult": [
+                    {
+                        "Success": False,
+                        "Code": "InvalidParameter.InvalidHTTPProtocol",
+                        "Message": "OpenUrl protocol not supported",
+                    }
+                ]
+            }
+        },
+    )
+
+    with pytest.raises(CloudProviderError) as caught:
+        provider.submit(_render_request())
+
+    assert caught.value.kind == "validation"
+    assert caught.value.outcome_unknown is False

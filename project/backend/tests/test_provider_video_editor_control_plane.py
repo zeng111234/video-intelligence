@@ -319,6 +319,7 @@ def test_video_editor_invalid_upload_refunds_once_and_voids_charge(tmp_path):
     [
         ("authorization", False, False, 422, True, 1, 422),
         ("connection", True, False, 502, False, 1, 409),
+        ("validation", False, False, 422, True, 1, 422),
         ("validation", False, True, 422, True, 0, 422),
     ],
 )
