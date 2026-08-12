@@ -162,6 +162,29 @@ def test_unknown_asr_model_is_rejected_before_processing() -> None:
         )
 
 
+def test_missing_ffprobe_reports_user_safe_media_component_error() -> None:
+    def missing_tool(_args, **_kwargs):
+        raise FileNotFoundError(2, "The system cannot find the file specified")
+
+    service = TranscriptionService(
+        MockRepository(candidates=[], tasks=[]),
+        command_runner=missing_tool,
+    )
+
+    with pytest.raises(MediaValidationError) as captured:
+        service.create_task(
+            media_name="owned.mp4",
+            media_type="video/mp4",
+            media_bytes=VIDEO_BYTES,
+            rights_confirmed=True,
+            rights_holder="测试公司",
+        )
+
+    assert captured.value.code == "media_tools_unavailable"
+    assert "视频检查组件暂不可用" in captured.value.user_message
+    assert "WinError" not in captured.value.user_message
+
+
 def test_progress_callback_failure_does_not_change_task_lifecycle() -> None:
     repository = MockRepository(candidates=[], tasks=[])
     callback_attempts = 0

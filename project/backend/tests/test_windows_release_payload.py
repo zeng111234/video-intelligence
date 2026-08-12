@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
@@ -29,6 +30,20 @@ def _payload(tmp_path: Path, url: str = "https://video.company.com") -> Path:
     release_config.mkdir(parents=True)
     (root / "VideoInsight.exe").write_bytes(b"desktop")
     (backend / "VideoInsightBackend.exe").write_bytes(b"backend")
+    media = backend / "_internal" / "media"
+    media.mkdir(parents=True)
+    (media / "ffmpeg.exe").write_bytes(b"ffmpeg")
+    (media / "ffprobe.exe").write_bytes(b"ffprobe")
+    (media / "LICENSE").write_text("GPLv3 test fixture", encoding="utf-8")
+    (media / "README.txt").write_text("test fixture", encoding="utf-8")
+    (media / "windows-media-tools.sha256").write_text(
+        "\n".join(
+            f"{hashlib.sha256((media / name).read_bytes()).hexdigest()}  {name}"
+            for name in ("LICENSE", "README.txt", "ffmpeg.exe", "ffprobe.exe")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (release_config / "release.json").write_text(
         json.dumps({"current_version": "0.2.1", "control_plane_url": url}),
         encoding="utf-8",
@@ -117,6 +132,20 @@ def test_release_payload_rejects_runtime_data_and_configured_secret(tmp_path):
             control_plane_url="https://video.company.com",
             version="0.2.1",
             environment={"COPYWRITING_API_KEY": "real-secret-value"},
+        )
+
+
+def test_release_payload_rejects_tampered_media_tool(tmp_path):
+    root = _payload(tmp_path)
+    ffprobe = root / "resources" / "backend" / "_internal" / "media" / "ffprobe.exe"
+    ffprobe.write_bytes(b"tampered")
+
+    with pytest.raises(verify.ReleasePayloadError, match="ffprobe.exe"):
+        verify.verify_release_payload(
+            root,
+            control_plane_url="https://video.company.com",
+            version="0.2.1",
+            environment={},
         )
 
 

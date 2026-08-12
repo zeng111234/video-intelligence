@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import re
 from datetime import datetime
@@ -33,6 +34,8 @@ ALLOWED_EXTENSIONS = {".mp4", ".mov"}
 ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo", "fun-asr"}
 ALLOWED_ASR_LANGUAGES = {"auto", "zh", "en", "ja", "ko"}
 MAX_HOTWORDS_LENGTH = 500
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionError(RuntimeError):
@@ -416,7 +419,10 @@ class TranscriptionService:
             task = self.repository.get_task(task_id)
             if not isinstance(task, TranscriptionTask):
                 raise TranscriptionError("转写任务不存在。", code="task_not_found")
-            if task.provider_name != "aliyun_fun_asr" or task.status != TaskStatus.SUCCEEDED:
+            if (
+                task.provider_name != "aliyun_fun_asr"
+                or task.status != TaskStatus.SUCCEEDED
+            ):
                 raise TranscriptionError(
                     "只有已完成的阿里云转写可以补做 AI 校对。",
                     code="task_not_reviewable",
@@ -463,7 +469,9 @@ class TranscriptionService:
         if not isinstance(task, TranscriptionTask):
             raise TranscriptionError("转写任务不存在。", code="task_not_found")
         if task.provider_name != "aliyun_fun_asr" or self.cloud_runtime is None:
-            raise TranscriptionError("该任务不是阿里云转写任务。", code="provider_mismatch")
+            raise TranscriptionError(
+                "该任务不是阿里云转写任务。", code="provider_mismatch"
+            )
         if task.status == TaskStatus.SUCCEEDED:
             return task
 
@@ -504,10 +512,7 @@ class TranscriptionService:
                     }
                 )
                 self._save_task(task, on_progress)
-                object_key = (
-                    f"asr-input/{task.task_id}/"
-                    f"{Path(task.media_name).name}"
-                )
+                object_key = f"asr-input/{task.task_id}/{Path(task.media_name).name}"
                 asset = self.cloud_runtime.upload(
                     media_path,
                     object_key=object_key,
@@ -648,9 +653,7 @@ class TranscriptionService:
                     "segments": segments,
                     "duration_seconds": cloud_transcript.duration_seconds
                     or task.duration_seconds,
-                    "language": cloud_transcript.language
-                    or task.language
-                    or "zh",
+                    "language": cloud_transcript.language or task.language or "zh",
                     "uncertain_segment_count": uncertain_segment_count,
                     "auto_reviewed": bool(auto_review["auto_reviewed"]),
                     "secondary_asr_count": 0,
@@ -666,8 +669,7 @@ class TranscriptionService:
         except Exception as exc:
             code = getattr(exc, "code", "")
             upload_failed_before_submission = (
-                not task.provider_job_id
-                and task.provider_status == "uploading"
+                not task.provider_job_id and task.provider_status == "uploading"
             )
             outcome_unknown = not upload_failed_before_submission and (
                 bool(getattr(exc, "outcome_unknown", False))
@@ -693,9 +695,7 @@ class TranscriptionService:
                         else "云端识别失败"
                     ),
                     "provider_status": (
-                        "outcome_unknown"
-                        if outcome_unknown
-                        else "failed"
+                        "outcome_unknown" if outcome_unknown else "failed"
                     ),
                     "error_message": (
                         "素材上传连接失败，尚未创建云端识别任务；素材已保留，确认费用后可重试一次。"
@@ -736,22 +736,29 @@ class TranscriptionService:
             raise MediaValidationError("文件内容与扩展名不匹配，已拒绝处理。")
 
     def _probe(self, input_path: Path) -> float:
-        result = self.command_runner(
-            [
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_streams",
-                "-show_format",
-                "-of",
-                "json",
-                str(input_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        try:
+            result = self.command_runner(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_streams",
+                    "-show_format",
+                    "-of",
+                    "json",
+                    str(input_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except OSError as exc:
+            logger.exception("转写视频检查组件不可用")
+            raise MediaValidationError(
+                "视频检查组件暂不可用，请重新打开软件后再试；仍失败请联系服务人员更新软件。",
+                code="media_tools_unavailable",
+            ) from exc
         if result.returncode != 0:
             raise MediaValidationError("媒体文件无法解析或已经损坏。")
         try:
@@ -773,28 +780,35 @@ class TranscriptionService:
         return duration
 
     def _extract_audio(self, input_path: Path, wav_path: Path) -> None:
-        result = self.command_runner(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-v",
-                "error",
-                "-i",
-                str(input_path),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-c:a",
-                "pcm_s16le",
-                "-y",
-                str(wav_path),
-            ],
-            capture_output=True,
-            timeout=180,
-            check=False,
-        )
+        try:
+            result = self.command_runner(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(input_path),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-c:a",
+                    "pcm_s16le",
+                    "-y",
+                    str(wav_path),
+                ],
+                capture_output=True,
+                timeout=180,
+                check=False,
+            )
+        except OSError as exc:
+            logger.exception("转写音频处理组件不可用")
+            raise MediaValidationError(
+                "音频处理组件暂不可用，请重新打开软件后再试；仍失败请联系服务人员更新软件。",
+                code="media_tools_unavailable",
+            ) from exc
         if result.returncode != 0 or not wav_path.exists():
             raise MediaValidationError("音频提取失败，请检查媒体文件。")
 
@@ -1051,9 +1065,9 @@ class TranscriptionService:
             sensitive_changed = self._sensitive_transcript_tokens(
                 proposed_text
             ) != self._sensitive_transcript_tokens(segment.text)
-            requires_human_review = bool(
-                correction.get("requires_human_review")
-            ) or sensitive_changed
+            requires_human_review = (
+                bool(correction.get("requires_human_review")) or sensitive_changed
+            )
             corrected_text = segment.text if sensitive_changed else proposed_text
             if not corrected_text:
                 corrected_text = segment.text

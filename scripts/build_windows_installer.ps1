@@ -15,6 +15,7 @@ $desktopBackend = Join-Path $frontendRoot "desktop\backend"
 $desktopConfig = Join-Path $pyInstallerWork "desktop-control-plane.json"
 $releaseConfig = Join-Path $frontendRoot "desktop\release-config.json"
 $appIcon = Join-Path $frontendRoot "desktop\icon.ico"
+$mediaToolManifest = Join-Path $repositoryRoot "config\windows-media-tools.sha256"
 
 if ($Version -notmatch '^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.-]+)?$') {
     throw "版本号格式无效。"
@@ -39,6 +40,47 @@ if (-not (Test-Path -LiteralPath $packagingPython)) {
 }
 if (-not $SkipChecks -and -not (Test-Path -LiteralPath $testPython)) {
     throw "缺少项目测试环境：$testPython"
+}
+
+if (-not (Test-Path -LiteralPath $mediaToolManifest -PathType Leaf)) {
+    throw "缺少 Windows 媒体工具校验清单：$mediaToolManifest"
+}
+$mediaCommands = @{}
+foreach ($toolName in @("ffmpeg.exe", "ffprobe.exe")) {
+    $command = Get-Command $toolName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -eq $command) {
+        throw "缺少 Windows 媒体工具：$toolName"
+    }
+    $mediaCommands[$toolName] = $command.Source
+}
+$mediaBinDirectory = Split-Path -Parent $mediaCommands["ffmpeg.exe"]
+if ((Split-Path -Parent $mediaCommands["ffprobe.exe"]) -ne $mediaBinDirectory) {
+    throw "ffmpeg.exe 与 ffprobe.exe 必须来自同一受审目录。"
+}
+$mediaDistributionRoot = Split-Path -Parent $mediaBinDirectory
+$mediaSources = @{
+    "LICENSE" = Join-Path $mediaDistributionRoot "LICENSE"
+    "README.txt" = Join-Path $mediaDistributionRoot "README.txt"
+    "ffmpeg.exe" = $mediaCommands["ffmpeg.exe"]
+    "ffprobe.exe" = $mediaCommands["ffprobe.exe"]
+}
+$expectedMediaHashes = @{}
+foreach ($line in Get-Content -LiteralPath $mediaToolManifest -Encoding UTF8) {
+    if ($line -match '^([0-9a-f]{64})  (LICENSE|README\.txt|ffmpeg\.exe|ffprobe\.exe)$') {
+        $expectedMediaHashes[$Matches[2]] = $Matches[1]
+    }
+}
+if ($expectedMediaHashes.Count -ne 4) {
+    throw "Windows 媒体工具校验清单无效。"
+}
+foreach ($entry in $mediaSources.GetEnumerator()) {
+    if (-not (Test-Path -LiteralPath $entry.Value -PathType Leaf)) {
+        throw "Windows 媒体工具发行文件缺失：$($entry.Key)"
+    }
+    $actualHash = (Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualHash -ne $expectedMediaHashes[$entry.Key]) {
+        throw "Windows 媒体工具校验失败：$($entry.Key)"
+    }
 }
 
 & $packagingPython (Join-Path $PSScriptRoot "generate_app_icon.py") `
@@ -119,6 +161,11 @@ try {
         --add-data "$(Join-Path $repositoryRoot 'scripts/doubao_mobile_worker.mjs');scripts" `
         --add-data "$(Join-Path $repositoryRoot 'assets');assets" `
         --add-data "$desktopConfig;config" `
+        --add-data "$mediaToolManifest;media" `
+        --add-data "$($mediaSources['LICENSE']);media" `
+        --add-data "$($mediaSources['README.txt']);media" `
+        --add-binary "$($mediaSources['ffmpeg.exe']);media" `
+        --add-binary "$($mediaSources['ffprobe.exe']);media" `
         --hidden-import project.backend.app.services.control_plane_client `
         --hidden-import project.backend.app.services.remote_asr `
         --hidden-import project.backend.app.services.remote_avatar `

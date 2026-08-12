@@ -779,12 +779,42 @@ function Assert-WindowsReleasePayloadAuthoritative {
         backend = Join-Path $PackageRoot "resources\backend\VideoInsightBackend.exe"
         desktop_config = Join-Path $PackageRoot "resources\config\release.json"
         backend_config = Join-Path $PackageRoot "resources\backend\_internal\config\desktop-control-plane.json"
+        ffmpeg = Join-Path $PackageRoot "resources\backend\_internal\media\ffmpeg.exe"
+        ffprobe = Join-Path $PackageRoot "resources\backend\_internal\media\ffprobe.exe"
+        media_license = Join-Path $PackageRoot "resources\backend\_internal\media\LICENSE"
+        media_readme = Join-Path $PackageRoot "resources\backend\_internal\media\README.txt"
+        media_manifest = Join-Path $PackageRoot "resources\backend\_internal\media\windows-media-tools.sha256"
     }
     foreach ($requiredFile in $requiredFiles.GetEnumerator()) {
         if (-not (Test-Path -LiteralPath $requiredFile.Value -PathType Leaf)) {
             throw "Windows 客户包缺少必要文件：$($requiredFile.Key)"
         }
     }
+    $expectedMediaHashes = @{}
+    foreach ($line in Get-Content -LiteralPath $requiredFiles.media_manifest -Encoding UTF8) {
+        if ($line -match '^([0-9a-f]{64})  (LICENSE|README\.txt|ffmpeg\.exe|ffprobe\.exe)$') {
+            $expectedMediaHashes[$Matches[2]] = $Matches[1]
+        }
+    }
+    if ($expectedMediaHashes.Count -ne 4) {
+        throw "Windows 媒体组件校验清单无效。"
+    }
+    $mediaFiles = @{
+        "LICENSE" = $requiredFiles.media_license
+        "README.txt" = $requiredFiles.media_readme
+        "ffmpeg.exe" = $requiredFiles.ffmpeg
+        "ffprobe.exe" = $requiredFiles.ffprobe
+    }
+    foreach ($mediaFile in $mediaFiles.GetEnumerator()) {
+        $actualMediaHash = Get-Sha256Hex -LiteralPath $mediaFile.Value
+        if ($actualMediaHash -ne $expectedMediaHashes[$mediaFile.Key]) {
+            throw "Windows 媒体组件校验失败：$($mediaFile.Key)"
+        }
+    }
+    $trustedMediaBinaryPaths = @(
+        [IO.Path]::GetFullPath($requiredFiles.ffmpeg),
+        [IO.Path]::GetFullPath($requiredFiles.ffprobe)
+    )
     try {
         $desktopConfig = Get-Content -LiteralPath $requiredFiles.desktop_config -Raw | ConvertFrom-Json
         $backendConfig = Get-Content -LiteralPath $requiredFiles.backend_config -Raw | ConvertFrom-Json
@@ -907,6 +937,9 @@ function Assert-WindowsReleasePayloadAuthoritative {
         }
     }
     foreach ($packageFile in $packageFiles) {
+        if ($trustedMediaBinaryPaths -contains [IO.Path]::GetFullPath($packageFile.FullName)) {
+            continue
+        }
         foreach ($pattern in $patterns) {
             if (Test-FileContainsBytePattern -LiteralPath $packageFile.FullName -Pattern $pattern.Bytes) {
                 throw "Windows 客户包包含构建机供应商密钥或私钥标记：$($packageFile.FullName)"

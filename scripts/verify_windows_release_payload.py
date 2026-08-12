@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import stat
 from collections.abc import Mapping
 from pathlib import Path
@@ -82,6 +84,38 @@ TRUSTED_BUILTIN_TEMPLATE = Path(
 
 class ReleasePayloadError(ValueError):
     pass
+
+
+def _verified_media_binaries(required_files: Mapping[str, Path]) -> set[Path]:
+    manifest_path = required_files["媒体组件校验清单"]
+    try:
+        lines = manifest_path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ReleasePayloadError("Windows 媒体组件校验清单无法读取。") from exc
+    expected: dict[str, str] = {}
+    pattern = re.compile(
+        r"^([0-9a-f]{64})  (LICENSE|README\.txt|ffmpeg\.exe|ffprobe\.exe)$"
+    )
+    for line in lines:
+        match = pattern.fullmatch(line.strip())
+        if match:
+            expected[match.group(2)] = match.group(1)
+    if set(expected) != {"LICENSE", "README.txt", "ffmpeg.exe", "ffprobe.exe"}:
+        raise ReleasePayloadError("Windows 媒体组件校验清单内容无效。")
+    media_files = {
+        "LICENSE": required_files["媒体组件许可"],
+        "README.txt": required_files["媒体组件说明"],
+        "ffmpeg.exe": required_files["音频处理组件"],
+        "ffprobe.exe": required_files["视频检查组件"],
+    }
+    for name, path in media_files.items():
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ReleasePayloadError(f"Windows 媒体组件无法读取：{name}") from exc
+        if actual != expected[name]:
+            raise ReleasePayloadError(f"Windows 媒体组件校验失败：{name}")
+    return {media_files["ffmpeg.exe"], media_files["ffprobe.exe"]}
 
 
 def _production_origin(value: str) -> str:
@@ -224,10 +258,31 @@ def verify_release_payload(
             / "config"
             / "desktop-control-plane.json"
         ),
+        "视频检查组件": (
+            root / "resources" / "backend" / "_internal" / "media" / "ffprobe.exe"
+        ),
+        "音频处理组件": (
+            root / "resources" / "backend" / "_internal" / "media" / "ffmpeg.exe"
+        ),
+        "媒体组件许可": (
+            root / "resources" / "backend" / "_internal" / "media" / "LICENSE"
+        ),
+        "媒体组件说明": (
+            root / "resources" / "backend" / "_internal" / "media" / "README.txt"
+        ),
+        "媒体组件校验清单": (
+            root
+            / "resources"
+            / "backend"
+            / "_internal"
+            / "media"
+            / "windows-media-tools.sha256"
+        ),
     }
     missing = [name for name, path in required_files.items() if not path.is_file()]
     if missing:
         raise ReleasePayloadError(f"Windows 客户包缺少必要文件：{', '.join(missing)}")
+    trusted_media_binaries = _verified_media_binaries(required_files)
 
     release_config = _read_object(required_files["桌面发布配置"])
     backend_config = _read_object(required_files["本地服务配置"])
@@ -289,7 +344,9 @@ def verify_release_payload(
             utf8_value.decode("utf-8").encode("utf-16-le"),
             utf8_value.decode("utf-8").encode("utf-16-be"),
         )
-    matches = _scan_files(files, scan_patterns)
+    matches = _scan_files(
+        [path for path in files if path not in trusted_media_binaries], scan_patterns
+    )
     leaked = [
         f"{key}:{path.relative_to(root).as_posix()}" for key, path in matches.items()
     ]

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+from time import monotonic
 
 from fastapi import Request
 from fastapi.responses import FileResponse
@@ -11,6 +13,48 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from project.backend.app.main import app
+
+
+logger = logging.getLogger(__name__)
+
+
+class DesktopOperationLogMiddleware(BaseHTTPMiddleware):
+    """Record useful desktop operations without logging bodies or credentials."""
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        should_log = request.url.path.startswith("/api/") and request.method in {
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        }
+        started = monotonic()
+        try:
+            response = await call_next(request)
+        except Exception:
+            if should_log:
+                logger.exception(
+                    "桌面操作异常 method=%s path=%s elapsed_ms=%d",
+                    request.method,
+                    request.url.path,
+                    round((monotonic() - started) * 1000),
+                )
+            raise
+        if should_log:
+            elapsed_ms = round((monotonic() - started) * 1000)
+            log_method = logger.info if response.status_code < 400 else logger.warning
+            log_method(
+                "桌面操作完成 method=%s path=%s status=%d elapsed_ms=%d",
+                request.method,
+                request.url.path,
+                response.status_code,
+                elapsed_ms,
+            )
+        return response
 
 
 class DesktopFrontendMiddleware(BaseHTTPMiddleware):
@@ -27,10 +71,13 @@ class DesktopFrontendMiddleware(BaseHTTPMiddleware):
         call_next: RequestResponseEndpoint,
     ) -> Response:
         path = request.url.path
-        backend_path = (
-            path.startswith("/api/")
-            or path in {"/health", "/docs", "/redoc", "/openapi.json", "/api-key-info"}
-        )
+        backend_path = path.startswith("/api/") or path in {
+            "/health",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/api-key-info",
+        }
         if request.method not in {"GET", "HEAD"} or backend_path:
             return await call_next(request)
 
@@ -57,3 +104,4 @@ app.add_middleware(
     DesktopFrontendMiddleware,
     frontend_directory=_frontend_directory,
 )
+app.add_middleware(DesktopOperationLogMiddleware)

@@ -132,7 +132,14 @@ def _load_control_plane_config(root: Path) -> dict[str, str | bool]:
 def _configure_desktop_environment(root: Path, runtime_root: Path) -> bool:
     runtime_root.mkdir(parents=True, exist_ok=True)
     os.chdir(runtime_root)
-    os.environ["PATH"] = f"{root}{os.pathsep}{os.environ.get('PATH', '')}"
+    bundled_media_tools = root / "media"
+    os.environ["PATH"] = os.pathsep.join(
+        (
+            str(bundled_media_tools),
+            str(root),
+            os.environ.get("PATH", ""),
+        )
+    )
     control_plane = _load_control_plane_config(root)
     control_plane_enabled = bool(
         control_plane["enabled"] and control_plane["control_plane_url"]
@@ -142,7 +149,9 @@ def _configure_desktop_environment(root: Path, runtime_root: Path) -> bool:
         "ENABLE_DOCS": "false",
         "VIDEOINSIGHT_DESKTOP_CLIENT": "true",
         "VIDEOINSIGHT_DESKTOP_DEMO": "false" if control_plane_enabled else "true",
-        "VIDEOINSIGHT_DEMO_OWNER": "" if control_plane_enabled else DEMO_ACTIVATION_CODE,
+        "VIDEOINSIGHT_DEMO_OWNER": ""
+        if control_plane_enabled
+        else DEMO_ACTIVATION_CODE,
         "VIDEOINSIGHT_CONTROL_PLANE_ENABLED": (
             "true" if control_plane_enabled else "false"
         ),

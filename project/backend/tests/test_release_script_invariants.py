@@ -2661,8 +2661,22 @@ def test_authoritative_windows_payload_scan_rejects_exact_env_secret_values(
     backend_config = backend / "_internal" / "config" / "desktop-control-plane.json"
     desktop_config.parent.mkdir(parents=True)
     backend_config.parent.mkdir(parents=True)
+    media = backend / "_internal" / "media"
+    media.mkdir(parents=True)
     (package / "VideoInsight.exe").write_bytes(b"desktop")
     (backend / "VideoInsightBackend.exe").write_bytes(b"backend")
+    (media / "ffmpeg.exe").write_bytes(b"ffmpeg")
+    (media / "ffprobe.exe").write_bytes(b"ffprobe")
+    (media / "LICENSE").write_text("GPLv3 test fixture", encoding="utf-8")
+    (media / "README.txt").write_text("test fixture", encoding="utf-8")
+    (media / "windows-media-tools.sha256").write_text(
+        "\n".join(
+            f"{hashlib.sha256((media / name).read_bytes()).hexdigest()}  {name}"
+            for name in ("LICENSE", "README.txt", "ffmpeg.exe", "ffprobe.exe")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     origin = "https://release.fixture.invalid"
     version = "0.2.7"
     desktop_config.write_text(
@@ -2682,6 +2696,7 @@ def test_authoritative_windows_payload_scan_rejects_exact_env_secret_values(
     loader = _powershell_function_loader(
         final_script,
         (
+            "Get-Sha256Hex",
             "Get-ExistingPathAttributesForRelease",
             "Assert-NoReparsePointsForReleasePath",
             "Test-ByteSequenceInArray",
@@ -2746,8 +2761,22 @@ def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
     backend_config.parent.mkdir(parents=True)
     trusted_ca.parent.mkdir(parents=True)
     trusted_builtin.parent.mkdir(parents=True)
+    media = backend / "_internal" / "media"
+    media.mkdir(parents=True)
     (package / "VideoInsight.exe").write_bytes(b"desktop")
     (backend / "VideoInsightBackend.exe").write_bytes(b"backend")
+    (media / "ffmpeg.exe").write_bytes(b"ffmpeg")
+    (media / "ffprobe.exe").write_bytes(b"ffprobe")
+    (media / "LICENSE").write_text("GPLv3 test fixture", encoding="utf-8")
+    (media / "README.txt").write_text("test fixture", encoding="utf-8")
+    (media / "windows-media-tools.sha256").write_text(
+        "\n".join(
+            f"{hashlib.sha256((media / name).read_bytes()).hexdigest()}  {name}"
+            for name in ("LICENSE", "README.txt", "ffmpeg.exe", "ffprobe.exe")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     origin = "https://release.fixture.invalid"
     version = "0.2.7"
     desktop_config.write_text(
@@ -2766,6 +2795,7 @@ def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
     loader = _powershell_function_loader(
         final_script,
         (
+            "Get-Sha256Hex",
             "Get-ExistingPathAttributesForRelease",
             "Assert-NoReparsePointsForReleasePath",
             "Test-ByteSequenceInArray",
@@ -3085,3 +3115,18 @@ def test_windows_backend_packages_builtin_video_templates():
     )
 
     assert "'data/templates');data/templates" in script
+    assert "config\\windows-media-tools.sha256" in script
+    assert "--add-binary \"$($mediaSources['ffmpeg.exe']);media\"" in script
+    assert "--add-binary \"$($mediaSources['ffprobe.exe']);media\"" in script
+    assert "Get-FileHash -LiteralPath $entry.Value -Algorithm SHA256" in script
+    final_script = (
+        REPOSITORY_ROOT / "scripts" / "build_final_windows_release.ps1"
+    ).read_text(encoding="utf-8")
+    for required_media_file in (
+        "media\\ffmpeg.exe",
+        "media\\ffprobe.exe",
+        "media\\LICENSE",
+        "media\\README.txt",
+        "media\\windows-media-tools.sha256",
+    ):
+        assert required_media_file in final_script
