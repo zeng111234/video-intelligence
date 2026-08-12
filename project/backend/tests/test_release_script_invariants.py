@@ -2681,9 +2681,11 @@ def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
     desktop_config = package / "resources" / "config" / "release.json"
     backend_config = backend / "_internal" / "config" / "desktop-control-plane.json"
     trusted_ca = backend / "_internal" / "certifi" / "cacert.pem"
+    trusted_builtin = backend / "_internal" / "data" / "templates" / "builtin.json"
     desktop_config.parent.mkdir(parents=True)
     backend_config.parent.mkdir(parents=True)
     trusted_ca.parent.mkdir(parents=True)
+    trusted_builtin.parent.mkdir(parents=True)
     (package / "VideoInsight.exe").write_bytes(b"desktop")
     (backend / "VideoInsightBackend.exe").write_bytes(b"backend")
     origin = "https://release.fixture.invalid"
@@ -2700,6 +2702,7 @@ def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
         "-----BEGIN CERTIFICATE-----\npublic-root-ca\n-----END CERTIFICATE-----\n",
         encoding="ascii",
     )
+    trusted_builtin.write_text('{"templates": []}', encoding="utf-8")
     loader = _powershell_function_loader(
         final_script,
         (
@@ -2727,6 +2730,20 @@ def test_authoritative_windows_payload_scan_allows_only_certifi_public_ca_pem(
         check=False,
     )
     assert allowed.returncode == 0, allowed.stderr
+
+    untrusted_runtime_data = trusted_builtin.parent / "customer.json"
+    untrusted_runtime_data.write_text("{}", encoding="utf-8")
+    rejected_runtime_data = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+    assert rejected_runtime_data.returncode != 0
+    untrusted_runtime_data.unlink()
 
     untrusted_pem = package / "resources" / "other.pem"
     untrusted_pem.write_text(trusted_ca.read_text(encoding="ascii"), encoding="ascii")
@@ -3003,8 +3020,8 @@ def test_installer_allows_developer_tools_but_manual_clean_pc_check_stays_strict
 
 
 def test_windows_backend_packages_builtin_video_templates():
-    script = (
-        REPOSITORY_ROOT / "scripts" / "build_windows_installer.ps1"
-    ).read_text(encoding="utf-8-sig")
+    script = (REPOSITORY_ROOT / "scripts" / "build_windows_installer.ps1").read_text(
+        encoding="utf-8-sig"
+    )
 
     assert "'data/templates');data/templates" in script

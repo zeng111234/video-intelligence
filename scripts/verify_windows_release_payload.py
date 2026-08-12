@@ -75,6 +75,9 @@ FORBIDDEN_EXTENSIONS = {
     ".wav",
     ".webm",
 }
+TRUSTED_BUILTIN_TEMPLATE = Path(
+    "resources/backend/_internal/data/templates/builtin.json"
+)
 
 
 class ReleasePayloadError(ValueError):
@@ -245,8 +248,15 @@ def verify_release_payload(
         relative = path.relative_to(root)
         lowered_parts = {part.casefold() for part in relative.parts[:-1]}
         name = path.name.casefold()
+        is_trusted_builtin_template = (
+            relative.as_posix().casefold()
+            == TRUSTED_BUILTIN_TEMPLATE.as_posix().casefold()
+        )
         if (
-            lowered_parts & FORBIDDEN_DIRECTORY_NAMES
+            (
+                lowered_parts & FORBIDDEN_DIRECTORY_NAMES
+                and not is_trusted_builtin_template
+            )
             or name == ".env"
             or name.startswith(".env.")
             or path.suffix.casefold() in FORBIDDEN_EXTENSIONS

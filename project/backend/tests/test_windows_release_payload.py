@@ -48,6 +48,17 @@ def test_release_payload_accepts_matching_production_configuration(tmp_path):
         "-----BEGIN CERTIFICATE-----\npublic-ca-only\n-----END CERTIFICATE-----\n",
         encoding="ascii",
     )
+    builtin_template = (
+        root
+        / "resources"
+        / "backend"
+        / "_internal"
+        / "data"
+        / "templates"
+        / "builtin.json"
+    )
+    builtin_template.parent.mkdir(parents=True)
+    builtin_template.write_text('{"templates": []}', encoding="utf-8")
     evidence = verify.verify_release_payload(
         root,
         control_plane_url="https://video.company.com",
@@ -55,6 +66,15 @@ def test_release_payload_accepts_matching_production_configuration(tmp_path):
         environment={},
     )
     assert "版本=0.2.1" in evidence
+
+    (builtin_template.parent / "customer.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(verify.ReleasePayloadError, match="运行数据"):
+        verify.verify_release_payload(
+            root,
+            control_plane_url="https://video.company.com",
+            version="0.2.1",
+            environment={},
+        )
 
 
 @pytest.mark.parametrize(

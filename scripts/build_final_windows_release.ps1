@@ -814,8 +814,16 @@ function Assert-WindowsReleasePayloadAuthoritative {
             "resources\backend\_internal\certifi\cacert.pem",
             [StringComparison]::OrdinalIgnoreCase
         )
+        $isTrustedBuiltinTemplate = [string]::Equals(
+            $relativePath,
+            "resources\backend\_internal\data\templates\builtin.json",
+            [StringComparison]::OrdinalIgnoreCase
+        )
         if (
-            @($parentSegments | Where-Object { $forbiddenDirectories -contains $_.ToLowerInvariant() }).Count -gt 0 -or
+            (
+                @($parentSegments | Where-Object { $forbiddenDirectories -contains $_.ToLowerInvariant() }).Count -gt 0 -and
+                -not $isTrustedBuiltinTemplate
+            ) -or
             $packageFile.Name -eq ".env" -or
             $packageFile.Name.StartsWith(".env.", [StringComparison]::OrdinalIgnoreCase) -or
             (
