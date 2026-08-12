@@ -459,6 +459,7 @@ export default function PipelinePage() {
     platforms: BrowserPlatform[];
   } | null>(null);
   const [materialSearchBatch, setMaterialSearchBatch] = useState<CrawlerBatchResponse | null>(null);
+  const [failedSearchPlatforms, setFailedSearchPlatforms] = useState<BrowserPlatform[]>([]);
 
   const [profiles, setProfiles] = useState<ProductionProfile[]>([]);
   const [profileId, setProfileId] = useState("");
@@ -926,6 +927,19 @@ export default function PipelinePage() {
     platforms: browserDiscoveries.filter(sourcePlatformReady).map((item) => item.platform).filter(isBrowserPlatform),
   }), [browserDiscoveries, countPerPlatform, keyword, publishedWindowDays]);
 
+  const retrySource = useMemo(() => {
+    const alternatives = browserDiscoveries.filter((item) => (
+      item.enabled
+      && isBrowserPlatform(item.platform)
+      && !failedSearchPlatforms.includes(item.platform)
+      && !(item.missing_configuration || []).length
+    ));
+    return alternatives.find((item) => item.ready_to_crawl)
+      || alternatives.find((item) => item.platform === "kuaishou")
+      || alternatives[0]
+      || null;
+  }, [browserDiscoveries, failedSearchPlatforms]);
+
   const finishMaterialSearchReveal = useCallback((batch: CrawlerBatchResponse) => {
     const found = strictCandidates(batch);
     setCandidates(found);
@@ -935,28 +949,51 @@ export default function PipelinePage() {
       (creationMode === "auto" ? automatic[0] : found[0])?.video_id || "",
     );
     if (found.length) {
+      setFailedSearchPlatforms([]);
       setActionMessage(
         creationMode === "auto"
           ? `找到 ${found.length} 条相关素材：${automatic.length} 条可用口播都会进入自动创作${visualCount ? `；${visualCount} 条疑似纯展示，只作画面参考` : ""}。`
           : `找到 ${found.length} 条相关素材，其中 ${visualCount} 条疑似纯展示，已单独标为画面参考。`,
       );
     } else {
+      const attemptedPlatforms = (batch.platforms || batch.platform_runs.map((run) => run.platform))
+        .filter(isBrowserPlatform);
+      setFailedSearchPlatforms(attemptedPlatforms);
+      const attemptedLabels = attemptedPlatforms.map((platform) => PLATFORM_LABELS[platform] || platform).join("、") || "当前平台";
+      const reason = batch.error
+        || batch.platform_runs.map((run) => run.crawl_stop_message || run.payload_diagnostic || run.error).find(Boolean)
+        || "平台本次没有返回可用素材";
+      const fallback = browserDiscoveries.find((item) => (
+        item.enabled
+        && isBrowserPlatform(item.platform)
+        && !attemptedPlatforms.includes(item.platform)
+        && !(item.missing_configuration || []).length
+        && item.ready_to_crawl
+      )) || browserDiscoveries.find((item) => (
+        item.enabled
+        && item.platform === "kuaishou"
+        && !attemptedPlatforms.includes("kuaishou")
+        && !(item.missing_configuration || []).length
+      ));
       setCrawlerReason({
         kind: "平台本次无结果",
-        message: `已保留关键词“${batch.keyword}”。本次平台没有返回可用素材，可以用原词重新获取，或进入素材发现查看平台详情。`,
+        message: fallback
+          ? `${attemptedLabels}本次未取到素材：${reason}。已保留关键词“${batch.keyword}”，可以切换到${fallback.platform_label || PLATFORM_LABELS[fallback.platform || ""] || "其他平台"}重新搜索，无需等待当前平台冷却。`
+          : `${attemptedLabels}本次未取到素材：${reason}。已保留关键词“${batch.keyword}”，请检查平台登录后再试。`,
       });
     }
     setMaterialSearchBatch(null);
     setMaterialSearchProgress(null);
     setBusy(false);
-  }, [creationMode]);
+  }, [browserDiscoveries, creationMode]);
 
-  const runKeywordSearch = async (forceRefresh = false) => {
+  const runKeywordSearch = async (forceRefresh = false, requestedPlatforms?: BrowserPlatform[]) => {
     if (keyword.trim().length < 2 || keyword.trim().length > 50) {
       setActionError("请输入 2–50 个字的关键词。");
       return;
     }
-    if (!crawlerRequest.platforms?.length) {
+    const targetPlatforms = requestedPlatforms || crawlerRequest.platforms || [];
+    if (!targetPlatforms.length) {
       setActionError("请先完成素材平台连接，再重新搜索。");
       return;
     }
@@ -967,12 +1004,30 @@ export default function PipelinePage() {
     setMaterialSearchBatch(null);
     setMaterialSearchProgress({
       startedAt: Date.now(),
-      platforms: [...(crawlerRequest.platforms || [])].filter(isBrowserPlatform),
+      platforms: [...targetPlatforms].filter(isBrowserPlatform),
     });
     try {
-      const request = forceRefresh
-        ? { ...crawlerRequest, force_refresh: true }
-        : crawlerRequest;
+      const readyPlatforms: BrowserPlatform[] = [];
+      for (const platform of targetPlatforms) {
+        const current = browserDiscoveries.find((item) => item.platform === platform);
+        if (current?.ready_to_crawl) {
+          readyPlatforms.push(platform);
+          continue;
+        }
+        const status = await startCrawlerBrowserDiscovery(platform);
+        const label = SOURCE_BROWSER_PLATFORMS.find((item) => item.platform === platform)?.label || platform;
+        const normalized = { ...status, platform, platform_label: label };
+        setBrowserDiscoveries((items) => items.map((item) => item.platform === platform ? normalized : item));
+        if (!status.ready_to_crawl) {
+          throw new Error(`${label}已打开，请先完成登录，再点“重新搜索”。`);
+        }
+        readyPlatforms.push(platform);
+      }
+      const request = {
+        ...crawlerRequest,
+        platforms: readyPlatforms,
+        force_refresh: forceRefresh,
+      };
       // 与“素材发现”页共用同一条免费搜索链路。这里不再额外预判，
       // 避免浏览器状态的瞬时差异把本可执行的搜索提前拦成“换关键词”。
       const batch = await createCrawlerBatch(request);
@@ -980,7 +1035,7 @@ export default function PipelinePage() {
     } catch (error) {
       setCrawlerReason({
         kind: "检索没有开始",
-        message: "搜索请求没有成功提交，请刷新页面后再试；你的关键词不会丢失。",
+        message: (error as Error).message || "搜索请求没有成功提交；你的关键词不会丢失。",
       });
       setMaterialSearchBatch(null);
       setMaterialSearchProgress(null);
@@ -2287,6 +2342,7 @@ export default function PipelinePage() {
                             setCandidates([]);
                             setSelectedCandidateId("");
                             setCrawlerReason(null);
+                            setFailedSearchPlatforms([]);
                           }}
                           onPressEnter={() => void handlePrimaryAction()}
                         />
@@ -2447,8 +2503,18 @@ export default function PipelinePage() {
                 {crawlerReason && (
                   <div className="search-empty">
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={crawlerReason.message} />
-                    <Button onClick={() => void runKeywordSearch(true)} loading={busy}>
-                      {crawlerReason.kind === "检索没有开始" ? "重新提交" : "用原词重试"}
+                    <Button
+                      onClick={() => void runKeywordSearch(
+                        true,
+                        retrySource && isBrowserPlatform(retrySource.platform) ? [retrySource.platform] : undefined,
+                      )}
+                      loading={busy}
+                    >
+                      {crawlerReason.kind === "检索没有开始"
+                        ? "重新提交"
+                        : retrySource
+                          ? `切换到${retrySource.platform_label || PLATFORM_LABELS[retrySource.platform || ""] || "其他平台"}重试`
+                          : "重新搜索"}
                     </Button>
                   </div>
                 )}

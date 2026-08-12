@@ -61,9 +61,7 @@ DEFAULT_VISUAL_STYLE_ID = "business_talking_head_v8"
 DEFAULT_PLAYBACK_RATE = 1.15
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
-_CAPTION_BREAK_CHARACTERS = frozenset(
-    "，。！？；：、,.!?;:“”‘’（）()【】[]《》…—"
-)
+_CAPTION_BREAK_CHARACTERS = frozenset("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—")
 _NUMERIC_PUNCTUATION = frozenset(".,:")
 _CAPTION_BREAK_BEFORE_TOKENS = (
     "因为",
@@ -254,6 +252,8 @@ _CAPTION_BAD_LINE_STARTS = (
     "块",
     "元",
 )
+
+
 def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
     """Return the public layout contract shared by preview and cloud render."""
 
@@ -555,7 +555,9 @@ def _normalized_emphasis_terms(segment: Mapping[str, Any]) -> list[str]:
     return [term for term in terms if term][:1]
 
 
-def _emphasis_range(lines: Sequence[str], terms: Sequence[str]) -> dict[str, int] | None:
+def _emphasis_range(
+    lines: Sequence[str], terms: Sequence[str]
+) -> dict[str, int] | None:
     for term in terms[:1]:
         for line_index, line in enumerate(lines):
             start = line.find(term)
@@ -584,8 +586,7 @@ def _caption_cue_timings(
         cue_end = (
             segment_end
             if index == len(chunks) - 1
-            else cursor
-            + (segment_end - segment_start) * len(chunk) / total_chars
+            else cursor + (segment_end - segment_start) * len(chunk) / total_chars
         )
         fallback.append((cursor, cue_end))
         cursor = cue_end
@@ -703,9 +704,7 @@ class SmartOpening(BaseModel):
     style_id: str = Field(pattern="^(suspense_reveal|story_unfold|number_focus)$")
     hook_text: str = Field(min_length=2, max_length=28)
     duration_seconds: float = Field(default=1.4, ge=1.2, le=1.8)
-    sound_effect_id: str = Field(
-        pattern="^(soft_whoosh|soft_page_turn|soft_chime)$"
-    )
+    sound_effect_id: str = Field(pattern="^(soft_whoosh|soft_page_turn|soft_chime)$")
     intensity: str = Field(default="medium", pattern="^(low|medium)$")
     reason: str = Field(default="", max_length=120)
 
@@ -719,15 +718,46 @@ def build_smart_opening(
     """Derive safe opening text and style without arbitrary effect parameters."""
 
     clean_transcript = re.sub(r"\s+", "", transcript or "")
-    candidates = [
-        re.sub(r"[\s，。！？、,.!?；;：:]+", "", str(item))
-        for item in title_candidates
-    ]
-    hook_text = next((item for item in candidates if len(item) >= 2), "")
-    if not hook_text:
-        hook_text = clean_transcript[:14].strip("，。！？、,.!?；;：: ")
-    if len(hook_text) > 14:
-        hook_text = hook_text[:14].rstrip("，。！？、,.!?；;：:")
+
+    def complete_short_clause(value: object) -> str:
+        compact = re.sub(r"\s+", "", str(value or "")).strip()
+        clean = re.sub(r"[，。！？、,.!?；;：:]+", "", compact)
+        if 2 <= len(clean) <= 14:
+            return clean
+        clauses = [
+            re.sub(r"[\s，。！？、,.!?；;：:]+", "", part)
+            for part in re.split(r"[，。！？、,.!?；;：:]+", compact)
+        ]
+        clauses = [part for part in clauses if 4 <= len(part) <= 14]
+        if not clauses:
+            return ""
+        action_words = (
+            "算",
+            "省",
+            "赚",
+            "亏",
+            "难",
+            "值",
+            "真相",
+            "关键",
+            "方法",
+            "怎么",
+            "为什么",
+            "别再",
+        )
+        return next(
+            (part for part in clauses if any(word in part for word in action_words)),
+            clauses[0],
+        )
+
+    hook_text = next(
+        (
+            hook
+            for item in [*title_candidates, transcript]
+            if (hook := complete_short_clause(item))
+        ),
+        "",
+    )
     if len(hook_text) < 2:
         return None
 
@@ -838,9 +868,7 @@ def validated_caption_emphasis(
     groups = validated_caption_groups(caption_groups, segments, max_chars=11)
     if caption_groups and not groups:
         return []
-    group_parts = {
-        group.segment_index: list(group.parts) for group in groups
-    }
+    group_parts = {group.segment_index: list(group.parts) for group in groups}
     accepted: list[CaptionEmphasis] = []
     seen_segments: set[int] = set()
     for raw_item in raw_emphasis:
@@ -885,9 +913,7 @@ def _caption_emphasis_style(kind: str) -> dict[str, Any]:
 _AUTO_EMPHASIS_NUMBER = re.compile(
     r"\d+(?:\.\d+)?(?:%|元|块|万|倍|折|公里|分钟|秒|张|个|家|人|套)"
 )
-_AUTO_EMPHASIS_PROMOTION_REWARD = re.compile(
-    r"送(\d+(?:\.\d+)?(?:元|块)?)"
-)
+_AUTO_EMPHASIS_PROMOTION_REWARD = re.compile(r"送(\d+(?:\.\d+)?(?:元|块)?)")
 _AUTO_EMPHASIS_KEYWORDS = (
     "现金奖励",
     "自动执行",
@@ -955,9 +981,7 @@ def build_business_talking_head_overlay_preview(
         truncate=True,
     )
     cues: list[dict[str, Any]] = []
-    max_caption_chars = (
-        caption_style["max_chars_per_line"] * caption_style["max_lines"]
-    )
+    max_caption_chars = caption_style["max_chars_per_line"] * caption_style["max_lines"]
     semantic_groups = validated_caption_groups(
         caption_groups,
         segments,
@@ -971,9 +995,7 @@ def build_business_talking_head_overlay_preview(
         segments,
         caption_groups=semantic_groups,
     )
-    emphasis_by_segment = {
-        item.segment_index: item for item in approved_emphasis
-    }
+    emphasis_by_segment = {item.segment_index: item for item in approved_emphasis}
     for segment_index, segment in enumerate(segments):
         try:
             start = float(segment.get("start", 0))
@@ -1002,9 +1024,7 @@ def build_business_talking_head_overlay_preview(
             ai_emphasis = emphasis_by_segment.get(segment_index)
             manual_terms = _normalized_emphasis_terms(segment)
             clean_chunk = re.sub(r"\s+", "", chunk)
-            active_manual_terms = [
-                term for term in manual_terms if term in clean_chunk
-            ]
+            active_manual_terms = [term for term in manual_terms if term in clean_chunk]
             active_ai_term = (
                 ai_emphasis.term
                 if ai_emphasis is not None and ai_emphasis.term in clean_chunk
@@ -1054,9 +1074,7 @@ def build_business_talking_head_overlay_preview(
                                 ai_emphasis.kind
                                 if active_ai_term and ai_emphasis is not None
                                 else (
-                                    automatic[1]
-                                    if automatic is not None
-                                    else "keyword"
+                                    automatic[1] if automatic is not None else "keyword"
                                 )
                             )
                         )
@@ -1166,7 +1184,9 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
             f"{_ass_timestamp(time_offset_seconds + visible_seconds)},Title,,0,0,0,,"
             f"{_wrap_ass_lines(title_preview['lines'])}"
         )
-        title_height = len(title_preview["lines"]) * round(title_style["font_size"] * 1.22)
+        title_height = len(title_preview["lines"]) * round(
+            title_style["font_size"] * 1.22
+        )
         accent_y = title_style["safe_top"] + title_height + accent_style["gap"]
         accent_path = (
             f"m 0 0 l {accent_style['width']} 0 l {accent_style['width']} "
@@ -1253,7 +1273,9 @@ class EditPlan(BaseModel):
     bgm_keywords: list[str] = Field(default_factory=list, max_length=6)
     caption_groups: list[CaptionGroup] = Field(default_factory=list, max_length=400)
     caption_group_source: str = "deterministic_fallback"
-    caption_emphasis: list[CaptionEmphasis] = Field(default_factory=list, max_length=140)
+    caption_emphasis: list[CaptionEmphasis] = Field(
+        default_factory=list, max_length=140
+    )
     smart_opening: SmartOpening | None = None
     explanation: str = ""
     warnings: list[str] = Field(default_factory=list)
@@ -1899,9 +1921,7 @@ def build_safe_edit_plan(
         bgm_category=bgm_category,
         bgm_energy=bgm_energy,
         bgm_keywords=[
-            str(item).strip()[:20]
-            for item in (bgm_keywords or [])
-            if str(item).strip()
+            str(item).strip()[:20] for item in (bgm_keywords or []) if str(item).strip()
         ][:6],
         caption_groups=list(caption_groups or []),
         caption_group_source=caption_group_source,

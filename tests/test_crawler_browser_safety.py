@@ -87,7 +87,13 @@ def test_browser_lease_cooldown_blocks_immediate_retry(tmp_path):
     now = datetime.now().astimezone()
     lease = _claim_browser_lease(Platform.XIAOHONGSHU, repo, now)
     assert lease is not None
-    _release(repo, Platform.XIAOHONGSHU, lease, now, cooldown_seconds=3600)
+    _release(
+        repo,
+        Platform.XIAOHONGSHU,
+        lease,
+        now,
+        cooldown_seconds=BROWSER_COOLDOWN_SECONDS,
+    )
     # 冷却期内：被拒
     assert (
         _claim_browser_lease(
@@ -97,10 +103,15 @@ def test_browser_lease_cooldown_blocks_immediate_retry(tmp_path):
     )
     status = _browser_safety_status(Platform.XIAOHONGSHU, repo)
     assert status.state == "cooldown"
+    assert BROWSER_COOLDOWN_SECONDS == 3 * 60
+    assert "60分钟" not in status.message
+    assert f"{BROWSER_COOLDOWN_SECONDS // 60} 分钟" in status.message
     # 冷却过后：恢复
     assert (
         _claim_browser_lease(
-            Platform.XIAOHONGSHU, repo, now + timedelta(seconds=3601)
+            Platform.XIAOHONGSHU,
+            repo,
+            now + timedelta(seconds=BROWSER_COOLDOWN_SECONDS + 1),
         )
         is not None
     )

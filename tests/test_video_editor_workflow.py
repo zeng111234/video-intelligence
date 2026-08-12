@@ -277,16 +277,92 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert submitted == [task.task_id]
 
 
+def test_production_export_builds_current_single_line_clean_caption_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    avatar = _avatar_task(
+        "avatar-production-export",
+        video,
+        script_text="你发现没，餐饮获客真正难的不是流量。",
+    )
+    repo.save_task(avatar)
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "outputs"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_media",
+        lambda _path: {
+            "duration_seconds": 8.0,
+            "width": 1080,
+            "height": 1920,
+            "fps": 30.0,
+            "orientation": "vertical",
+            "has_audio": True,
+            "size_bytes": 5,
+        },
+    )
+
+    def complete(task_id: str) -> None:
+        task = repo.get_task(task_id)
+        assert isinstance(task, VideoEditTask)
+        output = tmp_path / "outputs" / "smart.mp4"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"smart-video")
+        repo.save_task(
+            task.model_copy(
+                update={
+                    "status": TaskStatus.SUCCEEDED,
+                    "progress": 100,
+                    "result_path": str(output),
+                    "result_size_bytes": output.stat().st_size,
+                }
+            )
+        )
+
+    monkeypatch.setattr(service, "_run_local_preview_export", complete)
+
+    task = service.render_production_export(
+        avatar_task=avatar,
+        script_text=avatar.script_text,
+        publish_title="餐饮获客真正难在哪",
+    )
+
+    assert task.outputs["style_version"].startswith("business_talking_head_v9.1")
+    assert task.outputs["workflow"] == "local_preview_export"
+    assert task.outputs["publish_title"] == "餐饮获客真正难在哪"
+    batch = repo.list_video_editor_batches(limit=1)[0]
+    preview = service._batch_payload(batch)["items"][0]["overlay_preview"]
+    assert preview is not None
+    assert all(len(cue["lines"]) == 1 for cue in preview["cues"])
+    assert all(
+        not any(mark in line for mark in "，。！？；：、,.!?;:")
+        for cue in preview["cues"]
+        for line in cue["lines"]
+    )
+
+
 def test_subtitle_enabled_job_requires_an_approved_revision(tmp_path: Path):
     video = tmp_path / "avatar.mp4"
     video.write_bytes(b"video")
     repo = MockRepository(tasks=[])
     repo.save_task(_avatar_task("avatar-real", video))
     repo.save_task(_analysis_task(video))
-    service = VideoEditorWorkflowService(repo, None, _TranscriptionStub(approved=None), None)
+    service = VideoEditorWorkflowService(
+        repo, None, _TranscriptionStub(approved=None), None
+    )
 
     with pytest.raises(VideoEditorWorkflowError, match="字幕尚未完成复核确认"):
-        service.create_edit_job(analysis_id="analysis-test", steps=[], subtitle_enabled=True)
+        service.create_edit_job(
+            analysis_id="analysis-test", steps=[], subtitle_enabled=True
+        )
 
 
 def test_upload_source_is_persisted_and_listed(tmp_path: Path):
@@ -342,7 +418,9 @@ def test_product_showcase_uses_authorized_visual_assets_without_restarting_avata
         rights_confirmed=True,
         rights_holder="测试公司",
     )
-    monkeypatch.setattr(workflow_module._WORKFLOW_EXECUTOR, "submit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        workflow_module._WORKFLOW_EXECUTOR, "submit", lambda *args, **kwargs: None
+    )
 
     task = service.create_product_showcase_job(
         source_id="avatar:avatar-real",
@@ -378,13 +456,17 @@ def test_visual_asset_rejects_a_file_with_an_incorrect_image_signature(tmp_path:
         )
 
 
-def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_batch_waits_for_subtitle_then_confirms_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     video = tmp_path / "avatar.mp4"
     video.write_bytes(b"video")
     repo = MockRepository(tasks=[])
     repo.save_task(_avatar_task("avatar-real", video))
     transcript = _TranscriptionStub(approved=None)
-    service = VideoEditorWorkflowService(repo, _VideoEditingStub(tmp_path / "edits"), transcript, None)
+    service = VideoEditorWorkflowService(
+        repo, _VideoEditingStub(tmp_path / "edits"), transcript, None
+    )
 
     def fake_create_analysis(**kwargs):
         now = datetime.now().astimezone()
@@ -401,7 +483,7 @@ def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypat
                 "workflow": "analysis",
                 "source_id": kwargs["source_id"],
                 "transcription_task_id": "transcript-batch",
-                "analysis_json": "{\"recommended_steps\": []}",
+                "analysis_json": '{"recommended_steps": []}',
             },
         )
         repo.save_task(task)
@@ -418,7 +500,11 @@ def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypat
             updated_at=now,
             source_video_path=str(video),
             is_mock=False,
-            outputs={"workflow": "edit", "source_id": "avatar:avatar-real", "analysis_id": kwargs["analysis_id"]},
+            outputs={
+                "workflow": "edit",
+                "source_id": "avatar:avatar-real",
+                "analysis_id": kwargs["analysis_id"],
+            },
         )
         repo.save_task(task)
         return task
@@ -440,7 +526,9 @@ def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypat
 
     waiting = service.get_batch(created["batch_id"])
     assert waiting["items"][0]["status"] == "awaiting_subtitle_review"
-    with pytest.raises(VideoEditorWorkflowError, match="请先在当前页保存并确认字幕成稿"):
+    with pytest.raises(
+        VideoEditorWorkflowError, match="请先在当前页保存并确认字幕成稿"
+    ):
         service.continue_batch_item(created["batch_id"], item["item_id"])
 
     transcript.approved = object()
@@ -449,7 +537,15 @@ def test_batch_waits_for_subtitle_then_confirms_result(tmp_path: Path, monkeypat
 
     current = repo.get_task("edit-batch")
     assert isinstance(current, VideoEditTask)
-    result = current.model_copy(update={"status": TaskStatus.SUCCEEDED, "progress": 100, "stage": "剪辑完成", "result_path": str(video), "result_size_bytes": video.stat().st_size})
+    result = current.model_copy(
+        update={
+            "status": TaskStatus.SUCCEEDED,
+            "progress": 100,
+            "stage": "剪辑完成",
+            "result_path": str(video),
+            "result_size_bytes": video.stat().st_size,
+        }
+    )
     repo.save_task(result)
     ready = service.get_batch(created["batch_id"])
     assert ready["items"][0]["status"] == "awaiting_output_confirmation"
@@ -482,7 +578,9 @@ def test_local_title_candidates_are_zero_config_and_grounded():
     ]
 
 
-def test_authorized_bgm_is_added_to_batch_render(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_authorized_bgm_is_added_to_batch_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     video = tmp_path / "avatar.mp4"
     video.write_bytes(b"video")
     repo = MockRepository(tasks=[])
@@ -541,7 +639,11 @@ def test_authorized_bgm_is_added_to_batch_render(tmp_path: Path, monkeypatch: py
             updated_at=now,
             source_video_path=str(video),
             is_mock=False,
-            outputs={"workflow": "edit", "source_id": "avatar:avatar-real", "analysis_id": kwargs["analysis_id"]},
+            outputs={
+                "workflow": "edit",
+                "source_id": "avatar:avatar-real",
+                "analysis_id": kwargs["analysis_id"],
+            },
         )
         repo.save_task(task)
         return task
@@ -677,7 +779,10 @@ def test_retired_bgm_is_hidden_but_stays_resolvable(
 
     assert active["asset_id"] in listed_ids
     assert retired["asset_id"] not in listed_ids
-    assert service.resolve_bgm_asset(retired["asset_id"])["asset_id"] == retired["asset_id"]
+    assert (
+        service.resolve_bgm_asset(retired["asset_id"])["asset_id"]
+        == retired["asset_id"]
+    )
 
 
 def test_bgm_recommendation_does_not_auto_select_content_id_registered_track(
@@ -714,7 +819,9 @@ def test_bgm_recommendation_does_not_auto_select_content_id_registered_track(
     assert "版权识别" in reason
 
 
-def test_auto_bgm_keeps_original_audio_when_library_is_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_auto_bgm_keeps_original_audio_when_library_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     video = tmp_path / "avatar.mp4"
     video.write_bytes(b"video")
     repo = MockRepository(tasks=[])

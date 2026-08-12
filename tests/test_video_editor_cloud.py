@@ -614,7 +614,15 @@ def test_qwen_bgm_profile_is_restricted_to_approved_values():
                                 "enabled_steps": ["bgm"],
                                 "bgm_category": "任意外部分类",
                                 "bgm_energy": "爆炸",
-                                "bgm_keywords": ["科技", "未来", "第三个", "四", "五", "六", "七"],
+                                "bgm_keywords": [
+                                    "科技",
+                                    "未来",
+                                    "第三个",
+                                    "四",
+                                    "五",
+                                    "六",
+                                    "七",
+                                ],
                             },
                             ensure_ascii=False,
                         ),
@@ -660,7 +668,11 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
                                 "caption_groups": [
                                     {
                                         "segment_index": 0,
-                                        "parts": ["80%的顾客", "还主动加了", "店里的私域"],
+                                        "parts": [
+                                            "80%的顾客",
+                                            "还主动加了",
+                                            "店里的私域",
+                                        ],
                                     },
                                     {
                                         "segment_index": 1,
@@ -770,16 +782,22 @@ def test_caption_emphasis_is_sparse_exact_and_kept_inside_one_caption_part():
     )
 
     assert [item.term for item in emphasis] == ["49元", "5公里"]
-    assert validated_caption_emphasis(
-        [{"segment_index": 0, "term": "49元就能", "kind": "number"}],
-        segments,
-        caption_groups=groups,
-    ) == []
-    assert validated_caption_emphasis(
-        [{"segment_index": 0, "term": "免费", "kind": "benefit"}],
-        segments,
-        caption_groups=groups,
-    ) == []
+    assert (
+        validated_caption_emphasis(
+            [{"segment_index": 0, "term": "49元就能", "kind": "number"}],
+            segments,
+            caption_groups=groups,
+        )
+        == []
+    )
+    assert (
+        validated_caption_emphasis(
+            [{"segment_index": 0, "term": "免费", "kind": "benefit"}],
+            segments,
+            caption_groups=groups,
+        )
+        == []
+    )
 
 
 def test_qwen_request_contains_only_indexed_subtitle_text_for_semantic_grouping():
@@ -839,18 +857,25 @@ def test_smart_opening_rejects_unapproved_preferred_style():
     assert opening.style_id == "suspense_reveal"
 
 
+def test_smart_opening_selects_a_complete_clause_instead_of_cutting_mid_sentence():
+    opening = build_smart_opening(
+        "很多开连锁餐饮的老板，其实没细算过这笔账：光养一个获客员工就超过一万。",
+        ["很多开连锁餐饮的老板，其实没细算过这笔账：光养一个专门做获客"],
+    )
+
+    assert opening is not None
+    assert opening.hook_text == "其实没细算过这笔账"
+    assert opening.hook_text != "很多开连锁餐饮的老板其实没细"[:14]
+
+
 def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
     segments = [{"start": 0, "end": 2, "text": "只需要49元就能参加活动。"}]
     ass = build_business_talking_head_ass(
         segments,
         title="活动说明",
         output_profile="720p",
-        caption_groups=[
-            {"segment_index": 0, "parts": ["只需要49元", "就能参加活动"]}
-        ],
-        caption_emphasis=[
-            {"segment_index": 0, "term": "49元", "kind": "number"}
-        ],
+        caption_groups=[{"segment_index": 0, "parts": ["只需要49元", "就能参加活动"]}],
+        caption_emphasis=[{"segment_index": 0, "term": "49元", "kind": "number"}],
     ).decode("utf-8-sig")
 
     assert r"{\c&H006AE1FF&\fscx100\fscy100\t(0,120,\fscx150\fscy150)}49元" in ass
@@ -874,10 +899,7 @@ def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
         "duration_ms": 120,
     }
     assert preview["cues"][0]["emphasis_range"] is not None
-    assert any(
-        cue["emphasis_range"] is not None
-        for cue in preview["cues"][1:]
-    )
+    assert any(cue["emphasis_range"] is not None for cue in preview["cues"][1:])
 
 
 def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
@@ -905,9 +927,7 @@ def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
         "充200送30",
         "早就过时了",
     ]
-    assert [
-        (cue["start"], cue["end"]) for cue in preview["cues"]
-    ] == [
+    assert [(cue["start"], cue["end"]) for cue in preview["cues"]] == [
         (19.96, 21.88),
         (22.12, 23.24),
         (23.56, 24.68),
@@ -1203,8 +1223,7 @@ def test_caption_keeps_basic_together_and_prefers_the_phrase_boundary():
                 "start": 4,
                 "end": 10,
                 "text": (
-                    "街上有家烧烤店，才开一个月，"
-                    "附近5公里的居民基本都成了他的回头客。"
+                    "街上有家烧烤店，才开一个月，附近5公里的居民基本都成了他的回头客。"
                 ),
             },
         ],
@@ -1229,8 +1248,7 @@ def test_caption_uses_chinese_word_boundaries_instead_of_splitting_active():
                 "start": 11.04,
                 "end": 19.16,
                 "text": (
-                    "80%的顾客还主动加了店里的私域，"
-                    "生意好的不行，我也跑去试了几次。"
+                    "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次。"
                 ),
             },
         ],

@@ -974,7 +974,7 @@ describe("PipelinePage customer workspace", () => {
       .toContain("企业主音色");
   });
 
-  it("keeps a valid broad keyword when a platform temporarily returns no result", async () => {
+  it("keeps the keyword and retries on another configured platform after Douyin returns no result", async () => {
     vi.mocked(previewCrawlerBatch).mockResolvedValue({
       keyword: "财经",
       published_window_days: 7,
@@ -997,6 +997,19 @@ describe("PipelinePage customer workspace", () => {
     const emptyFinanceBatch = crawlerBatch();
     emptyFinanceBatch.keyword = "财经";
     vi.mocked(createCrawlerBatch).mockResolvedValue(emptyFinanceBatch);
+    vi.mocked(getCrawlerBrowserDiscoveryCapabilities).mockImplementation(async (platform) => ({
+      platform,
+      platform_label: platform === "douyin" ? "抖音" : platform === "kuaishou" ? "快手" : platform,
+      enabled: platform === "douyin" || platform === "kuaishou",
+      running: true,
+      login_required: false,
+      missing_configuration: [],
+      browser_channel: "chrome",
+      ready_to_crawl: platform === "douyin" || platform === "kuaishou",
+      phase: "ready",
+      provider_name: `${platform}_local_browser`,
+      message: "素材浏览器已连接。",
+    }));
     renderPage();
 
     const input = await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑");
@@ -1004,7 +1017,13 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findByText(/已保留关键词“财经”/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "用原词重试" })).toBeTruthy();
+    const retry = screen.getByRole("button", { name: "切换到快手重试" });
+    fireEvent.click(retry);
+    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledTimes(2));
+    expect(createCrawlerBatch).toHaveBeenLastCalledWith(expect.objectContaining({
+      platforms: ["kuaishou"],
+      force_refresh: true,
+    }));
     expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
       published_window_days: 0,
       count_per_platform: 30,
@@ -1072,7 +1091,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(input, { target: { value: "贴标机" } });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findByText("搜索请求没有成功提交，请刷新页面后再试；你的关键词不会丢失。")).toBeTruthy();
+    expect(await screen.findByText("请求参数校验失败")).toBeTruthy();
     expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
     expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({ keyword: "贴标机" }));
   });

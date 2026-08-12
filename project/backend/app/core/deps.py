@@ -60,6 +60,7 @@ from src.services.production import ProductionService  # noqa: E402
 from src.services.feedback import FeedbackService  # noqa: E402
 from src.services.pipeline_worker import PipelineWorker  # noqa: E402
 from src.services.video_editor import VideoEditingService  # noqa: E402
+from src.services.video_editor_workflow import VideoEditorWorkflowService  # noqa: E402
 from src.services.publisher import PublishService  # noqa: E402
 from src.services.publish_worker import PublishWorker  # noqa: E402
 from src.services.avatar import AvatarService  # noqa: E402
@@ -134,6 +135,7 @@ def _desktop_background_work_authorized() -> bool:
         and active_upstream_customer_session()
         and desktop_owner_matches(subject)
     )
+
 
 __all__ = [
     "COPYWRITING_API_KEY",
@@ -381,9 +383,7 @@ def _build_cloud_asr_loader():
     """Cloud mode is handled by the persisted Fun-ASR runtime."""
 
     def unavailable_legacy_loader(_model_name: str):
-        raise RuntimeError(
-            "云端 ASR 不会加载本地模型，也不会降级到演示数据。"
-        )
+        raise RuntimeError("云端 ASR 不会加载本地模型，也不会降级到演示数据。")
 
     return unavailable_legacy_loader
 
@@ -642,6 +642,12 @@ def get_feedback_service() -> FeedbackService:
 
 @lru_cache
 def get_pipeline_worker() -> PipelineWorker:
+    video_editor_workflow = VideoEditorWorkflowService(
+        get_repository(),
+        get_video_editing_service(),
+        get_transcription_service(),
+        get_copywriting_service(),
+    )
     return PipelineWorker(
         repository=get_repository(),
         pipeline_service=get_pipeline_service(),
@@ -650,6 +656,7 @@ def get_pipeline_worker() -> PipelineWorker:
         video_editing_service=get_video_editing_service(),
         publish_service=get_publish_service(),
         template_service=get_template_service(),
+        video_editor_workflow_service=video_editor_workflow,
         production_service=get_production_service(),
         douyin_link_transcription_service=get_douyin_link_transcription_service(),
         can_process=_desktop_background_work_authorized,

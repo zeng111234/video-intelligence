@@ -1570,18 +1570,23 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
         )
     if state and state.next_allowed_at and state.next_allowed_at > now:
         remaining = max(1, int((state.next_allowed_at - now).total_seconds()))
+        cooldown_minutes = max(1, (remaining + 59) // 60)
         return CrawlerSafetyStatus(
             state="cooldown",
             cooldown_remaining_seconds=remaining,
             next_available_at=state.next_allowed_at,
-            message=f"{_platform_label(platform.value)}正在冷却；同平台真实采集至少间隔60分钟。",
+            message=(
+                f"{_platform_label(platform.value)}刚完成一次真实搜索；"
+                f"同平台约 {cooldown_minutes} 分钟后可再搜。"
+            ),
             **common,
         )
     return CrawlerSafetyStatus(
         state="ready",
         message=(
             f"{_platform_label(platform.value)}安全模式已就绪：最多15条、"
-            f"每小时最多一次、24小时最多{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次。"
+            f"同平台搜索后短暂冷却 {max(1, BROWSER_COOLDOWN_SECONDS // 60)} 分钟、"
+            f"24小时最多{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次。"
         ),
         **common,
     )

@@ -20,13 +20,9 @@ from src.models import (
     PublishPlatform,
     PublishTask,
     TaskStatus,
-    VideoEditConfig,
-    VideoEditStep,
-    VideoEditStepKind,
 )
 from src.adapters.douyin_parser import DouyinParserError
 from src.adapters.publishers.sandbox import SandboxPublisher
-from src.services.production import DEFAULT_PRODUCTION_TEMPLATE_ID
 from src.services.publish_metadata import suggested_publish_draft
 
 logger = logging.getLogger(__name__)
@@ -45,6 +41,7 @@ class PipelineWorker:
         video_editing_service,
         publish_service,
         template_service,
+        video_editor_workflow_service=None,
         production_service=None,
         douyin_link_transcription_service=None,
         interval_seconds: float = 2.0,
@@ -57,6 +54,7 @@ class PipelineWorker:
         self.video_editing_service = video_editing_service
         self.publish_service = publish_service
         self.template_service = template_service
+        self.video_editor_workflow_service = video_editor_workflow_service
         self.production_service = production_service
         self.douyin_link_transcription_service = douyin_link_transcription_service
         self.interval_seconds = interval_seconds
@@ -105,7 +103,10 @@ class PipelineWorker:
             try:
                 if workflow.startswith("production_batch_"):
                     run = self._recover_interrupted_run(run)
-                if workflow == "keyword_auto_master" and run.status == PipelineRunStatus.PENDING:
+                if (
+                    workflow == "keyword_auto_master"
+                    and run.status == PipelineRunStatus.PENDING
+                ):
                     self._run_keyword_master(run)
                 elif workflow == "keyword_auto_candidate":
                     self._run_candidate(run)
@@ -113,13 +114,23 @@ class PipelineWorker:
                     self._run_candidate(run)
                 elif workflow == "guided_share_link":
                     self._run_guided_share_link(run)
-                elif workflow in {"production_batch_candidate", "production_batch_share_link", "production_batch_brief", "production_batch_script"}:
+                elif workflow in {
+                    "production_batch_candidate",
+                    "production_batch_share_link",
+                    "production_batch_brief",
+                    "production_batch_script",
+                }:
                     self._run_production_batch(run)
             except Exception as exc:
                 logger.exception("流水线 %s 执行异常", run.run_id)
-                self._fail(run, run.current_stage or PipelineStage.KEYWORD_SEARCH, str(exc))
+                self._fail(
+                    run, run.current_stage or PipelineStage.KEYWORD_SEARCH, str(exc)
+                )
             finally:
-                if workflow.startswith("production_batch_") and self.production_service is not None:
+                if (
+                    workflow.startswith("production_batch_")
+                    and self.production_service is not None
+                ):
                     batch_id = str(run.config.get("batch_id") or "")
                     self.production_service.sync_batch(batch_id)
                     self.production_service.maybe_auto_review_batch(
@@ -135,8 +146,7 @@ class PipelineWorker:
         if (
             stage == PipelineStage.COPYWRITING
             and bool(run.config.get("transcript_review_in_progress"))
-            and datetime.now().astimezone() - run.updated_at
-            < timedelta(minutes=2)
+            and datetime.now().astimezone() - run.updated_at < timedelta(minutes=2)
         ):
             # A review API request may legitimately be inside its bounded LLM
             # call while the worker scans. Only stale claims imply a restart.
@@ -264,7 +274,9 @@ class PipelineWorker:
         return paused
 
     def _run_keyword_master(self, run: PipelineRun) -> None:
-        run = self.pipeline_service.update_stage(run, PipelineStage.KEYWORD_SEARCH, TaskStatus.RUNNING)
+        run = self.pipeline_service.update_stage(
+            run, PipelineStage.KEYWORD_SEARCH, TaskStatus.RUNNING
+        )
         config = run.config
         search = self.commercial_search_service.execute(
             keyword=run.keyword,
@@ -274,16 +286,25 @@ class PipelineWorker:
             item
             for item in self.repository.list_candidates()
             if item.platform == Platform.DOUYIN
-            and run.keyword.casefold() in {value.casefold() for value in item.matched_by}
+            and run.keyword.casefold()
+            in {value.casefold() for value in item.matched_by}
             and item.platform_item_id
         ]
         candidates.sort(
-            key=lambda item: (item.heat.score, item.heat.confidence, item.metrics.likes or 0),
+            key=lambda item: (
+                item.heat.score,
+                item.heat.confidence,
+                item.metrics.likes or 0,
+            ),
             reverse=True,
         )
         selected = candidates[: int(config.get("candidate_count") or 1)]
         if not selected:
-            self._fail(run, PipelineStage.KEYWORD_SEARCH, "检索未得到可进入媒体处理的抖音候选。")
+            self._fail(
+                run,
+                PipelineStage.KEYWORD_SEARCH,
+                "检索未得到可进入媒体处理的抖音候选。",
+            )
             return
         child_ids: list[str] = []
         for candidate in selected:
@@ -302,8 +323,12 @@ class PipelineWorker:
                         "model_name": "large-v3-turbo",
                         "target_length": 300,
                         "tone": "casual",
-                        "target_audience": str(config["profile"].get("target_audience") or ""),
-                        "style_prompt": str(config["profile"].get("script_style") or ""),
+                        "target_audience": str(
+                            config["profile"].get("target_audience") or ""
+                        ),
+                        "style_prompt": str(
+                            config["profile"].get("script_style") or ""
+                        ),
                         "variant_count": 2,
                     },
                 },
@@ -314,7 +339,10 @@ class PipelineWorker:
                 action="candidate_selected",
                 stage=PipelineStage.MEDIA_RESOLUTION,
                 message="已由关键词任务选中，等待媒体到文案链路执行。",
-                details={"parent_run_id": run.run_id, "candidate_id": candidate.video_id},
+                details={
+                    "parent_run_id": run.run_id,
+                    "candidate_id": candidate.video_id,
+                },
             )
             self.repository.save_pipeline_run(child)
             child_ids.append(child.run_id)
@@ -323,7 +351,10 @@ class PipelineWorker:
             PipelineStage.KEYWORD_SEARCH,
             TaskStatus.SUCCEEDED,
             task_id=search.batch_id,
-            outputs={"search_batch_id": search.batch_id, "selected_runs": ",".join(child_ids)},
+            outputs={
+                "search_batch_id": search.batch_id,
+                "selected_runs": ",".join(child_ids),
+            },
         )
         self.pipeline_service.complete_run(run, success=True)
 
@@ -333,7 +364,11 @@ class PipelineWorker:
             self.pipeline_service.execute_candidate_script_pipeline(
                 candidate_id=run.candidate_video_id or "",
                 rights_confirmed=True,
-                rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
+                rights_holder=str(
+                    request.get("rights_holder")
+                    or run.config.get("rights_holder")
+                    or ""
+                ),
                 idempotency_key=f"worker-media-{run.run_id}",
                 model_name=str(request.get("model_name") or "large-v3-turbo"),
                 hotwords=str(request.get("hotwords") or "") or None,
@@ -345,20 +380,32 @@ class PipelineWorker:
                 existing_run=run,
             )
             return
-        if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+        if (
+            run.status == PipelineRunStatus.PENDING
+            and run.current_stage == PipelineStage.AVATAR_GENERATION
+        ):
             self._submit_avatar(run)
             return
-        if run.status == PipelineRunStatus.RUNNING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+        if (
+            run.status == PipelineRunStatus.RUNNING
+            and run.current_stage == PipelineStage.AVATAR_GENERATION
+        ):
             self._poll_avatar_and_continue(run)
             return
-        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
+        if (
+            run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.PUBLISHING
+        ):
             self._reconcile_publish(run)
 
     def _run_guided_share_link(self, run: PipelineRun) -> None:
         """从客户明确提供的平台分享链接开始，不经过关键词发现。"""
         share_text = str(run.config.get("share_text") or "")
         candidate_platform = str(run.config.get("candidate_platform") or "").lower()
-        if candidate_platform == Platform.XIAOHONGSHU.value or "xiaohongshu.com" in share_text.lower():
+        if (
+            candidate_platform == Platform.XIAOHONGSHU.value
+            or "xiaohongshu.com" in share_text.lower()
+        ):
             self._pause_for_xiaohongshu_safety(run)
             return
         if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
@@ -369,7 +416,9 @@ class PipelineWorker:
             if not share_text:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "缺少平台分享链接。")
                 return
-            run = self.pipeline_service.update_stage(run, PipelineStage.TRANSCRIPTION, TaskStatus.RUNNING)
+            run = self.pipeline_service.update_stage(
+                run, PipelineStage.TRANSCRIPTION, TaskStatus.RUNNING
+            )
             try:
                 if bool(run.config.get("use_paid_fallback")):
                     preview = self.douyin_link_transcription_service.preview(share_text)
@@ -378,18 +427,30 @@ class PipelineWorker:
                     transcription = self.douyin_link_transcription_service.transcribe_oneapi_fallback(
                         share_text=share_text,
                         work_id=preview.work_id,
-                        rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
+                        rights_holder=str(
+                            request.get("rights_holder")
+                            or run.config.get("rights_holder")
+                            or ""
+                        ),
                         rights_confirmed=True,
                         idempotency_key=f"worker-link-{run.run_id}",
                         model_name=str(request.get("model_name") or "large-v3-turbo"),
                     )
                 else:
-                    transcription = self.douyin_link_transcription_service.transcribe_experimental(
-                        share_text=share_text,
-                        rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
-                        rights_confirmed=True,
-                        model_name=str(request.get("model_name") or "large-v3-turbo"),
-                        candidate_id=run.candidate_video_id,
+                    transcription = (
+                        self.douyin_link_transcription_service.transcribe_experimental(
+                            share_text=share_text,
+                            rights_holder=str(
+                                request.get("rights_holder")
+                                or run.config.get("rights_holder")
+                                or ""
+                            ),
+                            rights_confirmed=True,
+                            model_name=str(
+                                request.get("model_name") or "large-v3-turbo"
+                            ),
+                            candidate_id=run.candidate_video_id,
+                        )
                     )
             except DouyinParserError as exc:
                 self._fail(run, PipelineStage.TRANSCRIPTION, exc.user_message)
@@ -434,25 +495,42 @@ class PipelineWorker:
                 style_prompt=str(profile.get("script_style") or ""),
             )
             return
-        if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+        if (
+            run.status == PipelineRunStatus.PENDING
+            and run.current_stage == PipelineStage.AVATAR_GENERATION
+        ):
             self._submit_avatar(run)
             return
-        if run.status == PipelineRunStatus.RUNNING and run.current_stage == PipelineStage.AVATAR_GENERATION:
+        if (
+            run.status == PipelineRunStatus.RUNNING
+            and run.current_stage == PipelineStage.AVATAR_GENERATION
+        ):
             self._poll_avatar_and_continue(run)
             return
-        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
+        if (
+            run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.PUBLISHING
+        ):
             self._reconcile_publish(run)
 
     def _run_production_batch(self, run: PipelineRun) -> None:
         """批次项统一领取并发槽位，再按来源进入对应的合规流水线。"""
-        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
+        if (
+            run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.PUBLISHING
+        ):
             # 人工发布结果回填后无需重新占用生产并发槽位，只需汇总终态。
             if run.publish_task_ids:
                 self._reconcile_publish(run)
             return
-        if self.production_service is None or not self.production_service.can_run(run.run_id):
+        if self.production_service is None or not self.production_service.can_run(
+            run.run_id
+        ):
             return
-        if run.status == PipelineRunStatus.PENDING and run.current_stage == PipelineStage.PUBLISHING:
+        if (
+            run.status == PipelineRunStatus.PENDING
+            and run.current_stage == PipelineStage.PUBLISHING
+        ):
             if bool(run.config.get("publish_confirmed")):
                 self._submit_publish(run)
             return
@@ -516,7 +594,11 @@ class PipelineWorker:
                     variant_count=2,
                 )
                 if task.status != TaskStatus.SUCCEEDED:
-                    self._fail(run, PipelineStage.COPYWRITING, task.error_message or "选题文案生成失败。")
+                    self._fail(
+                        run,
+                        PipelineStage.COPYWRITING,
+                        task.error_message or "选题文案生成失败。",
+                    )
                     return
             elif source_type == "script":
                 now = datetime.now().astimezone()
@@ -548,17 +630,27 @@ class PipelineWorker:
         if not isinstance(copy_task, CopywritingTask):
             self._fail(run, PipelineStage.AVATAR_GENERATION, "找不到已审核文案任务。")
             return
-        script = str(run.config.get("approved_script_text") or copy_task.result_text or "").strip()
+        script = str(
+            run.config.get("approved_script_text") or copy_task.result_text or ""
+        ).strip()
         if not script:
-            self._fail(run, PipelineStage.AVATAR_GENERATION, "审核后没有可用的最终口播文案。")
+            self._fail(
+                run, PipelineStage.AVATAR_GENERATION, "审核后没有可用的最终口播文案。"
+            )
             return
         assets = {item.asset_id: item for item in self.avatar_service.list_assets()}
         avatar = assets.get(str(profile.get("avatar_id") or ""))
         voice = assets.get(str(profile.get("voice_id") or ""))
         if avatar is None or voice is None:
-            self._fail(run, PipelineStage.AVATAR_GENERATION, "IP 配方绑定的数字人形象或音色不可用。")
+            self._fail(
+                run,
+                PipelineStage.AVATAR_GENERATION,
+                "IP 配方绑定的数字人形象或音色不可用。",
+            )
             return
-        run = self.pipeline_service.update_stage(run, PipelineStage.AVATAR_GENERATION, TaskStatus.RUNNING)
+        run = self.pipeline_service.update_stage(
+            run, PipelineStage.AVATAR_GENERATION, TaskStatus.RUNNING
+        )
         avatar_retry_number = int(
             (run.config.get("stage_retry_counts") or {}).get(
                 PipelineStage.AVATAR_GENERATION.value
@@ -584,7 +676,9 @@ class PipelineWorker:
             voice_rights_confirmed=True,
             idempotency_key=avatar_idempotency_key,
         )
-        task = self.avatar_service.submit(request, avatar_name=avatar.name, voice_name=voice.name)
+        task = self.avatar_service.submit(
+            request, avatar_name=avatar.name, voice_name=voice.name
+        )
         updated_run = self.pipeline_service.update_stage(
             run,
             PipelineStage.AVATAR_GENERATION,
@@ -634,53 +728,75 @@ class PipelineWorker:
         if task.status in {TaskStatus.QUEUED, TaskStatus.SUBMITTED, TaskStatus.RUNNING}:
             return
         if task.status != TaskStatus.SUCCEEDED:
-            self._fail(run, PipelineStage.AVATAR_GENERATION, task.error_message or "数字人生成失败。")
+            self._fail(
+                run,
+                PipelineStage.AVATAR_GENERATION,
+                task.error_message or "数字人生成失败。",
+            )
             return
         if not task.result_path:
             task = self.avatar_service.download_result(task_id)
         if not task.result_path:
-            self._fail(run, PipelineStage.AVATAR_GENERATION, "数字人结果未保存为本地视频。")
+            self._fail(
+                run, PipelineStage.AVATAR_GENERATION, "数字人结果未保存为本地视频。"
+            )
             return
         self._edit_and_package(run, task)
 
     def _edit_and_package(self, run: PipelineRun, avatar_task: AvatarTask) -> None:
         profile = dict(run.config.get("profile") or {})
-        template_id = str(
-            profile.get("edit_template_id") or DEFAULT_PRODUCTION_TEMPLATE_ID
-        )
-        template = self.template_service.get_template(template_id)
-        if template is None:
-            self._fail(run, PipelineStage.VIDEO_EDITING, "系统通用智能优化配置异常。")
-            return
-        steps = [
-            VideoEditStep(kind=VideoEditStepKind(step.kind), params=step.params, order=index)
-            for index, step in enumerate(template.steps)
-        ]
         copy_task = self.repository.get_task(run.copywriting_task_id or "")
-        script = str(run.config.get("approved_script_text") or getattr(copy_task, "result_text", "") or "")
-        run = self.pipeline_service.update_stage(run, PipelineStage.VIDEO_EDITING, TaskStatus.RUNNING)
-        edit_task = self.video_editing_service.edit_video(
-            source_video_path=avatar_task.result_path or "",
-            edit_config=VideoEditConfig(
-                steps=steps,
-                output_format=template.output_format,
-                output_resolution=template.output_resolution,
-                output_fps=template.output_fps,
-                output_bitrate=template.output_bitrate,
-            ),
-            subtitle_text=script,
-            source_task_id=run.copywriting_task_id,
-            source_avatar_task_id=avatar_task.task_id,
+        script = str(
+            run.config.get("approved_script_text")
+            or getattr(copy_task, "result_text", "")
+            or ""
         )
+        draft = suggested_publish_draft(
+            approved_script=script,
+            creative_plan=(
+                dict(plan)
+                if isinstance(plan := run.config.get("creative_plan"), dict)
+                else None
+            ),
+            profile_tags=list(profile.get("tags") or []),
+        )
+        run = self.pipeline_service.update_stage(
+            run, PipelineStage.VIDEO_EDITING, TaskStatus.RUNNING
+        )
+        if self.video_editor_workflow_service is None:
+            self._fail(
+                run,
+                PipelineStage.VIDEO_EDITING,
+                "新版智能剪辑服务未配置，已停止以避免生成旧模板。",
+            )
+            return
+        try:
+            edit_task = self.video_editor_workflow_service.render_production_export(
+                avatar_task=avatar_task,
+                script_text=script,
+                publish_title=draft["title"],
+            )
+        except Exception as exc:
+            self._fail(
+                run, PipelineStage.VIDEO_EDITING, str(exc) or "新版智能剪辑失败。"
+            )
+            return
         if edit_task.status != TaskStatus.SUCCEEDED or not edit_task.result_path:
-            self._fail(run, PipelineStage.VIDEO_EDITING, edit_task.error_message or "视频剪辑失败。")
+            self._fail(
+                run,
+                PipelineStage.VIDEO_EDITING,
+                edit_task.error_message or "视频剪辑失败。",
+            )
             return
         run = self.pipeline_service.update_stage(
             run,
             PipelineStage.VIDEO_EDITING,
             TaskStatus.SUCCEEDED,
             task_id=edit_task.task_id,
-            outputs={"edit_task_id": edit_task.task_id, "video_path": edit_task.result_path},
+            outputs={
+                "edit_task_id": edit_task.task_id,
+                "video_path": edit_task.result_path,
+            },
         )
         if run.config.get("publish_enabled") is False:
             self.pipeline_service.complete_run(run, success=True)
@@ -691,7 +807,11 @@ class PipelineWorker:
                     "status": PipelineRunStatus.PAUSED,
                     "current_stage": PipelineStage.PUBLISHING,
                     "updated_at": datetime.now().astimezone(),
-                    "config": {**run.config, "video_path": edit_task.result_path, "publish_confirmed": False},
+                    "config": {
+                        **run.config,
+                        "video_path": edit_task.result_path,
+                        "publish_confirmed": False,
+                    },
                 }
             )
             paused = self.pipeline_service._event(
@@ -702,23 +822,19 @@ class PipelineWorker:
             )
             self.repository.save_pipeline_run(paused)
             return
-        platforms = [PublishPlatform(item) for item in run.config.get("publish_platforms", ["douyin"])]
-        draft = suggested_publish_draft(
-            approved_script=script,
-            creative_plan=(
-                dict(plan)
-                if isinstance(plan := run.config.get("creative_plan"), dict)
-                else None
-            ),
-            profile_tags=list((run.config.get("profile") or {}).get("tags") or []),
-        )
+        platforms = [
+            PublishPlatform(item)
+            for item in run.config.get("publish_platforms", ["douyin"])
+        ]
         targets = self.pipeline_service.build_publish_targets(
             title=draft["title"],
             description=draft["description"],
             tags=draft["tags"],
             platforms=platforms,
         )
-        run = self.pipeline_service.update_stage(run, PipelineStage.PUBLISHING, TaskStatus.RUNNING)
+        run = self.pipeline_service.update_stage(
+            run, PipelineStage.PUBLISHING, TaskStatus.RUNNING
+        )
         summary = self.publish_service.create_batch(
             video_path=edit_task.result_path,
             targets=targets,
@@ -730,13 +846,22 @@ class PipelineWorker:
                 PipelineStage.PUBLISHING,
                 TaskStatus.SUBMITTED,
                 task_id=publish_task.task_id,
-                outputs={"platform": publish_task.target.platform.value, "publish_status": publish_task.publish_status.value},
+                outputs={
+                    "platform": publish_task.target.platform.value,
+                    "publish_status": publish_task.publish_status.value,
+                },
             )
         paused = run.model_copy(
-            update={"status": PipelineRunStatus.PAUSED, "current_stage": PipelineStage.PUBLISHING, "updated_at": datetime.now().astimezone()}
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.PUBLISHING,
+                "updated_at": datetime.now().astimezone(),
+            }
         )
         paused = self.pipeline_service._event(
-            paused, action="manual_publish_ready", stage=PipelineStage.PUBLISHING,
+            paused,
+            action="manual_publish_ready",
+            stage=PipelineStage.PUBLISHING,
             message="成片与人工发布包已准备，等待平台后台发布结果回填。",
         )
         self.repository.save_pipeline_run(paused)
@@ -768,7 +893,9 @@ class PipelineWorker:
             edit_task = self.repository.get_task(run.edit_task_id or "")
             video_path = str(getattr(edit_task, "result_path", "") or "")
         if not video_path:
-            self._fail(run, PipelineStage.PUBLISHING, "找不到已生成的成片，不能提交发布。")
+            self._fail(
+                run, PipelineStage.PUBLISHING, "找不到已生成的成片，不能提交发布。"
+            )
             return
         if not Path(video_path).is_file():
             self._fail(
@@ -789,8 +916,14 @@ class PipelineWorker:
                     for item in run.config.get("publish_platforms", ["douyin"])
                 ]
             draft = run.config.get("publish_draft")
-            if not bool(run.config.get("publish_draft_approved")) or not isinstance(draft, dict):
-                self._fail(run, PipelineStage.PUBLISHING, "请先确认标题、描述和标签，再准备发布。")
+            if not bool(run.config.get("publish_draft_approved")) or not isinstance(
+                draft, dict
+            ):
+                self._fail(
+                    run,
+                    PipelineStage.PUBLISHING,
+                    "请先确认标题、描述和标签，再准备发布。",
+                )
                 return
             targets = self.pipeline_service.build_publish_targets(
                 title=str(draft.get("title") or ""),
@@ -809,10 +942,18 @@ class PipelineWorker:
                     targets=real_targets,
                 )
                 if preflight["blocked"]:
-                    paused = run.model_copy(update={"status": PipelineRunStatus.PAUSED, "updated_at": datetime.now().astimezone(), "error_message": "；".join(preflight["issues"])})
+                    paused = run.model_copy(
+                        update={
+                            "status": PipelineRunStatus.PAUSED,
+                            "updated_at": datetime.now().astimezone(),
+                            "error_message": "；".join(preflight["issues"]),
+                        }
+                    )
                     self.repository.save_pipeline_run(paused)
                     return
-            run = self.pipeline_service.update_stage(run, PipelineStage.PUBLISHING, TaskStatus.RUNNING)
+            run = self.pipeline_service.update_stage(
+                run, PipelineStage.PUBLISHING, TaskStatus.RUNNING
+            )
             publish_tasks = []
             if real_targets:
                 summary = self.publish_service.create_batch(
@@ -839,15 +980,29 @@ class PipelineWorker:
                     PipelineStage.PUBLISHING,
                     publish_task.status,
                     task_id=publish_task.task_id,
-                    outputs={"platform": publish_task.target.platform.value, "publish_status": publish_task.publish_status.value},
+                    outputs={
+                        "platform": publish_task.target.platform.value,
+                        "publish_status": publish_task.publish_status.value,
+                    },
                 )
             if publish_tasks and all(
                 task.status == TaskStatus.SUCCEEDED for task in publish_tasks
             ):
                 self.pipeline_service.complete_run(run, success=True)
                 return
-            paused = run.model_copy(update={"status": PipelineRunStatus.PAUSED, "current_stage": PipelineStage.PUBLISHING, "updated_at": datetime.now().astimezone()})
-            paused = self.pipeline_service._event(paused, action="publish_submitted", stage=PipelineStage.PUBLISHING, message="已创建发布任务，等待官方结果或人工回填。")
+            paused = run.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "current_stage": PipelineStage.PUBLISHING,
+                    "updated_at": datetime.now().astimezone(),
+                }
+            )
+            paused = self.pipeline_service._event(
+                paused,
+                action="publish_submitted",
+                stage=PipelineStage.PUBLISHING,
+                message="已创建发布任务，等待官方结果或人工回填。",
+            )
             self.repository.save_pipeline_run(paused)
         except Exception as exc:
             self._fail(run, PipelineStage.PUBLISHING, str(exc))
@@ -855,7 +1010,10 @@ class PipelineWorker:
     def _reconcile_publish(self, run: PipelineRun) -> None:
         tasks = [self.repository.get_task(task_id) for task_id in run.publish_task_ids]
         statuses = [task.status for task in tasks if task is not None]
-        if not statuses or any(status in {TaskStatus.SUBMITTED, TaskStatus.RUNNING, TaskStatus.QUEUED} for status in statuses):
+        if not statuses or any(
+            status in {TaskStatus.SUBMITTED, TaskStatus.RUNNING, TaskStatus.QUEUED}
+            for status in statuses
+        ):
             return
         if all(status == TaskStatus.SUCCEEDED for status in statuses):
             self.pipeline_service.complete_run(run, success=True)
@@ -863,10 +1021,22 @@ class PipelineWorker:
         if all(status == TaskStatus.FAILED for status in statuses):
             self._fail(run, PipelineStage.PUBLISHING, "所有平台均人工确认发布失败。")
             return
-        updated = run.model_copy(update={"status": PipelineRunStatus.PARTIAL, "updated_at": datetime.now().astimezone()})
-        updated = self.pipeline_service._event(updated, action="publish_partial", stage=PipelineStage.PUBLISHING, message="发布结果部分成功或仍待核对。")
+        updated = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PARTIAL,
+                "updated_at": datetime.now().astimezone(),
+            }
+        )
+        updated = self.pipeline_service._event(
+            updated,
+            action="publish_partial",
+            stage=PipelineStage.PUBLISHING,
+            message="发布结果部分成功或仍待核对。",
+        )
         self.repository.save_pipeline_run(updated)
 
     def _fail(self, run: PipelineRun, stage: PipelineStage, message: str) -> None:
-        failed = self.pipeline_service.update_stage(run, stage, TaskStatus.FAILED, error_message=message)
+        failed = self.pipeline_service.update_stage(
+            run, stage, TaskStatus.FAILED, error_message=message
+        )
         self.pipeline_service.complete_run(failed, success=False, error_message=message)
