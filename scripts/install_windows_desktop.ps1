@@ -20,6 +20,7 @@ $desktopShortcut = $null
 $startMenuDir = $null
 $startMenuProgramsRoot = $null
 $startMenuShortcut = $null
+$startMenuUninstallShortcut = $null
 $startMenuDirCreated = $false
 $shortcutBackupRoot = $null
 $touchedShortcutPaths = @()
@@ -361,20 +362,23 @@ function Restore-UninstallRegistration {
         return
     }
     New-Item -Path $RegistryPath -Force | Out-Null
-    foreach ($name in @("DisplayName", "DisplayVersion", "Publisher", "InstallLocation", "RuntimeLocation", "UninstallString")) {
-        if ($null -eq $PreviousValues.$name) { continue }
+    foreach ($name in @("DisplayName", "DisplayVersion", "Publisher", "DisplayIcon", "InstallLocation", "RuntimeLocation", "UninstallString", "QuietUninstallString")) {
+        $property = $PreviousValues.PSObject.Properties[$name]
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
         New-ItemProperty `
             -Path $RegistryPath `
             -Name $name `
-            -Value ([string]$PreviousValues.$name) `
+            -Value ([string]$property.Value) `
             -PropertyType String `
             -Force | Out-Null
     }
-    foreach ($name in @("NoModify", "NoRepair")) {
+    foreach ($name in @("NoModify", "NoRepair", "EstimatedSize")) {
+        $property = $PreviousValues.PSObject.Properties[$name]
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
         New-ItemProperty `
             -Path $RegistryPath `
             -Name $name `
-            -Value ([int]$PreviousValues.$name) `
+            -Value ([int]$property.Value) `
             -PropertyType DWord `
             -Force | Out-Null
     }
@@ -519,6 +523,7 @@ try {
     $startMenuDir = Join-Path $startMenuProgramsRoot "VideoInsight"
     $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
     $startMenuShortcut = Join-Path $startMenuDir "VideoInsight.lnk"
+    $startMenuUninstallShortcut = Join-Path $startMenuDir "卸载 VideoInsight.lnk"
     $trustedPowerShell = Join-Path $PSHOME "powershell.exe"
     if (-not (Test-Path -LiteralPath $trustedPowerShell -PathType Leaf)) {
         throw "找不到受信任的 Windows PowerShell。"
@@ -526,7 +531,7 @@ try {
     Assert-NoReparsePoint -Path $trustedPowerShell -Label "Windows PowerShell"
     Assert-ChildPath -Parent $programsRoot -Child $installRoot
     Assert-ChildPath -Parent $startMenuProgramsRoot -Child $startMenuDir
-    foreach ($protectedRoot in @($programsRoot, $installRoot, $RuntimeRoot, $existingInstallRoot, $previousRuntimeRoot, $startMenuProgramsRoot, $startMenuDir, $desktopShortcut, $startMenuShortcut)) {
+    foreach ($protectedRoot in @($programsRoot, $installRoot, $RuntimeRoot, $existingInstallRoot, $previousRuntimeRoot, $startMenuProgramsRoot, $startMenuDir, $desktopShortcut, $startMenuShortcut, $startMenuUninstallShortcut)) {
         Assert-NoReparsePointsInAncestors -Path $protectedRoot -Label "安装目标"
     }
     Assert-NoReparsePoint -Path $programsRoot -Label "程序目录"
@@ -535,6 +540,7 @@ try {
     Assert-NoReparsePoint -Path $startMenuDir -Label "VideoInsight 开始菜单目录"
     Assert-NoReparsePoint -Path $desktopShortcut -Label "桌面快捷方式"
     Assert-NoReparsePoint -Path $startMenuShortcut -Label "开始菜单快捷方式"
+    Assert-NoReparsePoint -Path $startMenuUninstallShortcut -Label "开始菜单卸载快捷方式"
     if (
         (Test-Path -LiteralPath $installRoot) -and
         -not [string]::Equals($installRoot, $existingInstallRoot, [System.StringComparison]::OrdinalIgnoreCase)
@@ -641,9 +647,30 @@ try {
     $shortcutBackupRoot = Join-Path $programsRoot (".VideoInsight-shortcuts-" + [guid]::NewGuid().ToString("N"))
     Assert-ChildPath -Parent $programsRoot -Child $shortcutBackupRoot
     New-Item -ItemType Directory -Path $shortcutBackupRoot | Out-Null
-    $shortcutPaths = @($desktopShortcut, $startMenuShortcut)
-    for ($shortcutIndex = 0; $shortcutIndex -lt $shortcutPaths.Count; $shortcutIndex++) {
-        $shortcutPath = $shortcutPaths[$shortcutIndex]
+    $uninstallScript = Join-Path $installRoot "Uninstall-VideoInsight.ps1"
+    $shortcutDefinitions = @(
+        @{
+            Path = $desktopShortcut
+            Target = (Join-Path $installRoot "VideoInsight.exe")
+            Arguments = ""
+            Description = "VideoInsight 视频创作工作台"
+        },
+        @{
+            Path = $startMenuShortcut
+            Target = (Join-Path $installRoot "VideoInsight.exe")
+            Arguments = ""
+            Description = "VideoInsight 视频创作工作台"
+        },
+        @{
+            Path = $startMenuUninstallShortcut
+            Target = $trustedPowerShell
+            Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $uninstallScript)
+            Description = "卸载 VideoInsight（保留客户数据）"
+        }
+    )
+    for ($shortcutIndex = 0; $shortcutIndex -lt $shortcutDefinitions.Count; $shortcutIndex++) {
+        $shortcutDefinition = $shortcutDefinitions[$shortcutIndex]
+        $shortcutPath = [string]$shortcutDefinition.Path
         if (Test-Path -LiteralPath $shortcutPath) {
             Assert-NoReparsePoint -Path $shortcutPath -Label "既有快捷方式"
             $shortcutBackupPath = Join-Path $shortcutBackupRoot ("shortcut-$shortcutIndex.lnk")
@@ -652,24 +679,28 @@ try {
         }
         $touchedShortcutPaths += $shortcutPath
         $shortcut = $shell.CreateShortcut($shortcutPath)
-        $shortcut.TargetPath = Join-Path $installRoot "VideoInsight.exe"
+        $shortcut.TargetPath = [string]$shortcutDefinition.Target
+        $shortcut.Arguments = [string]$shortcutDefinition.Arguments
         $shortcut.WorkingDirectory = $installRoot
-        $shortcut.Description = "VideoInsight 视频创作工作台"
+        $shortcut.Description = [string]$shortcutDefinition.Description
         $shortcut.Save()
     }
 
     $phase = "注册卸载信息"
     New-Item -Path $uninstallKey -Force | Out-Null
-    $uninstallScript = Join-Path $installRoot "Uninstall-VideoInsight.ps1"
     $uninstallCommand = '"' + $trustedPowerShell + '" -NoProfile -ExecutionPolicy Bypass -File "' + $uninstallScript + '"'
+    $estimatedSizeKb = [Math]::Max(1, [int64]([Math]::Ceiling((Get-ChildItem -LiteralPath $installRoot -Recurse -Force -File | Measure-Object -Property Length -Sum).Sum / 1KB)))
     New-ItemProperty -Path $uninstallKey -Name DisplayName -Value "VideoInsight" -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $Version -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name Publisher -Value "VideoInsight" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name DisplayIcon -Value (Join-Path $installRoot "VideoInsight.exe") -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installRoot -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name RuntimeLocation -Value $RuntimeRoot -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name UninstallString -Value $uninstallCommand -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name QuietUninstallString -Value $uninstallCommand -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name EstimatedSize -Value $estimatedSizeKb -PropertyType DWord -Force | Out-Null
 
     $phase = "启动 VideoInsight"
     Start-Process -FilePath (Join-Path $installRoot "VideoInsight.exe")
@@ -713,7 +744,7 @@ try {
         try {
             Add-Type -AssemblyName PresentationFramework
             [System.Windows.MessageBox]::Show(
-                "VideoInsight 已安装并启动。桌面快捷方式已经创建。`n后续覆盖安装会保留客户数据。",
+                "VideoInsight 已安装并启动。桌面快捷方式已经创建。`n需要卸载时，请打开开始菜单中的「卸载 VideoInsight」；客户数据默认保留。`n后续覆盖安装会保留客户数据。",
                 "VideoInsight 安装完成"
             ) | Out-Null
         }

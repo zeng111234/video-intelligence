@@ -1595,6 +1595,7 @@ def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     assert "installerMutex.WaitOne(0, false)" in bootstrap_source
     assert "installerMutex.ReleaseMutex()" in bootstrap_source
     assert "不要重复启动" in bootstrap_source
+    assert "卸载 VideoInsight" in bootstrap_source
     assert "drive.DriveType != DriveType.Fixed" in bootstrap_source
     assert "Path.GetDirectoryName(installationPaths.InstallRoot)" in bootstrap_source
     assert "CreatePowerShellStartInfo(temporaryRoot)" in bootstrap_source
@@ -1904,6 +1905,10 @@ def test_installer_only_targets_processes_inside_install_root(tmp_path: Path):
     assert "$processes | Stop-Process -Force" not in script_text
     assert "$shortcutBackups[$shortcutPath]" in script_text
     assert "Restore-ShortcutBackupSafely" in script_text
+    assert 'Join-Path $startMenuDir "卸载 VideoInsight.lnk"' in script_text
+    assert "DisplayIcon" in script_text
+    assert "EstimatedSize" in script_text
+    assert "QuietUninstallString" in script_text
     assert "$startMenuDirCreated" in script_text
     assert "Remove-Item -LiteralPath $startMenuDir -Recurse" not in script_text
     assert "Get-ChildItem -LiteralPath $startMenuDir -Force" in script_text

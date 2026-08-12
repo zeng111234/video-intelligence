@@ -179,6 +179,7 @@ internal static class OfflineInstallerBootstrap
                 MessageBox.Show(
                     "VideoInsight 已安装并启动，自动检查全部通过。\n" +
                     "桌面和开始菜单快捷方式已经创建。\n" +
+                    "需要卸载时，请打开开始菜单中的“卸载 VideoInsight”；客户数据默认保留。\n" +
                     "桌面已生成验收报告，无需再输入命令。",
                     "VideoInsight 安装和检查完成",
                     MessageBoxButtons.OK,

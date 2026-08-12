@@ -52,6 +52,7 @@ def test_bootstrap_uses_no_clobber_extraction_and_non_recursive_cleanup() -> Non
     assert "while (!installer.WaitForExit(200))" in source
     assert "程序位置：" in source
     assert "数据位置：" in source
+    assert "卸载 VideoInsight" in source
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell version parser")
