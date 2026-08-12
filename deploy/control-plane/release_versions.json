@@ -31,15 +31,8 @@
     "0.2.8",
     "0.2.9"
   ],
-  "current_candidate": null,
-  "release_in_progress": {
-    "version": "0.2.28",
-    "source_commit": "9902e051573dcdadcc165fa8bc298e2e87047640",
-    "server_state": "ready",
-    "control_plane_sha256": "881bfafd65b9a6024c1a37080d247abc269279181e42a0639b33735a9ad70159",
-    "windows_state": "attempted",
-    "installer_sha256": null
-  },
+  "current_candidate": "0.2.29",
+  "release_in_progress": null,
   "completed_releases": [
     {
       "version": "0.2.23",
@@ -72,6 +65,14 @@
       "control_plane_sha256": "5263b25f090203d4c3f9e41a27ed08c818d3948a5c12ba6490c0efadc63ba1db",
       "windows_state": "complete",
       "installer_sha256": "2a8a069eb873130ab99819e750517ff7620ea9c46b3e6e815e52d7f20d0d4693"
+    },
+    {
+      "version": "0.2.28",
+      "source_commit": "9902e051573dcdadcc165fa8bc298e2e87047640",
+      "server_state": "ready",
+      "control_plane_sha256": "881bfafd65b9a6024c1a37080d247abc269279181e42a0639b33735a9ad70159",
+      "windows_state": "complete",
+      "installer_sha256": "38324be82027de514cc4acb0a4c896344aa7017cb42ea549ab65591fff855185"
     }
   ]
 }
