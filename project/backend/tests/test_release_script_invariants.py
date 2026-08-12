@@ -1561,6 +1561,9 @@ def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     bootstrap_source = (
         REPOSITORY_ROOT / "scripts" / "offline_installer_bootstrap.cs"
     ).read_text(encoding="utf-8")
+    electron_main = (
+        REPOSITORY_ROOT / "project" / "frontend" / "electron" / "main.cjs"
+    ).read_text(encoding="utf-8")
 
     verification = install_script.index('$phase = "自动验收新版本"')
     committed = install_script.index("$installationCommitted = $true", verification)
@@ -1588,8 +1591,15 @@ def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     assert '" -InstallRoot \\"" + installationPaths.InstallRoot' in bootstrap_source
     assert '" -RuntimeRoot \\"" + installationPaths.RuntimeRoot' in bootstrap_source
     assert "new FolderBrowserDialog()" in bootstrap_source
+    assert '@"Local\\VideoInsight-Installer"' in bootstrap_source
+    assert "installerMutex.WaitOne(0, false)" in bootstrap_source
+    assert "installerMutex.ReleaseMutex()" in bootstrap_source
+    assert "不要重复启动" in bootstrap_source
     assert "drive.DriveType != DriveType.Fixed" in bootstrap_source
     assert "Path.GetDirectoryName(installationPaths.InstallRoot)" in bootstrap_source
+    assert "CreatePowerShellStartInfo(temporaryRoot)" in bootstrap_source
+    assert "startInfo.WorkingDirectory = workingDirectory" in bootstrap_source
+    assert "cwd: path.dirname(destination)" in electron_main
     assert (
         "New-ItemProperty -Path $uninstallKey -Name RuntimeLocation" in install_script
     )
@@ -1718,6 +1728,44 @@ def test_first_install_rollback_continues_when_uninstall_key_never_existed(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_installer_rollback_recreates_shortcut_parent_before_restore(tmp_path: Path):
+    install_script = REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    loader = _powershell_function_loader(
+        install_script,
+        (
+            "Get-ExistingPathAttributesForInstall",
+            "Assert-NoReparsePoint",
+            "Assert-NoReparsePointsInAncestors",
+            "Restore-ShortcutBackupSafely",
+        ),
+    )
+    backup = tmp_path / "backup.lnk"
+    shortcut = (
+        tmp_path / "Start Menu" / "Programs" / "VideoInsight" / "VideoInsight.lnk"
+    )
+    backup.write_text("original shortcut", encoding="utf-8")
+    escaped_backup = str(backup).replace("'", "''")
+    escaped_shortcut = str(shortcut).replace("'", "''")
+    command = loader + (
+        f"Restore-ShortcutBackupSafely -BackupPath '{escaped_backup}' "
+        f"-ShortcutPath '{escaped_shortcut}'; Write-Output 'RESTORED'"
+    )
+    result = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "RESTORED" in result.stdout
+    assert shortcut.read_text(encoding="utf-8") == "original shortcut"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
 def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell():
     install_script = REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
     script_text = install_script.read_text(encoding="utf-8")
@@ -1732,6 +1780,9 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
     )
     assert registry_read < existing_install_probe < guard_call < first_install_write
     assert "([string]$previousUninstall.DisplayVersion)" in script_text
+    assert (
+        "-RegisteredVersion ([string]$previousUninstall.DisplayVersion)" in script_text
+    )
     assert "-HasExistingInstall $hasExistingInstall" in script_text
 
     escaped_script = str(install_script).replace("'", "''")
@@ -1739,10 +1790,12 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
     def invoke(
         new_version: str,
         installed_version: str,
+        registered_version: str,
         has_existing_install: bool,
     ) -> subprocess.CompletedProcess[str]:
         escaped_new = new_version.replace("'", "''")
         escaped_installed = installed_version.replace("'", "''")
+        escaped_registered = registered_version.replace("'", "''")
         existing_install_literal = "$true" if has_existing_install else "$false"
         command = (
             "$tokens = $null; $errors = $null; "
@@ -1756,6 +1809,7 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
             "try { "
             f"Assert-NewerInstallerVersion -NewVersion '{escaped_new}' "
             f"-InstalledVersion '{escaped_installed}' "
+            f"-RegisteredVersion '{escaped_registered}' "
             f"-HasExistingInstall {existing_install_literal}; "
             "Write-Output 'ALLOWED'; exit 0 "
             "} catch { [Console]::Error.WriteLine($_.Exception.Message); exit 23 }"
@@ -1771,30 +1825,36 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
             check=False,
         )
 
-    for new_version, installed_version, has_existing_install in (
-        ("0.2.7", "", False),
-        ("0.2.7", "unknown", False),
-        ("0.2.8", "0.2.7", False),
-        ("0.2.8", "0.2.7", True),
+    for new_version, installed_version, registered_version, has_existing_install in (
+        ("0.2.7", "", "", False),
+        ("0.2.8", "", "0.2.7", False),
+        ("0.2.8", "0.2.7", "0.2.7", True),
+        ("0.2.28", "0.2.25", "0.2.27", True),
     ):
-        allowed = invoke(new_version, installed_version, has_existing_install)
+        allowed = invoke(
+            new_version, installed_version, registered_version, has_existing_install
+        )
         assert allowed.returncode == 0, allowed.stderr
         assert "ALLOWED" in allowed.stdout
 
-    for new_version, installed_version, has_existing_install in (
-        ("0.2.7", "", True),
-        ("0.2.7", "unknown", True),
-        ("0.2.7", "0.2.7", True),
-        ("0.2.6", "0.2.7", True),
-        ("0.2.7", "0.2.8", False),
+    for new_version, installed_version, registered_version, has_existing_install in (
+        ("0.2.7", "", "0.2.6", True),
+        ("0.2.7", "unknown", "0.2.6", True),
+        ("0.2.7", "0.2.7", "0.2.7", True),
+        ("0.2.6", "0.2.7", "0.2.7", True),
+        ("0.2.27", "0.2.25", "0.2.27", True),
+        ("0.2.7", "", "0.2.8", False),
+        ("0.2.7", "", "unknown", False),
     ):
-        rejected = invoke(new_version, installed_version, has_existing_install)
+        rejected = invoke(
+            new_version, installed_version, registered_version, has_existing_install
+        )
         assert rejected.returncode != 0
         assert "ALLOWED" not in rejected.stdout
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
-def test_installer_binds_registry_version_to_actual_executable_metadata(
+def test_installer_reads_actual_executable_version_independently_of_registry(
     tmp_path: Path,
 ):
     source_executable, actual_version = _find_windows_stable_versioned_executable()
@@ -1815,11 +1875,10 @@ def test_installer_binds_registry_version_to_actual_executable_metadata(
     )
     escaped_root = str(install_root).replace("'", "''")
 
-    def invoke(registered_version: str) -> subprocess.CompletedProcess[str]:
-        escaped_version = registered_version.replace("'", "''")
+    def invoke() -> subprocess.CompletedProcess[str]:
         command = loader + (
             f"$actual = Get-ValidatedInstalledApplicationVersion -InstallRoot '{escaped_root}' "
-            f"-RegisteredVersion '{escaped_version}'; Write-Output \"VALIDATED:$actual\""
+            '; Write-Output "VALIDATED:$actual"'
         )
         return subprocess.run(
             [_windows_powershell(), "-NoProfile", "-Command", command],
@@ -1831,14 +1890,9 @@ def test_installer_binds_registry_version_to_actual_executable_metadata(
             check=False,
         )
 
-    exact = invoke(actual_version)
+    exact = invoke()
     assert exact.returncode == 0, exact.stderr
     assert f"VALIDATED:{actual_version}" in exact.stdout
-    false_low = "0.0.0" if actual_version != "0.0.0" else "0.0.1"
-    mismatch = invoke(false_low)
-    assert mismatch.returncode != 0
-    assert "VALIDATED:" not in mismatch.stdout
-    assert "实际版本" in (mismatch.stdout + mismatch.stderr)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
@@ -1849,6 +1903,7 @@ def test_installer_only_targets_processes_inside_install_root(tmp_path: Path):
     assert "Stop-VideoInsightProcesses -ExpectedInstallRoot $installRoot" in script_text
     assert "$processes | Stop-Process -Force" not in script_text
     assert "$shortcutBackups[$shortcutPath]" in script_text
+    assert "Restore-ShortcutBackupSafely" in script_text
     assert "$startMenuDirCreated" in script_text
     assert "Remove-Item -LiteralPath $startMenuDir -Recurse" not in script_text
     assert "Get-ChildItem -LiteralPath $startMenuDir -Force" in script_text

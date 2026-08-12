@@ -1,16 +1,79 @@
 const { app, BrowserWindow, dialog, shell } = require("electron");
 const { spawn } = require("node:child_process");
-const { existsSync, mkdirSync, readFileSync, promises: fsPromises } = require("node:fs");
+const { existsSync, mkdirSync, readFileSync } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { resolveBackendRuntimeRoot, sanitizeBackendEnvironment } = require("./environment.cjs");
-const { compareVersions, downloadInstaller, fetchManifest, validateReleaseConfig } = require("./update.cjs");
+const {
+  buildUpdateProgressHtml,
+  compareVersions,
+  downloadInstaller,
+  fetchManifest,
+  validateReleaseConfig,
+} = require("./update.cjs");
 
 const APP_URL = "http://127.0.0.1:1001/login";
 const HEALTH_URL = "http://127.0.0.1:1001/health";
 let backendProcess = null;
 let mainWindow = null;
 let updateCheckStarted = false;
+
+function formatMegabytes(bytes) {
+  return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function createUpdateProgressWindow({ version, destination }) {
+  const progressWindow = new BrowserWindow({
+    width: 560,
+    height: 360,
+    parent: mainWindow || undefined,
+    modal: Boolean(mainWindow),
+    show: false,
+    closable: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: true,
+    backgroundColor: "#f6f8fc",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  progressWindow.removeMenu();
+  await progressWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(
+      buildUpdateProgressHtml({ version, destination }),
+    )}`,
+  );
+  progressWindow.show();
+  return progressWindow;
+}
+
+function renderUpdateProgress(progressWindow, state) {
+  if (!progressWindow || progressWindow.isDestroyed()) return;
+  progressWindow.setProgressBar(Math.max(0, Math.min(1, Number(state.percent || 0) / 100)));
+  mainWindow?.setProgressBar(Math.max(0, Math.min(1, Number(state.percent || 0) / 100)));
+  void progressWindow.webContents
+    .executeJavaScript(`window.renderUpdateProgress(${JSON.stringify(state)})`, true)
+    .catch(() => undefined);
+}
+
+function launchInstaller(destination) {
+  return new Promise((resolve, reject) => {
+    const installer = spawn(destination, [], {
+      cwd: path.dirname(destination),
+      detached: true,
+      windowsHide: false,
+      stdio: "ignore",
+    });
+    installer.once("error", reject);
+    installer.once("spawn", () => {
+      installer.unref();
+      resolve();
+    });
+  });
+}
 
 app.setName("VideoInsight");
 
@@ -44,6 +107,7 @@ async function checkForUpdate() {
   const configuration = releaseConfiguration();
   if (!configuration) return;
   let manifest;
+  let progressWindow = null;
   try {
     manifest = await fetchManifest(configuration.controlPlaneUrl);
   } catch {
@@ -62,27 +126,51 @@ async function checkForUpdate() {
       noLink: true,
     });
     if (answer.response !== 0) return;
-    const updateDirectory = path.join(os.tmpdir(), "VideoInsight-updates");
+    const updateDirectory = path.join(
+      os.tmpdir(),
+      "VideoInsight-updates",
+      manifest.version,
+      `${Date.now()}-${process.pid}`,
+    );
     const destination = path.join(updateDirectory, manifest.installer);
-    await fsPromises.rm(destination, { force: true }).catch(() => undefined);
+    progressWindow = await createUpdateProgressWindow({
+      version: manifest.version,
+      destination,
+    });
+    let lastProgressAt = 0;
+    let lastPercent = -1;
     await downloadInstaller({
       controlPlaneUrl: configuration.controlPlaneUrl,
       manifest,
       destination,
+      onProgress: ({ downloadedBytes, totalBytes, percent }) => {
+        const now = Date.now();
+        if (percent < 100 && now - lastProgressAt < 150 && percent - lastPercent < 0.5) return;
+        lastProgressAt = now;
+        lastPercent = percent;
+        renderUpdateProgress(progressWindow, {
+          percent,
+          status: percent >= 100 ? "下载完成，正在校验并打开安装程序…" : "正在下载更新，请不要关闭软件…",
+          detail: `${percent.toFixed(1)}% · ${formatMegabytes(downloadedBytes)} / ${formatMegabytes(totalBytes)}`,
+        });
+      },
     });
-    const installer = spawn(destination, [], {
-      detached: true,
-      windowsHide: false,
-      stdio: "ignore",
+    renderUpdateProgress(progressWindow, {
+      percent: 100,
+      status: "校验通过，正在打开安装程序…",
+      detail: `100% · 安装包已保存到 ${destination}`,
     });
-    installer.unref();
+    await launchInstaller(destination);
     app.quit();
   } catch (error) {
+    mainWindow?.setProgressBar(-1);
+    if (progressWindow && !progressWindow.isDestroyed()) progressWindow.destroy();
     await dialog.showMessageBox(mainWindow, {
       type: "warning",
       title: "暂时无法更新",
-      message: error.message || "新版下载或校验失败",
-      detail: "当前版本仍可继续使用，稍后重新打开软件会再次检查。",
+      message: "更新没有完成，当前版本仍可继续使用。",
+      detail:
+        "请关闭其他 VideoInsight 安装窗口后重新打开软件再试一次。仍失败时，请把 installer-bootstrap.log 和 desktop.log 发给技术人员。",
       buttons: ["知道了"],
     });
   }

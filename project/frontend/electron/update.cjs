@@ -9,6 +9,59 @@ const MAX_INSTALLER_BYTES = 1024 * 1024 * 1024;
 const INSTALLER_PATTERN = /^VideoInsight-[0-9A-Za-z.-]+-Setup\.exe$/;
 const VERSION_PATTERN = /^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.-]+)?$/;
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function buildUpdateProgressHtml({ version, destination }) {
+  const safeVersion = escapeHtml(version);
+  const safeDestination = escapeHtml(destination);
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>VideoInsight 正在更新</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; background: #f6f8fc; color: #14213d; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+    h1 { margin: 0 0 8px; font-size: 22px; }
+    #status { margin: 0 0 20px; color: #58657a; }
+    progress { display: block; width: 100%; height: 18px; accent-color: #7638ef; }
+    #amount { margin: 10px 0 20px; color: #35445d; font-variant-numeric: tabular-nums; }
+    .location { padding: 12px 14px; border: 1px solid #d9e0ec; border-radius: 10px; background: white; }
+    .location strong { display: block; margin-bottom: 5px; }
+    #destination { color: #52617a; font-size: 12px; overflow-wrap: anywhere; user-select: text; }
+    .note { margin-top: 14px; color: #7b879b; font-size: 13px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>正在下载 VideoInsight ${safeVersion}</h1>
+  <p id="status">正在连接更新服务…</p>
+  <progress id="progress" max="100" value="0"></progress>
+  <p id="amount">0% · 准备下载</p>
+  <div class="location">
+    <strong>安装包保存位置</strong>
+    <div id="destination">${safeDestination}</div>
+  </div>
+  <div class="note">下载完成并校验通过后会自动打开安装程序；桌面和开始菜单快捷方式会自动创建或更新。</div>
+  <script>
+    window.renderUpdateProgress = function (state) {
+      var percent = Math.max(0, Math.min(100, Number(state.percent) || 0));
+      document.getElementById('progress').value = percent;
+      document.getElementById('status').textContent = state.status || '正在下载更新…';
+      document.getElementById('amount').textContent = state.detail || (percent.toFixed(1) + '%');
+    };
+  </script>
+</body>
+</html>`;
+}
+
 function compareVersions(left, right) {
   const numeric = (value) =>
     String(value)
@@ -78,7 +131,13 @@ async function fetchManifest(controlPlaneUrl, fetchImpl = fetch) {
   return validateManifest(JSON.parse(text));
 }
 
-async function downloadInstaller({ controlPlaneUrl, manifest, destination, fetchImpl = fetch }) {
+async function downloadInstaller({
+  controlPlaneUrl,
+  manifest,
+  destination,
+  fetchImpl = fetch,
+  onProgress = () => undefined,
+}) {
   const url = new URL(
     `desktop-updates/${encodeURIComponent(manifest.installer)}`,
     `${controlPlaneUrl}/`,
@@ -106,10 +165,16 @@ async function downloadInstaller({ controlPlaneUrl, manifest, destination, fetch
         return;
       }
       hash.update(chunk);
+      onProgress({
+        downloadedBytes: written,
+        totalBytes: manifest.sizeBytes,
+        percent: (written / manifest.sizeBytes) * 100,
+      });
       callback(null, chunk);
     },
   });
   try {
+    onProgress({ downloadedBytes: 0, totalBytes: manifest.sizeBytes, percent: 0 });
     await fs.rm(temporary, { force: true });
     await pipeline(input, verifier, createWriteStream(temporary, { flags: "wx" }));
     if (written !== manifest.sizeBytes || hash.digest("hex") !== manifest.sha256) {
@@ -117,6 +182,11 @@ async function downloadInstaller({ controlPlaneUrl, manifest, destination, fetch
     }
     await fs.rm(destination, { force: true });
     await fs.rename(temporary, destination);
+    onProgress({
+      downloadedBytes: manifest.sizeBytes,
+      totalBytes: manifest.sizeBytes,
+      percent: 100,
+    });
     return destination;
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -125,6 +195,7 @@ async function downloadInstaller({ controlPlaneUrl, manifest, destination, fetch
 }
 
 module.exports = {
+  buildUpdateProgressHtml,
   compareVersions,
   downloadInstaller,
   fetchManifest,

@@ -45,6 +45,13 @@ def test_bootstrap_uses_no_clobber_extraction_and_non_recursive_cleanup() -> Non
     assert '"安装失败：" + error.Message' not in source
     assert 'GetEnvironmentVariable("SystemRoot")' not in source
     assert "Environment.SpecialFolder.Windows" in source
+    assert '@"Local\\VideoInsight-Installer"' in source
+    assert "installerMutex.WaitOne(0, false)" in source
+    assert "installerMutex.ReleaseMutex()" in source
+    assert "InstallProgressForm" in source
+    assert "while (!installer.WaitForExit(200))" in source
+    assert "程序位置：" in source
+    assert "数据位置：" in source
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell version parser")

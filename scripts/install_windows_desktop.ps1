@@ -58,21 +58,38 @@ function Assert-NewerInstallerVersion {
     param(
         [Parameter(Mandatory = $true)][string]$NewVersion,
         [AllowEmptyString()][string]$InstalledVersion = "",
+        [AllowEmptyString()][string]$RegisteredVersion = "",
         [Parameter(Mandatory = $true)][bool]$HasExistingInstall
     )
     $stableVersionPattern = '^[0-9]+\.[0-9]+\.[0-9]+$'
     if ($NewVersion -notmatch $stableVersionPattern) {
         throw "安装包版本号无效：$NewVersion"
     }
-    $hasValidInstalledVersion = -not [string]::IsNullOrWhiteSpace($InstalledVersion) -and $InstalledVersion -match $stableVersionPattern
-    if ($hasValidInstalledVersion) {
-        if ([version]$NewVersion -le [version]$InstalledVersion) {
-            throw "已安装版本为 $InstalledVersion；只允许安装更高版本，不能重复安装或降级。"
+    $hasValidInstalledVersion = `
+        -not [string]::IsNullOrWhiteSpace($InstalledVersion) -and `
+        $InstalledVersion -match $stableVersionPattern
+    $hasRegisteredVersion = -not [string]::IsNullOrWhiteSpace($RegisteredVersion)
+    $hasValidRegisteredVersion = $hasRegisteredVersion -and $RegisteredVersion -match $stableVersionPattern
+    if ($hasRegisteredVersion -and -not $hasValidRegisteredVersion) {
+        throw "卸载登记中的版本号无效；为防止误覆盖，已停止安装。"
+    }
+    if ($HasExistingInstall) {
+        if (-not $hasValidInstalledVersion -or -not $hasValidRegisteredVersion) {
+            throw "检测到已有安装目录，但应用实际版本或卸载登记版本缺失；为防止误覆盖，已停止安装。"
+        }
+        if (
+            [version]$NewVersion -le [version]$InstalledVersion -or
+            [version]$NewVersion -le [version]$RegisteredVersion
+        ) {
+            throw "应用实际版本为 $InstalledVersion，卸载登记版本为 $RegisteredVersion；只允许安装同时高于两者的新版本。"
+        }
+        if ($InstalledVersion -ne $RegisteredVersion) {
+            Write-Warning "检测到旧安装的应用版本与卸载登记不一致；新版本更高，将安全修复登记。"
         }
         return
     }
-    if ($HasExistingInstall) {
-        throw "检测到已有安装目录，但已安装版本登记缺失或无效；为防止误覆盖，已停止安装。"
+    if ($hasValidRegisteredVersion -and [version]$NewVersion -le [version]$RegisteredVersion) {
+        throw "卸载登记版本为 $RegisteredVersion；只允许安装更高版本，不能重复安装或降级。"
     }
 }
 
@@ -104,12 +121,11 @@ function Get-ValidatedExecutableStableVersion {
 
 function Get-ValidatedInstalledApplicationVersion {
     param(
-        [Parameter(Mandatory = $true)][string]$InstallRoot,
-        [AllowEmptyString()][string]$RegisteredVersion = ""
+        [Parameter(Mandatory = $true)][string]$InstallRoot
     )
     $installRootAttributes = Get-ExistingPathAttributesForInstall -LiteralPath $InstallRoot
     if ($null -eq $installRootAttributes) {
-        return $RegisteredVersion
+        return ""
     }
     if (($installRootAttributes -band [System.IO.FileAttributes]::Directory) -eq 0) {
         throw "现有安装路径不是目录；已停止覆盖。"
@@ -119,12 +135,6 @@ function Get-ValidatedInstalledApplicationVersion {
     $fileVersion = Get-ValidatedExecutableStableVersion `
         -ExecutablePath $installedExecutable `
         -Label "现有 VideoInsight.exe"
-    if (
-        $RegisteredVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
-        [string]$RegisteredVersion -ne $fileVersion
-    ) {
-        throw "现有应用实际版本 $fileVersion 与卸载登记版本不一致；已停止覆盖。"
-    }
     return $fileVersion
 }
 
@@ -370,6 +380,24 @@ function Restore-UninstallRegistration {
     }
 }
 
+function Restore-ShortcutBackupSafely {
+    param(
+        [Parameter(Mandatory = $true)][string]$BackupPath,
+        [Parameter(Mandatory = $true)][string]$ShortcutPath
+    )
+    if (-not (Test-Path -LiteralPath $BackupPath -PathType Leaf)) {
+        throw "快捷方式备份不存在，无法自动恢复。"
+    }
+    Assert-NoReparsePoint -Path $BackupPath -Label "快捷方式备份"
+    $shortcutParent = [System.IO.Path]::GetDirectoryName($ShortcutPath)
+    Assert-NoReparsePointsInAncestors -Path $shortcutParent -Label "快捷方式恢复目录"
+    if (-not (Test-Path -LiteralPath $shortcutParent -PathType Container)) {
+        New-Item -ItemType Directory -Path $shortcutParent | Out-Null
+    }
+    Assert-NoReparsePoint -Path $shortcutParent -Label "快捷方式恢复目录"
+    [System.IO.File]::Copy($BackupPath, $ShortcutPath, $false)
+}
+
 function Assert-FixedLocalDrivePath {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -515,11 +543,11 @@ try {
     }
     $hasExistingInstall = Test-Path -LiteralPath $existingInstallRoot
     $validatedInstalledVersion = Get-ValidatedInstalledApplicationVersion `
-        -InstallRoot $existingInstallRoot `
-        -RegisteredVersion ([string]$previousUninstall.DisplayVersion)
+        -InstallRoot $existingInstallRoot
     Assert-NewerInstallerVersion `
         -NewVersion $Version `
         -InstalledVersion $validatedInstalledVersion `
+        -RegisteredVersion ([string]$previousUninstall.DisplayVersion) `
         -HasExistingInstall $hasExistingInstall
 
     New-Item -ItemType Directory -Path $programsRoot -Force | Out-Null
@@ -741,7 +769,9 @@ catch {
                 Remove-Item -LiteralPath $shortcutPath -Force
             }
             if ($shortcutBackups.ContainsKey($shortcutPath)) {
-                [System.IO.File]::Copy($shortcutBackups[$shortcutPath], $shortcutPath, $false)
+                Restore-ShortcutBackupSafely `
+                    -BackupPath $shortcutBackups[$shortcutPath] `
+                    -ShortcutPath $shortcutPath
             }
         }
         if ($startMenuDirCreated -and (Test-Path -LiteralPath $startMenuDir -PathType Container)) {

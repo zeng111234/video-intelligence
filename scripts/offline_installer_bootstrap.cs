@@ -4,19 +4,97 @@ using System.IO;
 using Microsoft.Win32;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 internal static class OfflineInstallerBootstrap
 {
+    private sealed class InstallProgressForm : Form
+    {
+        private readonly Label statusLabel;
+
+        internal InstallProgressForm(InstallationPaths paths)
+        {
+            Text = "VideoInsight 正在安装";
+            Width = 620;
+            Height = 260;
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = true;
+            ControlBox = false;
+            TopMost = true;
+
+            statusLabel = new Label {
+                Left = 28,
+                Top = 26,
+                Width = 540,
+                Height = 28,
+                Text = "正在准备安装文件…"
+            };
+            ProgressBar progress = new ProgressBar {
+                Left = 28,
+                Top = 68,
+                Width = 540,
+                Height = 20,
+                Style = ProgressBarStyle.Marquee,
+                MarqueeAnimationSpeed = 25
+            };
+            Label locationLabel = new Label {
+                Left = 28,
+                Top = 104,
+                Width = 540,
+                Height = 88,
+                AutoEllipsis = true,
+                Text = "程序位置：" + paths.InstallRoot + Environment.NewLine +
+                    "数据位置：" + paths.RuntimeRoot + Environment.NewLine +
+                    "安装完成后会自动创建桌面和开始菜单快捷方式。"
+            };
+            Controls.Add(statusLabel);
+            Controls.Add(progress);
+            Controls.Add(locationLabel);
+        }
+
+        internal void SetStatus(string status)
+        {
+            statusLabel.Text = status;
+            statusLabel.Refresh();
+            Application.DoEvents();
+        }
+    }
+
     [STAThread]
     private static int Main()
     {
         Application.EnableVisualStyles();
         string temporaryRoot = null;
+        Mutex installerMutex = null;
+        bool ownsInstallerMutex = false;
+        InstallProgressForm progressForm = null;
 
         try
         {
+            installerMutex = new Mutex(false, @"Local\VideoInsight-Installer");
+            try
+            {
+                ownsInstallerMutex = installerMutex.WaitOne(0, false);
+            }
+            catch (AbandonedMutexException)
+            {
+                ownsInstallerMutex = true;
+            }
+            if (!ownsInstallerMutex)
+            {
+                Log("another installer is already running");
+                MessageBox.Show(
+                    "VideoInsight 正在安装或更新，请查看已经打开的安装窗口，不要重复启动。",
+                    "安装正在进行",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information
+                );
+                return 2;
+            }
             Log("bootstrap started");
             string version = ReadTextResource("VideoInsight.Version").Trim();
             if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+$"))
@@ -29,6 +107,9 @@ internal static class OfflineInstallerBootstrap
                 Log("installation cancelled before changes");
                 return 0;
             }
+            progressForm = new InstallProgressForm(installationPaths);
+            progressForm.Show();
+            progressForm.Refresh();
             string temporaryParent = Path.GetDirectoryName(installationPaths.InstallRoot);
             EnsureSafeExistingPath(temporaryParent);
             Directory.CreateDirectory(temporaryParent);
@@ -55,13 +136,14 @@ internal static class OfflineInstallerBootstrap
                 Path.Combine(temporaryRoot, "verify_windows_install.ps1")
             );
             Log("resources extracted");
+            progressForm.SetStatus("正在关闭旧版本并安装，请不要再次打开 VideoInsight…");
 
             if (!File.Exists(payloadPath) || !File.Exists(installScriptPath))
             {
                 throw new InvalidOperationException("安装包内容不完整。");
             }
 
-            ProcessStartInfo startInfo = CreatePowerShellStartInfo();
+            ProcessStartInfo startInfo = CreatePowerShellStartInfo(temporaryRoot);
             startInfo.Arguments =
                 "-NoProfile -ExecutionPolicy Bypass -File \"" + installScriptPath +
                 "\" -Version \"" + version + "\" -VerifierPath \"" + verifierPath +
@@ -76,7 +158,10 @@ internal static class OfflineInstallerBootstrap
                 }
                 Task<string> outputTask = installer.StandardOutput.ReadToEndAsync();
                 Task<string> errorTask = installer.StandardError.ReadToEndAsync();
-                installer.WaitForExit();
+                while (!installer.WaitForExit(200))
+                {
+                    Application.DoEvents();
+                }
                 Task.WaitAll(outputTask, errorTask);
                 string output = outputTask.Result;
                 string errorOutput = errorTask.Result;
@@ -88,8 +173,12 @@ internal static class OfflineInstallerBootstrap
                         string.IsNullOrWhiteSpace(details) ? "安装脚本执行失败。" : details.Trim()
                     );
                 }
+                progressForm.SetStatus("安装完成，正在确认快捷方式和本机数据…");
+                progressForm.Close();
+                progressForm = null;
                 MessageBox.Show(
                     "VideoInsight 已安装并启动，自动检查全部通过。\n" +
+                    "桌面和开始菜单快捷方式已经创建。\n" +
                     "桌面已生成验收报告，无需再输入命令。",
                     "VideoInsight 安装和检查完成",
                     MessageBoxButtons.OK,
@@ -100,6 +189,11 @@ internal static class OfflineInstallerBootstrap
         }
         catch (Exception error)
         {
+            if (progressForm != null)
+            {
+                progressForm.Close();
+                progressForm = null;
+            }
             Log("bootstrap failed: " + error);
             MessageBox.Show(
                 "安装没有完成，程序已停止并尽可能恢复原版本。\n" +
@@ -112,6 +206,10 @@ internal static class OfflineInstallerBootstrap
         }
         finally
         {
+            if (progressForm != null)
+            {
+                progressForm.Close();
+            }
             try
             {
                 DeleteTemporaryRootSafely(temporaryRoot);
@@ -119,6 +217,20 @@ internal static class OfflineInstallerBootstrap
             catch
             {
                 // Windows or antivirus software may briefly retain extracted files.
+            }
+            if (ownsInstallerMutex && installerMutex != null)
+            {
+                try
+                {
+                    installerMutex.ReleaseMutex();
+                }
+                catch
+                {
+                }
+            }
+            if (installerMutex != null)
+            {
+                installerMutex.Dispose();
             }
         }
     }
@@ -247,7 +359,7 @@ internal static class OfflineInstallerBootstrap
         }
     }
 
-    private static ProcessStartInfo CreatePowerShellStartInfo()
+    private static ProcessStartInfo CreatePowerShellStartInfo(string workingDirectory)
     {
         string systemRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         if (string.IsNullOrWhiteSpace(systemRoot))
@@ -259,6 +371,7 @@ internal static class OfflineInstallerBootstrap
         EnsureSafeExistingPath(powershell);
         ProcessStartInfo startInfo = new ProcessStartInfo();
         startInfo.FileName = powershell;
+        startInfo.WorkingDirectory = workingDirectory;
         startInfo.UseShellExecute = false;
         startInfo.CreateNoWindow = true;
         startInfo.WindowStyle = ProcessWindowStyle.Hidden;

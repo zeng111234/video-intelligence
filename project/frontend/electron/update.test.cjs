@@ -6,12 +6,25 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  buildUpdateProgressHtml,
   compareVersions,
   downloadInstaller,
   fetchManifest,
   validateManifest,
   validateReleaseConfig,
 } = require("./update.cjs");
+
+test("update progress page shows percentage, destination and shortcut outcome", () => {
+  const html = buildUpdateProgressHtml({
+    version: "0.2.28",
+    destination: "D:\\VideoInsight <updates>\\VideoInsight-0.2.28-Setup.exe",
+  });
+  assert.match(html, /正在下载 VideoInsight 0\.2\.28/);
+  assert.match(html, /安装包保存位置/);
+  assert.match(html, /桌面和开始菜单快捷方式会自动创建或更新/);
+  assert.match(html, /D:\\VideoInsight &lt;updates&gt;\\VideoInsight-0\.2\.28-Setup\.exe/);
+  assert.doesNotMatch(html, /D:\\VideoInsight <updates>/);
+});
 
 test("version comparison only offers newer releases", () => {
   assert.equal(compareVersions("0.2.1", "0.2.0"), 1);
@@ -93,14 +106,19 @@ test("manifest and installer stay on the trusted update path", async () => {
   const temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "vi-update-test-"));
   try {
     const destination = path.join(temporaryRoot, manifest.installer);
+    const progress = [];
     await downloadInstaller({
       controlPlaneUrl: "https://video-api.company.example",
       manifest,
       destination,
       fetchImpl: fakeFetch,
+      onProgress: (entry) => progress.push(entry),
     });
     assert.deepEqual(await fs.readFile(destination), content);
     assert.ok(captured.every((url) => url.startsWith("https://video-api.company.example/desktop-updates/")));
+    assert.equal(progress[0].percent, 0);
+    assert.equal(progress.at(-1).percent, 100);
+    assert.equal(progress.at(-1).downloadedBytes, content.length);
   } finally {
     await fs.rm(temporaryRoot, { recursive: true, force: true });
   }
