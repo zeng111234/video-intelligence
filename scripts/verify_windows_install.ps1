@@ -62,12 +62,21 @@ function Invoke-LocalHttp {
         $payload = [System.Text.UTF8Encoding]::new($false).GetBytes($Body)
         $request.ContentType = $ContentType
         $request.ContentLength = $payload.Length
-        $requestStream = $request.GetRequestStream()
+        $requestStream = $null
         try {
+            $requestStream = $request.GetRequestStream()
             $requestStream.Write($payload, 0, $payload.Length)
         }
+        catch [System.Net.WebException] {
+            if ($null -eq $_.Exception.Response) {
+                return [pscustomobject]@{ StatusCode = 0; Body = "" }
+            }
+            throw
+        }
         finally {
-            $requestStream.Dispose()
+            if ($null -ne $requestStream) {
+                $requestStream.Dispose()
+            }
         }
     }
     $response = $null
