@@ -96,7 +96,9 @@ export default function DashboardLayout() {
       <style>{`
         .vi-app-layout {
           display: flex;
-          min-height: 100vh;
+          height: 100dvh;
+          min-height: 0;
+          overflow: hidden;
           background: var(--bg-body);
         }
 
@@ -111,16 +113,20 @@ export default function DashboardLayout() {
           flex: 1;
           display: flex;
           flex-direction: column;
-          min-height: 100vh;
+          height: 100dvh;
+          min-height: 0;
           transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1);
           min-width: 0;
         }
 
         .vi-page-content {
           flex: 1;
+          min-height: 0;
           padding: 24px;
           background: var(--bg-body);
           overflow-y: auto;
+          overscroll-behavior-y: contain;
+          scrollbar-gutter: stable;
         }
 
         .vi-sidebar-overlay {
