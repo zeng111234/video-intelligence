@@ -433,6 +433,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
         "item-1",
         expect.objectContaining({
           selectedTitle: "测试口播标题",
+          smartOpeningEnabled: false,
           confirmed: true,
           subtitleSegments: [expect.objectContaining({
             text: "这是一段待人工确认的字幕",

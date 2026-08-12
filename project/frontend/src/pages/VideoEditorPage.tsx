@@ -1584,6 +1584,7 @@ export default function VideoEditorPage() {
           enabledPlanStepIds: reviewPlanStepIds,
           selectedTitle: reviewTitle.trim() || reviewItem.title,
           selectedBgmId: reviewBgmId,
+          smartOpeningEnabled: reviewPlanStepIds.includes("smart_opening"),
           confirmed: true,
         },
       ) as CloudBatch;

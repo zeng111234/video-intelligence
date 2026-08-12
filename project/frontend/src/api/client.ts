@@ -2041,6 +2041,7 @@ export function reviewVideoEditorBatchItem(
     enabledPlanStepIds: string[];
     selectedTitle: string;
     selectedBgmId?: string | null;
+    smartOpeningEnabled?: boolean;
     confirmed: boolean;
   },
 ): Promise<VideoEditorBatch> {
@@ -2051,6 +2052,7 @@ export function reviewVideoEditorBatchItem(
       enabled_plan_step_ids: params.enabledPlanStepIds,
       selected_title: params.selectedTitle,
       selected_bgm_id: params.selectedBgmId || null,
+      smart_opening_enabled: params.smartOpeningEnabled ?? false,
       confirmed: params.confirmed,
     }),
   });
