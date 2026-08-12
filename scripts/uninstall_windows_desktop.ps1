@@ -139,13 +139,44 @@ function Remove-EmptyOwnedDirectorySafely {
     }
 }
 
+function Assert-FixedLocalDrivePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    if ($resolvedPath.StartsWith('\\')) {
+        throw "$Label 不能位于网络共享目录：$resolvedPath"
+    }
+    $root = [System.IO.Path]::GetPathRoot($resolvedPath)
+    if ([string]::IsNullOrWhiteSpace($root) -or [string]::Equals($resolvedPath.TrimEnd('\', '/'), $root.TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "$Label 不能直接使用磁盘根目录：$resolvedPath"
+    }
+    $driveName = $root.TrimEnd('\', '/').TrimEnd(':')
+    $drive = Get-PSDrive -Name $driveName -PSProvider FileSystem -ErrorAction Stop
+    if ($drive.DisplayRoot -or $drive.Root -notmatch '^[A-Za-z]:\\$') {
+        throw "$Label 必须位于本机固定磁盘：$resolvedPath"
+    }
+}
+
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
-$programsRoot = [System.IO.Path]::GetFullPath((Join-Path $localAppData "Programs")).TrimEnd('\', '/')
-$expectedInstallRoot = [System.IO.Path]::GetFullPath((Join-Path $programsRoot "VideoInsight"))
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
+if (-not (Test-Path -LiteralPath $uninstallKey)) {
+    throw "找不到 VideoInsight 安装登记，拒绝猜测卸载目录。"
+}
+$registration = Get-ItemProperty -LiteralPath $uninstallKey
+$registeredInstallLocation = [string]$registration.InstallLocation
+if ([string]::IsNullOrWhiteSpace($registeredInstallLocation)) {
+    throw "VideoInsight 安装登记缺少安装位置，拒绝猜测卸载目录。"
+}
+$expectedInstallRoot = [System.IO.Path]::GetFullPath($registeredInstallLocation).TrimEnd('\', '/')
 $installRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
 if (-not [string]::Equals($installRoot, $expectedInstallRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "拒绝卸载不安全或非标准的目录：$installRoot"
+    throw "卸载脚本位置与安装登记不一致，拒绝删除：$installRoot"
 }
+$programsRoot = [System.IO.Path]::GetDirectoryName($expectedInstallRoot).TrimEnd('\', '/')
+Assert-FixedLocalDrivePath -Path $programsRoot -Label "程序目录"
+Assert-FixedLocalDrivePath -Path $installRoot -Label "VideoInsight 安装目录"
 Assert-NoReparsePointsInAncestors -Path $programsRoot -Label "程序目录"
 Assert-NoReparsePointsInAncestors -Path $installRoot -Label "VideoInsight 安装目录"
 Assert-NoReparsePoint -Path $programsRoot -Label "程序目录"
@@ -170,7 +201,6 @@ Remove-EmptyOwnedDirectorySafely -DirectoryPath $startMenuDir
 $escapedInstallRoot = $installRoot.Replace("'", "''")
 $escapedExpectedInstallRoot = $expectedInstallRoot.Replace("'", "''")
 $escapedProgramsRoot = $programsRoot.Replace("'", "''")
-$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
 $escapedUninstallKey = $uninstallKey.Replace("'", "''")
 $cleanupFailureLog = Join-Path $localAppData ("VideoInsight-uninstall-failed-{0}.log" -f [guid]::NewGuid().ToString("N"))
 $cleanupPowerShell = Join-Path $PSHOME "powershell.exe"
@@ -189,7 +219,7 @@ try {
     `$programs = [System.IO.Path]::GetFullPath('$escapedProgramsRoot')
     `$uninstaller = [System.IO.Path]::GetFullPath((Join-Path `$target 'Uninstall-VideoInsight.ps1'))
     if (-not [string]::Equals(`$target, `$expected, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw '卸载目标不再是固定安装目录。'
+        throw '卸载目标与安装登记不再一致。'
     }
     foreach (`$checkedRoot in @(`$programs, `$target)) {
         `$pathRoot = [System.IO.Path]::GetPathRoot(`$checkedRoot).TrimEnd('\', '/')

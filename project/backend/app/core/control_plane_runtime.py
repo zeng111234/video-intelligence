@@ -64,7 +64,9 @@ def validate_control_plane_runtime() -> None:
         for item in os.getenv("CONTROL_PLANE_ALLOWED_HOSTS", "").split(",")
         if item.strip()
     ]
-    if not allowed_hosts or any(_unsafe_production_host(item) for item in allowed_hosts):
+    if not allowed_hosts or any(
+        _unsafe_production_host(item) for item in allowed_hosts
+    ):
         problems.append("CONTROL_PLANE_ALLOWED_HOSTS 不能包含通配符、本机或示例地址")
     elif domain not in allowed_hosts:
         problems.append("CONTROL_PLANE_ALLOWED_HOSTS 必须包含正式域名")
@@ -75,7 +77,7 @@ def validate_control_plane_runtime() -> None:
 
     crawler_mode = os.getenv("CRAWLER_PROVIDER_MODE", "sandbox").strip().casefold()
     if crawler_mode != "sandbox":
-        problems.append("服务器爬虫必须保持 sandbox 并在客户电脑本地运行")
+        problems.append("素材发现必须在客户电脑本地运行，服务器端只能保持关闭状态")
 
     if problems:
         raise RuntimeError("正式控制层配置不安全：" + "；".join(problems))

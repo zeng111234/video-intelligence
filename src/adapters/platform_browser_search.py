@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
 
@@ -46,6 +46,9 @@ from src.models import (
 )
 
 
+_LOCAL_DEBUG_OPENER = build_opener(ProxyHandler({}))
+
+
 @dataclass(frozen=True)
 class _PlatformSpec:
     platform: Platform
@@ -64,8 +67,7 @@ _SPECS = {
         label="小红书",
         home_url="https://www.xiaohongshu.com/",
         search_url=(
-            "https://www.xiaohongshu.com/search_result?"
-            "keyword={keyword}&source=web_search_result_notes&type=51"
+            "https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_search_result_notes&type=51"
         ),
         page_host="xiaohongshu.com",
         link_selector="a[href*='/explore/']",
@@ -234,9 +236,11 @@ class LocalPlatformBrowserSearchProvider:
                 ),
             )
         try:
-            with urlopen(self._debug_url(), timeout=0.6) as response:  # noqa: S310 - localhost only
+            with _LOCAL_DEBUG_OPENER.open(self._debug_url(), timeout=0.6) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-            with urlopen(self._debug_pages_url(), timeout=0.6) as response:  # noqa: S310 - localhost only
+            with _LOCAL_DEBUG_OPENER.open(
+                self._debug_pages_url(), timeout=0.6
+            ) as response:
                 pages = json.loads(response.read().decode("utf-8"))
         except (URLError, OSError, ValueError, json.JSONDecodeError):
             return BrowserSessionStatus(
@@ -571,10 +575,7 @@ class LocalPlatformBrowserSearchProvider:
             # 默认排序可能先加载大量较早作品。即使扫描达到安全边界，也
             # 必须如实告诉用户最终保留了多少条。
             self._collection_stop_reason = "safety_limit"
-            self._collection_stop_message = (
-                f"为避免过度加载，已扫描 {len(raw_rows)} 条页面结果，"
-                f"{final_filter_label}保留 {len(parsed_items)} 条。"
-            )
+            self._collection_stop_message = f"为避免过度加载，已扫描 {len(raw_rows)} 条页面结果，{final_filter_label}保留 {len(parsed_items)} 条。"
         elif self._collection_stop_reason == "platform_end":
             self._collection_stop_message = (
                 f"平台已经没有更多公开搜索结果；已扫描 {len(raw_rows)} 条页面结果，"
@@ -917,9 +918,7 @@ class LocalPlatformBrowserSearchProvider:
         """Scroll down by one viewport height."""
         self._scroll_for_more_results(page)
 
-    def _wait_for_bilibili_cards_ready(
-        self, page, max_wait_ms: int = 8_000
-    ) -> None:
+    def _wait_for_bilibili_cards_ready(self, page, max_wait_ms: int = 8_000) -> None:
         """等待 B 站搜索结果卡片 stats 渲染完成。
 
         B 站搜索页是服务端渲染,互动数字(stats 行)在页面加载后延迟
@@ -1048,10 +1047,7 @@ class LocalPlatformBrowserSearchProvider:
                 "只保留标题、话题或描述直接命中关键词的公开视频。"
             )
         elif self.platform == Platform.KUAISHOU:
-            diagnostic = (
-                "使用快手专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
-                "保留平台当前筛选后的公开视频。"
-            )
+            diagnostic = "使用快手专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，保留平台当前筛选后的公开视频。"
         else:
             diagnostic = (
                 f"使用{self.spec.label}专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
@@ -2014,9 +2010,7 @@ class LocalPlatformBrowserSearchProvider:
         if not match:
             return None
         unit = "万" if match.group(2) in {"w", "W"} else match.group(2)
-        return LocalPlatformBrowserSearchProvider._as_count(
-            f"{match.group(1)}{unit}"
-        )
+        return LocalPlatformBrowserSearchProvider._as_count(f"{match.group(1)}{unit}")
 
     @staticmethod
     def _first_duration_seconds(mapping: dict[str, Any], *keys: str) -> int | None:

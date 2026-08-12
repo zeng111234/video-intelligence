@@ -13,8 +13,8 @@ router = APIRouter(prefix="/api/v1", tags=["notifications"])
 MOCK_NOTIFICATIONS = [
     {
         "id": "1",
-        "title": "批量生产任务完成",
-        "description": "您提交的「二手车短视频」批量生产任务已完成，共生成 24 条视频。",
+        "title": "视频制作任务完成",
+        "description": "您提交的「二手车短视频」制作任务已完成，共生成 24 条视频。",
         "time": "5 分钟前",
         "read": False,
         "type": "task",
@@ -63,7 +63,7 @@ MOCK_MESSAGES = [
         "id": "1",
         "sender": "系统助手",
         "avatar": "🤖",
-        "content": "您的批量生产任务已排队，预计 10 分钟后开始执行。",
+        "content": "您的视频制作任务已排队，预计 10 分钟后开始处理。",
         "time": "10 分钟前",
         "read": False,
         "created_at": "2026-07-20T16:00:00+08:00",

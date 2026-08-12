@@ -666,7 +666,10 @@ def get_template_service():
     """获取模板管理服务实例。"""
     from src.services.template_service import TemplateService
 
-    return TemplateService(templates_dir=str(RUNTIME_ROOT / "data" / "templates"))
+    return TemplateService(
+        templates_dir=str(RUNTIME_ROOT / "data" / "templates"),
+        builtin_templates_dir=str(Path(_project_root) / "data" / "templates"),
+    )
 
 
 # ---------------------------------------------------------------------------

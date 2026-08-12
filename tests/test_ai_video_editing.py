@@ -601,7 +601,11 @@ class TestCapabilities:
 
     def test_ffmpeg_editor_declares_ai_capabilities(self) -> None:
         editor = make_editor()
-        caps = editor.capabilities()
+        with patch(
+            "src.adapters.subtitle_generator.SubtitleGenerator.whisper_available",
+            return_value=True,
+        ):
+            caps = editor.capabilities()
         assert caps["supports_ai_subtitle"] is True
         assert caps["supports_ai_volume_norm"] is True
         assert caps["supports_ai_enhance"] is True

@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   DESKTOP_BLOCKED_SECRET_KEYS,
+  resolveBackendRuntimeRoot,
   sanitizeBackendEnvironment,
 } = require("./environment.cjs");
 
@@ -46,5 +47,39 @@ test("blocked names stay aligned with the packaged Python launcher", () => {
   ];
   for (const key of required) {
     assert.ok(DESKTOP_BLOCKED_SECRET_KEYS.includes(key), key);
+  }
+});
+
+test("installer-selected local path controls backend data storage", () => {
+  const root = resolveBackendRuntimeRoot({
+    executablePath: "D:\\Apps\\VideoInsight\\VideoInsight.exe",
+    localAppData: "C:\\Users\\demo\\AppData\\Local",
+    fallbackUserData: "C:\\fallback",
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({ runtimeRoot: "E:\\VideoWork\\VideoInsight-Data" }),
+  });
+  assert.equal(root, "E:\\VideoWork\\VideoInsight-Data");
+});
+
+test("legacy install keeps its existing local data path", () => {
+  const root = resolveBackendRuntimeRoot({
+    executablePath: "C:\\Apps\\VideoInsight\\VideoInsight.exe",
+    localAppData: "C:\\Users\\demo\\AppData\\Local",
+    fallbackUserData: "C:\\fallback",
+    existsSync: () => false,
+    readFileSync: () => "",
+  });
+  assert.equal(root, "C:\\Users\\demo\\AppData\\Local\\VideoInsight");
+});
+
+test("runtime storage rejects drive roots and network shares", () => {
+  for (const runtimeRoot of ["D:\\", "\\\\server\\share\\VideoInsight"]) {
+    assert.throws(() => resolveBackendRuntimeRoot({
+      executablePath: "C:\\Apps\\VideoInsight\\VideoInsight.exe",
+      localAppData: "C:\\Users\\demo\\AppData\\Local",
+      fallbackUserData: "C:\\fallback",
+      existsSync: () => true,
+      readFileSync: () => JSON.stringify({ runtimeRoot }),
+    }), /安装位置记录无效/);
   }
 });

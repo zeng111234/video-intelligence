@@ -114,6 +114,7 @@ try {
         --specpath (Join-Path $pyInstallerWork "spec") `
         --paths $repositoryRoot `
         --add-data "$(Join-Path $repositoryRoot 'project/frontend/dist');project/frontend/dist" `
+        --add-data "$(Join-Path $repositoryRoot 'data/templates');data/templates" `
         --add-data "$(Join-Path $repositoryRoot 'scripts/doubao_browser_worker.mjs');scripts" `
         --add-data "$(Join-Path $repositoryRoot 'scripts/doubao_mobile_worker.mjs');scripts" `
         --add-data "$(Join-Path $repositoryRoot 'assets');assets" `

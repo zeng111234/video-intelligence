@@ -121,6 +121,23 @@ class TestLoadBuiltinTemplates:
             svc = TemplateService(tmp)
             assert svc.list_templates() == []
 
+    def test_builtin_templates_can_be_loaded_from_packaged_read_only_directory(
+        self,
+        tmp_path,
+    ):
+        runtime_templates = tmp_path / "runtime" / "templates"
+        packaged_templates = tmp_path / "packaged" / "templates"
+        packaged_templates.mkdir(parents=True)
+        _write_builtin_json(packaged_templates)
+
+        svc = TemplateService(
+            str(runtime_templates),
+            builtin_templates_dir=str(packaged_templates),
+        )
+
+        assert svc.get_template("short_video_optimize") is not None
+        assert not (runtime_templates / "builtin.json").exists()
+
 
 class TestFilterByCategory:
     """测试按分类过滤。"""

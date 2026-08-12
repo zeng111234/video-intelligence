@@ -86,6 +86,7 @@ def _seed_disposable_accounts() -> None:
     from src.models import AdminAccount, CustomerCode
     from src.repositories.sqlite import SQLiteRepository
 
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
     MigrationRunner(DATABASE_PATH).upgrade()
     repository = SQLiteRepository(DATABASE_PATH)
     now = datetime.now().astimezone()
@@ -101,15 +102,16 @@ def _seed_disposable_accounts() -> None:
                 )
             ]
         )
-    if repository.get_admin_account(QA_ADMIN_USERNAME) is None:
-        repository.create_admin_account(
-            AdminAccount(
-                username=QA_ADMIN_USERNAME,
-                password_hash=hash_password(QA_ADMIN_PASSWORD),
-                created_at=now,
-                updated_at=now,
+    for username in ("admin", QA_ADMIN_USERNAME):
+        if repository.get_admin_account(username) is None:
+            repository.create_admin_account(
+                AdminAccount(
+                    username=username,
+                    password_hash=hash_password(QA_ADMIN_PASSWORD),
+                    created_at=now,
+                    updated_at=now,
+                )
             )
-        )
 
 
 def main() -> int:

@@ -29,7 +29,7 @@ def test_safe_production_control_plane_runtime_is_accepted(monkeypatch):
         ("CONTROL_PLANE_DOMAIN", "video-api.example.com", "公网域名"),
         ("CONTROL_PLANE_ALLOWED_HOSTS", "video-api.company.cn,*", "通配符"),
         ("ASR_MODE", "local", "ASR_MODE"),
-        ("CRAWLER_PROVIDER_MODE", "production", "爬虫"),
+        ("CRAWLER_PROVIDER_MODE", "production", "素材发现"),
     ],
 )
 def test_unsafe_production_control_plane_runtime_is_rejected(

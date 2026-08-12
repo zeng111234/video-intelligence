@@ -70,7 +70,6 @@ import {
   preparePublishOfficialPage,
   preflightProductionBatch,
   preflightProductionBatchPublish,
-  previewCrawlerBatch,
   recordManualPublishResult,
   resumeProductionBatch,
   retryProductionBatchFailed,
@@ -375,7 +374,7 @@ function diagnoseCrawlerResult(batch: CrawlerBatchResponse) {
   if (batch.error || errors.length) {
     return {
       kind: "服务失败",
-      message: batch.error || errors.map((run) => run.error).filter(Boolean).join("；") || "爬虫服务执行失败。",
+      message: batch.error || errors.map((run) => run.error).filter(Boolean).join("；") || "素材查找失败。",
     };
   }
   const returned = runs.reduce((sum, run) => sum + (run.raw_item_count || run.returned_count || 0), 0);
@@ -399,7 +398,7 @@ function diagnoseCrawlerResult(batch: CrawlerBatchResponse) {
     return { kind: "无严格相关", message: `供应商返回 ${returned} 条内容，但没有标题或话题严格命中当前关键词。` };
   }
   if (returned === 0) {
-    return { kind: "供应商无返回", message: "当前数据源没有返回内容，可换词后重试或进入专业爬虫查看诊断。" };
+    return { kind: "数据源无返回", message: "当前数据源没有返回内容，可换词后重试或进入素材发现查看详情。" };
   }
   return { kind: "无严格相关", message: "当前检索没有可进入生产的严格相关候选。" };
 }
@@ -763,7 +762,7 @@ export default function PipelinePage() {
         if (requestedCandidateId && !requestedCandidateFound) {
           setCrawlerReason({
             kind: "所选候选不可用",
-            message: "专业爬虫传入的候选已不在该批次结果中；不会自动替换成另一条，请返回专业爬虫重新选择。",
+            message: "素材发现中选择的内容已不在本次结果中；不会自动替换成另一条，请返回素材发现重新选择。",
           });
         } else if (!found.length) {
           setCrawlerReason(diagnoseCrawlerResult(batch));
@@ -775,7 +774,7 @@ export default function PipelinePage() {
         ) {
           setCrawlerReason({
             kind: "未达热门阈值",
-            message: "已按专业爬虫中的明确选择带入该候选；它未进入当前热门主榜，请确认后再创建任务。",
+            message: "已按素材发现中的明确选择带入该内容；它未进入当前热门主榜，请确认后再创建任务。",
           });
         }
       }
@@ -942,14 +941,17 @@ export default function PipelinePage() {
           : `找到 ${found.length} 条相关素材，其中 ${visualCount} 条疑似纯展示，已单独标为画面参考。`,
       );
     } else {
-      setCrawlerReason({ kind: "暂时没找到合适素材", message: "换一个更具体的词再试试。" });
+      setCrawlerReason({
+        kind: "平台本次无结果",
+        message: `已保留关键词“${batch.keyword}”。本次平台没有返回可用素材，可以用原词重新获取，或进入素材发现查看平台详情。`,
+      });
     }
     setMaterialSearchBatch(null);
     setMaterialSearchProgress(null);
     setBusy(false);
   }, [creationMode]);
 
-  const runKeywordSearch = async () => {
+  const runKeywordSearch = async (forceRefresh = false) => {
     if (keyword.trim().length < 2 || keyword.trim().length > 50) {
       setActionError("请输入 2–50 个字的关键词。");
       return;
@@ -968,18 +970,12 @@ export default function PipelinePage() {
       platforms: [...(crawlerRequest.platforms || [])].filter(isBrowserPlatform),
     });
     try {
-      // 先由服务端按同一口径检查；客户只需点击一次，免费搜索才会继续。
-      const preview = await previewCrawlerBatch(crawlerRequest);
-      if (preview.blocked) {
-        setCrawlerReason({
-          kind: "暂时没找到合适素材",
-          message: "换一个更具体的词再试试。",
-        });
-        setMaterialSearchProgress(null);
-        setBusy(false);
-        return;
-      }
-      const batch = await createCrawlerBatch(crawlerRequest);
+      const request = forceRefresh
+        ? { ...crawlerRequest, force_refresh: true }
+        : crawlerRequest;
+      // 与“素材发现”页共用同一条免费搜索链路。这里不再额外预判，
+      // 避免浏览器状态的瞬时差异把本可执行的搜索提前拦成“换关键词”。
+      const batch = await createCrawlerBatch(request);
       setMaterialSearchBatch(batch);
     } catch (error) {
       setCrawlerReason({
@@ -2451,8 +2447,8 @@ export default function PipelinePage() {
                 {crawlerReason && (
                   <div className="search-empty">
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={crawlerReason.message} />
-                    <Button onClick={() => void runKeywordSearch()} loading={busy}>
-                      {crawlerReason.kind === "检索没有开始" ? "重新提交" : "换个词再找"}
+                    <Button onClick={() => void runKeywordSearch(true)} loading={busy}>
+                      {crawlerReason.kind === "检索没有开始" ? "重新提交" : "用原词重试"}
                     </Button>
                   </div>
                 )}
@@ -2803,6 +2799,12 @@ export default function PipelinePage() {
                 {stageIndex(currentStage) === 4 && (
                   <div className="publish-review">
                     <Text strong>发布信息与账号状态</Text>
+                    <Alert
+                      type="warning"
+                      showIcon
+                      message="请遵守平台规则并使用已授权内容"
+                      description="平台审核、限流或封禁风险无法由软件消除；请在发布前人工核对内容和账号操作。"
+                    />
                     {activeItem?.publish.draft && !["succeeded", "outcome_unknown"].includes(activeItem.publish.status) ? (
                       <Space direction="vertical" size={10} style={{ width: "100%" }}>
                         {publishPagePrepared && (

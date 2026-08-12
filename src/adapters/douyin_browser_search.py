@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
 
@@ -47,6 +47,7 @@ from src.services.commercial_search import title_matches_keyword
 
 _VIDEO_ID_RE = re.compile(r"/video/(\d{10,})")
 _LOGIN_MARKERS = ("安全验证", "扫码登录", "请完成验证")
+_LOCAL_DEBUG_OPENER = build_opener(ProxyHandler({}))
 
 
 def _safe_error(exc: BaseException) -> str:
@@ -92,10 +93,7 @@ _HOTSPOT_LIST_LABELS = {
     3001: "搜索榜",
     3002: "搜索飙升榜",
 }
-_HOTSPOT_ENTRY_URL = (
-    "https://douhot.douyin.com/square/hotspot?"
-    "active_tab=hotspot_video&date_window=168&sub_type=1001"
-)
+_HOTSPOT_ENTRY_URL = "https://douhot.douyin.com/square/hotspot?active_tab=hotspot_video&date_window=168&sub_type=1001"
 _PUBLIC_DOUYIN_ENTRY_URL = "https://www.douyin.com/"
 _HOTSPOT_ADAPTER_VERSION = "hotspot_fiber_v6_broad_recall"
 _PUBLIC_SEARCH_ADAPTER_VERSION = "douyin_public_search_v7_verified_multi_filters"
@@ -211,12 +209,14 @@ class LocalDouyinBrowserSearchProvider:
                 f"本机浏览器发现尚未就绪：{'；'.join(missing)}。",
             )
         try:
-            with urlopen(self._debug_url(), timeout=1.5) as response:  # noqa: S310 - localhost only
+            with _LOCAL_DEBUG_OPENER.open(self._debug_url(), timeout=1.5) as response:
                 payload = json.loads(response.read().decode("utf-8"))
             product = str(payload.get("Browser") or "Chrome")
             page_urls: list[str] = []
             try:
-                with urlopen(self._debug_pages_url(), timeout=1.5) as response:  # noqa: S310 - localhost only
+                with _LOCAL_DEBUG_OPENER.open(
+                    self._debug_pages_url(), timeout=1.5
+                ) as response:
                     pages = json.loads(response.read().decode("utf-8"))
                 page_urls = [
                     str(item.get("url") or "")
@@ -296,10 +296,7 @@ class LocalDouyinBrowserSearchProvider:
                     if self.browser_channel == "chrome"
                     else "Microsoft Edge"
                 )
-                message = (
-                    f"未找到 {browser}。请安装该浏览器，或将 "
-                    "DOUYIN_BROWSER_CHANNEL 改为已安装的浏览器后重启后端。"
-                )
+                message = f"未找到 {browser}。请安装该浏览器，或将 DOUYIN_BROWSER_CHANNEL 改为已安装的浏览器后重启后端。"
             else:
                 message = f"本机浏览器发现尚未就绪：{'；'.join(missing)}。"
             raise LicensedProviderError(
@@ -498,10 +495,7 @@ class LocalDouyinBrowserSearchProvider:
         )
         if manual_review_error is not None:
             if self._reveal_browser_for_manual_review():
-                manual_review_error.message = (
-                    f"{manual_review_error.message}"
-                    "已将抖音专用浏览器显示到前台，请完成处理后再重新搜索。"
-                )
+                manual_review_error.message = f"{manual_review_error.message}已将抖音专用浏览器显示到前台，请完成处理后再重新搜索。"
             else:
                 manual_review_error.message = (
                     f"{manual_review_error.message}"
@@ -555,8 +549,7 @@ class LocalDouyinBrowserSearchProvider:
             )
         elif not items:
             diagnostic = (
-                f"抖音登录搜索已读取候选，但其中 {published_filtered_count} 条"
-                "发布时间不在本次范围内。"
+                f"抖音登录搜索已读取候选，但其中 {published_filtered_count} 条发布时间不在本次范围内。"
                 if published_filtered_count
                 else "抖音登录搜索已读取候选，但其中没有可读标题或可用视频链接。"
             )
@@ -1284,8 +1277,7 @@ class LocalDouyinBrowserSearchProvider:
         """Detect a visible platform verification frame without interacting with it."""
         try:
             frames = page.locator(
-                "iframe[src*='verifycenter'], iframe[src*='nocaptcha'], "
-                "iframe[src*='captcha'], iframe[src*='geetest']"
+                "iframe[src*='verifycenter'], iframe[src*='nocaptcha'], iframe[src*='captcha'], iframe[src*='geetest']"
             )
             return any(
                 bool(

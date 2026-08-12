@@ -73,9 +73,7 @@ class MockRepository:
         self._video_editor_cloud_jobs: dict[str, dict] = {}
         self._hot_words: dict[tuple[str, datetime], HotWordRecord] = {}
         # 演示仓库默认预置演示余额，避免测试/沙箱环境处处充值；生产走 SQLite 真实余额。
-        self._credit_balance = Decimal(
-            os.getenv("MOCK_CREDIT_BALANCE", "1000")
-        )
+        self._credit_balance = Decimal(os.getenv("MOCK_CREDIT_BALANCE", "1000"))
         self._credit_transactions: list[dict] = []
         # 多账户：owner -> balance；默认账户与演示余额一致
         self._credit_accounts: dict[str, Decimal] = {"admin": self._credit_balance}
@@ -84,16 +82,20 @@ class MockRepository:
         self._pricing: dict[str, str] = {}
 
     def get_credit_balance(self, owner: str = "admin") -> Decimal:
-        return self._credit_accounts.get(owner, self._credit_balance if owner == "admin" else Decimal("0"))
+        return self._credit_accounts.get(
+            owner, self._credit_balance if owner == "admin" else Decimal("0")
+        )
 
     def ensure_credit_account(self, owner: str) -> Decimal:
         if owner not in self._credit_accounts:
             self._credit_accounts[owner] = Decimal("0")
         return self._credit_accounts[owner]
 
-    def list_credit_transactions(self, owner: str = "admin", limit: int = 100) -> list[dict]:
+    def list_credit_transactions(
+        self, owner: str = "admin", limit: int = 100
+    ) -> list[dict]:
         filtered = [t for t in self._credit_transactions if t.get("owner") == owner]
-        return list(filtered)[-int(limit):][::-1]
+        return list(filtered)[-int(limit) :][::-1]
 
     def adjust_credit_balance(
         self,
@@ -136,7 +138,9 @@ class MockRepository:
         return self._customer_codes.get(code)
 
     def list_customer_codes(self) -> list[CustomerCode]:
-        return sorted(self._customer_codes.values(), key=lambda c: c.created_at, reverse=True)
+        return sorted(
+            self._customer_codes.values(), key=lambda c: c.created_at, reverse=True
+        )
 
     def set_customer_code_enabled(self, code: str, enabled: bool) -> None:
         found = self._customer_codes.get(code)
@@ -218,8 +222,15 @@ class MockRepository:
         found = self._admin_accounts.get(username)
         if found is not None:
             self._admin_accounts[username] = found.model_copy(
-                update={"password_hash": password_hash, "updated_at": datetime.now().astimezone()}
+                update={
+                    "password_hash": password_hash,
+                    "updated_at": datetime.now().astimezone(),
+                }
             )
+
+    def delete_admin_account(self, username: str) -> bool:
+        return self._admin_accounts.pop(username, None) is not None
+
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
 
@@ -498,7 +509,8 @@ class MockRepository:
                 return False
         window_start = state.rolling_window_started_at if state else None
         active_window = bool(
-            window_start and now - window_start < timedelta(seconds=rolling_window_seconds)
+            window_start
+            and now - window_start < timedelta(seconds=rolling_window_seconds)
         )
         current_runs = state.real_runs_in_window if state and active_window else 0
         if max_runs_in_window is not None and current_runs >= max_runs_in_window:
@@ -540,11 +552,21 @@ class MockRepository:
         )
         state = ProviderSafetyState(
             provider=provider,
-            active_run_id=(current.active_run_id if current and current.active_run_id != run_id else None),
-            lease_expires_at=(current.lease_expires_at if current and current.active_run_id != run_id else None),
+            active_run_id=(
+                current.active_run_id
+                if current and current.active_run_id != run_id
+                else None
+            ),
+            lease_expires_at=(
+                current.lease_expires_at
+                if current and current.active_run_id != run_id
+                else None
+            ),
             next_allowed_at=now + timedelta(seconds=max(1, cooldown_seconds)),
             blocked_until=blocked_until,
-            blocked_reason=safety_reason if requested_block else (current.blocked_reason if current else None),
+            blocked_reason=safety_reason
+            if requested_block
+            else (current.blocked_reason if current else None),
             rolling_window_started_at=(
                 current.rolling_window_started_at if current else None
             ),
@@ -668,9 +690,8 @@ class MockRepository:
                 if g[2] == "claimed" and g[1] >= month_start
             ]
             used_count = self.monthly_platform_query_count(month_start) + len(pending)
-            used_cost = (
-                self.monthly_platform_query_cost(month_start)
-                + sum(float(g[3]) for g in pending)
+            used_cost = self.monthly_platform_query_cost(month_start) + sum(
+                float(g[3]) for g in pending
             )
             if (
                 monthly_queries_limit is not None
@@ -793,11 +814,7 @@ class MockRepository:
     def list_active_pipeline_runs(self) -> list[PipelineRun]:
         active = {"pending", "running", "paused"}
         return sorted(
-            (
-                run
-                for run in self._pipeline_runs.values()
-                if run.status.value in active
-            ),
+            (run for run in self._pipeline_runs.values() if run.status.value in active),
             key=lambda item: item.created_at,
         )
 
@@ -854,8 +871,7 @@ class MockRepository:
         if key in self._production_operations:
             return False
         if any(
-            record["resource_id"] == resource_id
-            and record["state"] == "pending"
+            record["resource_id"] == resource_id and record["state"] == "pending"
             for record in self._production_operations.values()
         ):
             return False
@@ -877,9 +893,7 @@ class MockRepository:
         operation_type: str,
         idempotency_key: str,
     ) -> dict | None:
-        record = self._production_operations.get(
-            (operation_type, idempotency_key)
-        )
+        record = self._production_operations.get((operation_type, idempotency_key))
         return dict(record) if record is not None else None
 
     def reclaim_production_operation(
@@ -890,9 +904,7 @@ class MockRepository:
         expected_updated_at: str,
         updated_at: str,
     ) -> bool:
-        record = self._production_operations.get(
-            (operation_type, idempotency_key)
-        )
+        record = self._production_operations.get((operation_type, idempotency_key))
         if (
             record is None
             or record["state"] != "pending"
@@ -917,10 +929,7 @@ class MockRepository:
     ) -> None:
         key = (operation_type, idempotency_key)
         operation = self._production_operations[key]
-        if (
-            operation["request_hash"] != request_hash
-            or operation["state"] != "pending"
-        ):
+        if operation["request_hash"] != request_hash or operation["state"] != "pending":
             raise ValueError("生产操作幂等记录与请求哈希不一致。")
         for run in runs or []:
             self._pipeline_runs[run.run_id] = run

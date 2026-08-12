@@ -441,10 +441,10 @@ export default function AvatarPage() {
           <Space direction="vertical" size={6}>
             <Text>
               本次先冻结最多 {quote.reservation_credits.toFixed(2)} 积分
-              （按 {quote.reservation_seconds} 秒保守上限）。
+              （按约每秒 4 字，预计 {quote.reservation_seconds} 秒）。
             </Text>
             <Text type="secondary">
-              成片后按实际时长向上取整到整秒结算，多余积分自动退回；不会重复结算。
+              字数不会直接当成秒数。成片后按实际时长整秒结算，多余积分自动退回；不会重复结算。
             </Text>
           </Space>
         ),

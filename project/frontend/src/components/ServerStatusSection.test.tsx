@@ -35,7 +35,7 @@ describe("ServerStatusSection", () => {
     render(<ServerStatusSection />);
 
     await waitFor(() => expect(screen.getByText("公司服务已连接")).toBeTruthy());
-    expect(screen.getByText("爬虫在本机运行 · 不扣积分")).toBeTruthy();
+    expect(screen.getByText("素材发现由本机完成 · 不扣积分")).toBeTruthy();
     expect(screen.getByText("AI 文案 · 可用")).toBeTruthy();
     expect(screen.getByText("云端转写 · 未开启")).toBeTruthy();
     expect(screen.getByText("2 项收费能力尚未开启（不影响本地免费功能）")).toBeTruthy();

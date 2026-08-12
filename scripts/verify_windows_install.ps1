@@ -189,13 +189,30 @@ function Test-SafeLeaf {
 }
 
 $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
-$installRoot = Join-Path $localAppData "Programs\VideoInsight"
+$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
+$uninstall = $null
+$registeredVersion = ""
+$registeredLocation = ""
+$registeredRuntimeLocation = ""
+if (Test-Path -LiteralPath $uninstallKey) {
+    $uninstall = Get-ItemProperty -LiteralPath $uninstallKey
+    $registeredVersion = [string]$uninstall.DisplayVersion
+    $registeredLocation = [string]$uninstall.InstallLocation
+    $registeredRuntimeLocation = [string]$uninstall.RuntimeLocation
+}
+$installRoot = if ([string]::IsNullOrWhiteSpace($registeredLocation)) {
+    Join-Path $localAppData "Programs\VideoInsight"
+}
+else { [System.IO.Path]::GetFullPath($registeredLocation) }
 $installedExe = Join-Path $installRoot "VideoInsight.exe"
-$dataRoot = Join-Path $localAppData "VideoInsight"
+$dataRoot = if ([string]::IsNullOrWhiteSpace($registeredRuntimeLocation)) {
+    Join-Path $localAppData "VideoInsight"
+}
+else { [System.IO.Path]::GetFullPath($registeredRuntimeLocation) }
 $database = Join-Path $dataRoot "data\video_intelligence.db"
+$runtimePointer = Join-Path $installRoot "runtime-location.json"
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
 $startShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "VideoInsight\VideoInsight.lnk"
-$uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
 
 $python = Get-Command python.exe -ErrorAction SilentlyContinue
 $node = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -212,23 +229,33 @@ Add-Check `
     -Evidence ("python={0}; node={1}" -f $(if ($python) { $python.Source } else { "not on PATH" }), $(if ($node) { $node.Source } else { "not on PATH" }))
 
 $installTreeSafe = Test-SafeDirectoryTree -LiteralPath $installRoot
+$dataTreeSafe = Test-SafeDirectoryTree -LiteralPath $dataRoot
+$runtimePointerMatches = $false
+if (Test-SafeLeaf -LiteralPath $runtimePointer) {
+    try {
+        $pointerPayload = Get-Content -LiteralPath $runtimePointer -Raw | ConvertFrom-Json
+        $runtimePointerMatches = [string]::Equals(
+            [System.IO.Path]::GetFullPath([string]$pointerPayload.runtimeRoot),
+            [System.IO.Path]::GetFullPath($dataRoot),
+            [System.StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    catch {
+        $runtimePointerMatches = $false
+    }
+}
 $installedExeSafe = Test-SafeLeaf -LiteralPath $installedExe
 $desktopShortcutSafe = Test-SafeLeaf -LiteralPath $desktopShortcut
 $startShortcutSafe = Test-SafeLeaf -LiteralPath $startShortcut
 $databaseSafe = Test-SafeLeaf -LiteralPath $database
 Add-Check -Name "Installed executable" -Passed $installedExeSafe -Evidence $installedExe
 Add-Check -Name "Install directory has no links" -Passed $installTreeSafe -Evidence $installRoot
+Add-Check -Name "Data directory has no links" -Passed $dataTreeSafe -Evidence $dataRoot
+Add-Check -Name "Selected data location" -Passed $runtimePointerMatches -Evidence $dataRoot
 Add-Check -Name "Desktop shortcut" -Passed $desktopShortcutSafe -Evidence $desktopShortcut
 Add-Check -Name "Start menu shortcut" -Passed $startShortcutSafe -Evidence $startShortcut
 Add-Check -Name "Local data database" -Passed $databaseSafe -Evidence $database
 
-$registeredVersion = ""
-$registeredLocation = ""
-if (Test-Path -LiteralPath $uninstallKey) {
-    $uninstall = Get-ItemProperty -LiteralPath $uninstallKey
-    $registeredVersion = [string]$uninstall.DisplayVersion
-    $registeredLocation = [string]$uninstall.InstallLocation
-}
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
     if ($registeredVersion -match '^[0-9]+\.[0-9]+\.[0-9]+$') {
         $ExpectedVersion = $registeredVersion
@@ -246,8 +273,8 @@ catch {
 }
 Add-Check `
     -Name "Apps and Features registration" `
-    -Passed ((Test-Path -LiteralPath $uninstallKey) -and $ExpectedVersion -and $registeredVersion -eq $ExpectedVersion -and $registeredLocationMatches) `
-    -Evidence ("version={0}; location={1}" -f $registeredVersion, $registeredLocation)
+    -Passed ((Test-Path -LiteralPath $uninstallKey) -and $ExpectedVersion -and $registeredVersion -eq $ExpectedVersion -and $registeredLocationMatches -and -not [string]::IsNullOrWhiteSpace($registeredRuntimeLocation)) `
+    -Evidence ("version={0}; location={1}; data={2}" -f $registeredVersion, $registeredLocation, $registeredRuntimeLocation)
 
 $installedFileVersion = ""
 $installedProductVersion = ""

@@ -28,6 +28,7 @@ _session_subjects: dict[str, str] = {}
 _active_customer_local_token: str | None = None
 _active_admin_local_token: str | None = None
 _session_tokens_lock = threading.Lock()
+_http_client: httpx.AsyncClient | None = None
 
 
 def _flag(name: str, default: bool = False) -> bool:
@@ -217,6 +218,35 @@ def _verify_setting() -> bool | str:
     return str(path)
 
 
+def _shared_http_client() -> httpx.AsyncClient:
+    """Return the direct, reusable client for the company control plane only."""
+
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        timeout = max(
+            2.0,
+            min(float(os.getenv("CONTROL_PLANE_TIMEOUT_SECONDS", "15")), 60.0),
+        )
+        _http_client = httpx.AsyncClient(
+            timeout=timeout,
+            verify=_verify_setting(),
+            follow_redirects=False,
+            trust_env=False,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    return _http_client
+
+
+async def close_control_plane_http_client() -> None:
+    """Close the shared company client during application shutdown/tests."""
+
+    global _http_client
+    client = _http_client
+    _http_client = None
+    if client is not None and not client.is_closed:
+        await client.aclose()
+
+
 async def _send_request(
     method: str,
     url: str,
@@ -224,16 +254,9 @@ async def _send_request(
     headers: dict[str, str],
     content: bytes,
 ) -> httpx.Response:
-    timeout = max(
-        2.0,
-        min(float(os.getenv("CONTROL_PLANE_TIMEOUT_SECONDS", "15")), 60.0),
+    return await _shared_http_client().request(
+        method, url, headers=headers, content=content
     )
-    async with httpx.AsyncClient(
-        timeout=timeout,
-        verify=_verify_setting(),
-        follow_redirects=False,
-    ) as client:
-        return await client.request(method, url, headers=headers, content=content)
 
 
 async def proxy_control_plane_request(request: Request) -> Response:
@@ -266,17 +289,14 @@ async def proxy_control_plane_request(request: Request) -> Response:
     except (httpx.TimeoutException, httpx.NetworkError, ValueError):
         return JSONResponse(
             status_code=503,
-            content={
-                "message": "暂时无法连接公司服务，本地内容已保留，请稍后再试。"
-            },
+            content={"message": "暂时无法连接公司服务，本地内容已保留，请稍后再试。"},
         )
     assert remote_response is not None
 
     response_body = remote_response.content
     local_media_cookie: tuple[str, str, int] | None = None
-    if (
-        remote_response.is_success
-        and request.url.path.endswith(("customer-login", "admin-login"))
+    if remote_response.is_success and request.url.path.endswith(
+        ("customer-login", "admin-login")
     ):
         try:
             payload = remote_response.json()
@@ -308,9 +328,7 @@ async def proxy_control_plane_request(request: Request) -> Response:
             )
             payload["token"] = local_session
             cookie_name = (
-                "vi_admin_media_token"
-                if role == "admin"
-                else "vi_customer_media_token"
+                "vi_admin_media_token" if role == "admin" else "vi_customer_media_token"
             )
             try:
                 max_age = max(300, int(payload.get("expires_in_seconds", 12 * 60 * 60)))

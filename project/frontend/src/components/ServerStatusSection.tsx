@@ -84,7 +84,7 @@ export default function ServerStatusSection() {
           >
             {companyConnected ? "公司服务已连接" : "本机功能可用 · 公司服务器待配置"}
           </Tag>
-          <Tag color="green">爬虫在本机运行 · 不扣积分</Tag>
+          <Tag color="green">素材发现由本机完成 · 不扣积分</Tag>
           {status &&
             CAPABILITIES.map(({ key, label }) => (
               <Tag key={key} color={capabilityReady(status[key]) ? "success" : "default"}>

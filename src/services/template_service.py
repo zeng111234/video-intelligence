@@ -35,7 +35,12 @@ class TemplateService:
     负责加载、管理和应用视频编辑模板。
     """
 
-    def __init__(self, templates_dir: str) -> None:
+    def __init__(
+        self,
+        templates_dir: str,
+        *,
+        builtin_templates_dir: str | None = None,
+    ) -> None:
         """初始化模板服务。
 
         Args:
@@ -43,6 +48,9 @@ class TemplateService:
         """
         self.templates_dir = Path(templates_dir)
         self.templates_dir.mkdir(parents=True, exist_ok=True)
+        self.builtin_templates_dir = Path(
+            builtin_templates_dir or templates_dir
+        )
 
         self._builtin_templates: list[EditTemplate] = []
         self._custom_templates: list[EditTemplate] = []
@@ -59,7 +67,7 @@ class TemplateService:
         Returns:
             内置模板列表
         """
-        builtin_path = self.templates_dir / "builtin.json"
+        builtin_path = self.builtin_templates_dir / "builtin.json"
         if not builtin_path.exists():
             return []
 

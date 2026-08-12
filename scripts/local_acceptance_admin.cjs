@@ -4,7 +4,8 @@ const path = require("node:path");
 const { chromium } = require("../project/frontend/node_modules/playwright-core");
 
 const backend = "http://127.0.0.1:2101";
-const frontend = "http://127.0.0.1:1001";
+const frontend = process.env.VIDEOINSIGHT_ACCEPTANCE_FRONTEND_URL
+  || "http://127.0.0.1:1001";
 const repositoryRoot = path.resolve(__dirname, "..");
 const evidenceRoot = path.resolve(
   process.env.VIDEOINSIGHT_ACCEPTANCE_EVIDENCE_DIR
@@ -112,7 +113,7 @@ async function main() {
     await page.getByRole("button", { name: "进入工作台", exact: true }).click();
     await page.waitForURL(/\/(pipeline|production)/, { timeout: 15_000 });
     await page.goto(`${frontend}/admin`, { waitUntil: "networkidle" });
-    await page.getByPlaceholder("管理员账号").fill("qa_admin");
+    await page.getByPlaceholder("管理员账号").fill("admin");
     const passwordInput = page.getByPlaceholder("请输入管理密码");
     await passwordInput.fill("LocalQAAdmin2026Pass");
     await passwordInput.press("Enter");
@@ -124,8 +125,8 @@ async function main() {
     if (await generate.getByLabel("可使用天数").inputValue() !== "7") {
       throw new Error("周卡默认使用天数不是 7 天。");
     }
-    if (Number(await generate.getByLabel("套餐价格（积分）").inputValue()) !== 9.9) {
-      throw new Error("周卡默认套餐价格不是 9.9 积分。");
+    if (Number(await generate.getByLabel("套餐内含可用积分").inputValue()) !== 9.9) {
+      throw new Error("周卡默认可用积分不是 9.9。");
     }
     await clickVisibleModalPrimary(page);
     await page.getByRole("button", { name: "知道了", exact: true }).click();
@@ -133,12 +134,15 @@ async function main() {
     const customerRow = page.getByRole("row").filter({ hasText: customerName });
     await customerRow.waitFor({ state: "visible" });
     const generatedText = await customerRow.innerText();
-    if (!generatedText.includes("7天 / 9.9积分") || !generatedText.includes("待首次激活")) {
+    if (!generatedText.includes("7天") || !generatedText.includes("9.9") || !generatedText.includes("待首次激活")) {
       throw new Error(`周卡展示不正确：${generatedText}`);
     }
 
-    await customerRow.getByRole("button", { name: "调整套餐", exact: true }).click();
+    await customerRow.getByRole("button", { name: "调整使用期", exact: true }).click();
     const extend = page.getByRole("dialog", { name: `延长使用期：${customerName}`, exact: true });
+    if (await extend.getByRole("spinbutton").count() !== 1) {
+      throw new Error("续期弹窗不应再出现积分输入框。");
+    }
     await clickVisibleModalPrimary(page);
     await page.getByText(`已为 ${customerName} 延长 7 天`, { exact: false }).waitFor();
 
@@ -157,11 +161,18 @@ async function main() {
 
     const pendingRow = page.locator("tr.ant-table-row").filter({ hasText: rechargeReason });
     await pendingRow.waitFor({ state: "visible" });
-    const pendingButtons = pendingRow.locator("button");
-    if (await pendingButtons.count() !== 2) {
-      throw new Error(`待审批行操作按钮数量异常：${await pendingButtons.count()}`);
+    if (!(await pendingRow.innerText()).includes("本地整体验收")) {
+      throw new Error(`充值申请没有显示客户名称：${await pendingRow.innerText()}`);
     }
-    await pendingButtons.first().click();
+    const pendingButtons = pendingRow.locator("button");
+    const pendingButtonTexts = await pendingButtons.allTextContents();
+    const approveIndex = pendingButtonTexts.findIndex(
+      (text) => text.replace(/\s+/g, "") === "批准",
+    );
+    if (approveIndex < 0) {
+      throw new Error(`待审批行没有批准按钮：${JSON.stringify(pendingButtonTexts)}`);
+    }
+    await pendingButtons.nth(approveIndex).click();
     await confirmVisiblePopconfirm(page);
     await page.getByText("已批准并充值", { exact: true }).waitFor();
 
@@ -175,6 +186,9 @@ async function main() {
     await reset.getByPlaceholder("新密码（至少 12 位）").fill("LocalAdminPass2027!");
     await clickVisibleModalPrimary(page);
     await page.getByText(`已重置 ${adminName} 的密码`, { exact: true }).waitFor();
+    await adminRow.getByRole("button", { name: "删除", exact: true }).click();
+    await confirmVisiblePopconfirm(page);
+    await page.getByText(`已删除管理员 ${adminName}`, { exact: true }).waitFor();
 
     await page.getByRole("button", { name: "查看收费项目", exact: true }).click();
     const pricingToggle = page.locator('.admin-pricing-card button[aria-expanded="true"]');
@@ -194,7 +208,7 @@ async function main() {
       weeklyPackage: "7 days / 9.9 credits",
       customerLifecycle: ["generated", "adjusted", "credited", "disabled", "enabled"],
       rechargeRequest: "approved",
-      administrator: ["created", "password reset"],
+      administrator: ["created", "password reset", "deleted"],
       pricing: "expanded without modification",
     }, null, 2));
   } catch (error) {

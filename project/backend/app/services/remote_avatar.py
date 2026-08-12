@@ -15,6 +15,7 @@ from uuid import uuid4
 import httpx
 
 from project.backend.app.services.control_plane_client import (
+    active_upstream_admin_session,
     active_upstream_customer_session,
     control_plane_base_url,
 )
@@ -67,13 +68,16 @@ class RemoteAvatarProvider:
 
     @staticmethod
     def _headers(idempotency_key: str | None = None) -> dict[str, str]:
-        token = active_upstream_customer_session()
+        customer_token = active_upstream_customer_session()
+        admin_token = active_upstream_admin_session()
+        token = customer_token or admin_token
         if not token:
             raise AvatarProviderError(
-                "请先登录客户账号，再使用数字人。",
+                "请先登录客户账号或管理员账号，再使用数字人。",
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
-        headers = {"X-Customer-Token": token, "Accept": "application/json"}
+        token_header = "X-Customer-Token" if customer_token else "X-Admin-Token"
+        headers = {token_header: token, "Accept": "application/json"}
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
         return headers
@@ -96,7 +100,9 @@ class RemoteAvatarProvider:
             return ProviderErrorKind.VALIDATION
         return ProviderErrorKind.SERVICE
 
-    def _get(self, path: str, *, allow_not_found: bool = False) -> httpx.Response | None:
+    def _get(
+        self, path: str, *, allow_not_found: bool = False
+    ) -> httpx.Response | None:
         base_url = control_plane_base_url()
         if not base_url:
             raise AvatarProviderError(
@@ -105,7 +111,10 @@ class RemoteAvatarProvider:
         response: httpx.Response | None = None
         try:
             with httpx.Client(
-                timeout=self._timeout(), verify=self._verify(), follow_redirects=False
+                timeout=self._timeout(),
+                verify=self._verify(),
+                follow_redirects=False,
+                trust_env=False,
             ) as client:
                 for attempt in range(2):
                     response = client.get(f"{base_url}{path}", headers=self._headers())
@@ -144,6 +153,7 @@ class RemoteAvatarProvider:
                     timeout=self._timeout(),
                     verify=self._verify(),
                     follow_redirects=False,
+                    trust_env=False,
                 ) as client:
                     response = client.post(
                         f"{control_plane_base_url()}{path}",
@@ -169,7 +179,11 @@ class RemoteAvatarProvider:
             unknown = response.status_code in {409, 500, 502, 503, 504}
             raise AvatarProviderError(
                 self._message(response, "公司数字人操作失败。"),
-                kind=(ProviderErrorKind.OUTCOME_UNKNOWN if unknown else self._kind(response.status_code)),
+                kind=(
+                    ProviderErrorKind.OUTCOME_UNKNOWN
+                    if unknown
+                    else self._kind(response.status_code)
+                ),
                 outcome_unknown=unknown,
             )
         return response
@@ -207,8 +221,7 @@ class RemoteAvatarProvider:
     def quote(self, *, script_text: str, speech_rate: float) -> AvatarBillingQuote:
         characters = sum(1 for character in script_text if not character.isspace())
         response = self._get(
-            "/api/v1/provider/avatar/quote"
-            f"?characters={max(1, characters)}&speech_rate={speech_rate}"
+            f"/api/v1/provider/avatar/quote?characters={max(1, characters)}&speech_rate={speech_rate}"
         )
         assert response is not None
         try:
@@ -280,7 +293,9 @@ class RemoteAvatarProvider:
             f"/api/v1/provider/avatar/jobs/{quote(job_id, safe='')}/result"
         )
         assert response is not None
-        return response.content, response.headers.get("content-type", "video/mp4").split(";", 1)[0]
+        return response.content, response.headers.get(
+            "content-type", "video/mp4"
+        ).split(";", 1)[0]
 
     def _upload_training(
         self,
@@ -339,7 +354,11 @@ class RemoteAvatarProvider:
             unknown = response.status_code in {409, 500, 502, 503, 504}
             raise AvatarProviderError(
                 self._message(response, "训练提交失败。"),
-                kind=(ProviderErrorKind.OUTCOME_UNKNOWN if unknown else self._kind(response.status_code)),
+                kind=(
+                    ProviderErrorKind.OUTCOME_UNKNOWN
+                    if unknown
+                    else self._kind(response.status_code)
+                ),
                 outcome_unknown=unknown,
             )
         return AvatarAsset.model_validate(self._json(response))

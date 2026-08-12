@@ -119,9 +119,9 @@ describe("AvatarPage avatar library", () => {
     vi.mocked(getAvatarBillingQuote).mockResolvedValue({
       price_per_minute_cny: 2.5,
       billing_unit_seconds: 1,
-      reservation_seconds: 9,
-      reservation_cost_cny: 0.375,
-      reservation_credits: 0.38,
+      reservation_seconds: 3,
+      reservation_cost_cny: 0.125,
+      reservation_credits: 0.13,
       settlement_note: "完成后按实际整秒结算，多余自动退回。",
     });
     vi.mocked(listAvatarAssets).mockResolvedValue([
@@ -386,8 +386,9 @@ describe("AvatarPage avatar library", () => {
     );
     expect(createAvatarJob).not.toHaveBeenCalled();
     const confirmDialog = await screen.findByRole("dialog");
-    expect(confirmDialog.textContent).toContain("最多 0.38 积分");
-    expect(confirmDialog.textContent).toContain("按 9 秒保守上限");
+    expect(confirmDialog.textContent).toContain("最多 0.13 积分");
+    expect(confirmDialog.textContent).toContain("预计 3 秒");
+    expect(confirmDialog.textContent).toContain("字数不会直接当成秒数");
     fireEvent.click(within(confirmDialog).getByRole("button", { name: "确认费用并开始生成" }));
 
     await waitFor(() => expect(createAvatarJob).toHaveBeenCalledTimes(1));

@@ -1,15 +1,20 @@
 """管理员：客户激活码管理 + 管理员账号管理。"""
+
 from __future__ import annotations
 
 import secrets
 from datetime import datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.repository import get_repository
-from project.backend.app.core.security import hash_password, require_admin_token, revoke_auth_tokens
+from project.backend.app.core.security import (
+    hash_password,
+    require_admin_token,
+    revoke_auth_tokens,
+)
 from src.models import AdminAccount, CustomerCode
 from src.repositories.sqlite import SQLiteRepository
 from src.services.credits import CreditsService
@@ -25,7 +30,9 @@ CODE_GROUP_LENGTH = 4
 
 class GenerateCodesRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=50, description="客户名/备注")
-    initial_credits: Decimal = Field(Decimal("0"), ge=0, description="初始赠送积分")
+    initial_credits: Decimal = Field(
+        Decimal("9.9"), ge=0, description="套餐内含的首次可用积分"
+    )
     valid_days: int | None = Field(7, ge=1, le=3650, description="首次激活后的可用天数")
     package_price_credits: Decimal = Field(
         Decimal("9.9"), ge=0, description="该使用套餐的售价积分"
@@ -49,7 +56,9 @@ class CustomerCodeResponse(BaseModel):
 
 class ExtendCodeAccessRequest(BaseModel):
     days: int = Field(..., ge=1, le=3650, description="增加的使用天数")
-    package_price_credits: Decimal = Field(..., ge=0, description="本次续期套餐售价积分")
+    package_price_credits: Decimal = Field(
+        ..., ge=0, description="本次续期套餐售价积分"
+    )
 
 
 class CreateAdminRequest(BaseModel):
@@ -64,6 +73,41 @@ class ResetPasswordRequest(BaseModel):
 class AdminAccountResponse(BaseModel):
     username: str
     created_at: str
+    is_current: bool = False
+    can_reset_password: bool = False
+    can_delete: bool = False
+
+
+class DeleteAdminAccountResponse(BaseModel):
+    username: str
+    deleted: bool
+
+
+def _current_admin(request: Request) -> str:
+    username = str(getattr(request.state, "admin_username", "")).strip()
+    if not username:
+        raise HTTPException(status_code=403, detail="无法确认当前管理员账号。")
+    return username
+
+
+def _is_primary_admin(username: str) -> bool:
+    return username.casefold() == "admin"
+
+
+def _admin_response(
+    account: AdminAccount, *, current_username: str
+) -> AdminAccountResponse:
+    is_current = account.username == current_username
+    is_primary = _is_primary_admin(current_username)
+    return AdminAccountResponse(
+        username=account.username,
+        created_at=account.created_at.isoformat(),
+        is_current=is_current,
+        can_reset_password=is_current or is_primary,
+        can_delete=(
+            is_primary and not is_current and not _is_primary_admin(account.username)
+        ),
+    )
 
 
 def _generate_code() -> str:
@@ -190,10 +234,13 @@ def extend_code_access(
 @router.post("/accounts", response_model=AdminAccountResponse)
 def create_admin(
     body: CreateAdminRequest,
+    request: Request,
     repo: SQLiteRepository = Depends(get_repository),
     _admin: bool = Security(require_admin_token),
 ):
     """新增管理员账号。"""
+    if not _is_primary_admin(_current_admin(request)):
+        raise HTTPException(status_code=403, detail="只有主管理员可以新增管理员账号。")
     username = body.username.strip()
     if repo.get_admin_account(username) is not None:
         raise HTTPException(status_code=400, detail="该管理员账号已存在。")
@@ -206,17 +253,21 @@ def create_admin(
             updated_at=now,
         )
     )
-    return AdminAccountResponse(username=username, created_at=now.isoformat())
+    account = repo.get_admin_account(username)
+    assert account is not None
+    return _admin_response(account, current_username=_current_admin(request))
 
 
 @router.get("/accounts", response_model=list[AdminAccountResponse])
 def list_admins(
+    request: Request,
     repo: SQLiteRepository = Depends(get_repository),
     _admin: bool = Security(require_admin_token),
 ):
     """管理员账号列表。"""
+    current_username = _current_admin(request)
     return [
-        AdminAccountResponse(username=a.username, created_at=a.created_at.isoformat())
+        _admin_response(a, current_username=current_username)
         for a in repo.list_admin_accounts()
     ]
 
@@ -225,16 +276,43 @@ def list_admins(
 def reset_admin_password(
     username: str,
     body: ResetPasswordRequest,
+    request: Request,
     repo: SQLiteRepository = Depends(get_repository),
     _admin: bool = Security(require_admin_token),
 ):
     """重置管理员密码。"""
+    current_username = _current_admin(request)
+    if username != current_username and not _is_primary_admin(current_username):
+        raise HTTPException(status_code=403, detail="普通管理员只能修改自己的密码。")
     account = repo.get_admin_account(username)
     if account is None:
         raise HTTPException(status_code=404, detail="管理员账号不存在。")
     repo.set_admin_password(username, hash_password(body.password))
     revoke_auth_tokens("admin", username)
-    return AdminAccountResponse(username=username, created_at=account.created_at.isoformat())
+    return _admin_response(account, current_username=current_username)
+
+
+@router.delete("/accounts/{username}", response_model=DeleteAdminAccountResponse)
+def delete_admin(
+    username: str,
+    request: Request,
+    repo: SQLiteRepository = Depends(get_repository),
+    _admin: bool = Security(require_admin_token),
+):
+    """主管理员删除不再使用的其他管理员账号。"""
+    current_username = _current_admin(request)
+    if not _is_primary_admin(current_username):
+        raise HTTPException(status_code=403, detail="只有主管理员可以删除管理员账号。")
+    if username == current_username or _is_primary_admin(username):
+        raise HTTPException(status_code=400, detail="主管理员账号不能删除。")
+    if len(repo.list_admin_accounts()) <= 1:
+        raise HTTPException(status_code=400, detail="系统必须至少保留一个管理员账号。")
+    if repo.get_admin_account(username) is None:
+        raise HTTPException(status_code=404, detail="管理员账号不存在。")
+    if not repo.delete_admin_account(username):
+        raise HTTPException(status_code=409, detail="账号状态已变化，请刷新后重试。")
+    revoke_auth_tokens("admin", username)
+    return DeleteAdminAccountResponse(username=username, deleted=True)
 
 
 # ---------------------------------------------------------------------------

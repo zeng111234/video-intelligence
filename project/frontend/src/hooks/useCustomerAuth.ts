@@ -22,6 +22,20 @@ export function getCustomerCode(): string | null {
   }
 }
 
+/** 在本机记住激活码，登录过期或重新打开后无需再次复制。 */
+export function rememberCustomerCode(code: string): void {
+  try {
+    const normalized = code.trim().toUpperCase();
+    if (normalized) {
+      localStorage.setItem(CUSTOMER_CODE_KEY, normalized);
+    } else {
+      localStorage.removeItem(CUSTOMER_CODE_KEY);
+    }
+  } catch {
+    // 本地存储不可用时仍允许本次登录。
+  }
+}
+
 export function getCustomerName(): string | null {
   try {
     return localStorage.getItem(CUSTOMER_NAME_KEY);

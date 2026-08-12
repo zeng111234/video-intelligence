@@ -208,7 +208,9 @@ class SQLiteRepository:
         # 旧版单账户表迁移：id=1 记录 -> owner='admin'
         self._migrate_legacy_credit_accounts()
         # 旧版流水表补 owner 列（默认归属 admin）
-        self._ensure_column("credit_transactions", "owner", "TEXT NOT NULL DEFAULT 'admin'")
+        self._ensure_column(
+            "credit_transactions", "owner", "TEXT NOT NULL DEFAULT 'admin'"
+        )
         # owner 索引必须在 owner 列迁移之后创建（旧库升级路径）
         self.connection.execute(
             """
@@ -420,9 +422,13 @@ class SQLiteRepository:
             ON provider_safety_states(next_allowed_at);
             """
         )
-        self._ensure_column("provider_safety_states", "rolling_window_started_at", "TEXT")
         self._ensure_column(
-            "provider_safety_states", "real_runs_in_window", "INTEGER NOT NULL DEFAULT 0"
+            "provider_safety_states", "rolling_window_started_at", "TEXT"
+        )
+        self._ensure_column(
+            "provider_safety_states",
+            "real_runs_in_window",
+            "INTEGER NOT NULL DEFAULT 0",
         )
         # 旧库迁移：provider_request_guards 增加预计成本列（月上限原子统计用）
         self._ensure_column(
@@ -1246,7 +1252,9 @@ class SQLiteRepository:
             "SELECT payload_json FROM candidate_copy_probes WHERE candidate_id = ?",
             (candidate_id,),
         ).fetchone()
-        return CandidateCopyProbe.model_validate_json(row["payload_json"]) if row else None
+        return (
+            CandidateCopyProbe.model_validate_json(row["payload_json"]) if row else None
+        )
 
     def list_reviews(self) -> list[RelevanceReview]:
         rows = self.connection.execute(
@@ -1576,7 +1584,8 @@ class SQLiteRepository:
                     return False
             window_start = state.rolling_window_started_at if state else None
             active_window = bool(
-                window_start and now - window_start < timedelta(seconds=rolling_window_seconds)
+                window_start
+                and now - window_start < timedelta(seconds=rolling_window_seconds)
             )
             current_runs = state.real_runs_in_window if state and active_window else 0
             if max_runs_in_window is not None and current_runs >= max_runs_in_window:
@@ -1639,7 +1648,11 @@ class SQLiteRepository:
             (item for item in (existing_block, requested_block) if item is not None),
             default=None,
         )
-        blocked_reason = safety_reason if requested_block else (current.blocked_reason if current else None)
+        blocked_reason = (
+            safety_reason
+            if requested_block
+            else (current.blocked_reason if current else None)
+        )
         next_allowed_at = now + timedelta(seconds=max(1, cooldown_seconds))
         with self.connection:
             self.connection.execute(
@@ -1754,7 +1767,13 @@ class SQLiteRepository:
                             owner, amount, balance_after, reason, ref_type, ref_id, created_at
                         ) VALUES (?, ?, ?, ?, NULL, NULL, ?)
                         """,
-                        (owner, str(opening), str(opening), gift_reason, now.isoformat()),
+                        (
+                            owner,
+                            str(opening),
+                            str(opening),
+                            gift_reason,
+                            now.isoformat(),
+                        ),
                     )
             balance = self.get_credit_balance(owner)
             connection.commit()
@@ -1776,7 +1795,9 @@ class SQLiteRepository:
             return Decimal("0")
         return Decimal(str(row["balance"]))
 
-    def list_credit_transactions(self, owner: str = "admin", limit: int = 100) -> list[dict]:
+    def list_credit_transactions(
+        self, owner: str = "admin", limit: int = 100
+    ) -> list[dict]:
         """按时间倒序返回指定账户的积分流水。"""
         rows = self.connection.execute(
             """
@@ -1820,7 +1841,9 @@ class SQLiteRepository:
             balance_row = connection.execute(
                 "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
             ).fetchone()
-            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            balance = (
+                Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            )
             new_balance = balance - Decimal(str(reserved_credits))
             if new_balance < 0:
                 raise ValueError(
@@ -1949,14 +1972,18 @@ class SQLiteRepository:
             balance_row = connection.execute(
                 "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
             ).fetchone()
-            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            balance = (
+                Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            )
             new_balance = balance + delta
             if new_balance < 0:
                 raise ValueError(
                     f"实际费用超过预留金额，当前余额 {balance}，还需补充 {abs(delta)} 积分"
                 )
             if delta != 0:
-                reason = "数字人成片费用结算退款" if delta > 0 else "数字人成片费用结算补扣"
+                reason = (
+                    "数字人成片费用结算退款" if delta > 0 else "数字人成片费用结算补扣"
+                )
                 connection.execute(
                     "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
                     (str(new_balance), now, owner),
@@ -1990,7 +2017,9 @@ class SQLiteRepository:
             connection.rollback()
             raise
 
-    def release_avatar_billing(self, *, owner: str, idempotency_key: str) -> dict | None:
+    def release_avatar_billing(
+        self, *, owner: str, idempotency_key: str
+    ) -> dict | None:
         """供应商明确未受理时全额释放预留；结果未知时禁止调用。"""
 
         now = datetime.now().astimezone().isoformat()
@@ -2011,7 +2040,9 @@ class SQLiteRepository:
             balance_row = connection.execute(
                 "SELECT balance FROM credit_accounts WHERE owner = ?", (owner,)
             ).fetchone()
-            balance = Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            balance = (
+                Decimal(str(balance_row["balance"])) if balance_row else Decimal("0")
+            )
             new_balance = balance + refund
             connection.execute(
                 "UPDATE credit_accounts SET balance = ?, updated_at = ? WHERE owner = ?",
@@ -2095,7 +2126,9 @@ class SQLiteRepository:
             name=row["name"],
             enabled=bool(row["enabled"]),
             initial_credits=Decimal(str(row["initial_credits"])),
-            valid_days=int(row["valid_days"]) if row["valid_days"] is not None else None,
+            valid_days=int(row["valid_days"])
+            if row["valid_days"] is not None
+            else None,
             package_price_credits=Decimal(str(row["package_price_credits"])),
             activated_at=datetime.fromisoformat(row["activated_at"])
             if row["activated_at"]
@@ -2200,7 +2233,9 @@ class SQLiteRepository:
 
     def delete_customer_code(self, code: str) -> None:
         with self.connection:
-            self.connection.execute("DELETE FROM customer_codes WHERE code = ?", (code,))
+            self.connection.execute(
+                "DELETE FROM customer_codes WHERE code = ?", (code,)
+            )
 
     # ------------------------------------------------------------------
     # 定价设置（管理员可调，表覆盖 > 代码默认值）
@@ -2298,6 +2333,13 @@ class SQLiteRepository:
                 """,
                 (password_hash, datetime.now().astimezone().isoformat(), username),
             )
+
+    def delete_admin_account(self, username: str) -> bool:
+        with self.connection:
+            cursor = self.connection.execute(
+                "DELETE FROM admin_accounts WHERE username = ?", (username,)
+            )
+        return cursor.rowcount == 1
 
     def get_publish_safety_state(
         self, platform: str, account_id: str
@@ -2523,7 +2565,14 @@ class SQLiteRepository:
             SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
             WHERE id = ?
             """,
-            (status, reviewed_by, now.isoformat(), review_note, now.isoformat(), request_id),
+            (
+                status,
+                reviewed_by,
+                now.isoformat(),
+                review_note,
+                now.isoformat(),
+                request_id,
+            ),
         )
         self.connection.commit()
         return self.get_recharge_request(request_id)
@@ -2554,7 +2603,14 @@ class SQLiteRepository:
                 SET status = ?, reviewed_by = ?, reviewed_at = ?, review_note = ?, updated_at = ?
                 WHERE id = ? AND status = 'pending'
                 """,
-                (status, reviewed_by, now.isoformat(), review_note, now.isoformat(), request_id),
+                (
+                    status,
+                    reviewed_by,
+                    now.isoformat(),
+                    review_note,
+                    now.isoformat(),
+                    request_id,
+                ),
             )
             if cursor.rowcount != 1:
                 connection.rollback()
@@ -2566,7 +2622,8 @@ class SQLiteRepository:
                 ).fetchone()
                 if account is None:
                     code_row = connection.execute(
-                        "SELECT initial_credits FROM customer_codes WHERE code = ?", (owner,)
+                        "SELECT initial_credits FROM customer_codes WHERE code = ?",
+                        (owner,),
                     ).fetchone()
                     opening = (
                         Decimal(str(code_row["initial_credits"]))
@@ -3301,7 +3358,9 @@ class SQLiteRepository:
             "SELECT payload_json FROM production_batches ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [ProductionBatch.model_validate_json(row["payload_json"]) for row in rows]
+        return [
+            ProductionBatch.model_validate_json(row["payload_json"]) for row in rows
+        ]
 
     def claim_production_operation(
         self,
@@ -3472,7 +3531,9 @@ class SQLiteRepository:
             "SELECT payload_json FROM video_editor_batches WHERE batch_id = ?",
             (batch_id,),
         ).fetchone()
-        return VideoEditorBatch.model_validate_json(row["payload_json"]) if row else None
+        return (
+            VideoEditorBatch.model_validate_json(row["payload_json"]) if row else None
+        )
 
     def list_video_editor_batches(self, limit: int = 100):
         from src.models import VideoEditorBatch
@@ -3481,7 +3542,9 @@ class SQLiteRepository:
             "SELECT payload_json FROM video_editor_batches ORDER BY created_at DESC LIMIT ?",
             (limit,),
         ).fetchall()
-        return [VideoEditorBatch.model_validate_json(row["payload_json"]) for row in rows]
+        return [
+            VideoEditorBatch.model_validate_json(row["payload_json"]) for row in rows
+        ]
 
     def save_video_editor_quote(
         self,
@@ -3573,7 +3636,9 @@ class SQLiteRepository:
             "request_hash": row["request_hash"],
             "state": row["state"],
             "resource_id": row["resource_id"],
-            "response": json.loads(row["response_json"]) if row["response_json"] else None,
+            "response": json.loads(row["response_json"])
+            if row["response_json"]
+            else None,
             "error_message": row["error_message"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -3599,7 +3664,9 @@ class SQLiteRepository:
             (
                 state,
                 resource_id,
-                json.dumps(response, ensure_ascii=False) if response is not None else None,
+                json.dumps(response, ensure_ascii=False)
+                if response is not None
+                else None,
                 error_message,
                 updated_at,
                 idempotency_key,

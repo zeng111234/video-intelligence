@@ -10,6 +10,7 @@ from src.services.credits import cny_to_credits
 
 
 AVATAR_BILLING_UNIT_SECONDS = 1
+AVATAR_ESTIMATED_CHARACTERS_PER_SECOND = 4.0
 
 
 def count_billable_characters(script_text: str) -> int:
@@ -19,11 +20,12 @@ def count_billable_characters(script_text: str) -> int:
 
 
 def reservation_seconds(script_text: str, speech_rate: float) -> int:
-    """按每字符最多一秒的保守上限冻结，完成后自动退还差额。"""
+    """按中文自然口播约每秒 4 字估算时长，完成后按真实时长结算。"""
 
     characters = max(1, count_billable_characters(script_text))
     safe_rate = max(0.8, min(float(speech_rate), 1.2))
-    return max(1, math.ceil(characters / safe_rate))
+    characters_per_second = AVATAR_ESTIMATED_CHARACTERS_PER_SECOND * safe_rate
+    return max(1, math.ceil(characters / characters_per_second))
 
 
 def billable_seconds(duration_seconds: float) -> int:
@@ -59,7 +61,7 @@ def build_avatar_billing_quote(
         reservation_cost_cny=float(cost),
         reservation_credits=float(credits),
         settlement_note=(
-            "先冻结本次保守上限；成片后按供应商实际时长向上取整到整秒结算，"
-            "多余积分自动退回。"
+            "先按每秒约 4 字估算并冻结；成片后按供应商实际时长向上取整到整秒结算，"
+            "多余积分自动退回，少量差额按真实时长补扣。"
         ),
     )

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -30,6 +31,7 @@ from project.backend.app.main import app  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
 from project.backend.app.api.v1 import crawler as crawler_module  # noqa: E402
 from src.adapters.licensed import SandboxLicensedSearchProvider  # noqa: E402
+from src.adapters.douyin_browser_search import BrowserSessionStatus  # noqa: E402
 from src.adapters.llm import SandboxCopywritingEngine  # noqa: E402
 from src.models import (  # noqa: E402
     DataSource,
@@ -228,7 +230,8 @@ def _billboard_item(
         matched_by=hot_words or [],
         cohort_key="douyin_hot_billboard:官方热榜",
         eligibility_status=EligibilityStatus.AUTO_MATCHED,
-        evidence="official_billboard:" + json.dumps(evidence_payload, ensure_ascii=False),
+        evidence="official_billboard:"
+        + json.dumps(evidence_payload, ensure_ascii=False),
         official_hot=True,
         official_rank=rank,
         official_hot_value=float(1_000_000 - rank),
@@ -323,6 +326,51 @@ def official_env():
 
 
 class TestOfficialCapabilities:
+    def test_browser_session_probes_run_in_parallel(self):
+        barrier = threading.Barrier(4, timeout=1)
+
+        class BrowserProvider:
+            browser_channel = "chrome"
+            adapter_version = "test"
+
+            @staticmethod
+            def capabilities() -> ProviderCapability:
+                return ProviderCapability(
+                    provider_name="local-browser",
+                    display_name="local-browser",
+                    mode=ProviderMode.LOCAL_BROWSER,
+                    enabled=True,
+                    permission_status="configured",
+                )
+
+            @staticmethod
+            def session_status() -> BrowserSessionStatus:
+                barrier.wait()
+                return BrowserSessionStatus(
+                    enabled=True,
+                    running=False,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="browser_closed",
+                    message="未打开",
+                )
+
+        payloads = crawler_module._browser_capability_payloads(
+            [
+                (BrowserProvider(), Platform.DOUYIN),
+                (BrowserProvider(), Platform.XIAOHONGSHU),
+                (BrowserProvider(), Platform.KUAISHOU),
+                (BrowserProvider(), Platform.BILIBILI),
+            ]
+        )
+
+        assert [item.platform for item in payloads] == [
+            "douyin",
+            "xiaohongshu",
+            "kuaishou",
+            "bilibili",
+        ]
+
     def test_capability_payload_never_calls_remote_usage(self):
         class Service:
             active_platforms: tuple[Platform, ...] = ()
@@ -348,7 +396,9 @@ class TestOfficialCapabilities:
 
             @staticmethod
             def usage():
-                raise AssertionError("capability payload must not make a remote usage call")
+                raise AssertionError(
+                    "capability payload must not make a remote usage call"
+                )
 
         response = crawler_module._capability_payload(Service(), Provider())
 
@@ -388,8 +438,8 @@ class TestOfficialCapabilities:
         app.dependency_overrides[backend_deps.get_official_hot_billboard_adapter] = (
             lambda: None
         )
-        app.dependency_overrides[backend_deps.get_official_hot_words_adapter] = (
-            lambda: None
+        app.dependency_overrides[backend_deps.get_official_hot_words_adapter] = lambda: (
+            None
         )
         try:
             resp = client.get("/api/v1/crawler/capabilities")
@@ -599,8 +649,8 @@ class TestOfficialHotMonitor:
         service = _build_hot_pool_service(
             repository, billboard, official_env["hot_words"], clock=lambda: NOW
         )
-        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
-            lambda: service
+        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = lambda: (
+            service
         )
         app.dependency_overrides[backend_deps.get_official_hot_billboard_adapter] = (
             lambda: billboard
@@ -668,8 +718,8 @@ class TestHotWordsEndpoint:
         service = _build_hot_pool_service(
             repository, FakeBillboardAdapter([]), hot_words=None
         )
-        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = (
-            lambda: service
+        app.dependency_overrides[backend_deps.get_official_hot_pool_service] = lambda: (
+            service
         )
         try:
             resp = client.get("/api/v1/crawler/hotwords")
@@ -694,8 +744,8 @@ class TestOriginalScript:
         repository = official_env["repository"]
         official_env["service"].sync_billboard()
         copywriting = CopywritingService(repository, SandboxCopywritingEngine())
-        app.dependency_overrides[backend_deps.get_copywriting_service] = (
-            lambda: copywriting
+        app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: (
+            copywriting
         )
         yield official_env
         app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
@@ -725,8 +775,8 @@ class TestDoubaoMobile:
         repository = official_env["repository"]
         official_env["service"].sync_billboard()
         mobile_service = DoubaoMobileAutomationService(repository)
-        app.dependency_overrides[backend_deps.get_doubao_mobile_service] = (
-            lambda: mobile_service
+        app.dependency_overrides[backend_deps.get_doubao_mobile_service] = lambda: (
+            mobile_service
         )
         # 强制前置条件全部缺失：无 adb、无包名、Appium 不可达
         monkeypatch.delenv("ADB_PATH", raising=False)
@@ -752,11 +802,11 @@ class TestDoubaoMobile:
         assert prerequisites["appium_url"] is False
         assert prerequisites["package"] is False
         assert prerequisites["device_ready"] is False
-        assert any("DOUBAO_ANDROID_PACKAGE" in item for item in data["missing_configuration"])
+        assert any(
+            "DOUBAO_ANDROID_PACKAGE" in item for item in data["missing_configuration"]
+        )
 
-    def test_create_mobile_job_zero_fee_and_explicit_failure(
-        self, client, mobile_env
-    ):
+    def test_create_mobile_job_zero_fee_and_explicit_failure(self, client, mobile_env):
         resp = client.post(
             "/api/v1/crawler/doubao-mobile/jobs",
             json={"candidate_ids": ["douyin-a1"]},

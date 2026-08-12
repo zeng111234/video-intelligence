@@ -128,12 +128,14 @@ export function getAdminToken(): string | null {
   return getStoredToken(ADMIN_TOKEN_KEY);
 }
 
-export function clearCustomerSession(): void {
+export function clearCustomerSession(options?: { forgetActivationCode?: boolean }): void {
   const token = getCustomerToken();
   try {
     localStorage.removeItem(CUSTOMER_TOKEN_KEY);
     localStorage.removeItem("vi_customer_name");
-    localStorage.removeItem("vi_customer_code");
+    if (options?.forgetActivationCode) {
+      localStorage.removeItem("vi_customer_code");
+    }
     localStorage.removeItem("vi_customer_valid_days");
     localStorage.removeItem("vi_customer_package_price_credits");
     localStorage.removeItem("vi_customer_access_expires_at");
@@ -900,6 +902,7 @@ export function adjustCredits(
 export interface RechargeRequestItem {
   id: number;
   customer_code: string;
+  customer_name: string;
   amount: string;
   reason: string | null;
   status: "pending" | "approved" | "rejected";
@@ -990,9 +993,23 @@ export function toggleCustomerCode(code: string): Promise<CustomerCodeItem> {
   });
 }
 
+export function extendCustomerCodeAccess(
+  code: string,
+  days: number,
+  packagePriceCredits: string,
+): Promise<CustomerCodeItem> {
+  return request(`/admin/codes/${encodeURIComponent(code)}/extend`, {
+    method: "POST",
+    body: JSON.stringify({ days, package_price_credits: packagePriceCredits }),
+  });
+}
+
 export interface AdminAccountItem {
   username: string;
   created_at: string;
+  is_current: boolean;
+  can_reset_password: boolean;
+  can_delete: boolean;
 }
 
 export function createAdminAccount(params: {
@@ -1072,14 +1089,9 @@ export async function getCrawlerCapabilities(): Promise<CrawlerCapabilitiesRespo
   };
 }
 
-export function extendCustomerCodeAccess(
-  code: string,
-  days: number,
-  packagePriceCredits: string,
-): Promise<CustomerCodeItem> {
-  return request(`/admin/codes/${encodeURIComponent(code)}/extend`, {
-    method: "POST",
-    body: JSON.stringify({ days, package_price_credits: packagePriceCredits }),
+export function deleteAdminAccount(username: string): Promise<{ username: string; deleted: boolean }> {
+  return request(`/admin/accounts/${encodeURIComponent(username)}`, {
+    method: "DELETE",
   });
 }
 

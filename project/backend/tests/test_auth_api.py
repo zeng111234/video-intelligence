@@ -329,6 +329,7 @@ def test_recharge_review_is_atomic_and_cannot_credit_twice(client):
         headers={"X-Customer-Token": customer_token},
     )
     assert created.status_code == 200
+    assert created.json()["customer_name"] == "客户甲"
     request_id = created.json()["id"]
     admin_token = test_client.post(
         "/api/v1/auth/admin-login",
@@ -336,6 +337,13 @@ def test_recharge_review_is_atomic_and_cannot_credit_twice(client):
         headers=TEST_API_HEADERS,
     ).json()["token"]
     headers = {"X-Admin-Token": admin_token}
+    pending = test_client.get(
+        "/api/v1/credits/recharge-requests?status=pending",
+        headers=headers,
+    )
+    assert pending.status_code == 200
+    assert pending.json()[0]["customer_name"] == "客户甲"
+    assert pending.json()[0]["customer_code"] == "GOOD-CODE-1"
     approved = test_client.post(
         f"/api/v1/credits/recharge-requests/{request_id}/review",
         json={"status": "approved"},

@@ -25,6 +25,7 @@ import {
 import {
   adjustCredits,
   createAdminAccount,
+  deleteAdminAccount,
   extendCustomerCodeAccess,
   generateCustomerCodes,
   listAdminAccounts,
@@ -65,7 +66,6 @@ function CustomerCodesCard() {
   const [adjusting, setAdjusting] = useState(false);
   const [extendCode, setExtendCode] = useState<CustomerCodeItem | null>(null);
   const [extendDays, setExtendDays] = useState<number>(7);
-  const [extendPriceCredits, setExtendPriceCredits] = useState<number>(9.9);
   const [extending, setExtending] = useState(false);
   const [generatedCodes, setGeneratedCodes] = useState<CustomerCodeItem[]>([]);
   const [form] = Form.useForm();
@@ -87,13 +87,14 @@ function CustomerCodesCard() {
 
   const submitGenerate = async () => {
     const values = await form.validateFields();
+    const packageCredits = String(values.package_credits ?? 9.9);
     setGenerating(true);
     try {
       const created = await generateCustomerCodes({
         name: values.name.trim(),
-        initial_credits: String(values.initial_credits ?? 0),
+        initial_credits: packageCredits,
         valid_days: values.valid_days ?? 7,
-        package_price_credits: String(values.package_price_credits ?? 9.9),
+        package_price_credits: packageCredits,
         count: values.count ?? 1,
       });
       toast.success(`已生成 ${created.length} 个激活码`);
@@ -138,20 +139,19 @@ function CustomerCodesCard() {
   };
 
   const submitExtend = async () => {
-    if (!extendCode || extendDays <= 0 || extendPriceCredits < 0) return;
+    if (!extendCode || extendDays <= 0) return;
     setExtending(true);
     try {
       const updated = await extendCustomerCodeAccess(
         extendCode.code,
         extendDays,
-        String(extendPriceCredits),
+        extendCode.package_price_credits,
       );
       toast.success(
-        `已为 ${updated.name} 延长 ${extendDays} 天，套餐价 ${extendPriceCredits} 积分；内容余额不变`,
+        `已为 ${updated.name} 延长 ${extendDays} 天；可用余额不变`,
       );
       setExtendCode(null);
       setExtendDays(7);
-      setExtendPriceCredits(9.9);
       void fetchCodes();
     } catch (err) {
       toast.error((err as Error).message || "续期失败");
@@ -189,7 +189,7 @@ function CustomerCodesCard() {
       }
     >
       <Text type="secondary" className="admin-section-intro">
-        使用期从客户第一次登录起算；积分单独计费，到期不会清空余额。
+        使用期从客户第一次登录起算；套餐内含积分会成为客户的初始可用余额。
       </Text>
       <Table
         className="admin-customer-codes-table"
@@ -230,14 +230,12 @@ function CustomerCodesCard() {
             ),
           },
           {
-            title: "套餐 / 有效期",
+            title: "使用期",
             width: 135,
             render: (_, item) => (
               <Space direction="vertical" size={0}>
                 <Text>
-                  {item.valid_days
-                    ? `${item.valid_days}天 / ${item.package_price_credits}积分`
-                    : "长期"}
+                  {item.valid_days ? `${item.valid_days}天` : "长期"}
                 </Text>
                 {accessStatus(item)}
                 {item.access_expires_at && (
@@ -249,7 +247,7 @@ function CustomerCodesCard() {
             ),
           },
           {
-            title: "积分",
+            title: "可用余额",
             dataIndex: "balance",
             width: 60,
             render: (value: string) => <Text strong>{value}</Text>,
@@ -266,10 +264,9 @@ function CustomerCodesCard() {
                     onClick={() => {
                       setExtendCode(item);
                       setExtendDays(item.valid_days ?? 7);
-                      setExtendPriceCredits(Number(item.package_price_credits));
                     }}
                   >
-                    {item.access_status === "unused" ? "调整套餐" : "续期"}
+                    {item.access_status === "unused" ? "调整使用期" : "续期"}
                   </Button>
                 )}
                 <Button size="small" type="link" onClick={() => setAdjustCode(item)}>
@@ -302,8 +299,7 @@ function CustomerCodesCard() {
           layout="vertical"
           initialValues={{
             valid_days: 7,
-            package_price_credits: 9.9,
-            initial_credits: 0,
+            package_credits: 9.9,
             count: 1,
           }}
         >
@@ -322,18 +318,11 @@ function CustomerCodesCard() {
             <InputNumber min={1} max={3650} suffix="天" style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item
-            name="package_price_credits"
-            label="套餐价格（积分）"
-            extra="周卡默认 9.9 积分；这是使用权限价格，不会从内容余额再次扣除。"
+            name="package_credits"
+            label="套餐内含可用积分"
+            extra="周卡默认 9.9 积分；客户首次登录后可以直接使用。"
           >
             <InputNumber min={0} max={100000} precision={2} style={{ width: "100%" }} />
-          </Form.Item>
-          <Form.Item
-            name="initial_credits"
-            label="赠送积分（可选）"
-            extra="套餐时长与积分相互独立；不赠送请保持 0。"
-          >
-            <InputNumber min={0} max={100000} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item name="count" label="生成数量">
             <InputNumber min={1} max={50} style={{ width: "100%" }} />
@@ -358,8 +347,7 @@ function CustomerCodesCard() {
               </Text>
               <Text type="secondary" style={{ marginLeft: 8 }}>
                 {item.name} · {item.valid_days ? `${item.valid_days}天` : "长期"}
-                {item.valid_days ? ` / ${item.package_price_credits}积分` : ""}
-                {` · 内容余额 ${item.balance} 积分`}
+                {` · 可用余额 ${item.balance} 积分`}
               </Text>
             </div>
           ))}
@@ -376,8 +364,8 @@ function CustomerCodesCard() {
       >
         <Space direction="vertical" size={8} style={{ width: "100%" }}>
           <Text type="secondary">
-            当前套餐 {extendCode?.valid_days ?? "—"} 天 / {extendCode?.package_price_credits ?? "—"}
-            积分；续期不会改动内容余额。
+            当前使用期 {extendCode?.valid_days ?? "—"} 天；续期只延长使用时间，
+            不会增加或扣减可用积分。如需加积分，请使用列表中的“充值”。
           </Text>
           <InputNumber
             min={1}
@@ -387,16 +375,6 @@ function CustomerCodesCard() {
             suffix="天"
             style={{ width: "100%" }}
             autoFocus
-          />
-          <InputNumber
-            min={0}
-            max={100000}
-            precision={2}
-            value={extendPriceCredits}
-            onChange={(value) => setExtendPriceCredits(value ?? 0)}
-            suffix="积分"
-            placeholder="本次套餐价格"
-            style={{ width: "100%" }}
           />
         </Space>
       </Modal>
@@ -436,6 +414,7 @@ function AdminAccountsCard() {
   const [resetTarget, setResetTarget] = useState<AdminAccountItem | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [resetting, setResetting] = useState(false);
+  const [deletingUsername, setDeletingUsername] = useState("");
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -489,6 +468,19 @@ function AdminAccountsCard() {
     }
   };
 
+  const submitDelete = async (item: AdminAccountItem) => {
+    setDeletingUsername(item.username);
+    try {
+      await deleteAdminAccount(item.username);
+      toast.success(`已删除管理员 ${item.username}`);
+      await fetchAccounts();
+    } catch (err) {
+      toast.error((err as Error).message || "删除失败");
+    } finally {
+      setDeletingUsername("");
+    }
+  };
+
   return (
     <Card
       className="admin-secondary-card"
@@ -505,7 +497,7 @@ function AdminAccountsCard() {
       }
     >
       <Text type="secondary" className="admin-section-intro">
-        可创建多个管理员账号；新密码至少 12 位。
+        主管理员可新增、重置和删除其他管理员；普通管理员只能修改自己的密码。新密码至少 12 位。
       </Text>
       <Space direction="vertical" size={12} style={{ width: "100%" }}>
         <Space.Compact style={{ width: "100%" }}>
@@ -541,9 +533,28 @@ function AdminAccountsCard() {
             {
               title: "操作",
               render: (_, item) => (
-                <Button size="small" type="link" onClick={() => setResetTarget(item)}>
-                  重置密码
-                </Button>
+                <Space size={4} wrap>
+                  {item.can_reset_password && (
+                    <Button size="small" type="link" onClick={() => setResetTarget(item)}>
+                      {item.is_current ? "修改我的密码" : "重置密码"}
+                    </Button>
+                  )}
+                  {item.can_delete && (
+                    <Popconfirm
+                      title={`删除管理员 ${item.username}？`}
+                      description="删除后该账号会立即退出，且无法再登录。"
+                      okText="确认删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true, loading: deletingUsername === item.username }}
+                      onConfirm={() => void submitDelete(item)}
+                    >
+                      <Button size="small" type="link" danger>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  )}
+                  {!item.can_reset_password && !item.can_delete && <Text type="secondary">无可用操作</Text>}
+                </Space>
               ),
             },
           ]}
@@ -648,7 +659,17 @@ function RechargeRequestsCard() {
           }}
           columns={[
           { title: "ID", dataIndex: "id", width: 60 },
-          { title: "客户", dataIndex: "customer_code" },
+          {
+            title: "申请客户",
+            render: (_, item) => (
+              <Space direction="vertical" size={0}>
+                <Text strong>{item.customer_name || "未命名客户"}</Text>
+                <Text type="secondary" copyable>
+                  激活码：{item.customer_code}
+                </Text>
+              </Space>
+            ),
+          },
           { title: "金额", dataIndex: "amount", render: (v: string) => `${v} 积分` },
           { title: "原因", dataIndex: "reason", render: (v: string) => v || "-" },
           {

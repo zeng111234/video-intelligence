@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import sys
 import os
@@ -187,7 +188,9 @@ class CrawlerSearchRequest(BaseModel):
         168,
         description="热点宝榜单统计周期：1/24/72/168 小时；不限制视频发布时间。",
     )
-    count_per_platform: int = Field(30, ge=1, le=100, description="每个平台最多保留数量")
+    count_per_platform: int = Field(
+        30, ge=1, le=100, description="每个平台最多保留数量"
+    )
     kuaishou_sort: Literal["platform", "newest", "likes"] = Field(
         "platform",
         description="快手排序：平台综合、最新发布或最多点赞。",
@@ -218,7 +221,9 @@ class CrawlerSearchRequest(BaseModel):
         False,
         description="复采已关闭，只执行本次搜索",
     )
-    target_main_count: int = Field(30, ge=1, le=100, description="历史兼容的候选目标数量")
+    target_main_count: int = Field(
+        30, ge=1, le=100, description="历史兼容的候选目标数量"
+    )
     max_paid_calls: int = Field(0, ge=0, le=0, description="免费模式不允许付费调用")
     allow_paid_fallback: bool = Field(
         False,
@@ -708,6 +713,22 @@ def _browser_capability_payload(
     )
 
 
+def _browser_capability_payloads(
+    providers: list[tuple[object, Platform]],
+) -> list[CrawlerBrowserDiscoveryCapabilities]:
+    """Probe independent loopback browser sessions concurrently.
+
+    A closed or proxy-delayed debug port must not multiply the page-open delay
+    by the number of supported platforms.
+    """
+    with ThreadPoolExecutor(max_workers=len(providers)) as executor:
+        futures = [
+            executor.submit(_browser_capability_payload, provider, platform=platform)
+            for provider, platform in providers
+        ]
+        return [future.result() for future in futures]
+
+
 def _capability_payload(
     service,
     provider,
@@ -734,9 +755,7 @@ def _capability_payload(
         hotspot_provider.capabilities() if hotspot_provider is not None else None
     )
     # 小红书找素材与连接状态共用用户主动登录的独立资料目录。
-    xiaohongshu_connection_provider = (
-        xiaohongshu_login_provider or xiaohongshu_provider
-    )
+    xiaohongshu_connection_provider = xiaohongshu_login_provider or xiaohongshu_provider
     return CrawlerCapabilitiesResponse(
         provider_name=capability.provider_name,
         display_name=capability.display_name,
@@ -786,24 +805,14 @@ def _capability_payload(
             if hotspot_capability is not None
             else None
         ),
-        platform_browsers=[
-            _browser_capability_payload(
-                douyin_public_provider,
-                platform=Platform.DOUYIN,
-            ),
-            _browser_capability_payload(
-                xiaohongshu_connection_provider,
-                platform=Platform.XIAOHONGSHU,
-            ),
-            _browser_capability_payload(
-                kuaishou_provider,
-                platform=Platform.KUAISHOU,
-            ),
-            _browser_capability_payload(
-                bilibili_provider,
-                platform=Platform.BILIBILI,
-            ),
-        ]
+        platform_browsers=_browser_capability_payloads(
+            [
+                (douyin_public_provider, Platform.DOUYIN),
+                (xiaohongshu_connection_provider, Platform.XIAOHONGSHU),
+                (kuaishou_provider, Platform.KUAISHOU),
+                (bilibili_provider, Platform.BILIBILI),
+            ]
+        )
         if (
             douyin_public_provider is not None
             and xiaohongshu_connection_provider is not None
@@ -1105,8 +1114,7 @@ def monitor_official_hot_pool(
                 matched_count=len(pool),
                 result_state="官方热榜候选",
                 result_message=(
-                    "未输入关键词，已完成全量热榜同步"
-                    f"{hot_words_note}；不会生成关键词复爬计划。"
+                    f"未输入关键词，已完成全量热榜同步{hot_words_note}；不会生成关键词复爬计划。"
                 ),
                 executed_recrawls=len(executed_recrawls),
                 candidates=[
@@ -1130,8 +1138,7 @@ def monitor_official_hot_pool(
         result_message=(
             result.user_notice
             or (
-                f"官方热榜匹配 {len(result.matched)} 条候选；"
-                "本次为单次搜索，不安排后续复采。"
+                f"官方热榜匹配 {len(result.matched)} 条候选；本次为单次搜索，不安排后续复采。"
             )
         ),
         executed_recrawls=len(executed_recrawls),
@@ -1450,8 +1457,7 @@ def _hotspot_safety_status(
             cooldown_remaining_seconds=remaining,
             next_available_at=window_ends_at,
             message=(
-                "为降低账号风险，滚动 24 小时的真实热点宝采集已达到 48 次上限；"
-                "缓存结果仍可立即查看。"
+                "为降低账号风险，滚动 24 小时的真实热点宝采集已达到 48 次上限；缓存结果仍可立即查看。"
             ),
             **common,
         )
@@ -1494,9 +1500,7 @@ def _browser_provider_key(platform: Platform) -> str:
     return f"{platform.value}_browser_search"
 
 
-def _claim_browser_lease(
-    platform: Platform, repo, now: datetime
-) -> str | None:
+def _claim_browser_lease(platform: Platform, repo, now: datetime) -> str | None:
     """为平台的真实浏览器采集抢占配额（并发互斥 + 24h 滚动次数上限）。
 
     返回租约 id 表示成功；返回 None 表示被限（冷却/运行中/今日次数用完）。
@@ -2181,14 +2185,14 @@ def _execute_free_multi_platform_batch(
             errors.append(f"{_platform_label(platform.value)}：{exc}")
 
     public_status = None
-    if (
-        Platform.DOUYIN in selected_platforms
-        and not browser_cache_hits.get(Platform.DOUYIN, False)
+    if Platform.DOUYIN in selected_platforms and not browser_cache_hits.get(
+        Platform.DOUYIN, False
     ):
         try:
             public_status = _start_browser_for_search(douyin_public_provider)
         except LicensedProviderError as exc:
             errors.append(f"抖音登录搜索：{exc}")
+
     def execute_browser_source(
         service,
         provider,
@@ -2214,9 +2218,7 @@ def _execute_free_multi_platform_batch(
         # 缓存命中不占用配额。被限时跳过该平台并提示，不影响其他平台。
         lease_id: str | None = None
         if not cache_hit:
-            lease_id = _claim_browser_lease(
-                platform, repo, datetime.now().astimezone()
-            )
+            lease_id = _claim_browser_lease(platform, repo, datetime.now().astimezone())
             if lease_id is None:
                 errors.append(_browser_safety_status(platform, repo).message)
                 return None
@@ -2261,8 +2263,7 @@ def _execute_free_multi_platform_batch(
                         BROWSER_SAFETY_PAUSE_SECONDS if is_safety_event else 0
                     ),
                     safety_reason=(
-                        f"{_platform_label(platform.value)}出现安全验证或访问频繁提示，"
-                        "已自动暂停真实采集 24 小时。"
+                        f"{_platform_label(platform.value)}出现安全验证或访问频繁提示，已自动暂停真实采集 24 小时。"
                         if is_safety_event
                         else None
                     ),
@@ -2294,9 +2295,7 @@ def _execute_free_multi_platform_batch(
                 platform,
                 body.published_window_days,
                 count=None,
-                cache_hit=(
-                    browser_cache_hits.get(platform, False)
-                ),
+                cache_hit=(browser_cache_hits.get(platform, False)),
             )
 
     persisted = [batch for batch in batches if repo.get_search_batch(batch.batch_id)]
@@ -2453,7 +2452,10 @@ def _enrich_bilibili_public_metrics(
     seen_candidate_ids: set[str] = set()
     for run in bilibili_runs:
         for match in repo.list_candidate_matches(run.run_id):
-            if match.platform != Platform.BILIBILI or match.video_id in seen_candidate_ids:
+            if (
+                match.platform != Platform.BILIBILI
+                or match.video_id in seen_candidate_ids
+            ):
                 continue
             candidate = repo.get_candidate(match.video_id)
             if candidate is None:
@@ -2475,7 +2477,10 @@ def _enrich_bilibili_public_metrics(
     try:
         detail_page = refresh_provider.refresh_metrics(
             Platform.BILIBILI,
-            [candidate.platform_item_id or candidate.video_id for candidate in candidates],
+            [
+                candidate.platform_item_id or candidate.video_id
+                for candidate in candidates
+            ],
             hashlib.sha256(
                 f"{batch_id}|bilibili-public-detail".encode("utf-8")
             ).hexdigest(),
@@ -2495,9 +2500,7 @@ def _enrich_bilibili_public_metrics(
         )
         return
 
-    detail_by_item_id = {
-        item.platform_item_id: item for item in detail_page.items
-    }
+    detail_by_item_id = {item.platform_item_id: item for item in detail_page.items}
     updated_count = 0
     for candidate in candidates:
         detail = detail_by_item_id.get(candidate.platform_item_id or candidate.video_id)
@@ -2510,9 +2513,7 @@ def _enrich_bilibili_public_metrics(
     if updated_count and callable(recompute):
         recompute()
 
-    message = (
-        f"B站公开详情已补全前 {len(candidates)} 条：成功 {updated_count} 条"
-    )
+    message = f"B站公开详情已补全前 {len(candidates)} 条：成功 {updated_count} 条"
     if detail_page.errors:
         message += f"；{len(detail_page.errors)} 条未返回完整指标"
     _record_bilibili_metric_refresh_diagnostic(
@@ -2536,7 +2537,9 @@ def _merge_bilibili_public_detail(candidate, detail):
                 if refreshed.comments is not None
                 else previous.comments
             ),
-            "shares": refreshed.shares if refreshed.shares is not None else previous.shares,
+            "shares": refreshed.shares
+            if refreshed.shares is not None
+            else previous.shares,
             "favorites": (
                 refreshed.favorites
                 if refreshed.favorites is not None
@@ -3078,8 +3081,7 @@ def _execute_hotspot_single_snapshot_batch(
                     else "滚动 24 小时的真实热点宝采集已达到 48 次上限；缓存结果仍可立即查看。"
                     if daily_limit_reached
                     else (
-                        "本次真实采集已完成；"
-                        f"下次真实采集约在 {(cooldown_seconds + 59) // 60} 分钟后开放。"
+                        f"本次真实采集已完成；下次真实采集约在 {(cooldown_seconds + 59) // 60} 分钟后开放。"
                     )
                 )
                 or "热点宝安全状态已更新。",
@@ -3854,7 +3856,9 @@ def start_doubao_browser_worker():
     log_dir = backend_config.RUNTIME_ROOT / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "doubao-browser-worker.log"
-    node_executable = os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    node_executable = (
+        os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    )
     backend_origin = os.getenv(
         "VIDEOINSIGHT_BACKEND_ORIGIN", "http://127.0.0.1:2001"
     ).rstrip("/")
@@ -4148,7 +4152,9 @@ def start_doubao_mobile_worker():
     log_dir = backend_config.RUNTIME_ROOT / "data" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "doubao-mobile-worker.log"
-    node_executable = os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    node_executable = (
+        os.getenv("VIDEOINSIGHT_NODE_EXECUTABLE", "node").strip() or "node"
+    )
     backend_origin = os.getenv(
         "VIDEOINSIGHT_BACKEND_ORIGIN", "http://127.0.0.1:2001"
     ).rstrip("/")
@@ -4528,10 +4534,12 @@ def _candidate_to_response(
     relevance_reason: str | None = None,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
-    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
-        resolved_evidence
+    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = (
+        _hotspot_evidence_details(resolved_evidence)
     )
-    duration_seconds = getattr(candidate, "duration_seconds", None) or evidence_duration_seconds
+    duration_seconds = (
+        getattr(candidate, "duration_seconds", None) or evidence_duration_seconds
+    )
     is_incremental_hotspot = "来源=video_board" in (resolved_evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(resolved_evidence)
     media_resolution = repo.find_latest_media_resolution_for_candidate(
@@ -4608,9 +4616,7 @@ def _candidate_to_response(
         platform_label=_platform_label(candidate.platform.value),
         source_url=str(candidate.source_url) if candidate.source_url else None,
         published_at=candidate.published_at,
-        published_at_reliable=bool(
-            getattr(candidate, "published_at_reliable", False)
-        ),
+        published_at_reliable=bool(getattr(candidate, "published_at_reliable", False)),
         trend_score=trend.score if trend else None,
         trend_level=trend.level.value if trend else None,
         display_tier=trend.display_tier if trend else "ordinary",
@@ -4674,10 +4680,12 @@ def _candidate_to_response(
 
 
 def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidateResult:
-    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = _hotspot_evidence_details(
-        item.evidence
+    hotspot_lists, evidence_duration_seconds, hotspot_window_hours = (
+        _hotspot_evidence_details(item.evidence)
     )
-    duration_seconds = getattr(item, "duration_seconds", None) or evidence_duration_seconds
+    duration_seconds = (
+        getattr(item, "duration_seconds", None) or evidence_duration_seconds
+    )
     likes_per_day, quality_source = _hotspot_quality_details(item.evidence)
     spoken_seed = _spoken_seed_quality(
         title=item.title,
@@ -4988,7 +4996,11 @@ def _interaction_heat_or_none(candidate) -> float | None:
     """Expose a heat score only when the platform returned an interaction field."""
     metrics = candidate.metrics
     values = (metrics.likes, metrics.comments, metrics.shares, metrics.favorites)
-    return _interaction_heat(candidate) if any(value is not None for value in values) else None
+    return (
+        _interaction_heat(candidate)
+        if any(value is not None for value in values)
+        else None
+    )
 
 
 def _is_official_hot_candidate(candidate) -> bool:
@@ -5105,7 +5117,9 @@ def _run_to_response(
                     evidence=match.evidence or candidate.evidence,
                     keyword=matched_keyword,
                     relevance_basis=(
-                        "title_or_hashtag" if direct_match_keyword else "platform_search"
+                        "title_or_hashtag"
+                        if direct_match_keyword
+                        else "platform_search"
                     ),
                     relevance_reason=(
                         keyword_match_reason(direct_match_keyword)

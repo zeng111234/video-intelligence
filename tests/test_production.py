@@ -2157,6 +2157,91 @@ def test_non_douyin_candidate_uses_local_link_preflight(tmp_path):
     assert preflight["items"][0]["reasons"] == []
 
 
+def test_douyin_home_candidate_falls_back_to_its_saved_link(
+    tmp_path,
+    monkeypatch,
+):
+    repository = MockRepository()
+    candidate = _candidate("candidate-home-blocked").model_copy(
+        update={
+            "source_url": "https://www.douyin.com/video/7390000000000000000",
+        }
+    )
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        link_transcription_service=_LocalLinkPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="主页候选配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="主页候选批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    options = {
+        "rights_holder": "测试公司",
+        "rights_confirmed": True,
+        "publish_platforms": ["douyin"],
+        "concurrency": 1,
+        "max_total_cost_cny": 10,
+        "paid_actions_confirmed": True,
+    }
+
+    preflight = service.preflight_batch(batch.batch_id, **options)
+    started = service.start_batch(
+        batch.batch_id,
+        options=options,
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(started.items[0].run_id)
+
+    assert preflight["ready_count"] == 1
+    assert preflight["items"][0]["use_candidate_link_fallback"] is True
+    assert preflight["items"][0]["reasons"] == []
+    assert run is not None
+    assert run.config["candidate_link_fallback"] is True
+    assert run.config["share_text"] == str(candidate.source_url)
+
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        production_service=service,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "_run_guided_share_link",
+        lambda selected: calls.append(f"link:{selected.run_id}"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_run_candidate",
+        lambda selected: calls.append(f"media:{selected.run_id}"),
+    )
+
+    worker._run_production_batch(run)
+
+    assert calls == [f"link:{run.run_id}"]
+
+
 def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):
     repository = MockRepository()
     candidates = [_candidate(f"candidate-auto-{index}") for index in range(4)]

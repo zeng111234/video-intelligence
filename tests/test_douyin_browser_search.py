@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
 
 import pytest
+from urllib.request import ProxyHandler
 
+from src.adapters import douyin_browser_search as douyin_browser_module
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.douyin_browser_search import (
     BrowserSessionStatus,
@@ -9,6 +11,13 @@ from src.adapters.douyin_browser_search import (
     LocalDouyinPublicSearchProvider,
 )
 from src.models import Platform, ProviderErrorKind, ProviderMode, ProviderSearchError
+
+
+def test_local_debug_status_bypasses_environment_proxies():
+    assert not any(
+        isinstance(handler, ProxyHandler)
+        for handler in douyin_browser_module._LOCAL_DEBUG_OPENER.handlers
+    )
 
 
 def test_visible_video_rows_become_canonical_douyin_candidates(tmp_path):
@@ -749,10 +758,7 @@ def test_public_search_multi_layout_marks_data_availability_without_fake_metrics
 
 def test_public_search_item_records_local_only_filter_without_fake_metrics():
     observed_at = datetime.fromisoformat("2026-08-04T12:00:00+08:00")
-    warning = (
-        "抖音官网没有可用的 7 天发布时间选项；"
-        "平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
-    )
+    warning = "抖音官网没有可用的 7 天发布时间选项；平台筛选未应用，仅按页面可核验发布时间在本地过滤。"
     items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
         [
             {

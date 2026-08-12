@@ -49,6 +49,18 @@ describe("LoginPage", () => {
     expect((screen.getByPlaceholderText(/激活码/) as HTMLInputElement).value).toBe("DEMO-0815");
   });
 
+  it("remembers the activation code on this customer computer", () => {
+    localStorage.setItem("vi_customer_code", "ABCD-EFGH-JKMP-QRST");
+    render(
+      <ToastProvider>
+        <LoginPage />
+      </ToastProvider>,
+    );
+    expect((screen.getByPlaceholderText(/激活码/) as HTMLInputElement).value).toBe(
+      "ABCD-EFGH-JKMP-QRST",
+    );
+  });
+
   it("submits uppercase code and stores session on success", async () => {
     mockCustomerLogin.mockResolvedValue({
       token: "customer-token-1",

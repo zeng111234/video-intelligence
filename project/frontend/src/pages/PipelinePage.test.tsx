@@ -974,9 +974,9 @@ describe("PipelinePage customer workspace", () => {
       .toContain("企业主音色");
   });
 
-  it("finds materials in one click without exposing supplier diagnostics", async () => {
+  it("keeps a valid broad keyword when a platform temporarily returns no result", async () => {
     vi.mocked(previewCrawlerBatch).mockResolvedValue({
-      keyword: "餐饮老板获客",
+      keyword: "财经",
       published_window_days: 7,
       hotspot_window_hours: 168,
       count_per_platform: 10,
@@ -994,15 +994,18 @@ describe("PipelinePage customer workspace", () => {
       estimated_total_cost_cny: 0,
       blocked: false,
     });
-    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch());
+    const emptyFinanceBatch = crawlerBatch();
+    emptyFinanceBatch.keyword = "财经";
+    vi.mocked(createCrawlerBatch).mockResolvedValue(emptyFinanceBatch);
     renderPage();
 
     const input = await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑");
-    fireEvent.change(input, { target: { value: "餐饮老板获客" } });
+    fireEvent.change(input, { target: { value: "财经" } });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findByText("换一个更具体的词再试试。")).toBeTruthy();
-    expect(previewCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+    expect(await screen.findByText(/已保留关键词“财经”/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "用原词重试" })).toBeTruthy();
+    expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
       published_window_days: 0,
       count_per_platform: 30,
       target_main_count: 30,
@@ -1010,12 +1013,59 @@ describe("PipelinePage customer workspace", () => {
       max_paid_calls: 0,
       allow_paid_fallback: false,
     }));
+    expect(previewCrawlerBatch).not.toHaveBeenCalled();
     expect(screen.queryByText("供应商无返回")).toBeNull();
     expect(screen.queryByText("检索范围与费用预览")).toBeNull();
   });
 
+  it("reuses the working material-search route instead of blocking it with a second preview", async () => {
+    vi.mocked(previewCrawlerBatch).mockResolvedValue({
+      keyword: "财经",
+      published_window_days: 0,
+      count_per_platform: 30,
+      force_refresh: false,
+      provider_mode: "local_browser",
+      provider_name: "browser",
+      ranking_mode: "platform_default",
+      monthly_query_count: 0,
+      monthly_estimated_cost_cny: 0,
+      monthly_warning_queries: 0,
+      monthly_hard_limit_queries: 0,
+      monthly_hard_limit_cost_cny: 0,
+      cache_ttl_minutes: 10,
+      platforms: [{
+        platform: "douyin",
+        platform_label: "抖音",
+        cache_hit: false,
+        estimated_api_calls: 0,
+        platform_unit_price_cny: 0,
+        estimated_cost_cny: 0,
+        blocked_reason: "抖音登录窗口尚未连接",
+      }],
+      estimated_total_cost_cny: 0,
+      blocked: true,
+    });
+    const financeCandidate = {
+      ...candidate,
+      video_id: "finance-candidate",
+      title: "财经行业分析与经营方法",
+    };
+    const financeBatch = crawlerBatch([financeCandidate]);
+    financeBatch.keyword = "财经";
+    vi.mocked(createCrawlerBatch).mockResolvedValue(financeBatch);
+    renderPage();
+
+    const input = await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑");
+    fireEvent.change(input, { target: { value: "财经" } });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect((await screen.findAllByText("财经行业分析与经营方法")).length).toBeGreaterThan(0);
+    expect(previewCrawlerBatch).not.toHaveBeenCalled();
+    expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({ keyword: "财经" }));
+  });
+
   it("distinguishes a rejected search request from an empty result", async () => {
-    vi.mocked(previewCrawlerBatch).mockRejectedValue(new Error("请求参数校验失败"));
+    vi.mocked(createCrawlerBatch).mockRejectedValue(new Error("请求参数校验失败"));
     renderPage();
 
     const input = await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑");
@@ -1024,7 +1074,7 @@ describe("PipelinePage customer workspace", () => {
 
     expect(await screen.findByText("搜索请求没有成功提交，请刷新页面后再试；你的关键词不会丢失。")).toBeTruthy();
     expect(screen.getByRole("button", { name: "重新提交" })).toBeTruthy();
-    expect(createCrawlerBatch).not.toHaveBeenCalled();
+    expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({ keyword: "贴标机" }));
   });
 
   it("shows every qualified candidate with its original video link in manual mode", async () => {
@@ -1223,7 +1273,7 @@ describe("PipelinePage customer workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    await waitFor(() => expect(previewCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
       published_window_days: 180,
       count_per_platform: 100,
       target_main_count: 100,
@@ -1268,7 +1318,7 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByRole("button", { name: "找素材" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
-    await waitFor(() => expect(previewCrawlerBatch).toHaveBeenLastCalledWith(
+    await waitFor(() => expect(createCrawlerBatch).toHaveBeenLastCalledWith(
       expect.objectContaining({ published_window_days: 7 }),
     ));
   });
@@ -1402,7 +1452,7 @@ describe("PipelinePage customer workspace", () => {
 
     const selected = await screen.findByRole("button", { name: new RegExp(lowThreshold.title) });
     expect(selected.className).toContain("selected");
-    expect(screen.getByText(/专业爬虫中的明确选择/)).toBeTruthy();
+    expect(screen.getByText(/素材发现中的明确选择/)).toBeTruthy();
     expect(createProductionBatch).not.toHaveBeenCalled();
   });
 
@@ -1653,6 +1703,8 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
     expect(await screen.findByText("发布信息与账号状态")).toBeTruthy();
+    expect(screen.getByText("请遵守平台规则并使用已授权内容")).toBeTruthy();
+    expect(screen.getByText(/平台审核、限流或封禁风险无法由软件消除/)).toBeTruthy();
     expect((screen.getByLabelText("发布标题") as HTMLInputElement).value).toBe("客户可见标题");
     expect((screen.getByLabelText("发布描述") as HTMLTextAreaElement).value).toBe("客户可见发布描述");
     expect((screen.getByLabelText("发布标签") as HTMLInputElement).value).toBe("本地获客、真实案例");

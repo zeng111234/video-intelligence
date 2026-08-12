@@ -4,7 +4,11 @@
 import { useState } from "react";
 import { Button, Input, Typography } from "antd";
 import { openAdminLogin } from "../hooks/useAdminAuth";
-import { useCustomerLogin } from "../hooks/useCustomerAuth";
+import {
+  getCustomerCode,
+  rememberCustomerCode,
+  useCustomerLogin,
+} from "../hooks/useCustomerAuth";
 
 const { Title, Text } = Typography;
 
@@ -12,7 +16,7 @@ export default function LoginPage() {
   const { loggingIn, doLogin } = useCustomerLogin();
   const [code, setCode] = useState(() => {
     const activation = new URLSearchParams(window.location.search).get("activation");
-    return activation?.trim().toUpperCase() ?? "";
+    return activation?.trim().toUpperCase() || getCustomerCode() || "";
   });
   const [error, setError] = useState("");
 
@@ -57,11 +61,14 @@ export default function LoginPage() {
           placeholder="激活码（如 ABCD-EFGH-JKMP-QRST）"
           value={code}
           onChange={(event) => {
-            setCode(event.target.value.toUpperCase());
+            const nextCode = event.target.value.toUpperCase();
+            setCode(nextCode);
+            rememberCustomerCode(nextCode);
             setError("");
           }}
           onPressEnter={submit}
           autoFocus
+          allowClear
           style={{ textTransform: "uppercase", letterSpacing: 2 }}
           aria-label="激活码"
         />

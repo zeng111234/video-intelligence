@@ -33,7 +33,7 @@ const FAQ_DATA = [
       },
       {
         q: `「${intelligentCreation.label}」和「${taskQueue.label}」有什么区别？`,
-        a: `「${intelligentCreation.label}」默认处理一条内容并显示当前步骤；「${taskQueue.label}」用于查看批量任务、暂停、审核和安全重试。两者都只展示真实任务与产物。`,
+        a: `「${intelligentCreation.label}」默认处理一条内容并显示当前步骤；「${taskQueue.label}」用于查看创作任务、暂停、审核和安全重试。两者都只展示真实任务与产物。`,
       },
       {
         q: `什么时候使用「${crawler.label}」？`,

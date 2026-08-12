@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  clearCustomerSession,
   createGuidedPipeline,
   deletePublishAccount,
   exportTranscription,
@@ -89,6 +90,17 @@ describe("request authentication headers", () => {
   afterEach(() => {
     localStorage.clear();
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the remembered activation code when a session expires", () => {
+    localStorage.setItem("vi_customer_token", "expired-token");
+    localStorage.setItem("vi_customer_code", "ABCD-EFGH-JKMP-QRST");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
+
+    clearCustomerSession();
+
+    expect(localStorage.getItem("vi_customer_token")).toBeNull();
+    expect(localStorage.getItem("vi_customer_code")).toBe("ABCD-EFGH-JKMP-QRST");
   });
 
   it("keeps the login token when an idempotency key is supplied", async () => {

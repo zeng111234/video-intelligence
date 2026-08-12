@@ -1,6 +1,8 @@
 ﻿param(
     [string]$Version = "0.2.0",
     [string]$VerifierPath = "",
+    [string]$InstallRoot = "",
+    [string]$RuntimeRoot = "",
     [switch]$Quiet
 )
 
@@ -22,6 +24,9 @@ $startMenuDirCreated = $false
 $shortcutBackupRoot = $null
 $touchedShortcutPaths = @()
 $shortcutBackups = @{}
+$existingInstallRoot = $null
+$previousRuntimeRoot = $null
+$runtimeMigrationCreated = $false
 
 function Test-InstallationRollbackRequired {
     param([Parameter(Mandatory = $true)][bool]$InstallationCommitted)
@@ -346,7 +351,8 @@ function Restore-UninstallRegistration {
         return
     }
     New-Item -Path $RegistryPath -Force | Out-Null
-    foreach ($name in @("DisplayName", "DisplayVersion", "Publisher", "InstallLocation", "UninstallString")) {
+    foreach ($name in @("DisplayName", "DisplayVersion", "Publisher", "InstallLocation", "RuntimeLocation", "UninstallString")) {
+        if ($null -eq $PreviousValues.$name) { continue }
         New-ItemProperty `
             -Path $RegistryPath `
             -Name $name `
@@ -364,6 +370,84 @@ function Restore-UninstallRegistration {
     }
 }
 
+function Assert-FixedLocalDrivePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    if (-not [System.IO.Path]::IsPathRooted($Path) -or $Path.StartsWith('\\')) {
+        throw "$Label 必须位于电脑内置的本地磁盘。"
+    }
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $driveRoot = [System.IO.Path]::GetPathRoot($fullPath)
+    $drive = [System.IO.DriveInfo]::new($driveRoot)
+    if (-not $drive.IsReady -or $drive.DriveType -ne [System.IO.DriveType]::Fixed) {
+        throw "$Label 不能位于U盘或网络盘。"
+    }
+    if ([string]::Equals(
+        $fullPath.TrimEnd('\', '/'),
+        $driveRoot.TrimEnd('\', '/'),
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "$Label 不能直接使用磁盘根目录。"
+    }
+}
+
+function Get-FileSha256ForMigration {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::Read
+    )
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
+function Copy-DirectoryTreeForMigration {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourceRoot,
+        [Parameter(Mandatory = $true)][string]$DestinationRoot
+    )
+    Assert-NoReparsePointsInTree -RootPath $SourceRoot -Label "原数据目录"
+    if (Test-Path -LiteralPath $DestinationRoot) {
+        throw "新的数据目录已经存在，为避免覆盖未知文件，已停止迁移：$DestinationRoot"
+    }
+    New-Item -ItemType Directory -Path $DestinationRoot | Out-Null
+    $sourcePath = [System.IO.Path]::GetFullPath($SourceRoot).TrimEnd('\', '/')
+    $destinationPath = [System.IO.Path]::GetFullPath($DestinationRoot).TrimEnd('\', '/')
+    foreach ($directory in Get-ChildItem -LiteralPath $sourcePath -Directory -Recurse -Force) {
+        $relative = $directory.FullName.Substring($sourcePath.Length).TrimStart('\', '/')
+        New-Item -ItemType Directory -Path (Join-Path $destinationPath $relative) -Force | Out-Null
+    }
+    foreach ($file in Get-ChildItem -LiteralPath $sourcePath -File -Recurse -Force) {
+        $relative = $file.FullName.Substring($sourcePath.Length).TrimStart('\', '/')
+        $target = Join-Path $destinationPath $relative
+        $targetParent = [System.IO.Path]::GetDirectoryName($target)
+        if (-not (Test-Path -LiteralPath $targetParent)) {
+            New-Item -ItemType Directory -Path $targetParent -Force | Out-Null
+        }
+        [System.IO.File]::Copy($file.FullName, $target, $false)
+        if ((Get-Item -LiteralPath $target).Length -ne $file.Length) {
+            throw "数据文件复制后大小不一致：$relative"
+        }
+        $sourceHash = Get-FileSha256ForMigration -Path $file.FullName
+        $targetHash = Get-FileSha256ForMigration -Path $target
+        if ($sourceHash -ne $targetHash) {
+            throw "数据文件复制后内容不一致：$relative"
+        }
+    }
+    Assert-NoReparsePointsInTree -RootPath $DestinationRoot -Label "新数据目录"
+}
+
 try {
     $payload = Join-Path $PSScriptRoot "payload.zip"
     if (-not (Test-Path -LiteralPath $payload)) {
@@ -371,8 +455,38 @@ try {
     }
 
     $localAppData = [Environment]::GetFolderPath("LocalApplicationData")
-    $programsRoot = Join-Path $localAppData "Programs"
-    $installRoot = Join-Path $programsRoot "VideoInsight"
+    $defaultInstallRoot = Join-Path $localAppData "Programs\VideoInsight"
+    $defaultRuntimeRoot = Join-Path $localAppData "VideoInsight"
+    $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
+    if (Test-Path -LiteralPath $uninstallKey) {
+        $previousUninstall = Get-ItemProperty -LiteralPath $uninstallKey
+    }
+    if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $InstallRoot = $defaultInstallRoot }
+    if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) { $RuntimeRoot = $defaultRuntimeRoot }
+    $installRoot = [System.IO.Path]::GetFullPath($InstallRoot).TrimEnd('\', '/')
+    $RuntimeRoot = [System.IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\', '/')
+    $programsRoot = [System.IO.Path]::GetDirectoryName($installRoot)
+    $existingInstallRoot = if (-not [string]::IsNullOrWhiteSpace([string]$previousUninstall.InstallLocation)) {
+        [System.IO.Path]::GetFullPath([string]$previousUninstall.InstallLocation).TrimEnd('\', '/')
+    }
+    else { $defaultInstallRoot }
+    $previousRuntimeRoot = if (-not [string]::IsNullOrWhiteSpace([string]$previousUninstall.RuntimeLocation)) {
+        [System.IO.Path]::GetFullPath([string]$previousUninstall.RuntimeLocation).TrimEnd('\', '/')
+    }
+    else { $defaultRuntimeRoot }
+    Assert-FixedLocalDrivePath -Path $installRoot -Label "程序安装位置"
+    Assert-FixedLocalDrivePath -Path $RuntimeRoot -Label "数据保存位置"
+    if ([string]::Equals($installRoot, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "程序目录和数据目录必须分开，避免升级时覆盖客户数据。"
+    }
+    $installPrefix = $installRoot + [System.IO.Path]::DirectorySeparatorChar
+    $runtimePrefix = $RuntimeRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (
+        $RuntimeRoot.StartsWith($installPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $installRoot.StartsWith($runtimePrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        throw "程序目录和数据目录不能互相包含，避免升级或卸载时误删客户数据。"
+    }
     $startMenuProgramsRoot = [Environment]::GetFolderPath("Programs")
     $startMenuDir = Join-Path $startMenuProgramsRoot "VideoInsight"
     $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
@@ -384,7 +498,7 @@ try {
     Assert-NoReparsePoint -Path $trustedPowerShell -Label "Windows PowerShell"
     Assert-ChildPath -Parent $programsRoot -Child $installRoot
     Assert-ChildPath -Parent $startMenuProgramsRoot -Child $startMenuDir
-    foreach ($protectedRoot in @($programsRoot, $installRoot, $startMenuProgramsRoot, $startMenuDir, $desktopShortcut, $startMenuShortcut)) {
+    foreach ($protectedRoot in @($programsRoot, $installRoot, $RuntimeRoot, $existingInstallRoot, $previousRuntimeRoot, $startMenuProgramsRoot, $startMenuDir, $desktopShortcut, $startMenuShortcut)) {
         Assert-NoReparsePointsInAncestors -Path $protectedRoot -Label "安装目标"
     }
     Assert-NoReparsePoint -Path $programsRoot -Label "程序目录"
@@ -393,13 +507,15 @@ try {
     Assert-NoReparsePoint -Path $startMenuDir -Label "VideoInsight 开始菜单目录"
     Assert-NoReparsePoint -Path $desktopShortcut -Label "桌面快捷方式"
     Assert-NoReparsePoint -Path $startMenuShortcut -Label "开始菜单快捷方式"
-    $uninstallKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight"
-    if (Test-Path -LiteralPath $uninstallKey) {
-        $previousUninstall = Get-ItemProperty -LiteralPath $uninstallKey
+    if (
+        (Test-Path -LiteralPath $installRoot) -and
+        -not [string]::Equals($installRoot, $existingInstallRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        throw "选择的新安装目录已存在，为避免覆盖未知文件，已停止安装。"
     }
-    $hasExistingInstall = Test-Path -LiteralPath $installRoot
+    $hasExistingInstall = Test-Path -LiteralPath $existingInstallRoot
     $validatedInstalledVersion = Get-ValidatedInstalledApplicationVersion `
-        -InstallRoot $installRoot `
+        -InstallRoot $existingInstallRoot `
         -RegisteredVersion ([string]$previousUninstall.DisplayVersion)
     Assert-NewerInstallerVersion `
         -NewVersion $Version `
@@ -408,9 +524,10 @@ try {
 
     New-Item -ItemType Directory -Path $programsRoot -Force | Out-Null
     $stage = Join-Path $programsRoot (".VideoInsight-install-" + [guid]::NewGuid().ToString("N"))
-    $backupRoot = Join-Path $programsRoot (".VideoInsight-backup-" + [guid]::NewGuid().ToString("N"))
+    $backupParent = [System.IO.Path]::GetDirectoryName($existingInstallRoot)
+    $backupRoot = Join-Path $backupParent (".VideoInsight-backup-" + [guid]::NewGuid().ToString("N"))
     Assert-ChildPath -Parent $programsRoot -Child $stage
-    Assert-ChildPath -Parent $programsRoot -Child $backupRoot
+    Assert-ChildPath -Parent $backupParent -Child $backupRoot
     Assert-NoReparsePointsInAncestors -Path $stage -Label "新版本暂存目录"
     Assert-NoReparsePointsInAncestors -Path $backupRoot -Label "旧版本备份目录"
 
@@ -427,14 +544,14 @@ try {
     }
 
     $phase = "关闭旧版后台进程"
-    Stop-VideoInsightProcesses -ExpectedInstallRoot $installRoot
+    Stop-VideoInsightProcesses -ExpectedInstallRoot $existingInstallRoot
 
-    if (Test-Path -LiteralPath $installRoot) {
+    if (Test-Path -LiteralPath $existingInstallRoot) {
         $phase = "保留旧版本"
-        Assert-NoReparsePointsInTree -RootPath $installRoot -Label "现有安装目录"
+        Assert-NoReparsePointsInTree -RootPath $existingInstallRoot -Label "现有安装目录"
         Invoke-WithSingleRetry `
             -Description "移动旧版本" `
-            -Action { Move-Item -LiteralPath $installRoot -Destination $backupRoot }
+            -Action { Move-Item -LiteralPath $existingInstallRoot -Destination $backupRoot }
     }
 
     $phase = "启用新版本"
@@ -446,18 +563,46 @@ try {
         $newVersionActivated = $true
     }
     catch {
-        if ((Test-Path -LiteralPath $backupRoot) -and -not (Test-Path -LiteralPath $installRoot)) {
-            Move-Item -LiteralPath $backupRoot -Destination $installRoot
+        if ((Test-Path -LiteralPath $backupRoot) -and -not (Test-Path -LiteralPath $existingInstallRoot)) {
+            Move-Item -LiteralPath $backupRoot -Destination $existingInstallRoot
             $backupRoot = $null
         }
         throw
     }
+
+    $phase = "准备客户数据目录"
+    if (-not [string]::Equals($previousRuntimeRoot, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (Test-Path -LiteralPath $previousRuntimeRoot -PathType Container) {
+            if (Test-Path -LiteralPath $RuntimeRoot) {
+                throw "新的数据目录已经存在，为避免覆盖未知文件，已停止迁移：$RuntimeRoot"
+            }
+            $runtimeMigrationCreated = $true
+            Copy-DirectoryTreeForMigration -SourceRoot $previousRuntimeRoot -DestinationRoot $RuntimeRoot
+        }
+        elseif (-not (Test-Path -LiteralPath $RuntimeRoot)) {
+            New-Item -ItemType Directory -Path $RuntimeRoot | Out-Null
+            $runtimeMigrationCreated = $true
+        }
+        else {
+            throw "新的数据目录已经存在，为避免使用来源不明的数据，已停止迁移：$RuntimeRoot"
+        }
+    }
+    elseif (-not (Test-Path -LiteralPath $RuntimeRoot)) {
+        New-Item -ItemType Directory -Path $RuntimeRoot | Out-Null
+    }
+    Assert-NoReparsePointsInTree -RootPath $RuntimeRoot -Label "客户数据目录"
 
     $phase = "写入卸载与验收工具"
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall_windows_desktop.ps1") -Destination (Join-Path $installRoot "Uninstall-VideoInsight.ps1") -Force
     if ($VerifierPath -and (Test-Path -LiteralPath $VerifierPath)) {
         Copy-Item -LiteralPath $VerifierPath -Destination (Join-Path $installRoot "Verify-VideoInsight.ps1") -Force
     }
+    $runtimeConfiguration = @{ runtimeRoot = $RuntimeRoot } | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText(
+        (Join-Path $installRoot "runtime-location.json"),
+        $runtimeConfiguration,
+        [System.Text.UTF8Encoding]::new($false)
+    )
 
     $phase = "创建快捷方式"
     $shell = New-Object -ComObject WScript.Shell
@@ -481,7 +626,7 @@ try {
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = Join-Path $installRoot "VideoInsight.exe"
         $shortcut.WorkingDirectory = $installRoot
-        $shortcut.Description = "VideoInsight 短视频工作台"
+        $shortcut.Description = "VideoInsight 视频创作工作台"
         $shortcut.Save()
     }
 
@@ -493,6 +638,7 @@ try {
     New-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $Version -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name Publisher -Value "VideoInsight" -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installRoot -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name RuntimeLocation -Value $RuntimeRoot -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name UninstallString -Value $uninstallCommand -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
@@ -528,6 +674,12 @@ try {
     if ($shortcutBackupRemoved) {
         $shortcutBackupRoot = $null
     }
+    if (
+        $runtimeMigrationCreated -and
+        -not [string]::Equals($previousRuntimeRoot, $RuntimeRoot, [System.StringComparison]::OrdinalIgnoreCase)
+    ) {
+        [void](Remove-PostCommitBackupSafely -Path $previousRuntimeRoot -Label "旧数据目录")
+    }
 
     if (-not $Quiet) {
         try {
@@ -558,12 +710,12 @@ catch {
                 Assert-NoReparsePointsInTree -RootPath $installRoot -Label "失败的新版本目录"
                 Remove-DirectoryTreeWithoutFollowingReparse -RootPath $installRoot -Label "失败的新版本目录"
             }
-            Move-Item -LiteralPath $backupRoot -Destination $installRoot
+            Move-Item -LiteralPath $backupRoot -Destination $existingInstallRoot
             $backupRoot = $null
             Restore-UninstallRegistration `
                 -RegistryPath $uninstallKey `
                 -PreviousValues $previousUninstall
-            $previousExecutable = Join-Path $installRoot "VideoInsight.exe"
+            $previousExecutable = Join-Path $existingInstallRoot "VideoInsight.exe"
             if (Test-Path -LiteralPath $previousExecutable -PathType Leaf) {
                 Start-Process -FilePath $previousExecutable
             }
@@ -572,6 +724,11 @@ catch {
             Assert-NoReparsePointsInTree -RootPath $installRoot -Label "失败的新版本目录"
             Remove-DirectoryTreeWithoutFollowingReparse -RootPath $installRoot -Label "失败的新版本目录"
             Restore-UninstallRegistration -RegistryPath $uninstallKey -PreviousValues $previousUninstall
+        }
+        if ($runtimeMigrationCreated -and (Test-Path -LiteralPath $RuntimeRoot)) {
+            Assert-NoReparsePointsInTree -RootPath $RuntimeRoot -Label "失败安装创建的数据目录"
+            Remove-DirectoryTreeWithoutFollowingReparse -RootPath $RuntimeRoot -Label "失败安装创建的数据目录"
+            $runtimeMigrationCreated = $false
         }
     }
     catch {

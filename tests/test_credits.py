@@ -568,10 +568,10 @@ def test_avatar_submit_debits_credits() -> None:
         voice_name="音色",
     )
     credits = CreditsService(repository)
-    # 4 个非空白字符按 4 秒预留：2.5 × 4 / 60，向上取整为 0.17 积分。
-    assert credits.get_balance() == initial - Decimal("0.17")
+    # 4 个字按自然中文口播约每秒 4 字预留 1 秒，最终仍按真实成片时长结算。
+    assert credits.get_balance() == initial - Decimal("0.05")
     txns = credits.list_transactions()
-    assert Decimal(str(txns[0]["amount"])) == Decimal("-0.17")
+    assert Decimal(str(txns[0]["amount"])) == Decimal("-0.05")
     assert txns[0]["reason"] == "数字人视频生成费用"
     assert txns[0]["ref_type"] == "avatar"
     assert task.task_id

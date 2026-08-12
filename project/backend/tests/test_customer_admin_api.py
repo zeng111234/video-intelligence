@@ -1,4 +1,5 @@
 """管理员客户管理 API 测试：生成激活码、客户列表、禁用、管理员账号管理。"""
+
 from __future__ import annotations
 
 import sys
@@ -63,7 +64,10 @@ def test_generate_codes_and_customer_login(client):
     codes = resp.json()
     assert len(codes) == 2
     assert all(len(item["code"].replace("-", "")) == 16 for item in codes)
-    assert all([len(group) for group in item["code"].split("-")] == [4, 4, 4, 4] for item in codes)
+    assert all(
+        [len(group) for group in item["code"].split("-")] == [4, 4, 4, 4]
+        for item in codes
+    )
     assert all(item["balance"] == "0" for item in codes)
     assert all(item["valid_days"] == 7 for item in codes)
     assert all(item["package_price_credits"] == "9.9" for item in codes)
@@ -153,7 +157,8 @@ def test_adjust_unused_access_package_does_not_start_countdown(client):
     code = created["code"]
     assert created["valid_days"] == 7
     assert created["package_price_credits"] == "9.9"
-    assert created["balance"] == "0"
+    assert created["initial_credits"] == "9.9"
+    assert created["balance"] == "9.9"
 
     adjusted = test_client.post(
         f"/api/v1/admin/codes/{code}/extend",
@@ -167,7 +172,7 @@ def test_adjust_unused_access_package_does_not_start_countdown(client):
     assert payload["access_status"] == "unused"
     assert payload["activated_at"] is None
     assert payload["access_expires_at"] is None
-    assert payload["balance"] == "0"
+    assert payload["balance"] == "9.9"
 
     before_login = datetime.now().astimezone()
     login = test_client.post(
@@ -179,7 +184,7 @@ def test_adjust_unused_access_package_does_not_start_countdown(client):
     expires_at = datetime.fromisoformat(login["access_expires_at"])
     assert activated_at >= before_login
     assert expires_at - activated_at == timedelta(days=14)
-    assert login["balance"] == "0"
+    assert login["balance"] == "9.9"
 
 
 def test_renew_expired_access_starts_from_renewal_time(client):
@@ -253,7 +258,9 @@ def test_list_and_toggle_codes(client):
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
     # 已签发的客户 token 也要立刻失效，不能等 12 小时自然过期。
-    stale = test_client.get("/api/v1/credits", headers={"X-Customer-Token": active_token})
+    stale = test_client.get(
+        "/api/v1/credits", headers={"X-Customer-Token": active_token}
+    )
     assert stale.status_code == 401
     # 禁用后客户登录被拒
     login = test_client.post(
@@ -265,7 +272,7 @@ def test_list_and_toggle_codes(client):
 
 
 def test_admin_accounts_management(client):
-    """新增管理员账号并可登录；重置密码生效。"""
+    """主管理员可管理其他账号；普通管理员仅能修改自己。"""
     test_client, repo = client
     admin_headers = _admin_headers(test_client)
     # 新增管理员
@@ -289,11 +296,26 @@ def test_admin_accounts_management(client):
         headers=TEST_API_HEADERS,
     )
     assert login.status_code == 200
+    boss_headers = {**TEST_API_HEADERS, "X-Admin-Token": login.json()["token"]}
     # 列表
     listing = test_client.get(
         "/api/v1/admin/accounts", headers=_admin_headers(test_client)
     ).json()
     assert {item["username"] for item in listing} >= {"admin", "boss2"}
+    permissions = {item["username"]: item for item in listing}
+    assert permissions["admin"]["is_current"] is True
+    assert permissions["admin"]["can_delete"] is False
+    assert permissions["boss2"]["can_reset_password"] is True
+    assert permissions["boss2"]["can_delete"] is True
+    # 普通管理员不能重置其他账号，也不能删除账号
+    resp = test_client.post(
+        "/api/v1/admin/accounts/admin/password",
+        json={"password": "cannot-reset-admin-123"},
+        headers=boss_headers,
+    )
+    assert resp.status_code == 403
+    resp = test_client.delete("/api/v1/admin/accounts/admin", headers=boss_headers)
+    assert resp.status_code == 403
     # 重置密码
     resp = test_client.post(
         "/api/v1/admin/accounts/boss2/password",
@@ -307,6 +329,19 @@ def test_admin_accounts_management(client):
         headers=TEST_API_HEADERS,
     )
     assert login.status_code == 200
+    # 主管理员不能删除自己，但可以删除不再使用的测试管理员
+    resp = test_client.delete("/api/v1/admin/accounts/admin", headers=admin_headers)
+    assert resp.status_code == 400
+    resp = test_client.delete("/api/v1/admin/accounts/boss2", headers=admin_headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"username": "boss2", "deleted": True}
+    assert repo.get_admin_account("boss2") is None
+    login = test_client.post(
+        "/api/v1/auth/admin-login",
+        json={"username": "boss2", "password": "new-pass-456"},
+        headers=TEST_API_HEADERS,
+    )
+    assert login.status_code == 401
 
 
 def test_admin_pricing_list_and_update(client, monkeypatch):

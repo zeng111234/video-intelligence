@@ -3,7 +3,7 @@ const { spawn } = require("node:child_process");
 const { existsSync, mkdirSync, readFileSync, promises: fsPromises } = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { sanitizeBackendEnvironment } = require("./environment.cjs");
+const { resolveBackendRuntimeRoot, sanitizeBackendEnvironment } = require("./environment.cjs");
 const { compareVersions, downloadInstaller, fetchManifest, validateReleaseConfig } = require("./update.cjs");
 
 const APP_URL = "http://127.0.0.1:1001/login";
@@ -15,10 +15,13 @@ let updateCheckStarted = false;
 app.setName("VideoInsight");
 
 function backendRuntimeRoot() {
-  const localAppData = process.env.LOCALAPPDATA;
-  return localAppData
-    ? path.join(localAppData, "VideoInsight")
-    : app.getPath("userData");
+  return resolveBackendRuntimeRoot({
+    executablePath: process.execPath,
+    localAppData: process.env.LOCALAPPDATA,
+    fallbackUserData: app.getPath("userData"),
+    existsSync,
+    readFileSync,
+  });
 }
 
 function backendExecutable() {

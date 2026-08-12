@@ -380,8 +380,7 @@ def test_all_shipped_powershell_scripts_parse_in_windows_powershell_5() -> None:
         )
         if result.returncode != 0:
             failures.append(
-                f"{script.relative_to(REPOSITORY_ROOT)}: "
-                f"{(result.stdout + result.stderr).strip()}"
+                f"{script.relative_to(REPOSITORY_ROOT)}: {(result.stdout + result.stderr).strip()}"
             )
 
     assert not failures, "\n".join(failures)
@@ -1286,8 +1285,7 @@ def test_dirty_or_untracked_verifier_never_receives_release_credentials(
 
     sentinel = tmp_path / "verifier-executed.txt"
     verification_stub.write_text(
-        "from pathlib import Path\n"
-        f"Path({str(sentinel)!r}).write_text('secret process executed', encoding='utf-8')\n",
+        f"from pathlib import Path\nPath({str(sentinel)!r}).write_text('secret process executed', encoding='utf-8')\n",
         encoding="utf-8",
     )
     names = (
@@ -1470,8 +1468,7 @@ def test_release_bundle_and_publish_reject_junction_ancestors(tmp_path: Path):
                 _powershell(),
                 "-NoProfile",
                 "-Command",
-                f"New-Item -ItemType Junction -Path '{escaped_path}' "
-                f"-Target '{escaped_target}' | Out-Null",
+                f"New-Item -ItemType Junction -Path '{escaped_path}' -Target '{escaped_target}' | Out-Null",
             ],
             capture_output=True,
             text=True,
@@ -1583,10 +1580,64 @@ def test_installer_verifies_before_deleting_backup_and_can_restore_it():
     )
     assert "Remove-DirectoryTreeWithoutFollowingReparse" in install_script
     assert (
-        "Move-Item -LiteralPath $backupRoot -Destination $installRoot" in install_script
+        "Move-Item -LiteralPath $backupRoot -Destination $existingInstallRoot"
+        in install_script
     )
     assert "RunVerification(" not in bootstrap_source
     assert '" -VerifierPath \\"" + verifierPath' in bootstrap_source
+    assert '" -InstallRoot \\"" + installationPaths.InstallRoot' in bootstrap_source
+    assert '" -RuntimeRoot \\"" + installationPaths.RuntimeRoot' in bootstrap_source
+    assert "new FolderBrowserDialog()" in bootstrap_source
+    assert "drive.DriveType != DriveType.Fixed" in bootstrap_source
+    assert "Path.GetDirectoryName(installationPaths.InstallRoot)" in bootstrap_source
+    assert (
+        "New-ItemProperty -Path $uninstallKey -Name RuntimeLocation" in install_script
+    )
+    assert 'Join-Path $installRoot "runtime-location.json"' in install_script
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_installer_migrates_customer_data_with_content_verification(tmp_path: Path):
+    install_script = REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    loader = _powershell_function_loader(
+        install_script,
+        (
+            "Get-ExistingPathAttributesForInstall",
+            "Assert-NoReparsePoint",
+            "Assert-NoReparsePointsInTree",
+            "Get-FileSha256ForMigration",
+            "Copy-DirectoryTreeForMigration",
+        ),
+    )
+    source = tmp_path / "old-data"
+    destination = tmp_path / "new-data"
+    (source / "data" / "assets").mkdir(parents=True)
+    (source / "data" / "video_intelligence.db").write_bytes(b"sqlite-state")
+    (source / "data" / "assets" / "material.mp4").write_bytes(b"customer-material")
+    escaped_source = str(source).replace("'", "''")
+    escaped_destination = str(destination).replace("'", "''")
+    command = loader + (
+        f"Copy-DirectoryTreeForMigration -SourceRoot '{escaped_source}' "
+        f"-DestinationRoot '{escaped_destination}'; Write-Output 'MIGRATED'"
+    )
+    result = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "MIGRATED" in result.stdout
+    assert (
+        destination / "data" / "video_intelligence.db"
+    ).read_bytes() == b"sqlite-state"
+    assert (
+        destination / "data" / "assets" / "material.mp4"
+    ).read_bytes() == b"customer-material"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
@@ -1672,7 +1723,7 @@ def test_installer_version_guard_rejects_reinstall_and_downgrade_in_powershell()
     script_text = install_script.read_text(encoding="utf-8")
     registry_read = script_text.index("Get-ItemProperty -LiteralPath $uninstallKey")
     existing_install_probe = script_text.index(
-        "$hasExistingInstall = Test-Path -LiteralPath $installRoot",
+        "$hasExistingInstall = Test-Path -LiteralPath $existingInstallRoot",
         registry_read,
     )
     guard_call = script_text.index("Assert-NewerInstallerVersion", registry_read)
@@ -2417,8 +2468,7 @@ def test_offline_started_marker_consumes_compile_right_before_any_artifact(
 
     def lifecycle(*, fail_after_gate: bool = False) -> subprocess.CompletedProcess[str]:
         failure_statement = (
-            f"Set-OfflineArtifactFailed -RegistryPath '{escaped_registry}' "
-            f"-ExpectedVersion '{version}' | Out-Null; "
+            f"Set-OfflineArtifactFailed -RegistryPath '{escaped_registry}' -ExpectedVersion '{version}' | Out-Null; "
             if fail_after_gate
             else ""
         )
@@ -2950,3 +3000,11 @@ def test_installer_allows_developer_tools_but_manual_clean_pc_check_stays_strict
 
     strict_report = run_verifier("-RequireNoDeveloperTools")
     assert "[FAIL] Python and Node unavailable to verification runtime" in strict_report
+
+
+def test_windows_backend_packages_builtin_video_templates():
+    script = (
+        REPOSITORY_ROOT / "scripts" / "build_windows_installer.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "'data/templates');data/templates" in script

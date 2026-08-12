@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib.request import ProxyHandler
 
 import pytest
 
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.douyin_browser_search import BrowserSessionStatus
 from src.adapters.platform_browser_search import LocalPlatformBrowserSearchProvider
+from src.adapters import platform_browser_search as platform_browser_module
 from src.models import Platform
 
 
@@ -21,6 +23,13 @@ def _provider(platform: Platform) -> LocalPlatformBrowserSearchProvider:
         profile_dir=Path("data/test-browser-profile"),
         debug_port=19999,
         clock=lambda: datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
+    )
+
+
+def test_local_debug_status_bypasses_environment_proxies():
+    assert not any(
+        isinstance(handler, ProxyHandler)
+        for handler in platform_browser_module._LOCAL_DEBUG_OPENER.handlers
     )
 
 
@@ -70,8 +79,7 @@ class _CollectionPage:
         for payload in self.response_payloads.get(page_number, []):
             response = _CollectionResponse(
                 (
-                    "https://api.bilibili.com/x/web-interface/wbi/search/type?"
-                    f"search_type=video&page={page_number}"
+                    f"https://api.bilibili.com/x/web-interface/wbi/search/type?search_type=video&page={page_number}"
                 ),
                 payload,
             )
@@ -1015,9 +1023,7 @@ def test_kuaishou_scrolls_until_time_qualified_target_is_reached(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_rendered_rows",
-        lambda _page: [old_row]
-        if len(page.evaluations) < 18
-        else [old_row, *new_rows],
+        lambda _page: [old_row] if len(page.evaluations) < 18 else [old_row, *new_rows],
     )
 
     rows = provider._collect_rows(
@@ -1528,9 +1534,7 @@ def test_merge_collected_rows_network_none_does_not_clobber():
 
     rendered = {"BV1": {"item_id": "BV1", "plays": 110, "likes": 5}}
     network = {"BV1": {"item_id": "BV1", "plays": None, "likes": None, "extra": "x"}}
-    merged = LocalPlatformBrowserSearchProvider._merge_collected_rows(
-        network, rendered
-    )
+    merged = LocalPlatformBrowserSearchProvider._merge_collected_rows(network, rendered)
     row = next(r for r in merged if r["item_id"] == "BV1")
     assert row["plays"] == 110
     assert row["likes"] == 5

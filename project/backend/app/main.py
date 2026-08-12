@@ -38,7 +38,9 @@ from project.backend.app.core.desktop_owner import desktop_owner_matches  # noqa
 
 from project.backend.app.api.v1.auth import router as auth_router  # noqa: E402
 from project.backend.app.api.v1.customer_admin import router as customer_admin_router  # noqa: E402
-from project.backend.app.api.v1.desktop_server_status import router as desktop_server_status_router  # noqa: E402
+from project.backend.app.api.v1.desktop_server_status import (  # noqa: E402
+    router as desktop_server_status_router,
+)
 from project.backend.app.api.v1.candidates import router as candidates_router  # noqa: E402
 from project.backend.app.api.v1.transcriptions import router as transcriptions_router  # noqa: E402
 from project.backend.app.api.v1.pipelines import router as pipelines_router  # noqa: E402
@@ -51,7 +53,9 @@ from project.backend.app.api.v1.credits import router as credits_router  # noqa:
 from project.backend.app.api.v1.video_editor import router as video_editor_router  # noqa: E402
 from project.backend.app.api.v1.publish import router as publish_router  # noqa: E402
 from project.backend.app.api.v1.crawler import router as crawler_router  # noqa: E402
-from project.backend.app.api.v1.link_transcriptions import router as link_transcriptions_router  # noqa: E402
+from project.backend.app.api.v1.link_transcriptions import (  # noqa: E402
+    router as link_transcriptions_router,
+)
 from project.backend.app.api.v1.analytics import router as analytics_router  # noqa: E402
 from project.backend.app.api.v1.notifications import router as notifications_router  # noqa: E402
 from project.backend.app.api.v1.avatar import router as avatar_router  # noqa: E402
@@ -64,7 +68,9 @@ _SWAGGER_JS_URL = "https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"
 
 # 安全配置
 _IS_PRODUCTION = os.getenv("APP_ENV", "development").lower() == "production"
-_ENABLE_DOCS = os.getenv("ENABLE_DOCS", "false" if _IS_PRODUCTION else "true").lower() == "true"
+_ENABLE_DOCS = (
+    os.getenv("ENABLE_DOCS", "false" if _IS_PRODUCTION else "true").lower() == "true"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +95,11 @@ def _desktop_worker_authorized(request: Request) -> bool:
         "/api/v1/crawler/doubao-"
     ):
         return False
-    if not request.client or request.client.host not in {"127.0.0.1", "::1", "testclient"}:
+    if not request.client or request.client.host not in {
+        "127.0.0.1",
+        "::1",
+        "testclient",
+    }:
         return False
     expected = os.getenv("VIDEOINSIGHT_WORKER_TOKEN", "").strip()
     provided = request.headers.get("X-Desktop-Worker-Token", "").strip()
@@ -106,7 +116,10 @@ async def lifespan(application: FastAPI):
     """启动时自动执行数据库迁移，关闭时清理。"""
     # 初始化API Key
     try:
-        from project.backend.app.core.security import API_KEY_FILE, get_or_create_api_key
+        from project.backend.app.core.security import (
+            API_KEY_FILE,
+            get_or_create_api_key,
+        )
 
         api_key_file_existed = API_KEY_FILE.exists()
         configured_in_env = bool(os.getenv("API_KEY", "").strip())
@@ -161,10 +174,15 @@ async def lifespan(application: FastAPI):
             await publish_worker.stop()
         if transcription_worker is not None:
             await transcription_worker.stop()
+        from project.backend.app.services.control_plane_client import (
+            close_control_plane_http_client,
+        )
+
+        await close_control_plane_http_client()
 
 
 app = FastAPI(
-    title="短视频批量生产系统 API",
+    title="VideoInsight 视频创作工作台 API",
     version="0.1.0",
     description="复用现有服务层，提供标准化 REST API。",
     docs_url="/docs" if _ENABLE_DOCS else None,
@@ -203,9 +221,8 @@ async def auth_middleware(request: Request, call_next):
     }
     # 媒体流端点的 <video>/<audio> 标签无法附加自定义 header，单独接受
     # 登录时写入的 HttpOnly Cookie；客户仅可读取当前电脑已绑定的本地工作区。
-    is_media_stream = (
-        request.url.path.endswith("/media")
-        or request.url.path.endswith("/download")
+    is_media_stream = request.url.path.endswith("/media") or request.url.path.endswith(
+        "/download"
     )
     if request.url.path in public_paths:
         return await call_next(request)
@@ -287,15 +304,12 @@ async def auth_middleware(request: Request, call_next):
                         "/api/v1/credits/recharge-requests/mine",
                     }
                     is_desktop_business_path = (
-                        (
-                            _desktop_demo_mode()
-                            or (
-                                control_plane_enabled()
-                                and desktop_owner_matches(str(record["subject"]))
-                            )
+                        _desktop_demo_mode()
+                        or (
+                            control_plane_enabled()
+                            and desktop_owner_matches(str(record["subject"]))
                         )
-                        and not request.url.path.startswith("/api/v1/admin")
-                    )
+                    ) and not request.url.path.startswith("/api/v1/admin")
                     if (
                         request.url.path not in customer_safe_paths
                         and not is_desktop_business_path
@@ -313,7 +327,11 @@ async def auth_middleware(request: Request, call_next):
                     return await call_next(request)
                 return JSONResponse(
                     status_code=401,
-                    content={"error": True, "code": 401, "message": "登录已过期，请重新输入激活码。"},
+                    content={
+                        "error": True,
+                        "code": 401,
+                        "message": "登录已过期，请重新输入激活码。",
+                    },
                 )
             # 2) 管理员登录 token
             admin_token = request.headers.get("X-Admin-Token")
@@ -325,7 +343,11 @@ async def auth_middleware(request: Request, call_next):
                     return await call_next(request)
                 return JSONResponse(
                     status_code=401,
-                    content={"error": True, "code": 401, "message": "管理员登录已过期，请重新登录。"},
+                    content={
+                        "error": True,
+                        "code": 401,
+                        "message": "管理员登录已过期，请重新登录。",
+                    },
                 )
             # 3) 兼容旧 API Key（脚本/测试通道）
             await verify_api_key(request)
@@ -336,7 +358,9 @@ async def auth_middleware(request: Request, call_next):
         except HTTPException as e:
             return JSONResponse(
                 status_code=e.status_code,
-                content=e.detail if isinstance(e.detail, dict) else {"message": str(e.detail)},
+                content=e.detail
+                if isinstance(e.detail, dict)
+                else {"message": str(e.detail)},
             )
 
     response = await call_next(request)
@@ -432,7 +456,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>短视频批量生产系统 API</title>
+<title>VideoInsight 视频创作工作台 API</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
@@ -466,7 +490,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <div class="card">
-  <h1>短视频批量生产系统 API</h1>
+  <h1>VideoInsight 视频创作工作台 API</h1>
   <div class="ver">v0.1.0 &middot; FastAPI</div>
   <p class="desc">
     后端 REST API 服务已正常运行。以下为主要端点，点击即可访问。

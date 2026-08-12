@@ -689,6 +689,7 @@ class ProductionService:
             item_cost = avatar_cost
             item_cost_known = avatar_cost_known
             use_paid_fallback = False
+            use_candidate_link_fallback = False
             rewrite_required = item.source_type in {"candidate", "share_link", "brief"}
             audit_required = manual_script_audit and item.source_type in {
                 "candidate",
@@ -768,14 +769,40 @@ class ProductionService:
                     reasons.append("媒体解析服务未配置。")
                 elif candidate.platform.value == "douyin":
                     preview = self.media_resolution_service.preview(candidate)
-                    if bundled_compute:
-                        item_cost += 0.0
-                    elif preview.estimated_cost_cny is None:
-                        item_cost_known = False
-                    else:
-                        item_cost += float(preview.estimated_cost_cny)
                     budget_used = max(budget_used, float(preview.monthly_budget_used_cny or 0))
-                    if not preview.resolvable:
+                    if preview.resolvable:
+                        if bundled_compute:
+                            item_cost += 0.0
+                        elif preview.estimated_cost_cny is None:
+                            item_cost_known = False
+                        else:
+                            item_cost += float(preview.estimated_cost_cny)
+                    elif candidate.source_url and self.link_transcription_service is not None:
+                        try:
+                            link_preview = self.link_transcription_service.preview(
+                                str(candidate.source_url)
+                            )
+                        except DouyinParserError as exc:
+                            reasons.append(exc.user_message)
+                        else:
+                            if link_preview.parser_enabled:
+                                use_candidate_link_fallback = True
+                            elif not link_preview.oneapi_fallback_available:
+                                reasons.append(
+                                    link_preview.parser_message
+                                    or preview.block_reason
+                                    or "候选当前不能提取可转写内容。"
+                                )
+                            elif link_preview.oneapi_estimated_cost_cny is None:
+                                item_cost_known = False
+                                reasons.append("候选链接的付费回退费用尚未配置。")
+                            else:
+                                item_cost += float(
+                                    link_preview.oneapi_estimated_cost_cny
+                                )
+                                use_paid_fallback = True
+                                use_candidate_link_fallback = True
+                    else:
                         reasons.append(preview.block_reason or "候选不能进入媒体解析。")
                 elif not str(candidate.source_url or "").lower().startswith(
                     ("http://", "https://")
@@ -839,6 +866,7 @@ class ProductionService:
                 "estimated_cost_cny": round(item_cost, 2) if item_cost_known else None,
                 "cost_known": item_cost_known,
                 "use_paid_fallback": use_paid_fallback,
+                "use_candidate_link_fallback": use_candidate_link_fallback,
                 "copy_call_count": copy_call_count,
                 "transcript_review_reserved": transcript_review_reserved,
                 "manual_script_audit": audit_required,
@@ -1043,6 +1071,9 @@ class ProductionService:
                     },
                     "use_paid_fallback": bool(
                         result.get("use_paid_fallback")
+                    ),
+                    "candidate_link_fallback": bool(
+                        result.get("use_candidate_link_fallback")
                     ),
                 }
                 if (

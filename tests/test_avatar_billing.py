@@ -19,15 +19,26 @@ def test_supplier_duration_is_rounded_up_to_whole_seconds() -> None:
     assert credits_for_seconds(Decimal("2.5"), 2) == Decimal("0.09")
 
 
-def test_short_script_reserves_two_seconds_then_uses_actual_settlement() -> None:
+def test_short_script_uses_spoken_duration_estimate_then_actual_settlement() -> None:
     quote = build_avatar_billing_quote(
         script_text="你好",
         speech_rate=1.0,
         price_per_minute_cny=Decimal("2.5"),
     )
 
-    assert quote.reservation_seconds == 2
-    assert Decimal(str(quote.reservation_credits)) == Decimal("0.09")
+    assert quote.reservation_seconds == 1
+    assert Decimal(str(quote.reservation_credits)) == Decimal("0.05")
+
+
+def test_313_characters_are_not_mistaken_for_313_seconds() -> None:
+    quote = build_avatar_billing_quote(
+        script_text="字" * 313,
+        speech_rate=1.0,
+        price_per_minute_cny=Decimal("2.5"),
+    )
+
+    assert quote.reservation_seconds == 79
+    assert Decimal(str(quote.reservation_credits)) == Decimal("3.30")
 
 
 def _customer(repository: SQLiteRepository, code: str, credits: str) -> None:

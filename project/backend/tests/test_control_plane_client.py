@@ -29,6 +29,49 @@ def test_control_plane_url_requires_https_except_loopback(monkeypatch):
     assert client.control_plane_base_url() == "http://127.0.0.1:8080"
 
 
+def test_company_client_bypasses_environment_proxy_and_reuses_connection(monkeypatch):
+    created: list[dict[str, object]] = []
+    requests: list[str] = []
+
+    class FakeClient:
+        is_closed = False
+
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+        async def request(self, method, url, *, headers, content):
+            requests.append(url)
+            return httpx.Response(200, json={"ok": True})
+
+        async def aclose(self):
+            self.is_closed = True
+
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setattr(client.httpx, "AsyncClient", FakeClient)
+    client._http_client = None
+
+    async def exercise():
+        await client._send_request(
+            "GET", "https://api.example.com/one", headers={}, content=b""
+        )
+        await client._send_request(
+            "GET", "https://api.example.com/two", headers={}, content=b""
+        )
+        await client.close_control_plane_http_client()
+
+    anyio.run(exercise)
+
+    assert len(created) == 1
+    assert created[0]["trust_env"] is False
+    assert created[0]["follow_redirects"] is False
+    assert requests == [
+        "https://api.example.com/one",
+        "https://api.example.com/two",
+    ]
+    assert client._http_client is None
+
+
 def test_only_authoritative_routes_are_proxied(monkeypatch):
     monkeypatch.setenv("VIDEOINSIGHT_CONTROL_PLANE_ENABLED", "true")
     monkeypatch.setenv("VIDEOINSIGHT_CONTROL_PLANE_URL", "https://api.example.com")
@@ -101,15 +144,11 @@ def test_proxy_uses_customer_for_business_and_admin_only_for_management():
     assert admin_headers["X-Admin-Token"] == "remote-admin"
     assert "X-Customer-Token" not in admin_headers
 
-    recharge_headers, recharge_token = translated(
-        "/api/v1/credits/recharge-requests"
-    )
+    recharge_headers, recharge_token = translated("/api/v1/credits/recharge-requests")
     assert recharge_token == "local-admin"
     assert recharge_headers["X-Admin-Token"] == "remote-admin"
 
-    mine_headers, mine_token = translated(
-        "/api/v1/credits/recharge-requests/mine"
-    )
+    mine_headers, mine_token = translated("/api/v1/credits/recharge-requests/mine")
     assert mine_token == "local-customer"
     assert mine_headers["X-Customer-Token"] == "remote-customer"
     client.clear_upstream_sessions()

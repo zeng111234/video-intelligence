@@ -389,6 +389,7 @@ class PipelineWorker:
                         rights_holder=str(request.get("rights_holder") or run.config.get("rights_holder") or ""),
                         rights_confirmed=True,
                         model_name=str(request.get("model_name") or "large-v3-turbo"),
+                        candidate_id=run.candidate_video_id,
                     )
             except DouyinParserError as exc:
                 self._fail(run, PipelineStage.TRANSCRIPTION, exc.user_message)
@@ -460,6 +461,8 @@ class PipelineWorker:
             candidate_platform = str(run.config.get("candidate_platform") or "douyin")
             if candidate_platform == Platform.XIAOHONGSHU.value:
                 self._pause_for_xiaohongshu_safety(run)
+            elif bool(run.config.get("candidate_link_fallback")):
+                self._run_guided_share_link(run)
             elif candidate_platform == Platform.DOUYIN.value:
                 self._run_candidate(run)
             else:

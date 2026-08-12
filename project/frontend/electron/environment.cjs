@@ -1,3 +1,7 @@
+const path = require("node:path");
+
+const windowsPath = path.win32;
+
 const DESKTOP_BLOCKED_SECRET_KEYS = Object.freeze([
   "APP_SECRET_KEY",
   "API_KEY",
@@ -49,7 +53,32 @@ function sanitizeBackendEnvironment(environment, overrides = {}) {
   return sanitized;
 }
 
+function resolveBackendRuntimeRoot({ executablePath, localAppData, fallbackUserData, existsSync, readFileSync }) {
+  const configuredPath = windowsPath.join(
+    windowsPath.dirname(executablePath),
+    "runtime-location.json",
+  );
+  if (existsSync(configuredPath)) {
+    const configured = JSON.parse(readFileSync(configuredPath, "utf8"));
+    const runtimeRoot = windowsPath.resolve(String(configured.runtimeRoot || ""));
+    const driveRoot = windowsPath.parse(runtimeRoot).root;
+    if (
+      !windowsPath.isAbsolute(runtimeRoot)
+      || !driveRoot
+      || runtimeRoot === driveRoot
+      || runtimeRoot.startsWith("\\\\")
+    ) {
+      throw new Error("安装位置记录无效，请重新运行安装包修复。");
+    }
+    return runtimeRoot;
+  }
+  return localAppData
+    ? windowsPath.join(localAppData, "VideoInsight")
+    : fallbackUserData;
+}
+
 module.exports = {
   DESKTOP_BLOCKED_SECRET_KEYS,
+  resolveBackendRuntimeRoot,
   sanitizeBackendEnvironment,
 };

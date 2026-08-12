@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from project.backend.app.control_plane import app
 from project.backend.app.core.repository import get_repository
-from project.backend.app.core.security import _auth_tokens
+from project.backend.app.core.security import _auth_tokens, issue_auth_token
 from project.backend.app.core.server_avatar import get_server_avatar_provider
 from src.models import (
     AvatarAsset,
@@ -160,6 +160,27 @@ def test_company_shared_avatar_is_visible_but_other_customer_asset_is_hidden(tmp
         _auth_tokens.clear()
 
 
+def test_admin_can_read_shared_avatar_assets_without_seeing_private_customer_assets():
+    provider = _FakeAvatarProvider()
+    app.dependency_overrides[get_server_avatar_provider] = lambda: provider
+    _auth_tokens.clear()
+    try:
+        token = issue_auth_token("admin", "admin")
+        with TestClient(app) as client:
+            response = client.get(
+                "/api/v1/provider/avatar/assets",
+                headers={"X-Admin-Token": token},
+            )
+        assert response.status_code == 200
+        asset_ids = {item["asset_id"] for item in response.json()}
+        assert "public-avatar-1" in asset_ids
+        assert "shared-avatar-1" in asset_ids
+        assert "private-avatar-1" not in asset_ids
+    finally:
+        app.dependency_overrides.clear()
+        _auth_tokens.clear()
+
+
 def test_avatar_submission_is_centrally_billed_idempotent_and_tenant_isolated(tmp_path):
     repository = SQLiteRepository(tmp_path / "avatar-control-plane.db")
     first_code = f"AVATAR-{uuid4().hex[:8].upper()}"
@@ -180,8 +201,8 @@ def test_avatar_submission_is_centrally_billed_idempotent_and_tenant_isolated(tm
                 headers={"X-Customer-Token": first_token},
             )
             assert quoted.status_code == 200
-            assert quoted.json()["reservation_seconds"] == 2
-            assert Decimal(str(quoted.json()["reservation_credits"])) == Decimal("0.09")
+            assert quoted.json()["reservation_seconds"] == 1
+            assert Decimal(str(quoted.json()["reservation_credits"])) == Decimal("0.05")
             headers = {
                 "X-Customer-Token": first_token,
                 "Idempotency-Key": f"avatar-submit-{request_key}",
@@ -215,7 +236,10 @@ def test_avatar_submission_is_centrally_billed_idempotent_and_tenant_isolated(tm
             )
             reserved_credits = Decimal(str(quote.reservation_credits))
             assert created.json()["estimated_seconds"] == quote.reservation_seconds
-            assert repository.get_credit_balance(first_code) == Decimal("20") - reserved_credits
+            assert (
+                repository.get_credit_balance(first_code)
+                == Decimal("20") - reserved_credits
+            )
 
             replay = client.post(
                 "/api/v1/provider/avatar/submit", headers=headers, json=payload
@@ -223,7 +247,10 @@ def test_avatar_submission_is_centrally_billed_idempotent_and_tenant_isolated(tm
             assert replay.status_code == 200
             assert replay.headers["x-idempotent-replay"] == "true"
             assert provider.submit_count == 1
-            assert repository.get_credit_balance(first_code) == Decimal("20") - reserved_credits
+            assert (
+                repository.get_credit_balance(first_code)
+                == Decimal("20") - reserved_credits
+            )
 
             provider.complete(job_id, seconds=2)
             final_charge = cny_to_credits(
@@ -236,20 +263,33 @@ def test_avatar_submission_is_centrally_billed_idempotent_and_tenant_isolated(tm
             )
             assert owner_query.status_code == 200
             assert owner_query.json()["estimated_seconds"] == 2
-            assert Decimal(str(owner_query.json()["estimated_cost_cny"])) == final_charge
-            assert repository.get_credit_balance(first_code) == Decimal("20") - final_charge
+            assert (
+                Decimal(str(owner_query.json()["estimated_cost_cny"])) == final_charge
+            )
+            assert (
+                repository.get_credit_balance(first_code)
+                == Decimal("20") - final_charge
+            )
 
             repeated_query = client.get(
                 f"/api/v1/provider/avatar/jobs/{job_id}",
                 headers={"X-Customer-Token": first_token},
             )
             assert repeated_query.status_code == 200
-            assert repository.get_credit_balance(first_code) == Decimal("20") - final_charge
+            assert (
+                repository.get_credit_balance(first_code)
+                == Decimal("20") - final_charge
+            )
             transactions = repository.list_credit_transactions(
                 owner=first_code, limit=20
             )
-            assert sum(item["ref_type"] == "avatar_reserve" for item in transactions) == 1
-            assert sum(item["ref_type"] == "avatar_settlement" for item in transactions) == 1
+            assert (
+                sum(item["ref_type"] == "avatar_reserve" for item in transactions) == 1
+            )
+            assert (
+                sum(item["ref_type"] == "avatar_settlement" for item in transactions)
+                == 1
+            )
             other_query = client.get(
                 f"/api/v1/provider/avatar/jobs/{job_id}",
                 headers={"X-Customer-Token": second_token},

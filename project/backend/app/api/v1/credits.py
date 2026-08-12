@@ -68,6 +68,7 @@ class RechargeRequestReview(BaseModel):
 class RechargeRequestResponse(BaseModel):
     id: int
     customer_code: str
+    customer_name: str
     amount: str
     reason: str | None
     status: str
@@ -76,6 +77,16 @@ class RechargeRequestResponse(BaseModel):
     reviewed_by: str | None = None
     reviewed_at: str | None = None
     review_note: str | None = None
+
+
+def _recharge_response(
+    row: dict, repo: SQLiteRepository
+) -> RechargeRequestResponse:
+    customer = repo.get_customer_code(str(row["customer_code"]))
+    return RechargeRequestResponse(
+        **row,
+        customer_name=customer.name if customer is not None else "未知客户",
+    )
 
 
 @router.post("/login", response_model=AdminLoginResponse)
@@ -165,7 +176,7 @@ def create_recharge_request(
         amount=body.amount,
         reason=body.reason,
     )
-    return RechargeRequestResponse(**result)
+    return _recharge_response(result, repo)
 
 
 @router.get("/recharge-requests", response_model=list[RechargeRequestResponse])
@@ -177,7 +188,7 @@ def list_recharge_requests(
 ) -> list[RechargeRequestResponse]:
     """管理员查看充值请求列表。"""
     rows = repo.list_recharge_requests(status=status, customer_code=customer_code)
-    return [RechargeRequestResponse(**row) for row in rows]
+    return [_recharge_response(row, repo) for row in rows]
 
 
 @router.get("/recharge-requests/mine", response_model=list[RechargeRequestResponse])
@@ -187,7 +198,7 @@ def list_my_recharge_requests(
 ) -> list[RechargeRequestResponse]:
     """客户查看自己的充值请求。"""
     rows = repo.list_recharge_requests(customer_code=customer_code)
-    return [RechargeRequestResponse(**row) for row in rows]
+    return [_recharge_response(row, repo) for row in rows]
 
 
 @router.post("/recharge-requests/{request_id}/review", response_model=RechargeRequestResponse)
@@ -209,4 +220,4 @@ def review_recharge_request(
     )
     if not updated:
         raise HTTPException(status_code=400, detail="该请求已处理")
-    return RechargeRequestResponse(**updated)
+    return _recharge_response(updated, repo)

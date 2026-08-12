@@ -124,7 +124,7 @@ export default function DashboardPage() {
         const typeCounts: Record<string, number> = {};
         items.forEach((t) => {
           const label =
-            t.kind === "pipeline" ? "批量生产" :
+            t.kind === "pipeline" ? "视频创作" :
             t.kind === "transcription" ? "语音转写" :
             t.kind === "candidate" ? "候选采集" :
             t.kind === "copywriting" ? "AI文案" : t.kind;
@@ -177,7 +177,7 @@ export default function DashboardPage() {
             <Title level={4} style={{ margin: 0 }}>
               数据仪表盘
             </Title>
-            <Text type="secondary">实时监控短视频生产全链路数据</Text>
+            <Text type="secondary">查看视频创作流程和任务数据</Text>
           </div>
           <Select value={timeRange} onChange={handleTimeRangeChange} style={{ width: 120 }}>
             <Option value="today">今日</Option>

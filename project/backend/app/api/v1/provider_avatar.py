@@ -9,11 +9,23 @@ import tempfile
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
-from project.backend.app.core.provider_jobs import provider_job_owned, register_provider_job
+from project.backend.app.core.provider_jobs import (
+    provider_job_owned,
+    register_provider_job,
+)
 from project.backend.app.core.avatar_media import (
     custom_voice_sample_path,
     validate_avatar_training_video,
@@ -59,18 +71,24 @@ class AvatarResumeBody(_StrictRequest):
     attempt_id: str
 
 
-def _owner(request: Request) -> str:
+def _principal(request: Request) -> tuple[str, str]:
     code = str(getattr(request.state, "customer_code", "")).strip()
-    if not code:
-        raise HTTPException(status_code=403, detail="需要客户身份。")
-    return f"customer:{code}"
+    if code:
+        return "customer", code
+    username = str(getattr(request.state, "admin_username", "")).strip()
+    if username:
+        return "admin", username
+    raise HTTPException(status_code=403, detail="需要客户或管理员身份。")
+
+
+def _owner(request: Request) -> str:
+    role, subject = _principal(request)
+    return f"{role}:{subject}"
 
 
 def _credit_owner(request: Request) -> str:
-    code = str(getattr(request.state, "customer_code", "")).strip()
-    if not code:
-        raise HTTPException(status_code=403, detail="需要客户身份。")
-    return code
+    role, subject = _principal(request)
+    return subject if role == "customer" else "admin"
 
 
 def _customer_capability(provider) -> AvatarCapability:
@@ -141,7 +159,9 @@ def _billing_snapshot(
         if seconds <= 0:
             return snapshot.model_copy(
                 update={
-                    "estimated_cost_cny": float(Decimal(str(record["reserved_credits"]))),
+                    "estimated_cost_cny": float(
+                        Decimal(str(record["reserved_credits"]))
+                    ),
                     "estimated_seconds": int(record["reserved_seconds"]),
                     "stage": f"{snapshot.stage}；成片时长待核对，预留积分尚未最终结算",
                 }
@@ -160,8 +180,7 @@ def _billing_snapshot(
                 "estimated_cost_cny": float(final_credits),
                 "estimated_seconds": int(record["final_seconds"]),
                 "stage": (
-                    f"{snapshot.stage}；按 {record['final_seconds']} 秒结算 "
-                    f"{final_credits} 积分"
+                    f"{snapshot.stage}；按 {record['final_seconds']} 秒结算 {final_credits} 积分"
                 ),
             }
         )
@@ -174,7 +193,13 @@ def _billing_snapshot(
 
 
 def _provider_error(exc: AvatarProviderError, fallback: str) -> HTTPException:
-    status = 400 if exc.kind.value == "validation" else 503 if exc.kind.value == "authorization" else 502
+    status = (
+        400
+        if exc.kind.value == "validation"
+        else 503
+        if exc.kind.value == "authorization"
+        else 502
+    )
     message = str(exc).strip() or fallback
     if exc.outcome_unknown:
         message = f"{message} 结果暂时无法确认，系统不会自动重复提交。"
@@ -189,7 +214,9 @@ def _register_snapshot(snapshot: AvatarJobSnapshot, *, owner: str) -> None:
             owner=owner,
             kind="avatar",
         ):
-            raise HTTPException(status_code=502, detail="数字人任务编号冲突，请联系管理员。")
+            raise HTTPException(
+                status_code=502, detail="数字人任务编号冲突，请联系管理员。"
+            )
 
 
 def _visible_assets(provider, *, owner: str) -> list[AvatarAsset]:
@@ -197,10 +224,14 @@ def _visible_assets(provider, *, owner: str) -> list[AvatarAsset]:
     for asset in provider.list_assets():
         if not asset.authorized:
             continue
-        if asset.shared or asset.source_type in {"built_in", "public"} or provider_job_owned(
-            provider_job_id=asset.asset_id,
-            owner=owner,
-            kind="avatar_asset",
+        if (
+            asset.shared
+            or asset.source_type in {"built_in", "public"}
+            or provider_job_owned(
+                provider_job_id=asset.asset_id,
+                owner=owner,
+                kind="avatar_asset",
+            )
         ):
             result.append(asset)
     return result
@@ -246,8 +277,12 @@ def submit(
         raise HTTPException(status_code=400, detail="数字人安全请求标识无效。")
     owner = _owner(request)
     alias = f"avatar-request:{provider_request.idempotency_key}"
-    if not register_provider_job(provider_job_id=alias, owner=owner, kind="avatar_request"):
-        raise HTTPException(status_code=409, detail="数字人请求归属冲突，请联系管理员。")
+    if not register_provider_job(
+        provider_job_id=alias, owner=owner, kind="avatar_request"
+    ):
+        raise HTTPException(
+            status_code=409, detail="数字人请求归属冲突，请联系管理员。"
+        )
     try:
         visible = _visible_assets(provider, owner=owner)
         avatar_ids = {
@@ -260,7 +295,10 @@ def submit(
             for asset in visible
             if asset.kind == AvatarAssetKind.VOICE and asset.status == "ready"
         }
-        if provider_request.avatar_id not in avatar_ids or provider_request.voice_id not in voice_ids:
+        if (
+            provider_request.avatar_id not in avatar_ids
+            or provider_request.voice_id not in voice_ids
+        ):
             raise HTTPException(status_code=400, detail="所选形象或声音当前不可用。")
         quote = _quote(provider_request.script_text, provider_request.speech_rate)
         credits.repository.reserve_avatar_billing(
@@ -312,7 +350,9 @@ def find_job(
         snapshot = provider.find_job(idempotency_key)
         if snapshot is not None:
             _register_snapshot(snapshot, owner=_owner(request))
-            snapshot = _billing_snapshot(snapshot=snapshot, credits=credits, request=request)
+            snapshot = _billing_snapshot(
+                snapshot=snapshot, credits=credits, request=request
+            )
         return snapshot
     except AvatarProviderError as exc:
         raise _provider_error(exc, "暂时无法核对数字人任务。") from exc
@@ -388,12 +428,16 @@ def download_result(
     return Response(content=payload, media_type=media_type)
 
 
-async def _stage_upload(file: UploadFile, *, maximum: int, prefix: str) -> tuple[Path, str]:
+async def _stage_upload(
+    file: UploadFile, *, maximum: int, prefix: str
+) -> tuple[Path, str]:
     expected_hash = ""
     written = 0
     digest = hashlib.sha256()
     suffix = Path(file.filename or "asset.bin").suffix[:12]
-    with tempfile.NamedTemporaryFile(prefix=prefix, suffix=suffix, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(
+        prefix=prefix, suffix=suffix, delete=False
+    ) as stream:
         path = Path(stream.name)
         while chunk := await file.read(1024 * 1024):
             written += len(chunk)
@@ -425,11 +469,15 @@ async def train_avatar(
     credits: CreditsService = Depends(get_credits_service),
 ):
     capability = _require_live(provider)
-    if not capability.supports_cloud_avatar_training or not isinstance(provider, ShuyingLegacyAvatarProvider):
+    if not capability.supports_cloud_avatar_training or not isinstance(
+        provider, ShuyingLegacyAvatarProvider
+    ):
         raise HTTPException(status_code=503, detail="公司云形象训练线路尚未配置。")
     if not rights_confirmed or not name.strip():
         raise HTTPException(status_code=400, detail="请填写名称并确认肖像授权。")
-    path, digest = await _stage_upload(file, maximum=MAX_FACE_BYTES, prefix="videoinsight-face-")
+    path, digest = await _stage_upload(
+        file, maximum=MAX_FACE_BYTES, prefix="videoinsight-face-"
+    )
     try:
         _verify_upload_hash(request, digest)
         if request.headers.get("Idempotency-Key") != f"avatar-train-face-{digest[:32]}":
@@ -445,7 +493,9 @@ async def train_avatar(
             ref_id=digest[:24],
         )
         asset = provider.create_cloud_avatar(
-            name=name.strip(), training_video_path=path, filename=file.filename or "training.mp4"
+            name=name.strip(),
+            training_video_path=path,
+            filename=file.filename or "training.mp4",
         )
         if not register_provider_job(
             provider_job_id=asset.asset_id, owner=_owner(request), kind="avatar_asset"
@@ -472,14 +522,21 @@ async def train_voice(
     credits: CreditsService = Depends(get_credits_service),
 ):
     capability = _require_live(provider)
-    if not capability.supports_voice_sample_upload or not isinstance(provider, ShuyingLegacyAvatarProvider):
+    if not capability.supports_voice_sample_upload or not isinstance(
+        provider, ShuyingLegacyAvatarProvider
+    ):
         raise HTTPException(status_code=503, detail="公司声音训练线路尚未配置。")
     if not rights_confirmed or not name.strip():
         raise HTTPException(status_code=400, detail="请填写名称并确认声音授权。")
-    path, digest = await _stage_upload(file, maximum=MAX_VOICE_BYTES, prefix="videoinsight-voice-")
+    path, digest = await _stage_upload(
+        file, maximum=MAX_VOICE_BYTES, prefix="videoinsight-voice-"
+    )
     try:
         _verify_upload_hash(request, digest)
-        if request.headers.get("Idempotency-Key") != f"avatar-train-voice-{digest[:32]}":
+        if (
+            request.headers.get("Idempotency-Key")
+            != f"avatar-train-voice-{digest[:32]}"
+        ):
             raise HTTPException(status_code=400, detail="声音训练请求标识无效。")
         try:
             validate_voice_training_sample(path)
@@ -525,7 +582,9 @@ def voice_preview(
     request: Request,
     provider=Depends(get_server_avatar_provider),
 ):
-    visible = {asset.asset_id for asset in _visible_assets(provider, owner=_owner(request))}
+    visible = {
+        asset.asset_id for asset in _visible_assets(provider, owner=_owner(request))
+    }
     if asset_id not in visible:
         raise HTTPException(status_code=404, detail="声音素材不存在。")
     try:
@@ -545,7 +604,9 @@ def resume_voice_clone(
         provider_job_id=asset_id, owner=_owner(request), kind="avatar_asset"
     ):
         raise HTTPException(status_code=404, detail="待恢复声音素材不存在。")
-    expected_key = f"avatar-resume-asset-{hashlib.sha256(asset_id.encode()).hexdigest()[:32]}"
+    expected_key = (
+        f"avatar-resume-asset-{hashlib.sha256(asset_id.encode()).hexdigest()[:32]}"
+    )
     if request.headers.get("Idempotency-Key") != expected_key:
         raise HTTPException(status_code=400, detail="声音恢复请求标识无效。")
     try:

@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using Microsoft.Win32;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -11,19 +12,30 @@ internal static class OfflineInstallerBootstrap
     [STAThread]
     private static int Main()
     {
-        string temporaryParent = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Temp"
-        );
-        string temporaryRoot = Path.Combine(
-            temporaryParent,
-            "VideoInsight-installer-" + Guid.NewGuid().ToString("N")
-        );
+        Application.EnableVisualStyles();
+        string temporaryRoot = null;
 
         try
         {
             Log("bootstrap started");
+            string version = ReadTextResource("VideoInsight.Version").Trim();
+            if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+$"))
+            {
+                throw new InvalidOperationException("安装包版本信息无效。");
+            }
+            InstallationPaths installationPaths = SelectInstallationPaths();
+            if (installationPaths == null)
+            {
+                Log("installation cancelled before changes");
+                return 0;
+            }
+            string temporaryParent = Path.GetDirectoryName(installationPaths.InstallRoot);
             EnsureSafeExistingPath(temporaryParent);
+            Directory.CreateDirectory(temporaryParent);
+            temporaryRoot = Path.Combine(
+                temporaryParent,
+                ".VideoInsight-installer-" + Guid.NewGuid().ToString("N")
+            );
             Directory.CreateDirectory(temporaryRoot);
             EnsureSafeExistingPath(temporaryRoot);
             string payloadPath = WriteResource(
@@ -42,11 +54,6 @@ internal static class OfflineInstallerBootstrap
                 "VideoInsight.VerifierScript",
                 Path.Combine(temporaryRoot, "verify_windows_install.ps1")
             );
-            string version = ReadTextResource("VideoInsight.Version").Trim();
-            if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+$"))
-            {
-                throw new InvalidOperationException("安装包版本信息无效。");
-            }
             Log("resources extracted");
 
             if (!File.Exists(payloadPath) || !File.Exists(installScriptPath))
@@ -57,7 +64,9 @@ internal static class OfflineInstallerBootstrap
             ProcessStartInfo startInfo = CreatePowerShellStartInfo();
             startInfo.Arguments =
                 "-NoProfile -ExecutionPolicy Bypass -File \"" + installScriptPath +
-                "\" -Version \"" + version + "\" -VerifierPath \"" + verifierPath + "\" -Quiet";
+                "\" -Version \"" + version + "\" -VerifierPath \"" + verifierPath +
+                "\" -InstallRoot \"" + installationPaths.InstallRoot +
+                "\" -RuntimeRoot \"" + installationPaths.RuntimeRoot + "\" -Quiet";
 
             using (Process installer = Process.Start(startInfo))
             {
@@ -112,6 +121,107 @@ internal static class OfflineInstallerBootstrap
                 // Windows or antivirus software may briefly retain extracted files.
             }
         }
+    }
+
+    private sealed class InstallationPaths
+    {
+        internal string InstallRoot;
+        internal string RuntimeRoot;
+    }
+
+    private static InstallationPaths SelectInstallationPaths()
+    {
+        const string uninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\VideoInsight";
+        string existingInstallRoot = "";
+        string existingRuntimeRoot = "";
+        using (RegistryKey key = Registry.CurrentUser.OpenSubKey(uninstallKey, false))
+        {
+            if (key != null)
+            {
+                existingInstallRoot = Convert.ToString(key.GetValue("InstallLocation", "")).Trim();
+                existingRuntimeRoot = Convert.ToString(key.GetValue("RuntimeLocation", "")).Trim();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(existingInstallRoot) &&
+            !string.IsNullOrWhiteSpace(existingRuntimeRoot))
+        {
+            ValidateSelectedLocation(existingInstallRoot);
+            ValidateSelectedLocation(existingRuntimeRoot);
+            return new InstallationPaths {
+                InstallRoot = Path.GetFullPath(existingInstallRoot),
+                RuntimeRoot = Path.GetFullPath(existingRuntimeRoot)
+            };
+        }
+
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        string defaultInstallRoot = string.IsNullOrWhiteSpace(existingInstallRoot)
+            ? Path.Combine(localAppData, "Programs", "VideoInsight")
+            : Path.GetFullPath(existingInstallRoot);
+        string selectedParent;
+        using (FolderBrowserDialog dialog = new FolderBrowserDialog())
+        {
+            dialog.Description =
+                "请选择 VideoInsight 的保存位置。程序、素材和生成视频都会放在所选位置；" +
+                "可以选择 C、D、E 等任意本地磁盘。";
+            dialog.SelectedPath = Directory.Exists(defaultInstallRoot)
+                ? defaultInstallRoot
+                : Path.GetDirectoryName(defaultInstallRoot);
+            dialog.ShowNewFolderButton = true;
+            if (dialog.ShowDialog() != DialogResult.OK)
+            {
+                return null;
+            }
+            selectedParent = Path.GetFullPath(dialog.SelectedPath);
+        }
+
+        string selectedInstallRoot = string.Equals(
+            Path.GetFileName(selectedParent.TrimEnd(Path.DirectorySeparatorChar)),
+            "VideoInsight",
+            StringComparison.OrdinalIgnoreCase
+        ) ? selectedParent : Path.Combine(selectedParent, "VideoInsight");
+        string selectedRuntimeRoot;
+        if (string.Equals(
+            Path.GetFullPath(selectedInstallRoot),
+            Path.GetFullPath(defaultInstallRoot),
+            StringComparison.OrdinalIgnoreCase
+        ) && !string.IsNullOrWhiteSpace(existingInstallRoot))
+        {
+            selectedRuntimeRoot = Path.Combine(localAppData, "VideoInsight");
+        }
+        else
+        {
+            selectedRuntimeRoot = Path.Combine(
+                Path.GetDirectoryName(selectedInstallRoot),
+                "VideoInsight-Data"
+            );
+        }
+        ValidateSelectedLocation(selectedInstallRoot);
+        ValidateSelectedLocation(selectedRuntimeRoot);
+        return new InstallationPaths {
+            InstallRoot = Path.GetFullPath(selectedInstallRoot),
+            RuntimeRoot = Path.GetFullPath(selectedRuntimeRoot)
+        };
+    }
+
+    private static void ValidateSelectedLocation(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+        {
+            throw new InvalidOperationException("请选择本机磁盘上的完整安装位置。");
+        }
+        string fullPath = Path.GetFullPath(path);
+        string driveRoot = Path.GetPathRoot(fullPath);
+        if (string.IsNullOrWhiteSpace(driveRoot) || fullPath.StartsWith(@"\\"))
+        {
+            throw new InvalidOperationException("安装位置不能是网络共享目录。");
+        }
+        DriveInfo drive = new DriveInfo(driveRoot);
+        if (!drive.IsReady || drive.DriveType != DriveType.Fixed)
+        {
+            throw new InvalidOperationException("请选择电脑内置的本地磁盘，不能使用U盘或网络盘。");
+        }
+        EnsureSafeExistingPath(fullPath);
     }
 
     private static void Log(string message)

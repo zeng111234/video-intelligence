@@ -24,8 +24,8 @@ export const CORE_NAVIGATION_ITEMS: NavigationItem[] = [
     label: "任务队列",
     path: "/production",
     section: "核心功能",
-    description: "查看批量任务、状态、审核和安全重试",
-    keywords: ["批量生产", "生产批次"],
+    description: "查看创作任务、状态、审核和安全重试",
+    keywords: ["创作任务", "任务记录"],
   },
   {
     id: "publish",
@@ -40,11 +40,11 @@ export const CORE_NAVIGATION_ITEMS: NavigationItem[] = [
 export const ADVANCED_NAVIGATION_ITEMS: NavigationItem[] = [
   {
     id: "crawler",
-    label: "专业爬虫",
+    label: "素材发现",
     path: "/crawler",
     section: "高级工具",
     description: "检索关键词候选并送入智能创作",
-    keywords: ["关键词爬虫", "热点"],
+    keywords: ["关键词找素材", "热点"],
   },
   {
     id: "candidates",
