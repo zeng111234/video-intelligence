@@ -406,49 +406,65 @@ function Invoke-ReleaseJsonRequest {
         [hashtable]$Headers = @{}
     )
     Add-Type -AssemblyName System.Net.Http
-    $handler = New-Object System.Net.Http.HttpClientHandler
-    $handler.AllowAutoRedirect = $false
-    $handler.UseCookies = $false
-    $handler.UseProxy = $false
-    $client = New-Object System.Net.Http.HttpClient($handler)
-    $client.Timeout = [TimeSpan]::FromSeconds(45)
-    $request = New-Object System.Net.Http.HttpRequestMessage(
-        (New-Object System.Net.Http.HttpMethod($Method.ToUpperInvariant())),
-        $Uri
-    )
-    $response = $null
-    try {
-        [void]$request.Headers.TryAddWithoutValidation("Accept", "application/json")
-        foreach ($headerName in $Headers.Keys) {
-            [void]$request.Headers.TryAddWithoutValidation($headerName, [string]$Headers[$headerName])
-        }
-        if ($null -ne $Body) {
-            $bodyJson = $Body | ConvertTo-Json -Depth 20 -Compress
-            $request.Content = New-Object System.Net.Http.StringContent(
-                $bodyJson,
-                (New-Object System.Text.UTF8Encoding($false)),
-                "application/json"
-            )
-        }
-        $response = $client.SendAsync($request).GetAwaiter().GetResult()
-        $statusCode = [int]$response.StatusCode
-        if ($statusCode -in @(301, 302, 303, 307, 308)) {
-            throw "正式公司服务返回了重定向，已拒绝继续发送或使用凭据。"
-        }
-        $rawBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        $payload = $null
-        if (-not [string]::IsNullOrWhiteSpace($rawBody)) {
-            try { $payload = $rawBody | ConvertFrom-Json }
-            catch { throw "正式公司服务返回了无效 JSON。" }
-        }
-        return [pscustomobject]@{ StatusCode = $statusCode; Payload = $payload }
+    $bodyJson = if ($null -ne $Body) {
+        $Body | ConvertTo-Json -Depth 20 -Compress
+    } else {
+        $null
     }
-    finally {
-        if ($null -ne $response) { $response.Dispose() }
-        $request.Dispose()
-        $client.Dispose()
-        $handler.Dispose()
+    for ($attempt = 0; $attempt -lt 2; $attempt += 1) {
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $false
+        $handler.UseCookies = $false
+        $handler.UseProxy = $false
+        $client = New-Object System.Net.Http.HttpClient($handler)
+        $client.Timeout = [TimeSpan]::FromSeconds(45)
+        $request = New-Object System.Net.Http.HttpRequestMessage(
+            (New-Object System.Net.Http.HttpMethod($Method.ToUpperInvariant())),
+            $Uri
+        )
+        $response = $null
+        try {
+            [void]$request.Headers.TryAddWithoutValidation("Accept", "application/json")
+            foreach ($headerName in $Headers.Keys) {
+                [void]$request.Headers.TryAddWithoutValidation($headerName, [string]$Headers[$headerName])
+            }
+            if ($null -ne $bodyJson) {
+                $request.Content = New-Object System.Net.Http.StringContent(
+                    $bodyJson,
+                    (New-Object System.Text.UTF8Encoding($false)),
+                    "application/json"
+                )
+            }
+            try {
+                $response = $client.SendAsync($request).GetAwaiter().GetResult()
+            }
+            catch {
+                if ($attempt -eq 0) {
+                    Start-Sleep -Milliseconds 750
+                    continue
+                }
+                throw
+            }
+            $statusCode = [int]$response.StatusCode
+            if ($statusCode -in @(301, 302, 303, 307, 308)) {
+                throw "正式公司服务返回了重定向，已拒绝继续发送或使用凭据。"
+            }
+            $rawBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+            $payload = $null
+            if (-not [string]::IsNullOrWhiteSpace($rawBody)) {
+                try { $payload = $rawBody | ConvertFrom-Json }
+                catch { throw "正式公司服务返回了无效 JSON。" }
+            }
+            return [pscustomobject]@{ StatusCode = $statusCode; Payload = $payload }
+        }
+        finally {
+            if ($null -ne $response) { $response.Dispose() }
+            $request.Dispose()
+            $client.Dispose()
+            $handler.Dispose()
+        }
     }
+    throw "正式公司服务连接失败。"
 }
 
 function Invoke-ControlPlaneAuthoritativeGate {

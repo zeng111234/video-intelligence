@@ -1197,6 +1197,29 @@ def test_final_release_clears_all_release_credentials_after_preflight_failure(
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_authoritative_release_gate_retries_transport_failure_only_once():
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "build_final_windows_release.ps1"
+    ).read_text(encoding="utf-8")
+    function_start = script_text.index("function Invoke-ReleaseJsonRequest {")
+    function_end = script_text.index(
+        "function Invoke-ControlPlaneAuthoritativeGate {", function_start
+    )
+    request_function = script_text[function_start:function_end]
+
+    assert "for ($attempt = 0; $attempt -lt 2; $attempt += 1)" in request_function
+    assert "if ($attempt -eq 0)" in request_function
+    assert "Start-Sleep -Milliseconds 750" in request_function
+    assert request_function.count("$client.SendAsync($request)") == 1
+    assert request_function.index("$client.SendAsync($request)") < request_function.index(
+        "if ($attempt -eq 0)"
+    )
+    assert request_function.index("$statusCode = [int]$response.StatusCode") > (
+        request_function.index("if ($attempt -eq 0)")
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
 def test_ignored_python_cannot_receive_release_secrets_or_replace_authoritative_gate(
     tmp_path: Path,
 ):
