@@ -426,9 +426,10 @@ class LocalPlatformLinkParserClient:
                             platform=link.platform,
                             work_id=link.work_id,
                         )
-                    page.wait_for_timeout(
-                        800 if link.platform == Platform.KUAISHOU else 5_000
-                    )
+                    # Kuaishou hydrates the detail page after the first DOM event.  The
+                    # previous 800 ms window often closed the page before the target
+                    # GraphQL/video response arrived on normal customer networks.
+                    page.wait_for_timeout(5_000)
                     check_block = getattr(provider, "_raise_for_visible_block", None)
                     if callable(check_block):
                         try:
@@ -451,19 +452,17 @@ class LocalPlatformLinkParserClient:
                         expected_work_id = final_link.work_id or link.work_id
                         video = page.locator("video")
                         page_title = self._clean_page_title(page.title(), link.platform)
-                        if expected_work_id and page_title and video.count() == 1:
+                        if expected_work_id and video.count() == 1:
                             media_url = video.first.evaluate(
                                 "node => node.currentSrc || node.src || ''"
                             )
-                            if (
-                                isinstance(media_url, str)
-                                and media_url.startswith("https://")
-                                and ".m3u8" not in media_url.casefold()
+                            if self._capture_kuaishou_page_video(
+                                captured,
+                                expected_work_id=expected_work_id,
+                                media_url=media_url,
+                                title=page_title,
                             ):
                                 video.first.evaluate("node => node.pause()")
-                                captured["media_url"] = media_url
-                                captured["work_id"] = expected_work_id
-                                captured["title"] = page_title
                         if expected_work_id and not captured.get("media_url"):
                             for payload in media_payloads:
                                 self._capture_media_payload(
@@ -635,6 +634,33 @@ class LocalPlatformLinkParserClient:
         captured["work_id"] = expected_work_id
         if scoped.get("title"):
             captured["title"] = scoped["title"]
+
+    @staticmethod
+    def _capture_kuaishou_page_video(
+        captured: dict[str, str],
+        *,
+        expected_work_id: str | None,
+        media_url: Any,
+        title: str,
+    ) -> bool:
+        """Bind the sole detail-page video to the work id from that exact URL.
+
+        A visible page title is presentation metadata and may be empty while the
+        player is already ready.  Requiring it caused valid Kuaishou videos to be
+        rejected even though the exact work id and sole player were both known.
+        """
+        if (
+            not expected_work_id
+            or not isinstance(media_url, str)
+            or not media_url.startswith("https://")
+            or ".m3u8" in media_url.casefold()
+        ):
+            return False
+        captured["media_url"] = media_url
+        captured["work_id"] = expected_work_id
+        if title.strip():
+            captured["title"] = title.strip()
+        return True
 
     @staticmethod
     def _capture_https_value(value: Any, captured: dict[str, str]) -> None:

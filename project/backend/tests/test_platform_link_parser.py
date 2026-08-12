@@ -172,6 +172,45 @@ def test_kuaishou_payload_rejects_media_when_requested_work_is_missing():
     assert captured == {}
 
 
+def test_kuaishou_detail_page_accepts_the_exact_work_without_a_page_title():
+    captured: dict[str, str] = {}
+
+    accepted = _client()._capture_kuaishou_page_video(
+        captured,
+        expected_work_id="target-work",
+        media_url="https://video.kuaishou.example/target.mp4",
+        title="",
+    )
+
+    assert accepted is True
+    assert captured == {
+        "media_url": "https://video.kuaishou.example/target.mp4",
+        "work_id": "target-work",
+    }
+
+
+@pytest.mark.parametrize(
+    ("work_id", "media_url"),
+    [
+        (None, "https://video.kuaishou.example/target.mp4"),
+        ("target-work", "http://video.kuaishou.example/target.mp4"),
+        ("target-work", "https://video.kuaishou.example/target.m3u8"),
+    ],
+)
+def test_kuaishou_detail_page_keeps_unsafe_streams_blocked(work_id, media_url):
+    captured: dict[str, str] = {}
+
+    accepted = _client()._capture_kuaishou_page_video(
+        captured,
+        expected_work_id=work_id,
+        media_url=media_url,
+        title="目标作品",
+    )
+
+    assert accepted is False
+    assert captured == {}
+
+
 def test_bilibili_payload_prefers_progressive_stream_then_dash_audio():
     captured: dict[str, str] = {}
     client = _client()
