@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -479,6 +480,51 @@ def test_upload_source_is_persisted_and_listed(tmp_path: Path):
     assert source["source_type"] == "upload"
     assert Path(source["_path"]).is_file()
     assert service.list_sources()[0]["source_id"] == source["source_id"]
+
+
+def test_generated_media_uses_a_larger_transcription_limit_than_manual_upload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "long-avatar.mp4"
+    video.write_bytes(b"video")
+    captured: dict[str, object] = {}
+
+    class CreatingTranscriptionStub(_TranscriptionStub):
+        def create_task(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                status=TaskStatus.SUCCEEDED,
+                task_id="transcript-long-avatar",
+                error_message=None,
+            )
+
+    monkeypatch.setattr(workflow_module, "_MAX_SOURCE_UPLOAD_BYTES", 4)
+    monkeypatch.setattr(workflow_module, "_MAX_GENERATED_SUBTITLE_BYTES", 8)
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        CreatingTranscriptionStub(),
+        None,
+    )
+
+    with pytest.raises(VideoEditorWorkflowError, match="上传素材超过 50MB"):
+        service.upload_source(
+            file_name="manual.mp4",
+            media_type="video/mp4",
+            media_bytes=b"video",
+            rights_confirmed=True,
+            rights_holder="测试用户",
+        )
+
+    transcript_id = service._create_transcription(
+        _analysis_task(video),
+        {"duration_seconds": 1},
+    )
+
+    assert transcript_id == "transcript-long-avatar"
+    assert captured["media_bytes"] == b"video"
+    assert captured["max_media_bytes"] == 8
 
 
 def test_product_showcase_uses_authorized_visual_assets_without_restarting_avatar(

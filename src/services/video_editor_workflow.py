@@ -41,7 +41,8 @@ from src.services.credits import InsufficientCreditsError
 _WORKFLOW_EXECUTOR = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="video-workflow"
 )
-_MAX_SUBTITLE_BYTES = 50 * 1024 * 1024
+_MAX_SOURCE_UPLOAD_BYTES = 50 * 1024 * 1024
+_MAX_GENERATED_SUBTITLE_BYTES = 100 * 1024 * 1024
 _MAX_SUBTITLE_SECONDS = 15 * 60
 _MAX_BATCH_ITEMS = 10
 _MAX_BGM_BYTES = 30 * 1024 * 1024
@@ -502,7 +503,7 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError("请确认拥有素材处理权并填写授权主体。")
         if not media_bytes:
             raise VideoEditorWorkflowError("上传文件为空。")
-        if len(media_bytes) > _MAX_SUBTITLE_BYTES:
+        if len(media_bytes) > _MAX_SOURCE_UPLOAD_BYTES:
             raise VideoEditorWorkflowError("上传素材超过 50MB 限制。")
 
         now = datetime.now().astimezone()
@@ -1156,9 +1157,9 @@ class VideoEditorWorkflowService:
         path = Path(task.source_video_path)
         if path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
             raise VideoEditorWorkflowError("该成片格式暂不支持字幕识别。")
-        if path.stat().st_size > _MAX_SUBTITLE_BYTES:
+        if path.stat().st_size > _MAX_GENERATED_SUBTITLE_BYTES:
             raise VideoEditorWorkflowError(
-                "成片超过 50MB，暂不能在智能剪辑中生成字幕。"
+                "成片超过 100MB，暂不能在智能剪辑中生成字幕。"
             )
         if float(media.get("duration_seconds") or 0) > _MAX_SUBTITLE_SECONDS:
             raise VideoEditorWorkflowError(
@@ -1172,6 +1173,7 @@ class VideoEditorWorkflowService:
             rights_holder="系统内已授权素材",
             model_name=task.outputs.get("subtitle_model", "large-v3-turbo"),
             language=task.outputs.get("language", "zh"),
+            max_media_bytes=_MAX_GENERATED_SUBTITLE_BYTES,
         )
         if transcript.status != TaskStatus.SUCCEEDED:
             raise VideoEditorWorkflowError(transcript.error_message or "字幕识别失败。")
