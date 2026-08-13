@@ -609,6 +609,20 @@ export default function PipelinePage() {
       );
   const publishPagePrepared = preparedPublishTaskIds.length > 0;
   const publishCompleted = activeItem?.publish.status === "succeeded";
+  const hasExplicitManualTarget = (activeItem?.publish.targets || []).some(
+    (target) => target.mode === "manual",
+  );
+  const manualPublishTaskIds = activeItem?.publish.status === "manual_ready" && hasExplicitManualTarget
+    ? activeItem.publish.task_ids
+    : [];
+  const activePublishPlatformLabel = useMemo(() => {
+    const labels = (activeItem?.publish.targets || [])
+      .map((target) => target.display_name || PLATFORM_LABELS[target.platform] || target.platform)
+      .filter(Boolean);
+    const unique = [...new Set(labels)];
+    if (unique.length) return unique.join("、");
+    return publishPagePrepared || activeItem?.publish.task_ids.length ? "抖音" : "所选平台";
+  }, [activeItem?.publish.targets, activeItem?.publish.task_ids.length, publishPagePrepared]);
   const currentStage = activeItem?.stage || activeItem?.current_stage || workspace?.current_stage || "source";
   const nextAction = activeItem?.next_action || workspace?.next_action || "start";
   const allowedActions = activeItem?.allowed_actions || workspace?.allowed_actions || [];
@@ -684,27 +698,48 @@ export default function PipelinePage() {
     }
   }, []);
 
+  const returnToMaterialSelection = useCallback(() => {
+    setWorkspace(null);
+    setSelectedBatchId("");
+    setSelectedRunId("");
+    setReviewText("");
+    setReviewNote("");
+    setCreativePlan(null);
+    setPublishTitle("");
+    setPublishDescription("");
+    setPublishTags("");
+    setActionError("");
+    setActionMessage("");
+    setExpandedWorkspaceStage(null);
+    setMaterialSummaryExpanded(true);
+    navigate("/pipeline", { replace: true });
+  }, [navigate]);
+
   const loadInitialData = useCallback(async () => {
     setInitializing(true);
     setLoadError("");
     try {
-      const [profileData, assetData, platformData, accountData, batchData, configuration, avatarCapabilityData] =
+      const optionalData = Promise.allSettled([
+        listPublishPlatforms(),
+        listPublishAccounts(),
+        getAvatarCapabilities(),
+      ] as const);
+      const [profileData, assetData, batchData, configuration] =
         await Promise.all([
           listProductionProfiles(),
           listAvatarAssets(),
-          listPublishPlatforms(),
-          listPublishAccounts(),
           listProductionBatches(),
           getProductionWorkspaceConfiguration(),
-          getAvatarCapabilities(),
         ]);
       setProfiles(profileData.items);
       setAssets(assetData);
-      setPlatforms(platformData.platforms);
-      setAccounts(accountData);
       setBatches(batchData.items);
       setWorkspaceConfiguration(configuration);
-      setAvatarCapability(avatarCapabilityData);
+      void optionalData.then(([platformResult, accountResult, avatarResult]) => {
+        if (platformResult.status === "fulfilled") setPlatforms(platformResult.value.platforms);
+        if (accountResult.status === "fulfilled") setAccounts(accountResult.value);
+        if (avatarResult.status === "fulfilled") setAvatarCapability(avatarResult.value);
+      });
       setSetupRightsHolder(configuration.rights_holder || "");
       setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
       setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
@@ -1313,6 +1348,11 @@ export default function PipelinePage() {
       }
       const connected = await connectPublishAccount(account.account_id);
       upsertPublishAccount(connected);
+      if (connected.status === "ready") {
+        setPublishPlatforms((current) => (
+          current.includes(platform) ? current : [...current, platform]
+        ));
+      }
       setActionMessage(
         `${PLATFORM_LABELS[platform] || platform}官方登录窗口已打开，扫码完成后系统会自动检查。建议使用专门的发布小号，避免主账号风险。`,
       );
@@ -1330,6 +1370,9 @@ export default function PipelinePage() {
       const account = await getPublishAccountStatus(accountId);
       upsertPublishAccount(account);
       if (account.status === "ready") {
+        setPublishPlatforms((current) => (
+          current.includes(platform) ? current : [...current, platform]
+        ));
         setActionMessage(`${PLATFORM_LABELS[platform] || platform}发布账号已核验，可以发布。`);
       } else {
         setActionError(account.message || "平台还没有完成登录，请在官方窗口完成扫码后再检查。");
@@ -1870,26 +1913,29 @@ export default function PipelinePage() {
   };
 
   const confirmManualPublishCompleted = () => {
-    if (!workspace || !preparedPublishTaskIds.length) {
-      setActionError("还没有等待确认的抖音发布页，请先准备官方发布页。");
+    const taskIds = manualPublishTaskIds.length
+      ? manualPublishTaskIds
+      : preparedPublishTaskIds;
+    if (!workspace || !taskIds.length) {
+      setActionError("还没有等待人工确认的发布任务，请先生成发布内容。");
       return;
     }
     Modal.confirm({
-      title: "确认已经在抖音发布？",
-      content: "只有你已经在抖音官方页面点击发布，并确认作品提交成功时才点这里。确认后，这条任务将完成并显示 100%。",
+      title: `确认已经在${activePublishPlatformLabel}发布？`,
+      content: `只有你已经在${activePublishPlatformLabel}官方页面点击发布，并确认作品提交成功时才点这里。确认后，这条任务将完成并显示 100%。`,
       okText: "确认已发布",
       cancelText: "还没有",
       onOk: async () => {
         setBusy(true);
         setActionError("");
         try {
-          for (const taskId of preparedPublishTaskIds) {
+          for (const taskId of taskIds) {
             await recordManualPublishResult(taskId, {
               succeeded: true,
-              note: "用户在智能创作工作台确认已完成抖音官方发布。",
+              note: `用户在智能创作工作台确认已完成${activePublishPlatformLabel}官方发布。`,
             });
           }
-          setActionMessage("已记录抖音发布完成，这条任务现在是 100%。");
+          setActionMessage(`已记录${activePublishPlatformLabel}发布完成，这条任务现在是 100%。`);
           await loadWorkspace(workspace.batch.batch_id);
         } catch (error) {
           setActionError((error as Error).message || "发布完成状态没有保存成功，请保留当前内容后重试。");
@@ -2691,7 +2737,15 @@ export default function PipelinePage() {
                 <Alert
                   type={activeItem?.error_message || activeItem?.blocked_reasons?.length ? "warning" : "info"}
                   showIcon
-                  message={publishCompleted ? "已在抖音发布" : publishPagePrepared ? "抖音发布页已准备" : (STAGE_LABEL[currentStage] || currentStage)}
+                  message={
+                    publishCompleted
+                      ? `已完成${activePublishPlatformLabel}发布`
+                      : publishPagePrepared
+                        ? "抖音发布页已准备"
+                        : manualPublishTaskIds.length
+                          ? `${activePublishPlatformLabel}发布内容已准备`
+                          : (STAGE_LABEL[currentStage] || currentStage)
+                  }
                   description={
                     activeItem?.error_message
                     || activeItem?.blocked_reasons?.join("；")
@@ -2932,6 +2986,20 @@ export default function PipelinePage() {
                             </Space>
                           </>
                         )}
+                        {!publishPagePrepared && manualPublishTaskIds.length > 0 && (
+                          <Alert
+                            type="info"
+                            showIcon
+                            message={`${activePublishPlatformLabel}发布内容已准备`}
+                            description="该平台当前需要手动完成最终发布。请在发布中心下载或复制已准备内容，确认官方平台发布成功后再回来登记结果。"
+                            action={(
+                              <Space wrap>
+                                <Button onClick={() => navigate("/publish")}>前往发布中心</Button>
+                                <Button type="primary" onClick={confirmManualPublishCompleted}>我已手动发布</Button>
+                              </Space>
+                            )}
+                          />
+                        )}
                         <Text type="secondary">系统已根据最终口播稿生成标题、描述和标签；不会继承原视频的人物或话题，请你审核后再保存。</Text>
                         <Input aria-label="发布标题" value={publishTitle} maxLength={30} showCount placeholder="30 字内，不写 # 或 @" onChange={(event) => setPublishTitle(event.target.value)} />
                         <TextArea aria-label="发布描述" rows={6} value={publishDescription} maxLength={1000} showCount placeholder="写给观众看的作品描述" onChange={(event) => setPublishDescription(event.target.value)} />
@@ -2943,7 +3011,11 @@ export default function PipelinePage() {
                             <Button loading={busy} onClick={() => void submitReview("publish")}>
                               保存发布信息
                             </Button>
-                            {activeItem.publish.task_ids.length > 0 && !publishPagePrepared && (
+                            {activeItem.publish.task_ids.length > 0
+                              && !publishPagePrepared
+                              && manualPublishTaskIds.length === 0
+                              && activePublishPlatformLabel === "抖音"
+                              && (
                               <Button type="primary" icon={<RocketOutlined />} loading={busy} onClick={prepareExistingPublishPages}>
                                 准备抖音发布页
                               </Button>
@@ -3012,7 +3084,7 @@ export default function PipelinePage() {
             {workspace ? (
               <div className="workspace-primary-actions">
                 {renderPrimaryButton()}
-                <Button size="large" icon={<FileTextOutlined />} onClick={() => navigate("/pipeline")}>返回素材</Button>
+                <Button size="large" icon={<FileTextOutlined />} onClick={returnToMaterialSelection}>返回素材</Button>
               </div>
             ) : (
               (candidates.length > 0 || sourceMode === "script") && renderPrimaryButton()

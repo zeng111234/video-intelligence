@@ -359,6 +359,35 @@ describe("VideoEditorPage cloud-light workflow", () => {
     });
   });
 
+  it("never shows a total lower than the sum of its fee lines", async () => {
+    const inconsistent = quote("720p");
+    inconsistent.estimated_max = 0.03;
+    inconsistent.line_items![2].estimated_cost_cny = 0.08;
+    vi.mocked(preflightVideoEditor).mockResolvedValue(inconsistent);
+
+    renderPage();
+
+    fireEvent.click(await screen.findByTestId("primary-action"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cost-total").textContent).toBe("0.10 积分");
+    });
+  });
+
+  it("opens the task history drawer", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /任务历史/ }));
+    expect(await screen.findByRole("dialog", { name: "智能剪辑任务历史" })).toBeTruthy();
+  });
+
+  it("opens the advanced settings drawer", async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /高级设置/ }));
+    expect(await screen.findByRole("dialog", { name: "高级设置" })).toBeTruthy();
+  });
+
   it("blocks production when required cloud configuration is missing", async () => {
     vi.mocked(getVideoCapabilities).mockResolvedValue({
       ...sandboxCapabilities,

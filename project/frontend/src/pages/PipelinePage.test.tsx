@@ -675,6 +675,30 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByRole("button", { name: /开始创作|找素材/ })).toBeTruthy();
   });
 
+  it("shows the workspace without waiting for publishing and avatar extras", async () => {
+    vi.mocked(listPublishPlatforms).mockReturnValue(new Promise(() => {}));
+    vi.mocked(listPublishAccounts).mockReturnValue(new Promise(() => {}));
+    vi.mocked(getAvatarCapabilities).mockReturnValue(new Promise(() => {}));
+
+    renderPage();
+
+    expect(await screen.findByText("今天想做什么视频？")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /开始创作|找素材/ })).toBeTruthy();
+  });
+
+  it("returns from an existing task to material selection instead of keeping stale task state", async () => {
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [productionBatch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(transcriptWorkspace);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+
+    expect(await screen.findByLabelText("AI 校对后的转写")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /返回素材/ }));
+
+    await waitFor(() => expect(screen.queryByLabelText("AI 校对后的转写")).toBeNull());
+    expect(screen.getByText("今天想做什么视频？")).toBeTruthy();
+  });
+
   it("recommends manual selection by default and explains automatic risk", async () => {
     renderPage();
 
@@ -1807,6 +1831,60 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByText(/未绑定就绪账号/)).toBeTruthy();
   });
 
+  it("keeps a non-Douyin manual destination through the final handoff", async () => {
+    const publishWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      status: "awaiting_publish",
+      current_stage: "publish",
+      next_action: "wait",
+      allowed_actions: [],
+      items: [{
+        ...transcriptWorkspace.items[0],
+        stage: "publish",
+        current_stage: "publishing",
+        status: "awaiting_publish",
+        next_action: "wait",
+        allowed_actions: [],
+        publish: {
+          confirmed: true,
+          status: "manual_ready",
+          targets: [{
+            platform: "xiaohongshu",
+            mode: "manual",
+            display_name: "小红书",
+            use_manual_fallback: true,
+          }],
+          task_ids: ["publish-xiaohongshu"],
+          prepared_task_ids: [],
+          draft: {
+            title: "小红书标题",
+            description: "小红书描述",
+            tags: ["获客"],
+          },
+        },
+      }],
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [productionBatch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(publishWorkspace);
+    vi.mocked(recordManualPublishResult).mockResolvedValue({ task_id: "publish-xiaohongshu" } as never);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+
+    expect((await screen.findAllByText("小红书发布内容已准备")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /准备抖音发布页/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "我已手动发布" }));
+    expect((await screen.findAllByText("确认已经在小红书发布？")).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "确认已发布" }));
+
+    await waitFor(() => expect(recordManualPublishResult).toHaveBeenCalledWith(
+      "publish-xiaohongshu",
+      expect.objectContaining({
+        succeeded: true,
+        note: expect.stringContaining("小红书"),
+      }),
+    ));
+  });
+
   it("removes legacy warnings and lets an existing publish task save complete metadata", async () => {
     const legacyDescription = "这是一段必须完整显示并允许修改的发布描述。".repeat(12);
     const legacyWorkspace: ProductionWorkspace = {
@@ -1974,7 +2052,7 @@ describe("PipelinePage customer workspace", () => {
         note: "用户在智能创作工作台确认已完成抖音官方发布。",
       },
     ));
-    expect(await screen.findByText("已在抖音发布")).toBeTruthy();
+    expect(await screen.findByText("已完成抖音发布")).toBeTruthy();
     expect(screen.getByText("这条任务已完成，进度 100%。")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100"));
   });

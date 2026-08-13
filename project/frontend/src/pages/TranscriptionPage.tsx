@@ -238,6 +238,7 @@ export default function TranscriptionPage() {
       const statusOk = filterStatus === "all" || task.status === filterStatus;
       const searchOk =
         !normalized ||
+        formatTranscriptionName(task).toLowerCase().includes(normalized) ||
         task.media_name.toLowerCase().includes(normalized) ||
         task.title.toLowerCase().includes(normalized) ||
         task.task_id.toLowerCase().includes(normalized);

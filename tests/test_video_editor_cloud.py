@@ -988,8 +988,8 @@ def test_mps_request_uses_selected_profile_and_requires_human_review():
     assert watermark["Type"] == "Image"
     assert watermark["InputFile"]["Object"] == "review%2Fapproved-title.png"
     assert watermark["ReferPos"] == "TopLeft"
-    assert watermark["Width"] == "520"
-    assert watermark["Dx"] == "56"
+    assert watermark["Width"] == "660"
+    assert watermark["Dx"] == "30"
     assert watermark["Dy"] == "84"
     assert watermark["Timeline"] == {"Start": "0", "Duration": "2.5"}
     assert outputs[0]["Clip"]["ConfigToClipFirstPart"] is True
@@ -1093,22 +1093,25 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     }
     assert "PlayResX: 720" in ass
     assert "PlayResY: 1280" in ass
-    assert spec["style_id"] == "business_talking_head_v8"
+    assert spec["style_id"] == (
+        "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
+    )
     assert spec["playback_rate"] == 1.15
-    assert spec["title"]["max_chars_per_line"] == 9
+    assert spec["title"]["max_lines"] == 1
+    assert spec["title"]["max_chars_per_line"] == 14
     assert spec["title"]["font_family"] == "Source Han Serif CN Heavy"
     assert spec["title"]["render_mode"] == "png_watermark"
     assert spec["subtitle"]["max_lines"] == 1
     assert spec["subtitle"]["max_chars_per_line"] == 11
     assert spec["subtitle"]["font_size"] == 52
     assert spec["subtitle"]["outline_width"] == 2
-    assert "Style: Title,YaHei,52" in ass
+    assert "Style: Title,YaHei,44" in ass
     assert "Style: Accent,Arial,1" in ass
     assert "Style: Caption,YaHei,52" in ass
     assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.18" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
     assert r"\fad" not in ass
-    assert r"\N" in ass
+    assert r"\N" not in ass
     assert r"\\N" not in ass
 
 
@@ -1154,7 +1157,7 @@ def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuat
         output_profile="720p",
     ).decode("utf-8-sig")
 
-    assert preview["title"]["lines"] == ["机器人也被裁员？真", "相令人深思"]
+    assert preview["title"]["lines"] == ["机器人也被裁员？真相令人深思"]
     assert [cue["lines"] for cue in preview["cues"]] == [
         ["你发现没"],
         ["机器人最近也被裁员了"],

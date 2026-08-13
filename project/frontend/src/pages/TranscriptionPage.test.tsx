@@ -388,6 +388,12 @@ describe("TranscriptionPage", () => {
     expect(await screen.findByText("平面贴标机 · 操作说明")).toBeTruthy();
     expect(screen.getByText("餐饮门店 · 共享会员模式")).toBeTruthy();
     expect(screen.queryByText(opaqueFilename)).toBeNull();
+
+    fireEvent.change(screen.getByPlaceholderText("搜索视频名称、来源或任务 ID"), {
+      target: { value: "共享会员" },
+    });
+    expect(screen.getByText("餐饮门店 · 共享会员模式")).toBeTruthy();
+    expect(screen.queryByText("平面贴标机 · 操作说明")).toBeNull();
   });
 
   it("shows real LLM-rewritten segments as the default voiceover draft", async () => {

@@ -57,7 +57,9 @@ HEAD_TAIL_PADDING_SECONDS = 0.25
 MAX_KEEP_RANGES = 50
 MAX_REMOVE_RANGES = MAX_KEEP_RANGES - 1
 _COST_PRECISION = Decimal("0.000001")
-DEFAULT_VISUAL_STYLE_ID = "business_talking_head_v8"
+DEFAULT_VISUAL_STYLE_ID = (
+    "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
+)
 DEFAULT_PLAYBACK_RATE = 1.15
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
@@ -275,16 +277,16 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
             "visible_seconds": 2.5,
             "fade_in_ms": 0,
             "fade_out_ms": 0,
-            "max_lines": 2,
-            "max_chars_per_line": 9,
+            "max_lines": 1,
+            "max_chars_per_line": 14,
             "font_family": "Source Han Serif CN Heavy",
             "render_mode": "png_watermark",
-            "font_size": round(52 * scale),
+            "font_size": round(44 * scale),
             "line_height": 1.1,
             "safe_top": round(84 * scale),
-            "safe_left": round(56 * scale),
-            "asset_width": round(520 * scale),
-            "asset_height": round(150 * scale),
+            "safe_left": round(30 * scale),
+            "asset_width": round(660 * scale),
+            "asset_height": round(72 * scale),
             "outline_width": max(1, round(1 * scale)),
             "shadow": max(2, round(3 * scale)),
             "color": "#FFFFFF",

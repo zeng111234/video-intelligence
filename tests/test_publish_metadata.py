@@ -9,7 +9,10 @@ from src.models import (
     TaskStatus,
 )
 from src.services.production import ProductionService
-from src.services.publish_metadata import suggested_publish_draft, validated_publish_draft
+from src.services.publish_metadata import (
+    suggested_publish_draft,
+    validated_publish_draft,
+)
 
 
 def test_suggested_draft_never_inherits_source_title_or_hashtags():
@@ -21,7 +24,9 @@ def test_suggested_draft_never_inherits_source_title_or_hashtags():
 
     assert draft["title"] == "机器人也失业，最终谁输谁赢"
     assert draft["tags"] == ["商业思维", "AI获客"]
-    assert "石杨兵" not in " ".join([draft["title"], draft["description"], *draft["tags"]])
+    assert "石杨兵" not in " ".join(
+        [draft["title"], draft["description"], *draft["tags"]]
+    )
 
 
 def test_publish_draft_collapses_duplicate_title_and_rejects_embedded_hashtags():
@@ -43,6 +48,19 @@ def test_suggested_draft_infers_complete_tags_when_profile_has_none():
     )
 
     assert draft["tags"] == ["机器人产业", "就业观察", "商业思维", "企业经营"]
+
+
+def test_long_publish_title_stops_at_a_complete_clause_instead_of_mid_sentence():
+    draft = suggested_publish_draft(
+        approved_script=(
+            "很多开连锁餐饮的老板，其实没细算过这笔账：光养一个专门做获客的人就不便宜。"
+        ),
+        creative_plan=None,
+        profile_tags=[],
+    )
+
+    assert draft["title"] == "很多开连锁餐饮的老板，其实没细算过这笔账"
+    assert len(draft["title"]) <= 30
 
 
 def test_legacy_publish_task_uses_safe_script_metadata_in_workspace():
@@ -75,6 +93,9 @@ def test_legacy_publish_task_uses_safe_script_metadata_in_workspace():
 
     assert draft is not None
     assert draft["title"] == "你发现没，机器人最近也被裁员了"
-    assert draft["description"] == "你发现没，机器人最近也被裁员了。让人有活干，企业才有未来。"
+    assert (
+        draft["description"]
+        == "你发现没，机器人最近也被裁员了。让人有活干，企业才有未来。"
+    )
     assert draft["tags"] == ["机器人产业", "就业观察", "企业经营"]
     assert "石杨兵" not in str(draft)

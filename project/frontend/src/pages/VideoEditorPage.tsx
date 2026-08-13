@@ -181,23 +181,23 @@ type CloudBatchItem = VideoEditorBatchItem;
 type CloudBatch = VideoEditorBatch;
 
 const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
-  style_id: "business_talking_head_v8",
+  style_id: "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15",
   playback_rate: 1.15,
   canvas: { width: 720, height: 1280, pixel_aspect_ratio: "1:1" },
   title: {
     visible_seconds: 2.5,
     fade_in_ms: 0,
     fade_out_ms: 0,
-    max_lines: 2,
-    max_chars_per_line: 9,
+    max_lines: 1,
+    max_chars_per_line: 14,
     font_family: "Source Han Serif CN Heavy",
     render_mode: "png_watermark",
-    font_size: 52,
+    font_size: 44,
     line_height: 1.1,
     safe_top: 84,
-    safe_left: 56,
-    asset_width: 520,
-    asset_height: 150,
+    safe_left: 30,
+    asset_width: 660,
+    asset_height: 72,
     outline_width: 1,
     shadow: 3,
     color: "#FFFFFF",
@@ -402,7 +402,7 @@ function quoteLines(quote: CostQuote | null): Array<{ key: string; label: string
 
 function quoteUpperBound(quote: CostQuote | null, fallback: number) {
   if (!quote) return fallback;
-  return asNumber(
+  const declared = asNumber(
     quote.estimated_upper_bound_cny
       ?? quote.estimated_total_cny
       ?? quote.max_cost_cny
@@ -411,6 +411,8 @@ function quoteUpperBound(quote: CostQuote | null, fallback: number) {
       ?? quote.estimated_total,
     fallback,
   );
+  const itemTotal = quoteLines(quote).reduce((total, item) => total + item.amount, 0);
+  return Math.max(declared, itemTotal);
 }
 
 function hasQuoteExpired(quote: CostQuote | null) {

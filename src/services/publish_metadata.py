@@ -47,6 +47,27 @@ def _collapse_repeated_half(value: str) -> str:
     return first if first and first == second else text
 
 
+def _complete_title_prefix(value: str) -> str:
+    """Keep a complete, useful clause instead of cutting a title mid-sentence."""
+
+    text = _compact(value)
+    if len(text) <= DOUYIN_TITLE_LIMIT:
+        return text
+    clauses = [
+        part.strip() for part in re.split(r"([，。！？!?；;：:])", text) if part.strip()
+    ]
+    result = ""
+    for part in clauses:
+        candidate = f"{result}{part}"
+        if len(candidate) > DOUYIN_TITLE_LIMIT:
+            break
+        result = candidate
+    result = result.rstrip("，。！？!?；;：: ")
+    if len(result) >= 6:
+        return result
+    return text[:DOUYIN_TITLE_LIMIT].rstrip("，。！？!?；;：: ")
+
+
 def normalize_title(value: str, *, remove_source_metadata: bool = False) -> str:
     text = _remove_source_metadata(value) if remove_source_metadata else _compact(value)
     if not remove_source_metadata and (
@@ -56,7 +77,7 @@ def normalize_title(value: str, *, remove_source_metadata: bool = False) -> str:
     text = _collapse_repeated_half(text)
     if not text:
         raise ValueError("请填写发布标题。")
-    return text[:DOUYIN_TITLE_LIMIT]
+    return _complete_title_prefix(text)
 
 
 def normalize_description(value: str) -> str:

@@ -178,7 +178,9 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert created["output_resolution"] == "720x1280"
     assert created["output_fps"] == 30
     assert created["output_bitrate"] == "2.5M"
-    assert created["visual_spec"]["style_id"] == "business_talking_head_v8"
+    assert created["visual_spec"]["style_id"] == (
+        "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
+    )
     assert created["visual_spec"]["canvas"]["pixel_aspect_ratio"] == "1:1"
     item = created["items"][0]
     assert item["status"] == "awaiting_subtitle_review"
@@ -207,7 +209,7 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert reviewed_item["subtitle_segments"][0]["emphasis_terms"] == ["演示"]
     assert reviewed_item["status"] == "configuration_required"
     assert reviewed_item["render_manifest"] == {
-            "visual_style_id": "business_talking_head_v8",
+        "visual_style_id": "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15",
         "subtitle_format": "ass",
         "title_render_mode": "png_watermark",
         "title_font": "Source Han Serif CN Heavy",
@@ -439,7 +441,7 @@ def test_remote_desktop_can_request_owned_output_without_private_bucket(
                 "oss://private-bucket/"
                 "video-editor-output/edit-batch-owned/output/720p.mp4"
             )
-        }
+        },
     )
 
     preview_url = service._cloud_preview_url(item)
@@ -447,9 +449,7 @@ def test_remote_desktop_can_request_owned_output_without_private_bucket(
     assert preview_url == (
         "https://private-bucket.oss-cn-beijing.aliyuncs.com/output.mp4"
     )
-    assert requested == [
-        ("video-editor-output/edit-batch-owned/output/720p.mp4", 3600)
-    ]
+    assert requested == [("video-editor-output/edit-batch-owned/output/720p.mp4", 3600)]
 
 
 def test_real_cloud_output_can_download_before_publish_confirmation(tmp_path: Path):
