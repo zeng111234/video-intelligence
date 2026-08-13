@@ -123,6 +123,7 @@ class ParsedPlatformMedia:
     work_id: str
     media_url: str
     title: str
+    browser_user_agent: str | None = None
 
     @property
     def media_request_headers(self) -> dict[str, str]:
@@ -132,7 +133,7 @@ class ParsedPlatformMedia:
                 if self.platform == Platform.BILIBILI
                 else _PLATFORM_HOME[self.platform]
             ),
-            "User-Agent": _BROWSER_USER_AGENT,
+            "User-Agent": self.browser_user_agent or _BROWSER_USER_AGENT,
         }
 
 
@@ -308,8 +309,7 @@ class LocalPlatformLinkParserClient:
             if (
                 view_payload.get("code") != 0
                 or not isinstance(view_data, dict)
-                or str(view_data.get("bvid") or "").casefold()
-                != work_id.casefold()
+                or str(view_data.get("bvid") or "").casefold() != work_id.casefold()
             ):
                 raise PlatformLinkParserError(
                     "B站没有返回目标作品信息。",
@@ -388,6 +388,9 @@ class LocalPlatformLinkParserClient:
                     timeout_ms = int(self.timeout_seconds * 1000)
                     page.set_default_timeout(timeout_ms)
                     page.set_default_navigation_timeout(timeout_ms)
+                    browser_user_agent = self._safe_browser_user_agent(
+                        page.evaluate("navigator.userAgent")
+                    )
 
                     def capture_response(response) -> None:
                         try:
@@ -395,9 +398,7 @@ class LocalPlatformLinkParserClient:
                                 "content-type", ""
                             ).casefold()
                             if (
-                                self._may_capture_generic_video_response(
-                                    link.platform
-                                )
+                                self._may_capture_generic_video_response(link.platform)
                                 and not captured.get("media_url")
                                 and content_type.startswith("video/")
                                 and response.url.startswith("https://")
@@ -529,7 +530,20 @@ class LocalPlatformLinkParserClient:
             work_id=work_id,
             media_url=media_url,
             title=(title or f"{platform_label(link.platform)}作品 {work_id}")[:200],
+            browser_user_agent=browser_user_agent,
         )
+
+    @staticmethod
+    def _safe_browser_user_agent(value: object) -> str | None:
+        user_agent = str(value or "").strip()
+        if (
+            not user_agent
+            or len(user_agent) > 512
+            or "\r" in user_agent
+            or "\n" in user_agent
+        ):
+            return None
+        return user_agent
 
     @staticmethod
     def _is_media_api_url(platform: Platform, url: str) -> bool:

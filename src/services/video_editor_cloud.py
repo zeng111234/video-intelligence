@@ -719,16 +719,30 @@ def build_smart_opening(
 
     clean_transcript = re.sub(r"\s+", "", transcript or "")
 
+    def context_free_transition(value: str) -> bool:
+        return bool(
+            re.fullmatch(
+                r"(?:但|但是|不过|然而|可是)?(?:这个|这件事|这次|它)?"
+                r"(?:真的|其实|就是)?(?:不一样|不同|有区别|不是这样)(?:了|的)?|"
+                r"你知道吗|没想到吧|重点来了|真相来了|事情没那么简单",
+                value,
+            )
+        )
+
     def complete_short_clause(value: object) -> str:
         compact = re.sub(r"\s+", "", str(value or "")).strip()
         clean = re.sub(r"[，。！？、,.!?；;：:]+", "", compact)
-        if 2 <= len(clean) <= 14:
+        if 2 <= len(clean) <= 14 and not context_free_transition(clean):
             return clean
         clauses = [
             re.sub(r"[\s，。！？、,.!?；;：:]+", "", part)
-            for part in re.split(r"[，。！？、,.!?；;：:]+", compact)
+            for part in re.split(r"[\s，。！？、,.!?；;：:]+", str(value or "").strip())
         ]
-        clauses = [part for part in clauses if 4 <= len(part) <= 14]
+        clauses = [
+            part
+            for part in clauses
+            if 4 <= len(part) <= 14 and not context_free_transition(part)
+        ]
         if not clauses:
             return ""
         action_words = (

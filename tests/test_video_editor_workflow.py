@@ -367,6 +367,49 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     ]
 
 
+def test_production_export_does_not_render_a_context_free_transition_as_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "avatar-transition.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    avatar = _avatar_task(
+        "avatar-transition",
+        video,
+        script_text="但这个不一样 流水线成片不用粘胶 不用充电也能牢固使用",
+    )
+    repo.save_task(avatar)
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "outputs"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_media",
+        lambda _path: {
+            "duration_seconds": 8.0,
+            "width": 1080,
+            "height": 1920,
+            "fps": 30.0,
+            "orientation": "vertical",
+            "has_audio": True,
+            "size_bytes": 5,
+        },
+    )
+    monkeypatch.setattr(service, "_run_local_preview_export", lambda _task_id: None)
+
+    task = service.render_production_export(
+        avatar_task=avatar,
+        script_text=avatar.script_text,
+        publish_title="但这个不一样",
+    )
+
+    assert task.outputs["publish_title"] == "流水线成片不用粘胶"
+
+
 def test_approved_script_segments_keep_real_asr_pauses_without_asr_word_drift():
     script = "这套方法不保证爆单 但能帮助门店更稳定地测试效果 连续测试七天"
 

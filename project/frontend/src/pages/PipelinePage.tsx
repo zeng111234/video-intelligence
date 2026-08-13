@@ -1353,7 +1353,7 @@ export default function PipelinePage() {
         rightsHolder: workspaceConfiguration.rights_holder || setupRightsHolder,
         agreementAccepted: true,
         defaultProfileId: workspaceConfiguration.default_profile_id || profileId || null,
-        defaultPublishPlatforms: workspaceConfiguration.default_publish_platforms || publishPlatforms,
+        defaultPublishPlatforms: publishPlatforms,
         copywritingEstimatedCostCny: copywritingCost,
         avatarEstimatedCostCny: avatarCost,
         bundledCompute: workspaceConfiguration.bundled_compute ?? true,
@@ -1398,19 +1398,60 @@ export default function PipelinePage() {
     publishPlatforms: publishPlatforms.length ? publishPlatforms : ["douyin"],
     concurrency: 1,
     maxTotalCostCny: null,
-    paidActionsConfirmed: Boolean(workspaceConfiguration.bundled_compute),
+    paidActionsConfirmed: false,
     automationMode: sourceMode === "keyword" ? creationMode : "manual" as const,
   }), [creationMode, publishPlatforms, sourceMode, workspaceConfiguration]);
 
   const preflightAndStart = async (batchId: string) => {
     const checked = await preflightProductionBatch(batchId, executionParams);
+    const confirmationOnly = Boolean(
+      checked.cost_known
+      && (checked.estimated_cost_cny || 0) > 0
+      && checked.cost_issues?.length
+      && checked.cost_issues.every((issue) => issue.includes("必须确认预计费用")),
+    );
+    if (confirmationOnly) {
+      const estimatedCredits = cnyToCredits(checked.estimated_cost_cny || 0);
+      Modal.confirm({
+        title: `确认本次最多 ${estimatedCredits} 积分？`,
+        content: "这是提交前的冻结上限，包含转写、文案和数字人；数字人成片完成后按实际整秒结算，多余积分会自动退回。本地剪辑不重复收费。",
+        okText: "确认费用并开始制作",
+        cancelText: "暂不制作",
+        onOk: async () => {
+          setBusy(true);
+          setActionError("");
+          try {
+            const confirmedParams = { ...executionParams, paidActionsConfirmed: true };
+            const confirmed = await preflightProductionBatch(batchId, confirmedParams);
+            if (confirmed.blocked_count || confirmed.cost_blocked || confirmed.ready_count === 0) {
+              throw new Error(
+                confirmed.cost_issues?.join("；")
+                || confirmed.items.flatMap((item) => item.reasons || []).join("；")
+                || "费用确认后预检仍未通过。",
+              );
+            }
+            const idempotencyKey = getOperationKey("start", { batchId, ...confirmedParams });
+            await startProductionBatch(batchId, { ...confirmedParams, idempotencyKey });
+            localStorage.setItem(PROFILE_STORAGE_KEY, profileId);
+            setActionMessage("费用已确认，任务已启动；系统会自动推进到下一次人工确认。 ");
+            await loadWorkspace(batchId);
+          } catch (error) {
+            setActionError((error as Error).message || "费用确认后启动失败，任务内容已保留。 ");
+            throw error;
+          } finally {
+            setBusy(false);
+          }
+        },
+      });
+      return;
+    }
     if (checked.blocked_count || checked.cost_blocked || checked.ready_count === 0) {
       setActionError(
         checked.cost_issues?.join("；")
         || checked.items.flatMap((item) => item.reasons || []).join("；")
         || "预检未通过，请根据提示补齐后重试。",
       );
-      if (checked.cost_blocked && !workspaceConfiguration.bundled_compute) setCostSetupOpen(true);
+      if (checked.cost_blocked && !checked.cost_known) setCostSetupOpen(true);
       await loadWorkspace(batchId);
       return;
     }
@@ -2669,7 +2710,7 @@ export default function PipelinePage() {
                   />
                 )}
 
-                {workspace.cost.blocked && !workspaceConfiguration.bundled_compute && (
+                {workspace.cost.blocked && (
                   <Alert
                     type="warning"
                     showIcon
@@ -3461,7 +3502,7 @@ export default function PipelinePage() {
         destroyOnHidden
       >
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Text type="secondary">仅在按次计费时需要填写。包算力模式不需要填写，系统会按套餐内处理。</Text>
+          <Text type="secondary">仅在供应商没有返回报价时填写。平台转写、AI 文案和数字人即使使用本机剪辑，也可能单独扣积分。</Text>
           <div>
             <Text strong>文案生成每次费用（元）</Text>
             <InputNumber

@@ -1663,13 +1663,88 @@ describe("PipelinePage customer workspace", () => {
 
     await waitFor(() => expect(preflightProductionBatch).toHaveBeenCalledWith(
       "production-batch-1",
-      expect.objectContaining({ rightsConfirmed: true, paidActionsConfirmed: true }),
+      expect.objectContaining({ rightsConfirmed: true, paidActionsConfirmed: false }),
     ));
     expect(startProductionBatch).toHaveBeenCalledWith(
       "production-batch-1",
       expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
     expect(createProductionBatch).not.toHaveBeenCalled();
+  });
+
+  it("shows the real provider credit ceiling and requires an explicit confirmation", async () => {
+    const preflightWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      batch: {
+        ...productionBatch,
+        status: "failed",
+        items: [{
+          ...productionBatch.items[0],
+          status: "planned",
+          current_stage: null,
+        }],
+      },
+      status: "failed",
+      progress: { total: 1, pending: 1, running: 0, paused: 0, succeeded: 0, failed: 0 },
+      current_stage: "source",
+      next_action: "preflight",
+      allowed_actions: ["preflight", "start"],
+      items: [{
+        ...transcriptWorkspace.items[0],
+        status: "planned",
+        stage: "source",
+        current_stage: null,
+        next_action: "preflight",
+        allowed_actions: ["preflight", "start"],
+      }],
+    };
+    const costIssue = "存在付费动作，必须确认预计费用后才能启动。";
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [preflightWorkspace.batch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(preflightWorkspace);
+    vi.mocked(preflightProductionBatch)
+      .mockResolvedValueOnce({
+        batch_id: "production-batch-1",
+        ready_count: 0,
+        blocked_count: 1,
+        items: [{ run_id: "pipeline-run-1", candidate_id: candidate.video_id, ready: false, reasons: [costIssue], estimated_cost_cny: 1.69, cost_known: true }],
+        estimated_cost_cny: 1.69,
+        monthly_budget_used_cny: 0,
+        platforms: [],
+        concurrency: 1,
+        cost_known: true,
+        cost_blocked: true,
+        cost_issues: [costIssue],
+      })
+      .mockResolvedValueOnce({
+        batch_id: "production-batch-1",
+        ready_count: 1,
+        blocked_count: 0,
+        items: [{ run_id: "pipeline-run-1", candidate_id: candidate.video_id, ready: true, reasons: [], estimated_cost_cny: 1.69, cost_known: true }],
+        estimated_cost_cny: 1.69,
+        monthly_budget_used_cny: 0,
+        platforms: [],
+        concurrency: 1,
+        cost_known: true,
+        cost_blocked: false,
+        cost_issues: [],
+      });
+    vi.mocked(startProductionBatch).mockResolvedValue(preflightWorkspace.batch);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+    fireEvent.click(await screen.findByRole("button", { name: "完成预检并启动" }));
+
+    expect((await screen.findAllByText("确认本次最多 1.69 积分？")).length).toBeGreaterThan(0);
+    expect(startProductionBatch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "确认费用并开始制作" }));
+
+    await waitFor(() => expect(preflightProductionBatch).toHaveBeenLastCalledWith(
+      "production-batch-1",
+      expect.objectContaining({ paidActionsConfirmed: true }),
+    ));
+    expect(startProductionBatch).toHaveBeenCalledWith(
+      "production-batch-1",
+      expect.objectContaining({ paidActionsConfirmed: true, idempotencyKey: expect.any(String) }),
+    );
   });
 
   it("shows final publish metadata and the server-confirmed manual destination", async () => {

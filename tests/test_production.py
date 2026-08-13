@@ -60,7 +60,9 @@ def _candidate(candidate_id: str = "candidate-production-1") -> VideoCandidate:
         category="企业服务",
         published_at=now,
         source_type=DataSource.LICENSED_PROVIDER,
-        metrics=VideoMetricSnapshot(item_id=candidate_id, sampled_at=now, likes=10, confidence=0.8),
+        metrics=VideoMetricSnapshot(
+            item_id=candidate_id, sampled_at=now, likes=10, confidence=0.8
+        ),
         heat=HeatResult(score=50, level=HeatLevel.INSUFFICIENT, confidence=0.5),
     )
 
@@ -172,8 +174,12 @@ def test_production_api_creates_profile_and_pending_batch(tmp_path):
     repository.save_candidate(candidate)
     production_service = ProductionService(repository, tmp_path / "production")
     pipeline_service = PipelineService(repository, None, None, None, None)
-    app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: (
+        production_service
+    )
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile_response = client.post(
@@ -215,7 +221,10 @@ def test_mixed_source_batch_keeps_each_source_in_one_persistent_queue(tmp_path):
         profile_id=profile.profile_id,
         candidate_ids=[candidate.video_id],
         source_items=[
-            {"source_type": "share_link", "source_value": "https://example.com/share/1"},
+            {
+                "source_type": "share_link",
+                "source_value": "https://example.com/share/1",
+            },
             {"source_type": "brief", "source_value": "面向企业老板讲解 AI 获客"},
             {"source_type": "script", "source_value": "这是一条已写好的完整口播稿。"},
             {"source_type": "brief", "source_value": "面向企业老板讲解 AI 获客"},
@@ -223,8 +232,16 @@ def test_mixed_source_batch_keeps_each_source_in_one_persistent_queue(tmp_path):
         pipeline_service=pipeline_service,
     )
 
-    assert [item.source_type for item in batch.items] == ["candidate", "share_link", "brief", "script"]
-    workflows = [repository.get_pipeline_run(item.run_id).config["workflow"] for item in batch.items]
+    assert [item.source_type for item in batch.items] == [
+        "candidate",
+        "share_link",
+        "brief",
+        "script",
+    ]
+    workflows = [
+        repository.get_pipeline_run(item.run_id).config["workflow"]
+        for item in batch.items
+    ]
     assert workflows == [
         "production_batch_candidate",
         "production_batch_share_link",
@@ -238,11 +255,17 @@ def test_production_api_accepts_mixed_source_items(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
     production_service = ProductionService(repository, tmp_path / "production")
-    app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: (
+        production_service
+    )
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
-            profile = client.post("/api/v1/production/profiles", json={"name": "混合 API 配方"}).json()
+            profile = client.post(
+                "/api/v1/production/profiles", json={"name": "混合 API 配方"}
+            ).json()
             response = client.post(
                 "/api/v1/production/batches",
                 headers={"Idempotency-Key": "create-mixed-batch"},
@@ -260,15 +283,22 @@ def test_production_api_accepts_mixed_source_items(tmp_path):
         app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
 
     assert response.status_code == 201, response.text
-    assert [item["source_type"] for item in response.json()["items"]] == ["brief", "script"]
+    assert [item["source_type"] for item in response.json()["items"]] == [
+        "brief",
+        "script",
+    ]
 
 
 def test_keyword_auto_run_api_only_enqueues_after_preflight(tmp_path):
     repository = MockRepository()
     production_service = ProductionService(repository, tmp_path / "production")
     pipeline_service = PipelineService(repository, None, None, None, None)
-    app.dependency_overrides[backend_deps.get_production_service] = lambda: production_service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_production_service] = lambda: (
+        production_service
+    )
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile_response = client.post(
@@ -289,8 +319,12 @@ def test_keyword_auto_run_api_only_enqueues_after_preflight(tmp_path):
                 "rights_confirmed": True,
                 "publish_platforms": ["douyin"],
             }
-            preflight_response = client.post("/api/v1/production/keyword-runs/preflight", json=request)
-            start_response = client.post("/api/v1/production/keyword-runs", json=request)
+            preflight_response = client.post(
+                "/api/v1/production/keyword-runs/preflight", json=request
+            )
+            start_response = client.post(
+                "/api/v1/production/keyword-runs", json=request
+            )
     finally:
         app.dependency_overrides.pop(backend_deps.get_production_service, None)
         app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
@@ -351,8 +385,18 @@ class _LocalLinkPreview:
 class _Assets:
     def list_assets(self):
         return [
-            AvatarAsset(asset_id="avatar-owner", kind=AvatarAssetKind.AVATAR, name="形象", authorized=True),
-            AvatarAsset(asset_id="voice-owner", kind=AvatarAssetKind.VOICE, name="音色", authorized=True),
+            AvatarAsset(
+                asset_id="avatar-owner",
+                kind=AvatarAssetKind.AVATAR,
+                name="形象",
+                authorized=True,
+            ),
+            AvatarAsset(
+                asset_id="voice-owner",
+                kind=AvatarAssetKind.VOICE,
+                name="音色",
+                authorized=True,
+            ),
         ]
 
 
@@ -366,6 +410,21 @@ class _AssetsWithMaximumScript(_Assets):
         )
 
 
+class _CentrallyBilledAssets(_Assets):
+    def capabilities(self):
+        return SimpleNamespace(
+            mode=SimpleNamespace(value="production"),
+            estimated_cost_cny=None,
+            estimated_seconds=None,
+            max_script_chars=2000,
+        )
+
+    def billing_quote(self, *, script_text, speech_rate):
+        assert len(script_text) == 300
+        assert speech_rate == 1.0
+        return SimpleNamespace(reservation_credits=1.67, reservation_seconds=75)
+
+
 class _AlignmentTranscription:
     cloud_runtime = SimpleNamespace(
         capability=lambda: {
@@ -377,12 +436,24 @@ class _AlignmentTranscription:
 
 class _Templates:
     def get_template(self, template_id):
-        return SimpleNamespace(template_id=template_id) if template_id == "template-professional" else None
+        return (
+            SimpleNamespace(template_id=template_id)
+            if template_id == "template-professional"
+            else None
+        )
 
 
 class _Publish:
     def available_platforms(self):
-        return [{"platform": "douyin", "display_name": "抖音", "enabled": False, "manual_fallback": True, "mode": "manual"}]
+        return [
+            {
+                "platform": "douyin",
+                "display_name": "抖音",
+                "enabled": False,
+                "manual_fallback": True,
+                "mode": "manual",
+            }
+        ]
 
 
 class _LocalBrowserPublish:
@@ -453,6 +524,14 @@ class _UnknownCostCopywriting(_Copywriting):
             "enabled": True,
             "estimated_cost_cny": None,
             "missing_configuration": [],
+        }
+
+
+class _CentrallyBilledCopywriting(_UnknownCostCopywriting):
+    def capabilities(self):
+        return {
+            **super().capabilities(),
+            "minimum_charge_credits": "0.01",
         }
 
 
@@ -766,11 +845,13 @@ def test_batch_preflight_isolates_an_invalid_single_item_profile_override(tmp_pa
     batch = service.create_batch(
         name="带单条覆盖",
         profile_id=profile.profile_id,
-        source_items=[{
-            "source_type": "candidate",
-            "source_value": candidate.video_id,
-            "profile_overrides": {"avatar_id": "avatar-missing"},
-        }],
+        source_items=[
+            {
+                "source_type": "candidate",
+                "source_value": candidate.video_id,
+                "profile_overrides": {"avatar_id": "avatar-missing"},
+            }
+        ],
         pipeline_service=pipeline_service,
     )
 
@@ -800,12 +881,20 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
         publish_service=_Publish(),
     )
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
-            profile = client.post("/api/v1/production/profiles", json={
-                "name": "API 启动配方", "avatar_id": "avatar-owner", "voice_id": "voice-owner", "edit_template_id": "template-professional",
-            }).json()
+            profile = client.post(
+                "/api/v1/production/profiles",
+                json={
+                    "name": "API 启动配方",
+                    "avatar_id": "avatar-owner",
+                    "voice_id": "voice-owner",
+                    "edit_template_id": "template-professional",
+                },
+            ).json()
             batch = client.post(
                 "/api/v1/production/batches",
                 headers={"Idempotency-Key": "create-api-ready"},
@@ -823,7 +912,9 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
                 "max_total_cost_cny": 1,
                 "paid_actions_confirmed": True,
             }
-            preflight = client.post(f"/api/v1/production/batches/{batch['batch_id']}/preflight", json=body)
+            preflight = client.post(
+                f"/api/v1/production/batches/{batch['batch_id']}/preflight", json=body
+            )
             started = client.post(
                 f"/api/v1/production/batches/{batch['batch_id']}/start",
                 json=body,
@@ -874,7 +965,9 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
         media_type="video/mp4",
         rights_confirmed=True,
         segments=[
-            TranscriptSegment(text="原始转写第一句", confidence=0.55, needs_review=True),
+            TranscriptSegment(
+                text="原始转写第一句", confidence=0.55, needs_review=True
+            ),
             TranscriptSegment(text="原始转写第二句", confidence=0.95),
         ],
         uncertain_segment_count=1,
@@ -904,7 +997,9 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     )
 
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
             workspace = client.get(
@@ -1179,7 +1274,9 @@ def test_batch_create_and_start_idempotency_reuse_and_conflict(tmp_path):
         publish_service=_Publish(),
     )
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
             profile = client.post(
@@ -1297,7 +1394,9 @@ def test_publish_requires_output_review_and_persists_manual_targets_idempotently
     )
     repository.save_pipeline_run(run)
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
+    )
     publish_body = {
         "run_ids": [run.run_id],
         "targets": [
@@ -1331,14 +1430,16 @@ def test_publish_requires_output_review_and_persists_manual_targets_idempotently
                 json={
                     "stage": "publish",
                     "reviewer": "成片审核员",
-                    "items": [{
-                        "run_id": run.run_id,
-                        "publish_draft": {
-                            "title": "客户可见标题",
-                            "description": "客户可见发布描述",
-                            "tags": ["本地获客", "真实案例"],
-                        },
-                    }],
+                    "items": [
+                        {
+                            "run_id": run.run_id,
+                            "publish_draft": {
+                                "title": "客户可见标题",
+                                "description": "客户可见发布描述",
+                                "tags": ["本地获客", "真实案例"],
+                            },
+                        }
+                    ],
                 },
             )
             ready = client.post(
@@ -1676,11 +1777,13 @@ def test_manual_publish_fallback_creates_persistent_manual_ready_task(tmp_path):
                 "tags": [],
             },
             "publish_draft_approved": True,
-            "publish_draft_fingerprint": publish_draft_fingerprint({
-                "title": "人工发布包",
-                "description": "最终口播文案",
-                "tags": [],
-            }),
+            "publish_draft_fingerprint": publish_draft_fingerprint(
+                {
+                    "title": "人工发布包",
+                    "description": "最终口播文案",
+                    "tags": [],
+                }
+            ),
             "publish_targets": [
                 {
                     "platform": "douyin",
@@ -1918,14 +2021,14 @@ def test_workspace_cost_quote_unblocks_unknown_copywriting_cost(tmp_path):
     assert preflight["items"][0]["transcript_review_reserved"] is False
 
 
-def test_bundled_compute_treats_unknown_provider_prices_as_included(tmp_path):
+def test_bundled_compute_does_not_hide_centrally_billed_provider_prices(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
     service = ProductionService(
         repository,
         tmp_path / "production",
-        copywriting_service=_UnknownCostCopywriting(),
-        avatar_service=_Assets(),
+        copywriting_service=_CentrallyBilledCopywriting(),
+        avatar_service=_CentrallyBilledAssets(),
         template_service=_Templates(),
         publish_service=_Publish(),
     )
@@ -1957,8 +2060,31 @@ def test_bundled_compute_treats_unknown_provider_prices_as_included(tmp_path):
     )
 
     assert preflight["cost_known"] is True
-    assert preflight["estimated_cost_cny"] == 0
+    assert preflight["estimated_cost_cny"] == 1.69
     assert preflight["ready_count"] == 1
+
+    unresolved = service.resolve_workspace_execution_options(
+        {
+            "publish_platforms": ["kuaishou"],
+            "paid_actions_confirmed": False,
+        }
+    )
+    assert unresolved["publish_platforms"] == ["kuaishou"]
+    assert unresolved["paid_actions_confirmed"] is False
+
+    started = service.start_batch(
+        batch.batch_id,
+        options={
+            "rights_holder": "测试公司",
+            "rights_confirmed": True,
+            "publish_platforms": ["kuaishou"],
+            "paid_actions_confirmed": True,
+        },
+        pipeline_service=pipeline_service,
+    )
+    workspace = service.workspace(started.batch_id)
+    assert workspace["cost"]["known"] is True
+    assert workspace["cost"]["estimated_cost_cny"] == 1.69
 
 
 def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
@@ -1966,9 +2092,7 @@ def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
     candidate = _candidate("candidate-review-failure")
     repository.save_candidate(candidate)
     copywriting = _FailingCopywriting()
-    pipeline_service = PipelineService(
-        repository, None, copywriting, None, None
-    )
+    pipeline_service = PipelineService(repository, None, copywriting, None, None)
     service = ProductionService(repository, tmp_path / "production")
     profile = service.create_profile(name="审核失败配方")
     batch = service.create_batch(
@@ -2008,8 +2132,8 @@ def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
         transcription=transcription,
     )
     app.dependency_overrides[backend_deps.get_production_service] = lambda: service
-    app.dependency_overrides[backend_deps.get_pipeline_service] = (
-        lambda: pipeline_service
+    app.dependency_overrides[backend_deps.get_pipeline_service] = lambda: (
+        pipeline_service
     )
     try:
         with TestClient(app, headers=TEST_API_HEADERS) as client:
@@ -2027,12 +2151,8 @@ def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):
                 },
             )
     finally:
-        app.dependency_overrides.pop(
-            backend_deps.get_production_service, None
-        )
-        app.dependency_overrides.pop(
-            backend_deps.get_pipeline_service, None
-        )
+        app.dependency_overrides.pop(backend_deps.get_production_service, None)
+        app.dependency_overrides.pop(backend_deps.get_pipeline_service, None)
 
     assert response.status_code == 200
     assert response.json()["results"][0]["ok"] is False
@@ -2355,7 +2475,11 @@ def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):
             media_name=f"candidate-{index}.mp4",
             media_type="video/mp4",
             rights_confirmed=True,
-            segments=[TranscriptSegment(text=f"第 {index + 1} 条真实口播转写", confidence=0.95)],
+            segments=[
+                TranscriptSegment(
+                    text=f"第 {index + 1} 条真实口播转写", confidence=0.95
+                )
+            ],
             is_mock=True,
         )
         repository.save_task(transcription)
@@ -2381,10 +2505,10 @@ def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):
     assert updated is not None
     assert updated.execution_config["auto_review_state"] == "completed"
     assert updated.execution_config["auto_selected_run_id"] == batch.items[0].run_id
-    assert sum(
-        item.status == ProductionBatchItemStatus.SKIPPED
-        for item in updated.items
-    ) == 3
+    assert (
+        sum(item.status == ProductionBatchItemStatus.SKIPPED for item in updated.items)
+        == 3
+    )
     winner = repository.get_pipeline_run(batch.items[0].run_id)
     assert winner is not None
     assert winner.status == PipelineRunStatus.PENDING

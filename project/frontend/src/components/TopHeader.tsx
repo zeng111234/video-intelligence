@@ -136,6 +136,29 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
 
   useEffect(() => {
     void fetchCredits();
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void fetchCredits();
+      }
+    };
+    const refreshOnFocus = () => void fetchCredits();
+    const refreshTimer = window.setInterval(refreshWhenVisible, 5_000);
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [fetchCredits]);
+
+  const handleCreditsOpenChange = useCallback((open: boolean) => {
+    setCreditsOpen(open);
+    if (open) {
+      void fetchCredits();
+    }
   }, [fetchCredits]);
 
   const recharge = async () => {
@@ -282,7 +305,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           {/* 积分余额入口：所有页面可见，点击可查看流水并快速充值 */}
           <Popover
             open={creditsOpen}
-            onOpenChange={setCreditsOpen}
+            onOpenChange={handleCreditsOpenChange}
             trigger="click"
             placement="bottomRight"
             content={(
@@ -343,7 +366,7 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             <Button
               className="vi-header-credits"
               icon={<WalletOutlined />}
-              onClick={() => setCreditsOpen(true)}
+              onClick={() => handleCreditsOpenChange(true)}
             >
               {credits?.balance ?? "—"} 积分
             </Button>

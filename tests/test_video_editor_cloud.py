@@ -868,6 +868,17 @@ def test_smart_opening_selects_a_complete_clause_instead_of_cutting_mid_sentence
     assert opening.hook_text != "很多开连锁餐饮的老板其实没细"[:14]
 
 
+def test_smart_opening_skips_a_context_free_transition_title():
+    opening = build_smart_opening(
+        "但这个不一样 流水线成片不用粘胶 不用充电也能牢固使用",
+        ["但这个不一样"],
+    )
+
+    assert opening is not None
+    assert opening.hook_text == "流水线成片不用粘胶"
+    assert opening.hook_text != "但这个不一样"
+
+
 def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
     segments = [{"start": 0, "end": 2, "text": "只需要49元就能参加活动。"}]
     ass = build_business_talking_head_ass(

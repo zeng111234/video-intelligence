@@ -6,6 +6,7 @@ import pytest
 from src.adapters.douyin_parser import LocalDouyinBrowserParserClient
 from src.adapters.platform_link_parser import (
     LocalPlatformLinkParserClient,
+    ParsedPlatformMedia,
     PlatformLinkParserError,
     parse_platform_share_text,
 )
@@ -265,11 +266,7 @@ def test_bilibili_public_api_resolves_the_target_audio_stream():
             json={
                 "code": 0,
                 "data": {
-                    "dash": {
-                        "audio": [
-                            {"baseUrl": "https://upos.example/audio.m4s"}
-                        ]
-                    }
+                    "dash": {"audio": [{"baseUrl": "https://upos.example/audio.m4s"}]}
                 },
             },
         )
@@ -289,6 +286,31 @@ def test_bilibili_public_api_resolves_the_target_audio_stream():
     assert media.title == "外贸获客讲解"
     assert media.media_url == "https://upos.example/audio.m4s"
     assert media.media_request_headers["Referer"].endswith("/BV1bZ3t64EvY")
+
+
+def test_connected_browser_media_uses_the_real_browser_user_agent():
+    media = ParsedPlatformMedia(
+        platform=Platform.KUAISHOU,
+        share_url="https://www.kuaishou.com/short-video/target-work",
+        work_id="target-work",
+        media_url="https://video.kuaishou.example/target.mp4",
+        title="快手目标作品",
+        browser_user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+        ),
+    )
+
+    assert "Chrome/140.0.0.0" in media.media_request_headers["User-Agent"]
+
+
+def test_browser_user_agent_rejects_header_injection():
+    assert (
+        LocalPlatformLinkParserClient._safe_browser_user_agent(
+            "Chrome/140\r\nX-Test: 1"
+        )
+        is None
+    )
 
 
 def test_platform_capability_requires_the_corresponding_browser_session():

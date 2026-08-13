@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
+from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,10 @@ DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
 BUNDLED_DEFAULT_PROFILE_NAME = "大树1"
 BUNDLED_DEFAULT_AVATAR_ID = "shuying-avatar-21920"
 BUNDLED_DEFAULT_VOICE_ID = "shuying-voice-7869"
+
+
+def _round_up_credits(value: float | Decimal) -> float:
+    return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_CEILING))
 
 
 class IdempotencyConflictError(ValueError):
@@ -131,7 +136,10 @@ class ProductionService:
         )
 
     def get_profile(self, profile_id: str) -> ProductionProfile | None:
-        return next((item for item in self.list_profiles() if item.profile_id == profile_id), None)
+        return next(
+            (item for item in self.list_profiles() if item.profile_id == profile_id),
+            None,
+        )
 
     def get_workspace_configuration(self) -> ProductionWorkspaceConfiguration | None:
         """读取客户首次设置；不存在时明确返回未设置，绝不默认授权。"""
@@ -207,8 +215,6 @@ class ProductionService:
             resolved["publish_platforms"] = list(
                 configuration.default_publish_platforms
             )
-        if configuration.bundled_compute:
-            resolved["paid_actions_confirmed"] = True
         return resolved
 
     def create_profile(
@@ -262,7 +268,9 @@ class ProductionService:
         profile = self.get_profile(profile_id)
         if profile is None:
             raise ValueError("IP 配方不存在。")
-        normalized_sources = self._normalize_source_items(candidate_ids or [], source_items or [])
+        normalized_sources = self._normalize_source_items(
+            candidate_ids or [], source_items or []
+        )
         if not normalized_sources:
             raise ValueError("请至少添加一条候选、链接、选题或完整文案。")
         if len(normalized_sources) > 400:
@@ -290,9 +298,7 @@ class ProductionService:
             assert existing is not None
             return existing
         if operation_resource_id != batch.batch_id:
-            batch = batch.model_copy(
-                update={"batch_id": operation_resource_id}
-            )
+            batch = batch.model_copy(update={"batch_id": operation_resource_id})
         items: list[ProductionBatchItem] = []
         runs = []
         try:
@@ -332,7 +338,9 @@ class ProductionService:
                         "workflow": workflow,
                         "batch_id": batch.batch_id,
                         "profile": merged_profile,
-                        "candidate_id": candidate.video_id if candidate is not None else "",
+                        "candidate_id": candidate.video_id
+                        if candidate is not None
+                        else "",
                         "candidate_role": candidate_role,
                         "candidate_platform": (
                             candidate.platform.value if candidate is not None else ""
@@ -394,7 +402,9 @@ class ProductionService:
 
     @staticmethod
     def request_hash(payload: dict[str, Any]) -> str:
-        serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        serialized = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
     def _claim_operation(
@@ -423,8 +433,10 @@ class ProductionService:
             idempotency_key=key,
         )
         same_resource = (
-            operation == "create" or record.get("resource_id") == resource_id
-        ) if record is not None else False
+            (operation == "create" or record.get("resource_id") == resource_id)
+            if record is not None
+            else False
+        )
         if (
             record is None
             or record.get("request_hash") != request_hash
@@ -436,7 +448,10 @@ class ProductionService:
         recorded_resource_id = str(record.get("resource_id") or resource_id)
         if record.get("state") == "failed":
             raise ValueError(
-                str(record.get("error_message") or "此前相同请求执行失败，请使用新的幂等键重试。")
+                str(
+                    record.get("error_message")
+                    or "此前相同请求执行失败，请使用新的幂等键重试。"
+                )
             )
         existing = self.get_batch(recorded_resource_id)
         if record.get("state") == "completed":
@@ -521,7 +536,10 @@ class ProductionService:
         if not key:
             return dict(config)
         records = list(config.get("_idempotency_records") or [])
-        if not any(item.get("operation") == operation and item.get("key") == key for item in records):
+        if not any(
+            item.get("operation") == operation and item.get("key") == key
+            for item in records
+        ):
             records.append(
                 {
                     "operation": operation,
@@ -532,7 +550,9 @@ class ProductionService:
         return {**config, "_idempotency_records": records}
 
     @staticmethod
-    def _normalize_source_items(candidate_ids: list[str], source_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _normalize_source_items(
+        candidate_ids: list[str], source_items: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """标准化混合来源并按来源和值去重，不在这里调用外部服务。"""
         raw: list[dict[str, Any]] = [
             {"source_type": "candidate", "source_value": value}
@@ -548,29 +568,37 @@ class ProductionService:
                 raise ValueError(f"不支持的批量来源：{source_type}")
             if not value:
                 raise ValueError("批量来源内容不能为空。")
-            if source_type == "share_link" and not value.lower().startswith(("http://", "https://")):
+            if source_type == "share_link" and not value.lower().startswith(
+                ("http://", "https://")
+            ):
                 raise ValueError("分享链接必须以 http:// 或 https:// 开头。")
             key = (source_type, value.casefold())
             if key in seen:
                 continue
             seen.add(key)
             overrides = item.get("profile_overrides") or {}
-            normalized.append({
-                "source_type": source_type,
-                "source_value": value,
-                "display_title": str(item.get("display_title") or item.get("title") or "").strip(),
-                "candidate_role": (
-                    "reserve"
-                    if source_type == "candidate"
-                    and str(item.get("candidate_role") or "").casefold() == "reserve"
-                    else "primary"
-                ),
-                "profile_overrides": {
-                    key: str(value)
-                    for key, value in overrides.items()
-                    if key in {"avatar_id", "voice_id", "edit_template_id"} and str(value).strip()
-                },
-            })
+            normalized.append(
+                {
+                    "source_type": source_type,
+                    "source_value": value,
+                    "display_title": str(
+                        item.get("display_title") or item.get("title") or ""
+                    ).strip(),
+                    "candidate_role": (
+                        "reserve"
+                        if source_type == "candidate"
+                        and str(item.get("candidate_role") or "").casefold()
+                        == "reserve"
+                        else "primary"
+                    ),
+                    "profile_overrides": {
+                        key: str(value)
+                        for key, value in overrides.items()
+                        if key in {"avatar_id", "voice_id", "edit_template_id"}
+                        and str(value).strip()
+                    },
+                }
+            )
         return normalized
 
     def preflight_batch(
@@ -593,10 +621,6 @@ class ProductionService:
         if max_total_cost_cny is not None and max_total_cost_cny < 0:
             raise ValueError("费用上限不能小于 0。")
         workspace_configuration = self.get_workspace_configuration()
-        bundled_compute = bool(
-            workspace_configuration is not None
-            and workspace_configuration.bundled_compute
-        )
         profile = self.get_profile(batch.profile_id)
         shared: list[str] = []
         platforms: list[PublishPlatform] = []
@@ -605,7 +629,9 @@ class ProductionService:
         avatar_cost_known = True
         avatar_estimated_seconds = 0
         if not rights_confirmed or not rights_holder.strip():
-            shared.append("必须确认拥有媒体、文案、肖像和声音处理授权，并填写授权主体。")
+            shared.append(
+                "必须确认拥有媒体、文案、肖像和声音处理授权，并填写授权主体。"
+            )
         if profile is None:
             shared.append("IP 配方不存在。")
         else:
@@ -614,8 +640,13 @@ class ProductionService:
             if self.avatar_service is None:
                 shared.append("数字人服务未配置。")
             elif profile.avatar_id and profile.voice_id:
-                assets_by_id = {item.asset_id: item for item in self.avatar_service.list_assets()}
-                for asset_id, label in ((profile.avatar_id, "数字人形象"), (profile.voice_id, "音色")):
+                assets_by_id = {
+                    item.asset_id: item for item in self.avatar_service.list_assets()
+                }
+                for asset_id, label in (
+                    (profile.avatar_id, "数字人形象"),
+                    (profile.voice_id, "音色"),
+                ):
                     asset = assets_by_id.get(asset_id)
                     if asset is None:
                         shared.append(f"IP 配方绑定的{label}不存在。")
@@ -640,9 +671,38 @@ class ProductionService:
                                 "字" * max_script_chars,
                                 1.0,
                             )
-                    if estimated is None and mode.casefold() not in {"sandbox", "providermode.sandbox"}:
-                        if bundled_compute:
-                            avatar_cost = 0.0
+                    if estimated is None and mode.casefold() not in {
+                        "sandbox",
+                        "providermode.sandbox",
+                    }:
+                        billing_quote = getattr(
+                            self.avatar_service, "billing_quote", None
+                        )
+                        if callable(billing_quote):
+                            expected_characters = max(
+                                [
+                                    sum(
+                                        1
+                                        for character in item.source_value
+                                        if not character.isspace()
+                                    )
+                                    if item.source_type == "script"
+                                    else 300
+                                    for item in batch.items
+                                ]
+                                or [300]
+                            )
+                            try:
+                                quote = billing_quote(
+                                    script_text="字" * max(1, expected_characters),
+                                    speech_rate=1.0,
+                                )
+                                avatar_cost = float(quote.reservation_credits)
+                                avatar_estimated_seconds = int(
+                                    quote.reservation_seconds
+                                )
+                            except (TypeError, ValueError):
+                                avatar_cost_known = False
                         else:
                             configured_cost = (
                                 workspace_configuration.avatar_estimated_cost_cny
@@ -672,7 +732,10 @@ class ProductionService:
         if self.publish_service is None:
             shared.append("发布服务未配置。")
         else:
-            available = {item["platform"]: item for item in self.publish_service.available_platforms()}
+            available = {
+                item["platform"]: item
+                for item in self.publish_service.available_platforms()
+            }
             for platform in platforms:
                 capability = available.get(platform.value)
                 if capability is None:
@@ -680,7 +743,9 @@ class ProductionService:
                 else:
                     platform_summary.append(capability)
                     if not (capability["enabled"] or capability["manual_fallback"]):
-                        shared.append(f"{capability['display_name']} 未启用且没有人工发布兜底。")
+                        shared.append(
+                            f"{capability['display_name']} 未启用且没有人工发布兜底。"
+                        )
 
         copy_capability: dict[str, Any] | None = None
         copy_capability_error = ""
@@ -748,10 +813,7 @@ class ProductionService:
                     missing = "、".join(
                         str(value)
                         for value in (
-                            (copy_capability or {}).get(
-                                "missing_configuration"
-                            )
-                            or []
+                            (copy_capability or {}).get("missing_configuration") or []
                         )
                     )
                     reasons.append(
@@ -760,13 +822,15 @@ class ProductionService:
                     )
                     item_cost_known = False
                 else:
-                    copy_mode = str(
-                        copy_capability.get("mode") or ""
-                    ).casefold()
+                    copy_mode = str(copy_capability.get("mode") or "").casefold()
                     copy_cost = copy_capability.get("estimated_cost_cny")
                     if copy_cost is None and copy_mode != "sandbox":
-                        if bundled_compute:
-                            item_cost += 0.0
+                        minimum_charge = copy_capability.get("minimum_charge_credits")
+                        if minimum_charge is not None:
+                            try:
+                                item_cost += float(minimum_charge) * copy_call_count
+                            except (TypeError, ValueError):
+                                item_cost_known = False
                         else:
                             configured_cost = (
                                 workspace_configuration.copywriting_estimated_cost_cny
@@ -781,7 +845,10 @@ class ProductionService:
                         item_cost += float(copy_cost or 0) * copy_call_count
             if item.profile_overrides:
                 if self.avatar_service is not None:
-                    for key, label in (("avatar_id", "数字人形象"), ("voice_id", "音色")):
+                    for key, label in (
+                        ("avatar_id", "数字人形象"),
+                        ("voice_id", "音色"),
+                    ):
                         asset_id = item.profile_overrides.get(key)
                         if not asset_id:
                             continue
@@ -792,25 +859,36 @@ class ProductionService:
                             reasons.append(f"单条覆盖的{label}未标记为已授权。")
                 if self.template_service is not None:
                     template_id = item.profile_overrides.get("edit_template_id")
-                    if template_id and self.template_service.get_template(template_id) is None:
+                    if (
+                        template_id
+                        and self.template_service.get_template(template_id) is None
+                    ):
                         reasons.append("单条覆盖的剪辑模板不存在。")
             if item.source_type == "candidate":
-                candidate = getattr(self.repository, "get_candidate", lambda _: None)(item.candidate_id)
+                candidate = getattr(self.repository, "get_candidate", lambda _: None)(
+                    item.candidate_id
+                )
                 if candidate is None:
                     reasons.append("候选不存在或已被删除。")
-                elif candidate.platform.value == "douyin" and self.media_resolution_service is None:
+                elif (
+                    candidate.platform.value == "douyin"
+                    and self.media_resolution_service is None
+                ):
                     reasons.append("媒体解析服务未配置。")
                 elif candidate.platform.value == "douyin":
                     preview = self.media_resolution_service.preview(candidate)
-                    budget_used = max(budget_used, float(preview.monthly_budget_used_cny or 0))
+                    budget_used = max(
+                        budget_used, float(preview.monthly_budget_used_cny or 0)
+                    )
                     if preview.resolvable:
-                        if bundled_compute:
-                            item_cost += 0.0
-                        elif preview.estimated_cost_cny is None:
+                        if preview.estimated_cost_cny is None:
                             item_cost_known = False
                         else:
                             item_cost += float(preview.estimated_cost_cny)
-                    elif candidate.source_url and self.link_transcription_service is not None:
+                    elif (
+                        candidate.source_url
+                        and self.link_transcription_service is not None
+                    ):
                         try:
                             link_preview = self.link_transcription_service.preview(
                                 str(candidate.source_url)
@@ -837,8 +915,10 @@ class ProductionService:
                                 use_candidate_link_fallback = True
                     else:
                         reasons.append(preview.block_reason or "候选不能进入媒体解析。")
-                elif not str(candidate.source_url or "").lower().startswith(
-                    ("http://", "https://")
+                elif (
+                    not str(candidate.source_url or "")
+                    .lower()
+                    .startswith(("http://", "https://"))
                 ):
                     reasons.append("该平台候选缺少可打开的原视频链接。")
                 elif self.link_transcription_service is None:
@@ -857,6 +937,14 @@ class ProductionService:
                                 link_preview.parser_message
                                 or "本机浏览器暂时不能解析该平台链接。"
                             )
+                if candidate is not None and cloud_runtime is not None:
+                    duration_seconds = float(candidate.duration_seconds or 0)
+                    if asr_unit_cost is None or duration_seconds <= 0:
+                        item_cost_known = False
+                    else:
+                        item_cost += _round_up_credits(
+                            float(asr_unit_cost) * duration_seconds
+                        )
             elif item.source_type == "share_link":
                 if not item.source_value.lower().startswith(("http://", "https://")):
                     reasons.append("分享链接格式无效。")
@@ -889,21 +977,25 @@ class ProductionService:
                 reasons.append("批次项来源不受支持。")
             total_cost += item_cost
             all_costs_known = all_costs_known and item_cost_known
-            prepared_items.append({
-                "run_id": item.run_id,
-                "candidate_id": item.candidate_id,
-                "source_type": item.source_type,
-                "display_title": item.display_title or item.source_value,
-                "candidate_role": item.candidate_role,
-                "reasons": reasons,
-                "estimated_cost_cny": round(item_cost, 2) if item_cost_known else None,
-                "cost_known": item_cost_known,
-                "use_paid_fallback": use_paid_fallback,
-                "use_candidate_link_fallback": use_candidate_link_fallback,
-                "copy_call_count": copy_call_count,
-                "transcript_review_reserved": transcript_review_reserved,
-                "manual_script_audit": audit_required,
-            })
+            prepared_items.append(
+                {
+                    "run_id": item.run_id,
+                    "candidate_id": item.candidate_id,
+                    "source_type": item.source_type,
+                    "display_title": item.display_title or item.source_value,
+                    "candidate_role": item.candidate_role,
+                    "reasons": reasons,
+                    "estimated_cost_cny": round(item_cost, 2)
+                    if item_cost_known
+                    else None,
+                    "cost_known": item_cost_known,
+                    "use_paid_fallback": use_paid_fallback,
+                    "use_candidate_link_fallback": use_candidate_link_fallback,
+                    "copy_call_count": copy_call_count,
+                    "transcript_review_reserved": transcript_review_reserved,
+                    "manual_script_audit": audit_required,
+                }
+            )
         cost_issues: list[str] = []
         if not all_costs_known:
             missing_costs: list[str] = []
@@ -914,19 +1006,25 @@ class ProductionService:
                 if (
                     copy_mode != "sandbox"
                     and copy_capability.get("estimated_cost_cny") is None
+                    and copy_capability.get("minimum_charge_credits") is None
                     and (
                         workspace_configuration is None
-                        or workspace_configuration.copywriting_estimated_cost_cny is None
+                        or workspace_configuration.copywriting_estimated_cost_cny
+                        is None
                     )
                 ):
                     missing_costs.append("文案生成")
             suffix = "、".join(missing_costs) or "当前服务"
             cost_issues.append(
-                f"{suffix}的单次费用尚未填写，暂不能启动。请先填写实际报价。"
+                f"{suffix}的单次费用暂无法确认，不能以 0 积分启动。请先取得实际报价。"
             )
-        if all_costs_known and max_total_cost_cny is not None and total_cost > max_total_cost_cny:
+        if (
+            all_costs_known
+            and max_total_cost_cny is not None
+            and total_cost > max_total_cost_cny
+        ):
             cost_issues.append(
-                f"预计总费用 {total_cost:.2f} 元超过本次上限 {max_total_cost_cny:.2f} 元。"
+                f"预计最多 {total_cost:.2f} 积分，超过本次上限 {max_total_cost_cny:.2f} 积分。"
             )
         if total_cost > 0 and not paid_actions_confirmed:
             cost_issues.append("存在付费动作，必须确认预计费用后才能启动。")
@@ -966,9 +1064,10 @@ class ProductionService:
         batch = self.get_batch(batch_id)
         if batch is None:
             raise ValueError("生产批次不存在。")
-        if not bool(options.get("rights_confirmed")) or not str(
-            options.get("rights_holder") or ""
-        ).strip():
+        if (
+            not bool(options.get("rights_confirmed"))
+            or not str(options.get("rights_holder") or "").strip()
+        ):
             raise ValueError("请先完成一次基础设置并确认拥有创作所需授权。")
         claimed, existing, _ = self._claim_operation(
             operation="start",
@@ -1030,14 +1129,10 @@ class ProductionService:
                         else "not_required"
                     ),
                     "auto_target_count": sum(
-                        1
-                        for item in batch.items
-                        if item.candidate_role != "reserve"
+                        1 for item in batch.items if item.candidate_role != "reserve"
                     ),
                     "auto_reserve_count": sum(
-                        1
-                        for item in batch.items
-                        if item.candidate_role == "reserve"
+                        1 for item in batch.items if item.candidate_role == "reserve"
                     ),
                     "auto_reserve_activated_count": 0,
                     "item_costs": {
@@ -1102,9 +1197,7 @@ class ProductionService:
                         "style_prompt": profile.script_style,
                         "variant_count": 2,
                     },
-                    "use_paid_fallback": bool(
-                        result.get("use_paid_fallback")
-                    ),
+                    "use_paid_fallback": bool(result.get("use_paid_fallback")),
                     "candidate_link_fallback": bool(
                         result.get("use_candidate_link_fallback")
                     ),
@@ -1175,12 +1268,8 @@ class ProductionService:
                     ),
                     "is_paused": False,
                     "execution_config": execution_config,
-                    "estimated_cost_cny": float(
-                        preflight["estimated_cost_cny"] or 0
-                    ),
-                    "monthly_budget_used_cny": preflight[
-                        "monthly_budget_used_cny"
-                    ],
+                    "estimated_cost_cny": float(preflight["estimated_cost_cny"] or 0),
+                    "monthly_budget_used_cny": preflight["monthly_budget_used_cny"],
                     "started_at": batch.started_at or now,
                     "updated_at": now,
                 }
@@ -1206,7 +1295,13 @@ class ProductionService:
 
     def pause_batch(self, batch_id: str) -> ProductionBatch:
         batch = self._require_batch(batch_id)
-        updated = batch.model_copy(update={"is_paused": True, "status": ProductionBatchStatus.PAUSED, "updated_at": datetime.now().astimezone()})
+        updated = batch.model_copy(
+            update={
+                "is_paused": True,
+                "status": ProductionBatchStatus.PAUSED,
+                "updated_at": datetime.now().astimezone(),
+            }
+        )
         self.repository.save_production_batch(updated)
         return updated
 
@@ -1217,8 +1312,7 @@ class ProductionService:
         )
         if not has_execution_config:
             if all(
-                item.status == ProductionBatchItemStatus.PLANNED
-                for item in batch.items
+                item.status == ProductionBatchItemStatus.PLANNED for item in batch.items
             ):
                 updated = batch.model_copy(
                     update={
@@ -1230,7 +1324,13 @@ class ProductionService:
                 self.repository.save_production_batch(updated)
                 return updated
             raise ValueError("请先完成预检并启动批次。")
-        updated = batch.model_copy(update={"is_paused": False, "status": ProductionBatchStatus.RUNNING, "updated_at": datetime.now().astimezone()})
+        updated = batch.model_copy(
+            update={
+                "is_paused": False,
+                "status": ProductionBatchStatus.RUNNING,
+                "updated_at": datetime.now().astimezone(),
+            }
+        )
         self.repository.save_production_batch(updated)
         return updated
 
@@ -1289,7 +1389,9 @@ class ProductionService:
                 items.append(
                     item.model_copy(
                         update={
-                            "blocked_reasons": ["该阶段已安全重试过一次，请人工核对后重新创建任务。"],
+                            "blocked_reasons": [
+                                "该阶段已安全重试过一次，请人工核对后重新创建任务。"
+                            ],
                             "status": ProductionBatchItemStatus.BLOCKED,
                             "updated_at": now,
                         }
@@ -1305,9 +1407,7 @@ class ProductionService:
                 and retry_stage == PipelineStage.AVATAR_GENERATION
                 and bool(run.avatar_task_id)
             )
-            retrying_transcription_upload = (
-                retry_stage == PipelineStage.TRANSCRIPTION
-            )
+            retrying_transcription_upload = retry_stage == PipelineStage.TRANSCRIPTION
             retry_config = {
                 **run.config,
                 "stage_retry_counts": retry_counts,
@@ -1356,8 +1456,23 @@ class ProductionService:
                 ),
             )
             self.repository.save_pipeline_run(queued)
-            items.append(item.model_copy(update={"status": ProductionBatchItemStatus.QUEUED, "error_message": None, "updated_at": now}))
-        updated = batch.model_copy(update={"items": items, "is_paused": False, "status": ProductionBatchStatus.RUNNING, "updated_at": now})
+            items.append(
+                item.model_copy(
+                    update={
+                        "status": ProductionBatchItemStatus.QUEUED,
+                        "error_message": None,
+                        "updated_at": now,
+                    }
+                )
+            )
+        updated = batch.model_copy(
+            update={
+                "items": items,
+                "is_paused": False,
+                "status": ProductionBatchStatus.RUNNING,
+                "updated_at": now,
+            }
+        )
         self.repository.save_production_batch(updated)
         return updated
 
@@ -1379,12 +1494,18 @@ class ProductionService:
             return None, "发布任务已经创建，不能从生产队列自动重提；请在发布中心处理。"
         if run.current_stage == PipelineStage.VIDEO_EDITING and run.avatar_task_id:
             avatar_task = self.repository.get_task(run.avatar_task_id)
-            if avatar_task is not None and avatar_task.status == TaskStatus.OUTCOME_UNKNOWN:
+            if (
+                avatar_task is not None
+                and avatar_task.status == TaskStatus.OUTCOME_UNKNOWN
+            ):
                 return None, "数字人结果未知，不能自动重试以避免重复扣费。"
             return PipelineStage.AVATAR_GENERATION, ""
         if run.current_stage == PipelineStage.AVATAR_GENERATION:
             avatar_task = self.repository.get_task(run.avatar_task_id or "")
-            if avatar_task is not None and avatar_task.status == TaskStatus.OUTCOME_UNKNOWN:
+            if (
+                avatar_task is not None
+                and avatar_task.status == TaskStatus.OUTCOME_UNKNOWN
+            ):
                 return None, "数字人结果未知，不能自动重试以避免重复扣费。"
             return PipelineStage.AVATAR_GENERATION, ""
         if run.current_stage == PipelineStage.COPYWRITING:
@@ -1424,19 +1545,37 @@ class ProductionService:
             return False
         batch_id = str(run.config.get("batch_id") or "")
         batch = self.get_batch(batch_id)
-        if batch is None or batch.is_paused or batch.status == ProductionBatchStatus.PAUSED:
+        if (
+            batch is None
+            or batch.is_paused
+            or batch.status == ProductionBatchStatus.PAUSED
+        ):
             return False
         target = next((item for item in batch.items if item.run_id == run_id), None)
-        if target is None or target.status not in {ProductionBatchItemStatus.QUEUED, ProductionBatchItemStatus.RUNNING}:
+        if target is None or target.status not in {
+            ProductionBatchItemStatus.QUEUED,
+            ProductionBatchItemStatus.RUNNING,
+        }:
             return False
         first_queued = next(
-            (item.run_id for item in batch.items if item.status == ProductionBatchItemStatus.QUEUED),
+            (
+                item.run_id
+                for item in batch.items
+                if item.status == ProductionBatchItemStatus.QUEUED
+            ),
             None,
         )
         if target.status == ProductionBatchItemStatus.QUEUED and first_queued != run_id:
             return False
-        active = sum(1 for item in batch.items if item.status == ProductionBatchItemStatus.RUNNING and item.run_id != run_id)
-        if target.status == ProductionBatchItemStatus.QUEUED and active >= int(batch.execution_config.get("concurrency") or 1):
+        active = sum(
+            1
+            for item in batch.items
+            if item.status == ProductionBatchItemStatus.RUNNING
+            and item.run_id != run_id
+        )
+        if target.status == ProductionBatchItemStatus.QUEUED and active >= int(
+            batch.execution_config.get("concurrency") or 1
+        ):
             return False
         if target.status == ProductionBatchItemStatus.QUEUED:
             self._save_item(batch, run_id, status=ProductionBatchItemStatus.RUNNING)
@@ -1469,23 +1608,49 @@ class ProductionService:
             if item.run_id not in selected:
                 continue
             run = self.repository.get_pipeline_run(item.run_id)
-            if run is None or run.current_stage != PipelineStage.PUBLISHING or run.status != PipelineRunStatus.PAUSED:
-                results.append({"run_id": item.run_id, "blocked": True, "issues": ["该任务尚未生成可确认发布的成片。"]})
+            if (
+                run is None
+                or run.current_stage != PipelineStage.PUBLISHING
+                or run.status != PipelineRunStatus.PAUSED
+            ):
+                results.append(
+                    {
+                        "run_id": item.run_id,
+                        "blocked": True,
+                        "issues": ["该任务尚未生成可确认发布的成片。"],
+                    }
+                )
                 continue
             if not bool(run.config.get("output_reviewed")):
-                results.append({"run_id": item.run_id, "blocked": True, "issues": ["请先完成人工成片复核。"]})
+                results.append(
+                    {
+                        "run_id": item.run_id,
+                        "blocked": True,
+                        "issues": ["请先完成人工成片复核。"],
+                    }
+                )
                 continue
             try:
                 draft = self._approved_publish_draft(run)
             except ValueError as exc:
-                results.append({"run_id": item.run_id, "blocked": True, "issues": [str(exc)]})
+                results.append(
+                    {"run_id": item.run_id, "blocked": True, "issues": [str(exc)]}
+                )
                 continue
             if bool(run.config.get("publish_confirmed")) or run.publish_task_ids:
-                results.append({"run_id": item.run_id, "blocked": True, "issues": ["该任务已经确认或创建发布任务，不能重复提交。"]})
+                results.append(
+                    {
+                        "run_id": item.run_id,
+                        "blocked": True,
+                        "issues": ["该任务已经确认或创建发布任务，不能重复提交。"],
+                    }
+                )
                 continue
             video_path = self._video_path(run)
             try:
-                resolved, resolution_issues = self._resolve_publish_targets(requested_targets)
+                resolved, resolution_issues = self._resolve_publish_targets(
+                    requested_targets
+                )
                 publish_targets = pipeline_service.build_publish_targets(
                     title=draft["title"],
                     description=draft["description"],
@@ -1497,7 +1662,9 @@ class ProductionService:
                 if not video_path.strip():
                     issues.append("找不到已生成的成片，不能创建发布任务。")
                 elif not Path(video_path).is_file():
-                    issues.append("成片文件不存在或已被移动，请重新生成或恢复文件后再发布。")
+                    issues.append(
+                        "成片文件不存在或已被移动，请重新生成或恢复文件后再发布。"
+                    )
                 for target, spec in zip(publish_targets, resolved):
                     if spec["mode"] == "manual":
                         platform_results.append(
@@ -1513,10 +1680,15 @@ class ProductionService:
                             }
                         )
                         continue
-                    check = self.publish_service.preflight(video_path=video_path, targets=[target])
+                    check = self.publish_service.preflight(
+                        video_path=video_path, targets=[target]
+                    )
                     platform_results.extend(check["platforms"])
                     issues.extend(check["issues"])
-                blocked = bool(issues) or any(not value.get("can_create_task", False) for value in platform_results)
+                blocked = bool(issues) or any(
+                    not value.get("can_create_task", False)
+                    for value in platform_results
+                )
                 results.append(
                     {
                         "run_id": item.run_id,
@@ -1528,8 +1700,14 @@ class ProductionService:
                     }
                 )
             except (ValueError, RuntimeError) as exc:
-                results.append({"run_id": item.run_id, "blocked": True, "issues": [str(exc)]})
-        return {"batch_id": batch_id, "items": results, "blocked": any(item["blocked"] for item in results)}
+                results.append(
+                    {"run_id": item.run_id, "blocked": True, "issues": [str(exc)]}
+                )
+        return {
+            "batch_id": batch_id,
+            "items": results,
+            "blocked": any(item["blocked"] for item in results),
+        }
 
     def confirm_publish(
         self,
@@ -1737,7 +1915,9 @@ class ProductionService:
             elif allow_manual and bool(capability.get("manual_fallback", False)):
                 resolved_mode = "manual"
             else:
-                issues.append(f"{capability['display_name']} 不可用且未允许人工发布兜底。")
+                issues.append(
+                    f"{capability['display_name']} 不可用且未允许人工发布兜底。"
+                )
                 continue
             resolved.append(
                 {
@@ -1762,10 +1942,26 @@ class ProductionService:
         if batch is None:
             return None
         now = datetime.now().astimezone()
-        items = [self._item_from_run(item, self.repository.get_pipeline_run(item.run_id), now) for item in batch.items]
+        items = [
+            self._item_from_run(
+                item, self.repository.get_pipeline_run(item.run_id), now
+            )
+            for item in batch.items
+        ]
         status = self._aggregate_status(items, paused=batch.is_paused)
-        terminal = status in {ProductionBatchStatus.SUCCEEDED, ProductionBatchStatus.FAILED, ProductionBatchStatus.PARTIAL}
-        updated = batch.model_copy(update={"items": items, "status": status, "updated_at": now, "finished_at": now if terminal else None})
+        terminal = status in {
+            ProductionBatchStatus.SUCCEEDED,
+            ProductionBatchStatus.FAILED,
+            ProductionBatchStatus.PARTIAL,
+        }
+        updated = batch.model_copy(
+            update={
+                "items": items,
+                "status": status,
+                "updated_at": now,
+                "finished_at": now if terminal else None,
+            }
+        )
         self.repository.save_production_batch(updated)
         return updated
 
@@ -1839,7 +2035,9 @@ class ProductionService:
         self.repository.save_production_batch(updated)
         return self.sync_batch(batch.batch_id) or updated
 
-    def maybe_auto_review_batch(self, batch_id: str, *, pipeline_service) -> ProductionBatch | None:
+    def maybe_auto_review_batch(
+        self, batch_id: str, *, pipeline_service
+    ) -> ProductionBatch | None:
         """When all selected sources are transcribed, choose one and continue it.
 
         The state is claimed before the model call.  A failed or interrupted
@@ -2249,7 +2447,11 @@ class ProductionService:
                             "ai_audit": (
                                 dict(audit)
                                 if isinstance(
-                                    audit := (run.config.get("script_ai_audit") if run is not None else None),
+                                    audit := (
+                                        run.config.get("script_ai_audit")
+                                        if run is not None
+                                        else None
+                                    ),
                                     dict,
                                 )
                                 else None
@@ -2257,7 +2459,11 @@ class ProductionService:
                             "creative_plan": (
                                 dict(plan)
                                 if isinstance(
-                                    plan := (run.config.get("creative_plan") if run is not None else None),
+                                    plan := (
+                                        run.config.get("creative_plan")
+                                        if run is not None
+                                        else None
+                                    ),
                                     dict,
                                 )
                                 and plan
@@ -2278,9 +2484,7 @@ class ProductionService:
                         "confirmed": bool(run and run.config.get("publish_confirmed")),
                         "status": self._publish_status(publish_tasks),
                         "stage": "；".join(
-                            task.stage
-                            for task in publish_tasks
-                            if task.stage
+                            task.stage for task in publish_tasks if task.stage
                         ),
                         "action_required": next(
                             (
@@ -2304,7 +2508,9 @@ class ProductionService:
                         "draft": self._workspace_publish_draft(
                             run=run,
                             publish_tasks=publish_tasks,
-                            profile_tags=list(profile.tags) if profile is not None else [],
+                            profile_tags=list(profile.tags)
+                            if profile is not None
+                            else [],
                             approved_script_text=approved_script_text,
                         ),
                     },
@@ -2338,21 +2544,8 @@ class ProductionService:
             for key, value in batch_payload.get("execution_config", {}).items()
             if not key.startswith("_")
         }
-        workspace_configuration = self.get_workspace_configuration()
-        bundled_compute = bool(
-            workspace_configuration is not None
-            and workspace_configuration.bundled_compute
-        )
-        cost_known = bundled_compute or bool(batch.execution_config.get("cost_known"))
-        estimated_total_cny = (
-            0.0
-            if bundled_compute
-            else (
-                batch.estimated_cost_cny
-                if bool(batch.execution_config.get("cost_known"))
-                else None
-            )
-        )
+        cost_known = bool(batch.execution_config.get("cost_known"))
+        estimated_total_cny = batch.estimated_cost_cny if cost_known else None
         publish_confirmed = any(
             bool(
                 (
@@ -2386,19 +2579,12 @@ class ProductionService:
             "retry_allowed": bool(active and active["retry_allowed"]),
             "items": workspace_items,
             "automation": {
-                "mode": str(
-                    batch.execution_config.get("automation_mode") or "manual"
-                ),
+                "mode": str(batch.execution_config.get("automation_mode") or "manual"),
                 "review_state": str(
-                    batch.execution_config.get("auto_review_state")
-                    or "not_required"
+                    batch.execution_config.get("auto_review_state") or "not_required"
                 ),
-                "selected_run_id": batch.execution_config.get(
-                    "auto_selected_run_id"
-                ),
-                "selection_reason": batch.execution_config.get(
-                    "auto_selection_reason"
-                ),
+                "selected_run_id": batch.execution_config.get("auto_selected_run_id"),
+                "selection_reason": batch.execution_config.get("auto_selection_reason"),
                 "error": batch.execution_config.get("auto_review_error"),
                 "target_count": int(
                     batch.execution_config.get("auto_target_count") or 0
@@ -2420,13 +2606,9 @@ class ProductionService:
                 "known": cost_known,
                 "blocked": not cost_known,
                 "issues": (
-                    ["存在预计费用未知的付费动作，不能启动。"]
-                    if not cost_known
-                    else []
+                    ["存在预计费用未知的付费动作，不能启动。"] if not cost_known else []
                 ),
-                "max_total_cost_cny": batch.execution_config.get(
-                    "max_total_cost_cny"
-                ),
+                "max_total_cost_cny": batch.execution_config.get("max_total_cost_cny"),
                 "paid_actions_confirmed": bool(
                     batch.execution_config.get("paid_actions_confirmed")
                 ),
@@ -2531,9 +2713,13 @@ class ProductionService:
         *,
         batch_paused: bool = False,
     ) -> tuple[str, list[str]]:
-        if run is not None and run.status == PipelineRunStatus.PAUSED and (
-            bool(run.config.get("outcome_unknown"))
-            or bool(run.config.get("recovery_blocked"))
+        if (
+            run is not None
+            and run.status == PipelineRunStatus.PAUSED
+            and (
+                bool(run.config.get("outcome_unknown"))
+                or bool(run.config.get("recovery_blocked"))
+            )
         ):
             return "manual_review", []
         if batch_paused:
@@ -2544,16 +2730,28 @@ class ProductionService:
             return "view_result", ["view_result"]
         if item.status == ProductionBatchItemStatus.PLANNED:
             return "preflight", ["preflight", "start"]
-        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.HUMAN_REVIEW:
+        if (
+            run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.HUMAN_REVIEW
+        ):
             if run.config.get("review_stage") == "transcript":
                 return "review_transcript", ["review_transcript", "pause"]
             return "review_script", ["review_script", "pause"]
-        if run.status == PipelineRunStatus.PAUSED and run.current_stage == PipelineStage.PUBLISHING:
+        if (
+            run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.PUBLISHING
+        ):
             if not bool(run.config.get("output_reviewed")):
                 return "review_output", ["review_output", "pause"]
-            if not bool(run.config.get("publish_draft_approved")) and not run.publish_task_ids:
+            if (
+                not bool(run.config.get("publish_draft_approved"))
+                and not run.publish_task_ids
+            ):
                 return "review_publish_draft", ["review_publish_draft", "pause"]
-            if not bool(run.config.get("publish_confirmed")) and not run.publish_task_ids:
+            if (
+                not bool(run.config.get("publish_confirmed"))
+                and not run.publish_task_ids
+            ):
                 return "publish", ["publish", "pause"]
             return "wait", ["wait"]
         if run.status in {PipelineRunStatus.FAILED, PipelineRunStatus.PARTIAL}:
@@ -2571,7 +2769,11 @@ class ProductionService:
         if self._publish_tasks_succeeded(run):
             return "completed"
         if run.current_stage == PipelineStage.HUMAN_REVIEW:
-            return "transcript" if run.config.get("review_stage") == "transcript" else "script"
+            return (
+                "transcript"
+                if run.config.get("review_stage") == "transcript"
+                else "script"
+            )
         if run.current_stage == PipelineStage.TRANSCRIPTION:
             return "transcript"
         if run.current_stage == PipelineStage.COPYWRITING:
@@ -2610,7 +2812,9 @@ class ProductionService:
         return "pending"
 
     def batch_progress(self, batch: ProductionBatch) -> dict[str, int]:
-        if all(item.status == ProductionBatchItemStatus.PLANNED for item in batch.items):
+        if all(
+            item.status == ProductionBatchItemStatus.PLANNED for item in batch.items
+        ):
             return {
                 "total": len(batch.items),
                 "pending": len(batch.items),
@@ -2626,27 +2830,44 @@ class ProductionService:
         return {
             "total": len(batch.items),
             **counts,
-            "pending": counts[ProductionBatchItemStatus.PLANNED.value] + counts[ProductionBatchItemStatus.QUEUED.value],
+            "pending": counts[ProductionBatchItemStatus.PLANNED.value]
+            + counts[ProductionBatchItemStatus.QUEUED.value],
             "running": counts[ProductionBatchItemStatus.RUNNING.value],
-            "paused": counts[ProductionBatchItemStatus.AWAITING_REVIEW.value] + counts[ProductionBatchItemStatus.AWAITING_PUBLISH.value] + counts[ProductionBatchItemStatus.READY_TO_PUBLISH.value],
+            "paused": counts[ProductionBatchItemStatus.AWAITING_REVIEW.value]
+            + counts[ProductionBatchItemStatus.AWAITING_PUBLISH.value]
+            + counts[ProductionBatchItemStatus.READY_TO_PUBLISH.value],
             "succeeded": counts[ProductionBatchItemStatus.SUCCEEDED.value],
             "failed": counts[ProductionBatchItemStatus.FAILED.value],
         }
 
-    def _save_item(self, batch: ProductionBatch, run_id: str, **changes: Any) -> ProductionBatch:
+    def _save_item(
+        self, batch: ProductionBatch, run_id: str, **changes: Any
+    ) -> ProductionBatch:
         now = datetime.now().astimezone()
-        items = [item.model_copy(update={**changes, "updated_at": now}) if item.run_id == run_id else item for item in batch.items]
+        items = [
+            item.model_copy(update={**changes, "updated_at": now})
+            if item.run_id == run_id
+            else item
+            for item in batch.items
+        ]
         updated = batch.model_copy(update={"items": items, "updated_at": now})
         self.repository.save_production_batch(updated)
         return updated
 
-    def _item_from_run(self, item: ProductionBatchItem, run, now: datetime) -> ProductionBatchItem:
+    def _item_from_run(
+        self, item: ProductionBatchItem, run, now: datetime
+    ) -> ProductionBatchItem:
         if run is None:
-            return item.model_copy(update={"status": ProductionBatchItemStatus.BLOCKED, "blocked_reasons": ["流水线记录不存在。"], "updated_at": now})
+            return item.model_copy(
+                update={
+                    "status": ProductionBatchItemStatus.BLOCKED,
+                    "blocked_reasons": ["流水线记录不存在。"],
+                    "updated_at": now,
+                }
+            )
         stage = run.current_stage
         publish_tasks = [
-            self.repository.get_task(task_id)
-            for task_id in run.publish_task_ids
+            self.repository.get_task(task_id) for task_id in run.publish_task_ids
         ]
         publish_completed = self._publish_tasks_succeeded(run)
         waiting_for_manual_publish = any(
@@ -2691,9 +2912,14 @@ class ProductionService:
             or bool(run.config.get("recovery_blocked"))
         ):
             status = ProductionBatchItemStatus.BLOCKED
-        elif run.status == PipelineRunStatus.PAUSED and stage == PipelineStage.HUMAN_REVIEW:
+        elif (
+            run.status == PipelineRunStatus.PAUSED
+            and stage == PipelineStage.HUMAN_REVIEW
+        ):
             status = ProductionBatchItemStatus.AWAITING_REVIEW
-        elif run.status == PipelineRunStatus.PAUSED and stage == PipelineStage.PUBLISHING:
+        elif (
+            run.status == PipelineRunStatus.PAUSED and stage == PipelineStage.PUBLISHING
+        ):
             status = (
                 ProductionBatchItemStatus.AWAITING_PUBLISH
                 if bool(run.config.get("publish_confirmed")) or run.publish_task_ids
@@ -2705,7 +2931,10 @@ class ProductionService:
             )
         elif run.status == PipelineRunStatus.RUNNING:
             status = ProductionBatchItemStatus.RUNNING
-        elif item.status in {ProductionBatchItemStatus.BLOCKED, ProductionBatchItemStatus.PLANNED}:
+        elif item.status in {
+            ProductionBatchItemStatus.BLOCKED,
+            ProductionBatchItemStatus.PLANNED,
+        }:
             status = item.status
         else:
             status = ProductionBatchItemStatus.QUEUED
@@ -2713,7 +2942,14 @@ class ProductionService:
         if not video_path:
             for step in reversed(run.stages):
                 if step.stage == PipelineStage.VIDEO_EDITING:
-                    video_path = str(step.outputs.get("video_path") or step.outputs.get("result_path") or "") or None
+                    video_path = (
+                        str(
+                            step.outputs.get("video_path")
+                            or step.outputs.get("result_path")
+                            or ""
+                        )
+                        or None
+                    )
                     break
         return item.model_copy(
             update={
@@ -2728,26 +2964,38 @@ class ProductionService:
         )
 
     def _video_path(self, run) -> str:
-        task = self.repository.get_task(run.edit_task_id or "") if run.edit_task_id else None
+        task = (
+            self.repository.get_task(run.edit_task_id or "")
+            if run.edit_task_id
+            else None
+        )
         result_path = str(getattr(task, "result_path", "") or "")
         if result_path:
             return result_path
         for stage in reversed(run.stages):
             if stage.stage == PipelineStage.VIDEO_EDITING:
-                return str(stage.outputs.get("video_path") or stage.outputs.get("result_path") or "")
+                return str(
+                    stage.outputs.get("video_path")
+                    or stage.outputs.get("result_path")
+                    or ""
+                )
         return ""
 
     @staticmethod
     def _approved_publish_draft(run) -> dict[str, Any]:
         raw = run.config.get("publish_draft")
-        if not bool(run.config.get("publish_draft_approved")) or not isinstance(raw, dict):
+        if not bool(run.config.get("publish_draft_approved")) or not isinstance(
+            raw, dict
+        ):
             raise ValueError("请先确认标题、描述和标签，再准备发布。")
         draft = validated_publish_draft(
             title=str(raw.get("title") or ""),
             description=str(raw.get("description") or ""),
             tags=list(raw.get("tags") or []),
         )
-        if publish_draft_fingerprint(draft) != str(run.config.get("publish_draft_fingerprint") or ""):
+        if publish_draft_fingerprint(draft) != str(
+            run.config.get("publish_draft_fingerprint") or ""
+        ):
             raise ValueError("发布信息已变化，请重新确认标题、描述和标签。")
         return draft
 
@@ -2802,7 +3050,9 @@ class ProductionService:
         )
 
     @staticmethod
-    def _aggregate_status(items: list[ProductionBatchItem], *, paused: bool) -> ProductionBatchStatus:
+    def _aggregate_status(
+        items: list[ProductionBatchItem], *, paused: bool
+    ) -> ProductionBatchStatus:
         statuses = [item.status for item in items]
         if paused:
             return ProductionBatchStatus.PAUSED
@@ -2810,11 +3060,24 @@ class ProductionService:
             status == ProductionBatchItemStatus.PLANNED for status in statuses
         ):
             return ProductionBatchStatus.PLANNED
-        if any(status in {ProductionBatchItemStatus.RUNNING, ProductionBatchItemStatus.QUEUED} for status in statuses):
+        if any(
+            status
+            in {ProductionBatchItemStatus.RUNNING, ProductionBatchItemStatus.QUEUED}
+            for status in statuses
+        ):
             return ProductionBatchStatus.RUNNING
-        if any(status == ProductionBatchItemStatus.AWAITING_REVIEW for status in statuses):
+        if any(
+            status == ProductionBatchItemStatus.AWAITING_REVIEW for status in statuses
+        ):
             return ProductionBatchStatus.AWAITING_REVIEW
-        if any(status in {ProductionBatchItemStatus.AWAITING_PUBLISH, ProductionBatchItemStatus.READY_TO_PUBLISH} for status in statuses):
+        if any(
+            status
+            in {
+                ProductionBatchItemStatus.AWAITING_PUBLISH,
+                ProductionBatchItemStatus.READY_TO_PUBLISH,
+            }
+            for status in statuses
+        ):
             return ProductionBatchStatus.AWAITING_PUBLISH
         if any(status == ProductionBatchItemStatus.PLANNED for status in statuses):
             return ProductionBatchStatus.RUNNING
@@ -2824,7 +3087,9 @@ class ProductionService:
         }
         if (
             statuses
-            and any(status == ProductionBatchItemStatus.SUCCEEDED for status in statuses)
+            and any(
+                status == ProductionBatchItemStatus.SUCCEEDED for status in statuses
+            )
             and all(status in completed_statuses for status in statuses)
         ):
             return ProductionBatchStatus.SUCCEEDED
