@@ -356,6 +356,25 @@ class _Assets:
         ]
 
 
+class _AssetsWithMaximumScript(_Assets):
+    def capabilities(self):
+        return SimpleNamespace(
+            mode=SimpleNamespace(value="production"),
+            estimated_cost_cny=1.34,
+            estimated_seconds=None,
+            max_script_chars=240,
+        )
+
+
+class _AlignmentTranscription:
+    cloud_runtime = SimpleNamespace(
+        capability=lambda: {
+            "live_ready": True,
+            "unit_price_cny_per_second": 0.00022,
+        }
+    )
+
+
 class _Templates:
     def get_template(self, template_id):
         return SimpleNamespace(template_id=template_id) if template_id == "template-professional" else None
@@ -505,6 +524,51 @@ def test_share_link_preflight_prices_and_records_paid_fallback(tmp_path):
     assert preflight["items"][0]["use_paid_fallback"] is True
     assert run is not None
     assert run.config["use_paid_fallback"] is True
+
+
+def test_preflight_includes_post_avatar_caption_alignment_cost(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        link_transcription_service=_PaidLinkPreview(),
+        transcription_service=_AlignmentTranscription(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_AssetsWithMaximumScript(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="字幕对齐配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="字幕对齐费用",
+        profile_id=profile.profile_id,
+        source_items=[
+            {
+                "source_type": "share_link",
+                "source_value": "https://v.douyin.com/example/",
+            }
+        ],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        max_total_cost_cny=2,
+        paid_actions_confirmed=True,
+    )
+
+    # 未知最终文案时按 240 字 / 每秒 4 字预留字幕对齐费用。
+    assert preflight["cost_known"] is True
+    assert preflight["estimated_cost_cny"] == 1.65
 
 
 def test_batch_start_isolates_blocked_item_and_respects_single_concurrency(tmp_path):

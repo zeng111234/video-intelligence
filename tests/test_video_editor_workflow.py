@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -287,7 +288,7 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     avatar = _avatar_task(
         "avatar-production-export",
         video,
-        script_text="你发现没，餐饮获客真正难的不是流量。",
+        script_text="餐饮门店想做同城获客 别急着先砸钱投流 可以从老顾客和门店内容做起",
     )
     repo.save_task(avatar)
     service = VideoEditorWorkflowService(
@@ -332,13 +333,24 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     task = service.render_production_export(
         avatar_task=avatar,
         script_text=avatar.script_text,
-        publish_title="餐饮获客真正难在哪",
+        publish_title="很多餐饮老板都在头疼",
+        subtitle_segments=[
+            {"start": 0.8, "end": 2.9, "text": "餐饮门店想做同城获客"},
+            {"start": 3.1, "end": 4.8, "text": "别急着先砸钱投流"},
+            {
+                "start": 5.0,
+                "end": 7.8,
+                "text": "可以从老顾客和门店内容做起",
+            },
+        ],
     )
 
     assert task.outputs["style_version"].startswith("business_talking_head_v9.1")
     assert task.outputs["workflow"] == "local_preview_export"
-    assert task.outputs["publish_title"] == "餐饮获客真正难在哪"
+    assert task.outputs["publish_title"] == "餐饮门店同城获客"
+    assert json.loads(task.outputs["subtitle_segments_json"])[0]["start"] == 0.8
     batch = repo.list_video_editor_batches(limit=1)[0]
+    assert batch.items[0].review_snapshot["source"] == "approved_avatar_asr"
     preview = service._batch_payload(batch)["items"][0]["overlay_preview"]
     assert preview is not None
     assert all(len(cue["lines"]) == 1 for cue in preview["cues"])
@@ -347,6 +359,44 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
         for cue in preview["cues"]
         for line in cue["lines"]
     )
+    assert [cue["lines"][0] for cue in preview["cues"]] == [
+        "餐饮门店想做同城获客",
+        "别急着先砸钱投流",
+        "可以从老顾客",
+        "和门店内容做起",
+    ]
+
+
+def test_approved_script_segments_keep_real_asr_pauses_without_asr_word_drift():
+    script = "这套方法不保证爆单 但能帮助门店更稳定地测试效果 连续测试七天"
+
+    segments = VideoEditorWorkflowService.approved_script_segments_from_asr(
+        script,
+        [
+            {
+                "start": 0.8,
+                "end": 3.1,
+                "text": "这套方法不保证爆单，但能帮助门店更稳定的测试效果。",
+            },
+            {"start": 3.5, "end": 4.8, "text": "连续测试7天。"},
+        ],
+    )
+
+    assert segments[0]["start"] == 0.8
+    assert segments[1]["start"] == 3.5
+    assert "".join(segment["text"] for segment in segments) == re.sub(
+        r"[\W_]+", "", script
+    )
+    assert "稳定地" in "".join(segment["text"] for segment in segments)
+    assert "七天" in segments[-1]["text"]
+
+
+def test_approved_script_segments_reject_unrelated_recognition():
+    with pytest.raises(VideoEditorWorkflowError, match="差异过大"):
+        VideoEditorWorkflowService.approved_script_segments_from_asr(
+            "餐饮门店想做同城获客",
+            [{"start": 0.0, "end": 2.0, "text": "今天天气非常不错"}],
+        )
 
 
 def test_subtitle_enabled_job_requires_an_approved_revision(tmp_path: Path):

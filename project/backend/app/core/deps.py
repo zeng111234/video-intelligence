@@ -627,6 +627,7 @@ def get_production_service() -> ProductionService:
         storage_directory=RUNTIME_ROOT / "data" / "production",
         media_resolution_service=get_media_resolution_service(),
         link_transcription_service=get_douyin_link_transcription_service(),
+        transcription_service=get_transcription_service(),
         copywriting_service=get_copywriting_service(),
         avatar_service=get_avatar_service(),
         template_service=get_template_service(),

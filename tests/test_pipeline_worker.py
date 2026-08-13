@@ -14,6 +14,8 @@ from src.models import (
     PipelineStage,
     Platform,
     TaskStatus,
+    TranscriptSegment,
+    TranscriptionTask,
     VideoCandidate,
     VideoMetricSnapshot,
 )
@@ -263,12 +265,140 @@ def test_production_edit_uses_current_smart_template_and_never_legacy_editor(tmp
         ),
     )
 
-    worker._edit_and_package(run, avatar_task)
+    subtitle_segments = [
+        {"start": 0.8, "end": 3.2, "text": copy_task.result_text or ""}
+    ]
+    worker._edit_and_package(
+        run,
+        avatar_task,
+        subtitle_segments=subtitle_segments,
+    )
 
     assert legacy_calls == []
     assert len(smart_calls) == 1
     assert smart_calls[0]["avatar_task"] == avatar_task
     assert smart_calls[0]["script_text"] == copy_task.result_text
+    assert smart_calls[0]["subtitle_segments"] == subtitle_segments
+    stored = repository.get_pipeline_run(run.run_id)
+    assert stored is not None
+    assert stored.status == PipelineRunStatus.SUCCEEDED
+
+
+def test_avatar_success_reuses_persisted_asr_timing_before_smart_render(tmp_path):
+    repository = MockRepository()
+    transcription_service = SimpleNamespace()
+    pipeline_service = PipelineService(
+        repository,
+        None,
+        None,
+        None,
+        None,
+        transcription_service=transcription_service,
+    )
+    now = datetime.now().astimezone()
+    script = "餐饮门店想做同城获客"
+    copy_task = CopywritingTask(
+        task_id="copy-aligned-avatar",
+        title="文案",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        result_text=script,
+    )
+    repository.save_task(copy_task)
+    avatar_path = tmp_path / "avatar.mp4"
+    avatar_path.write_bytes(b"avatar")
+    avatar_task = AvatarTask(
+        task_id="avatar-aligned",
+        title="数字人",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        script_text=script,
+        avatar_id="avatar-1",
+        avatar_name="大树1",
+        voice_id="voice-1",
+        voice_name="大树1",
+        rights_holder="测试用户",
+        rights_confirmed_at=now,
+        idempotency_key="avatar-aligned-key",
+        provider_name="production",
+        provider_status=AvatarProviderStatus.SUCCEEDED,
+        result_path=str(avatar_path),
+    )
+    repository.save_task(avatar_task)
+    caption_task = TranscriptionTask(
+        task_id="transcript-avatar-aligned",
+        title=avatar_path.name,
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name=avatar_path.name,
+        media_type="video/mp4",
+        rights_confirmed=True,
+        rights_holder="测试用户",
+        candidate_id=avatar_task.task_id,
+        source_kind="avatar_caption_alignment",
+        segments=[TranscriptSegment(start=0.8, end=3.2, text=script)],
+    )
+    repository.save_task(caption_task)
+    run = pipeline_service.create_run(
+        keyword="餐饮获客",
+        config={
+            "workflow": "production_batch_candidate",
+            "approved_script_text": script,
+            "publish_enabled": False,
+            "profile": {"tags": ["餐饮获客"]},
+        },
+    ).model_copy(
+        update={
+            "status": PipelineRunStatus.RUNNING,
+            "current_stage": PipelineStage.AVATAR_GENERATION,
+            "copywriting_task_id": copy_task.task_id,
+            "avatar_task_id": avatar_task.task_id,
+        }
+    )
+    repository.save_pipeline_run(run)
+    rendered_path = tmp_path / "aligned.mp4"
+    rendered_path.write_bytes(b"aligned")
+    rendered = SimpleNamespace(
+        status=TaskStatus.SUCCEEDED,
+        task_id="edit-aligned",
+        result_path=str(rendered_path),
+        error_message=None,
+    )
+    smart_calls: list[dict[str, object]] = []
+    workflow = SimpleNamespace(
+        approved_script_segments_from_asr=lambda _approved, segments: segments,
+        render_production_export=lambda **kwargs: (
+            smart_calls.append(kwargs) or rendered
+        ),
+    )
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=SimpleNamespace(
+            refresh_task=lambda _task_id: avatar_task,
+            download_result=lambda _task_id: avatar_task,
+        ),
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        video_editor_workflow_service=workflow,
+    )
+
+    worker._poll_avatar_and_continue(run)
+
+    assert len(smart_calls) == 1
+    submitted_segments = smart_calls[0]["subtitle_segments"]
+    assert isinstance(submitted_segments, list)
+    assert submitted_segments[0]["start"] == 0.8
+    assert submitted_segments[0]["end"] == 3.2
+    assert submitted_segments[0]["text"] == script
     stored = repository.get_pipeline_run(run.run_id)
     assert stored is not None
     assert stored.status == PipelineRunStatus.SUCCEEDED

@@ -57,6 +57,7 @@ class ProductionService:
         *,
         media_resolution_service=None,
         link_transcription_service=None,
+        transcription_service=None,
         copywriting_service=None,
         avatar_service=None,
         template_service=None,
@@ -73,6 +74,7 @@ class ProductionService:
         self._legacy_batches_path = self.storage_directory / "batches.json"
         self.media_resolution_service = media_resolution_service
         self.link_transcription_service = link_transcription_service
+        self.transcription_service = transcription_service
         self.copywriting_service = copywriting_service
         self.avatar_service = avatar_service
         self.template_service = template_service
@@ -601,6 +603,7 @@ class ProductionService:
         assets_by_id: dict[str, Any] = {}
         avatar_cost = 0.0
         avatar_cost_known = True
+        avatar_estimated_seconds = 0
         if not rights_confirmed or not rights_holder.strip():
             shared.append("必须确认拥有媒体、文案、肖像和声音处理授权，并填写授权主体。")
         if profile is None:
@@ -623,6 +626,20 @@ class ProductionService:
                     capability = capabilities()
                     mode = str(getattr(capability, "mode", "") or "")
                     estimated = getattr(capability, "estimated_cost_cny", None)
+                    avatar_estimated_seconds = int(
+                        getattr(capability, "estimated_seconds", 0) or 0
+                    )
+                    if avatar_estimated_seconds <= 0:
+                        max_script_chars = int(
+                            getattr(capability, "max_script_chars", 0) or 0
+                        )
+                        if max_script_chars > 0:
+                            from src.services.avatar_billing import reservation_seconds
+
+                            avatar_estimated_seconds = reservation_seconds(
+                                "字" * max_script_chars,
+                                1.0,
+                            )
                     if estimated is None and mode.casefold() not in {"sandbox", "providermode.sandbox"}:
                         if bundled_compute:
                             avatar_cost = 0.0
@@ -679,6 +696,22 @@ class ProductionService:
                 except Exception:
                     copy_capability_error = "AI 文案服务能力检查失败。"
 
+        alignment_cost = 0.0
+        alignment_cost_known = True
+        cloud_runtime = getattr(self.transcription_service, "cloud_runtime", None)
+        if cloud_runtime is not None:
+            try:
+                asr_capability = dict(cloud_runtime.capability())
+                asr_unit_cost = asr_capability.get("unit_price_cny_per_second")
+                if not bool(asr_capability.get("live_ready")):
+                    shared.append("数字人口播字幕对齐服务暂不可用。")
+                elif asr_unit_cost is None or avatar_estimated_seconds <= 0:
+                    alignment_cost_known = False
+                else:
+                    alignment_cost = float(asr_unit_cost) * avatar_estimated_seconds
+            except Exception:
+                alignment_cost_known = False
+
         prepared_items: list[dict[str, Any]] = []
         total_cost = 0.0
         budget_used = 0.0
@@ -686,8 +719,8 @@ class ProductionService:
         manual_script_audit = str(automation_mode or "manual").casefold() != "auto"
         for item in batch.items:
             reasons = list(shared)
-            item_cost = avatar_cost
-            item_cost_known = avatar_cost_known
+            item_cost = avatar_cost + alignment_cost
+            item_cost_known = avatar_cost_known and alignment_cost_known
             use_paid_fallback = False
             use_candidate_link_fallback = False
             rewrite_required = item.source_type in {"candidate", "share_link", "brief"}

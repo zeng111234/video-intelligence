@@ -20,6 +20,7 @@ from src.models import (
     PublishPlatform,
     PublishTask,
     TaskStatus,
+    TranscriptionTask,
 )
 from src.adapters.douyin_parser import DouyinParserError
 from src.adapters.publishers.sandbox import SandboxPublisher
@@ -741,9 +742,85 @@ class PipelineWorker:
                 run, PipelineStage.AVATAR_GENERATION, "数字人结果未保存为本地视频。"
             )
             return
-        self._edit_and_package(run, task)
+        if self.video_editor_workflow_service is None:
+            self._fail(
+                run,
+                PipelineStage.VIDEO_EDITING,
+                "新版智能剪辑服务未配置，已停止避免生成旧模板。",
+            )
+            return
+        transcription_service = self.pipeline_service.transcription_service
+        if transcription_service is None:
+            self._fail(
+                run,
+                PipelineStage.VIDEO_EDITING,
+                "真实语音字幕对齐服务未配置，已停止避免生成错位字幕。",
+            )
+            return
+        caption_task = next(
+            (
+                candidate
+                for candidate in self.repository.list_tasks()
+                if isinstance(candidate, TranscriptionTask)
+                and candidate.candidate_id == task.task_id
+                and candidate.source_kind == "avatar_caption_alignment"
+            ),
+            None,
+        )
+        if caption_task is None:
+            source_path = Path(task.result_path)
+            caption_task = transcription_service.create_task(
+                media_name=source_path.name,
+                media_type="video/mp4",
+                media_bytes=source_path.read_bytes(),
+                rights_confirmed=True,
+                rights_holder=task.rights_holder,
+                candidate_id=task.task_id,
+                language="zh",
+                source_kind="avatar_caption_alignment",
+                async_processing=True,
+            )
+            updated = run.model_copy(
+                update={
+                    "updated_at": datetime.now().astimezone(),
+                    "config": {
+                        **run.config,
+                        "caption_timing_task_id": caption_task.task_id,
+                        "caption_timing_source": "pending_avatar_asr",
+                    },
+                }
+            )
+            self.repository.save_pipeline_run(updated)
+            return
+        if caption_task.status in {
+            TaskStatus.QUEUED,
+            TaskStatus.SUBMITTED,
+            TaskStatus.RUNNING,
+        }:
+            return
+        if caption_task.status != TaskStatus.SUCCEEDED:
+            self._fail(
+                run,
+                PipelineStage.VIDEO_EDITING,
+                caption_task.error_message or "真实语音字幕对齐失败。",
+            )
+            return
+        script = str(run.config.get("approved_script_text") or task.script_text or "")
+        timed_segments = (
+            self.video_editor_workflow_service.approved_script_segments_from_asr(
+                script,
+                [segment.model_dump(mode="json") for segment in caption_task.segments],
+            )
+        )
+        self._edit_and_package(run, task, subtitle_segments=timed_segments)
 
-    def _edit_and_package(self, run: PipelineRun, avatar_task: AvatarTask) -> None:
+    def _edit_and_package(
+        self,
+        run: PipelineRun,
+        avatar_task: AvatarTask,
+        *,
+        subtitle_segments: list[dict[str, object]] | None = None,
+    ) -> None:
         profile = dict(run.config.get("profile") or {})
         copy_task = self.repository.get_task(run.copywriting_task_id or "")
         script = str(
@@ -775,6 +852,7 @@ class PipelineWorker:
                 avatar_task=avatar_task,
                 script_text=script,
                 publish_title=draft["title"],
+                subtitle_segments=subtitle_segments,
             )
         except Exception as exc:
             self._fail(

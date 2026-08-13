@@ -18,8 +18,9 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
@@ -331,12 +332,14 @@ class VideoEditorWorkflowService:
         script = re.sub(r"\s+", " ", script_text).strip()
         if not script:
             return fallback
-        first_sentence = re.split(r"[。！？!?；;\n]", script, maxsplit=1)[0]
+        first_sentence = re.split(r"[。！？!?；;\n]|\s+", script, maxsplit=1)[0]
         subject = re.sub(
             r"^(最近|大家好|你知道吗|你发现没|今天(?:我们)?(?:来)?聊聊)\s*",
             "",
             first_sentence,
         ).strip(" ，,：:")
+        if len(subject) > 9:
+            subject = re.sub(r"(想做|想要|正在做)", "", subject, count=1)
         return (subject or first_sentence or fallback)[:40]
 
     def _semantic_source_title(
@@ -368,9 +371,16 @@ class VideoEditorWorkflowService:
         script_text: str,
         duration_seconds: float,
     ) -> list[dict[str, Any]]:
+        # The approved production script deliberately uses spaces to mark the
+        # editor's human-reviewed spoken clauses.  Preserve those boundaries:
+        # flattening them first makes captions jump across clauses (for example
+        # "服务细节拍短视频标题写"), which reads like the legacy hard splitter.
         parts = [
             part.strip()
-            for part in re.findall(r"[^。！？!?；;\n]+[。！？!?；;]?", script_text)
+            for part in re.findall(
+                r"[^。！？!?；;\s]+[。！？!?；;]?",
+                script_text,
+            )
             if part.strip()
         ]
         if not parts:
@@ -394,6 +404,86 @@ class VideoEditorWorkflowService:
             )
             cursor = end
         return segments
+
+    @staticmethod
+    def approved_script_segments_from_asr(
+        script_text: str,
+        asr_segments: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Project real ASR timing onto the exact approved spoken script.
+
+        The avatar is generated from the approved script, while ASR may return
+        harmless spelling variants (for example ``稳定的``/``稳定地`` or
+        ``7``/``七``).  Keep ASR's real pause boundaries, but never replace the
+        approved on-screen words with those recognition variants.
+        """
+
+        approved = re.sub(r"[\W_]+", "", script_text, flags=re.UNICODE)
+        normalized_asr = [
+            {
+                "start": float(segment.get("start", 0)),
+                "end": float(segment.get("end", 0)),
+                "text": re.sub(
+                    r"[\W_]+",
+                    "",
+                    str(segment.get("text") or ""),
+                    flags=re.UNICODE,
+                ),
+            }
+            for segment in asr_segments
+            if str(segment.get("text") or "").strip()
+        ]
+        recognized = "".join(segment["text"] for segment in normalized_asr)
+        if not approved or not recognized or not normalized_asr:
+            raise VideoEditorWorkflowError("真实字幕时间轴为空，不能开始智能剪辑。")
+        matcher = SequenceMatcher(None, recognized, approved, autojunk=False)
+        if matcher.ratio() < 0.82:
+            raise VideoEditorWorkflowError(
+                "真实语音与已确认口播文案差异过大，已停止避免字幕错配。"
+            )
+        opcodes = matcher.get_opcodes()
+
+        def project_boundary(position: int) -> int:
+            for _tag, source_start, source_end, target_start, target_end in opcodes:
+                if position > source_end:
+                    continue
+                if source_end <= source_start:
+                    return target_start
+                relative = (position - source_start) / (source_end - source_start)
+                return max(
+                    target_start,
+                    min(
+                        target_end,
+                        round(target_start + relative * (target_end - target_start)),
+                    ),
+                )
+            return len(approved)
+
+        projected: list[dict[str, Any]] = []
+        source_cursor = 0
+        target_cursor = 0
+        for index, segment in enumerate(normalized_asr):
+            source_cursor += len(segment["text"])
+            target_end = (
+                len(approved)
+                if index == len(normalized_asr) - 1
+                else max(target_cursor, project_boundary(source_cursor))
+            )
+            text = approved[target_cursor:target_end]
+            if text:
+                projected.append(
+                    {
+                        "start": segment["start"],
+                        "end": segment["end"],
+                        "text": text,
+                    }
+                )
+            target_cursor = target_end
+        if target_cursor != len(approved):
+            raise VideoEditorWorkflowError(
+                "真实字幕时间轴未完整覆盖口播文案，已停止避免字幕错配。"
+            )
+        return projected
 
     def upload_source(
         self,
@@ -2444,6 +2534,7 @@ class VideoEditorWorkflowService:
         avatar_task: AvatarTask,
         script_text: str,
         publish_title: str,
+        subtitle_segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> VideoEditTask:
         """Render an approved production avatar with the current local template.
 
@@ -2466,6 +2557,11 @@ class VideoEditorWorkflowService:
         if not title:
             raise VideoEditorWorkflowError("成片标题为空，不能开始智能剪辑。")
 
+        # The production draft can still carry a stale creative-plan hook.
+        # Anchor the on-screen title to the first approved spoken clause so it
+        # is a complete sentence fragment and matches the actual video.
+        title = self._script_topic_title(script, title)
+
         from src.services.video_editor_cloud import build_smart_opening
 
         approved_opening = build_smart_opening(script, [title])
@@ -2473,10 +2569,29 @@ class VideoEditorWorkflowService:
             title = approved_opening.hook_text
 
         media = self._probe_media(source_path)
-        segments = self._estimated_script_segments(
-            script,
-            float(media["duration_seconds"]),
-        )
+        timing_source = "approved_avatar_script_estimate"
+        if subtitle_segments is not None:
+            segments = self._validated_review_segments(
+                [dict(segment) for segment in subtitle_segments],
+                duration_seconds=float(media["duration_seconds"]),
+            )
+            approved_text = re.sub(r"[\W_]+", "", script, flags=re.UNICODE)
+            timed_text = re.sub(
+                r"[\W_]+",
+                "",
+                "".join(str(segment.get("text") or "") for segment in segments),
+                flags=re.UNICODE,
+            )
+            if timed_text != approved_text:
+                raise VideoEditorWorkflowError(
+                    "真实字幕时间轴与已确认口播文案不一致，已停止避免音画错配。"
+                )
+            timing_source = "approved_avatar_asr"
+        else:
+            segments = self._estimated_script_segments(
+                script,
+                float(media["duration_seconds"]),
+            )
         if not segments:
             raise VideoEditorWorkflowError("无法生成字幕时间轴，不能开始智能剪辑。")
 
@@ -2488,7 +2603,7 @@ class VideoEditorWorkflowService:
             status="outcome_unknown",
             selected_title=title,
             subtitle_segments=segments,
-            review_snapshot={"confirmed": True, "source": "approved_avatar_script"},
+            review_snapshot={"confirmed": True, "source": timing_source},
             review_confirmed_at=now,
             enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
             edit_plan={"remove_ranges": []},
