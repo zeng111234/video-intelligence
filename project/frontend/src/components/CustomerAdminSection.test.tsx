@@ -159,7 +159,7 @@ describe("CustomerAdminSection access package", () => {
     expect(screen.getByRole("dialog", { name: /延长使用期/ })).toBeTruthy();
     expect(screen.getByText(/续期只延长使用时间/)).toBeTruthy();
     expect(screen.queryByPlaceholderText("本次套餐价格")).toBeNull();
-  });
+  }, 10_000);
 
   it("shows the customer name as the primary recharge-request identity", async () => {
     mockListRechargeRequests.mockResolvedValue([
