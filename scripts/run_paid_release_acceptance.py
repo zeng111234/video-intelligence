@@ -35,6 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.services.credits import cny_to_credits  # noqa: E402
+from src.services.avatar_billing import credits_for_seconds  # noqa: E402
 from src.services.video_editor_cloud import create_cost_quote  # noqa: E402
 
 
@@ -47,6 +48,7 @@ EXPECTED_VERSION_ENV = "VIDEOINSIGHT_ACCEPTANCE_EXPECTED_VERSION"
 AVATAR_ID = "shuying-avatar-21920"
 VOICE_ID = "shuying-voice-7869"
 AVATAR_SCRIPT = "交付测试"
+AVATAR_ACCEPTANCE_MAX_BILLED_SECONDS = 2
 OPENING_SECONDS = Decimal("1.4")
 MAIN_FIXTURE_SECONDS = Decimal("2.0")
 
@@ -687,7 +689,15 @@ class PaidReleaseAcceptanceRunner:
         avatar_quote = self._get_json(
             f"/api/v1/provider/avatar/quote?{urlencode({'characters': len(AVATAR_SCRIPT), 'speech_rate': 1.0})}"
         )
-        avatar_credits = _money(avatar_quote["reservation_credits"])
+        avatar_reservation_seconds = int(avatar_quote["reservation_seconds"])
+        avatar_estimated_billed_seconds = max(
+            avatar_reservation_seconds, AVATAR_ACCEPTANCE_MAX_BILLED_SECONDS
+        )
+        avatar_price = Decimal(str(avatar_quote["price_per_minute_cny"]))
+        avatar_credits = max(
+            _money(avatar_quote["reservation_credits"]),
+            credits_for_seconds(avatar_price, avatar_estimated_billed_seconds),
+        )
         estimates = {
             "copywriting": ai_credits,
             "asr": asr_credits,
@@ -715,6 +725,7 @@ class PaidReleaseAcceptanceRunner:
                 "avatar_id": AVATAR_ID,
                 "voice_id": VOICE_ID,
                 "characters": len(AVATAR_SCRIPT),
+                "estimated_billed_seconds": avatar_estimated_billed_seconds,
                 "price_per_minute_cny": str(avatar_quote["price_per_minute_cny"]),
             },
             "video_editor_quote": editor_quote.model_dump(mode="json"),

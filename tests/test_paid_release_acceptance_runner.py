@@ -167,7 +167,8 @@ class FakeTransport:
         if path.startswith("/api/v1/provider/avatar/quote?"):
             return _response(
                 {
-                    "reservation_credits": 0.17,
+                    "reservation_credits": 0.05,
+                    "reservation_seconds": 1,
                     "price_per_minute_cny": 2.5,
                 }
             )
@@ -281,12 +282,35 @@ def test_default_mode_only_builds_a_cost_capped_plan_without_leaking_credentials
     assert Decimal(result["plan"]["estimated_total_credits"]) <= Decimal("5.00")
     assert result["plan"]["avatar"]["avatar_id"] == AVATAR_ID
     assert result["plan"]["avatar"]["voice_id"] == VOICE_ID
+    assert result["plan"]["avatar"]["estimated_billed_seconds"] == 2
+    assert result["plan"]["estimated_credits"]["avatar"] == "0.09"
+    assert result["plan"]["estimated_total_credits"] == "0.12"
     assert result["plan"]["fixture"]["opening_seconds"] == "1.4"
     assert all(call["method"] == "GET" for call in transport.calls[2:])
     encoded = (tmp_path / "acceptance.json").read_text(encoding="utf-8")
     assert "PRIVATE-ACTIVATION-CODE" not in encoded
     assert "private-token" not in encoded
     assert "交付测试" not in encoded
+
+
+def test_plan_rejects_budget_below_full_avatar_settlement_estimate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ACTIVATION_CODE_ENV, "PRIVATE-ACTIVATION-CODE")
+    runner = PaidReleaseAcceptanceRunner(
+        RunnerConfig(
+            base_url="https://accept.example.test",
+            journal_path=tmp_path / "acceptance.json",
+            expected_version="0.2.7",
+            budget=Decimal("0.11"),
+        ),
+        transport=FakeTransport(),
+    )
+
+    result = runner.run()
+
+    assert result["status"] == "failed"
+    assert "预计总费用超过" in result["message"]
 
 
 def test_execute_paid_requires_separate_environment_acknowledgement(
