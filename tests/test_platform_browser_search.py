@@ -467,6 +467,7 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
                 {
                     "id": "xhs-note-1",
                     "note_card": {
+                        "type": "video",
                         "display_title": "餐饮获客的三个新方法",
                         "user": {"user_id": "xhs-user-1", "nickname": "餐饮老板说"},
                         "interact_info": {
@@ -477,7 +478,14 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
                         },
                         "time": 1785380400000,
                     },
-                }
+                },
+                {
+                    "id": "xhs-image-1",
+                    "note_card": {
+                        "type": "normal",
+                        "display_title": "餐饮获客图文笔记",
+                    },
+                },
             ]
         }
     }
@@ -502,6 +510,126 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
     assert "time=platform" in (item.evidence or "")
 
 
+def test_xiaohongshu_payload_rejects_items_without_video_type():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-unknown-type",
+                    "note_card": {"display_title": "未标明类型的笔记"},
+                },
+                {
+                    "id": "xhs-image-type",
+                    "note_card": {"type": "normal", "display_title": "图文笔记"},
+                },
+            ]
+        }
+    }
+
+    assert provider._rows_from_payload(payload) == []
+
+
+def test_platform_filter_days_only_maps_native_date_options():
+    observed_at = datetime(2026, 8, 14, 12, tzinfo=timezone.utc)
+
+    assert (
+        LocalPlatformBrowserSearchProvider._platform_filter_days(None, observed_at) == 0
+    )
+    assert (
+        LocalPlatformBrowserSearchProvider._platform_filter_days(
+            observed_at - timedelta(days=7), observed_at
+        )
+        == 7
+    )
+    assert (
+        LocalPlatformBrowserSearchProvider._platform_filter_days(
+            observed_at - timedelta(days=3), observed_at
+        )
+        is None
+    )
+
+
+def test_bilibili_next_page_keeps_native_filter_query():
+    next_url = LocalPlatformBrowserSearchProvider._bilibili_page_url(
+        "https://search.bilibili.com/all?keyword=ai&order=pubdate&pubtime_begin_s=1&page=1",
+        2,
+    )
+    query = parse_qs(urlparse(next_url).query)
+
+    assert query["order"] == ["pubdate"]
+    assert query["pubtime_begin_s"] == ["1"]
+    assert query["page"] == ["2"]
+
+
+def test_bilibili_newest_filter_waits_for_delayed_controls():
+    class Control:
+        def __init__(self, page):
+            self.page = page
+
+        def is_visible(self):
+            return True
+
+        def click(self, *, timeout):
+            assert timeout == 3000
+            self.page.url += "&order=pubdate"
+
+    class Matches:
+        def __init__(self, page, visible):
+            self.page = page
+            self.visible = visible
+
+        def count(self):
+            return 1 if self.visible else 0
+
+        def nth(self, _index):
+            return Control(self.page)
+
+    class Page:
+        url = "https://search.bilibili.com/all?keyword=ai"
+        polls = 0
+        waits = []
+
+        def get_by_text(self, label, *, exact):
+            assert label == "最新发布"
+            assert exact is True
+            self.polls += 1
+            return Matches(self, self.polls >= 3)
+
+        def wait_for_timeout(self, timeout):
+            self.waits.append(timeout)
+
+    page = Page()
+    assert LocalPlatformBrowserSearchProvider._select_bilibili_newest_filter(page)
+    assert parse_qs(urlparse(page.url).query)["order"] == ["pubdate"]
+    assert page.waits == [500]
+
+
+def test_bilibili_comprehensive_sort_keeps_date_filter_without_clicking_newest(
+    monkeypatch,
+):
+    provider = _provider(Platform.BILIBILI)
+    labels = []
+    monkeypatch.setattr(
+        provider,
+        "_select_bilibili_newest_filter",
+        lambda _page: pytest.fail("综合排序不应点击最新发布"),
+    )
+    monkeypatch.setattr(
+        provider,
+        "_select_bilibili_date_filter",
+        lambda _page, label: labels.append(label) or True,
+    )
+
+    notes = provider._apply_platform_filters(
+        object(),
+        search_filters={"bilibili_sort": "platform", "published_days": "7"},
+    )
+
+    assert labels == ["最近一周"]
+    assert notes == ["使用B站综合排序", "已选择B站发布时间“最近一周”"]
+
+
 def test_xiaohongshu_public_metric_aliases_keep_explicit_zero_values():
     provider = _provider(Platform.XIAOHONGSHU)
     payload = {
@@ -510,6 +638,7 @@ def test_xiaohongshu_public_metric_aliases_keep_explicit_zero_values():
                 {
                     "id": "xhs-note-zero",
                     "noteCard": {
+                        "type": "video",
                         "display_title": "互动数据为零的公开笔记",
                         "user": {"id": "xhs-user-zero", "nick_name": "零互动作者"},
                         "interactInfo": {
@@ -1289,7 +1418,7 @@ def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_collect_rows",
-        lambda _keyword, *, target: captured.update(target=target) or [],
+        lambda _keyword, *, target, **_kwargs: captured.update(target=target) or [],
     )
 
     provider.search(
@@ -1325,7 +1454,7 @@ def test_bilibili_raw_pool_never_assigns_a_provider_rank_above_100(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_collect_rows",
-        lambda _keyword, *, target: raw_rows,
+        lambda _keyword, *, target, **_kwargs: raw_rows,
     )
 
     page = provider.search(
@@ -1352,7 +1481,7 @@ def test_xiaohongshu_anonymous_search_has_a_tight_public_budget(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_collect_rows",
-        lambda _keyword, *, target: captured.update(target=target) or [],
+        lambda _keyword, *, target, **_kwargs: captured.update(target=target) or [],
     )
 
     provider.search(
@@ -1494,6 +1623,7 @@ def test_rendered_rows_extracts_xiaohongshu_count(monkeypatch, tmp_path):
                     "title": "餐饮获客笔记",
                     "text": "别小瞧:餐饮店老板靠同城种草天天满座 | 作者 | 2天前 | 22",
                     "counts": ["22"],
+                    "isVideo": True,
                 }
             ]
 

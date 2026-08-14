@@ -134,8 +134,10 @@ BROWSER_MAX_REAL_RUNS_PER_WINDOW = int(
 )
 BROWSER_LEASE_SECONDS = 15 * 60
 BROWSER_RESULT_LIMIT = 15
-# B站公开详情接口逐条读取，当前搜索批次只补全平台排序靠前的少量候选。
-BILIBILI_PUBLIC_METRIC_REFRESH_LIMIT = 10
+# B站公开详情单次最多读取 10 条；按批次补全本次最多 100 条候选，避免
+# 后排结果因固定的首批上限全部显示为“未返回”。任一批失败即停止后续批次。
+BILIBILI_PUBLIC_METRIC_REFRESH_BATCH_SIZE = 10
+BILIBILI_PUBLIC_METRIC_REFRESH_LIMIT = 100
 HOTSPOT_WINDOW_LABELS = {
     1: "近1小时",
     24: "近1天",
@@ -2344,7 +2346,7 @@ def _execute_free_multi_platform_batch(
             all_runs.append(moved)
         repo.delete_search_batch(supplemental.batch_id)
 
-    # 搜索页已经先保留所有结果；B站公开详情再只补全平台排序靠前的十条。
+    # 搜索页已经先保留所有结果；B站公开详情再分批补全一个有界候选池。
     # 详情接口未返回的字段保持空，不把弹幕等相近字段伪装成评论。
     _enrich_bilibili_public_metrics(
         runs=all_runs,
@@ -2427,7 +2429,7 @@ def _enrich_bilibili_public_metrics(
     source_service,
     batch_id: str,
 ) -> None:
-    """Safely enrich up to ten fresh Bilibili search results with public detail data.
+    """Safely enrich a bounded fresh Bilibili result set in batches of ten.
 
     A cached search deliberately does not issue fresh detail lookups.  That keeps
     normal cache reuse quiet while a force-refreshed search can improve its metric
@@ -2479,48 +2481,50 @@ def _enrich_bilibili_public_metrics(
     if not candidates:
         return
 
-    try:
-        detail_page = refresh_provider.refresh_metrics(
-            Platform.BILIBILI,
-            [
-                candidate.platform_item_id or candidate.video_id
-                for candidate in candidates
-            ],
-            hashlib.sha256(
-                f"{batch_id}|bilibili-public-detail".encode("utf-8")
-            ).hexdigest(),
-        )
-    except LicensedProviderError:
-        _record_bilibili_metric_refresh_diagnostic(
-            bilibili_runs,
-            repo=repo,
-            message="B站公开详情暂未返回，已保留本次搜索结果和原有字段。",
-        )
-        return
-    except Exception:
-        _record_bilibili_metric_refresh_diagnostic(
-            bilibili_runs,
-            repo=repo,
-            message="B站公开详情补全未完成，已保留本次搜索结果和原有字段。",
-        )
-        return
-
-    detail_by_item_id = {item.platform_item_id: item for item in detail_page.items}
     updated_count = 0
-    for candidate in candidates:
-        detail = detail_by_item_id.get(candidate.platform_item_id or candidate.video_id)
-        if detail is None:
-            continue
-        repo.save_candidate(_merge_bilibili_public_detail(candidate, detail))
-        updated_count += 1
+    incomplete_count = 0
+    stopped_early = False
+    for offset in range(0, len(candidates), BILIBILI_PUBLIC_METRIC_REFRESH_BATCH_SIZE):
+        candidate_batch = candidates[
+            offset : offset + BILIBILI_PUBLIC_METRIC_REFRESH_BATCH_SIZE
+        ]
+        try:
+            detail_page = refresh_provider.refresh_metrics(
+                Platform.BILIBILI,
+                [
+                    candidate.platform_item_id or candidate.video_id
+                    for candidate in candidate_batch
+                ],
+                hashlib.sha256(
+                    f"{batch_id}|bilibili-public-detail|{offset}".encode("utf-8")
+                ).hexdigest(),
+            )
+        except Exception:
+            stopped_early = True
+            break
+
+        detail_by_item_id = {
+            item.platform_item_id: item for item in detail_page.items
+        }
+        incomplete_count += len(detail_page.errors)
+        for candidate in candidate_batch:
+            detail = detail_by_item_id.get(
+                candidate.platform_item_id or candidate.video_id
+            )
+            if detail is None:
+                continue
+            repo.save_candidate(_merge_bilibili_public_detail(candidate, detail))
+            updated_count += 1
 
     recompute = getattr(source_service, "recompute_all", None)
     if updated_count and callable(recompute):
         recompute()
 
     message = f"B站公开详情已补全前 {len(candidates)} 条：成功 {updated_count} 条"
-    if detail_page.errors:
-        message += f"；{len(detail_page.errors)} 条未返回完整指标"
+    if incomplete_count:
+        message += f"；{incomplete_count} 条未返回完整指标"
+    if stopped_early:
+        message += "；后续批次未完成，已保留搜索结果和已有字段"
     _record_bilibili_metric_refresh_diagnostic(
         bilibili_runs,
         repo=repo,

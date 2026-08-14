@@ -427,9 +427,11 @@ class LocalPlatformLinkParserClient:
                             platform=link.platform,
                             work_id=link.work_id,
                         )
-                    # Kuaishou hydrates the detail page after the first DOM event.  The
-                    # previous 800 ms window often closed the page before the target
-                    # GraphQL/video response arrived on normal customer networks.
+                    # Kuaishou hydrates the detail page after the first DOM event.  Keep
+                    # collecting scoped API payloads for a short initial window, then
+                    # actively wait for the sole detail-player source below.  On normal
+                    # customer networks currentSrc can appear after this five-second
+                    # window even though the exact work page is already loaded.
                     page.wait_for_timeout(5_000)
                     check_block = getattr(provider, "_raise_for_visible_block", None)
                     if callable(check_block):
@@ -451,11 +453,11 @@ class LocalPlatformLinkParserClient:
                         )
                     if link.platform == Platform.KUAISHOU:
                         expected_work_id = final_link.work_id or link.work_id
-                        video = page.locator("video")
                         page_title = self._clean_page_title(page.title(), link.platform)
-                        if expected_work_id and video.count() == 1:
-                            media_url = video.first.evaluate(
-                                "node => node.currentSrc || node.src || ''"
+                        if expected_work_id:
+                            media_url = self._wait_for_kuaishou_page_video_source(
+                                page,
+                                timeout_ms=min(timeout_ms, 12_000),
                             )
                             if self._capture_kuaishou_page_video(
                                 captured,
@@ -463,7 +465,9 @@ class LocalPlatformLinkParserClient:
                                 media_url=media_url,
                                 title=page_title,
                             ):
-                                video.first.evaluate("node => node.pause()")
+                                page.locator("video").first.evaluate(
+                                    "node => node.pause()"
+                                )
                         if expected_work_id and not captured.get("media_url"):
                             for payload in media_payloads:
                                 self._capture_media_payload(
@@ -675,6 +679,46 @@ class LocalPlatformLinkParserClient:
         if title.strip():
             captured["title"] = title.strip()
         return True
+
+    @staticmethod
+    def _wait_for_kuaishou_page_video_source(
+        page: Any,
+        *,
+        timeout_ms: int,
+    ) -> str:
+        """Wait for the one visible player on the exact Kuaishou detail page.
+
+        The work identity is still bound by the canonical detail-page URL in the
+        caller.  This wait only removes the brittle assumption that ``currentSrc``
+        is populated within a fixed five seconds.
+        """
+
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        try:
+            page.wait_for_function(
+                """
+                () => {
+                  const videos = Array.from(document.querySelectorAll('video'))
+                    .filter((node) => {
+                      const box = node.getBoundingClientRect();
+                      const style = window.getComputedStyle(node);
+                      return box.width > 0 && box.height > 0 &&
+                        style.display !== 'none' && style.visibility !== 'hidden';
+                    });
+                  return videos.length === 1 &&
+                    Boolean(videos[0].currentSrc || videos[0].src);
+                }
+                """,
+                timeout=max(1_000, min(int(timeout_ms), 12_000)),
+            )
+        except PlaywrightTimeoutError:
+            return ""
+        videos = page.locator("video")
+        if videos.count() != 1:
+            return ""
+        value = videos.first.evaluate("node => node.currentSrc || node.src || ''")
+        return value if isinstance(value, str) else ""
 
     @staticmethod
     def _capture_https_value(value: Any, captured: dict[str, str]) -> None:

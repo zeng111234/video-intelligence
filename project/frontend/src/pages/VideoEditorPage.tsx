@@ -1,5 +1,5 @@
 /** 云端轻量智能剪辑工作台。 */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Alert,
   Button,
@@ -17,7 +17,6 @@ import {
   Slider,
   Space,
   Spin,
-  Switch,
   Tabs,
   Tag,
   Tooltip,
@@ -31,14 +30,12 @@ import {
   CloudOutlined,
   DownloadOutlined,
   EditOutlined,
-  FileProtectOutlined,
   FullscreenOutlined,
   HistoryOutlined,
   MutedOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
-  SettingOutlined,
   SoundOutlined,
   UploadOutlined,
 } from "@ant-design/icons";
@@ -59,25 +56,6 @@ import type {
 
 const { Title, Text } = Typography;
 
-const BGM_CATEGORY_OPTIONS = [
-  "理性干货",
-  "情绪共鸣",
-  "故事叙事",
-  "商业表达",
-  "科技未来",
-  "轻松日常",
-  "励志成长",
-  "悬念揭秘",
-  "通用口播",
-].map((value) => ({ value, label: value }));
-
-const BGM_SOURCE_OPTIONS = [
-  { value: "manual", label: "本人/公司或已有授权" },
-  { value: "pixabay", label: "Pixabay 免费素材" },
-  { value: "light_factory", label: "光厂已购授权" },
-  { value: "bodian", label: "波点商用库授权" },
-];
-
 const BGM_SOURCE_LABELS: Record<string, string> = {
   manual: "本地授权",
   freepd: "FreePD 公共领域",
@@ -85,8 +63,12 @@ const BGM_SOURCE_LABELS: Record<string, string> = {
   light_factory: "光厂",
   bodian: "波点商用库",
 };
+const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
+  `${asset.voiceover_category || asset.mood} · ${asset.title} · ${
+    BGM_SOURCE_LABELS[asset.source_provider] || "授权素材"
+  }`
+);
 
-const BGM_LIBRARY_SOURCES = ["freepd", "pixabay", "light_factory", "bodian", "manual"];
 const CAPTION_BREAK_BEFORE_TOKENS = [
   "因为", "所以", "但是", "不过", "而且", "然后", "如果", "虽然",
   "为了", "其实", "基本", "通常", "一般", "几乎", "结果", "现在", "大量", "少量", "很多", "有些", "倒闭",
@@ -113,12 +95,6 @@ const CAPTION_BAD_LINE_STARTS = [
   "个", "位", "名", "家", "户", "只", "条", "件", "张", "种", "次", "套",
   "台", "份", "部", "本", "辆",
 ];
-const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
-  `${asset.voiceover_category || asset.mood} · ${asset.title} · ${
-    BGM_SOURCE_LABELS[asset.source_provider] || "授权素材"
-  }`
-);
-
 type OutputProfile = "720p" | "1080p";
 type PreviewMode = "original" | "plan" | "output";
 
@@ -1076,7 +1052,6 @@ function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
 export default function VideoEditorPage() {
   const navigate = useNavigate();
   const previewRef = useRef<HTMLVideoElement | null>(null);
-  const filmstripMouseDraggingRef = useRef(false);
   const pendingLocalDownloadRef = useRef<string | null>(null);
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
@@ -1099,8 +1074,6 @@ export default function VideoEditorPage() {
   const [previewDuration, setPreviewDuration] = useState(0);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [isPreviewMuted, setIsPreviewMuted] = useState(false);
-  const [timelineFrames, setTimelineFrames] = useState<string[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [reviewItem, setReviewItem] = useState<CloudBatchItem | null>(null);
   const [reviewSegments, setReviewSegments] = useState<TranscriptSegment[]>([]);
@@ -1109,18 +1082,9 @@ export default function VideoEditorPage() {
   const [reviewBgmId, setReviewBgmId] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
-  const [bgmEnabled, setBgmEnabled] = useState(true);
+  const [bgmEnabled, setBgmEnabled] = useState(false);
   const [bgmId, setBgmId] = useState<string>();
   const [bgmVolume, setBgmVolume] = useState(0.18);
-  const [bgmRightsHolder, setBgmRightsHolder] = useState("");
-  const [bgmMood, setBgmMood] = useState("知识·讲解·平稳");
-  const [bgmVoiceoverCategory, setBgmVoiceoverCategory] = useState("理性干货");
-  const [bgmEnergy, setBgmEnergy] = useState("克制");
-  const [bgmSourceProvider, setBgmSourceProvider] = useState("manual");
-  const [bgmSourceUrl, setBgmSourceUrl] = useState("");
-  const [bgmLicenseUrl, setBgmLicenseUrl] = useState("");
-  const [bgmContentIdRisk, setBgmContentIdRisk] = useState<"none" | "registered" | "unknown">("unknown");
-  const [bgmUploading, setBgmUploading] = useState(false);
 
   const refresh = useCallback(async (keepCurrent = true) => {
     setLoading(true);
@@ -1180,13 +1144,6 @@ export default function VideoEditorPage() {
     || (selectedReviewBgm
       ? `当前任务原先未选配乐，已根据文案预选《${selectedReviewBgm.title}》；请试听后再确认生成。`
       : null);
-  const bgmSourceCounts = useMemo(
-    () => BGM_LIBRARY_SOURCES.map((source) => ({
-      source,
-      count: bgmAssets.filter((asset) => asset.source_provider === source).length,
-    })),
-    [bgmAssets],
-  );
   const currentStatus = currentItem?.status || batch?.status || "idle";
   const isLocalExport = Boolean(
     currentItem?.job?.workflow === "local_preview_export"
@@ -1248,117 +1205,12 @@ export default function VideoEditorPage() {
   );
   const resultMediaUrl = currentItem?.result_media_url || currentItem?.job?.media_url || null;
   const playableResultMediaUrl = isBrowserMediaUrl(resultMediaUrl) ? resultMediaUrl : null;
-  const playableSourceMediaUrl = isBrowserMediaUrl(selectedSource?.media_url)
-    ? selectedSource.media_url
-    : null;
   const canConfirmOutput = Boolean(
     !isSandbox
     && playableResultMediaUrl
     && currentItem?.publish_allowed !== false,
   );
   const publishHandoffReady = Boolean(canConfirmOutput && currentItem?.edit_task_id);
-
-  useEffect(() => {
-    const duration = previewDuration || asNumber(currentItem?.edit_plan?.duration_seconds, 0);
-    if (!playableSourceMediaUrl || duration <= 0 || typeof document === "undefined") {
-      setTimelineFrames([]);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const video = document.createElement("video");
-    video.muted = true;
-    video.playsInline = true;
-    video.preload = "auto";
-    video.crossOrigin = "anonymous";
-    video.src = playableSourceMediaUrl;
-
-    const waitForMetadata = () => new Promise<void>((resolve, reject) => {
-      if (video.readyState >= 1) {
-        resolve();
-        return;
-      }
-      const timeout = window.setTimeout(() => reject(new Error("metadata timeout")), 5000);
-      video.addEventListener("loadedmetadata", () => {
-        window.clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-      video.addEventListener("error", () => {
-        window.clearTimeout(timeout);
-        reject(new Error("media unavailable"));
-      }, { once: true });
-    });
-
-    const seekTo = (time: number) => new Promise<void>((resolve) => {
-      const timeout = window.setTimeout(resolve, 900);
-      video.addEventListener("seeked", () => {
-        window.clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-      video.currentTime = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.05)));
-    });
-
-    const captureFrames = async () => {
-      try {
-        await waitForMetadata();
-        const canvas = document.createElement("canvas");
-        canvas.width = 72;
-        canvas.height = 82;
-        const context = canvas.getContext("2d");
-        if (!context || !video.videoWidth || !video.videoHeight) return;
-
-        const frameDuration = Number.isFinite(video.duration) ? video.duration : duration;
-        const frameIntervalSeconds = 8;
-        const frameCount = Math.max(1, Math.min(30, Math.ceil(frameDuration / frameIntervalSeconds)));
-        const frames: string[] = [];
-        for (let index = 0; index < frameCount; index += 1) {
-          if (cancelled) return;
-          const time = Math.min(
-            frameDuration - 0.05,
-            index * frameIntervalSeconds + frameIntervalSeconds / 2,
-          );
-          await seekTo(time);
-          const sourceRatio = video.videoWidth / video.videoHeight;
-          const targetRatio = canvas.width / canvas.height;
-          let sourceX = 0;
-          let sourceY = 0;
-          let sourceWidth = video.videoWidth;
-          let sourceHeight = video.videoHeight;
-          if (sourceRatio > targetRatio) {
-            sourceWidth = video.videoHeight * targetRatio;
-            sourceX = (video.videoWidth - sourceWidth) / 2;
-          } else {
-            sourceHeight = video.videoWidth / targetRatio;
-            sourceY = (video.videoHeight - sourceHeight) / 2;
-          }
-          context.drawImage(
-            video,
-            sourceX,
-            sourceY,
-            sourceWidth,
-            sourceHeight,
-            0,
-            0,
-            canvas.width,
-            canvas.height,
-          );
-          frames.push(canvas.toDataURL("image/jpeg", 0.78));
-          // 让出主线程,避免帧生成期间页面卡顿
-          await new Promise((resolve) => window.setTimeout(resolve, 0));
-        }
-        if (!cancelled) setTimelineFrames(frames);
-      } catch {
-        if (!cancelled) setTimelineFrames([]);
-      }
-    };
-
-    setTimelineFrames([]);
-    void captureFrames();
-    return () => {
-      cancelled = true;
-      video.removeAttribute("src");
-    };
-  }, [currentItem?.edit_plan?.duration_seconds, playableSourceMediaUrl, previewDuration]);
 
   useEffect(() => {
     if (
@@ -1438,7 +1290,7 @@ export default function VideoEditorPage() {
     setReviewSegments([]);
     setReviewTitle("");
     setReviewBgmId(null);
-    setBgmEnabled(true);
+    setBgmEnabled(false);
     setBgmId(undefined);
   };
 
@@ -1460,35 +1312,6 @@ export default function VideoEditorPage() {
       message.error((error as Error).message || "视频素材上传失败");
     } finally {
       setUploading(false);
-    }
-  };
-
-  const uploadBgm = async (file: File) => {
-    if (!bgmRightsHolder.trim()) {
-      message.warning("请先填写音乐权利主体");
-      return;
-    }
-    setBgmUploading(true);
-    try {
-      const asset = await videoEditorApi.uploadVideoEditorBgm({
-        file,
-        mood: bgmMood,
-        voiceoverCategory: bgmVoiceoverCategory,
-        energy: bgmEnergy,
-        rightsHolder: bgmRightsHolder.trim(),
-        sourceProvider: bgmSourceProvider,
-        sourceUrl: bgmSourceUrl.trim(),
-        licenseUrl: bgmLicenseUrl.trim(),
-        contentIdRisk: bgmContentIdRisk,
-      });
-      setBgmAssets((items) => [asset, ...items.filter((item) => item.asset_id !== asset.asset_id)]);
-      setBgmId(asset.asset_id);
-      setBgmEnabled(true);
-      message.success("授权音乐已加入素材库");
-    } catch (error) {
-      message.error((error as Error).message || "背景音乐上传失败");
-    } finally {
-      setBgmUploading(false);
     }
   };
 
@@ -1720,14 +1543,6 @@ export default function VideoEditorPage() {
       downloadUrl,
       currentItem?.selected_title || currentItem?.title || selectedSource?.title || "剪辑成片",
     );
-  };
-
-  const downloadSourceVideo = () => {
-    if (!playableSourceMediaUrl) {
-      message.warning("当前原片暂时不可下载");
-      return;
-    }
-    downloadBrowserMedia(playableSourceMediaUrl, `${selectedSource?.title || "视频"}-原片`);
   };
 
   const handlePrimaryAction = () => {
@@ -1968,36 +1783,6 @@ export default function VideoEditorPage() {
   const timelineValue = previewMode === "plan"
     ? planTimelineValue
     : Math.min(previewTime, timelineDuration);
-  const timelineTickValues = Array.from({ length: 6 }, (_, index) => (
-    timelineDuration * (index / 5)
-  ));
-  const timelinePosition = timelineDuration > 0
-    ? Math.max(0, Math.min(100, (timelineValue / timelineDuration) * 100))
-    : 0;
-  const sourceTimeToTimelineTime = (sourceTime: number) => (
-    previewMode === "plan"
-      ? planTimeFromSourceTime(sourceTime, activeIntervals) / playbackRate
-      : sourceTime
-  );
-  const representativeSubtitle = previewSegments.length
-    ? previewSegments[Math.floor(previewSegments.length / 2)]
-    : null;
-  const timelineMarkerTargets = {
-    pause: sourceTimeToTimelineTime(
-      activeIntervals[0]?.start ?? sourceTimelineDuration * 0.23,
-    ),
-    caption: sourceTimeToTimelineTime(
-      asNumber(representativeSubtitle?.start, sourceTimelineDuration * 0.49),
-    ),
-    title: Math.min(timelineDuration, 0.5),
-  };
-  const timelineMarkerPosition = (target: number) => {
-    if (timelineDuration <= 0) return "8%";
-    return `${Math.max(8, Math.min(92, (target / timelineDuration) * 100))}%`;
-  };
-  const jumpToTimelineMarker = (target: number) => {
-    seekPreviewTimeline(Math.max(0, Math.min(timelineDuration, target)));
-  };
   const seekPreviewTimeline = (nextTime: number) => {
     if (previewMode === "plan") {
       seekPlanPreview(nextTime);
@@ -2008,48 +1793,6 @@ export default function VideoEditorPage() {
     video.pause();
     video.currentTime = nextTime;
     setPreviewTime(nextTime);
-  };
-  const seekFromFilmstripPosition = (surface: HTMLDivElement, clientX: number) => {
-    if (timelineDuration <= 0) return;
-    const bounds = surface.getBoundingClientRect();
-    if (bounds.width <= 0) return;
-    const position = Math.max(0, Math.min(1, (clientX - bounds.left) / bounds.width));
-    seekPreviewTimeline(position * timelineDuration);
-  };
-  const startFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-  };
-  const continueFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-  };
-  const finishFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-  const cancelFilmstripDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    event.currentTarget.releasePointerCapture(event.pointerId);
-  };
-  const startFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    filmstripMouseDraggingRef.current = true;
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-  };
-  const continueFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!filmstripMouseDraggingRef.current) return;
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-  };
-  const finishFilmstripMouseDrag = (event: ReactMouseEvent<HTMLDivElement>) => {
-    if (!filmstripMouseDraggingRef.current) return;
-    seekFromFilmstripPosition(event.currentTarget, event.clientX);
-    filmstripMouseDraggingRef.current = false;
-  };
-  const cancelFilmstripMouseDrag = () => {
-    filmstripMouseDraggingRef.current = false;
   };
 
   const returnToSourceSelection = () => {
@@ -2085,7 +1828,6 @@ export default function VideoEditorPage() {
         <div>{batch ? statusTag(displayStatus) : null}</div>
         <Space wrap size={8}>
           <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>任务历史</Button>
-          <Button icon={<SettingOutlined />} onClick={() => setAdvancedOpen(true)}>高级设置</Button>
           <Tooltip title="刷新当前任务状态">
             <Button aria-label="刷新工作台" icon={<ReloadOutlined />} onClick={() => void refresh()} />
           </Tooltip>
@@ -2247,108 +1989,6 @@ export default function VideoEditorPage() {
                   onClick={openPreviewFullscreen}
                 />
               </Tooltip>
-              {!playableResultMediaUrl && playableSourceMediaUrl && (
-                <Tooltip title="下载当前原片">
-                  <Button type="text" aria-label="下载原片" icon={<DownloadOutlined />} onClick={downloadSourceVideo} />
-                </Tooltip>
-              )}
-            </div>
-            <div className="video-editor-timeline-ruler" aria-hidden="true">
-              {timelineTickValues.map((time, index) => (
-                <span key={`${index}-${time}`}>{formatTimelineTime(time)}</span>
-              ))}
-            </div>
-            <div
-              className="video-editor-filmstrip"
-              aria-label="可拖动的视频画面缩略时间轴"
-              data-testid="filmstrip-surface"
-              onPointerDown={startFilmstripDrag}
-              onPointerMove={continueFilmstripDrag}
-              onPointerUp={finishFilmstripDrag}
-              onPointerCancel={cancelFilmstripDrag}
-              onMouseDown={startFilmstripMouseDrag}
-              onMouseMove={continueFilmstripMouseDrag}
-              onMouseUp={finishFilmstripMouseDrag}
-              onMouseLeave={cancelFilmstripMouseDrag}
-              onDragStart={(event) => event.preventDefault()}
-            >
-              <div className="video-editor-filmstrip-content">
-                  {timelineFrames.length ? (
-                    <div
-                      className="video-editor-filmstrip-frames"
-                      style={{ gridTemplateColumns: `repeat(${timelineFrames.length}, minmax(0, 1fr))` }}
-                    >
-                      {timelineFrames.map((frame, index) => (
-                        <img
-                          alt=""
-                          aria-hidden="true"
-                          data-testid="timeline-frame"
-                          draggable={false}
-                          key={`${selectedSourceId}-${index}`}
-                          src={frame}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="video-editor-filmstrip-loading">
-                      <Spin size="small" />
-                      <span>正在读取原片画面</span>
-                    </div>
-                  )}
-                  <span
-                    className="video-editor-timeline-playhead"
-                    aria-hidden="true"
-                    style={{ left: `${timelinePosition}%` }}
-                  />
-                  <Slider
-                    className="video-editor-filmstrip-slider"
-                    ariaLabelForHandle="视频预览进度"
-                    min={0}
-                    max={Math.max(timelineDuration, 0.1)}
-                    step={0.05}
-                    value={timelineValue}
-                    tooltip={{ formatter: (value) => formatTimelineTime(asNumber(value)) }}
-                    onChange={seekPreviewTimeline}
-                  />
-              </div>
-            </div>
-            <div className="video-editor-timeline-markers" aria-label="剪辑时间线标记">
-              <Tooltip title={`点击跳到明显停顿处 · ${formatTimelineTime(timelineMarkerTargets.pause)}`}>
-                <Button
-                  type="text"
-                  className="is-pause"
-                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.pause) }}
-                  aria-label={`跳到停顿标记 ${formatTimelineTime(timelineMarkerTargets.pause)}`}
-                  icon={<ClockCircleOutlined />}
-                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.pause)}
-                >
-                  停顿 · {formatTimelineTime(timelineMarkerTargets.pause)}
-                </Button>
-              </Tooltip>
-              <Tooltip title={`点击跳到字幕位置 · ${formatTimelineTime(timelineMarkerTargets.caption)}`}>
-                <Button
-                  type="text"
-                  className="is-caption"
-                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.caption) }}
-                  aria-label={`跳到字幕标记 ${formatTimelineTime(timelineMarkerTargets.caption)}`}
-                  icon={<EditOutlined />}
-                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.caption)}
-                >
-                  字幕 · {formatTimelineTime(timelineMarkerTargets.caption)}
-                </Button>
-              </Tooltip>
-              <Tooltip title={`点击跳到标题出现位置 · ${formatTimelineTime(timelineMarkerTargets.title)}`}>
-                <Button
-                  type="text"
-                  className="is-title"
-                  style={{ left: timelineMarkerPosition(timelineMarkerTargets.title) }}
-                  aria-label={`跳到标题标记 ${formatTimelineTime(timelineMarkerTargets.title)}`}
-                  icon={<FileProtectOutlined />}
-                  onClick={() => jumpToTimelineMarker(timelineMarkerTargets.title)}
-                >
-                  标题 · {formatTimelineTime(timelineMarkerTargets.title)}
-                </Button>
-              </Tooltip>
             </div>
           </div>
         </section>
@@ -2395,7 +2035,7 @@ export default function VideoEditorPage() {
             </div>
 
             <div className="video-editor-result-list">
-              {RESULT_SUMMARY_ITEMS.map((item) => (
+              {RESULT_SUMMARY_ITEMS.filter((item) => item.key !== "background_music" || bgmEnabled).map((item) => (
                 <div className="video-editor-result-item" key={item.key}>
                   <CheckCircleOutlined />
                   <div>
@@ -2747,162 +2387,6 @@ export default function VideoEditorPage() {
       </Drawer>
 
       <Drawer
-        title="高级设置"
-        width={520}
-        open={advancedOpen}
-        onClose={() => setAdvancedOpen(false)}
-      >
-        <Space direction="vertical" size={20} style={{ width: "100%" }}>
-          <Alert
-            type="info"
-            showIcon
-            message="安全轻剪边界固定"
-            description="v1 不做语义删句、智能高光、主体追踪横转竖或自动发布，也不接受任意 MPS 参数。"
-          />
-          <section>
-            <Space>
-              <Switch checked={bgmEnabled} onChange={setBgmEnabled} />
-              <Text strong>AI 自动选择背景音乐</Text>
-            </Space>
-            <Select
-              aria-label="选择背景音乐"
-              allowClear
-              disabled={!bgmEnabled}
-              value={bgmId}
-              onChange={setBgmId}
-              placeholder="让系统根据文案自动挑选"
-              options={bgmAssets.map((asset) => ({
-                value: asset.asset_id,
-                label: formatBgmOptionLabel(asset),
-              }))}
-              style={{ width: "100%", marginTop: 10 }}
-            />
-            <Space wrap size={[6, 6]} style={{ marginTop: 10 }}>
-              {bgmSourceCounts.filter(({ count }) => count > 0).map(({ source, count }) => (
-                <Tag key={source} color={count ? "blue" : "default"}>
-                  {BGM_SOURCE_LABELS[source]} {count} 首
-                </Tag>
-              ))}
-            </Space>
-            <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
-              这里只显示已真实入库的音乐；新增授权素材可在下方导入。
-            </Text>
-            <Space style={{ width: "100%", marginTop: 10 }}>
-              <Text type="secondary">BGM 音量</Text>
-              <Slider
-                disabled={!bgmEnabled}
-                min={0.08}
-                max={0.5}
-                step={0.01}
-                value={bgmVolume}
-                onChange={setBgmVolume}
-                style={{ width: 220 }}
-              />
-              <Text>{Math.round(bgmVolume * 100)}%</Text>
-            </Space>
-          </section>
-          <Card title="导入口播音乐" size="small" styles={{ body: { padding: 14 } }}>
-            <Space direction="vertical" size={10} style={{ width: "100%" }}>
-              <Select
-                aria-label="口播音乐分类"
-                value={bgmVoiceoverCategory}
-                onChange={setBgmVoiceoverCategory}
-                options={BGM_CATEGORY_OPTIONS}
-                placeholder="适合哪类口播"
-                style={{ width: "100%" }}
-              />
-              <Select
-                aria-label="音乐能量等级"
-                value={bgmEnergy}
-                onChange={setBgmEnergy}
-                options={["克制", "平稳", "有推动感"].map((value) => ({ value, label: value }))}
-                placeholder="音乐能量"
-                style={{ width: "100%" }}
-              />
-              <Input
-                value={bgmRightsHolder}
-                onChange={(event) => setBgmRightsHolder(event.target.value)}
-                placeholder="音乐权利主体"
-              />
-              <Input
-                value={bgmMood}
-                onChange={(event) => setBgmMood(event.target.value)}
-                placeholder="补充标签，如：知识、讲解、钢琴"
-              />
-              <Select
-                aria-label="音乐素材来源"
-                value={bgmSourceProvider}
-                onChange={(value) => {
-                  setBgmSourceProvider(value);
-                  if (value !== "pixabay") {
-                    setBgmContentIdRisk("unknown");
-                  }
-                  if (value === "manual") {
-                    setBgmSourceUrl("");
-                    setBgmLicenseUrl("");
-                  }
-                }}
-                options={BGM_SOURCE_OPTIONS}
-                style={{ width: "100%" }}
-              />
-              {bgmSourceProvider !== "manual" && (
-                <>
-                  <Input
-                    value={bgmSourceUrl}
-                    onChange={(event) => setBgmSourceUrl(event.target.value)}
-                    placeholder="原始素材页面链接（必填）"
-                  />
-                  <Input
-                    value={bgmLicenseUrl}
-                    onChange={(event) => setBgmLicenseUrl(event.target.value)}
-                    placeholder="授权说明或订单凭证链接（建议填写）"
-                  />
-                </>
-              )}
-              {bgmSourceProvider === "pixabay" && (
-                <Select
-                  aria-label="Pixabay Content ID 状态"
-                  value={bgmContentIdRisk}
-                  onChange={setBgmContentIdRisk}
-                  options={[
-                    { value: "none", label: "页面未标记 Content ID" },
-                    { value: "registered", label: "页面已标记 Content ID" },
-                    { value: "unknown", label: "尚未确认 Content ID" },
-                  ]}
-                  style={{ width: "100%" }}
-                />
-              )}
-              <Alert
-                type="warning"
-                showIcon
-                message="短视频也要按实际发布用途确认音乐许可"
-                description="个人非推广内容按素材页允许范围使用；企业号、获客、品牌宣传或带货通常属于商业使用。光厂、波点和 Pixabay 都应保存对应作品的来源或授权记录。"
-              />
-              <Upload
-                accept="audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/flac"
-                showUploadList={false}
-                beforeUpload={(file) => {
-                  void uploadBgm(file as File);
-                  return Upload.LIST_IGNORE;
-                }}
-              >
-                <Button
-                  icon={<UploadOutlined />}
-                  loading={bgmUploading}
-                  disabled={
-                    !bgmRightsHolder.trim()
-                    || (bgmSourceProvider !== "manual" && !bgmSourceUrl.trim())
-                  }
-                >
-                  确认有权并上传到音乐库
-                </Button>
-              </Upload>
-            </Space>
-          </Card>
-        </Space>
-      </Drawer>
-
-      <Drawer
         title="智能剪辑任务历史"
         width={560}
         open={historyOpen}
@@ -2963,35 +2447,15 @@ export default function VideoEditorPage() {
         .video-editor-overlay-line{display:block}
         .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.5) * 1em);line-height:0;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,120ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
         @keyframes video-editor-emphasis-pop{0%{transform:scale(.94)}70%{transform:scale(1.05)}100%{transform:scale(1)}}
-        .video-editor-preview-footer{display:flex;flex:none;flex-direction:column;gap:4px;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
+        .video-editor-preview-footer{display:flex;flex:none;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
         .video-editor-preview-footer .ant-typography,.video-editor-preview-footer .ant-btn{color:#f8fafc}
-        .video-editor-timeline-time{font-variant-numeric:tabular-nums}
-        .video-editor-transport{display:flex;min-width:0;align-items:center;gap:8px}
+        .video-editor-timeline-time{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
+        .video-editor-transport{display:flex;width:100%;min-width:0;flex:1;align-items:center;gap:8px}
         .video-editor-transport>.ant-btn{flex:none;width:26px;height:26px;padding:0}
         .video-editor-transport-slider{min-width:80px;flex:1;margin:0 4px!important}
         .video-editor-transport-slider .ant-slider-rail{background:rgba(255,255,255,.22)}
         .video-editor-transport-slider .ant-slider-track{background:#8b5cf6}
         .video-editor-transport-slider .ant-slider-handle:after{box-shadow:0 0 0 2px #8b5cf6}
-        .video-editor-timeline-ruler{display:grid;grid-template-columns:repeat(6,1fr);padding:0 2px;color:#94a3b8;font-size:11px;font-variant-numeric:tabular-nums}
-        .video-editor-timeline-ruler span{text-align:center}
-        .video-editor-timeline-ruler span:first-child{text-align:left}
-        .video-editor-timeline-ruler span:last-child{text-align:right}
-        .video-editor-filmstrip{position:relative;height:62px;flex:none;overflow:hidden;touch-action:none;cursor:ew-resize;border:1px solid rgba(255,255,255,.28);border-radius:7px;background:#090e18;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
-        .video-editor-filmstrip-content{position:relative;width:100%;height:100%;overflow:hidden}
-        .video-editor-filmstrip-frames{display:grid;height:100%;pointer-events:none;user-select:none}
-        .video-editor-filmstrip-frames img{display:block;width:100%;height:100%;-webkit-user-drag:none;user-select:none;object-fit:cover;border-right:1px solid rgba(255,255,255,.16)}
-        .video-editor-filmstrip-frames img:last-child{border-right:0}
-        .video-editor-filmstrip-loading{display:flex;height:100%;align-items:center;justify-content:center;gap:8px;color:#94a3b8;font-size:12px}
-        .video-editor-timeline-playhead{position:absolute;z-index:2;top:0;bottom:0;width:2px;transform:translateX(-1px);background:#8b5cf6;box-shadow:0 0 0 1px rgba(139,92,246,.2),0 0 9px rgba(139,92,246,.8);pointer-events:none}
-        .video-editor-filmstrip-slider{position:absolute;z-index:3;inset:0;margin:0!important;padding:0!important;pointer-events:none}
-        .video-editor-filmstrip-slider .ant-slider-rail,.video-editor-filmstrip-slider .ant-slider-track{height:100%;background:transparent!important}
-        .video-editor-filmstrip-slider .ant-slider-handle{opacity:1}
-        .video-editor-filmstrip-slider .ant-slider-handle:after{width:12px;height:12px;inset:-1px;background:#8b5cf6;box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.42)}
-        .video-editor-timeline-markers{position:relative;height:38px;color:#cbd5e1;font-size:11px}
-        .video-editor-timeline-markers>button{position:absolute;top:0;display:flex;height:auto;flex-direction:column;align-items:center;gap:2px;padding:0 6px;transform:translateX(-50%);color:#cbd5e1!important}
-        .video-editor-timeline-markers .anticon{display:flex;width:21px;height:21px;align-items:center;justify-content:center;border-radius:6px;background:rgba(124,58,237,.2);color:#c4b5fd}
-        .video-editor-timeline-markers .is-caption .anticon{background:rgba(14,165,233,.19);color:#7dd3fc}
-        .video-editor-timeline-markers .is-title .anticon{background:rgba(245,158,11,.18);color:#fcd34d}
         .video-editor-result-panel{display:flex;min-height:0;flex-direction:column;overflow:hidden;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--bg-card);box-shadow:var(--shadow-sm)}
         .video-editor-result-scroll{display:flex;min-height:0;flex:1;flex-direction:column;gap:14px;overflow-y:auto;padding:24px 22px}
         .video-editor-result-heading{display:flex;flex-direction:column;gap:4px}

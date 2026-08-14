@@ -190,6 +190,42 @@ def test_kuaishou_detail_page_accepts_the_exact_work_without_a_page_title():
     }
 
 
+def test_kuaishou_detail_page_waits_for_delayed_current_source():
+    class _Video:
+        def evaluate(self, _script):
+            return "https://video.kuaishou.example/delayed-target.mp4"
+
+    class _Videos:
+        first = _Video()
+
+        @staticmethod
+        def count():
+            return 1
+
+    class _Page:
+        def __init__(self):
+            self.waited = False
+
+        def wait_for_function(self, _script, *, timeout):
+            assert timeout == 12_000
+            self.waited = True
+
+        @staticmethod
+        def locator(selector):
+            assert selector == "video"
+            return _Videos()
+
+    page = _Page()
+
+    media_url = _client()._wait_for_kuaishou_page_video_source(
+        page,
+        timeout_ms=35_000,
+    )
+
+    assert page.waited is True
+    assert media_url == "https://video.kuaishou.example/delayed-target.mp4"
+
+
 @pytest.mark.parametrize(
     ("work_id", "media_url"),
     [

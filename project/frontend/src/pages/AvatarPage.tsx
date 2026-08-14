@@ -260,8 +260,13 @@ export default function AvatarPage() {
     setCapability(nextCapability);
     setAssets(nextAssets);
     setJobs(nextJobs);
-    setAvatarId((current) => current || nextAssets.find((item) => item.kind === "avatar")?.asset_id);
-    setVoiceId((current) => current || nextAssets.find((item) => item.kind === "voice")?.asset_id);
+    const defaultAvatar = nextAssets.find((item) => item.kind === "avatar");
+    const defaultVoice =
+      nextAssets.find(
+        (item) => item.kind === "voice" && item.name === defaultAvatar?.name,
+      ) || nextAssets.find((item) => item.kind === "voice");
+    setAvatarId((current) => current || defaultAvatar?.asset_id);
+    setVoiceId((current) => current || defaultVoice?.asset_id);
     setProfileId((current) => {
       const enabled = nextCapability.profiles?.find((item) => item.enabled)?.profile_id;
       return nextCapability.profiles?.some((item) => item.profile_id === current) ? current : enabled || "default";

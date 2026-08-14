@@ -373,6 +373,7 @@ export interface ProductionPublishTarget {
   mode?: "real" | "manual" | string;
   display_name?: string;
   provider_name?: string;
+  manual_only?: boolean;
 }
 
 export interface ProductionPublishDraft {
@@ -388,7 +389,9 @@ export interface ProductionWorkspacePublish {
   status: string;
   stage?: string | null;
   action_required?: string | null;
+  official_page_task_ids?: string[];
   prepared_task_ids?: string[];
+  manual_task_ids?: string[];
   targets: ProductionPublishTarget[];
   task_ids: string[];
   message?: string | null;
@@ -1150,6 +1153,12 @@ export interface PublishResponse {
   updated_at: string | null;
 }
 
+export interface PublishPlatformContent {
+  title: string;
+  description: string;
+  tags: string[];
+}
+
 export interface PublishMetadataResponse {
   task_id: string;
   provider_name: string;
@@ -1158,6 +1167,7 @@ export interface PublishMetadataResponse {
   title: string;
   description: string;
   tags: string[];
+  platforms: Record<string, PublishPlatformContent>;
   charged_credits: number | null;
 }
 

@@ -6,6 +6,7 @@
 - 间隔满足后正常执行
 - 不同平台互不影响
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -17,6 +18,7 @@ import pytest
 from src.adapters.publishers.sandbox import SandboxPublisher
 from src.models import PublishPlatform, PublishTarget
 from src.repositories.mock import MockRepository
+from src.services import publisher as publisher_module
 from src.services.publisher import PublishService
 
 
@@ -56,9 +58,9 @@ class TestPublishRateLimit:
         )
         self.repo.save_task(updated)
 
-    def test_daily_limit_blocks_6th_publish(self):
-        """当日已发布 5 条后，第 6 个任务被明确拒绝（FAILED + 提示）。"""
-        for i in range(5):
+    def test_daily_limit_blocks_the_next_publish(self):
+        """达到当前每日上限后，下一个任务被明确拒绝（FAILED + 提示）。"""
+        for i in range(publisher_module.PUBLISH_DAILY_LIMIT):
             self._mark_published(self._enqueue_douyin(), minutes_ago=10 + i)
         task = self._enqueue_douyin()
         result = self.svc.execute_queued_task(task.task_id)
@@ -67,7 +69,7 @@ class TestPublishRateLimit:
         assert "每日上限" in (result.error_message or "")
 
     def test_interval_short_keeps_task_queued(self):
-        """距上次发布不足 15 分钟：任务保持排队，不执行不失败。"""
+        """距上次发布不足当前最小间隔：任务保持排队，不执行不失败。"""
         self._mark_published(self._enqueue_douyin(), minutes_ago=2)
         task = self._enqueue_douyin()
         result = self.svc.execute_queued_task(task.task_id)
@@ -87,7 +89,7 @@ class TestPublishRateLimit:
 
     def test_platforms_independent(self):
         """不同平台互不影响：抖音超限不影响快手。"""
-        for i in range(5):
+        for i in range(publisher_module.PUBLISH_DAILY_LIMIT):
             self._mark_published(self._enqueue_douyin(), minutes_ago=10 + i)
         target = PublishTarget(
             platform=PublishPlatform.KUAISHOU,
@@ -98,10 +100,8 @@ class TestPublishRateLimit:
         assert result is not None
         assert result.status.value == "paused"
 
-    def test_daily_limit_env_override(self, monkeypatch):
+    def test_daily_limit_env_override(self):
         """PUBLISH_DAILY_LIMIT 可调：设为 2 后第 3 条被拒。"""
-        import src.services.publisher as publisher_module
-
         original = publisher_module.PUBLISH_DAILY_LIMIT
         publisher_module.PUBLISH_DAILY_LIMIT = 2
         try:
@@ -163,12 +163,18 @@ class TestPublishConcurrencyGuard:
                 return "douyin"
 
             def capabilities(self):
-                return {"enabled": True, "mode": "sandbox", "provider_name": "sandbox_douyin"}
+                return {
+                    "enabled": True,
+                    "mode": "sandbox",
+                    "provider_name": "sandbox_douyin",
+                }
 
             def publish(self, video_path, target):
                 started.set()
                 time.sleep(0.6)
-                return SandboxPublisher(PublishPlatform.DOUYIN).publish(video_path, target)
+                return SandboxPublisher(PublishPlatform.DOUYIN).publish(
+                    video_path, target
+                )
 
             def check_status(self, task_id):
                 return "failed"
@@ -207,12 +213,18 @@ class TestPublishConcurrencyGuard:
                 return "douyin"
 
             def capabilities(self):
-                return {"enabled": True, "mode": "sandbox", "provider_name": "sandbox_douyin"}
+                return {
+                    "enabled": True,
+                    "mode": "sandbox",
+                    "provider_name": "sandbox_douyin",
+                }
 
             def publish(self, video_path, target):
                 started.set()
                 time.sleep(0.6)
-                return SandboxPublisher(PublishPlatform.DOUYIN).publish(video_path, target)
+                return SandboxPublisher(PublishPlatform.DOUYIN).publish(
+                    video_path, target
+                )
 
             def check_status(self, task_id):
                 return "failed"

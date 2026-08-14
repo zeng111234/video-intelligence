@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
@@ -526,6 +527,11 @@ class LocalPlatformBrowserSearchProvider:
         self._collection_stop_message = None
         self._collection_filter_notes = []
         collection_kwargs: dict[str, Any] = {}
+        if self.platform in {Platform.XIAOHONGSHU, Platform.BILIBILI}:
+            collection_kwargs["published_filter_days"] = self._platform_filter_days(
+                published_after,
+                observed_at,
+            )
         if requested_kuaishou_filters:
             collection_kwargs["search_filters"] = kuaishou_filters
         if self.platform == Platform.KUAISHOU:
@@ -539,6 +545,8 @@ class LocalPlatformBrowserSearchProvider:
                     ),
                 ),
             )
+        elif self.platform == Platform.BILIBILI and published_after is not None:
+            collection_kwargs["prefer_recent"] = True
         raw_rows = self._collect_rows(keyword, target=raw_target, **collection_kwargs)
         candidate_rows = raw_rows
         if self.platform == Platform.KUAISHOU:
@@ -630,6 +638,8 @@ class LocalPlatformBrowserSearchProvider:
         search_filters: dict[str, str] | None = None,
         qualified_target: int | None = None,
         qualifying_count: Callable[[list[dict[str, Any]]], int] | None = None,
+        prefer_recent: bool = False,
+        published_filter_days: int | None = None,
     ) -> list[dict[str, Any]]:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -678,13 +688,43 @@ class LocalPlatformBrowserSearchProvider:
                 # encode it once; pre-encoding makes Xiaohongshu encode the
                 # percent signs again and search for the wrong literal text.
                 if self.platform == Platform.BILIBILI:
+                    date_filter_applied = False
+                    active_filter_url: str | None = None
                     for page_number in range(1, _BILIBILI_MAX_SEARCH_PAGES + 1):
                         response = page.goto(
-                            self._search_url(keyword, page=page_number),
+                            (
+                                self._bilibili_page_url(active_filter_url, page_number)
+                                if active_filter_url
+                                else self._search_url(keyword, page=page_number)
+                            ),
                             wait_until="domcontentloaded",
                         )
                         minimize_browser_window(self.debug_port)
                         self._raise_for_search_response(response)
+                        if page_number == 1 and prefer_recent:
+                            network_rows.clear()
+                            rendered_rows.clear()
+                            bilibili_search_response_seen = False
+                            bilibili_page_count = None
+                            filter_notes = self._apply_platform_filters(
+                                page,
+                                search_filters={
+                                    "bilibili_sort": "platform",
+                                    "published_days": str(published_filter_days),
+                                },
+                            )
+                            self._collection_filter_notes.extend(filter_notes)
+                            date_filter_applied = self._bilibili_date_filter_active(
+                                page
+                            )
+                            if date_filter_applied:
+                                active_filter_url = str(page.url or "")
+                                response = page.goto(
+                                    active_filter_url,
+                                    wait_until="domcontentloaded",
+                                )
+                                minimize_browser_window(self.debug_port)
+                                self._raise_for_search_response(response)
                         self._wait_for_bilibili_cards_ready(page)
                         self._raise_for_visible_block(page)
                         if not bilibili_search_response_seen:
@@ -722,12 +762,25 @@ class LocalPlatformBrowserSearchProvider:
                     minimize_browser_window(self.debug_port)
                     self._raise_for_search_response(response)
                     page.wait_for_timeout(2500)
-                    self._collection_filter_notes = (
-                        self._apply_platform_filters(
-                            page, search_filters=search_filters
-                        )
-                        if search_filters
-                        else self._apply_platform_filters(page)
+                    effective_filters = dict(search_filters or {})
+                    if (
+                        self.platform == Platform.XIAOHONGSHU
+                        and published_filter_days is not None
+                    ):
+                        effective_filters["published_days"] = str(published_filter_days)
+                    if self.platform == Platform.XIAOHONGSHU:
+                        # Discard the unfiltered response emitted by the initial
+                        # navigation. The video-tab response is likewise cleared
+                        # immediately before selecting the requested time window.
+                        network_rows.clear()
+                    self._collection_filter_notes = self._apply_platform_filters(
+                        page,
+                        search_filters=effective_filters or None,
+                        before_time_filter=(
+                            network_rows.clear
+                            if self.platform == Platform.XIAOHONGSHU
+                            else None
+                        ),
                     )
                     page.wait_for_timeout(1500)
                     self._raise_for_visible_block(page)
@@ -862,11 +915,40 @@ class LocalPlatformBrowserSearchProvider:
             merged[item_id] = combined
         return list(merged.values())
 
-    def _search_url(self, keyword: str, *, page: int | None = None) -> str:
+    def _search_url(
+        self,
+        keyword: str,
+        *,
+        page: int | None = None,
+    ) -> str:
         url = self.spec.search_url.format(keyword=keyword.strip())
         if self.platform == Platform.BILIBILI:
             return f"{url}&page={page or 1}"
         return url
+
+    @staticmethod
+    def _bilibili_page_url(active_url: str, page_number: int) -> str:
+        """Keep the sort/date query selected in the page while changing pages."""
+        parsed = urlparse(active_url)
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query["page"] = str(page_number)
+        return urlunparse(parsed._replace(query=urlencode(query)))
+
+    @staticmethod
+    def _platform_filter_days(
+        published_after: datetime | None,
+        observed_at: datetime,
+    ) -> int | None:
+        if published_after is None:
+            return 0
+        try:
+            days = (observed_at - published_after).total_seconds() / 86400
+        except (TypeError, ValueError):
+            return None
+        for supported in (1, 7, 180):
+            if abs(days - supported) <= (15 / 1440):
+                return supported
+        return None
 
     def _raise_for_search_response(self, response) -> None:
         if response is not None and response.status in {403, 412, 429}:
@@ -1048,6 +1130,11 @@ class LocalPlatformBrowserSearchProvider:
             )
         elif self.platform == Platform.KUAISHOU:
             diagnostic = "使用快手专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，保留平台当前筛选后的公开视频。"
+        elif self.platform == Platform.XIAOHONGSHU:
+            diagnostic = (
+                "使用小红书专用浏览器正常搜索；先选择页面“视频”筛选，"
+                "并只保留带视频标记的公开作品。"
+            )
         else:
             diagnostic = (
                 f"使用{self.spec.label}专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
@@ -1076,8 +1163,64 @@ class LocalPlatformBrowserSearchProvider:
         page,
         *,
         search_filters: dict[str, str] | None = None,
+        before_time_filter: Callable[[], None] | None = None,
     ) -> list[str]:
-        """Use only visible Kuaishou search controls before reading metadata."""
+        """Use visible platform controls before reading search metadata."""
+        if self.platform == Platform.XIAOHONGSHU:
+            video_selected = self._select_xiaohongshu_video_filter(page)
+            notes = [
+                "已选择小红书“视频”筛选"
+                if video_selected
+                else "小红书页面未确认“视频”筛选；本次只接收带视频标记的卡片"
+            ]
+            if search_filters and "published_days" in search_filters:
+                if before_time_filter is not None:
+                    before_time_filter()
+                try:
+                    published_days = int(search_filters["published_days"])
+                except (TypeError, ValueError):
+                    published_days = -1
+                time_label = self._select_xiaohongshu_time_filter(page, published_days)
+                notes.append(
+                    f"已选择小红书发布时间“{time_label}”"
+                    if time_label
+                    else "小红书页面未确认发布时间筛选；仍会按可核验时间在本地过滤"
+                )
+            return notes
+        if self.platform == Platform.BILIBILI:
+            if not search_filters:
+                return []
+            sort = search_filters.get("bilibili_sort", "platform")
+            notes = ["使用B站综合排序"]
+            if sort == "newest":
+                selected = self._select_bilibili_newest_filter(page)
+                notes = [
+                    "已选择B站“最新发布”"
+                    if selected
+                    else "B站页面未确认“最新发布”，已保留当前排序"
+                ]
+                if selected:
+                    page.wait_for_timeout(800)
+            if "published_days" in search_filters:
+                try:
+                    published_days = int(search_filters["published_days"])
+                except (TypeError, ValueError):
+                    published_days = -1
+                label = {
+                    0: "全部日期",
+                    1: "最近一天",
+                    7: "最近一周",
+                    180: "最近半年",
+                }.get(published_days)
+                date_selected = bool(
+                    label and self._select_bilibili_date_filter(page, label)
+                )
+                notes.append(
+                    f"已选择B站发布时间“{label}”"
+                    if date_selected
+                    else "B站页面未确认发布时间筛选；仍会按可核验时间在本地过滤"
+                )
+            return notes
         if self.platform != Platform.KUAISHOU or not search_filters:
             return []
         controls = (
@@ -1114,6 +1257,216 @@ class LocalPlatformBrowserSearchProvider:
             else:
                 notes.append(f"快手页面未显示{category}“{labels[0]}”，保留当前平台结果")
         return notes
+
+    @staticmethod
+    def _select_xiaohongshu_video_filter(page) -> bool:
+        try:
+            locator = page.locator("#video.channel")
+            if locator.count() != 1:
+                return False
+            if "active" in str(locator.get_attribute("class") or "").split():
+                return True
+            try:
+                locator.click(timeout=3000)
+            except Exception:
+                # Xiaohongshu can keep the click handler busy after the visible
+                # selection has already changed.  Verify the resulting state
+                # instead of treating that as an automatic failure.
+                pass
+            page.wait_for_timeout(600)
+            return "active" in str(locator.get_attribute("class") or "").split()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _select_xiaohongshu_time_filter(page, days: int) -> str | None:
+        label = {0: "不限", 1: "一天内", 7: "一周内", 180: "半年内"}.get(days)
+        if label is None:
+            return None
+        try:
+            drawer = page.locator("div.filter")
+            if drawer.count() < 1:
+                return None
+
+            def select_visible_option() -> bool:
+                return bool(
+                    page.evaluate(
+                        """label => {
+                          const visible = node => Boolean(
+                            node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length)
+                          );
+                          for (const group of document.querySelectorAll('.filters')) {
+                            if (!visible(group) || !String(group.innerText || '').includes('发布时间')) continue;
+                            const target = [...group.querySelectorAll('.tags')].find(
+                              node => String(node.innerText || '').trim() === label
+                            );
+                            if (!target) continue;
+                            if (!target.classList.contains('active')) target.click();
+                            return true;
+                          }
+                          return false;
+                        }""",
+                        label,
+                    )
+                )
+
+            if not select_visible_option():
+                drawer.first.evaluate("node => node.click()")
+                page.wait_for_timeout(400)
+                if not select_visible_option():
+                    return None
+            page.wait_for_timeout(800)
+            confirmed = bool(
+                page.evaluate(
+                    """label => [...document.querySelectorAll('.filters')].some(group =>
+                      String(group.innerText || '').includes('发布时间') &&
+                      [...group.querySelectorAll('.tags')].some(node =>
+                        String(node.innerText || '').trim() === label && node.classList.contains('active')
+                      )
+                    )""",
+                    label,
+                )
+            )
+            if not confirmed:
+                return None
+            page.evaluate(
+                """() => {
+                  const visible = node => Boolean(
+                    node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length)
+                  );
+                  const close = [...document.querySelectorAll('*')].find(
+                    node => visible(node) && node.children.length === 0 &&
+                      String(node.textContent || '').trim() === '收起'
+                  );
+                  if (close) close.click();
+                }"""
+            )
+            return label
+        except Exception:
+            return None
+
+    @staticmethod
+    def _select_bilibili_date_filter(page, label: str) -> bool:
+        try:
+            date_visible = False
+            for attempt in range(8):
+                candidates = page.get_by_text(label, exact=True)
+                date_visible = any(
+                    candidates.nth(index).is_visible()
+                    for index in range(candidates.count())
+                )
+                if date_visible:
+                    break
+                more_filters = page.get_by_text("更多筛选", exact=True)
+                for index in range(more_filters.count()):
+                    trigger = more_filters.nth(index)
+                    if not trigger.is_visible():
+                        continue
+                    trigger.evaluate("node => node.click()")
+                    page.wait_for_timeout(500)
+                    break
+                if attempt < 7:
+                    page.wait_for_timeout(500)
+            if not date_visible:
+                return False
+            candidates = page.get_by_text(label, exact=True)
+            for index in range(candidates.count()):
+                candidate = candidates.nth(index)
+                if not candidate.is_visible():
+                    continue
+                try:
+                    candidate.click(timeout=3000)
+                except Exception:
+                    try:
+                        candidate.evaluate("node => node.click()")
+                    except Exception:
+                        pass
+                for _ in range(8):
+                    query = parse_qs(urlparse(str(page.url or "")).query)
+                    if LocalPlatformBrowserSearchProvider._visible_text_selected(
+                        page, label
+                    ) or (
+                        label != "全部日期"
+                        and "pubtime_begin_s" in query
+                        and "pubtime_end_s" in query
+                    ):
+                        return True
+                    page.wait_for_timeout(250)
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _select_bilibili_newest_filter(page) -> bool:
+        if LocalPlatformBrowserSearchProvider._bilibili_recent_filter_active(page):
+            return True
+        try:
+            for attempt in range(8):
+                candidates = page.get_by_text("最新发布", exact=True)
+                for index in range(candidates.count()):
+                    candidate = candidates.nth(index)
+                    if not candidate.is_visible():
+                        continue
+                    try:
+                        candidate.click(timeout=3000)
+                    except Exception:
+                        try:
+                            candidate.evaluate("node => node.click()")
+                        except Exception:
+                            pass
+                    for _ in range(8):
+                        if LocalPlatformBrowserSearchProvider._bilibili_recent_filter_active(
+                            page
+                        ):
+                            return True
+                        page.wait_for_timeout(250)
+                    return False
+                if attempt < 7:
+                    page.wait_for_timeout(500)
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _visible_text_selected(page, label: str) -> bool:
+        try:
+            candidates = page.get_by_text(label, exact=True)
+            for index in range(candidates.count()):
+                candidate = candidates.nth(index)
+                if not candidate.is_visible():
+                    continue
+                class_names = " ".join(
+                    (
+                        str(candidate.get_attribute("class") or ""),
+                        str(candidate.locator("..").get_attribute("class") or ""),
+                    )
+                ).casefold()
+                if "active" in class_names or "selected" in class_names:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    @staticmethod
+    def _bilibili_recent_filter_active(page) -> bool:
+        try:
+            if parse_qs(urlparse(str(page.url or "")).query).get("order") == [
+                "pubdate"
+            ]:
+                return True
+            return LocalPlatformBrowserSearchProvider._visible_text_selected(
+                page, "最新发布"
+            )
+        except Exception:
+            return False
+
+    @staticmethod
+    def _bilibili_date_filter_active(page) -> bool:
+        try:
+            query = parse_qs(urlparse(str(page.url or "")).query)
+            return "pubtime_begin_s" in query and "pubtime_end_s" in query
+        except Exception:
+            return False
 
     @staticmethod
     def _click_visible_text(page, labels: tuple[str, ...]) -> bool:
@@ -1194,6 +1547,9 @@ class LocalPlatformBrowserSearchProvider:
                         title: element.getAttribute("title") || image?.alt || "",
                         text: (container?.innerText || element.innerText || "").trim(),
                         counts: countNodes,
+                        isVideo: Boolean(container?.querySelector(
+                          '.play-icon, [class*="play-icon"], [class*="video-icon"]'
+                        )),
                     };
                 })"""
             )
@@ -1206,6 +1562,11 @@ class LocalPlatformBrowserSearchProvider:
             if not match:
                 continue
             text = self._clean_text(item.get("text"))
+            if (
+                self.platform == Platform.XIAOHONGSHU
+                and item.get("isVideo") is not True
+            ):
+                continue
             published_at = self._parse_published_at(text, self.clock())
             title = self._clean_title(item.get("title"), text)
             if (
@@ -1256,6 +1617,9 @@ class LocalPlatformBrowserSearchProvider:
                     "comments": self._labeled_count(text, ("评论",)),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
+                    "is_video": (
+                        True if self.platform == Platform.XIAOHONGSHU else None
+                    ),
                     "strict_topic": bool(
                         self.platform == Platform.BILIBILI
                         and keyword
@@ -1310,6 +1674,11 @@ class LocalPlatformBrowserSearchProvider:
                 continue
             card = entry.get("note_card") or entry.get("noteCard") or {}
             if not isinstance(card, dict):
+                continue
+            note_type = LocalPlatformBrowserSearchProvider._clean_text(
+                card.get("type") or card.get("note_type") or card.get("noteType")
+            ).casefold()
+            if "video" not in note_type:
                 continue
             item_id = str(
                 entry.get("id") or card.get("note_id") or card.get("id") or ""
@@ -1366,6 +1735,7 @@ class LocalPlatformBrowserSearchProvider:
                     ),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
+                    "is_video": True,
                     "evidence": "browser_search_response",
                 }
             )

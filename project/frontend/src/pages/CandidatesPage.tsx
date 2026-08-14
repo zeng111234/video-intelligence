@@ -21,8 +21,8 @@ import { SkeletonTable } from "../components/SkeletonLoader";
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
   xiaohongshu: "小红书",
-  wechat_channels: "视频号",
   kuaishou: "快手",
+  bilibili: "B站",
 };
 
 function keywordRecordLabel(value: string) {

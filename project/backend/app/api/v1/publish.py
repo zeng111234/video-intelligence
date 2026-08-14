@@ -13,7 +13,16 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Security, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Security,
+    UploadFile,
+)
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -29,7 +38,9 @@ router = APIRouter(prefix="/api/v1/publish", tags=["publish"])
 PUBLISH_ASSET_DIR = RUNTIME_ROOT / "data" / "publish_assets"
 
 
-def _edit_asset_copy_source(task: Any, repository: Any) -> tuple[str | None, str | None]:
+def _edit_asset_copy_source(
+    task: Any, repository: Any
+) -> tuple[str | None, str | None]:
     """Return the confirmed script behind a system-generated edit when available."""
     source_text = str(getattr(task, "subtitle_text", "") or "").strip()
     source_task_id = str(getattr(task, "source_task_id", "") or "").strip() or None
@@ -40,7 +51,9 @@ def _edit_asset_copy_source(task: Any, repository: Any) -> tuple[str | None, str
         avatar_task = repository.get_task(avatar_task_id)
         if isinstance(avatar_task, AvatarTask):
             source_text = avatar_task.script_text.strip()
-            source_task_id = avatar_task.source_task_id or source_task_id or avatar_task.task_id
+            source_task_id = (
+                avatar_task.source_task_id or source_task_id or avatar_task.task_id
+            )
     return source_text[:12_000] or None, source_task_id
 
 
@@ -105,6 +118,7 @@ def _completed_avatar_assets(repository: Any) -> list[dict[str, Any]]:
         )
     return items
 
+
 PUBLISH_CONFIG_FIELDS: dict[str, dict[str, str]] = {
     "douyin": {
         "mode": "PUBLISH_DOUYIN_MODE",
@@ -161,12 +175,23 @@ class PublishRequest(BaseModel):
     native_music_hint: str = Field("", max_length=80, description="配乐情绪提示")
 
 
+class PublishPlatformContent(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100, description="该平台标题")
+    description: str = Field("", max_length=1000, description="该平台正文")
+    tags: list[str] = Field(
+        default_factory=list, max_length=8, description="该平台标签"
+    )
+
+
 class PublishPreflightRequest(BaseModel):
     video_path: str = Field(..., description="视频路径")
     platforms: list[str] = Field(..., min_length=1, description="平台标识列表")
     title: str = Field(..., min_length=1, description="标题")
     description: str = Field("", description="描述")
     tags: list[str] = Field(default_factory=list, description="标签")
+    platform_contents: dict[str, PublishPlatformContent] = Field(
+        default_factory=dict, description="各平台独立的标题、正文和标签"
+    )
     account_ids: dict[str, str] = Field(
         default_factory=dict, description="平台对应的本机发布账号"
     )
@@ -315,12 +340,17 @@ def _build_targets(body: PublishPreflightRequest):
             platform = PublishPlatform(platform_key)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"不支持的平台: {platform_key}")
+        platform_content = body.platform_contents.get(platform_key)
         targets.append(
             PublishTarget(
                 platform=platform,
-                title=body.title,
-                description=body.description,
-                tags=body.tags,
+                title=platform_content.title if platform_content else body.title,
+                description=(
+                    platform_content.description
+                    if platform_content
+                    else body.description
+                ),
+                tags=platform_content.tags if platform_content else body.tags,
                 account_id=body.account_ids.get(platform_key),
                 native_music_mode=(
                     body.native_music_mode
@@ -328,14 +358,18 @@ def _build_targets(body: PublishPreflightRequest):
                     else "off"
                 ),
                 native_music_hint=(
-                    body.native_music_hint
-                    if platform == PublishPlatform.DOUYIN
-                    else ""
+                    body.native_music_hint if platform == PublishPlatform.DOUYIN else ""
                 ),
                 auto_publish_authorized=bool(
                     isinstance(body, PublishBatchRequest)
                     and body.confirmation_accepted
-                    and platform == PublishPlatform.DOUYIN
+                    and platform
+                    in {
+                        PublishPlatform.DOUYIN,
+                        PublishPlatform.KUAISHOU,
+                        PublishPlatform.WECHAT_CHANNELS,
+                        PublishPlatform.BILIBILI,
+                    }
                 ),
             )
         )
@@ -413,7 +447,9 @@ def _task_response(task) -> PublishResponse:
         is_mock=task.is_mock,
         error_message=task.error_message,
         action_required=task.action_required,
-        final_publish_started_at=task.final_publish_started_at.isoformat() if task.final_publish_started_at else None,
+        final_publish_started_at=task.final_publish_started_at.isoformat()
+        if task.final_publish_started_at
+        else None,
         outcome_evidence=task.outcome_evidence,
         created_at=task.created_at.isoformat() if task.created_at else None,
         updated_at=task.updated_at.isoformat() if task.updated_at else None,
@@ -847,7 +883,9 @@ def resume_publish_safety(
     try:
         platform = PublishPlatform(body.platform)
     except ValueError:
-        raise HTTPException(status_code=400, detail=f"不支持的平台: {body.platform}") from None
+        raise HTTPException(
+            status_code=400, detail=f"不支持的平台: {body.platform}"
+        ) from None
     return service.resume_publish_account(platform, body.account_id)
 
 
@@ -955,7 +993,10 @@ def list_assets(repository=Depends(get_repository)):
         items.append(item)
     existing_names = {str(item["name"]) for item in items}
     existing_paths = {Path(str(item["path"])).resolve() for item in items}
-    for item in [*_completed_edit_assets(repository), *_completed_avatar_assets(repository)]:
+    for item in [
+        *_completed_edit_assets(repository),
+        *_completed_avatar_assets(repository),
+    ]:
         if item["name"] in existing_names:
             continue
         if Path(str(item["path"])).resolve() in existing_paths:
@@ -980,7 +1021,9 @@ def get_asset_media(name: str = Query(..., min_length=1)):
         ".mov": "video/quicktime",
         ".m4v": "video/x-m4v",
     }
-    return FileResponse(path, media_type=media_types.get(path.suffix.lower(), "video/mp4"))
+    return FileResponse(
+        path, media_type=media_types.get(path.suffix.lower(), "video/mp4")
+    )
 
 
 @router.post("/assets/upload")
@@ -1254,14 +1297,10 @@ def publish_video(
         description=body.description,
         tags=body.tags,
         native_music_mode=(
-            body.native_music_mode
-            if platform == PublishPlatform.DOUYIN
-            else "off"
+            body.native_music_mode if platform == PublishPlatform.DOUYIN else "off"
         ),
         native_music_hint=(
-            body.native_music_hint
-            if platform == PublishPlatform.DOUYIN
-            else ""
+            body.native_music_hint if platform == PublishPlatform.DOUYIN else ""
         ),
     )
     try:

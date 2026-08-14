@@ -1486,6 +1486,7 @@ export function preflightPublish(params: {
   title: string;
   description?: string;
   tags?: string[];
+  platform_contents?: Record<string, { title: string; description: string; tags: string[] }>;
   account_ids?: Record<string, string>;
   native_music_mode?: "off" | "auto_recommended";
   native_music_hint?: string;
@@ -1514,6 +1515,7 @@ export function createPublishBatch(params: {
   title: string;
   description?: string;
   tags?: string[];
+  platform_contents?: Record<string, { title: string; description: string; tags: string[] }>;
   account_ids?: Record<string, string>;
   native_music_mode?: "off" | "auto_recommended";
   native_music_hint?: string;
@@ -1694,6 +1696,25 @@ export function getMessages(): Promise<any[]> {
 
 export function getUserProfile(): Promise<any> {
   return request("/user/profile");
+}
+
+export interface LocalStorageLocations {
+  data_directory: string;
+  log_directory: string;
+  primary_log_path: string;
+}
+
+export function getLocalStorageLocations(): Promise<LocalStorageLocations> {
+  return request("/user/storage-locations");
+}
+
+export function openLocalStorageLocation(
+  target: "data" | "logs",
+): Promise<{ opened: boolean; target: "data" | "logs"; path: string }> {
+  return request("/user/storage-locations/open", {
+    method: "POST",
+    body: JSON.stringify({ target }),
+  });
 }
 
 /* ---- 深度分析 ---- */

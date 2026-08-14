@@ -227,6 +227,49 @@ describe("AvatarPage avatar library", () => {
     expect(view.container.querySelector("img, video, audio")).toBeNull();
   });
 
+  it("pairs the default avatar with a ready voice of the same name", async () => {
+    vi.mocked(listAvatarAssets).mockResolvedValue([
+      {
+        asset_id: "avatar-dashu",
+        kind: "avatar",
+        name: "大树1",
+        preview_url: "/dashu.mp4",
+        authorized: true,
+        preview_type: "video",
+        status: "ready",
+        status_message: null,
+        source_type: "built_in",
+      },
+      {
+        asset_id: "voice-generic",
+        kind: "voice",
+        name: "通用女声",
+        preview_url: null,
+        authorized: true,
+        preview_type: "audio",
+        status: "ready",
+        status_message: null,
+        source_type: "built_in",
+      },
+      {
+        asset_id: "voice-dashu",
+        kind: "voice",
+        name: "大树1",
+        preview_url: null,
+        authorized: true,
+        preview_type: "audio",
+        status: "ready",
+        status_message: null,
+        source_type: "built_in",
+      },
+    ]);
+
+    const view = renderPage();
+    const generationRegion = within(view.container).getByRole("region", { name: "生成配置" });
+
+    expect(await within(generationRegion).findAllByText("大树1")).toHaveLength(2);
+  });
+
   it("keeps voice controls in the voice library and switches ready voices", async () => {
     const view = renderPage();
 

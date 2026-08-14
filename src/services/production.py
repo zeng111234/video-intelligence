@@ -1927,6 +1927,7 @@ class ProductionService:
                     "mode": resolved_mode,
                     "display_name": capability.get("display_name", platform),
                     "provider_name": capability.get("provider_name", platform),
+                    "manual_only": bool(capability.get("manual_only", False)),
                     "use_manual_fallback": allow_manual,
                     "auto_publish_authorized": bool(
                         item.get("auto_publish_authorized", False)
@@ -2286,6 +2287,14 @@ class ProductionService:
         now = datetime.now().astimezone()
         profile = self.get_profile(batch.profile_id)
         item_costs = dict(batch.execution_config.get("item_costs") or {})
+        publish_capabilities = {
+            str(capability.get("platform") or ""): capability
+            for capability in (
+                self.publish_service.available_platforms()
+                if self.publish_service is not None
+                else []
+            )
+        }
         workspace_items: list[dict[str, Any]] = []
         for item in batch.items:
             run = self.repository.get_pipeline_run(item.run_id)
@@ -2333,6 +2342,35 @@ class ProductionService:
             ]
             publish_tasks = [
                 task for task in publish_tasks if isinstance(task, PublishTask)
+            ]
+            local_browser_tasks = [
+                task
+                for task in publish_tasks
+                if (capability := publish_capabilities.get(task.target.platform.value))
+                and capability.get("mode") == "local_browser"
+                and task.provider_name == capability.get("provider_name")
+            ]
+            official_page_task_ids = [
+                task.task_id
+                for task in local_browser_tasks
+                if task.publish_status
+                not in {PublishStatus.SUCCEEDED, PublishStatus.OUTCOME_UNKNOWN}
+                and task.final_publish_started_at is None
+                and task.outputs.get("final_publish_clicked") != "true"
+            ]
+            prepared_task_ids = [
+                task.task_id
+                for task in local_browser_tasks
+                if task.publish_status == PublishStatus.MANUAL_READY
+                and not bool(
+                    publish_capabilities[task.target.platform.value].get("manual_only")
+                )
+            ]
+            manual_task_ids = [
+                task.task_id
+                for task in publish_tasks
+                if task.publish_status == PublishStatus.MANUAL_READY
+                and task.task_id not in prepared_task_ids
             ]
             cost = item_costs.get(item.run_id) or {}
             workspace_items.append(
@@ -2494,13 +2532,9 @@ class ProductionService:
                             ),
                             None,
                         ),
-                        "prepared_task_ids": [
-                            task.task_id
-                            for task in publish_tasks
-                            if task.provider_name == "douyin_local_browser"
-                            and task.publish_status == PublishStatus.MANUAL_READY
-                            and task.stage.startswith("已在账号")
-                        ],
+                        "official_page_task_ids": official_page_task_ids,
+                        "prepared_task_ids": prepared_task_ids,
+                        "manual_task_ids": manual_task_ids,
                         "targets": list(run.config.get("publish_targets") or [])
                         if run is not None
                         else [],
@@ -2624,10 +2658,10 @@ class ProductionService:
                 ],
                 "message": {
                     "manual_ready": (
-                        "抖音官方发布页已准备，等待你最终确认"
+                        "所选平台官方发布页已准备，等待你最终确认"
                         if any(
-                            task.provider_name == "douyin_local_browser"
-                            and task.stage.startswith("已在账号")
+                            task.provider_name.endswith("_local_browser")
+                            and task.publish_status == PublishStatus.MANUAL_READY
                             for task in all_publish_tasks
                         )
                         else "手动发布包已生成"

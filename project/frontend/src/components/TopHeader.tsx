@@ -30,13 +30,18 @@ import {
   MobileOutlined,
   WalletOutlined,
   PlusOutlined,
+  FolderOpenOutlined,
+  FileTextOutlined,
 } from "@ant-design/icons";
 import {
   createRechargeRequest,
   getCredits,
+  getLocalStorageLocations,
   getNotifications,
   getMessages,
+  openLocalStorageLocation,
 } from "../api/client";
+import type { LocalStorageLocations } from "../api/client";
 import { getPageTitle } from "../navigation";
 import { useToast } from "./Toast";
 import { clearAdminToken, getAdminToken, useAdminToken } from "../hooks/useAdminAuth";
@@ -105,6 +110,9 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [rechargeAmount, setRechargeAmount] = useState<number | null>(50);
   const [recharging, setRecharging] = useState(false);
+  const [storageLocations, setStorageLocations] = useState<LocalStorageLocations | null>(null);
+  const [storageLocationsError, setStorageLocationsError] = useState("");
+  const [openingStorageTarget, setOpeningStorageTarget] = useState<"data" | "logs" | null>(null);
 
   const fetchCredits = useCallback(async () => {
     try {
@@ -113,6 +121,26 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       // 后端未启动或未配置时静默，不打扰页面
     }
   }, []);
+
+  const fetchStorageLocations = useCallback(async () => {
+    setStorageLocationsError("");
+    try {
+      setStorageLocations(await getLocalStorageLocations());
+    } catch (error) {
+      setStorageLocationsError((error as Error).message || "暂时无法读取存储位置");
+    }
+  }, []);
+
+  const openStorageLocation = useCallback(async (target: "data" | "logs") => {
+    setOpeningStorageTarget(target);
+    try {
+      await openLocalStorageLocation(target);
+    } catch (error) {
+      toast.error((error as Error).message || "暂时无法打开该位置");
+    } finally {
+      setOpeningStorageTarget(null);
+    }
+  }, [toast]);
 
   /** 加载通知和消息 */
   useEffect(() => {
@@ -143,16 +171,18 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
       }
     };
     const refreshOnFocus = () => void fetchCredits();
-    const refreshTimer = window.setInterval(refreshWhenVisible, 5_000);
 
     window.addEventListener("focus", refreshOnFocus);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
-      window.clearInterval(refreshTimer);
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [fetchCredits]);
+
+  useEffect(() => {
+    if (profileOpen) void fetchStorageLocations();
+  }, [fetchStorageLocations, profileOpen]);
 
   const handleCreditsOpenChange = useCallback((open: boolean) => {
     setCreditsOpen(open);
@@ -338,8 +368,9 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
                   <Table
                     size="small"
                     rowKey="id"
-                    dataSource={credits?.transactions?.slice(0, 5) || []}
+                    dataSource={credits?.transactions || []}
                     pagination={false}
+                    scroll={{ y: 320 }}
                     columns={[
                       {
                         title: "时间",
@@ -377,7 +408,15 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             placement="bottomRight"
             trigger={["click"]}
           >
-            <div className="vi-user-avatar">
+            <div
+              className="vi-user-avatar"
+              role="button"
+              tabIndex={0}
+              aria-label="打开用户菜单"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") event.currentTarget.click();
+              }}
+            >
               <span>{displayName.slice(0, 1).toUpperCase()}</span>
             </div>
           </Dropdown>
@@ -709,6 +748,47 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
           white-space: nowrap;
         }
 
+        .profile-storage-section {
+          padding: 18px 24px 22px;
+          background: var(--bg-card, #fff);
+        }
+        .profile-storage-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 4px;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--text-primary, #1e293b);
+        }
+        .profile-storage-description {
+          display: block;
+          margin-bottom: 14px;
+          font-size: 12px;
+        }
+        .profile-storage-item + .profile-storage-item {
+          margin-top: 14px;
+        }
+        .profile-storage-label {
+          display: block;
+          margin-bottom: 5px;
+          font-size: 12px;
+          color: var(--text-secondary, #64748b);
+        }
+        .profile-storage-path {
+          display: block;
+          margin-bottom: 8px;
+          padding: 8px 10px;
+          border-radius: 8px;
+          background: var(--gray-50, #f8fafc);
+          border: 1px solid var(--border-light, #e2e8f0);
+          font-family: Consolas, "Microsoft YaHei", monospace;
+          font-size: 11px;
+          line-height: 1.5;
+          overflow-wrap: anywhere;
+          user-select: text;
+        }
+
       `}</style>
 
       {/* ===== 通知抽屉 ===== */}
@@ -933,6 +1013,57 @@ export default function TopHeader({ title, onMenuClick }: TopHeaderProps) {
             </div>
           )}
         </div>
+
+        {/* 数据与日志 */}
+        <section className="profile-storage-section" aria-label="数据与日志">
+          <div className="profile-storage-title">
+            <FolderOpenOutlined />
+            数据与日志
+          </div>
+          <Text type="secondary" className="profile-storage-description">
+            软件安装位置和客户数据位置相互独立，这里显示当前实际使用的位置。
+          </Text>
+          {storageLocationsError ? (
+            <Alert
+              type="warning"
+              showIcon
+              message="暂时无法读取位置"
+              action={<Button size="small" onClick={() => void fetchStorageLocations()}>重试</Button>}
+            />
+          ) : storageLocations ? (
+            <>
+              <div className="profile-storage-item">
+                <span className="profile-storage-label">数据位置</span>
+                <Text className="profile-storage-path" copyable>{storageLocations.data_directory}</Text>
+                <Button
+                  block
+                  icon={<FolderOpenOutlined />}
+                  loading={openingStorageTarget === "data"}
+                  onClick={() => void openStorageLocation("data")}
+                >
+                  打开数据位置
+                </Button>
+              </div>
+              <div className="profile-storage-item">
+                <span className="profile-storage-label">日志位置</span>
+                <Text className="profile-storage-path" copyable>{storageLocations.log_directory}</Text>
+                <Text type="secondary" className="profile-storage-label">
+                  主要日志：{storageLocations.primary_log_path}
+                </Text>
+                <Button
+                  block
+                  icon={<FileTextOutlined />}
+                  loading={openingStorageTarget === "logs"}
+                  onClick={() => void openStorageLocation("logs")}
+                >
+                  打开日志位置
+                </Button>
+              </div>
+            </>
+          ) : (
+            <Text type="secondary">正在读取实际位置…</Text>
+          )}
+        </section>
 
       </Drawer>
     </>

@@ -298,10 +298,39 @@ function candidateInteractionHeat(candidate: CrawlerCandidateResult) {
 }
 
 function formatCandidateMetric(value: number | null | undefined) {
-  if (value === null || value === undefined) return "未返回";
+  if (value === null || value === undefined) return "平台未提供";
   if (value >= 100_000_000) return `${Number((value / 100_000_000).toFixed(1))}亿`;
   if (value >= 10_000) return `${Number((value / 10_000).toFixed(1))}万`;
   return value.toLocaleString("zh-CN");
+}
+
+function platformRunSummary(
+  run: CrawlerBatchResponse["platform_runs"][number],
+  defaultTarget: number,
+) {
+  const label = run.platform_label || PLATFORM_LABELS[run.platform] || run.platform;
+  const target = run.requested_count || defaultTarget;
+  const returned = run.returned_count || 0;
+  if (returned >= target || run.crawl_stop_reason === "target_reached") {
+    return `${label} ${returned}/${target}`;
+  }
+  const errorCode = (run.errors || [])
+    .map((error) => (typeof error.code === "string" ? error.code : ""))
+    .find(Boolean);
+  let reason = "本次只返回这些结果";
+  if (errorCode === "public_search_video_filter_unavailable"
+    || errorCode === "public_search_video_filter_unconfirmed") {
+    reason = "视频筛选未生效";
+  } else if ((run.out_of_window_count || 0) > 0) {
+    reason = `已排除 ${run.out_of_window_count} 条时间范围外素材`;
+  } else if (run.crawl_stop_reason === "no_more_loaded" || run.crawl_stop_reason === "platform_end") {
+    reason = "平台没有继续加载";
+  } else if (run.crawl_stop_reason === "safety_limit") {
+    reason = "已到本次安全加载上限";
+  } else if (run.status === "failed") {
+    reason = "本次未完成";
+  }
+  return `${label} ${returned}/${target}（${reason}）`;
 }
 
 function compareCandidateRanking(left: CrawlerCandidateResult, right: CrawlerCandidateResult) {
@@ -324,24 +353,6 @@ function compareCandidateRanking(left: CrawlerCandidateResult, right: CrawlerCan
   return left.video_id.localeCompare(right.video_id);
 }
 
-function candidateSpokenUse(candidate: CrawlerCandidateResult) {
-  if (candidate.spoken_material_status === "transcript_ready") {
-    return { usable: true, label: "已有可用口播" };
-  }
-  if (candidate.spoken_material_status === "text_reference") {
-    return { usable: true, label: "有文字，可改成口播" };
-  }
-  // 后端搜索阶段对未转写素材统一返回 topic_only；
-  // 仍按标题启发式区分"疑似讲解（可 ASR 确认）"与"疑似纯展示（仅作画面参考）"，
-  // 供候选面板说明与自动选稿使用。
-  const title = (candidate.title || "").replace(/#[^#\s]+/g, " ");
-  const looksLikeExplanation = /(首先|其次|为什么|怎么|如何|导致|解决|注意|避坑|教程|讲解|分析|测评|实测|区别|问题|原因|方法|技巧|如果|只要|千万|不要|老板|很多人|我们|咱们)/.test(title);
-  if (looksLikeExplanation) {
-    return { usable: true, label: "疑似有讲解，待 ASR 确认" };
-  }
-  return { usable: false, label: "疑似纯展示，仅作画面参考" };
-}
-
 function strictCandidates(batch: CrawlerBatchResponse, preferredCandidateId = "") {
   const byId = new Map<string, CrawlerCandidateResult>();
   batch.platform_runs.forEach((run) => {
@@ -362,10 +373,6 @@ function strictCandidates(batch: CrawlerBatchResponse, preferredCandidateId = ""
 
 function selectAutomaticCandidates(candidates: CrawlerCandidateResult[]) {
   return [...candidates].sort(compareCandidateRanking);
-}
-
-function selectSpokenAutomaticCandidates(candidates: CrawlerCandidateResult[]) {
-  return selectAutomaticCandidates(candidates.filter((candidate) => candidateSpokenUse(candidate).usable));
 }
 
 function diagnoseCrawlerResult(batch: CrawlerBatchResponse) {
@@ -531,11 +538,7 @@ export default function PipelinePage() {
     [candidates, selectedCandidateId],
   );
   const automaticCandidatePool = useMemo(
-    () => selectSpokenAutomaticCandidates(candidates),
-    [candidates],
-  );
-  const visualReferenceCount = useMemo(
-    () => candidates.filter((candidate) => !candidateSpokenUse(candidate).usable).length,
+    () => selectAutomaticCandidates(candidates),
     [candidates],
   );
   const readySourceCount = browserDiscoveries.filter(sourcePlatformReady).length;
@@ -599,7 +602,12 @@ export default function PipelinePage() {
       || workspace.items.find((item) => item.run_id === workspace.current_run_id)
       || workspace.items[0];
   }, [selectedRunId, workspace]);
-  const preparedPublishTaskIds = activeItem?.publish.prepared_task_ids?.length
+  const officialPageTaskIds = activeItem?.publish.official_page_task_ids !== undefined
+    ? activeItem.publish.official_page_task_ids
+    : (activeItem?.publish.targets || []).some((target) => target.mode === "real")
+      ? activeItem?.publish.task_ids || []
+      : [];
+  const preparedPublishTaskIds = activeItem?.publish.prepared_task_ids !== undefined
     ? activeItem.publish.prepared_task_ids
     : (
         activeItem?.publish.status === "manual_ready"
@@ -609,20 +617,34 @@ export default function PipelinePage() {
       );
   const publishPagePrepared = preparedPublishTaskIds.length > 0;
   const publishCompleted = activeItem?.publish.status === "succeeded";
-  const hasExplicitManualTarget = (activeItem?.publish.targets || []).some(
-    (target) => target.mode === "manual",
-  );
-  const manualPublishTaskIds = activeItem?.publish.status === "manual_ready" && hasExplicitManualTarget
-    ? activeItem.publish.task_ids
-    : [];
+  const manualPublishTaskIds = activeItem?.publish.manual_task_ids !== undefined
+    ? activeItem.publish.manual_task_ids
+    : activeItem?.publish.status === "manual_ready"
+      && (activeItem.publish.targets || []).some((target) => target.mode === "manual")
+      ? activeItem.publish.task_ids
+      : [];
   const activePublishPlatformLabel = useMemo(() => {
     const labels = (activeItem?.publish.targets || [])
       .map((target) => target.display_name || PLATFORM_LABELS[target.platform] || target.platform)
       .filter(Boolean);
     const unique = [...new Set(labels)];
     if (unique.length) return unique.join("、");
-    return publishPagePrepared || activeItem?.publish.task_ids.length ? "抖音" : "所选平台";
-  }, [activeItem?.publish.targets, activeItem?.publish.task_ids.length, publishPagePrepared]);
+    return "所选平台";
+  }, [activeItem?.publish.targets]);
+  const officialPagePlatformLabel = useMemo(() => {
+    const labels = (activeItem?.publish.targets || [])
+      .filter((target) => target.mode === "real")
+      .map((target) => target.display_name || PLATFORM_LABELS[target.platform] || target.platform)
+      .filter(Boolean);
+    return [...new Set(labels)].join("、") || "所选平台";
+  }, [activeItem?.publish.targets]);
+  const automaticPublishPlatformLabel = useMemo(() => {
+    const labels = (activeItem?.publish.targets || [])
+      .filter((target) => target.mode === "real" && !target.manual_only)
+      .map((target) => target.display_name || PLATFORM_LABELS[target.platform] || target.platform)
+      .filter(Boolean);
+    return [...new Set(labels)].join("、") || officialPagePlatformLabel;
+  }, [activeItem?.publish.targets, officialPagePlatformLabel]);
   const currentStage = activeItem?.stage || activeItem?.current_stage || workspace?.current_stage || "source";
   const nextAction = activeItem?.next_action || workspace?.next_action || "start";
   const allowedActions = activeItem?.allowed_actions || workspace?.allowed_actions || [];
@@ -735,14 +757,14 @@ export default function PipelinePage() {
       setAssets(assetData);
       setBatches(batchData.items);
       setWorkspaceConfiguration(configuration);
+      setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
+      setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
       void optionalData.then(([platformResult, accountResult, avatarResult]) => {
         if (platformResult.status === "fulfilled") setPlatforms(platformResult.value.platforms);
         if (accountResult.status === "fulfilled") setAccounts(accountResult.value);
         if (avatarResult.status === "fulfilled") setAvatarCapability(avatarResult.value);
       });
       setSetupRightsHolder(configuration.rights_holder || "");
-      setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
-      setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
       if (configuration.default_publish_platforms?.length) {
         setPublishPlatforms(configuration.default_publish_platforms);
       }
@@ -978,17 +1000,13 @@ export default function PipelinePage() {
   const finishMaterialSearchReveal = useCallback((batch: CrawlerBatchResponse) => {
     const found = strictCandidates(batch);
     setCandidates(found);
-    const automatic = selectSpokenAutomaticCandidates(found);
-    const visualCount = found.filter((candidate) => !candidateSpokenUse(candidate).usable).length;
-    setSelectedCandidateId(
-      (creationMode === "auto" ? automatic[0] : found[0])?.video_id || "",
-    );
+    setSelectedCandidateId(found[0]?.video_id || "");
     if (found.length) {
       setFailedSearchPlatforms([]);
       setActionMessage(
         creationMode === "auto"
-          ? `找到 ${found.length} 条相关素材：${automatic.length} 条可用口播都会进入自动创作${visualCount ? `；${visualCount} 条疑似纯展示，只作画面参考` : ""}。`
-          : `找到 ${found.length} 条相关素材，其中 ${visualCount} 条疑似纯展示，已单独标为画面参考。`,
+          ? `找到 ${found.length} 条相关素材，已按当前排序进入自动创作。`
+          : `找到 ${found.length} 条相关素材，请选择要使用的素材。`,
       );
     } else {
       const attemptedPlatforms = (batch.platforms || batch.platform_runs.map((run) => run.platform))
@@ -1017,7 +1035,6 @@ export default function PipelinePage() {
           : `${attemptedLabels}本次未取到素材：${reason}。已保留关键词“${batch.keyword}”，请检查平台登录后再试。`,
       });
     }
-    setMaterialSearchBatch(null);
     setMaterialSearchProgress(null);
     setBusy(false);
   }, [browserDiscoveries, creationMode]);
@@ -1386,26 +1403,28 @@ export default function PipelinePage() {
 
   const saveCostSetup = async () => {
     if (copywritingCost === null || avatarCost === null) {
-      setActionError("请先填写文案和数字人的实际单次费用；不确定时先向供应商确认。 ");
+      setActionError("请先补全合同中的文案和数字人单次费用。");
       return;
     }
     setBusy(true);
     setActionError("");
     try {
       const configuration = await saveProductionWorkspaceConfiguration({
-        rightsHolder: workspaceConfiguration.rights_holder || setupRightsHolder,
+        rightsHolder: workspaceConfiguration.rights_holder || "管理员",
         agreementAccepted: true,
         defaultProfileId: workspaceConfiguration.default_profile_id || profileId || null,
-        defaultPublishPlatforms: publishPlatforms,
+        defaultPublishPlatforms: publishPlatforms.length ? publishPlatforms : ["douyin"],
         copywritingEstimatedCostCny: copywritingCost,
         avatarEstimatedCostCny: avatarCost,
         bundledCompute: workspaceConfiguration.bundled_compute ?? true,
       });
       setWorkspaceConfiguration(configuration);
+      setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? copywritingCost);
+      setAvatarCost(configuration.avatar_estimated_cost_cny ?? avatarCost);
       setCostSetupOpen(false);
-      setActionMessage("费用已保存。请再点击“完成预检并启动”，系统会重新核对后再开始。 ");
+      setActionMessage("费用配置已保存，请重新预检后再开始制作。");
     } catch (error) {
-      setActionError((error as Error).message || "费用设置保存失败");
+      setActionError((error as Error).message || "费用配置保存失败");
     } finally {
       setBusy(false);
     }
@@ -1422,11 +1441,6 @@ export default function PipelinePage() {
     if (!selectedProfile) return "请先补齐一个可用的 IP 配方。";
     const executionError = validateExecution();
     if (executionError) return executionError;
-    if (
-      sourceMode === "keyword"
-      && creationMode === "auto"
-      && automaticCandidatePool.length === 0
-    ) return "这批只有画面参考，没有可用口播候选；请换一个更偏讲解、测评或避坑的关键词。";
     if (sourceMode === "keyword" && creationMode === "manual" && !selectedCandidate) {
       return "请先检索并选择一条严格相关候选。";
     }
@@ -1489,12 +1503,15 @@ export default function PipelinePage() {
       return;
     }
     if (checked.blocked_count || checked.cost_blocked || checked.ready_count === 0) {
+      const costUnknown = checked.cost_blocked && !checked.cost_known;
+      if (costUnknown && isAdminSession) setCostSetupOpen(true);
       setActionError(
-        checked.cost_issues?.join("；")
-        || checked.items.flatMap((item) => item.reasons || []).join("；")
-        || "预检未通过，请根据提示补齐后重试。",
+        costUnknown && !isAdminSession
+          ? "本次费用暂无法确认，请联系管理员完成费用配置后重试。不会扣费，也不会开始制作。"
+          : checked.cost_issues?.join("；")
+            || checked.items.flatMap((item) => item.reasons || []).join("；")
+            || "预检未通过，请根据提示补齐后重试。",
       );
-      if (checked.cost_blocked && !checked.cost_known) setCostSetupOpen(true);
       await loadWorkspace(batchId);
       return;
     }
@@ -1850,14 +1867,14 @@ export default function PipelinePage() {
   };
 
   const prepareExistingPublishPages = () => {
-    const taskIds = activeItem?.publish.task_ids || [];
+    const taskIds = officialPageTaskIds;
     if (!workspace || !taskIds.length) {
       setActionError("还没有可重新准备的发布任务，请先保存发布信息。");
       return;
     }
     Modal.confirm({
-      title: "准备抖音官方发布页？",
-      content: "系统会打开官方创作者页面并填入已保存的标题、描述和标签；不会点击最终发布，最后一步仍由你在抖音确认。",
+      title: `准备${officialPagePlatformLabel}官方发布页？`,
+      content: "系统会逐个平台打开官方创作者页面，上传成片并填入已保存的标题、描述和标签；不会在这一步点击最终发布。",
       okText: "继续准备",
       cancelText: "暂不处理",
       onOk: async () => {
@@ -1867,7 +1884,7 @@ export default function PipelinePage() {
           for (const taskId of taskIds) {
             await preparePublishOfficialPage(taskId);
           }
-          setActionMessage("正在打开抖音创作者中心并填入内容；窗口出现后，请你检查并完成最终发布。");
+          setActionMessage(`正在打开${officialPagePlatformLabel}官方创作者页面并填入内容；窗口出现后请检查最终效果。`);
           // Keep the last trustworthy workspace state until the normal 2.5 s
           // refresh observes the worker result. An immediate reload can race
           // with the worker and briefly freeze the page on a stale "失败" state.
@@ -1883,15 +1900,15 @@ export default function PipelinePage() {
 
   const confirmAutomaticPublish = () => {
     if (!workspace || !preparedPublishTaskIds.length) {
-      setActionError("还没有准备好的抖音发布页，请先准备官方发布页。");
+      setActionError("还没有准备好的官方发布页，请先准备官方发布页。");
       return;
     }
-    const accountName = publishDestinations.find(
-      (destination) => destination.platform === "douyin",
-    )?.accountName || "当前抖音账号";
+    const accountNames = publishDestinations
+      .filter((destination) => destination.mode === "确认后自动发布")
+      .map((destination) => `${destination.displayName}“${destination.accountName}”`);
     Modal.confirm({
-      title: "确认并自动发布到抖音？",
-      content: `本次使用“${accountName}”。系统会等待视频上传完成并只点击一次最终发布；遇到验证码、页面异常或结果不明确时会停止并让你核对。`,
+      title: `确认并自动发布到${automaticPublishPlatformLabel}？`,
+      content: `本次使用${accountNames.join("、") || "已核验账号"}。系统会等待视频上传完成并在每个平台最多点击一次最终发布；遇到验证码、页面异常或结果不明确时会停止并让你核对。`,
       okText: "确认并自动发布",
       cancelText: "我再检查一下",
       onOk: async () => {
@@ -2069,7 +2086,7 @@ export default function PipelinePage() {
   const chooseCreationMode = (nextMode: CreationMode) => {
     setCreationMode(nextMode);
     const nextCandidate = nextMode === "auto"
-      ? selectSpokenAutomaticCandidates(candidates)[0]
+      ? selectAutomaticCandidates(candidates)[0]
       : candidates[0];
     setSelectedCandidateId(nextCandidate?.video_id || "");
     setActionError("");
@@ -2611,18 +2628,19 @@ export default function PipelinePage() {
                     <div className="section-heading">
                       <Text strong>
                         {creationMode === "auto"
-                          ? `自动创作口播 ${automaticCandidatePool.length} 条`
+                          ? `自动创作素材（${automaticCandidatePool.length}）`
                           : `本次找到的全部素材（${candidates.length}）`}
                       </Text>
-                      <Text type="secondary">
-                        {creationMode === "auto"
-                          ? `${visualReferenceCount} 条画面参考不参与 ASR`
-                          : `${candidates.length - visualReferenceCount} 条口播优先 · ${visualReferenceCount} 条画面参考`}
-                      </Text>
                     </div>
-                    <Text type="secondary" className="candidate-legend">
-                      口播优先：素材自带可转写成口播的讲解内容；画面参考：仅作镜头与画面素材，不参与口播识别。
-                    </Text>
+                    {materialSearchBatch?.platform_runs?.length ? (
+                      <div className="candidate-platform-summary" aria-label="各平台素材数量">
+                        {materialSearchBatch.platform_runs.map((run) => (
+                          <span key={run.run_id}>
+                            {platformRunSummary(run, materialSearchBatch.count_per_platform)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="candidate-stack">
                       {(() => {
                         const allCandidates = creationMode === "auto" ? automaticCandidatePool : candidates;
@@ -2647,10 +2665,7 @@ export default function PipelinePage() {
                             <span className="candidate-copy">
                               <strong>{candidate.title || "未命名候选"}</strong>
                               <small>{candidate.platform_label} · {candidate.author_name || "作者未返回"}</small>
-                              <small>
-                                {candidate.selection_tier === "reserve" ? "低热度候补 · " : ""}
-                                {candidateSpokenUse(candidate).label}
-                              </small>
+                              {candidate.selection_tier === "reserve" ? <small>低热度候补</small> : null}
                               <small className="candidate-metrics">
                                 点赞 {formatCandidateMetric(candidate.likes)} · 评论 {formatCandidateMetric(candidate.comments)} · 分享 {formatCandidateMetric(candidate.shares)} · 收藏 {formatCandidateMetric(candidate.favorites)}
                               </small>
@@ -2694,12 +2709,6 @@ export default function PipelinePage() {
                         </div>
                       )}
                     </div>
-                    {creationMode === "auto" && automaticCandidatePool.length === 0 && (
-                      <Empty
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                        description="这批只有画面参考，没有可进入口播筛选的素材。"
-                      />
-                    )}
                   </div>
                 )}
               </Space>
@@ -2741,7 +2750,7 @@ export default function PipelinePage() {
                     publishCompleted
                       ? `已完成${activePublishPlatformLabel}发布`
                       : publishPagePrepared
-                        ? "抖音发布页已准备"
+                        ? `${automaticPublishPlatformLabel}发布页已准备`
                         : manualPublishTaskIds.length
                           ? `${activePublishPlatformLabel}发布内容已准备`
                           : (STAGE_LABEL[currentStage] || currentStage)
@@ -2761,16 +2770,6 @@ export default function PipelinePage() {
                     showIcon
                     message={`数字人处理偏慢，已等待 ${formatElapsedSeconds(avatarProcessing?.elapsed_seconds)}`}
                     description="系统会继续查询这一次生成，不会重复提交。电脑关机期间，开机后才会继续下载和剪辑。"
-                  />
-                )}
-
-                {workspace.cost.blocked && (
-                  <Alert
-                    type="warning"
-                    showIcon
-                    message="还差一次费用设置"
-                    description="当前供应商没有自动返回报价。填写合同中的单次价格后，系统才能在启动前算清总费用。"
-                    action={<Button type="primary" onClick={() => setCostSetupOpen(true)}>填写费用</Button>}
                   />
                 )}
 
@@ -2973,8 +2972,8 @@ export default function PipelinePage() {
                             <Alert
                               type="success"
                               showIcon
-                              message="抖音发布页已准备"
-                              description={`请检查任务栏里的“抖音创作者中心”窗口。${activeItem.publish.action_required || "确认标题、封面和可见范围后，可以让系统安全完成最终发布。"}`}
+                              message={`${automaticPublishPlatformLabel}发布页已准备`}
+                              description={`请检查任务栏中各平台的官方创作者窗口。${activeItem.publish.action_required || "确认标题、封面和可见范围后，可以让系统安全完成最终发布。"}`}
                             />
                             <Space wrap>
                               <Button type="primary" icon={<RocketOutlined />} loading={busy} onClick={confirmAutomaticPublish}>
@@ -3014,10 +3013,10 @@ export default function PipelinePage() {
                             {activeItem.publish.task_ids.length > 0
                               && !publishPagePrepared
                               && manualPublishTaskIds.length === 0
-                              && activePublishPlatformLabel === "抖音"
+                              && officialPageTaskIds.length > 0
                               && (
                               <Button type="primary" icon={<RocketOutlined />} loading={busy} onClick={prepareExistingPublishPages}>
-                                准备抖音发布页
+                                准备官方发布页
                               </Button>
                             )}
                           </Space>
@@ -3241,8 +3240,8 @@ export default function PipelinePage() {
             {!workspace && (
               sourceMode === "keyword" && creationMode === "auto" && automaticCandidatePool.length ? (
                 <div className="source-preview">
-                  <Tag color="purple">自动创作口播 {automaticCandidatePool.length} 条</Tag>
-                  <Title level={4}>依次处理全部可用口播，再由 AI 选出 1 条</Title>
+                  <Tag color="purple">自动创作素材 {automaticCandidatePool.length} 条</Tag>
+                  <Title level={4}>按当前排序处理素材，再由 AI 选出 1 条</Title>
                   <List
                     size="small"
                     dataSource={automaticCandidatePool}
@@ -3250,7 +3249,7 @@ export default function PipelinePage() {
                       <List.Item>
                         <List.Item.Meta
                           title={candidate.title || "未命名候选"}
-                          description={`${candidate.platform_label} · ${candidate.author_name || "作者未返回"} · ${candidateSpokenUse(candidate).label}`}
+                          description={`${candidate.platform_label} · ${candidate.author_name || "作者未返回"}`}
                         />
                       </List.Item>
                     )}
@@ -3409,6 +3408,47 @@ export default function PipelinePage() {
         </div>
       </Modal>
 
+      {isAdminSession && (
+        <Modal
+          title="补充费用配置"
+          open={costSetupOpen}
+          onCancel={() => setCostSetupOpen(false)}
+          footer={null}
+          destroyOnHidden
+        >
+          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+            <Text type="secondary">
+              仅管理员在预检无法取得报价时补充公司合同价；客户不会看到或填写这些信息。
+            </Text>
+            <div>
+              <Text strong>文案生成单次费用（元）</Text>
+              <InputNumber
+                aria-label="文案生成单次费用"
+                min={0}
+                precision={2}
+                value={copywritingCost}
+                onChange={setCopywritingCost}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            </div>
+            <div>
+              <Text strong>数字人口播单次费用（元）</Text>
+              <InputNumber
+                aria-label="数字人口播单次费用"
+                min={0}
+                precision={2}
+                value={avatarCost}
+                onChange={setAvatarCost}
+                style={{ width: "100%", marginTop: 8 }}
+              />
+            </div>
+            <Button type="primary" onClick={() => void saveCostSetup()} loading={busy}>
+              保存费用配置
+            </Button>
+          </Space>
+        </Modal>
+      )}
+
       <Modal
         title="管理素材网站"
         aria-label="管理素材网站"
@@ -3563,45 +3603,6 @@ export default function PipelinePage() {
               );
             })}
           </div>
-        </Space>
-      </Modal>
-
-      <Modal
-        title="填写实际费用"
-        open={costSetupOpen}
-        onCancel={() => setCostSetupOpen(false)}
-        footer={null}
-        destroyOnHidden
-      >
-        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Text type="secondary">仅在供应商没有返回报价时填写。平台转写、AI 文案和数字人即使使用本机剪辑，也可能单独扣积分。</Text>
-          <div>
-            <Text strong>文案生成每次费用（元）</Text>
-            <InputNumber
-              aria-label="文案生成每次费用"
-              min={0}
-              precision={2}
-              value={copywritingCost}
-              onChange={setCopywritingCost}
-              placeholder="例如 0.02"
-              style={{ width: "100%", marginTop: 8 }}
-            />
-          </div>
-          <div>
-            <Text strong>数字人口播每条费用（元）</Text>
-            <InputNumber
-              aria-label="数字人口播每条费用"
-              min={0}
-              precision={2}
-              value={avatarCost}
-              onChange={setAvatarCost}
-              placeholder="例如 2.50"
-              style={{ width: "100%", marginTop: 8 }}
-            />
-          </div>
-          <Button type="primary" size="large" block loading={busy} onClick={() => void saveCostSetup()}>
-            保存费用
-          </Button>
         </Space>
       </Modal>
 
@@ -4294,6 +4295,20 @@ export default function PipelinePage() {
           margin: -2px 2px 10px;
           font-size: 12.5px;
           line-height: 1.6;
+        }
+        .candidate-platform-summary {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px 8px;
+          margin: -2px 0 12px;
+        }
+        .candidate-platform-summary span {
+          padding: 4px 9px;
+          border-radius: 999px;
+          background: #f5f2ff;
+          color: #5f43b2;
+          font-size: 12px;
+          line-height: 1.5;
         }
         .candidate-stack-toggle {
           display: flex;

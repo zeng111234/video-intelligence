@@ -101,6 +101,12 @@ class PublishMetadataRequest(BaseModel):
     source_task_id: str | None = None
 
 
+class PublishPlatformMetadata(BaseModel):
+    title: str
+    description: str
+    tags: list[str]
+
+
 class PublishMetadataResponse(BaseModel):
     task_id: str
     provider_name: str
@@ -109,6 +115,7 @@ class PublishMetadataResponse(BaseModel):
     title: str
     description: str
     tags: list[str]
+    platforms: dict[str, PublishPlatformMetadata] = Field(default_factory=dict)
     charged_credits: float | None = None
 
 
@@ -126,9 +133,16 @@ def capabilities(service=Depends(get_copywriting_service)):
         max_output_chars=int(cap.get("max_output_chars", 4000)),
         supports_variants=bool(cap.get("supports_variants", True)),
         max_variants=int(cap.get("max_variants", 5)),
-        supported_platforms=["douyin", "xiaohongshu", "wechat_channels"],
+        supported_platforms=[
+            "douyin",
+            "kuaishou",
+            "xiaohongshu",
+            "wechat_channels",
+            "bilibili",
+        ],
         missing_configuration=[
-            str(item) for item in cap.get("missing_configuration", [])  # type: ignore[arg-type]
+            str(item)
+            for item in cap.get("missing_configuration", [])  # type: ignore[arg-type]
         ],
         billing_label=str(cap.get("billing_label", "平台服务价")),
         input_price_credits_per_1k_tokens=str(
@@ -162,7 +176,9 @@ def list_copywriting(
 @router.delete("/history", response_model=CopywritingHistoryDeleteResponse)
 def clear_copywriting_history(service=Depends(get_copywriting_service)):
     """删除历史抽屉中的全部独立文案任务，保留转写生成的口播稿。"""
-    task_ids = [task.task_id for task in service.list_tasks() if task.source_task_id is None]
+    task_ids = [
+        task.task_id for task in service.list_tasks() if task.source_task_id is None
+    ]
     for task_id in task_ids:
         service.repository.delete_task(task_id)
     return CopywritingHistoryDeleteResponse(deleted_count=len(task_ids))
@@ -240,7 +256,9 @@ def generate_publish_metadata(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if metadata is None:
-        raise HTTPException(status_code=400, detail=task.error_message or "发布信息生成失败。")
+        raise HTTPException(
+            status_code=400, detail=task.error_message or "发布信息生成失败。"
+        )
     return PublishMetadataResponse(
         task_id=task.task_id,
         provider_name=task.provider_name,
@@ -249,6 +267,15 @@ def generate_publish_metadata(
         title=str(metadata["title"]),
         description=str(metadata["description"]),
         tags=[str(item) for item in metadata["tags"]],
+        platforms={
+            str(platform): PublishPlatformMetadata(
+                title=str(content["title"]),
+                description=str(content["description"]),
+                tags=[str(item) for item in content["tags"]],
+            )
+            for platform, content in dict(metadata.get("platforms") or {}).items()
+            if isinstance(content, dict)
+        },
         charged_credits=task.charged_credits,
     )
 

@@ -30,6 +30,8 @@ from src.models import (
     ProviderMode,
 )
 
+_HIDDEN_LEGACY_BUILT_IN_AVATAR_IDS = {"10078"}
+
 
 class RemoteAvatarProvider:
     billing_centrally_managed = True
@@ -214,7 +216,16 @@ class RemoteAvatarProvider:
         response = self._get("/api/v1/provider/avatar/assets")
         assert response is not None
         try:
-            return [AvatarAsset.model_validate(item) for item in self._json(response)]
+            assets = [AvatarAsset.model_validate(item) for item in self._json(response)]
+            return [
+                asset
+                for asset in assets
+                if not (
+                    asset.kind.value == "avatar"
+                    and asset.source_type == "built_in"
+                    and asset.asset_id in _HIDDEN_LEGACY_BUILT_IN_AVATAR_IDS
+                )
+            ]
         except (TypeError, ValueError) as exc:
             raise AvatarProviderError("公司数字人素材列表无效。") from exc
 

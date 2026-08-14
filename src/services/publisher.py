@@ -25,11 +25,11 @@ from src.models import (
     TaskStatus,
 )
 
-# 发布防封保护（可在项目根 .env 调整）:
+# 发布防封保护：默认采用对成熟账号不过度保守的自动错峰策略。
 # - PUBLISH_DAILY_LIMIT: 每个平台账号每天最多发布条数
 # - PUBLISH_MIN_INTERVAL_MINUTES: 同平台两条发布之间的最小间隔
-PUBLISH_DAILY_LIMIT = int(os.getenv("PUBLISH_DAILY_LIMIT", "5"))
-PUBLISH_MIN_INTERVAL_MINUTES = int(os.getenv("PUBLISH_MIN_INTERVAL_MINUTES", "15"))
+PUBLISH_DAILY_LIMIT = int(os.getenv("PUBLISH_DAILY_LIMIT", "10"))
+PUBLISH_MIN_INTERVAL_MINUTES = int(os.getenv("PUBLISH_MIN_INTERVAL_MINUTES", "10"))
 
 # 发布行为风控提示标记：一旦出现即视为平台风控信号，账号自动暂停发布
 PUBLISH_RISK_MARKERS = (
@@ -60,7 +60,9 @@ class PublishService:
         self._publish_locks: dict[tuple[str, str], threading.Lock] = {}
         self._publish_locks_guard = threading.Lock()
 
-    def _publish_lock(self, platform: PublishPlatform, account_id: str | None) -> threading.Lock:
+    def _publish_lock(
+        self, platform: PublishPlatform, account_id: str | None
+    ) -> threading.Lock:
         key = (platform.value, self._account_key(platform, account_id))
         with self._publish_locks_guard:
             lock = self._publish_locks.get(key)
@@ -392,7 +394,10 @@ class PublishService:
                         "daily_limit": PUBLISH_DAILY_LIMIT,
                         "remaining_today": max(0, PUBLISH_DAILY_LIMIT - count_today),
                         "next_allowed_at": (
-                            (last_at + timedelta(minutes=PUBLISH_MIN_INTERVAL_MINUTES)).isoformat()
+                            (
+                                last_at
+                                + timedelta(minutes=PUBLISH_MIN_INTERVAL_MINUTES)
+                            ).isoformat()
                             if last_at
                             else None
                         ),
@@ -414,12 +419,8 @@ class PublishService:
         key = self._account_key(platform, account_id)
         state = self.repository.get_publish_safety_state(platform.value, key)
         now = datetime.now().astimezone()
-        active_block = bool(
-            state and state.blocked_until and state.blocked_until > now
-        )
-        if state is not None and (
-            active_block or state.consecutive_failures > 0
-        ):
+        active_block = bool(state and state.blocked_until and state.blocked_until > now)
+        if state is not None and (active_block or state.consecutive_failures > 0):
             self.repository.update_publish_safety_state(
                 state.model_copy(
                     update={
@@ -434,7 +435,9 @@ class PublishService:
             "platform": platform.value,
             "account_id": key,
             "resumed": active_block,
-            "message": "已恢复该账号发布。" if active_block else "该账号当前未处于暂停状态。",
+            "message": "已恢复该账号发布。"
+            if active_block
+            else "该账号当前未处于暂停状态。",
         }
 
     def _account_key(self, platform: PublishPlatform, account_id: str | None) -> str:
@@ -455,7 +458,8 @@ class PublishService:
         if is_risk:
             updated = state.model_copy(
                 update={
-                    "blocked_until": now + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
+                    "blocked_until": now
+                    + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
                     "blocked_reason": (
                         "平台提示发布频繁或操作频繁，已自动暂停该账号发布 24 小时，"
                         "避免账号被限流。可在发布账号管理页手动恢复。"
@@ -467,7 +471,8 @@ class PublishService:
         elif failures >= PUBLISH_MAX_CONSECUTIVE_FAILURES:
             updated = state.model_copy(
                 update={
-                    "blocked_until": now + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
+                    "blocked_until": now
+                    + timedelta(seconds=PUBLISH_SAFETY_PAUSE_SECONDS),
                     "blocked_reason": (
                         f"连续 {failures} 次发布失败，已自动暂停该账号发布 24 小时，"
                         "避免异常操作被平台盯上。请检查发布环境后到发布账号管理页恢复。"
@@ -519,8 +524,8 @@ class PublishService:
                     "updated_at": datetime.now().astimezone(),
                     "error_message": (
                         f"该平台今天已发布 {count_today} 条，达到每日上限 "
-                        f"{PUBLISH_DAILY_LIMIT} 条（防封保护）。请明天再发布，"
-                        "或在项目根 .env 调整 PUBLISH_DAILY_LIMIT。"
+                        f"{PUBLISH_DAILY_LIMIT} 条。系统已暂停该账号今天的自动发布，"
+                        "请明天继续。"
                     ),
                 }
             )
@@ -538,7 +543,11 @@ class PublishService:
         safety = self.repository.get_publish_safety_state(
             task.target.platform.value, account_key
         )
-        if safety and safety.blocked_until and safety.blocked_until > datetime.now().astimezone():
+        if (
+            safety
+            and safety.blocked_until
+            and safety.blocked_until > datetime.now().astimezone()
+        ):
             blocked = task.model_copy(
                 update={
                     "status": TaskStatus.FAILED,
@@ -763,8 +772,13 @@ class PublishService:
         task = self.get_task(task_id)
         if task is None:
             raise ValueError("发布任务不存在。")
-        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
-            raise ValueError("系统已经点击最终发布，结果可能已进入平台处理；请先人工核对平台后台，不能自动重试。")
+        if (
+            task.final_publish_started_at
+            or task.outputs.get("final_publish_clicked") == "true"
+        ):
+            raise ValueError(
+                "系统已经点击最终发布，结果可能已进入平台处理；请先人工核对平台后台，不能自动重试。"
+            )
         if task.retry_count >= 1:
             raise ValueError("该发布任务已重试过一次，请先人工核对平台后台状态。")
         updated = task.model_copy(
@@ -792,12 +806,20 @@ class PublishService:
         task = self.get_task(task_id)
         if task is None:
             raise ValueError("发布任务不存在。")
-        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
-            raise ValueError("系统已经点击最终发布，请先到抖音后台核对结果。")
-        if task.publish_status in {PublishStatus.SUCCEEDED, PublishStatus.OUTCOME_UNKNOWN}:
-            raise ValueError("当前发布结果不能重新准备官方页，请先到抖音后台核对。")
-        if task.provider_name != "douyin_local_browser":
-            raise ValueError("当前任务不是抖音本机发布任务，不能准备抖音官方页。")
+        if (
+            task.final_publish_started_at
+            or task.outputs.get("final_publish_clicked") == "true"
+        ):
+            raise ValueError("系统已经点击最终发布，请先到对应平台后台核对结果。")
+        if task.publish_status in {
+            PublishStatus.SUCCEEDED,
+            PublishStatus.OUTCOME_UNKNOWN,
+        }:
+            raise ValueError("当前发布结果不能重新准备官方页，请先到对应平台后台核对。")
+        capabilities = self._local_browser_capabilities(task)
+        platform_label = str(
+            capabilities.get("display_name") or task.target.platform.value
+        ).replace("本机扫码发布", "")
         if task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}:
             return task
         updated = task.model_copy(
@@ -805,7 +827,7 @@ class PublishService:
                 "status": TaskStatus.QUEUED,
                 "publish_status": PublishStatus.PENDING,
                 "progress": 0,
-                "stage": "正在准备抖音官方发布页",
+                "stage": f"正在准备{platform_label}官方发布页",
                 "updated_at": datetime.now().astimezone(),
                 "error_message": None,
                 "action_required": None,
@@ -815,22 +837,25 @@ class PublishService:
         return updated
 
     def confirm_auto_publish(self, task_id: str) -> PublishTask:
-        """Authorize one Douyin task to use its prepared page and submit once."""
+        """Authorize one prepared local-browser task to submit exactly once."""
         task = self.get_task(task_id)
         if task is None:
             raise ValueError("发布任务不存在。")
-        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
-            raise ValueError("系统已经点击最终发布，请先到抖音后台核对结果。")
+        if (
+            task.final_publish_started_at
+            or task.outputs.get("final_publish_clicked") == "true"
+        ):
+            raise ValueError("系统已经点击最终发布，请先到对应平台后台核对结果。")
         if task.publish_status in {
             PublishStatus.SUCCEEDED,
             PublishStatus.OUTCOME_UNKNOWN,
         }:
-            raise ValueError("当前发布结果不能再次自动提交，请先到抖音后台核对。")
-        if (
-            task.provider_name != "douyin_local_browser"
-            or task.target.platform != PublishPlatform.DOUYIN
-        ):
-            raise ValueError("当前任务不是抖音本机发布任务，不能自动提交。")
+            raise ValueError("当前发布结果不能再次自动提交，请先到对应平台后台核对。")
+        capabilities = self._local_browser_capabilities(task)
+        if bool(capabilities.get("manual_only", False)):
+            raise ValueError(
+                "该平台要求你在官方页面手动确认发布，系统不会代点最终发布。"
+            )
         if (
             task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
             and task.target.auto_publish_authorized
@@ -862,14 +887,43 @@ class PublishService:
         self._save(updated, None)
         return updated
 
+    def _local_browser_capabilities(self, task: PublishTask) -> dict[str, Any]:
+        """Bind a persisted task to its registered local-browser adapter.
+
+        A provider name stored on a task is not trusted by itself.  Preparing or
+        submitting an official page is allowed only when the currently
+        registered adapter for that exact platform still reports the same
+        provider and local-browser mode.
+        """
+        publisher = self.publishers.get(task.target.platform.value)
+        if publisher is None:
+            raise ValueError("当前平台没有可用的官方页面发布能力。")
+        capabilities = dict(publisher.capabilities())
+        expected_provider = str(capabilities.get("provider_name") or "")
+        if (
+            str(capabilities.get("mode") or "") != "local_browser"
+            or not expected_provider
+            or task.provider_name != expected_provider
+        ):
+            raise ValueError("当前任务不是可验证的本机官方页面发布任务。")
+        return capabilities
+
     def resume_task(self, task_id: str) -> PublishTask:
         """Resume a user-gated task only while no final publish click happened."""
         task = self.get_task(task_id)
         if task is None:
             raise ValueError("发布任务不存在。")
-        if task.final_publish_started_at or task.outputs.get("final_publish_clicked") == "true":
-            raise ValueError("系统已经点击最终发布，不能继续或重试；请先人工核对平台后台。")
-        if task.status != TaskStatus.PAUSED or task.publish_status != PublishStatus.ACTION_REQUIRED:
+        if (
+            task.final_publish_started_at
+            or task.outputs.get("final_publish_clicked") == "true"
+        ):
+            raise ValueError(
+                "系统已经点击最终发布，不能继续或重试；请先人工核对平台后台。"
+            )
+        if (
+            task.status != TaskStatus.PAUSED
+            or task.publish_status != PublishStatus.ACTION_REQUIRED
+        ):
             raise ValueError("当前任务不处于可继续的等待状态。")
         updated = task.model_copy(
             update={
@@ -905,7 +959,11 @@ class PublishService:
         missing = [task_id for task_id, task in zip(unique_ids, tasks) if task is None]
         if missing:
             raise ValueError("部分发布任务不存在或已被删除，请刷新列表。")
-        active = [task.task_id for task in tasks if task and task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}]
+        active = [
+            task.task_id
+            for task in tasks
+            if task and task.status in {TaskStatus.QUEUED, TaskStatus.RUNNING}
+        ]
         if active:
             raise ValueError("选中任务包含正在队列中或执行中的任务，不能删除。")
         deleted: list[str] = []

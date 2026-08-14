@@ -328,7 +328,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
         quoteId: "quote-720p",
         billingConfirmation: { confirmed: true, maxCostCny: 0.048 },
         idempotencyKey: expect.stringMatching(/^video-editor-/),
-        bgmEnabled: true,
+        bgmEnabled: false,
         bgmId: undefined,
         bgmVolume: 0.18,
       }));
@@ -381,11 +381,15 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(await screen.findByRole("dialog", { name: "智能剪辑任务历史" })).toBeTruthy();
   });
 
-  it("opens the advanced settings drawer", async () => {
+  it("does not expose unfinished advanced music settings", async () => {
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: /高级设置/ }));
-    expect(await screen.findByRole("dialog", { name: "高级设置" })).toBeTruthy();
+    await screen.findByTestId("primary-action");
+    expect(screen.queryByRole("button", { name: /高级设置|配乐设置/ })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "高级设置" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "配乐设置" })).toBeNull();
+    expect(screen.queryByText("AI 自动选择背景音乐")).toBeNull();
+    expect(screen.queryByText("安全轻剪边界固定")).toBeNull();
   });
 
   it("blocks production when required cloud configuration is missing", async () => {
@@ -427,11 +431,8 @@ describe("VideoEditorPage cloud-light workflow", () => {
 
     const primary = await screen.findByTestId("primary-action");
     expect(primary.textContent).toContain("审核字幕、粗剪和配乐");
-    const downloadClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    fireEvent.click(screen.getByRole("button", { name: /下载原片$/ }));
-    expect(downloadClick).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByText("方案预览"));
-    const timeline = await screen.findByRole("slider", { name: "视频预览进度" });
+    const timeline = await screen.findByRole("slider", { name: "视频播放进度" });
     expect(timeline.getAttribute("aria-valuemin")).toBe("0");
     expect(Number(timeline.getAttribute("aria-valuemax"))).toBeCloseTo(58 / 1.15, 4);
     const previewSubtitle = await waitFor(() => {
@@ -443,14 +444,11 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(
       previewSubtitle?.querySelectorAll(".video-editor-overlay-line"),
     ).toHaveLength(1);
-    const pauseMarker = screen.getByRole("button", { name: /跳到停顿标记/ });
-    expect(pauseMarker.textContent).toMatch(/停顿 · \d+:\d{2}/);
-    expect(screen.getByRole("button", { name: /跳到字幕标记/ }).textContent).toMatch(/字幕 · \d+:\d{2}/);
-    expect(screen.getByRole("button", { name: /跳到标题标记/ }).textContent).toContain("标题 · 0:00");
-    fireEvent.click(pauseMarker);
-    expect(Number(timeline.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "向前浏览时间轴" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "向后浏览时间轴" })).toBeNull();
+    expect(screen.queryByTestId("filmstrip-surface")).toBeNull();
+    expect(screen.queryByLabelText("拖动画面快速定位")).toBeNull();
+    expect(screen.queryByRole("button", { name: /跳到.*标记/ })).toBeNull();
+    expect(screen.queryByText(/停顿 ·|字幕 ·|标题 ·/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "下载原片" })).toBeNull();
     fireEvent.click(primary);
     const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
     expect(within(drawer).getByText("这是一段待人工确认的字幕")).toBeTruthy();

@@ -236,12 +236,19 @@ class TestCandidatesSearch:
         assert resp.status_code == 422  # Pydantic validation: le=100
 
     def test_search_respects_page(self, client: TestClient):
-        first = client.post("/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 1})
-        second = client.post("/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 2})
+        first = client.post(
+            "/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 1}
+        )
+        second = client.post(
+            "/api/v1/candidates/search", json={"keyword": "", "limit": 1, "page": 2}
+        )
         assert first.status_code == 200
         assert second.status_code == 200
         if first.json()["total"] > 1:
-            assert first.json()["items"][0]["video_id"] != second.json()["items"][0]["video_id"]
+            assert (
+                first.json()["items"][0]["video_id"]
+                != second.json()["items"][0]["video_id"]
+            )
 
     def test_search_limit_zero(self, client: TestClient):
         resp = client.post(
@@ -481,8 +488,12 @@ class TestPipelines:
 
     def test_delete_all_pipeline_history(self, client: TestClient):
         repository = MockRepository(candidates=[], tasks=[])
-        repository.save_pipeline_run(PipelineRun(run_id="pipeline-clear-1", keyword="待清空 1"))
-        repository.save_pipeline_run(PipelineRun(run_id="pipeline-clear-2", keyword="待清空 2"))
+        repository.save_pipeline_run(
+            PipelineRun(run_id="pipeline-clear-1", keyword="待清空 1")
+        )
+        repository.save_pipeline_run(
+            PipelineRun(run_id="pipeline-clear-2", keyword="待清空 2")
+        )
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
         try:
             deleted = client.delete("/api/v1/pipelines")
@@ -754,12 +765,11 @@ class TestCrawlerBatches:
                         running=self.running,
                         login_required=not self.running,
                         ready_to_crawl=self.running,
-                        phase=(
-                            "ready" if self.running else "waiting_login"
-                        ),
+                        phase=("ready" if self.running else "waiting_login"),
                         message=(
                             "小红书已登录，可开始找素材。"
-                            if self.running else "小红书当前未登录，请先完成扫码。"
+                            if self.running
+                            else "小红书当前未登录，请先完成扫码。"
                         ),
                     )
                 return SimpleNamespace(
@@ -936,8 +946,8 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
         )
-        app.dependency_overrides[backend_deps.get_bilibili_browser_provider] = (
-            lambda: bilibili_provider
+        app.dependency_overrides[backend_deps.get_bilibili_browser_provider] = lambda: (
+            bilibili_provider
         )
         app.dependency_overrides[backend_deps.get_bilibili_browser_search_service] = (
             lambda: bilibili_service
@@ -954,23 +964,23 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_douyin_public_browser_provider] = (
             lambda: douyin_public_provider
         )
-        app.dependency_overrides[
-            backend_deps.get_douyin_public_search_service
-        ] = lambda: douyin_public_service
+        app.dependency_overrides[backend_deps.get_douyin_public_search_service] = (
+            lambda: douyin_public_service
+        )
         app.dependency_overrides[
             backend_deps.get_xiaohongshu_browser_search_service
         ] = lambda: xiaohongshu_service
-        app.dependency_overrides[backend_deps.get_kuaishou_browser_provider] = (
-            lambda: kuaishou_provider
+        app.dependency_overrides[backend_deps.get_kuaishou_browser_provider] = lambda: (
+            kuaishou_provider
         )
-        app.dependency_overrides[
-            backend_deps.get_kuaishou_browser_search_service
-        ] = lambda: kuaishou_service
-        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
-            lambda: hotspot_provider
+        app.dependency_overrides[backend_deps.get_kuaishou_browser_search_service] = (
+            lambda: kuaishou_service
         )
-        app.dependency_overrides[backend_deps.get_hotspot_search_service] = (
-            lambda: hotspot_service
+        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = lambda: (
+            hotspot_provider
+        )
+        app.dependency_overrides[backend_deps.get_hotspot_search_service] = lambda: (
+            hotspot_service
         )
         app.dependency_overrides[backend_deps.get_official_hot_billboard_adapter] = (
             lambda: FakeOfficialAdapter("douyin_hot_billboard")
@@ -1343,12 +1353,12 @@ class TestCrawlerBatches:
         def unexpected_hotspot_dependency():
             raise AssertionError("常规找素材不应解析热点宝依赖")
 
-        app.dependency_overrides[
-            backend_deps.get_hotspot_browser_provider
-        ] = unexpected_hotspot_dependency
-        app.dependency_overrides[
-            backend_deps.get_hotspot_search_service
-        ] = unexpected_hotspot_dependency
+        app.dependency_overrides[backend_deps.get_hotspot_browser_provider] = (
+            unexpected_hotspot_dependency
+        )
+        app.dependency_overrides[backend_deps.get_hotspot_search_service] = (
+            unexpected_hotspot_dependency
+        )
         try:
             capabilities = client.get("/api/v1/crawler/capabilities")
             preview = client.post(
@@ -1384,9 +1394,7 @@ class TestCrawlerBatches:
         assert created.status_code == 200
         created_data = created.json()
         assert created_data["platforms"] == ["douyin"]
-        assert [run["platform"] for run in created_data["platform_runs"]] == [
-            "douyin"
-        ]
+        assert [run["platform"] for run in created_data["platform_runs"]] == ["douyin"]
         assert created_data["hotspot_window_hours"] is None
 
     def test_create_and_read_persistent_batch(
@@ -1442,13 +1450,15 @@ class TestCrawlerBatches:
         first_run = detail["platform_runs"][0]
         assert first_run["relevant_count"] == first_run["returned_count"]
         assert "irrelevant_count" in first_run
-        assert first_run["relevance_rule_version"] == "platform_search_final_eligible_v3"
+        assert (
+            first_run["relevance_rule_version"] == "platform_search_final_eligible_v3"
+        )
 
         list_resp = client.get("/api/v1/crawler/batches")
         assert list_resp.status_code == 200
         assert any(item["batch_id"] == batch_id for item in list_resp.json()["items"])
 
-    def test_bilibili_public_detail_enrichment_is_limited_to_top_ten(
+    def test_bilibili_public_detail_enrichment_is_batched_beyond_top_ten(
         self,
         client: TestClient,
         crawler_sandbox,
@@ -1467,14 +1477,15 @@ class TestCrawlerBatches:
         run = response.json()["platform_runs"][0]
         assert run["platform"] == "bilibili"
         assert len(run["candidates"]) == 12
-        assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls) == 1
+        assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls) == 2
         assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls[0]) == 10
-        assert "B站公开详情已补全前 10 条：成功 10 条" in run["payload_diagnostic"]
+        assert len(crawler_sandbox.bilibili_metrics_provider.refresh_calls[1]) == 2
+        assert "B站公开详情已补全前 12 条：成功 12 条" in run["payload_diagnostic"]
 
         enriched = [item for item in run["candidates"] if item["likes"] is not None]
         not_enriched = [item for item in run["candidates"] if item["likes"] is None]
-        assert len(enriched) == 10
-        assert len(not_enriched) == 2
+        assert len(enriched) == 12
+        assert len(not_enriched) == 0
         assert all(item["comments"] is not None for item in enriched)
         assert all(item["shares"] is not None for item in enriched)
         assert all(item["favorites"] is not None for item in enriched)
@@ -1838,8 +1849,10 @@ class TestCopywriting:
         assert data["mode"] == "sandbox"
         assert data["supported_platforms"] == [
             "douyin",
+            "kuaishou",
             "xiaohongshu",
             "wechat_channels",
+            "bilibili",
         ]
         assert data["billing_label"] == "平台服务价"
         assert data["input_price_credits_per_1k_tokens"] == "0.0015"
@@ -2201,7 +2214,9 @@ class TestPublish:
                 is_mock=False,
             )
         )
-        monkeypatch.setattr(publish_api, "PUBLISH_ASSET_DIR", tmp_path / "publish-assets")
+        monkeypatch.setattr(
+            publish_api, "PUBLISH_ASSET_DIR", tmp_path / "publish-assets"
+        )
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
         try:
             listed = client.get("/api/v1/publish/assets")
@@ -2209,7 +2224,10 @@ class TestPublish:
             data = listed.json()
             assert data["total"] == 1
             assert data["items"][0]["path"] == str(result_path.resolve())
-            assert data["items"][0]["recommended_title"] == "机器人也失业，如今到底谁输谁赢？"
+            assert (
+                data["items"][0]["recommended_title"]
+                == "机器人也失业，如今到底谁输谁赢？"
+            )
             assert data["items"][0]["source_text"] == "你发现没，机器人最近也被裁员了。"
             assert data["items"][0]["media_url"] == (
                 "/api/v1/video-editor/sources/avatar%3Aavatar-publish-1/media"
@@ -2281,10 +2299,15 @@ class TestPublish:
         try:
             batch = service.create_batch(
                 video_path="/some/video.mp4",
-                targets=[PublishTarget(platform=PublishPlatform.DOUYIN, title="验证后继续")],
+                targets=[
+                    PublishTarget(platform=PublishPlatform.DOUYIN, title="验证后继续")
+                ],
             )
             task = batch["tasks"][0].model_copy(
-                update={"status": TaskStatus.PAUSED, "publish_status": PublishStatus.ACTION_REQUIRED}
+                update={
+                    "status": TaskStatus.PAUSED,
+                    "publish_status": PublishStatus.ACTION_REQUIRED,
+                }
             )
             service.repository.save_task(task)
             resp = client.post(f"/api/v1/publish/tasks/{task.task_id}/resume")
@@ -2353,11 +2376,15 @@ class TestPublish:
 
             second = service.publish(
                 video_path="/some/video.mp4",
-                target=PublishTarget(platform=PublishPlatform.DOUYIN, title="批量删除 A"),
+                target=PublishTarget(
+                    platform=PublishPlatform.DOUYIN, title="批量删除 A"
+                ),
             )
             third = service.publish(
                 video_path="/some/video.mp4",
-                target=PublishTarget(platform=PublishPlatform.KUAISHOU, title="批量删除 B"),
+                target=PublishTarget(
+                    platform=PublishPlatform.KUAISHOU, title="批量删除 B"
+                ),
             )
             batch = client.post(
                 "/api/v1/publish/tasks/delete-batch",
@@ -2385,13 +2412,16 @@ class TestPublish:
             assert data["is_mock"] is True
             assert data["title"].startswith("【演示】")
             assert data["description"].startswith("【演示结果】")
+            assert data["platforms"]["douyin"]["title"] == data["title"]
             task = service.get_task(data["task_id"])
             assert task is not None
             assert task.source_task_id == "copy-source-1"
         finally:
             app.dependency_overrides.pop(backend_deps.get_copywriting_service, None)
 
-    def test_generate_publish_metadata_rejects_engine_input_over_limit(self, client: TestClient):
+    def test_generate_publish_metadata_rejects_engine_input_over_limit(
+        self, client: TestClient
+    ):
         service = CopywritingService(MockRepository(), SandboxCopywritingEngine())
         app.dependency_overrides[backend_deps.get_copywriting_service] = lambda: service
         try:
@@ -2459,11 +2489,28 @@ class TestPublish:
             app.dependency_overrides.pop(backend_deps.get_publish_service, None)
         assert resp.status_code == 400
 
-    def test_confirmed_douyin_batch_authorizes_only_that_task(self):
+    def test_confirmed_batch_authorizes_automatic_platforms_with_distinct_content(self):
         body = publish_api.PublishBatchRequest(
             video_path="/some/video.mp4",
-            platforms=["douyin", "kuaishou"],
+            platforms=["douyin", "kuaishou", "xiaohongshu"],
             title="自动发布边界",
+            platform_contents={
+                "douyin": {
+                    "title": "抖音标题",
+                    "description": "抖音正文",
+                    "tags": ["抖音"],
+                },
+                "kuaishou": {
+                    "title": "快手标题",
+                    "description": "快手正文",
+                    "tags": ["快手"],
+                },
+                "xiaohongshu": {
+                    "title": "小红书标题",
+                    "description": "小红书正文",
+                    "tags": ["小红书"],
+                },
+            },
             native_music_mode="auto_recommended",
             native_music_hint="商业表达 平稳",
             confirmation_accepted=True,
@@ -2473,10 +2520,14 @@ class TestPublish:
 
         assert targets[0].platform == PublishPlatform.DOUYIN
         assert targets[0].auto_publish_authorized is True
+        assert targets[0].title == "抖音标题"
         assert targets[0].native_music_mode == "auto_recommended"
         assert targets[0].native_music_hint == "商业表达 平稳"
-        assert targets[1].auto_publish_authorized is False
+        assert targets[1].auto_publish_authorized is True
+        assert targets[1].title == "快手标题"
+        assert targets[1].description == "快手正文"
         assert targets[1].native_music_mode == "off"
+        assert targets[2].auto_publish_authorized is False
 
     def test_publish_config_can_be_saved_to_root_env(
         self,

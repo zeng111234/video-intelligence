@@ -33,19 +33,22 @@ SUPPORTED_COPYWRITING_PLATFORMS = {
 }
 
 METADATA_ORIGINAL_NOTE = (
-    "本脚本基于标题/热点词/互动数据原创生成，不是原视频转写，"
-    "使用前请人工复核。"
+    "本脚本基于标题/热点词/互动数据原创生成，不是原视频转写，使用前请人工复核。"
 )
 
 COMPLIANCE_RISK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (
         "收益或效果承诺",
-        re.compile(r"(?:月入|日入|年入|赚[到]?)[0-9一二三四五六七八九十百千万wW]+(?:元|万|w|W)?|稳赚|躺赚|保本"),
+        re.compile(
+            r"(?:月入|日入|年入|赚[到]?)[0-9一二三四五六七八九十百千万wW]+(?:元|万|w|W)?|稳赚|躺赚|保本"
+        ),
         "已将收益或效果承诺改为个人经历或条件性表达。",
     ),
     (
         "绝对化保证",
-        re.compile(r"百分之百|100%|一定(?:能|会|有效|成功|赚钱)|保证(?:有效|成功|成交|赚钱)|必定|绝不"),
+        re.compile(
+            r"百分之百|100%|一定(?:能|会|有效|成功|赚钱)|保证(?:有效|成功|成交|赚钱)|必定|绝不"
+        ),
         "已弱化绝对化、保证性表述。",
     ),
     (
@@ -60,7 +63,9 @@ COMPLIANCE_RISK_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ),
     (
         "平台敏感营销用语",
-        re.compile(r"加(?:微信|微|V)|扫码加|二维码加|点击(?:下方)?链接|全网(?:最低|第一)|史上最|最强|顶级"),
+        re.compile(
+            r"加(?:微信|微|V)|扫码加|二维码加|点击(?:下方)?链接|全网(?:最低|第一)|史上最|最强|顶级"
+        ),
         "已清理常见的导流、夸大或排名式营销用语。",
     ),
 )
@@ -138,14 +143,11 @@ class CopywritingService:
                 + int(token_usage.get("prompt_cache_miss_tokens", 0)),
             )
         completion_tokens = max(0, int(token_usage.get("completion_tokens", 0)))
-        return (
-            Decimal(prompt_tokens)
-            * get_price(COPYWRITING_INPUT_PRICE_KEY)
-            / Decimal("1000")
-            + Decimal(completion_tokens)
-            * get_price(COPYWRITING_OUTPUT_PRICE_KEY)
-            / Decimal("1000")
-        )
+        return Decimal(prompt_tokens) * get_price(
+            COPYWRITING_INPUT_PRICE_KEY
+        ) / Decimal("1000") + Decimal(completion_tokens) * get_price(
+            COPYWRITING_OUTPUT_PRICE_KEY
+        ) / Decimal("1000")
 
     def _charge_token_usage(
         self,
@@ -162,7 +164,11 @@ class CopywritingService:
                 return max(0.0, float(getattr(self.engine, "last_charged_credits", 0)))
             except (TypeError, ValueError):
                 return 0.0
-        from src.services.credits import CreditsService, cny_to_credits, get_current_owner
+        from src.services.credits import (
+            CreditsService,
+            cny_to_credits,
+            get_current_owner,
+        )
 
         raw_cost = self.token_cost_cny(token_usage)
         charged = cny_to_credits(raw_cost)
@@ -221,7 +227,9 @@ class CopywritingService:
             raise RuntimeError("AI 返回的胜出文案不在本次候选中。")
         return {
             "winner_id": winner_id,
-            "reason": str(decision.get("reason") or "综合口播适配度最高。").strip()[:160],
+            "reason": str(decision.get("reason") or "综合口播适配度最高。").strip()[
+                :160
+            ],
         }
 
     def audit_spoken_script(
@@ -256,7 +264,9 @@ class CopywritingService:
                 issues.append(
                     {
                         "severity": "block" if severity == "block" else "warning",
-                        "category": str(item.get("category") or "文案建议").strip()[:40],
+                        "category": str(item.get("category") or "文案建议").strip()[
+                            :40
+                        ],
                         "message": message,
                     }
                 )
@@ -266,14 +276,20 @@ class CopywritingService:
         return {
             "status": "mock" if bool(reviewed.get("is_mock")) else "completed",
             "approved": approved,
-            "summary": str(reviewed.get("summary") or "请人工核对文案内容。").strip()[:160],
+            "summary": str(reviewed.get("summary") or "请人工核对文案内容。").strip()[
+                :160
+            ],
             "issues": issues,
         }
 
     @staticmethod
     def _risk_categories(texts: list[str]) -> list[str]:
         combined = "\n".join(texts)
-        return [category for category, pattern, _ in COMPLIANCE_RISK_RULES if pattern.search(combined)]
+        return [
+            category
+            for category, pattern, _ in COMPLIANCE_RISK_RULES
+            if pattern.search(combined)
+        ]
 
     @staticmethod
     def _compliance_hint(categories: list[str]) -> str:
@@ -291,12 +307,20 @@ class CopywritingService:
         result = re.sub(r"[\W_]+", "", result_text.lower())
         if not source or not result:
             return 0.0, 0.0
-        sequence_similarity = SequenceMatcher(None, source, result, autojunk=False).ratio()
+        sequence_similarity = SequenceMatcher(
+            None, source, result, autojunk=False
+        ).ratio()
         ngram_size = 8
         if min(len(source), len(result)) < ngram_size:
             return sequence_similarity, 0.0
-        source_ngrams = {source[index : index + ngram_size] for index in range(len(source) - ngram_size + 1)}
-        result_ngrams = {result[index : index + ngram_size] for index in range(len(result) - ngram_size + 1)}
+        source_ngrams = {
+            source[index : index + ngram_size]
+            for index in range(len(source) - ngram_size + 1)
+        }
+        result_ngrams = {
+            result[index : index + ngram_size]
+            for index in range(len(result) - ngram_size + 1)
+        }
         overlap = len(source_ngrams & result_ngrams) / max(1, len(result_ngrams))
         return sequence_similarity, overlap
 
@@ -731,17 +755,46 @@ class CopywritingService:
             metadata = generator(source_text, platforms=platforms or [])
             if not isinstance(metadata, dict):
                 raise RuntimeError("LLM 未返回有效的发布信息。")
-            title = str(metadata.get("title") or "").strip()[:100]
-            description = str(metadata.get("description") or "").strip()[:1000]
-            raw_tags = metadata.get("tags")
-            tags = (
-                list(dict.fromkeys(str(item).strip().lstrip("#")[:30] for item in raw_tags if str(item).strip()))[:8]
-                if isinstance(raw_tags, list)
-                else []
-            )
-            if not title or not description:
-                raise RuntimeError("LLM 未返回完整的标题和发布描述。")
-            result = {"title": title, "description": description, "tags": tags}
+            requested_platforms = list(
+                dict.fromkeys(
+                    str(item).strip() for item in (platforms or []) if str(item).strip()
+                )
+            ) or ["douyin"]
+
+            def normalize_content(raw: object) -> dict[str, object]:
+                item = raw if isinstance(raw, dict) else {}
+                title = str(item.get("title") or "").strip()[:100]
+                description = str(item.get("description") or "").strip()[:1000]
+                raw_tags = item.get("tags")
+                tags = (
+                    list(
+                        dict.fromkeys(
+                            str(tag).strip().lstrip("#")[:30]
+                            for tag in raw_tags
+                            if str(tag).strip()
+                        )
+                    )[:8]
+                    if isinstance(raw_tags, list)
+                    else []
+                )
+                if not title or not description:
+                    raise RuntimeError("LLM 未返回完整的标题和发布描述。")
+                return {"title": title, "description": description, "tags": tags}
+
+            raw_platforms = metadata.get("platforms")
+            platform_results: dict[str, dict[str, object]] = {}
+            if isinstance(raw_platforms, dict):
+                for platform in requested_platforms:
+                    platform_results[platform] = normalize_content(
+                        raw_platforms.get(platform)
+                    )
+            else:
+                shared = normalize_content(metadata)
+                platform_results = {
+                    platform: dict(shared) for platform in requested_platforms
+                }
+            first = platform_results[requested_platforms[0]]
+            result = {**first, "platforms": platform_results}
             token_usage = self._last_usage()
             charged_credits = self._charge_token_usage(
                 capability=cap,
@@ -757,7 +810,7 @@ class CopywritingService:
                     "token_usage": token_usage,
                     "charged_credits": charged_credits,
                     "result_text": json.dumps(result, ensure_ascii=False),
-                    "result_variants": [description],
+                    "result_variants": [str(first["description"])],
                 }
             )
             self._save(task, None)
@@ -835,7 +888,9 @@ class CopywritingService:
             latest_attention_terms: list[str] = []
 
             def run(retry_hint: str) -> list[str]:
-                goal = "；".join(item for item in [rewrite_goal.strip(), retry_hint] if item)
+                goal = "；".join(
+                    item for item in [rewrite_goal.strip(), retry_hint] if item
+                )
                 results = self.engine.rewrite(
                     source_text,
                     platform=platform_enum.value,
@@ -850,10 +905,18 @@ class CopywritingService:
                 raw_attention_terms = getattr(self.engine, "last_attention_terms", [])
                 latest_attention_terms.clear()
                 if isinstance(raw_attention_terms, list):
-                    latest_attention_terms.extend(str(item) for item in raw_attention_terms)
+                    latest_attention_terms.extend(
+                        str(item) for item in raw_attention_terms
+                    )
                 return results
 
-            results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
+            (
+                results,
+                compliance_status,
+                compliance_notes,
+                compliance_rewritten,
+                compliance_retry_used,
+            ) = self._run_with_compliance(
                 source_texts=[source_text],
                 run=run,
                 dedup_source=source_text,
@@ -971,7 +1034,9 @@ class CopywritingService:
             )
 
             def run(retry_hint: str) -> list[str]:
-                prompt = "\n".join(item for item in [style_prompt.strip(), retry_hint] if item)
+                prompt = "\n".join(
+                    item for item in [style_prompt.strip(), retry_hint] if item
+                )
                 results = self.engine.generate(
                     content_brief=content_brief,
                     platform=platform_enum.value,
@@ -987,10 +1052,18 @@ class CopywritingService:
                 raw_attention_terms = getattr(self.engine, "last_attention_terms", [])
                 latest_attention_terms.clear()
                 if isinstance(raw_attention_terms, list):
-                    latest_attention_terms.extend(str(item) for item in raw_attention_terms)
+                    latest_attention_terms.extend(
+                        str(item) for item in raw_attention_terms
+                    )
                 return results
 
-            results, compliance_status, compliance_notes, compliance_rewritten, compliance_retry_used = self._run_with_compliance(
+            (
+                results,
+                compliance_status,
+                compliance_notes,
+                compliance_rewritten,
+                compliance_retry_used,
+            ) = self._run_with_compliance(
                 source_texts=[content_brief, selling_points, call_to_action],
                 run=run,
                 fallback_results=[fallback_text],

@@ -64,7 +64,11 @@ def _style_directives(style_prompt: str) -> list[str]:
 
 def _deduplication_directives(style_prompt: str) -> list[str]:
     """Extract the single-copy rewrite depth chosen by the AI-copy page."""
-    return [directive for label, directive in DEDUPLICATION_DIRECTIVES if label in style_prompt]
+    return [
+        directive
+        for label, directive in DEDUPLICATION_DIRECTIVES
+        if label in style_prompt
+    ]
 
 
 def _variant_strategy_instructions(variant_count: int) -> list[str]:
@@ -198,7 +202,9 @@ class SandboxCopywritingEngine:
                 "最后再留一个动作。\n"
                 "想看具体做法，评论区告诉我。"
             ]
-        style = _style_directives(style_prompt) or _deduplication_directives(style_prompt)
+        style = _style_directives(style_prompt) or _deduplication_directives(
+            style_prompt
+        )
         style_lead = style[0] if style else "用自然、清晰的口播表达。"
         templates = [
             f"【演示·问题反差】你明明在讲「{snippet}」，为什么目标客户还是划走？\n别急着加信息，先抓住{target_audience or '他们'}真正关心的问题。{style_lead}\n{selling_points or '把核心价值讲清楚。'}\n{call_to_action or '欢迎私信了解更多。'}",
@@ -221,7 +227,9 @@ class SandboxCopywritingEngine:
         variant_count: int = 1,
     ) -> list[str]:
         snippet = source_text[:80].replace("\n", " ")
-        style = _style_directives(style_prompt) or _deduplication_directives(style_prompt)
+        style = _style_directives(style_prompt) or _deduplication_directives(
+            style_prompt
+        )
         style_lead = style[0] if style else "保持自然、清晰的口播节奏。"
         templates = [
             f"【演示·问题反差】明明内容不少，为什么「{snippet}」还是让人听不进去？\n问题往往不在信息少，而在重点出现得太晚。{style_lead}\n先讲用户最在意的一点，再补充说明。",
@@ -354,9 +362,7 @@ class OpenAICompatibleCopywritingEngine:
             "supports_variants": True,
             "max_variants": 5,
             "model": self.model,
-            "estimated_cost_cny": (
-                self.estimated_cost_cny if configured else None
-            ),
+            "estimated_cost_cny": (self.estimated_cost_cny if configured else None),
             "missing_configuration": [] if configured else ["COPYWRITING_API_KEY"],
         }
 
@@ -428,13 +434,35 @@ class OpenAICompatibleCopywritingEngine:
         """Produce bounded publish metadata from user-provided source facts only."""
         if not self.api_key:
             raise LLMAdapterError("未配置 COPYWRITING_API_KEY，无法调用 LLM。")
-        platforms = [str(item) for item in kwargs.get("platforms", []) if str(item)]
+        platforms = list(
+            dict.fromkeys(
+                str(item) for item in kwargs.get("platforms", []) if str(item)
+            )
+        ) or ["douyin"]
+        platform_rules = {
+            "douyin": "抖音：标题简短有钩子，正文自然，话题精准",
+            "kuaishou": "快手：标题直接接地气，正文说明清楚，不夸大",
+            "xiaohongshu": "小红书：标题有信息量，正文分段自然，话题便于检索",
+            "wechat_channels": "视频号：标题稳重清楚，正文适合微信生态阅读",
+            "bilibili": "B站：标题信息完整，正文说明内容看点，标签准确",
+        }
+        schema = {
+            "platforms": {
+                platform: {
+                    "title": "不超过100字",
+                    "description": "不超过1000字",
+                    "tags": ["不带#的话题", "最多8个"],
+                }
+                for platform in platforms
+            }
+        }
         system_prompt = "\n".join(
             [
                 "你是企业短视频发布助手。只能使用用户提供的事实，不得编造价格、资质、案例、数据、效果、平台背书或审核承诺。",
-                "输出适合短视频平台的标题、描述和话题标签；表达清晰、克制，不能承诺收益或效果。",
+                "为每个目标平台分别输出标题、描述和话题标签；各平台文案必须独立适配，表达清晰、克制，不能承诺收益或效果。",
+                *[platform_rules[item] for item in platforms if item in platform_rules],
                 "只返回严格 JSON，不要 Markdown 或解释。",
-                'JSON 格式：{"title":"不超过100字","description":"不超过1000字","tags":["不带#的话题", "最多8个"]}',
+                f"JSON 格式：{json.dumps(schema, ensure_ascii=False)}",
             ]
         )
         user_prompt = "\n".join(
@@ -451,17 +479,30 @@ class OpenAICompatibleCopywritingEngine:
             raise LLMAdapterError("LLM 未返回有效的发布信息 JSON。") from exc
         if not isinstance(payload, dict):
             raise LLMAdapterError("LLM 未返回有效的发布信息对象。")
-        title = str(payload.get("title") or "").strip()[:100]
-        description = str(payload.get("description") or "").strip()[:1000]
-        raw_tags = payload.get("tags")
-        tags = (
-            list(dict.fromkeys(str(item).strip().lstrip("#")[:30] for item in raw_tags if str(item).strip()))[:8]
-            if isinstance(raw_tags, list)
-            else []
-        )
-        if not title or not description:
-            raise LLMAdapterError("LLM 未返回完整的标题和发布描述。")
-        return {"title": title, "description": description, "tags": tags}
+        raw_platforms = payload.get("platforms")
+        if not isinstance(raw_platforms, dict):
+            # 兼容尚未升级的远端提供方；服务层会将这份结果复制为各平台草稿。
+            title = str(payload.get("title") or "").strip()[:100]
+            description = str(payload.get("description") or "").strip()[:1000]
+            raw_tags = payload.get("tags")
+            tags = (
+                list(
+                    dict.fromkeys(
+                        str(item).strip().lstrip("#")[:30]
+                        for item in raw_tags
+                        if str(item).strip()
+                    )
+                )[:8]
+                if isinstance(raw_tags, list)
+                else []
+            )
+            if not title or not description:
+                raise LLMAdapterError("LLM 未返回完整的标题和发布描述。")
+            return {"title": title, "description": description, "tags": tags}
+        for platform in platforms:
+            if not isinstance(raw_platforms.get(platform), dict):
+                raise LLMAdapterError(f"LLM 未返回{platform}的完整发布信息。")
+        return {"platforms": raw_platforms}
 
     def review_transcript_candidates(
         self,
@@ -559,7 +600,9 @@ class OpenAICompatibleCopywritingEngine:
             payload = json.loads(cleaned)
         except json.JSONDecodeError as exc:
             raise LLMAdapterError("LLM 未返回有效的批量转写复核 JSON。") from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("corrections"), list):
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("corrections"), list
+        ):
             raise LLMAdapterError("LLM 未返回有效的批量转写复核对象。")
         target_indexes = {item["index"] for item in targets}
         corrections: list[dict[str, Any]] = []
@@ -607,8 +650,7 @@ class OpenAICompatibleCopywritingEngine:
                 "text": str(item.get("text") or "").strip()[:12000],
             }
             for item in candidates
-            if str(item.get("id") or "").strip()
-            and str(item.get("text") or "").strip()
+            if str(item.get("id") or "").strip() and str(item.get("text") or "").strip()
         ]
         if not normalized:
             raise LLMAdapterError("没有可供 AI 择优的有效转写文案。")
@@ -701,7 +743,9 @@ class OpenAICompatibleCopywritingEngine:
                 issues.append(
                     {
                         "severity": "block" if severity == "block" else "warning",
-                        "category": str(item.get("category") or "文案建议").strip()[:40],
+                        "category": str(item.get("category") or "文案建议").strip()[
+                            :40
+                        ],
                         "message": message,
                     }
                 )
@@ -710,7 +754,9 @@ class OpenAICompatibleCopywritingEngine:
         )
         return {
             "approved": approved,
-            "summary": str(payload.get("summary") or "请人工核对文案内容。").strip()[:160],
+            "summary": str(payload.get("summary") or "请人工核对文案内容。").strip()[
+                :160
+            ],
             "issues": issues,
         }
 
@@ -752,15 +798,21 @@ class OpenAICompatibleCopywritingEngine:
         if target_audience:
             parts.append(f"目标受众：{target_audience}")
         else:
-            parts.append("请根据输入的产品、场景、痛点和表达方式自动判断最适合的受众，并据此调整措辞；不要输出受众分析。")
+            parts.append(
+                "请根据输入的产品、场景、痛点和表达方式自动判断最适合的受众，并据此调整措辞；不要输出受众分析。"
+            )
         parts.append(f"语气：{tone}")
         count = max(1, min(variant_count, 5))
         parts.append(f"变体数量：{count}")
         if count == 1:
             parts.append("只输出一篇完成度高、可直接使用的文案，不提供备选版本。")
         else:
-            parts.append("每个变体都要有实质差异：开头角度、信息顺序和推进结构必须不同，不能只是替换同义词。")
-            parts.append("同一批中不得复用相同的首句、相同的论证顺序或相同的行动引导句。")
+            parts.append(
+                "每个变体都要有实质差异：开头角度、信息顺序和推进结构必须不同，不能只是替换同义词。"
+            )
+            parts.append(
+                "同一批中不得复用相同的首句、相同的论证顺序或相同的行动引导句。"
+            )
             parts.append("逐版差异化策略（按数组顺序输出，不要把策略标题写进文案）：")
             parts.extend(_variant_strategy_instructions(count))
         return "\n".join(parts)

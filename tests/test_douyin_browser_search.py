@@ -420,6 +420,94 @@ def test_public_search_selects_and_confirms_multi_column_layout():
     assert outcome.warning is None
 
 
+def test_public_search_selects_and_confirms_video_filter():
+    class VideoLocator:
+        def __init__(self, page):
+            self.page = page
+
+        def count(self):
+            return 1
+
+        def is_visible(self):
+            return True
+
+        def click(self, *, timeout):
+            assert timeout == 3000
+            self.page.url = "https://www.douyin.com/search/test?type=video"
+
+    class VideoPage:
+        url = "https://www.douyin.com/search/test?type=general"
+
+        def locator(self, selector):
+            assert selector == 'span[data-key="video"]'
+            return VideoLocator(self)
+
+        def wait_for_timeout(self, timeout):
+            assert timeout == 800
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_video_filter(
+        VideoPage()
+    )
+
+    assert outcome.receipt == "已应用平台筛选：视频"
+    assert outcome.warning is None
+
+
+def test_public_search_waits_for_delayed_video_filter():
+    class VideoLocator:
+        def __init__(self, page):
+            self.page = page
+
+        def count(self):
+            return 1 if self.page.polls >= 2 else 0
+
+        def is_visible(self):
+            return True
+
+        def click(self, *, timeout):
+            assert timeout == 3000
+            self.page.url = "https://www.douyin.com/jingxuan/search/test?type=video"
+
+    class DelayedVideoPage:
+        url = "https://www.douyin.com/jingxuan/search/test?type=general"
+        polls = 0
+        waits = []
+
+        def locator(self, selector):
+            assert selector == 'span[data-key="video"]'
+            self.polls += 1
+            return VideoLocator(self)
+
+        def wait_for_timeout(self, timeout):
+            self.waits.append(timeout)
+
+    page = DelayedVideoPage()
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_video_filter(page)
+
+    assert outcome.receipt == "已应用平台筛选：视频"
+    assert outcome.warning is None
+    assert page.waits == [500, 800]
+
+
+def test_public_search_stops_if_video_filter_cannot_be_confirmed():
+    class MissingLocator:
+        def count(self):
+            return 0
+
+    class MissingVideoPage:
+        url = "https://www.douyin.com/search/test?type=general"
+
+        def locator(self, _selector):
+            return MissingLocator()
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_video_filter(
+        MissingVideoPage()
+    )
+
+    assert outcome.error_code == "public_search_video_filter_unavailable"
+    assert "避免混入图文" in outcome.warning
+
+
 def test_public_search_does_not_reclick_an_already_selected_multi_layout():
     page = _VisibleFilterPage({"多列": [{}], "单列": [{}]})
     page.selected_layout = "多列"
@@ -448,7 +536,7 @@ def test_public_search_waits_for_layout_controls_after_navigation():
     assert outcome.mode == "multi_column"
 
 
-def test_public_search_stops_when_multi_column_state_is_unconfirmed():
+def test_public_search_continues_when_multi_column_state_is_unconfirmed():
     page = _VisibleFilterPage(
         {"多列": [{}], "单列": [{}]},
         confirm_layout=False,
@@ -457,8 +545,18 @@ def test_public_search_stops_when_multi_column_state_is_unconfirmed():
     outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
 
     assert outcome.mode == "unconfirmed"
-    assert outcome.error_code == "public_search_multi_column_unconfirmed"
-    assert "没有显示多列为选中状态" in outcome.warning
+    assert outcome.error_code is None
+    assert outcome.warning is None
+
+
+def test_public_search_continues_when_layout_controls_are_missing():
+    page = _VisibleFilterPage({})
+
+    outcome = LocalDouyinBrowserSearchProvider._ensure_public_search_multi_column(page)
+
+    assert outcome.mode == "unconfirmed"
+    assert outcome.error_code is None
+    assert outcome.warning is None
 
 
 def test_public_search_does_not_map_legacy_three_days_to_one_week():
@@ -605,6 +703,14 @@ def test_public_search_confirms_multi_layout_then_filter_before_scrolling(
     monkeypatch.setattr(provider, "_random_delay_ms", lambda *_args: 1)
     monkeypatch.setattr(
         provider,
+        "_ensure_public_search_video_filter",
+        lambda _page: (
+            calls.append("video_filter")
+            or type("Outcome", (), {"receipt": "已应用", "warning": None})()
+        ),
+    )
+    monkeypatch.setattr(
+        provider,
         "_ensure_public_search_multi_column",
         lambda _page: (
             calls.append("layout")
@@ -635,7 +741,7 @@ def test_public_search_confirms_multi_layout_then_filter_before_scrolling(
 
     assert rows == []
     assert errors == []
-    assert calls == ["layout", "time_filter", "scroll"]
+    assert calls == ["video_filter", "layout", "time_filter", "scroll"]
 
 
 def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkeypatch):

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -63,6 +63,7 @@ import type {
   PublishAccount,
   PublishAsset,
   PublishPlatformCapability,
+  PublishPlatformContent,
   PublishPreflightResponse,
   PublishResponse,
   PublishSafetyItem,
@@ -75,6 +76,12 @@ const { TextArea } = Input;
 
 type PageStep = "configure" | "publish";
 type PublishStage = "select" | "review";
+
+const EMPTY_PLATFORM_CONTENT: PublishPlatformContent = {
+  title: "",
+  description: "",
+  tags: [],
+};
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -122,6 +129,25 @@ function inferDouyinMusicHint(title: string, description: string) {
 
 function platformLabel(platform: string) {
   return PLATFORM_LABELS[platform] || platform;
+}
+
+function readyAccountForPlatform(
+  accounts: PublishAccount[],
+  selectedAccountIds: Record<string, string>,
+  platform: string,
+) {
+  const selectedAccount = accounts.find((account) => account.account_id === selectedAccountIds[platform]);
+  if (selectedAccount?.platform === platform && selectedAccount.status === "ready") return selectedAccount;
+  return accounts.find((account) => account.platform === platform && account.status === "ready");
+}
+
+function platformAutomationNote(platform: string, nativeMusicHint: string) {
+  if (platform === "douyin") return `自动上传视频、填写文案并提交；原生配乐按“${nativeMusicHint}”匹配。`;
+  if (platform === "kuaishou") return "自动上传视频、填写作品描述并提交。";
+  if (platform === "wechat_channels") return "自动上传视频、填写标题和描述并提交。";
+  if (platform === "bilibili") return "自动上传视频、填写标题和简介并提交。";
+  if (platform === "xiaohongshu") return "自动上传视频并填写标题、正文和话题；最后由你在官方页面确认发布。";
+  return "按当前平台能力自动准备发布内容。";
 }
 
 function accountStatusMeta(status: string) {
@@ -200,11 +226,12 @@ export default function PublishPage() {
   const [tasks, setTasks] = useState<PublishResponse[]>([]);
   const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [platforms, setPlatforms] = useState<string[]>(["douyin"]);
+  const platformDefaultsInitialized = useRef(false);
+  const creatingBatchRef = useRef(false);
   const [videoPath, setVideoPath] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [platformContents, setPlatformContents] = useState<Record<string, PublishPlatformContent>>({});
+  const [activeContentPlatform, setActiveContentPlatform] = useState("douyin");
   const [tagInput, setTagInput] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
   const [metadataLoading, setMetadataLoading] = useState(false);
   const [metadataGenerated, setMetadataGenerated] = useState(false);
   const [metadataConfirmOpen, setMetadataConfirmOpen] = useState(false);
@@ -240,6 +267,34 @@ export default function PublishPage() {
     [assets, videoPath],
   );
 
+  const activeContent = platformContents[activeContentPlatform] || EMPTY_PLATFORM_CONTENT;
+
+  const updatePlatformContent = useCallback(
+    (platform: string, patch: Partial<PublishPlatformContent>) => {
+      setPlatformContents((current) => ({
+        ...current,
+        [platform]: {
+          ...(current[platform] || EMPTY_PLATFORM_CONTENT),
+          ...patch,
+        },
+      }));
+      setPreflight(null);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!platforms.length) return;
+    setActiveContentPlatform((current) => platforms.includes(current) ? current : platforms[0]);
+    setPlatformContents((current) => {
+      const next = { ...current };
+      platforms.forEach((platform) => {
+        if (!next[platform]) next[platform] = { ...EMPTY_PLATFORM_CONTENT };
+      });
+      return next;
+    });
+  }, [platforms]);
+
   const filteredAssets = useMemo(() => {
     const keyword = assetSearch.trim().toLowerCase();
     const filtered = keyword
@@ -264,6 +319,9 @@ export default function PublishPage() {
         if (account.status === "ready" && !result[account.platform]) result[account.platform] = account.account_id;
         return result;
       }, {});
+      const readyAutomaticPlatforms = platformData.platforms
+        .filter((platform) => !platform.manual_only && Boolean(readyByPlatform[platform.platform]))
+        .map((platform) => platform.platform);
       setAvailablePlatforms(platformData.platforms);
       setSelectedConfigPlatform((current) => (
         platformData.platforms.some((platform) => platform.platform === current)
@@ -281,6 +339,10 @@ export default function PublishPage() {
       setAccounts(accountData);
       setPublishSafety(safetyData);
       setSelectedAccountIds((current) => ({ ...readyByPlatform, ...Object.fromEntries(Object.entries(current).filter(([, id]) => accountData.some((account) => account.account_id === id && account.status === "ready"))) }));
+      if (!platformDefaultsInitialized.current) {
+        platformDefaultsInitialized.current = true;
+        setPlatforms((current) => readyAutomaticPlatforms.length ? readyAutomaticPlatforms : current);
+      }
       if (Object.keys(readyByPlatform).length) setPageStep("publish");
     } catch (error) {
       toast.error((error as Error).message || "加载发布数据失败");
@@ -299,7 +361,14 @@ export default function PublishPage() {
         setAssets((current) => [asset, ...current.filter((item) => item.path !== asset.path)]);
         setVideoPath(asset.path);
         setMetadataGenerated(false);
-        if (asset.recommended_title) setTitle((current) => current || asset.recommended_title || "");
+        if (asset.recommended_title) {
+          setPlatformContents((current) => Object.fromEntries(
+            Object.keys(PLATFORM_LABELS).map((platform) => [platform, {
+              ...(current[platform] || EMPTY_PLATFORM_CONTENT),
+              title: current[platform]?.title || asset.recommended_title || "",
+            }]),
+          ));
+        }
         setNativeMusicHint(asset.recommended_music_hint || "");
         setPageStep("publish");
         toast.success("已带入剪辑成片");
@@ -313,9 +382,12 @@ export default function PublishPage() {
     if (!raw) return;
     try {
       const draft = JSON.parse(raw) as { title?: string; description?: string; tags?: string[] };
-      setTitle(String(draft.title || "").slice(0, 100));
-      setDescription(String(draft.description || "").slice(0, 1000));
-      setTags(Array.isArray(draft.tags) ? draft.tags.map(String).filter(Boolean).slice(0, 8) : []);
+      const imported = {
+        title: String(draft.title || "").slice(0, 100),
+        description: String(draft.description || "").slice(0, 1000),
+        tags: Array.isArray(draft.tags) ? draft.tags.map(String).filter(Boolean).slice(0, 8) : [],
+      };
+      setPlatformContents(Object.fromEntries(Object.keys(PLATFORM_LABELS).map((platform) => [platform, { ...imported }])));
       setPreflight(null);
       setPageStep("publish");
       window.sessionStorage.removeItem("publish_ai_draft");
@@ -431,8 +503,8 @@ export default function PublishPage() {
 
   const addTag = () => {
     const normalized = tagInput.trim().replace(/^#/, "");
-    if (!normalized || tags.includes(normalized)) return;
-    setTags((current) => [...current, normalized]);
+    if (!normalized || activeContent.tags.includes(normalized)) return;
+    updatePlatformContent(activeContentPlatform, { tags: [...activeContent.tags, normalized] });
     setTagInput("");
   };
 
@@ -453,9 +525,19 @@ export default function PublishPage() {
         platforms,
         source_task_id: selectedAsset.source_task_id || undefined,
       });
-      setTitle(result.title.slice(0, 100));
-      setDescription(result.description.slice(0, 1000));
-      setTags(result.tags.map(String).filter(Boolean).slice(0, 8));
+      const fallback = {
+        title: result.title.slice(0, 100),
+        description: result.description.slice(0, 1000),
+        tags: result.tags.map(String).filter(Boolean).slice(0, 8),
+      };
+      setPlatformContents(Object.fromEntries(platforms.map((platform) => {
+        const generated = result.platforms?.[platform] || fallback;
+        return [platform, {
+          title: generated.title.slice(0, 100),
+          description: generated.description.slice(0, 1000),
+          tags: generated.tags.map(String).filter(Boolean).slice(0, 8),
+        }];
+      })));
       setPreflight(null);
       setMetadataGenerated(true);
       setMetadataConfirmOpen(false);
@@ -468,27 +550,36 @@ export default function PublishPage() {
   }, [platforms, selectedAsset, toast]);
 
   const confirmCreateBatch = async (currentAccountIds: Record<string, string>) => {
+    if (creatingBatchRef.current) return;
+    creatingBatchRef.current = true;
     setSubmitting(true);
     try {
+      const primaryContent = platformContents[platforms[0]] || EMPTY_PLATFORM_CONTENT;
       const batch = await createPublishBatch({
         video_path: videoPath,
         platforms,
-        title,
-        description,
-        tags,
+        title: primaryContent.title,
+        description: primaryContent.description,
+        tags: primaryContent.tags,
+        platform_contents: Object.fromEntries(platforms.map((platform) => [platform, platformContents[platform] || EMPTY_PLATFORM_CONTENT])),
         account_ids: currentAccountIds,
         native_music_mode: platforms.includes("douyin") ? "auto_recommended" : "off",
-        native_music_hint: nativeMusicHint || inferDouyinMusicHint(title, description),
+        native_music_hint: nativeMusicHint || inferDouyinMusicHint(
+          platformContents.douyin?.title || primaryContent.title,
+          platformContents.douyin?.description || primaryContent.description,
+        ),
         confirmation_accepted: true,
       });
       setTasks((current) => [...batch.tasks, ...current]);
       setPreflight(null);
+      setTaskDrawerOpen(true);
       toast.success(platforms.includes("xiaohongshu")
         ? "发布准备已创建；小红书会准备视频和文案，请在官方创作端检查后手动点击发布。"
-        : "发布任务已创建；系统会自动选抖音配乐并填写发布页");
+        : "发布任务已创建并开始处理；任务记录已打开，可查看上传和填写进度");
     } catch (error) {
       toast.error((error as Error).message || "创建发布任务失败");
     } finally {
+      creatingBatchRef.current = false;
       setSubmitting(false);
     }
   };
@@ -498,15 +589,21 @@ export default function PublishPage() {
       toast.error("请至少选择一个发布平台");
       return;
     }
-    if (!title.trim()) {
-      toast.error("请填写发布标题");
+    const missingTitlePlatform = platforms.find((platform) => !platformContents[platform]?.title.trim());
+    if (missingTitlePlatform) {
+      setActiveContentPlatform(missingTitlePlatform);
+      toast.error(`请填写${platformLabel(missingTitlePlatform)}发布标题`);
       return;
     }
     setSubmitting(true);
     try {
       const currentAccounts = await listPublishAccounts();
       setAccounts(currentAccounts);
-      const currentAccountIds = Object.fromEntries(platforms.map((platform) => [platform, selectedAccountIds[platform]]).filter(([, accountId]) => Boolean(accountId))) as Record<string, string>;
+      const currentAccountIds = Object.fromEntries(platforms.flatMap((platform) => {
+        const account = readyAccountForPlatform(currentAccounts, selectedAccountIds, platform);
+        return account ? [[platform, account.account_id]] : [];
+      })) as Record<string, string>;
+      setSelectedAccountIds((current) => ({ ...current, ...currentAccountIds }));
       const unavailable = platforms.find((platform) => {
         const capability = availablePlatforms.find((item) => item.platform === platform);
         if (capability && !capability.requires_account) return false;
@@ -519,15 +616,20 @@ export default function PublishPage() {
         toast.error(`${platformLabel(unavailable)}账号尚未核验，请重新扫码或核验`);
         return;
       }
+      const primaryContent = platformContents[platforms[0]] || EMPTY_PLATFORM_CONTENT;
       const result = await preflightPublish({
         video_path: videoPath,
         platforms,
-        title,
-        description,
-        tags,
+        title: primaryContent.title,
+        description: primaryContent.description,
+        tags: primaryContent.tags,
+        platform_contents: Object.fromEntries(platforms.map((platform) => [platform, platformContents[platform] || EMPTY_PLATFORM_CONTENT])),
         account_ids: currentAccountIds,
         native_music_mode: platforms.includes("douyin") ? "auto_recommended" : "off",
-        native_music_hint: nativeMusicHint || inferDouyinMusicHint(title, description),
+        native_music_hint: nativeMusicHint || inferDouyinMusicHint(
+          platformContents.douyin?.title || primaryContent.title,
+          platformContents.douyin?.description || primaryContent.description,
+        ),
       });
       setPreflight(result);
       if (result.blocked) {
@@ -542,7 +644,7 @@ export default function PublishPage() {
         title: "确认创建发布任务？",
         content: platforms.includes("xiaohongshu")
           ? "系统会上传视频并填写文案。小红书只会准备官方创作端，请你检查后手动点击发布；登录、验证码或风控验证也由你处理。结果不明确时系统会停止，不会重复发布。"
-          : "系统会上传视频、填写文案、自动选择抖音官方推荐配乐并提交发布。你只需在官方窗口完成登录、验证码或风控验证；结果不明确时系统会停止，不会重复发布。",
+          : "系统会按平台分别上传视频、填写对应文案并提交发布；抖音会自动选择官方推荐配乐。你只需处理登录、验证码或风控验证；结果不明确时系统会停止，不会重复发布。",
         okText: "确认并开始",
         cancelText: "返回修改",
         onOk: () => confirmCreateBatch(currentAccountIds),
@@ -686,12 +788,16 @@ export default function PublishPage() {
 
   const publishTargetOptions = availablePlatforms.map((capability) => {
     const platform = capability.platform;
-    const account = accounts.find((item) => item.account_id === selectedAccountIds[platform]);
+    const account = readyAccountForPlatform(accounts, selectedAccountIds, platform);
     return {
       platform,
       accountName: capability?.requires_account === false ? "无需登录" : account?.name || "待选择账号",
       ready: capability?.requires_account === false || account?.status === "ready",
-      statusLabel: capability?.requires_account === false ? "无需登录" : account?.status === "ready" ? "已登录" : "待登录",
+      statusLabel: capability.manual_only
+        ? (capability.requires_account === false || account?.status === "ready" ? "需手动发布" : "待登录")
+        : account?.status === "ready"
+          ? "可自动提交"
+          : "待登录",
     };
   });
   const selectedAccountSummary = publishTargetOptions.filter((item) => platforms.includes(item.platform));
@@ -741,7 +847,7 @@ export default function PublishPage() {
         message="发布保护已开启"
         description={
           <div>
-            每个平台每天最多发布 {publishSafety[0]?.daily_limit ?? 5} 条，两条之间至少间隔 15 分钟（防封保护，可在 .env 调整）。
+            每个平台账号每天可自动发布 {publishSafety[0]?.daily_limit ?? 10} 条，各账号分别计算；系统会自动错峰发布，降低触发平台风控的风险。
             {publishSafety.map((item) => (
               item.remaining_today < item.daily_limit ? (
                 <div key={`${item.platform}-${item.account_id}`} style={{ marginTop: 4 }}>
@@ -892,7 +998,7 @@ export default function PublishPage() {
           <div className="publish-target-picker">
             <div className="publish-target-label">
               <strong>发布平台</strong>
-              <span>可多选 · 已选 {platforms.length} 个</span>
+              <span>已登录平台默认全选 · 已选 {platforms.length} 个</span>
             </div>
             <div className="publish-target-options" role="group" aria-label="选择发布平台">
               {publishTargetOptions.map((item) => {
@@ -1014,18 +1120,50 @@ export default function PublishPage() {
 
             <div className="publish-review-section">
               <div className="publish-review-section-heading">
-                <div><Text strong>发布文案</Text><Text type="secondary">可以手动填写，也可以根据口播稿生成</Text></div>
+                <div><Text strong>各平台发布文案</Text><Text type="secondary">切换平台分别确认；生成时仍只调用一次 AI</Text></div>
                 <Button loading={metadataLoading} disabled={!selectedAsset?.source_text?.trim()} onClick={() => setMetadataConfirmOpen(true)}>{metadataGenerated ? "重新生成" : "生成发布信息"}</Button>
               </div>
+              <div className="publish-content-platforms" role="tablist" aria-label="切换发布文案平台">
+                {platforms.map((platform) => <Button
+                  key={platform}
+                  role="tab"
+                  aria-selected={activeContentPlatform === platform}
+                  type={activeContentPlatform === platform ? "primary" : "default"}
+                  onClick={() => { setActiveContentPlatform(platform); setTagInput(""); }}
+                >{platformLabel(platform)}{platformContents[platform]?.title.trim() ? " · 已填写" : " · 待填写"}</Button>)}
+              </div>
+              <Alert
+                type="info"
+                showIcon
+                message={`正在编辑：${platformLabel(activeContentPlatform)}`}
+                description="这里的标题、正文和话题只用于当前平台，不会覆盖其他平台。"
+              />
               <Space direction="vertical" size={12} style={{ width: "100%" }}>
-                <Input aria-label="发布标题" placeholder="输入发布标题" value={title} onChange={(event) => { setTitle(event.target.value); setPreflight(null); }} maxLength={100} showCount />
-                <TextArea aria-label="发布描述" placeholder="输入发布描述（可选）" rows={5} value={description} onChange={(event) => { setDescription(event.target.value); setPreflight(null); }} maxLength={1000} showCount />
+                <Input aria-label="发布标题" placeholder={`输入${platformLabel(activeContentPlatform)}标题`} value={activeContent.title} onChange={(event) => updatePlatformContent(activeContentPlatform, { title: event.target.value })} maxLength={100} showCount />
+                <TextArea aria-label="发布描述" placeholder={`输入${platformLabel(activeContentPlatform)}正文（可选）`} rows={5} value={activeContent.description} onChange={(event) => updatePlatformContent(activeContentPlatform, { description: event.target.value })} maxLength={1000} showCount />
                 <Space.Compact style={{ width: "100%" }}><Input aria-label="添加话题标签" prefix={<TagOutlined />} placeholder="输入话题，按回车添加" value={tagInput} onChange={(event) => setTagInput(event.target.value)} onPressEnter={addTag} /><Button onClick={addTag}>添加</Button></Space.Compact>
-                <div>{tags.map((tag) => <Tag key={tag} closable color="purple" onClose={() => setTags((current) => current.filter((item) => item !== tag))}>#{tag}</Tag>)}</div>
+                <div>{activeContent.tags.map((tag) => <Tag key={tag} closable color="purple" onClose={() => updatePlatformContent(activeContentPlatform, { tags: activeContent.tags.filter((item) => item !== tag) })}>#{tag}</Tag>)}</div>
               </Space>
             </div>
 
-            {platforms.includes("douyin") && <Alert type="success" showIcon message="抖音原生配乐会自动匹配" description={`当前方向：${nativeMusicHint || inferDouyinMusicHint(title, description)}。只有登录或验证码需要你接手。`} />}
+            <Alert
+              type="success"
+              showIcon
+              message="所选平台会分别自动准备"
+              description={<Space direction="vertical" size={2}>
+                {platforms.map((platform) => <Text key={platform}>
+                  <Text strong>{platformLabel(platform)}：</Text>
+                  {platformAutomationNote(
+                    platform,
+                    nativeMusicHint || inferDouyinMusicHint(
+                      platformContents.douyin?.title || "",
+                      platformContents.douyin?.description || "",
+                    ),
+                  )}
+                </Text>)}
+                <Text type="secondary">只有登录、验证码或平台风控需要你接手。</Text>
+              </Space>}
+            />
             {preflight && <Alert type={preflight.blocked ? "warning" : "success"} showIcon message={preflight.blocked ? "请先处理以下问题" : "发布前检查通过"} description={<Space direction="vertical" size={4}>{preflight.issues.length > 0 && <Text>{preflight.issues.join("；")}</Text>}{preflight.platforms.filter((item) => item.issue).map((item) => <Text key={item.platform}>{platformLabel(item.platform)}：{item.issue}</Text>)}</Space>} />}
           </main>
 
@@ -1041,7 +1179,7 @@ export default function PublishPage() {
             <Divider />
             <Text type="secondary">确认后系统才会创建发布任务；需要验证码或平台结果不明确时会暂停并提醒你。</Text>
               {!selectedAccountSummary.every((item) => item.ready) && <Button type="link" onClick={() => setPageStep("configure")}>先去配置发布账号</Button>}
-              <Button type="primary" size="large" icon={<RocketOutlined />} disabled={!title.trim() || !selectedAccountSummary.every((item) => item.ready)} loading={submitting} onClick={startPublishing}>确认并开始发布</Button>
+              <Button type="primary" size="large" icon={<RocketOutlined />} disabled={platforms.some((platform) => !platformContents[platform]?.title.trim()) || !selectedAccountSummary.every((item) => item.ready)} loading={submitting} onClick={startPublishing}>确认并开始发布</Button>
           </aside>
         </div>
       </section>}
@@ -1056,7 +1194,7 @@ export default function PublishPage() {
       okText="生成"
       cancelText="取消"
     >
-      系统将根据这条成片对应的口播稿生成标题、描述和话题，会调用一次 AI 文案服务。费用按实际模型计费，暂无法准确估算。
+      系统将根据这条成片对应的口播稿，一次生成所选平台各自的标题、正文和话题。只调用一次 AI 文案服务，不会按平台重复计费；费用按实际模型计费，暂无法准确估算。
     </Modal>
 
     <Drawer
@@ -1508,6 +1646,7 @@ export default function PublishPage() {
       .publish-review-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
       .publish-review-section-heading .ant-typography { display: block; }
       .publish-review-section-heading .ant-typography-secondary { margin-top: 3px; font-size: 12px; }
+      .publish-content-platforms { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
       .publish-review-form > .ant-alert { margin-top: 16px; }
       .publish-review-summary { align-self: start; padding: 20px; }
       .publish-review-summary-title { display: block; margin-bottom: 14px; font-size: 16px; }

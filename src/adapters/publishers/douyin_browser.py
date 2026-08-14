@@ -25,6 +25,7 @@ from src.services.publish_accounts import PublishAccountError, publish_account_m
 DOUYIN_UPLOAD_URL = "https://creator.douyin.com/creator-micro/content/upload"
 DOUYIN_VIDEO_TITLE_SELECTOR = "input[placeholder*='填写作品标题']"
 DOUYIN_VIDEO_DESCRIPTION_SELECTOR = "div.zone-container[contenteditable='true']"
+DOUYIN_MUSIC_FALLBACK_MARKER = "官方推荐配乐不可用，已保留原声"
 
 
 class DouyinBrowserPublisher:
@@ -61,21 +62,27 @@ class DouyinBrowserPublisher:
         if account.status != "ready":
             raise RuntimeError(account.last_message)
 
-        stage = self._prepare_official_draft(
-            debug_port=account.debug_port,
-            video_path=str(video),
-            target=target,
-            account_name=account.name,
-        ) if not target.use_prepared_page else (
-            f"已在账号“{account.name}”的官方页面等待视频上传完成。"
+        stage = (
+            self._prepare_official_draft(
+                debug_port=account.debug_port,
+                video_path=str(video),
+                target=target,
+                account_name=account.name,
+            )
+            if not target.use_prepared_page
+            else (f"已在账号“{account.name}”的官方页面等待视频上传完成。")
         )
         selected_music = re.search(r"推荐配乐《([^》]+)》", stage)
         if selected_music:
             target = target.model_copy(
                 update={"selected_music_title": selected_music.group(1)[:100]}
             )
+        elif DOUYIN_MUSIC_FALLBACK_MARKER in stage:
+            target = target.model_copy(
+                update={"native_music_mode": "off", "selected_music_title": None}
+            )
         now = datetime.now().astimezone()
-        if stage.startswith(("需要你完成验证：", "自动配乐未完成：")):
+        if stage.startswith("需要你完成验证："):
             return PublishTask(
                 task_id=f"publish-{uuid4().hex[:10]}",
                 title=f"抖音等待处理 · {target.title[:20]}",
@@ -87,7 +94,7 @@ class DouyinBrowserPublisher:
                 target=target,
                 publish_status=PublishStatus.ACTION_REQUIRED,
                 provider_name="douyin_local_browser",
-                stage="等待登录验证" if stage.startswith("需要你") else "自动配乐已安全停止",
+                stage="等待登录验证",
                 action_required=stage.split("：", 1)[-1],
                 is_mock=False,
                 outputs={
@@ -110,16 +117,24 @@ class DouyinBrowserPublisher:
                 return PublishTask(
                     task_id=f"publish-{uuid4().hex[:10]}",
                     title=f"抖音发布 · {target.title[:20]}",
-                    status=TaskStatus.SUCCEEDED if succeeded else TaskStatus.OUTCOME_UNKNOWN,
+                    status=TaskStatus.SUCCEEDED
+                    if succeeded
+                    else TaskStatus.OUTCOME_UNKNOWN,
                     progress=100 if succeeded else 90,
                     created_at=now,
                     updated_at=now,
                     video_path=str(video),
                     target=target,
-                    publish_status=PublishStatus.SUCCEEDED if succeeded else PublishStatus.OUTCOME_UNKNOWN,
+                    publish_status=PublishStatus.SUCCEEDED
+                    if succeeded
+                    else PublishStatus.OUTCOME_UNKNOWN,
                     provider_name="douyin_local_browser",
-                    stage="平台页面已确认发布成功" if succeeded else "已点击官方发布，等待平台处理结果",
-                    action_required=None if succeeded else "已执行最终发布点击；请在抖音创作者后台确认结果后回填。系统不会自动重试。",
+                    stage="平台页面已确认发布成功"
+                    if succeeded
+                    else "已点击官方发布，等待平台处理结果",
+                    action_required=None
+                    if succeeded
+                    else "已执行最终发布点击；请在抖音创作者后台确认结果后回填。系统不会自动重试。",
                     final_publish_started_at=now,
                     outcome_evidence=evidence,
                     is_mock=False,
@@ -287,8 +302,9 @@ class DouyinBrowserPublisher:
                         "视频已交给官方页面，但未找到作品标题输入框；"
                         "为避免误填评论区，系统已停止。"
                     ) from exc
-                if title_input.count() != 1 or not DouyinBrowserPublisher._is_publish_page(
-                    page.url
+                if (
+                    title_input.count() != 1
+                    or not DouyinBrowserPublisher._is_publish_page(page.url)
                 ):
                     raise RuntimeError(
                         "未确认进入唯一的视频发布表单；为避免误填评论区，系统已停止。"
@@ -297,9 +313,7 @@ class DouyinBrowserPublisher:
 
                 content = DouyinBrowserPublisher._content(target)
                 if content:
-                    description_input = page.locator(
-                        DOUYIN_VIDEO_DESCRIPTION_SELECTOR
-                    )
+                    description_input = page.locator(DOUYIN_VIDEO_DESCRIPTION_SELECTOR)
                     try:
                         description_input.first.wait_for(
                             state="visible", timeout=120_000
@@ -319,8 +333,28 @@ class DouyinBrowserPublisher:
                         DouyinBrowserPublisher._select_recommended_music(page, target)
                     )
                     if not music_selected:
+                        if any(marker in music_evidence for marker in ("登录", "验证")):
+                            page.bring_to_front()
+                            return f"需要你完成验证：{music_evidence}"
                         page.bring_to_front()
-                        return f"自动配乐未完成：{music_evidence}"
+                        verified_target = target.model_copy(
+                            update={
+                                "native_music_mode": "off",
+                                "selected_music_title": None,
+                            }
+                        )
+                        form_matches, mismatch_reason = (
+                            DouyinBrowserPublisher._prepared_form_matches(
+                                page, verified_target
+                            )
+                        )
+                        if not form_matches:
+                            raise RuntimeError(mismatch_reason)
+                        return (
+                            f"已在账号“{account_name}”的作品发布表单填写标题、描述和标签；"
+                            f"{DOUYIN_MUSIC_FALLBACK_MARKER}（{music_evidence}）；"
+                            "系统将继续等待上传完成并提交。"
+                        )
                 verified_target = (
                     target.model_copy(update={"selected_music_title": music_title})
                     if music_title
@@ -333,9 +367,7 @@ class DouyinBrowserPublisher:
                     raise RuntimeError(mismatch_reason)
                 page.bring_to_front()
                 music_summary = (
-                    f"并自动选择抖音推荐配乐《{music_title}》"
-                    if music_title
-                    else ""
+                    f"并自动选择抖音推荐配乐《{music_title}》" if music_title else ""
                 )
                 return (
                     f"已在账号“{account_name}”的作品发布表单填写标题、描述和标签"
@@ -377,7 +409,9 @@ class DouyinBrowserPublisher:
                 browser = None
                 for _ in range(2):
                     try:
-                        browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{debug_port}")
+                        browser = playwright.chromium.connect_over_cdp(
+                            f"http://127.0.0.1:{debug_port}"
+                        )
                         break
                     except Exception:
                         time.sleep(0.6)

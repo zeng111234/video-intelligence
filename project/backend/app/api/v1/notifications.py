@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+import os
+import sys
+from pathlib import Path
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from project.backend.app.core import config as backend_config
 
 router = APIRouter(prefix="/api/v1", tags=["notifications"])
 
@@ -99,6 +105,29 @@ MOCK_USER_PROFILE = {
 }
 
 
+class OpenLocalStorageRequest(BaseModel):
+    target: Literal["data", "logs"]
+
+
+def _local_storage_paths() -> dict[str, Path]:
+    data_directory = backend_config.RUNTIME_ROOT / "data"
+    log_directory = data_directory / "logs"
+    return {
+        "data": data_directory,
+        "logs": log_directory,
+        "primary_log": log_directory / "desktop.log",
+    }
+
+
+def _open_local_directory(path: Path) -> None:
+    if sys.platform != "win32":
+        raise OSError("当前系统不支持打开本地目录")
+    startfile = getattr(os, "startfile", None)
+    if not callable(startfile):
+        raise OSError("系统目录打开功能不可用")
+    startfile(str(path))
+
+
 @router.get("/notifications")
 async def get_notifications() -> list[dict[str, Any]]:
     """获取通知列表"""
@@ -143,3 +172,29 @@ async def mark_message_read(message_id: str) -> dict[str, str]:
 async def get_user_profile() -> dict[str, Any]:
     """获取用户信息"""
     return MOCK_USER_PROFILE
+
+
+@router.get("/user/storage-locations")
+async def get_storage_locations() -> dict[str, str]:
+    """返回当前安装实例实际使用的数据与日志位置。"""
+    paths = _local_storage_paths()
+    return {
+        "data_directory": str(paths["data"]),
+        "log_directory": str(paths["logs"]),
+        "primary_log_path": str(paths["primary_log"]),
+    }
+
+
+@router.post("/user/storage-locations/open")
+async def open_storage_location(body: OpenLocalStorageRequest) -> dict[str, Any]:
+    """打开固定的数据或日志目录，不接受任意文件系统路径。"""
+    path = _local_storage_paths()[body.target]
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        _open_local_directory(path)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="暂时无法打开该位置，请复制页面显示的路径后手动打开。",
+        ) from exc
+    return {"opened": True, "target": body.target, "path": str(path)}

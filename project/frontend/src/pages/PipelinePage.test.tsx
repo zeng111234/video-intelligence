@@ -491,6 +491,7 @@ describe("PipelinePage customer workspace", () => {
   afterEach(() => {
     Modal.destroyAll();
     cleanup();
+    localStorage.removeItem("vi_admin_token");
     vi.clearAllMocks();
   });
 
@@ -1187,7 +1188,45 @@ describe("PipelinePage customer workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findByText("点赞 4,000 · 评论 未返回 · 分享 未返回 · 收藏 未返回")).toBeTruthy();
+    expect(await screen.findByText("点赞 4,000 · 评论 平台未提供 · 分享 平台未提供 · 收藏 平台未提供")).toBeTruthy();
+  });
+
+  it("shows each platform actual count and a plain-language partial reason", async () => {
+    const response = crawlerBatch([candidate]);
+    response.count_per_platform = 100;
+    response.platform_runs = [
+      {
+        ...response.platform_runs[0],
+        requested_count: 100,
+        returned_count: 0,
+        candidates: [],
+        status: "partial",
+        errors: [{ code: "public_search_video_filter_unavailable" }],
+      },
+      {
+        ...response.platform_runs[0],
+        run_id: "crawler-run-bilibili",
+        platform: "bilibili",
+        platform_label: "B站",
+        requested_count: 100,
+        returned_count: 16,
+        out_of_window_count: 41,
+        candidates: [candidate],
+        status: "partial",
+        crawl_stop_reason: "safety_limit",
+        errors: [],
+      },
+    ];
+    vi.mocked(createCrawlerBatch).mockResolvedValue(response);
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "餐饮老板获客" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("抖音 0/100（视频筛选未生效）")).toBeTruthy();
+    expect(screen.getByText("B站 16/100（已排除 41 条时间范围外素材）")).toBeTruthy();
   });
 
   it("ranks hotter materials ahead of a zero-like supplier top result", async () => {
@@ -1298,9 +1337,8 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findAllByText("自动创作口播 6 条")).toHaveLength(2);
-    expect(screen.queryByText(/候补参考 · 已有可用口播/)).toBeNull();
-    expect(screen.getByText("0 条画面参考不参与 ASR")).toBeTruthy();
+    expect(await screen.findAllByText(/自动创作素材.*6/)).toHaveLength(2);
+    expect(screen.queryByText(/口播优先|画面参考|疑似纯展示/)).toBeNull();
   });
 
   it("uses the same material filters as the crawler page", async () => {
@@ -1366,7 +1404,7 @@ describe("PipelinePage customer workspace", () => {
     ));
   });
 
-  it("keeps likely machine showcases out of the automatic spoken pool", async () => {
+  it("keeps every returned material available instead of guessing its spoken content from the title", async () => {
     const showcaseCandidates = [
       "贴标机",
       "高速口服液灌装机 立转卧高速贴标机 200瓶/分",
@@ -1408,9 +1446,9 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    expect(await screen.findAllByText("自动创作口播 1 条")).toHaveLength(2);
-    expect(screen.getByText("4 条画面参考不参与 ASR")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^#\d+ 贴标机 B站/ })).toBeNull();
+    expect(await screen.findAllByText(/自动创作素材.*5/)).toHaveLength(2);
+    expect(screen.queryByText(/口播优先|画面参考|疑似纯展示/)).toBeNull();
+    expect(screen.getByRole("button", { name: /^#\d+ 贴标机 抖音/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /首先切标鼓角度不对/ })).toBeTruthy();
   });
 
@@ -1458,7 +1496,8 @@ describe("PipelinePage customer workspace", () => {
 
     expect(await screen.findByText("本次找到的全部素材（2）")).toBeTruthy();
     expect(screen.getByRole("button", { name: /低热度但相关的候补/ })).toBeTruthy();
-    expect(screen.getByText(/低热度候补 · 疑似纯展示，仅作画面参考/)).toBeTruthy();
+    expect(screen.getByText("低热度候补")).toBeTruthy();
+    expect(screen.queryByText(/疑似纯展示|画面参考/)).toBeNull();
   });
 
   it("restores a crawler handoff and selects the highest candidate without starting production", async () => {
@@ -1470,7 +1509,7 @@ describe("PipelinePage customer workspace", () => {
     const selected = screen.getByRole("button", { name: new RegExp(candidate.title) });
     expect(selected.className).toContain("selected");
     expect(createProductionBatch).not.toHaveBeenCalled();
-    expect(screen.getByText("1 条口播优先 · 0 条画面参考")).toBeTruthy();
+    expect(screen.getByText("本次找到的全部素材（1）")).toBeTruthy();
   });
 
   it("preserves an explicitly selected low-threshold crawler candidate during handoff", async () => {
@@ -1771,6 +1810,92 @@ describe("PipelinePage customer workspace", () => {
     );
   });
 
+  it("keeps an unknown-cost preflight out of the customer price form", async () => {
+    const preflightWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      batch: { ...productionBatch, status: "failed" },
+      status: "failed",
+      progress: { total: 1, pending: 1, running: 0, paused: 0, succeeded: 0, failed: 0 },
+      current_stage: "source",
+      next_action: "preflight",
+      allowed_actions: ["preflight", "start"],
+      items: [{
+        ...transcriptWorkspace.items[0],
+        status: "planned",
+        stage: "source",
+        current_stage: null,
+        next_action: "preflight",
+        allowed_actions: ["preflight", "start"],
+      }],
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [preflightWorkspace.batch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(preflightWorkspace);
+    vi.mocked(preflightProductionBatch).mockResolvedValue({
+      batch_id: "production-batch-1",
+      ready_count: 0,
+      blocked_count: 1,
+      items: [{ run_id: "pipeline-run-1", candidate_id: candidate.video_id, ready: false, reasons: ["费用未知"], estimated_cost_cny: 0, cost_known: false }],
+      estimated_cost_cny: 0,
+      monthly_budget_used_cny: 0,
+      platforms: [],
+      concurrency: 1,
+      cost_known: false,
+      cost_blocked: true,
+      cost_issues: ["费用未知"],
+    });
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+    fireEvent.click(await screen.findByRole("button", { name: "完成预检并启动" }));
+
+    expect(await screen.findByText("本次费用暂无法确认，请联系管理员完成费用配置后重试。不会扣费，也不会开始制作。")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "补充费用配置" })).toBeNull();
+    expect(screen.queryByLabelText("文案生成单次费用")).toBeNull();
+    expect(startProductionBatch).not.toHaveBeenCalled();
+  });
+
+  it("opens the internal cost configuration only for an administrator after an unknown-cost preflight", async () => {
+    localStorage.setItem("vi_admin_token", "test-admin-token");
+    const preflightWorkspace: ProductionWorkspace = {
+      ...transcriptWorkspace,
+      batch: { ...productionBatch, status: "failed" },
+      status: "failed",
+      progress: { total: 1, pending: 1, running: 0, paused: 0, succeeded: 0, failed: 0 },
+      current_stage: "source",
+      next_action: "preflight",
+      allowed_actions: ["preflight", "start"],
+      items: [{
+        ...transcriptWorkspace.items[0],
+        status: "planned",
+        stage: "source",
+        current_stage: null,
+        next_action: "preflight",
+        allowed_actions: ["preflight", "start"],
+      }],
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [preflightWorkspace.batch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(preflightWorkspace);
+    vi.mocked(preflightProductionBatch).mockResolvedValue({
+      batch_id: "production-batch-1",
+      ready_count: 0,
+      blocked_count: 1,
+      items: [{ run_id: "pipeline-run-1", candidate_id: candidate.video_id, ready: false, reasons: ["费用未知"], estimated_cost_cny: 0, cost_known: false }],
+      estimated_cost_cny: 0,
+      monthly_budget_used_cny: 0,
+      platforms: [],
+      concurrency: 1,
+      cost_known: false,
+      cost_blocked: true,
+      cost_issues: ["费用未知"],
+    });
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+    fireEvent.click(await screen.findByRole("button", { name: "完成预检并启动" }));
+
+    expect(await screen.findByRole("dialog", { name: "补充费用配置" })).toBeTruthy();
+    expect(screen.getByLabelText("文案生成单次费用")).toBeTruthy();
+    expect(screen.getByLabelText("数字人口播单次费用")).toBeTruthy();
+  });
+
   it("shows final publish metadata and the server-confirmed manual destination", async () => {
     const publishWorkspace: ProductionWorkspace = {
       ...transcriptWorkspace,
@@ -1855,7 +1980,9 @@ describe("PipelinePage customer workspace", () => {
             use_manual_fallback: true,
           }],
           task_ids: ["publish-xiaohongshu"],
+          official_page_task_ids: [],
           prepared_task_ids: [],
+          manual_task_ids: ["publish-xiaohongshu"],
           draft: {
             title: "小红书标题",
             description: "小红书描述",
@@ -1871,7 +1998,7 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
     expect((await screen.findAllByText("小红书发布内容已准备")).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: /准备抖音发布页/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /准备官方发布页/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "我已手动发布" }));
     expect((await screen.findAllByText("确认已经在小红书发布？")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "确认已发布" }));
@@ -1903,8 +2030,16 @@ describe("PipelinePage customer workspace", () => {
         publish: {
           confirmed: true,
           status: "manual_ready",
-          targets: [],
+          targets: [{
+            platform: "douyin",
+            mode: "real",
+            display_name: "抖音",
+            provider_name: "douyin_local_browser",
+          }],
           task_ids: ["publish-existing"],
+          official_page_task_ids: ["publish-existing"],
+          prepared_task_ids: [],
+          manual_task_ids: [],
           draft: {
             title: "旧标题",
             description: legacyDescription,
@@ -1948,7 +2083,7 @@ describe("PipelinePage customer workspace", () => {
       }),
     ));
 
-    fireEvent.click(screen.getByRole("button", { name: /准备抖音发布页/ }));
+    fireEvent.click(screen.getByRole("button", { name: /准备官方发布页/ }));
     expect(
       (await screen.findAllByText("准备抖音官方发布页？")).length,
     ).toBeGreaterThan(0);
@@ -1957,7 +2092,7 @@ describe("PipelinePage customer workspace", () => {
     await waitFor(() => expect(preparePublishOfficialPage).toHaveBeenCalledWith("publish-existing"));
   });
 
-  it("shows the human final-publish handoff after the official Douyin page is prepared", async () => {
+  it("shows the final-publish handoff after a Kuaishou official page is prepared", async () => {
     const preparedWorkspace: ProductionWorkspace = {
       ...transcriptWorkspace,
       status: "awaiting_publish",
@@ -1976,8 +2111,17 @@ describe("PipelinePage customer workspace", () => {
           status: "manual_ready",
           stage: "已在账号“测试号”的官方页面选择视频并填写内容",
           action_required: "请等待上传完成，检查内容后在官方页面手动点击发布。",
+          official_page_task_ids: ["publish-existing"],
           prepared_task_ids: ["publish-existing"],
-          targets: [],
+          manual_task_ids: [],
+          targets: [{
+            platform: "kuaishou",
+            mode: "real",
+            display_name: "快手",
+            provider_name: "kuaishou_local_browser",
+            manual_only: false,
+            account_name: "测试号",
+          }],
           task_ids: ["publish-existing"],
           draft: {
             title: "已准备标题",
@@ -1992,7 +2136,7 @@ describe("PipelinePage customer workspace", () => {
         ...transcriptWorkspace.publish,
         confirmed: true,
         status: "manual_ready",
-        message: "抖音官方发布页已准备，等待你最终确认",
+        message: "所选平台官方发布页已准备，等待你最终确认",
         task_ids: ["publish-existing"],
       },
     };
@@ -2012,6 +2156,7 @@ describe("PipelinePage customer workspace", () => {
         publish: {
           ...preparedWorkspace.items[0].publish,
           status: "succeeded",
+          official_page_task_ids: [],
           prepared_task_ids: [],
         },
       }],
@@ -2030,29 +2175,29 @@ describe("PipelinePage customer workspace", () => {
 
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
-    expect((await screen.findAllByText("抖音发布页已准备")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("快手发布页已准备")).length).toBeGreaterThan(0);
     expect(screen.getByText("检查内容后，可让系统安全点击一次最终发布，也可以由你手动完成。")).toBeTruthy();
-    expect(screen.getByText("请检查任务栏里的“抖音创作者中心”窗口。请等待上传完成，检查内容后在官方页面手动点击发布。")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /准备抖音发布页/ })).toBeNull();
-    expect(screen.getByText("抖音官方发布页已准备，等待你最终确认")).toBeTruthy();
+    expect(screen.getByText("请检查任务栏中各平台的官方创作者窗口。请等待上传完成，检查内容后在官方页面手动点击发布。")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /准备官方发布页/ })).toBeNull();
+    expect(screen.getByText("所选平台官方发布页已准备，等待你最终确认")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /确认并自动发布/ }));
-    expect((await screen.findAllByText("确认并自动发布到抖音？")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("确认并自动发布到快手？")).length).toBeGreaterThan(0);
     const autoPublishButtons = screen.getAllByRole("button", { name: /确认并自动发布/ });
     fireEvent.click(autoPublishButtons[autoPublishButtons.length - 1]);
     await waitFor(() => expect(confirmPublishTaskAuto).toHaveBeenCalledWith("publish-existing"));
 
     fireEvent.click(screen.getByRole("button", { name: /我已手动发布/ }));
-    expect((await screen.findAllByText("确认已经在抖音发布？")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("确认已经在快手发布？")).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "确认已发布" }));
 
     await waitFor(() => expect(recordManualPublishResult).toHaveBeenCalledWith(
       "publish-existing",
       {
         succeeded: true,
-        note: "用户在智能创作工作台确认已完成抖音官方发布。",
+        note: "用户在智能创作工作台确认已完成快手官方发布。",
       },
     ));
-    expect(await screen.findByText("已完成抖音发布")).toBeTruthy();
+    expect(await screen.findByText("已完成快手发布")).toBeTruthy();
     expect(screen.getByText("这条任务已完成，进度 100%。")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100"));
   });

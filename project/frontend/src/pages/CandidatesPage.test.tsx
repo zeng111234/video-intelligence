@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CandidatesPage from "./CandidatesPage";
 import { ToastProvider } from "../components/Toast";
@@ -68,6 +68,8 @@ describe("CandidatesPage", () => {
     });
   });
 
+  afterEach(() => cleanup());
+
   it("uses fixed-size pagination without a heat-status column and keeps transcription behind the approval flow", async () => {
     renderPage();
 
@@ -87,5 +89,15 @@ describe("CandidatesPage", () => {
     expect(transcriptionUrl.pathname).toBe("/transcription");
     expect(transcriptionUrl.searchParams.get("candidate")).toBe("douyin-1");
     expect(transcriptionUrl.searchParams.get("share_text")).toBe("https://www.bilibili.com/video/BV1test");
+  });
+
+  it("offers B站 instead of the unsupported 视频号 filter", async () => {
+    renderPage();
+
+    await screen.findByText("共 40 条结果");
+    fireEvent.mouseDown(screen.getByText("平台筛选"));
+
+    expect((await screen.findAllByText("B站")).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText("视频号")).toBeNull();
   });
 });

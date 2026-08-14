@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
@@ -1043,6 +1043,17 @@ class LocalDouyinBrowserSearchProvider:
                             )
                         )
                         return [], errors
+                    video_filter = self._ensure_public_search_video_filter(page)
+                    if video_filter.warning:
+                        errors.append(
+                            ProviderSearchError(
+                                kind=ProviderErrorKind.VALIDATION,
+                                code=video_filter.error_code,
+                                message=video_filter.warning,
+                                retryable=False,
+                            )
+                        )
+                        return [], errors
                     layout = self._ensure_public_search_multi_column(page)
                     if layout.warning:
                         errors.append(
@@ -1508,16 +1519,62 @@ class LocalDouyinBrowserSearchProvider:
         )
 
     @staticmethod
+    def _ensure_public_search_video_filter(page) -> _PublicSearchFilterOutcome:
+        """Select and verify Douyin's video-only result tab."""
+        try:
+            current_type = parse_qs(urlparse(str(page.url or "")).query).get("type")
+            if current_type == ["video"]:
+                return _PublicSearchFilterOutcome("已应用平台筛选：视频")
+            visible_locator = None
+            for attempt in range(8):
+                locator = page.locator('span[data-key="video"]')
+                count = locator.count()
+                for index in range(count):
+                    candidate = locator if count == 1 else locator.nth(index)
+                    if candidate.is_visible():
+                        visible_locator = candidate
+                        break
+                if visible_locator is not None:
+                    break
+                wait = getattr(page, "wait_for_timeout", None)
+                if attempt == 7 or not callable(wait):
+                    break
+                wait(500)
+            if visible_locator is None:
+                return _PublicSearchFilterOutcome(
+                    "平台筛选未应用",
+                    "抖音搜索页等待后仍未显示“视频”筛选；为避免混入图文，本次搜索已停止。",
+                    "public_search_video_filter_unavailable",
+                )
+            try:
+                visible_locator.click(timeout=3000)
+            except Exception:
+                # The navigation may complete while Playwright is still waiting
+                # for the click handler. Confirm the resulting URL below.
+                pass
+            page.wait_for_timeout(800)
+            selected_type = parse_qs(urlparse(str(page.url or "")).query).get("type")
+            if selected_type == ["video"]:
+                return _PublicSearchFilterOutcome("已应用平台筛选：视频")
+        except Exception:
+            pass
+        return _PublicSearchFilterOutcome(
+            "平台筛选未应用",
+            "已点击抖音“视频”，但页面没有确认视频筛选；为避免混入图文，本次搜索已停止。",
+            "public_search_video_filter_unconfirmed",
+        )
+
+    @staticmethod
     def _ensure_public_search_multi_column(page) -> _PublicSearchLayoutOutcome:
         """Select and verify Douyin's multi-column result layout."""
         if not LocalDouyinBrowserSearchProvider._wait_for_public_search_layout_controls(
             page
         ):
-            return _PublicSearchLayoutOutcome(
-                "unconfirmed",
-                "抖音搜索结果页没有在等待时间内显示“单列/多列”控件；为避免按错误布局采集，本次搜索已停止。",
-                "public_search_multi_column_unavailable",
-            )
+            # The video-only result page can render its cards before (or
+            # without) the optional single/multi-column switch.  Extraction
+            # does not depend on that visual switch, so do not discard an
+            # otherwise valid platform run merely because the control is late.
+            return _PublicSearchLayoutOutcome("unconfirmed")
         if LocalDouyinBrowserSearchProvider._public_search_multi_column_selected(page):
             return _PublicSearchLayoutOutcome("multi_column")
         status, _ = LocalDouyinBrowserSearchProvider._click_visible_public_search_text(
@@ -1525,25 +1582,13 @@ class LocalDouyinBrowserSearchProvider:
             ("多列",),
         )
         if status != "clicked":
-            return _PublicSearchLayoutOutcome(
-                "unconfirmed",
-                (
-                    "抖音官网的“多列”控件"
-                    f"{LocalDouyinBrowserSearchProvider._public_control_status_text(status)}；"
-                    "为避免按错误布局采集，本次搜索已停止。"
-                ),
-                "public_search_multi_column_unavailable",
-            )
+            return _PublicSearchLayoutOutcome("unconfirmed")
         page.wait_for_timeout(1_200)
         confirmed = (
             LocalDouyinBrowserSearchProvider._public_search_multi_column_selected(page)
         )
         if not confirmed:
-            return _PublicSearchLayoutOutcome(
-                "unconfirmed",
-                "已点击“多列”，但抖音官网没有显示多列为选中状态；为避免按错误布局采集，本次搜索已停止。",
-                "public_search_multi_column_unconfirmed",
-            )
+            return _PublicSearchLayoutOutcome("unconfirmed")
         return _PublicSearchLayoutOutcome("multi_column")
 
     @staticmethod
