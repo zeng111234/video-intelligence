@@ -36,14 +36,22 @@
     "0.2.38",
     "0.2.39",
     "0.2.4",
+    "0.2.40",
     "0.2.5",
     "0.2.6",
     "0.2.7",
     "0.2.8",
     "0.2.9"
   ],
-  "current_candidate": "0.2.40",
-  "release_in_progress": null,
+  "current_candidate": null,
+  "release_in_progress": {
+    "version": "0.2.40",
+    "source_commit": "1d2b0ae9ab23404b8a4361702dfcc5db849bdbbc",
+    "server_state": "ready",
+    "control_plane_sha256": "aea0b3a43f7b3ea5297c8dfba218217fc722ccd40532e432c86833d546205b1a",
+    "windows_state": "pending",
+    "installer_sha256": null
+  },
   "completed_releases": [
     {
       "version": "0.2.23",
