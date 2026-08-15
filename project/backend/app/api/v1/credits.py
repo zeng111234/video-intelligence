@@ -237,6 +237,9 @@ def review_recharge_request(
         reviewed_by=admin_user,
         review_note=body.review_note,
     )
+    if not updated:
+        raise HTTPException(status_code=400, detail="该请求已处理")
+    return _recharge_response(updated, repo)
 
 
 _CREDIT_PROJECT_NAMES = {
@@ -285,14 +288,24 @@ def get_admin_credit_usage(
         project_key, project_name = _credit_project(row.get("ref_type"))
         project = project_totals.setdefault(
             project_key,
-            {"key": project_key, "name": project_name, "consumed": Decimal("0"), "transaction_count": 0},
+            {
+                "key": project_key,
+                "name": project_name,
+                "consumed": Decimal("0"),
+                "transaction_count": 0,
+            },
         )
         project["consumed"] = Decimal(str(project["consumed"])) + consumed
         project["transaction_count"] = int(project["transaction_count"]) + 1
         owner = str(row["owner"])
         customer = customer_totals.setdefault(
             owner,
-            {"key": owner, "name": customer_name(owner), "consumed": Decimal("0"), "transaction_count": 0},
+            {
+                "key": owner,
+                "name": customer_name(owner),
+                "consumed": Decimal("0"),
+                "transaction_count": 0,
+            },
         )
         customer["consumed"] = Decimal(str(customer["consumed"])) + consumed
         customer["transaction_count"] = int(customer["transaction_count"]) + 1
@@ -305,7 +318,11 @@ def get_admin_credit_usage(
             )
 
     def groups(values: dict[str, dict[str, object]]) -> list[CreditUsageGroupResponse]:
-        ordered = sorted(values.values(), key=lambda item: Decimal(str(item["consumed"])), reverse=True)
+        ordered = sorted(
+            values.values(),
+            key=lambda item: Decimal(str(item["consumed"])),
+            reverse=True,
+        )
         return [
             CreditUsageGroupResponse(
                 key=str(item["key"]),
@@ -322,6 +339,3 @@ def get_admin_credit_usage(
         by_customer=groups(customer_totals),
         recent_transactions=recent,
     )
-    if not updated:
-        raise HTTPException(status_code=400, detail="该请求已处理")
-    return _recharge_response(updated, repo)
