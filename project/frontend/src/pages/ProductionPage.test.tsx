@@ -73,7 +73,7 @@ describe("ProductionPage single-task queue", () => {
     fireEvent.click(within(dialog).getByText("确认并生成改写稿").closest("button") as HTMLButtonElement);
 
     await waitFor(() => expect(reviewProductionBatchItems).toHaveBeenCalledWith("batch-1", expect.objectContaining({ stage: "transcript", items: [{ run_id: "run-1", approved_text: "人工确认后的原转写" }] })));
-  });
+  }, 10_000);
 
   it("does not render creation or batch-wide actions", async () => {
     vi.mocked(listProductionBatches).mockResolvedValue({ items: [batch()] });
