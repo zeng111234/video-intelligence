@@ -6,6 +6,8 @@ import re
 from io import BytesIO
 from pathlib import Path
 
+import pytest
+
 from scripts import desktop_launcher
 from scripts import verify_windows_release_payload
 
@@ -20,6 +22,7 @@ _ENVIRONMENT_KEYS = (
     "VIDEOINSIGHT_DEMO_OWNER",
     "VIDEOINSIGHT_WORKER_TOKEN",
     "VIDEOINSIGHT_RUNTIME_ROOT",
+    "VIDEOINSIGHT_DESKTOP_PORT",
     "VIDEOINSIGHT_FRONTEND_DIST",
     "VIDEOINSIGHT_BACKEND_ORIGIN",
     "ASR_MODE",
@@ -92,6 +95,24 @@ def test_desktop_control_plane_config_defaults_to_demo(tmp_path):
         _restore_environment(previous)
 
 
+def test_desktop_port_can_be_selected_dynamically(monkeypatch, tmp_path):
+    monkeypatch.delenv("VIDEOINSIGHT_DESKTOP_PORT", raising=False)
+    port = desktop_launcher._resolve_desktop_port()
+    assert 1024 <= port <= 65535
+    desktop_launcher._configure_local_urls(port)
+    desktop_launcher._write_runtime_state(tmp_path, port)
+    state = json.loads((tmp_path / "data" / "desktop-runtime.json").read_text(encoding="utf-8"))
+    assert state["port"] == port
+    assert state["origin"] == f"http://127.0.0.1:{port}"
+
+
+@pytest.mark.parametrize("value", ["nope", "80", "70000"])
+def test_desktop_port_rejects_invalid_environment(monkeypatch, value):
+    monkeypatch.setenv("VIDEOINSIGHT_DESKTOP_PORT", value)
+    with pytest.raises(ValueError, match="端口配置无效"):
+        desktop_launcher._resolve_desktop_port()
+
+
 def test_packaged_desktop_never_allows_local_demo(monkeypatch):
     monkeypatch.setattr(desktop_launcher.sys, "frozen", True, raising=False)
     assert desktop_launcher._allow_local_demo() is False
@@ -110,7 +131,7 @@ def test_packaged_main_fails_closed_before_creating_demo(monkeypatch, tmp_path):
     monkeypatch.setattr(
         desktop_launcher,
         "_configure_desktop_environment",
-        lambda _root, _runtime: False,
+        lambda _root, _runtime, _port=None: False,
     )
     monkeypatch.setattr(desktop_launcher, "_configure_logging", lambda _root: None)
     monkeypatch.setattr(desktop_launcher, "_health_ready", lambda: False)

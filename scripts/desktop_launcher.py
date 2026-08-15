@@ -26,8 +26,10 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 DEMO_ACTIVATION_CODE = "DEMO-0815"
-APP_URL = "http://127.0.0.1:1001/login"
-HEALTH_URL = "http://127.0.0.1:1001/health"
+DEFAULT_DESKTOP_PORT = 1001
+DESKTOP_PORT = DEFAULT_DESKTOP_PORT
+APP_URL = f"http://127.0.0.1:{DESKTOP_PORT}/login"
+HEALTH_URL = f"http://127.0.0.1:{DESKTOP_PORT}/health"
 
 DESKTOP_BLOCKED_SECRET_KEYS = (
     "APP_SECRET_KEY",
@@ -129,7 +131,31 @@ def _load_control_plane_config(root: Path) -> dict[str, str | bool]:
     }
 
 
-def _configure_desktop_environment(root: Path, runtime_root: Path) -> bool:
+def _configure_local_urls(port: int) -> None:
+    global DESKTOP_PORT, APP_URL, HEALTH_URL
+    DESKTOP_PORT = port
+    APP_URL = f"http://127.0.0.1:{port}/login"
+    HEALTH_URL = f"http://127.0.0.1:{port}/health"
+
+
+def _resolve_desktop_port() -> int:
+    configured = os.getenv("VIDEOINSIGHT_DESKTOP_PORT", "").strip()
+    if configured:
+        try:
+            port = int(configured)
+        except ValueError as exc:
+            raise ValueError("桌面服务端口配置无效。") from exc
+        if not 1024 <= port <= 65535:
+            raise ValueError("桌面服务端口配置无效。")
+        return port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _configure_desktop_environment(
+    root: Path, runtime_root: Path, port: int | None = None
+) -> bool:
     runtime_root.mkdir(parents=True, exist_ok=True)
     os.chdir(runtime_root)
     bundled_media_tools = root / "media"
@@ -159,7 +185,7 @@ def _configure_desktop_environment(root: Path, runtime_root: Path) -> bool:
         "VIDEOINSIGHT_WORKER_TOKEN": secrets.token_urlsafe(32),
         "VIDEOINSIGHT_RUNTIME_ROOT": str(runtime_root),
         "VIDEOINSIGHT_FRONTEND_DIST": str(root / "project" / "frontend" / "dist"),
-        "VIDEOINSIGHT_BACKEND_ORIGIN": "http://127.0.0.1:1001",
+        "VIDEOINSIGHT_BACKEND_ORIGIN": f"http://127.0.0.1:{port or DESKTOP_PORT}",
         "ASR_MODE": "sandbox",
         "VIDEO_EDITOR_PROVIDER_MODE": "sandbox",
         "CRAWLER_PROVIDER_MODE": "sandbox",
@@ -209,6 +235,23 @@ def _port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.settimeout(0.5)
         return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _write_runtime_state(runtime_root: Path, port: int) -> None:
+    data_directory = runtime_root / "data"
+    data_directory.mkdir(parents=True, exist_ok=True)
+    destination = data_directory / "desktop-runtime.json"
+    temporary = data_directory / f".desktop-runtime-{os.getpid()}.tmp"
+    payload = {
+        "schema_version": 1,
+        "pid": os.getpid(),
+        "port": port,
+        "origin": f"http://127.0.0.1:{port}",
+    }
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+    )
+    os.replace(temporary, destination)
 
 
 def _show_error(message: str) -> None:
@@ -262,15 +305,21 @@ def main() -> int:
     multiprocessing.freeze_support()
     root = _application_root()
     runtime_root = _runtime_root(root)
-    control_plane_enabled = _configure_desktop_environment(root, runtime_root)
+    try:
+        port = _resolve_desktop_port()
+    except ValueError as exc:
+        _show_error(str(exc))
+        return 1
+    _configure_local_urls(port)
+    control_plane_enabled = _configure_desktop_environment(root, runtime_root, port)
     _configure_logging(runtime_root)
 
     if _health_ready():
         if os.getenv("VIDEOINSIGHT_NO_BROWSER", "").casefold() != "true":
             webbrowser.open(APP_URL)
         return 0
-    if _port_in_use(1001):
-        _show_error("端口 1001 已被其他程序占用，请关闭该程序后重新启动。")
+    if _port_in_use(port):
+        _show_error("本机服务端口刚被其他程序占用，请重新启动 VideoInsight。")
         return 1
     if not control_plane_enabled and not _allow_local_demo():
         logging.error("Packaged desktop control-plane configuration is unavailable")
@@ -283,11 +332,12 @@ def main() -> int:
         from project.backend.app.desktop import app
         import uvicorn
 
+        _write_runtime_state(runtime_root, port)
         threading.Thread(target=_open_when_ready, daemon=True).start()
         uvicorn.run(
             app,
             host="127.0.0.1",
-            port=1001,
+            port=port,
             proxy_headers=False,
             access_log=False,
             log_config=None,

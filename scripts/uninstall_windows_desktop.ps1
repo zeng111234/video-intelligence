@@ -189,16 +189,13 @@ $startMenuProgramsRoot = [Environment]::GetFolderPath("Programs")
 $desktopShortcut = Join-Path $desktopRoot "VideoInsight.lnk"
 $startMenuDir = Join-Path $startMenuProgramsRoot "VideoInsight"
 $startMenuShortcut = Join-Path $startMenuDir "VideoInsight.lnk"
-$startMenuUninstallShortcut = Join-Path $startMenuDir "卸载 VideoInsight.lnk"
 foreach ($safeRoot in @($desktopRoot, $startMenuProgramsRoot, $startMenuDir)) {
     Assert-NoReparsePointsInAncestors -Path $safeRoot -Label "快捷方式目录"
     Assert-NoReparsePoint -Path $safeRoot -Label "快捷方式目录"
 }
 $installedExecutable = Join-Path $installRoot "VideoInsight.exe"
-$trustedPowerShell = Join-Path $PSHOME "powershell.exe"
 Remove-OwnedShortcutSafely -ShortcutPath $desktopShortcut -ExpectedTarget $installedExecutable
 Remove-OwnedShortcutSafely -ShortcutPath $startMenuShortcut -ExpectedTarget $installedExecutable
-Remove-OwnedShortcutSafely -ShortcutPath $startMenuUninstallShortcut -ExpectedTarget $trustedPowerShell
 Remove-EmptyOwnedDirectorySafely -DirectoryPath $startMenuDir
 
 $escapedInstallRoot = $installRoot.Replace("'", "''")

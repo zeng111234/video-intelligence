@@ -1972,6 +1972,25 @@ export interface CreditBalanceResponse {
   transactions: CreditTransaction[];
 }
 
+export interface CreditUsageGroup {
+  key: string;
+  name: string;
+  consumed: string;
+  transaction_count: number;
+}
+
+export interface AdminCreditUsageTransaction extends CreditTransaction {
+  owner: string;
+  customer_name: string;
+}
+
+export interface AdminCreditUsageResponse {
+  total_consumed: string;
+  by_project: CreditUsageGroup[];
+  by_customer: CreditUsageGroup[];
+  recent_transactions: AdminCreditUsageTransaction[];
+}
+
 export interface CreditAdjustRequest {
   amount: number;
   reason: string;

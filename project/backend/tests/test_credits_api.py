@@ -134,3 +134,52 @@ def test_adjust_credit_requires_reason(client: TestClient) -> None:
         headers=_admin_headers(token),
     )
     assert resp.status_code == 422
+
+
+def test_admin_usage_groups_real_debits_by_project_and_customer(client: TestClient) -> None:
+    token = _login(client)
+    headers = _admin_headers(token)
+    client.post(
+        "/api/v1/credits/adjust",
+        json={"amount": "10", "reason": "充值", "owner": "CUSTOMER-A"},
+        headers=headers,
+    )
+    client.post(
+        "/api/v1/credits/adjust",
+        json={
+            "amount": "-1.25",
+            "reason": "转写扣费",
+            "owner": "CUSTOMER-A",
+            "ref_type": "transcription",
+            "ref_id": "task-1",
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/v1/credits/adjust",
+        json={
+            "amount": "-2.5",
+            "reason": "剪辑扣费",
+            "owner": "CUSTOMER-A",
+            "ref_type": "video_editor",
+            "ref_id": "batch-1",
+        },
+        headers=headers,
+    )
+
+    response = client.get("/api/v1/credits/admin/usage", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_consumed"] == "3.75"
+    assert {item["name"]: item["consumed"] for item in payload["by_project"]} == {
+        "云端剪辑": "2.5",
+        "云端转写": "1.25",
+    }
+    assert payload["by_customer"][0]["key"] == "CUSTOMER-A"
+    assert payload["by_customer"][0]["consumed"] == "3.75"
+    assert len(payload["recent_transactions"]) == 2
+
+
+def test_admin_usage_requires_admin_login(client: TestClient) -> None:
+    response = client.get("/api/v1/credits/admin/usage", headers=TEST_API_HEADERS)
+    assert response.status_code == 401

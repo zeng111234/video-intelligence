@@ -4,6 +4,7 @@
 
 import type {
   AdminStatusResponse,
+  AdminCreditUsageResponse,
   AsrCapabilityResponse,
   AnalyticsResponse,
   AvatarAsset,
@@ -865,6 +866,14 @@ export function getServerStatus(): Promise<ServerStatusResponse> {
 
 export function getCredits(): Promise<CreditBalanceResponse> {
   return request("/credits");
+}
+
+export function getAdminCreditUsage(
+  adminToken: string,
+): Promise<AdminCreditUsageResponse> {
+  return request("/credits/admin/usage", {
+    headers: { "X-Admin-Token": adminToken },
+  });
 }
 
 /** 管理员登录（账号+密码；兼容旧版 password-only） */

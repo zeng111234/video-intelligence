@@ -1811,6 +1811,19 @@ class SQLiteRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_all_credit_transactions(self, limit: int = 2000) -> list[dict]:
+        """管理员报表使用：按时间倒序返回所有账户流水。"""
+        rows = self.connection.execute(
+            """
+            SELECT id, owner, amount, balance_after, reason, ref_type, ref_id, created_at
+            FROM credit_transactions
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 5000)),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def reserve_avatar_billing(
         self,
         *,

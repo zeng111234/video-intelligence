@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, shell } = require("electron");
 const { spawn } = require("node:child_process");
 const { existsSync, mkdirSync, readFileSync } = require("node:fs");
+const net = require("node:net");
 const path = require("node:path");
 const os = require("node:os");
 const { resolveBackendRuntimeRoot, sanitizeBackendEnvironment } = require("./environment.cjs");
@@ -12,11 +13,27 @@ const {
   validateReleaseConfig,
 } = require("./update.cjs");
 
-const APP_URL = "http://127.0.0.1:1001/login";
-const HEALTH_URL = "http://127.0.0.1:1001/health";
 let backendProcess = null;
 let mainWindow = null;
 let updateCheckStarted = false;
+let backendOrigin = "";
+
+function findAvailableLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!port) reject(new Error("未能分配本机服务端口"));
+        else resolve(port);
+      });
+    });
+  });
+}
 
 function formatMegabytes(bytes) {
   return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)} MB`;
@@ -176,7 +193,7 @@ async function checkForUpdate() {
   }
 }
 
-function startBackend() {
+function startBackend(port) {
   const executable = backendExecutable();
   if (!existsSync(executable)) {
     throw new Error(`缺少本地服务文件：${executable}`);
@@ -189,6 +206,7 @@ function startBackend() {
     env: sanitizeBackendEnvironment(process.env, {
       VIDEOINSIGHT_NO_BROWSER: "true",
       VIDEOINSIGHT_RUNTIME_ROOT: runtimeRoot,
+      VIDEOINSIGHT_DESKTOP_PORT: String(port),
       VIDEOINSIGHT_NODE_EXECUTABLE: process.execPath,
       VIDEOINSIGHT_NODE_AS_ELECTRON: "true",
     }),
@@ -204,11 +222,11 @@ function startBackend() {
   });
 }
 
-async function waitForBackend(timeoutMs = 90000) {
+async function waitForBackend(healthUrl, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(1000) });
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1000) });
       if (response.ok) return;
     } catch {
       // The local service may need several seconds on the first launch.
@@ -234,7 +252,7 @@ function createWindow() {
   });
   mainWindow.removeMenu();
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://127.0.0.1:1001/")) {
+    if (backendOrigin && url.startsWith(`${backendOrigin}/`)) {
       return { action: "allow" };
     }
     shell.openExternal(url);
@@ -253,9 +271,11 @@ async function boot() {
       '<style>body{font-family:Segoe UI,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#f6f8fc;color:#14213d}div{text-align:center}b{display:block;font-size:24px;margin-bottom:12px}</style><div><b>VideoInsight 正在启动</b>首次启动可能需要几十秒，请稍候…</div>',
     )}`,
   );
-  startBackend();
-  await waitForBackend();
-  await mainWindow.loadURL(APP_URL);
+  const port = await findAvailableLoopbackPort();
+  backendOrigin = `http://127.0.0.1:${port}`;
+  startBackend(port);
+  await waitForBackend(`${backendOrigin}/health`);
+  await mainWindow.loadURL(`${backendOrigin}/login`);
   setTimeout(() => void checkForUpdate(), 3000);
 }
 

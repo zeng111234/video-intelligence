@@ -7,6 +7,7 @@
 
 $ErrorActionPreference = "Stop"
 $results = New-Object System.Collections.Generic.List[object]
+$script:ServicePort = 1001
 
 function Add-Check {
     param(
@@ -43,7 +44,7 @@ function Invoke-LocalHttp {
     if (
         $target.Scheme -ne "http" -or
         $target.Host -ne "127.0.0.1" -or
-        $target.Port -ne 1001 -or
+        $target.Port -ne $script:ServicePort -or
         -not [string]::IsNullOrEmpty($target.UserInfo)
     ) {
         throw "自动验收只允许连接本机 VideoInsight 服务。"
@@ -133,7 +134,7 @@ function Get-HttpStatus {
 }
 
 function Get-LocalHealth {
-    $response = Invoke-LocalHttp -Uri "http://127.0.0.1:1001/health"
+    $response = Invoke-LocalHttp -Uri ("{0}/health" -f $script:ServiceOrigin)
     if ($response.StatusCode -ne 200) {
         return $null
     }
@@ -219,9 +220,29 @@ $dataRoot = if ([string]::IsNullOrWhiteSpace($registeredRuntimeLocation)) {
 }
 else { [System.IO.Path]::GetFullPath($registeredRuntimeLocation) }
 $database = Join-Path $dataRoot "data\video_intelligence.db"
+$runtimeState = Join-Path $dataRoot "data\desktop-runtime.json"
 $runtimePointer = Join-Path $installRoot "runtime-location.json"
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
 $startShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "VideoInsight\VideoInsight.lnk"
+
+# 新版桌面程序每次选择空闲本机端口；旧版没有状态文件时仍兼容 1001。
+if (Test-SafeLeaf -LiteralPath $runtimeState) {
+    try {
+        $state = Get-Content -LiteralPath $runtimeState -Raw | ConvertFrom-Json
+        $candidatePort = [int]$state.port
+        $candidateProcess = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
+        if (
+            $state.schema_version -eq 1 -and
+            $candidatePort -ge 1024 -and
+            $candidatePort -le 65535 -and
+            $candidateProcess
+        ) {
+            $script:ServicePort = $candidatePort
+        }
+    }
+    catch { }
+}
+$script:ServiceOrigin = "http://127.0.0.1:$script:ServicePort"
 
 $python = Get-Command python.exe -ErrorAction SilentlyContinue
 $node = Get-Command node.exe -ErrorAction SilentlyContinue
@@ -256,14 +277,12 @@ if (Test-SafeLeaf -LiteralPath $runtimePointer) {
 $installedExeSafe = Test-SafeLeaf -LiteralPath $installedExe
 $desktopShortcutSafe = Test-SafeLeaf -LiteralPath $desktopShortcut
 $startShortcutSafe = Test-SafeLeaf -LiteralPath $startShortcut
-$databaseSafe = Test-SafeLeaf -LiteralPath $database
 Add-Check -Name "Installed executable" -Passed $installedExeSafe -Evidence $installedExe
 Add-Check -Name "Install directory has no links" -Passed $installTreeSafe -Evidence $installRoot
 Add-Check -Name "Data directory has no links" -Passed $dataTreeSafe -Evidence $dataRoot
 Add-Check -Name "Selected data location" -Passed $runtimePointerMatches -Evidence $dataRoot
 Add-Check -Name "Desktop shortcut" -Passed $desktopShortcutSafe -Evidence $desktopShortcut
 Add-Check -Name "Start menu shortcut" -Passed $startShortcutSafe -Evidence $startShortcut
-Add-Check -Name "Local data database" -Passed $databaseSafe -Evidence $database
 
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) {
     if ($registeredVersion -match '^[0-9]+\.[0-9]+\.[0-9]+$') {
@@ -333,14 +352,21 @@ Add-Check `
     -Passed ([bool]$healthValid) `
     -Evidence ("service={0}; protocol={1}" -f $health.service, $health.desktop_protocol)
 
-$loginPageStatus = Get-HttpStatus -Uri "http://127.0.0.1:1001/login"
+# 服务健康后数据库才应当存在；首次启动时给 SQLite 初始化一个短暂、有限的窗口。
+for ($attempt = 0; $attempt -lt 30 -and -not (Test-SafeLeaf -LiteralPath $database); $attempt++) {
+    Start-Sleep -Milliseconds 250
+}
+$databaseSafe = Test-SafeLeaf -LiteralPath $database
+Add-Check -Name "Local data database" -Passed $databaseSafe -Evidence $database
+
+$loginPageStatus = Get-HttpStatus -Uri ("{0}/login" -f $script:ServiceOrigin)
 Add-Check `
     -Name "Login page available" `
     -Passed ($loginPageStatus -eq 200) `
     -Evidence ("HTTP {0}" -f $loginPageStatus)
 
 $invalidLoginStatus = Get-HttpStatus `
-    -Uri "http://127.0.0.1:1001/api/v1/auth/customer-login" `
+    -Uri ("{0}/api/v1/auth/customer-login" -f $script:ServiceOrigin) `
     -Method "Post" `
     -Body '{"code":"VI-INSTALL-CHECK-INVALID-DO-NOT-CREATE"}'
 Add-Check `
@@ -348,9 +374,9 @@ Add-Check `
     -Passed ($invalidLoginStatus -eq 401) `
     -Evidence ("expected invalid-code HTTP 401; actual HTTP {0}" -f $invalidLoginStatus)
 
-$tasksStatus = Get-HttpStatus -Uri "http://127.0.0.1:1001/api/v1/tasks"
-$crawlerStatus = Get-HttpStatus -Uri "http://127.0.0.1:1001/api/v1/crawler/capabilities"
-$adminStatus = Get-HttpStatus -Uri "http://127.0.0.1:1001/api/v1/admin/status"
+$tasksStatus = Get-HttpStatus -Uri ("{0}/api/v1/tasks" -f $script:ServiceOrigin)
+$crawlerStatus = Get-HttpStatus -Uri ("{0}/api/v1/crawler/capabilities" -f $script:ServiceOrigin)
+$adminStatus = Get-HttpStatus -Uri ("{0}/api/v1/admin/status" -f $script:ServiceOrigin)
 Add-Check -Name "Tasks require login" -Passed ($tasksStatus -eq 401) -Evidence ("HTTP {0}" -f $tasksStatus)
 Add-Check -Name "Crawler requires login" -Passed ($crawlerStatus -eq 401) -Evidence ("HTTP {0}" -f $crawlerStatus)
 Add-Check -Name "Admin requires login" -Passed ($adminStatus -eq 401) -Evidence ("HTTP {0}" -f $adminStatus)
@@ -369,7 +395,11 @@ Add-Check `
 
 if (-not $ReportPath) {
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-    $ReportPath = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight-clean-pc-acceptance-$timestamp.txt"
+    $ReportPath = Join-Path $dataRoot "data\logs\install-acceptance-$timestamp.txt"
+}
+$reportDirectory = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($ReportPath))
+if (-not (Test-Path -LiteralPath $reportDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
 }
 
 $failed = @($results | Where-Object { $_.Result -eq "FAIL" })

@@ -68,6 +68,13 @@ _LOCAL_PREVIEW_EXPORT_STYLE_VERSION = (
     "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
 )
 _LOCAL_PREVIEW_PLAYBACK_RATE = 1.15
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _run_media_command(*args, **kwargs):
+    """Run bundled media tools without flashing console windows on Windows."""
+    kwargs.setdefault("creationflags", _WINDOWS_NO_WINDOW)
+    return subprocess.run(*args, **kwargs)
 
 
 class VideoEditorWorkflowError(ValueError):
@@ -851,7 +858,7 @@ class VideoEditorWorkflowService:
     def _probe_bgm_duration(path: Path) -> float:
         if not shutil.which("ffprobe"):
             raise VideoEditorWorkflowError("未检测到 FFprobe，无法验证背景音乐。")
-        result = subprocess.run(
+        result = _run_media_command(
             [
                 "ffprobe",
                 "-v",
@@ -893,7 +900,7 @@ class VideoEditorWorkflowService:
         handle = tempfile.NamedTemporaryFile(suffix=".m4a", delete=False)
         handle.close()
         prepared = Path(handle.name)
-        result = subprocess.run(
+        result = _run_media_command(
             [
                 "ffmpeg",
                 "-nostdin",
@@ -1235,7 +1242,7 @@ class VideoEditorWorkflowService:
             "json",
             str(path),
         ]
-        result = subprocess.run(
+        result = _run_media_command(
             cmd, capture_output=True, text=True, timeout=30, check=False
         )
         if result.returncode != 0:
@@ -1277,7 +1284,7 @@ class VideoEditorWorkflowService:
             "silence_seconds": 0.0,
         }
         try:
-            volume = subprocess.run(
+            volume = _run_media_command(
                 [
                     "ffmpeg",
                     "-nostdin",
@@ -1302,7 +1309,7 @@ class VideoEditorWorkflowService:
         except Exception:
             pass
         try:
-            silence = subprocess.run(
+            silence = _run_media_command(
                 [
                     "ffmpeg",
                     "-nostdin",
@@ -2870,7 +2877,7 @@ class VideoEditorWorkflowService:
             "+faststart",
             str(output_path),
         ]
-        result = subprocess.run(
+        result = _run_media_command(
             command, capture_output=True, text=True, timeout=180, check=False
         )
         if (
@@ -2922,7 +2929,7 @@ class VideoEditorWorkflowService:
             "+faststart",
             output_path.as_posix(),
         ]
-        result = subprocess.run(
+        result = _run_media_command(
             command, capture_output=True, text=True, timeout=15 * 60, check=False
         )
         if (
@@ -3099,7 +3106,7 @@ class VideoEditorWorkflowService:
                 progress=15,
                 stage="正在写入标题、字幕和配乐",
             )
-            result = subprocess.run(
+            result = _run_media_command(
                 command,
                 capture_output=True,
                 text=True,

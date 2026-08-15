@@ -1088,21 +1088,37 @@ export default function VideoEditorPage() {
 
   const refresh = useCallback(async (keepCurrent = true) => {
     setLoading(true);
+    const secondaryData = Promise.allSettled([
+      videoEditorApi.listVideoEditorBatches(),
+      videoEditorApi.listVideoEditorBgm(),
+    ] as const);
     try {
-      const [sourceResponse, capabilityResponse, batchResponse, bgmResponse] = await Promise.all([
+      const [sourceResponse, capabilityResponse] = await Promise.all([
         videoEditorApi.listVideoEditorSources(),
         videoEditorApi.getVideoCapabilities(),
-        videoEditorApi.listVideoEditorBatches(),
-        videoEditorApi.listVideoEditorBgm(),
       ]);
-      const cloudBatches = batchResponse.items.filter(isCloudBatch);
+      setSources(sourceResponse.items);
+      setCapabilities(capabilityResponse as CloudCapabilities);
+      setSelectedSourceId((current) => (
+        current
+        || sourceResponse.items[0]?.source_id
+      ));
+      setPollingStopped(false);
+    } catch (error) {
+      message.error((error as Error).message || "云端剪辑工作台加载失败");
+    } finally {
+      setLoading(false);
+    }
+    const [batchResult, bgmResult] = await secondaryData;
+    if (bgmResult.status === "fulfilled") {
+      setBgmAssets(bgmResult.value.items);
+    }
+    if (batchResult.status === "fulfilled") {
+      const cloudBatches = batchResult.value.items.filter(isCloudBatch);
       const nextBatch = keepCurrent
         ? cloudBatches.find((item) => item.batch_id === batch?.batch_id) || batch || cloudBatches[0] || null
         : cloudBatches[0] || null;
-      setSources(sourceResponse.items);
-      setCapabilities(capabilityResponse as CloudCapabilities);
       setBatches(cloudBatches);
-      setBgmAssets(bgmResponse.items);
       setBatch(nextBatch);
       setQuote(nextBatch?.cost_quote || null);
       if (nextBatch) {
@@ -1111,17 +1127,8 @@ export default function VideoEditorPage() {
         setBgmEnabled(nextBatch.bgm_enabled);
         setBgmId(nextBatch.bgm_id || undefined);
         setBgmVolume(nextBatch.bgm_volume);
+        setSelectedSourceId((current) => current || nextBatch.items[0]?.source_id);
       }
-      setSelectedSourceId((current) => (
-        current
-        || nextBatch?.items[0]?.source_id
-        || sourceResponse.items[0]?.source_id
-      ));
-      setPollingStopped(false);
-    } catch (error) {
-      message.error((error as Error).message || "云端剪辑工作台加载失败");
-    } finally {
-      setLoading(false);
     }
   }, [batch]);
 

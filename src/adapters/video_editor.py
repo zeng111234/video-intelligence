@@ -19,6 +19,9 @@ from uuid import uuid4
 from src.models import VideoEditConfig, VideoEditStep, VideoEditStepKind
 
 
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 class VideoEditorError(RuntimeError):
     """视频编辑失败。"""
 
@@ -42,6 +45,10 @@ class FFmpegVideoEditor:
         self.ffprobe = ffprobe_path or shutil.which("ffprobe") or "ffprobe"
         self.temp_dir = temp_dir
         self.command_runner = command_runner
+
+    def _execute(self, *args, **kwargs):
+        kwargs.setdefault("creationflags", _WINDOWS_NO_WINDOW)
+        return self.command_runner(*args, **kwargs)
 
     def capabilities(self) -> dict[str, str | bool]:
         ffmpeg_available = shutil.which(self.ffmpeg) is not None
@@ -531,7 +538,7 @@ class FFmpegVideoEditor:
         self._run(cmd, "添加背景音乐失败。")
 
     def _has_audio_stream(self, path: Path) -> bool:
-        result = self.command_runner(
+        result = self._execute(
             [
                 self.ffprobe,
                 "-v",
@@ -552,7 +559,7 @@ class FFmpegVideoEditor:
         return result.returncode == 0 and bool((result.stdout or "").strip())
 
     def _probe_duration_seconds(self, path: Path) -> float:
-        result = self.command_runner(
+        result = self._execute(
             [
                 self.ffprobe,
                 "-v",
@@ -708,7 +715,7 @@ class FFmpegVideoEditor:
                 "-y",
                 str(audio_path),
             ]
-            result = self.command_runner(
+            result = self._execute(
                 extract_cmd, capture_output=True, text=True, timeout=300, check=False
             )
             if result.returncode != 0 or not audio_path.exists():
@@ -727,7 +734,7 @@ class FFmpegVideoEditor:
                 "--output_dir",
                 tmp,
             ]
-            result = self.command_runner(
+            result = self._execute(
                 whisper_cmd,
                 capture_output=True,
                 text=True,
@@ -780,7 +787,7 @@ class FFmpegVideoEditor:
             "null",
             "-",
         ]
-        result = self.command_runner(
+        result = self._execute(
             analyze_cmd, capture_output=True, text=True, timeout=600, check=False
         )
         if result.returncode != 0:
@@ -927,7 +934,7 @@ class FFmpegVideoEditor:
             "null",
             "-",
         ]
-        result = self.command_runner(
+        result = self._execute(
             detect_cmd, capture_output=True, text=True, timeout=600, check=False
         )
         if result.returncode != 0:
@@ -1037,7 +1044,7 @@ class FFmpegVideoEditor:
             "json",
             str(path),
         ]
-        result = self.command_runner(
+        result = self._execute(
             cmd, capture_output=True, text=True, timeout=30, check=False
         )
         if result.returncode != 0:
@@ -1111,14 +1118,14 @@ class FFmpegVideoEditor:
             "default=nw=1:nk=1",
             str(path),
         ]
-        result = self.command_runner(
+        result = self._execute(
             cmd, capture_output=True, text=True, timeout=30, check=False
         )
         if result.returncode != 0 or "video" not in result.stdout:
             raise VideoEditorError("输入文件不是有效的视频。")
 
     def _run(self, cmd: list[str], error_msg: str) -> None:
-        result = self.command_runner(
+        result = self._execute(
             cmd, capture_output=True, text=True, timeout=600, check=False
         )
         if result.returncode != 0:

@@ -53,6 +53,25 @@ class AdminLoginResponse(BaseModel):
     expires_in_seconds: int
 
 
+class CreditUsageGroupResponse(BaseModel):
+    key: str
+    name: str
+    consumed: str
+    transaction_count: int
+
+
+class AdminCreditUsageTransactionResponse(CreditsTransactionResponse):
+    owner: str
+    customer_name: str
+
+
+class AdminCreditUsageResponse(BaseModel):
+    total_consumed: str
+    by_project: list[CreditUsageGroupResponse]
+    by_customer: list[CreditUsageGroupResponse]
+    recent_transactions: list[AdminCreditUsageTransactionResponse]
+
+
 # ---- 充值请求相关 ----
 
 class RechargeRequestCreate(BaseModel):
@@ -217,6 +236,91 @@ def review_recharge_request(
         status=body.status,
         reviewed_by=admin_user,
         review_note=body.review_note,
+    )
+
+
+_CREDIT_PROJECT_NAMES = {
+    "transcription": "云端转写",
+    "transcription_adjustment": "云端转写",
+    "avatar": "数字人成片",
+    "avatar_training": "数字人训练",
+    "avatar_reserve": "数字人成片",
+    "avatar_settlement": "数字人成片",
+    "video_editor": "云端剪辑",
+    "video_editor_adjustment": "云端剪辑",
+    "copywriting": "AI 文案",
+}
+
+
+def _credit_project(ref_type: str | None) -> tuple[str, str]:
+    raw = (ref_type or "other").strip() or "other"
+    key = raw.removesuffix("_refund").removesuffix("_release")
+    return key, _CREDIT_PROJECT_NAMES.get(key, "其他消费")
+
+
+@router.get("/admin/usage", response_model=AdminCreditUsageResponse)
+def get_admin_credit_usage(
+    limit: int = 500,
+    repo: SQLiteRepository = Depends(get_repository),
+    _admin: bool = Security(require_admin_token),
+) -> AdminCreditUsageResponse:
+    """管理员查看真实扣减流水，按业务功能和客户汇总。"""
+    rows = repo.list_all_credit_transactions(limit=max(1, min(limit, 2000)))
+    debits = [row for row in rows if Decimal(str(row["amount"])) < 0]
+    project_totals: dict[str, dict[str, object]] = {}
+    customer_totals: dict[str, dict[str, object]] = {}
+    customer_names: dict[str, str] = {}
+
+    def customer_name(owner: str) -> str:
+        if owner not in customer_names:
+            customer = repo.get_customer_code(owner)
+            customer_names[owner] = customer.name if customer is not None else owner
+        return customer_names[owner]
+
+    total = Decimal("0")
+    recent: list[AdminCreditUsageTransactionResponse] = []
+    for row in debits:
+        consumed = abs(Decimal(str(row["amount"])))
+        total += consumed
+        project_key, project_name = _credit_project(row.get("ref_type"))
+        project = project_totals.setdefault(
+            project_key,
+            {"key": project_key, "name": project_name, "consumed": Decimal("0"), "transaction_count": 0},
+        )
+        project["consumed"] = Decimal(str(project["consumed"])) + consumed
+        project["transaction_count"] = int(project["transaction_count"]) + 1
+        owner = str(row["owner"])
+        customer = customer_totals.setdefault(
+            owner,
+            {"key": owner, "name": customer_name(owner), "consumed": Decimal("0"), "transaction_count": 0},
+        )
+        customer["consumed"] = Decimal(str(customer["consumed"])) + consumed
+        customer["transaction_count"] = int(customer["transaction_count"]) + 1
+        if len(recent) < 100:
+            recent.append(
+                AdminCreditUsageTransactionResponse(
+                    **row,
+                    customer_name=customer_name(owner),
+                )
+            )
+
+    def groups(values: dict[str, dict[str, object]]) -> list[CreditUsageGroupResponse]:
+        ordered = sorted(values.values(), key=lambda item: Decimal(str(item["consumed"])), reverse=True)
+        return [
+            CreditUsageGroupResponse(
+                key=str(item["key"]),
+                name=str(item["name"]),
+                consumed=str(item["consumed"]),
+                transaction_count=int(item["transaction_count"]),
+            )
+            for item in ordered
+        ]
+
+    return AdminCreditUsageResponse(
+        total_consumed=str(total),
+        by_project=groups(project_totals),
+        by_customer=groups(customer_totals),
+        recent_transactions=recent,
     )
     if not updated:
         raise HTTPException(status_code=400, detail="该请求已处理")

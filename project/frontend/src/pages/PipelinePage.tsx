@@ -746,16 +746,16 @@ export default function PipelinePage() {
         listPublishAccounts(),
         getAvatarCapabilities(),
       ] as const);
-      const [profileData, assetData, batchData, configuration] =
+      const batchData = listProductionBatches();
+      const [profileData, assetData, configuration] =
         await Promise.all([
           listProductionProfiles(),
           listAvatarAssets(),
-          listProductionBatches(),
           getProductionWorkspaceConfiguration(),
         ]);
       setProfiles(profileData.items);
       setAssets(assetData);
-      setBatches(batchData.items);
+      void batchData.then((result) => setBatches(result.items)).catch(() => undefined);
       setWorkspaceConfiguration(configuration);
       setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
       setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
@@ -786,17 +786,20 @@ export default function PipelinePage() {
 
       const requestedBatch = searchParams.get("batch") || "";
       const requestedRun = searchParams.get("run") || "";
-      const recoveredBatch = batchData.items.find(
-        (batch) => batch.items.some((item) => item.run_id === requestedRun),
-      );
       if (requestedBatch) {
         setSelectedRunId(requestedRun);
         setSelectedBatchId(requestedBatch);
         await loadWorkspace(requestedBatch);
-      } else if (recoveredBatch) {
-        setSelectedRunId(requestedRun);
-        setSelectedBatchId(recoveredBatch.batch_id);
-        await loadWorkspace(recoveredBatch.batch_id);
+      } else if (requestedRun) {
+        const recoveredBatches = await batchData;
+        const recoveredBatch = recoveredBatches.items.find(
+          (batch) => batch.items.some((item) => item.run_id === requestedRun),
+        );
+        if (recoveredBatch) {
+          setSelectedRunId(requestedRun);
+          setSelectedBatchId(recoveredBatch.batch_id);
+          await loadWorkspace(recoveredBatch.batch_id);
+        }
       }
 
       const crawlerBatchId = searchParams.get("crawler_batch_id") || "";
@@ -1680,7 +1683,7 @@ export default function PipelinePage() {
             activeItem.run_id,
           );
           setWorkspace(refreshed);
-          setActionMessage("AI 已先校对转写；现在只需确认仍无法确定的事实。 ");
+          setActionMessage("");
         } catch (error) {
           setActionError((error as Error).message || "AI 校对暂不可用，原转写已保留。");
           throw error;

@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -1675,6 +1676,55 @@ def test_installer_migrates_customer_data_with_content_verification(tmp_path: Pa
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows release script")
+def test_installer_accepts_only_empty_install_folders_or_owned_runtime_data(tmp_path: Path):
+    install_script = REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    loader = _powershell_function_loader(
+        install_script,
+        (
+            "Get-ExistingPathAttributesForInstall",
+            "Assert-NoReparsePoint",
+            "Assert-NoReparsePointsInTree",
+            "Test-EmptyDirectoryForInstall",
+            "Test-ReusableVideoInsightRuntimeRoot",
+        ),
+    )
+    empty_install = tmp_path / "empty-install"
+    nonempty_install = tmp_path / "nonempty-install"
+    legacy_runtime = tmp_path / "legacy-runtime"
+    empty_install.mkdir()
+    nonempty_install.mkdir()
+    (nonempty_install / "unknown.txt").write_text("keep", encoding="utf-8")
+    (legacy_runtime / "data").mkdir(parents=True)
+    connection = sqlite3.connect(legacy_runtime / "data" / "video_intelligence.db")
+    connection.execute("CREATE TABLE evidence(id INTEGER PRIMARY KEY)")
+    connection.commit()
+    connection.close()
+
+    escaped_empty = str(empty_install).replace("'", "''")
+    escaped_nonempty = str(nonempty_install).replace("'", "''")
+    escaped_runtime = str(legacy_runtime).replace("'", "''")
+    command = loader + (
+        f"Write-Output ('EMPTY=' + (Test-EmptyDirectoryForInstall -Path '{escaped_empty}')); "
+        f"Write-Output ('NONEMPTY=' + (Test-EmptyDirectoryForInstall -Path '{escaped_nonempty}')); "
+        f"Write-Output ('RUNTIME=' + (Test-ReusableVideoInsightRuntimeRoot -Path '{escaped_runtime}'))"
+    )
+    result = subprocess.run(
+        [_windows_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "EMPTY=True" in result.stdout
+    assert "NONEMPTY=False" in result.stdout
+    assert "RUNTIME=True" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows release script")
 def test_installer_post_commit_cleanup_failure_cannot_roll_back_new_install(
     tmp_path: Path,
 ):
@@ -1928,7 +1978,8 @@ def test_installer_only_targets_processes_inside_install_root(tmp_path: Path):
     assert "$processes | Stop-Process -Force" not in script_text
     assert "$shortcutBackups[$shortcutPath]" in script_text
     assert "Restore-ShortcutBackupSafely" in script_text
-    assert 'Join-Path $startMenuDir "卸载 VideoInsight.lnk"' in script_text
+    assert 'Join-Path $startMenuDir "卸载 VideoInsight.lnk"' not in script_text
+    assert "QuietUninstallString" in script_text
     assert "DisplayIcon" in script_text
     assert "EstimatedSize" in script_text
     assert "QuietUninstallString" in script_text

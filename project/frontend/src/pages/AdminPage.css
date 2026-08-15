@@ -33,6 +33,27 @@
   box-shadow: none;
 }
 
+.admin-credit-usage-card {
+  margin-bottom: 24px;
+  border-color: var(--border-default);
+  box-shadow: none;
+}
+
+.admin-credit-total {
+  margin: 16px 0 20px;
+}
+
+.admin-credit-details {
+  margin-top: 20px;
+}
+
+.admin-credit-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--primary-600);
+  margin-bottom: 12px;
+}
+
 .admin-server-status-card .ant-card-head {
   min-height: 56px;
 }

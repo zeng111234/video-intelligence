@@ -51,6 +51,15 @@ def fake_video(tmp_path: Path) -> Path:
     return v
 
 
+def test_media_commands_do_not_open_a_windows_console() -> None:
+    runner = MagicMock(return_value=FakeCompletedProcess())
+    editor = make_editor(command_runner=runner)
+
+    editor._run(["ffmpeg", "-version"], "probe failed")
+
+    assert "creationflags" in runner.call_args.kwargs
+
+
 def test_background_music_uses_ducking_and_aac(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 
