@@ -1,0 +1,83 @@
+{
+  "provenance_version": "local-release-provenance-v1",
+  "cloud_calls": 0,
+  "publish_action": "not_performed",
+  "source_video": "upload:upload-4c188f4d4d",
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-270d9707c8",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": null,
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/majestic-black-swans-on-tranquil-lake-in-autumn-34226228/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "客户数据库"
+      ],
+      "semantic_query": "客户数据库",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-14f7720cd1",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/automated-industrial-production-line-in-action-32386533/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [],
+      "semantic_query": null,
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 2,
+      "asset_id": "broll-3344413315",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/men-using-computer-in-office-6803585/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [],
+      "semantic_query": null,
+      "domestic_context": "international",
+      "domestic_scene": ""
+    }
+  ],
+  "bgm": {
+    "asset_id": "bgm-a40b291dc5b1",
+    "source_path": "C:\\Users\\zeng\\Music\\.mp3",
+    "registered_path": "C:\\Users\\zeng\\Desktop\\video\\data\\bgm_library\\bgm-a40b291dc5b1.mp3",
+    "sha256": "012943cd55d33ecbbed70400f3e99a5650ae9011e5e10be0e2ffa08bbabc1470",
+    "source_type": "user_supplied",
+    "authorization_status": "confirmed_for_local_acceptance",
+    "public_license_claim": false,
+    "volume": 0.18,
+    "ducking": {
+      "enabled": true,
+      "voice_priority": true,
+      "target_db": -24,
+      "attack_ms": 20,
+      "release_ms": 450
+    }
+  },
+  "generated_asset_policy": {
+    "generated_for_local_acceptance": true,
+    "publish_licensed": false,
+    "cannot_satisfy_publish_rights_gate": true
+  }
+}

@@ -4,11 +4,11 @@ import {
   Alert,
   Button,
   Card,
-  Checkbox,
   Descriptions,
   Drawer,
   Empty,
   Input,
+  InputNumber,
   List,
   Modal,
   Radio,
@@ -47,9 +47,11 @@ import type {
   VideoCapabilitiesResponse,
   VideoEditorBatch,
   VideoEditorBatchItem,
+  VideoEditorBrollPlacement,
   VideoEditorBgmAsset,
   VideoEditorSource,
   VideoEditorOverlayPreview,
+  VideoEditorVisualAsset,
   VideoEditorTimeRange,
   VideoEditorVisualSpec,
 } from "../api/types";
@@ -57,15 +59,19 @@ import type {
 const { Title, Text } = Typography;
 
 const BGM_SOURCE_LABELS: Record<string, string> = {
-  manual: "本地授权",
+  manual: "本地授权素材",
   freepd: "FreePD 公共领域",
   pixabay: "Pixabay",
   light_factory: "光厂",
   bodian: "波点商用库",
 };
+const getBgmSourceLabel = (asset: VideoEditorBgmAsset) =>
+  asset.generated && asset.source_provider === "manual"
+    ? "本地原创合成"
+    : BGM_SOURCE_LABELS[asset.source_provider] || "授权素材";
 const formatBgmOptionLabel = (asset: VideoEditorBgmAsset) => (
   `${asset.voiceover_category || asset.mood} · ${asset.title} · ${
-    BGM_SOURCE_LABELS[asset.source_provider] || "授权素材"
+    getBgmSourceLabel(asset)
   }`
 );
 
@@ -100,6 +106,7 @@ type PreviewMode = "original" | "plan" | "output";
 
 interface CloudCapabilities extends VideoCapabilitiesResponse {
   provider_mode?: string;
+  renderer_mode?: string;
   live_ready?: boolean;
   missing_configuration?: string[];
   is_mock?: boolean;
@@ -136,6 +143,7 @@ interface CostQuote {
   provider_ready?: boolean;
   live_ready?: boolean;
   provider_mode?: string;
+  renderer_mode?: string;
   is_mock?: boolean;
   missing_configuration?: string[];
   blocked_reasons?: string[];
@@ -175,7 +183,7 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
     asset_width: 660,
     asset_height: 72,
     outline_width: 1,
-    shadow: 3,
+    shadow: 1,
     color: "#FFFFFF",
   },
   accent: { color: "transparent", width: 0, height: 0, gap: 0 },
@@ -184,8 +192,8 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
     max_chars_per_line: 11,
     font_size: 52,
     safe_bottom: 170,
-    outline_width: 2,
-    shadow: 3,
+    outline_width: 1,
+    shadow: 1,
     color: "#F8FAFC",
     emphasis_color: "#FFE16A",
   },
@@ -658,8 +666,9 @@ function captionPhraseParts(piece: string, maxChars: number) {
   return parts;
 }
 
-function captionChunks(text: string, maxChars: number) {
-  const characters = Array.from(text.replace(/\s+/g, ""));
+function captionChunks(text: string, maxChars: number, durationSeconds?: number) {
+  const cleanText = text.replace(/\s+/g, "");
+  const characters = Array.from(cleanText);
   const breakCharacters = new Set(Array.from("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—"));
   const numericPunctuation = new Set([".", ",", ":"]);
   const pieces: string[] = [];
@@ -678,7 +687,23 @@ function captionChunks(text: string, maxChars: number) {
     phrase += character;
   });
   if (phrase) pieces.push(phrase);
-  return pieces.flatMap((piece) => captionPhraseParts(piece, maxChars));
+  const base = pieces.flatMap((piece) => captionPhraseParts(piece, maxChars));
+  const duration = Math.max(0, durationSeconds ?? 0);
+  if (!duration || duration <= 2.2 || base.length === 0) return base;
+  const minimumCues = Math.max(1, Math.ceil(duration / 2.2));
+  const maximumCues = duration >= 0.8 ? Math.max(1, Math.floor(duration / 0.8)) : 1;
+  const targetCues = Math.min(
+    Math.max(base.length, minimumCues),
+    maximumCues,
+    characters.length,
+  );
+  if (targetCues <= base.length) return base;
+  const dynamicMaxChars = Math.max(
+    1,
+    Math.min(maxChars, Math.ceil(characters.length / targetCues)),
+  );
+  const refined = pieces.flatMap((piece) => captionPhraseParts(piece, dynamicMaxChars));
+  return refined.length ? refined : base;
 }
 
 function displayLines(
@@ -887,7 +912,11 @@ function previewCaptionCues(
   return segments.flatMap((segment, segmentIndex) => {
     const start = asNumber(segment.start, -1);
     const end = asNumber(segment.end, -1);
-    const chunks = semanticParts?.get(segmentIndex) || captionChunks(segment.text, maxChars);
+    const chunks = semanticParts?.get(segmentIndex) || captionChunks(
+      segment.text,
+      maxChars,
+      end - start,
+    );
     if (start < 0 || end <= start || !chunks.length) return [];
     const timings = captionCueTimings(chunks, start, end, spokenRanges);
     return chunks.map((chunk, index) => {
@@ -938,6 +967,9 @@ function localOverlayPreview(
     },
     cues: previewCaptionCues(segments, spec, captionGroups, spokenRanges),
     caption_group_source: semanticParts ? "qwen_semantic" : "deterministic_fallback",
+    phrase_timing_source: segments.some((segment) => (
+      Array.isArray(segment.words) && segment.words.length > 0
+    )) ? "word_timestamps" : "estimated_phrase_timestamps",
   };
 }
 
@@ -1043,7 +1075,11 @@ function downloadBrowserMedia(mediaUrl: string, fallbackTitle: string) {
 function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
   const cloudBatch = batch as CloudBatch;
   return (
+    cloudBatch.provider_mode === "legacy"
+    ||
     cloudBatch.provider_mode === "sandbox"
+    || cloudBatch.provider_mode === "local"
+    || cloudBatch.provider_mode === "local_ffmpeg"
     || cloudBatch.provider_mode === "aliyun"
     || Boolean(!cloudBatch.provider_mode && (cloudBatch.output_profile || cloudBatch.cost_quote))
   );
@@ -1055,6 +1091,7 @@ export default function VideoEditorPage() {
   const pendingLocalDownloadRef = useRef<string | null>(null);
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
+  const [brollAssets, setBrollAssets] = useState<VideoEditorVisualAsset[]>([]);
   const [capabilities, setCapabilities] = useState<CloudCapabilities | null>(null);
   const [batches, setBatches] = useState<CloudBatch[]>([]);
   const [batch, setBatch] = useState<CloudBatch | null>(null);
@@ -1080,6 +1117,11 @@ export default function VideoEditorPage() {
   const [reviewPlanStepIds, setReviewPlanStepIds] = useState<string[]>([]);
   const [reviewTitle, setReviewTitle] = useState("");
   const [reviewBgmId, setReviewBgmId] = useState<string | null>(null);
+  const [reviewBrollAsset, setReviewBrollAsset] = useState<VideoEditorVisualAsset | null>(null);
+  const [reviewBrollStart, setReviewBrollStart] = useState<number | null>(null);
+  const [reviewBrollEnd, setReviewBrollEnd] = useState<number | null>(null);
+  const [reviewBrollMode, setReviewBrollMode] = useState<"pip" | "full">("pip");
+  const [brollUploading, setBrollUploading] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
   const [bgmEnabled, setBgmEnabled] = useState(false);
@@ -1091,6 +1133,7 @@ export default function VideoEditorPage() {
     const secondaryData = Promise.allSettled([
       videoEditorApi.listVideoEditorBatches(),
       videoEditorApi.listVideoEditorBgm(),
+      videoEditorApi.listVideoEditorVisualAssets("broll"),
     ] as const);
     try {
       const [sourceResponse, capabilityResponse] = await Promise.all([
@@ -1109,9 +1152,12 @@ export default function VideoEditorPage() {
     } finally {
       setLoading(false);
     }
-    const [batchResult, bgmResult] = await secondaryData;
+    const [batchResult, bgmResult, brollResult] = await secondaryData;
     if (bgmResult.status === "fulfilled") {
       setBgmAssets(bgmResult.value.items);
+    }
+    if (brollResult.status === "fulfilled") {
+      setBrollAssets(brollResult.value.items);
     }
     if (batchResult.status === "fulfilled") {
       const cloudBatches = batchResult.value.items.filter(isCloudBatch);
@@ -1140,7 +1186,7 @@ export default function VideoEditorPage() {
 
   const currentItem = (batch?.items[0] || null) as CloudBatchItem | null;
   const usableBgmAssets = useMemo(
-    () => bgmAssets.filter((asset) => asset.content_id_risk !== "registered"),
+    () => bgmAssets.filter((asset) => asset.auto_eligible !== false && asset.authorization_status !== "unverified"),
     [bgmAssets],
   );
   const selectedReviewBgm = useMemo(
@@ -1191,11 +1237,15 @@ export default function VideoEditorPage() {
   const displayStatus = isSandbox && currentStatus === "configuration_required"
     ? "sandbox_completed"
     : currentStatus;
-  const configurationBlocked = !isSandbox && (
+  const localRenderer = providerMode === "local_ffmpeg" || capabilities?.renderer_mode === "local_ffmpeg";
+  const configurationBlocked = !isSandbox && !localRenderer && (
+    batch?.provider_mode !== "legacy"
+    && (
     providerMode === "configuration_required"
     || capabilities?.live_ready === false
     || capabilities?.enabled === false
     || missingConfiguration.length > 0
+    )
   );
   const quoteBreakdown = quoteLines(quote);
   const costUpperBound = quoteUpperBound(quote, PROFILE_META[outputProfile].exampleCost);
@@ -1297,6 +1347,10 @@ export default function VideoEditorPage() {
     setReviewSegments([]);
     setReviewTitle("");
     setReviewBgmId(null);
+    setReviewBrollAsset(null);
+    setReviewBrollStart(null);
+    setReviewBrollEnd(null);
+    setReviewBrollMode("pip");
     setBgmEnabled(false);
     setBgmId(undefined);
   };
@@ -1319,6 +1373,29 @@ export default function VideoEditorPage() {
       message.error((error as Error).message || "视频素材上传失败");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const uploadBroll = async (file: File) => {
+    setBrollUploading(true);
+    try {
+      const asset = await videoEditorApi.uploadVideoEditorVisualAsset({
+        kind: "broll",
+        file,
+        rightsHolder: "当前账号（上传即确认）",
+      });
+      setBrollAssets((items) => [asset, ...items.filter((item) => item.asset_id !== asset.asset_id)]);
+      setReviewBrollAsset(asset);
+      if (reviewBrollStart === null) setReviewBrollStart(0);
+      if (reviewBrollEnd === null) {
+        const firstSegment = reviewSegments[0];
+        setReviewBrollEnd(firstSegment ? Number(firstSegment.end) : 3);
+      }
+      message.success("B-roll 素材已就绪，请绑定口播时间段");
+    } catch (error) {
+      message.error((error as Error).message || "B-roll 上传失败");
+    } finally {
+      setBrollUploading(false);
     }
   };
 
@@ -1386,6 +1463,17 @@ export default function VideoEditorPage() {
       || recommendReviewBgm(item, bgmAssets)?.asset_id
       || null;
     setReviewBgmId(nextBgmId);
+    const rawBroll = item.review_snapshot?.broll;
+    const savedBroll = rawBroll && typeof rawBroll === "object"
+      ? rawBroll as Partial<VideoEditorBrollPlacement>
+      : null;
+    const savedAsset = savedBroll?.asset_id
+      ? brollAssets.find((asset) => asset.asset_id === savedBroll.asset_id) || null
+      : null;
+    setReviewBrollAsset(savedAsset);
+    setReviewBrollStart(typeof savedBroll?.start === "number" ? savedBroll.start : null);
+    setReviewBrollEnd(typeof savedBroll?.end === "number" ? savedBroll.end : null);
+    setReviewBrollMode(savedBroll?.mode === "full" ? "full" : "pip");
     setReviewPlanStepIds(Array.from(new Set([
       ...enabledIds,
       ...(nextBgmId ? ["bgm"] : []),
@@ -1408,6 +1496,24 @@ export default function VideoEditorPage() {
     if (!batch || !reviewItem) return;
     setReviewSaving(true);
     try {
+      const brollPlacement = reviewBrollAsset && reviewBrollStart !== null && reviewBrollEnd !== null
+        ? {
+            asset_id: reviewBrollAsset.asset_id,
+            start: reviewBrollStart,
+            end: reviewBrollEnd,
+            mode: reviewBrollMode,
+          }
+        : null;
+      if (brollPlacement && (isSandbox || reviewItem.is_mock)) {
+        message.warning("免费体验没有真实媒体，B-roll 请在真实本机素材批次中使用。");
+        setReviewSaving(false);
+        return;
+      }
+      const localOnlyPreview = Boolean(brollPlacement)
+        || batch.provider_mode === "legacy"
+        || batch.provider_mode === "local"
+        || batch.provider_mode === "local_ffmpeg"
+        || capabilities?.renderer_mode === "local_ffmpeg";
       const next = await videoEditorApi.reviewVideoEditorBatchItem(
         batch.batch_id,
         reviewItem.item_id,
@@ -1416,18 +1522,45 @@ export default function VideoEditorPage() {
           enabledPlanStepIds: reviewPlanStepIds,
           selectedTitle: reviewTitle.trim() || reviewItem.title,
           selectedBgmId: reviewBgmId,
+          brollPlacement,
+          localOnly: localOnlyPreview,
           smartOpeningEnabled: reviewPlanStepIds.includes("smart_opening"),
           confirmed: true,
         },
       ) as CloudBatch;
-      setBatch(next);
-      setBatches((items) => [next, ...items.filter((item) => item.batch_id !== next.batch_id)]);
+      const reviewedItem = next.items[0] as CloudBatchItem | undefined;
+      const releaseTemplateLocal = Boolean(
+        localOnlyPreview
+        && reviewedItem
+        && !isSandbox
+        && !reviewedItem.is_mock,
+      );
+      const exported = releaseTemplateLocal && reviewedItem
+        ? await videoEditorApi.createVideoEditorReleaseTemplateLocalExport(
+            next.batch_id,
+            reviewedItem.item_id,
+            reviewBgmId,
+          ) as CloudBatch
+        : localOnlyPreview && reviewedItem
+          ? await videoEditorApi.createVideoEditorLocalExport(
+              next.batch_id,
+              reviewedItem.item_id,
+            ) as CloudBatch
+          : next;
+      setBatch(exported);
+      setBatches((items) => [exported, ...items.filter((item) => item.batch_id !== exported.batch_id)]);
       setReviewItem(null);
-      const nextItem = next.items[0] as CloudBatchItem | undefined;
+      const nextItem = exported.items[0] as CloudBatchItem | undefined;
       const nextMediaUrl = nextItem?.result_media_url || nextItem?.job?.media_url;
       setPreviewMode(isBrowserMediaUrl(nextMediaUrl) ? "output" : "plan");
       message.success(
-        next.is_mock
+        localOnlyPreview
+          ? releaseTemplateLocal
+            ? "已自动套用口播发布级分镜；正在本机合成，不会上传云端"
+            : brollPlacement
+              ? "B-roll 已保存；正在本机免费合成，不会上传云端"
+              : "字幕与方案已确认，正在本机免费生成成片"
+          : exported.is_mock
           ? "体验方案已保存；云端出片开通后可处理真实素材"
           : "字幕与方案已确认，正在生成一次正式成片",
       );
@@ -1583,9 +1716,9 @@ export default function VideoEditorPage() {
       return {
         label: isSandbox
           ? "免费预览剪辑方案"
-          : configurationBlocked
-            ? "查看出片参考与开通说明"
-            : "确认并生成成片",
+            : configurationBlocked
+              ? "查看出片参考与开通说明"
+            : "制作发布级成片",
         disabled: !selectedSourceId,
         icon: <CloudOutlined />,
       };
@@ -2041,6 +2174,131 @@ export default function VideoEditorPage() {
               <Text type="secondary">以下处理为默认成片内容，无需重复选择。</Text>
             </div>
 
+            {currentItem?.edit_plan?.shot_plan && (
+              <Card size="small" data-testid="talking-head-template-summary">
+                <Space direction="vertical" size={5} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Text strong>自动母版：</Text>
+                    <Tag color="blue">
+                      自适应综合型
+                    </Tag>
+                    {currentItem.edit_plan.director_plan?.visual_events && (
+                      (() => {
+                        const visualEvents = currentItem.edit_plan.director_plan.visual_events;
+                        const generatedImageEvents = visualEvents.filter((event) => (
+                          event.asset_origin === "generated_image_asset"
+                          && Boolean(event.asset_id)
+                          && (event.type === "broll_pip" || event.type === "broll_fullscreen")
+                        ));
+                        const realBrollEvents = visualEvents.filter((event) => (
+                          Boolean(event.asset_id)
+                          && event.asset_origin !== "generated_image_asset"
+                          && (event.type === "broll_pip" || event.type === "broll_fullscreen")
+                        ));
+                        const quality = currentItem.job?.quality_report;
+                        const realCount = quality?.real_broll_event_count ?? realBrollEvents.length;
+                        const generatedCount = quality?.generated_image_event_count ?? generatedImageEvents.length;
+                        return (
+                          <>
+                            <Tag color={quality?.visual_gate_policy?.passed ? "green" : "gold"}>
+                              真实授权 B-roll {realCount} 个
+                            </Tag>
+                            {generatedCount > 0 && (
+                              <Tag color="cyan">
+                                生成图（仅本地验收） {generatedCount}
+                              </Tag>
+                            )}
+                          </>
+                        );
+                      })()
+                    )}
+                    {currentItem.edit_plan.vector_track && (currentItem.edit_plan.vector_track.asset_count || 0) > 0 && (
+                      <Tag color="cyan">
+                        自动匹配 {currentItem.edit_plan.vector_track.asset_count} 个透明矢量素材
+                      </Tag>
+                    )}
+                    {currentItem.edit_plan.shot_plan.degradation?.mode === "精剪口播降级" && (
+                      <Tag color="gold">精剪口播降级</Tag>
+                    )}
+                  </Space>
+                  <Text type="secondary">
+                    {currentItem.job?.quality_report?.shot_plan?.degradation?.message
+                      || currentItem.edit_plan.shot_plan.degradation?.message
+                      || "分镜、字幕、动效和配乐共用同一时间轴。"}
+                  </Text>
+                </Space>
+              </Card>
+            )}
+
+            {currentItem?.edit_plan?.director_plan && (
+              <Card size="small" data-testid="director-plan-summary">
+                <Space direction="vertical" size={5} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Text strong>AI 导演计划：</Text>
+                    <Tag color="purple">{currentItem.edit_plan.director_plan.plan_version}</Tag>
+                    <Tag color="blue">
+                      {currentItem.edit_plan.director_plan.scenes?.length || 0} 个场景
+                    </Tag>
+                  </Space>
+                  <Text type="secondary">
+                    钩子使用原片完整原话，只出现一次；字幕、画面和配乐共用一条时间轴。
+                  </Text>
+                  <Text type="secondary">
+                    {currentItem.edit_plan.director_plan.asset_requests?.length
+                      ? `已生成 ${currentItem.edit_plan.director_plan.asset_requests.length} 个图片素材需求，等待生图接口和本条预算。`
+                      : currentItem.edit_plan.vector_track && (currentItem.edit_plan.vector_track.asset_count || 0) > 0
+                        ? `已按${currentItem.edit_plan.vector_track.theme || "当前"}主题自动匹配透明矢量素材，独立视觉轨道会在字幕前渲染，并保留来源与许可证记录。`
+                      : currentItem.job?.quality_report?.shot_plan?.degradation?.mode === "authorized_real_broll"
+                        ? "当前成片使用语义相关且来源可追溯的真实素材，已按模板视觉门完成验收。"
+                      : currentItem.job?.quality_report?.shot_plan?.degradation?.mode === "a_roll_safe_degradation"
+                        ? "当前没有可靠语义素材，已保留人物主画面和安全虚拟运镜。"
+                      : currentItem.edit_plan.director_plan.degradation?.mode === "generated_image_broll"
+                        ? "已绑定生成图并完成本地视觉验收；生成图不代表免费素材授权，也不开放发布声明。"
+                      : currentItem.edit_plan.director_plan.degradation?.mode === "精剪口播降级"
+                        ? "当前没有可用的真实 B-roll，已安全降级为人物主画面；配置素材后才会进入发布级视觉验收。"
+                        : "当前已绑定视觉素材，系统将按分镜自动安排画中画或全屏画面。"}
+                  </Text>
+                  <Text type="secondary">
+                    质量门：{currentItem.job?.quality_report?.visual_gate_policy?.language
+                      || "按内容类型检查有意义的视觉变化；无可靠素材时安全降级。"}
+                    音画漂移不超过 67ms；无关素材、生成图和矢量不能冒充已授权真实素材。
+                  </Text>
+                </Space>
+              </Card>
+            )}
+
+            {isLocalExport && currentItem?.job?.quality_report && (
+              <Card size="small" data-testid="local-quality-summary">
+                <Space direction="vertical" size={5} style={{ width: "100%" }}>
+                  <Space wrap>
+                    <Text strong>本机成片验收：</Text>
+                    <Tag color={currentItem.job.quality_report.passed ? "green" : "red"}>
+                      {currentItem.job.quality_report.passed ? "质量门通过" : "质量门未通过"}
+                    </Tag>
+                    <Tag color="blue">
+                      真实 B-roll {currentItem.job.quality_report.real_broll_event_count || 0} 个
+                    </Tag>
+                    <Tag>
+                      国内 {currentItem.job.quality_report.domestic_real_broll_event_count || 0}
+                    </Tag>
+                    <Tag>
+                      国际 {currentItem.job.quality_report.international_broll_event_count || 0}
+                    </Tag>
+                    {(currentItem.job.quality_report.generated_image_event_count || 0) > 0 && (
+                      <Tag color="cyan">
+                        生成图（仅本地） {currentItem.job.quality_report.generated_image_event_count}
+                      </Tag>
+                    )}
+                  </Space>
+                  <Text type="secondary">
+                    PiP {currentItem.job.quality_report.broll_modes?.pip || 0} 个，
+                    全屏 {currentItem.job.quality_report.broll_modes?.full || 0} 个；
+                    覆盖 {Math.round((currentItem.job.quality_report.real_broll_coverage_ratio || 0) * 100)}%
+                  </Text>
+                </Space>
+              </Card>
+            )}
+
             <div className="video-editor-result-list">
               {RESULT_SUMMARY_ITEMS.filter((item) => item.key !== "background_music" || bgmEnabled).map((item) => (
                 <div className="video-editor-result-item" key={item.key}>
@@ -2271,30 +2529,149 @@ export default function VideoEditorPage() {
                 },
                 {
                   key: "plan",
-                  label: "粗剪方案",
+                  label: "自动方案",
                   children: (
-                    <Checkbox.Group
-                      value={reviewPlanStepIds}
-                      onChange={(values) => setReviewPlanStepIds(values as string[])}
-                      style={{ width: "100%" }}
-                    >
-                      <Space direction="vertical" size={10} style={{ width: "100%" }}>
-                        {planSteps.map((step) => (
-                          <Card
-                            key={step.id}
-                            size="small"
-                            styles={{ body: { padding: 12 } }}
-                          >
-                            <Checkbox value={step.id}>
-                              <Space direction="vertical" size={2}>
-                                <Text strong>{step.label}</Text>
-                                <Text type="secondary">{step.reason}</Text>
-                              </Space>
-                            </Checkbox>
-                          </Card>
-                        ))}
-                      </Space>
-                    </Checkbox.Group>
+                    <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                      {currentItem?.edit_plan?.shot_plan && (
+                        <Card size="small" title="自动选择的口播母版">
+                          <Space direction="vertical" size={6} style={{ width: "100%" }}>
+                            <Space wrap>
+                              <Tag color="blue">
+                                自适应综合型
+                              </Tag>
+                              <Text type="secondary">
+                                {currentItem.edit_plan.shot_plan.template_version}
+                              </Text>
+                              {currentItem.edit_plan.shot_plan.degradation?.mode === "精剪口播降级" && (
+                                <Tag color="gold">精剪口播降级</Tag>
+                              )}
+                            </Space>
+                            <Text type="secondary">
+                              {currentItem.edit_plan.shot_plan.selection?.reason || "系统按语义、句式和内容完整性自动选择。"}
+                            </Text>
+                            <Text type="secondary">
+                              {currentItem.edit_plan.shot_plan.degradation?.message || "分镜、字幕、动效和配乐共用同一时间轴。"}
+                            </Text>
+                          </Space>
+                        </Card>
+                      )}
+                      <Alert
+                        type="success"
+                        showIcon
+                        message="系统自动组织剪辑方案并做发布门禁检查"
+                        description="系统自动选择母版、识别报号/残句、安排钩子、绑定统一时间轴、匹配授权配乐和可用视觉素材；没有真实视觉素材时会明确降级，不把字幕卡片冒充 B-roll。"
+                      />
+                      {planSteps.map((step) => (
+                        <Card
+                          key={step.id}
+                          size="small"
+                          styles={{ body: { padding: 12 } }}
+                        >
+                          <Space align="start">
+                            <Tag color="green">自动</Tag>
+                            <Space direction="vertical" size={2}>
+                              <Text strong>{step.label}</Text>
+                              <Text type="secondary">{step.reason}</Text>
+                            </Space>
+                          </Space>
+                        </Card>
+                      ))}
+                    </Space>
+                  ),
+                },
+                {
+                  key: "broll",
+                  label: "画面素材（可选）",
+                  children: (
+                    <Space direction="vertical" size={14} style={{ width: "100%" }}>
+                  <Alert
+                        type="info"
+                        showIcon
+                        message="视觉素材由系统自动匹配"
+                        description="你上传到素材库的已授权图片/视频会按口播内容自动安排为画中画或全屏画面；这里的手动绑定仅作为高级覆盖。未配置素材或生图接口时，系统会安全降级并明确标注。"
+                      />
+                      <Upload
+                        accept=".png,.jpg,.jpeg,.webp,.mp4,.mov,.m4v"
+                        showUploadList={false}
+                        beforeUpload={(file) => {
+                          void uploadBroll(file as File);
+                          return false;
+                        }}
+                      >
+                        <Button icon={<UploadOutlined />} loading={brollUploading}>
+                          上传图片或视频素材
+                        </Button>
+                      </Upload>
+                      <Select
+                        aria-label="选择 B-roll 素材"
+                        allowClear
+                        value={reviewBrollAsset?.asset_id || undefined}
+                        placeholder="不添加 B-roll（保持原模板）"
+                        options={brollAssets.map((asset) => ({
+                          value: asset.asset_id,
+                          label: `${asset.name} · ${asset.media_kind === "image" ? "图片" : "视频"}${asset.asset_origin === "generated_image_asset" ? " · 生成图（仅本地验收）" : ""}`,
+                        }))}
+                        onChange={(value) => {
+                          const asset = brollAssets.find((item) => item.asset_id === value) || null;
+                          setReviewBrollAsset(asset);
+                          if (!asset) {
+                            setReviewBrollStart(null);
+                            setReviewBrollEnd(null);
+                          }
+                        }}
+                        style={{ width: "100%" }}
+                      />
+                      {reviewBrollAsset && (
+                        <Card size="small" title={`绑定《${reviewBrollAsset.name}》`}>
+                          <Space direction="vertical" size={10} style={{ width: "100%" }}>
+                            <Space wrap>
+                              <Text>出现时间（原片）</Text>
+                              <InputNumber
+                                aria-label="B-roll 开始时间"
+                                min={0}
+                                step={0.1}
+                                precision={1}
+                                value={reviewBrollStart ?? undefined}
+                                onChange={(value) => setReviewBrollStart(value === null ? null : Number(value))}
+                                addonAfter="秒"
+                              />
+                              <Text>到</Text>
+                              <InputNumber
+                                aria-label="B-roll 结束时间"
+                                min={0.1}
+                                step={0.1}
+                                precision={1}
+                                value={reviewBrollEnd ?? undefined}
+                                onChange={(value) => setReviewBrollEnd(value === null ? null : Number(value))}
+                                addonAfter="秒"
+                              />
+                              <Button
+                                onClick={() => {
+                                  const segment = reviewSegments[0];
+                                  if (segment) {
+                                    setReviewBrollStart(Number(segment.start));
+                                    setReviewBrollEnd(Number(segment.end));
+                                  }
+                                }}
+                              >
+                                绑定第一句字幕
+                              </Button>
+                            </Space>
+                            <Radio.Group
+                              value={reviewBrollMode}
+                              onChange={(event) => setReviewBrollMode(event.target.value)}
+                              options={[
+                                { label: "下方侧边安全区画中画", value: "pip" },
+                                { label: "全屏替换", value: "full" },
+                              ]}
+                            />
+                            <Text type="secondary">
+                              只允许绑定在原片时间轴内；画中画会自动放到下方侧边安全区，避开人物头脸和字幕，人声与字幕仍按已确认时间轴输出。
+                            </Text>
+                          </Space>
+                        </Card>
+                      )}
+                    </Space>
                   ),
                 },
                 {
@@ -2322,6 +2699,19 @@ export default function VideoEditorPage() {
                           <Text type="secondary" style={{ display: "block", marginTop: 4 }}>
                             {reviewBgmExplanation}
                           </Text>
+                        )}
+                        {!usableBgmAssets.length && (
+                          <Alert
+                            type="warning"
+                            showIcon
+                            style={{ marginTop: 10 }}
+                            message={bgmAssets.length ? "当前配乐授权尚未核验，已安全保持原声" : "暂未配置可自动使用的授权配乐"}
+                            description={
+                              bgmAssets.length
+                                ? "未核验商用授权的音乐不会被自动带入正式渲染；如需配乐，请补充授权凭证或继续保持原声。"
+                                : "上传或配置一首有明确使用权的音乐后，系统才会按口播语气自动匹配。"
+                            }
+                          />
                         )}
                         <Select
                           aria-label="复核背景音乐"
@@ -2358,7 +2748,7 @@ export default function VideoEditorPage() {
                             </Space>
                             <Space wrap size={6} style={{ marginBottom: 8 }}>
                               <Text type="secondary">
-                                来源：{BGM_SOURCE_LABELS[selectedReviewBgm.source_provider] || "授权素材"}
+                                来源：{getBgmSourceLabel(selectedReviewBgm)}
                               </Text>
                               {selectedReviewBgm.content_id_risk === "registered" && (
                                 <Tag color="orange">可能触发平台版权识别</Tag>
@@ -2450,7 +2840,7 @@ export default function VideoEditorPage() {
         @font-face{font-family:"VideoInsight Title Serif";src:url("/api/v1/video-editor/brand-title-font") format("opentype");font-display:swap;font-style:normal;font-weight:900}
         .video-editor-title-overlay{position:absolute;width:76%;font-family:"VideoInsight Title Serif","Microsoft YaHei UI",serif;font-size:var(--video-editor-title-font-size);font-weight:900;line-height:var(--video-editor-title-line-height);letter-spacing:.01em;text-align:left;white-space:normal;-webkit-text-stroke:var(--video-editor-title-outline) rgba(0,0,0,.72);paint-order:stroke fill;text-shadow:0 2px 7px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.62);pointer-events:none;transition:opacity .12s linear}
         .video-editor-title-accent{position:absolute;border-radius:999px;pointer-events:none;transition:opacity .12s linear}
-        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);paint-order:stroke fill;text-shadow:0 1px 2px rgba(0,0,0,.72),0 3px 8px rgba(0,0,0,.48);pointer-events:none}
+        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.64);paint-order:stroke fill;text-shadow:0 1px 1px rgba(0,0,0,.58),0 2px 3px rgba(0,0,0,.22);pointer-events:none}
         .video-editor-overlay-line{display:block}
         .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.5) * 1em);line-height:0;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,120ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
         @keyframes video-editor-emphasis-pop{0%{transform:scale(.94)}70%{transform:scale(1.05)}100%{transform:scale(1)}}

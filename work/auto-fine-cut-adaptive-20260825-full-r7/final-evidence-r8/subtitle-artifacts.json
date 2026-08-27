@@ -1,0 +1,10 @@
+{
+  "ass": {
+    "path": "work\\auto-fine-cut-adaptive-20260825-full-r7\\final-evidence-r8\\rendered.ass",
+    "sha256": "7f31b4616ec1bd90d226b943669675136ef436df2aa6f85cc5dd0fd1891f6d87"
+  },
+  "manifest": {
+    "path": "work\\auto-fine-cut-adaptive-20260825-full-r7\\final-evidence-r8\\subtitle-manifest.json",
+    "sha256": "43fbeb5e9e69315d204957cebc1e432a6e745ba7f7477022d624a46d422f834a"
+  }
+}

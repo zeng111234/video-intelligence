@@ -1,0 +1,15 @@
+{
+  "task_id": "edit-local-1238867f9a",
+  "status": "failed",
+  "progress": 0,
+  "stage": "本机成片生成失败",
+  "error_message": "本机成片质量校验失败：subtitle_timeline",
+  "result_size_bytes": null,
+  "media_url": null,
+  "download_url": null,
+  "source_id": "upload:upload-a88ae01012",
+  "analysis_id": null,
+  "publish_title": "广州烧烤店的回头客模式",
+  "workflow": "local_preview_export",
+  "quality_report": {}
+}

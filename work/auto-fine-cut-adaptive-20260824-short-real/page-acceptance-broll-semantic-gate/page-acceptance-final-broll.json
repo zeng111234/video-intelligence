@@ -1,0 +1,24 @@
+{
+  "before": {
+    "src": "http://localhost:1001/api/v1/video-editor/jobs/edit-local-541073959f/media",
+    "duration": 19.713,
+    "readyState": 4
+  },
+  "playback": {
+    "ended": true,
+    "currentTime": 19.713,
+    "duration": 19.713,
+    "elapsed_ms": 19790,
+    "timeout": false
+  },
+  "download": {
+    "suggestedFilename": "edit-local-541073959f.mp4",
+    "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260824-short-real\\page-acceptance-broll-semantic-gate\\downloaded-from-page-edit-local-541073959f.mp4",
+    "sha256": "1c2061f43e1b57de07f2406c8abecb242c503cd3037044951a32794f94839b09"
+  },
+  "expected_sha256": "1c2061f43e1b57de07f2406c8abecb242c503cd3037044951a32794f94839b09",
+  "download_hash_matches_output": true,
+  "body_contains_title": true,
+  "body_contains_broll": true,
+  "console_errors": []
+}

@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,6 @@ from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
 
-from src.adapters.drission_browser import ANTI_DETECTION_INIT_SCRIPT
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.browser_window import (
     minimize_browser_window,
@@ -50,6 +50,43 @@ _LOGIN_MARKERS = ("安全验证", "扫码登录", "请完成验证")
 _LOCAL_DEBUG_OPENER = build_opener(ProxyHandler({}))
 
 
+def _public_search_normalize(value: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKC", value).casefold()
+        if not character.isspace()
+        and not unicodedata.category(character).startswith(("P", "Z"))
+    )
+
+
+def _public_search_keyword_match(row: dict[str, Any], keyword: str) -> str | None:
+    """Match title/description/topics without requiring a contiguous phrase."""
+    values: list[str] = []
+    for key in ("title", "description", "text", "aria", "match_text"):
+        value = row.get(key)
+        if value:
+            values.append(str(value))
+    hashtags = row.get("hashtags")
+    if isinstance(hashtags, (list, tuple, set)):
+        values.extend(str(value) for value in hashtags if value)
+    elif hashtags:
+        values.append(str(hashtags))
+    combined = _public_search_normalize(" ".join(values))
+    normalized_keyword = _public_search_normalize(keyword)
+    if not normalized_keyword or not combined:
+        return None
+    if title_matches_keyword(
+        title=combined,
+        keyword=keyword,
+        require_intent=False,
+    ):
+        return "exact"
+    tokens = re.findall(r"[a-z0-9]+|[\u3400-\u9fff]", normalized_keyword)
+    if tokens and all(token in combined for token in tokens):
+        return "token_union"
+    return None
+
+
 def _safe_error(exc: BaseException) -> str:
     """截断异常文本，避免向用户暴露过长或敏感的底层细节。"""
     text = str(exc).strip()
@@ -70,8 +107,10 @@ _HOTSPOT_CUSTOMER_RESULT_LIMIT = 3
 _PUBLIC_SEARCH_MAX_RESULT_LIMIT = 100
 _PUBLIC_SEARCH_MAX_SCROLL_ROUNDS = 30
 _PUBLIC_SEARCH_MAX_STAGNANT_ROUNDS = 2
-_PUBLIC_SEARCH_MIN_RAW_SCAN_LIMIT = 100
-_PUBLIC_SEARCH_MAX_RAW_SCAN_LIMIT = 150
+_PUBLIC_SEARCH_PAGE_SETTLE_MS = 1_800
+_PUBLIC_SEARCH_INPUT_SETTLE_MS = 250
+_PUBLIC_SEARCH_MIN_RAW_SCAN_LIMIT = 200
+_PUBLIC_SEARCH_MAX_RAW_SCAN_LIMIT = 200
 _PUBLIC_SEARCH_RAW_SCAN_MULTIPLIER = 3
 _MIN_QUALIFYING_LIKES = 100
 _MIN_QUALIFYING_LIKES_PER_DAY = 1.0
@@ -110,6 +149,9 @@ _PUBLIC_SEARCH_SERVICE_ERROR_MARKERS = ("服务出现异常", "服务异常", "�
 _PUBLIC_SEARCH_MANUAL_REVIEW_CODES = frozenset(
     {"public_search_verification", "public_search_login_required"}
 )
+# 人工验证（滑块/扫码）允许的等待上限；用户在可见窗口完成验证后，
+# 轮询会立即（约 1 秒内）发现并继续本次采集，而不是等满这个时长。
+_PUBLIC_SEARCH_MANUAL_REVIEW_WAIT_SECONDS = 60
 _PUBLIC_SEARCH_STOP_CODES = frozenset(
     {
         "public_search_platform_end",
@@ -270,6 +312,66 @@ class LocalDouyinBrowserSearchProvider:
         """Start the dedicated profile without interrupting background work."""
         return self._start_browser(visible=False)
 
+    def reset_login_state(self, *, confirmed: bool = False) -> BrowserSessionStatus:
+        """Reset only Douyin's login state after an explicit human confirmation.
+
+        Keep the dedicated profile and browser process intact.  Clearing is
+        limited to Douyin hosts that are open in this provider's context; no
+        cookies are exported, no other platform is touched, and no verification
+        flow is automated.
+        """
+        if not confirmed:
+            raise LicensedProviderError(
+                "重置抖音登录状态前需要明确确认。",
+                kind=ProviderErrorKind.VALIDATION,
+                retryable=False,
+            )
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        platform_domains = {
+            "douyin.com",
+            "www.douyin.com",
+            "douhot.douyin.com",
+            "open.douyin.com",
+        }
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect_over_cdp(
+                    f"http://127.0.0.1:{self.debug_port}",
+                    timeout=2500,
+                )
+                for context in browser.contexts:
+                    page_hosts: set[str] = set()
+                    for page in context.pages:
+                        host = (urlparse(str(page.url or "")).hostname or "").casefold()
+                        if host == "douyin.com" or host.endswith(".douyin.com"):
+                            page_hosts.add(host)
+                    for domain in sorted(platform_domains | page_hosts):
+                        context.clear_cookies(domain=domain)
+                    for page in context.pages:
+                        host = (urlparse(str(page.url or "")).hostname or "").casefold()
+                        if host != "douyin.com" and not host.endswith(".douyin.com"):
+                            continue
+                        try:
+                            page.evaluate(
+                                """() => {
+                                    window.localStorage.clear();
+                                    window.sessionStorage.clear();
+                                }"""
+                            )
+                        except Exception:
+                            # Cookie clearing is authoritative; a closed page
+                            # must not broaden the reset scope.
+                            continue
+        except (PlaywrightError, OSError) as exc:
+            raise LicensedProviderError(
+                "抖音登录状态重置失败；未删除浏览器资料，请稍后重试。",
+                kind=ProviderErrorKind.CONNECTION,
+                retryable=True,
+            ) from exc
+        return self.session_status()
+
     def _start_browser(self, *, visible: bool) -> BrowserSessionStatus:
         status = self.session_status()
         if status.running and visible:
@@ -316,8 +418,6 @@ class LocalDouyinBrowserSearchProvider:
             f"--user-data-dir={self.profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
             "--disable-dev-shm-usage",
             "--disable-gpu",
             "--lang=zh-CN",
@@ -373,6 +473,7 @@ class LocalDouyinBrowserSearchProvider:
         limit: int,
         idempotency_key: str,
         hotspot_window_hours: int | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderSearchPage:
         capability = self.capabilities()
         if not capability.enabled:
@@ -438,6 +539,7 @@ class LocalDouyinBrowserSearchProvider:
         limit: int,
         idempotency_key: str,
         hotspot_window_hours: int | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderSearchPage:
         """Search Douyin with the dedicated local, login-bearing profile.
 
@@ -484,6 +586,7 @@ class LocalDouyinBrowserSearchProvider:
             scan_limit=raw_scan_limit,
             observed_at=observed_at,
             published_after=published_after,
+            progress_callback=progress_callback,
         )
         manual_review_error = next(
             (
@@ -495,12 +598,12 @@ class LocalDouyinBrowserSearchProvider:
         )
         if manual_review_error is not None:
             if self._reveal_browser_for_manual_review():
-                manual_review_error.message = f"{manual_review_error.message}已将抖音专用浏览器显示到前台，请完成处理后再重新搜索。"
+                manual_review_error.message = f"抖音需要你确认一次：{manual_review_error.message}已将抖音专用浏览器显示到前台，请完成处理后继续当前搜索。"
             else:
                 manual_review_error.message = (
-                    f"{manual_review_error.message}"
+                    f"抖音需要你确认一次：{manual_review_error.message}"
                     "未能定位抖音专用浏览器窗口；请在“账号连接”中点击“登录抖音”，"
-                    "完成处理后再重新搜索。"
+                    "完成处理后继续当前搜索。"
                 )
         (
             items,
@@ -553,6 +656,7 @@ class LocalDouyinBrowserSearchProvider:
                 if published_filtered_count
                 else "抖音登录搜索已读取候选，但其中没有可读标题或可用视频链接。"
             )
+        parsed_count = self._public_search_parsed_count(raw_rows)
         return ProviderSearchPage(
             platform=Platform.DOUYIN,
             provider=self.provider_name,
@@ -570,12 +674,17 @@ class LocalDouyinBrowserSearchProvider:
                 )
             ),
             raw_item_count=len(raw_rows),
-            parsed_item_count=len(items),
+            parsed_item_count=parsed_count,
+            raw_discovered_count=len(raw_rows),
+            deduped_item_count=len({str(row.get("item_id") or "") for row in raw_rows if row.get("item_id")}),
+            direct_match_count=len(items),
+            out_of_window_count=published_filtered_count,
+            invalid_count=max(0, len(raw_rows) - parsed_count),
+            relevance_filtered_count=filter_counts["relevance"],
             crawl_stop_reason=crawl_stop_reason,
             crawl_stop_message=crawl_stop_message,
             payload_diagnostic=diagnostic,
             duration_filtered_count=filter_counts["duration"],
-            relevance_filtered_count=filter_counts["relevance"],
             errors=[*collection_errors, *warnings],
         )
 
@@ -618,6 +727,86 @@ class LocalDouyinBrowserSearchProvider:
     def _reveal_browser_for_manual_review(self) -> bool:
         """Bring a confirmed human-action page to the foreground."""
         return reveal_browser_window(self.debug_port)
+
+    def _wait_for_public_search_manual_review(
+        self,
+        page,
+        *,
+        timeout_seconds: int = _PUBLIC_SEARCH_MANUAL_REVIEW_WAIT_SECONDS,
+    ) -> bool:
+        """Show the Douyin window and wait for the user to finish the visible
+        slider/QR verification, then let the current collection continue.
+
+        Polls every second, so a completed challenge resumes the search almost
+        immediately instead of forcing a manual re-run.  Returns True only when
+        the challenge is cleared; the caller then continues collecting rows.
+        """
+        self._reveal_browser_for_manual_review()
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            page.wait_for_timeout(1000)
+            try:
+                if page.is_closed():
+                    return False
+            except Exception:
+                return False
+            try:
+                self._raise_for_public_search_block(page)
+            except LicensedProviderError:
+                continue
+            return True
+        return False
+
+    def _prepare_public_search_input(self, page, keyword: str):
+        """Use the existing Douyin page/search box before navigating.
+
+        A healthy same-domain search tab already has the right profile, login
+        state, and often the current search surface. Reusing it avoids the
+        extra home-page navigation that was previously done for every query.
+        """
+        current_url = str(getattr(page, "url", "") or "")
+        host = (urlparse(current_url).hostname or "").casefold()
+        same_domain = host in {"douyin.com", "www.douyin.com"}
+        if not same_domain:
+            response = page.goto(_PUBLIC_DOUYIN_ENTRY_URL, wait_until="domcontentloaded")
+            if response is not None and response.status in {403, 412, 429}:
+                raise LicensedProviderError(
+                    f"抖音官网返回 {response.status}，已停止本次搜索；请稍后继续。",
+                    kind=ProviderErrorKind.RATE_LIMIT,
+                    code="public_search_rate_limited",
+                )
+            page.wait_for_timeout(_PUBLIC_SEARCH_PAGE_SETTLE_MS)
+
+        search_focused = page.evaluate(
+            """() => {
+              const input = document.querySelector(
+                'input[placeholder*="搜索"], input[data-e2e*="search"]'
+              );
+              if (!input) return false;
+              input.focus();
+              return true;
+            }"""
+        )
+        if search_focused:
+            # Clear only the visible field. Cookies, storage, profile, and the
+            # existing tab remain untouched.
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.type(keyword)
+            page.wait_for_timeout(_PUBLIC_SEARCH_INPUT_SETTLE_MS)
+            page.keyboard.press("Enter")
+            return
+
+        # A same-domain page without a search box is stale. Navigate once
+        # directly to the visible search URL; do not go home and then navigate
+        # again for the same business search.
+        response = page.goto(self._public_search_url(keyword), wait_until="domcontentloaded")
+        if response is not None and response.status in {403, 412, 429}:
+            raise LicensedProviderError(
+                f"抖音官网返回 {response.status}，已停止本次搜索；请稍后继续。",
+                kind=ProviderErrorKind.RATE_LIMIT,
+                code="public_search_rate_limited",
+            )
 
     @staticmethod
     def _reuse_or_create_collection_page(
@@ -686,7 +875,6 @@ class LocalDouyinBrowserSearchProvider:
             try:
                 browser = playwright_manager.chromium.connect_over_cdp(endpoint)
                 context = browser.contexts[0]
-                context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
                 page, created_page = self._reuse_or_create_collection_page(
                     context,
                     preferred_url_fragments=("douhot.douyin.com",),
@@ -913,6 +1101,7 @@ class LocalDouyinBrowserSearchProvider:
         scan_limit: int,
         observed_at: datetime,
         published_after: datetime | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[list[dict[str, Any]], list[ProviderSearchError]]:
         """Collect only rendered cards from the public Douyin search result page."""
         from playwright.sync_api import Error as PlaywrightError
@@ -927,7 +1116,6 @@ class LocalDouyinBrowserSearchProvider:
             try:
                 browser = playwright_manager.chromium.connect_over_cdp(endpoint)
                 context = browser.contexts[0]
-                context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
                 page, created_page = self._reuse_or_create_collection_page(
                     context,
                     preferred_url_fragments=("www.douyin.com/search/",),
@@ -967,82 +1155,64 @@ class LocalDouyinBrowserSearchProvider:
                 try:
                     page.set_default_timeout(int(self.timeout_seconds * 1000))
                     page.on("response", capture_search_response)
-                    # Mark before calling goto: a transport error can occur after
-                    # Chrome has already sent the request, so it must never cause a
-                    # second navigation for the same business search.
-                    navigation_started = True
-                    response = page.goto(
-                        "https://www.douyin.com/",
-                        wait_until="domcontentloaded",
-                    )
-                    if response is not None and response.status in {403, 412, 429}:
-                        raise LicensedProviderError(
-                            (
-                                f"抖音官网返回 {response.status}，后台检索已停止；"
-                                "当前没有可处理的登录或安全验证，请稍后再搜索。"
-                            ),
-                            kind=ProviderErrorKind.RATE_LIMIT,
-                            code="public_search_rate_limited",
-                        )
-                    page.wait_for_timeout(
-                        self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
-                    )
-                    # 新版抖音搜索:URL 直带关键词不再发起搜索请求,页面只
-                    # 显示作者卡片。必须像真人一样在搜索框输入关键词后回车,
-                    # 才会触发 general/search 接口并返回完整视频数据。
-                    search_focused = page.evaluate(
-                        """() => {
-                          const input = document.querySelector(
-                            'input[placeholder*="搜索"], input[data-e2e*="search"]'
-                          );
-                          if (!input) return false;
-                          input.focus();
-                          return true;
-                        }"""
-                    )
-                    if search_focused:
-                        page.keyboard.type(keyword, delay=60)
-                        page.wait_for_timeout(self._random_delay_ms(400, 900))
-                        page.keyboard.press("Enter")
-                    else:
-                        # 兜底:找不到搜索框时回退 URL 直访
-                        fallback_response = page.goto(
-                            self._public_search_url(keyword),
-                            wait_until="domcontentloaded",
-                        )
-                        if (
-                            fallback_response is not None
-                            and fallback_response.status
-                            in {
-                                403,
-                                412,
-                                429,
-                            }
-                        ):
-                            raise LicensedProviderError(
-                                (
-                                    f"抖音官网返回 {fallback_response.status}，后台检索已停止；"
-                                    "当前没有可处理的登录或安全验证，请稍后再搜索。"
-                                ),
-                                kind=ProviderErrorKind.RATE_LIMIT,
-                                code="public_search_rate_limited",
-                            )
-                    page.wait_for_timeout(
-                        self._random_delay_ms(*_HOTSPOT_SEARCH_SETTLE_RANGE_MS)
-                    )
                     errors: list[ProviderSearchError] = []
                     try:
                         self._raise_for_public_search_block(page)
                     except LicensedProviderError as exc:
-                        errors.append(
-                            ProviderSearchError(
-                                kind=exc.kind,
-                                code=exc.code or "public_search_blocked",
-                                message=exc.args[0],
-                                retryable=False,
+                        if exc.code in _PUBLIC_SEARCH_MANUAL_REVIEW_CODES and (
+                            self._wait_for_public_search_manual_review(page)
+                        ):
+                            # 用户在可见窗口完成了滑块/扫码验证；继续本次采集，
+                            # 而不是放弃当前搜索让用户重新找素材。
+                            pass
+                        else:
+                            errors.append(
+                                ProviderSearchError(
+                                    kind=exc.kind,
+                                    code=exc.code or "public_search_blocked",
+                                    message=exc.args[0],
+                                    retryable=False,
+                                )
                             )
-                        )
-                        return [], errors
+                            return [], errors
+                    # Mark before the first real page action so a transport
+                    # failure cannot trigger a second automatic navigation.
+                    navigation_started = True
+                    self._prepare_public_search_input(page, keyword)
+                    page.wait_for_timeout(_PUBLIC_SEARCH_PAGE_SETTLE_MS)
+                    try:
+                        self._raise_for_public_search_block(page)
+                    except LicensedProviderError as exc:
+                        if exc.code in _PUBLIC_SEARCH_MANUAL_REVIEW_CODES and (
+                            self._wait_for_public_search_manual_review(page)
+                        ):
+                            # The challenge appeared while the search was
+                            # settling. Re-submit the same visible keyword once
+                            # in the same tab/context after the human clears it.
+                            self._prepare_public_search_input(page, keyword)
+                            page.wait_for_timeout(_PUBLIC_SEARCH_PAGE_SETTLE_MS)
+                            try:
+                                self._raise_for_public_search_block(page)
+                            except LicensedProviderError as still_blocked:
+                                errors.append(
+                                    ProviderSearchError(
+                                        kind=still_blocked.kind,
+                                        code=still_blocked.code or "public_search_blocked",
+                                        message=still_blocked.args[0],
+                                        retryable=False,
+                                    )
+                                )
+                                return [], errors
+                        else:
+                            errors.append(
+                                ProviderSearchError(
+                                    kind=exc.kind,
+                                    code=exc.code or "public_search_blocked",
+                                    message=exc.args[0],
+                                    retryable=False,
+                                )
+                            )
+                            return [], errors
                     video_filter = self._ensure_public_search_video_filter(page)
                     if video_filter.warning:
                         errors.append(
@@ -1081,10 +1251,14 @@ class LocalDouyinBrowserSearchProvider:
                         )
                     rows, stop_error = self._collect_public_douyin_search_rows(
                         page,
+                        keyword=keyword,
+                        observed_at=observed_at,
+                        published_after=published_after,
                         target_limit=target_limit,
                         scan_limit=scan_limit,
                         layout_mode=layout_mode,
                         network_rows=network_rows,
+                        progress_callback=progress_callback,
                         qualifying_count=lambda candidate_rows: len(
                             self._to_public_search_items(
                                 candidate_rows,
@@ -1190,10 +1364,22 @@ class LocalDouyinBrowserSearchProvider:
             if not item_id or not item_id.isdigit():
                 continue
             title = str(aweme.get("desc") or "").strip()
-            if not title or not title_matches_keyword(
-                title=title, keyword=keyword, require_intent=False
+            hashtags: list[str] = []
+            for topic in (
+                aweme.get("text_extra"),
+                aweme.get("textExtra"),
+                aweme.get("cha_list"),
+                aweme.get("hashtags"),
             ):
-                continue
+                if not isinstance(topic, list):
+                    continue
+                for value in topic:
+                    if isinstance(value, dict):
+                        label = value.get("hashtag_name") or value.get("name") or value.get("text")
+                    else:
+                        label = value
+                    if label:
+                        hashtags.append(str(label).lstrip("#"))
             stats = aweme.get("statistics") or aweme.get("interact_info") or {}
             if not isinstance(stats, dict):
                 stats = {}
@@ -1218,6 +1404,8 @@ class LocalDouyinBrowserSearchProvider:
                 {
                     "item_id": item_id,
                     "title": title,
+                    "description": title,
+                    "hashtags": hashtags,
                     "author_name": str(author.get("nickname") or ""),
                     "duration": duration,
                     "plays": self._as_int(
@@ -1520,19 +1708,36 @@ class LocalDouyinBrowserSearchProvider:
 
     @staticmethod
     def _ensure_public_search_video_filter(page) -> _PublicSearchFilterOutcome:
-        """Select and verify Douyin's video-only result tab."""
+        """Select and verify Douyin's video-only result tab (兼容新旧两个搜索页)."""
         try:
             current_type = parse_qs(urlparse(str(page.url or "")).query).get("type")
             if current_type == ["video"]:
                 return _PublicSearchFilterOutcome("已应用平台筛选：视频")
+            # 抖音新版 /jingxuan/search/... 用 <a href="...type=video"> 或
+            # [role="tab"]:text-is("视频") 渲染"视频"筛选; 旧版 /search/... 用
+            # <span data-key="video">. 依次尝试, 兼容两个页面.
+            candidate_selectors = (
+                'a[href*="type=video"]',
+                '[role="tab"]:text-is("视频")',
+                'span[data-key="video"]',
+            )
             visible_locator = None
             for attempt in range(8):
-                locator = page.locator('span[data-key="video"]')
-                count = locator.count()
-                for index in range(count):
-                    candidate = locator if count == 1 else locator.nth(index)
-                    if candidate.is_visible():
-                        visible_locator = candidate
+                for selector in candidate_selectors:
+                    try:
+                        locator = page.locator(selector)
+                        count = locator.count()
+                    except Exception:
+                        continue
+                    for index in range(count):
+                        candidate = locator if count == 1 else locator.nth(index)
+                        try:
+                            if candidate.is_visible():
+                                visible_locator = candidate
+                                break
+                        except Exception:
+                            continue
+                    if visible_locator is not None:
                         break
                 if visible_locator is not None:
                     break
@@ -1541,9 +1746,13 @@ class LocalDouyinBrowserSearchProvider:
                     break
                 wait(500)
             if visible_locator is None:
+                current_url = str(getattr(page, "url", "") or "")
                 return _PublicSearchFilterOutcome(
                     "平台筛选未应用",
-                    "抖音搜索页等待后仍未显示“视频”筛选；为避免混入图文，本次搜索已停止。",
+                    (
+                        "抖音搜索页等待后仍未显示“视频”筛选；"
+                        f"当前 URL={current_url}；为避免混入图文，本次搜索已停止。"
+                    ),
                     "public_search_video_filter_unavailable",
                 )
             try:
@@ -2249,11 +2458,15 @@ class LocalDouyinBrowserSearchProvider:
         self,
         page,
         *,
+        keyword: str = "",
+        observed_at: datetime | None = None,
+        published_after: datetime | None = None,
         target_limit: int,
         scan_limit: int | None = None,
         qualifying_count: Callable[[list[dict[str, Any]]], int] | None = None,
         layout_mode: str = "default",
         network_rows: dict[str, dict[str, Any]] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[list[dict[str, Any]], ProviderSearchError | None]:
         """Load rendered public-search cards until the goal or a safe stop condition."""
         target_limit = max(1, min(target_limit, _PUBLIC_SEARCH_MAX_RESULT_LIMIT))
@@ -2265,6 +2478,47 @@ class LocalDouyinBrowserSearchProvider:
         stagnant_rounds = 0
         previous_count = -1
         last_scroll_moved = False
+        duplicate_count = 0
+        emitted_candidate_ids: set[str] = set()
+
+        def notify_funnel(
+            current_rows: list[dict[str, Any]],
+            current_items: list[ProviderSearchItem],
+            filter_counts: dict[str, int],
+            out_of_window_count: int,
+        ) -> None:
+            if progress_callback is None:
+                return
+            parsed_count = self._public_search_parsed_count(current_rows)
+            event_base = {
+                "platform": Platform.DOUYIN.value,
+                "stage": "scanning",
+                "message": (
+                    f"抖音已扫描 {len(current_rows)} 条，解析 {parsed_count} 条，"
+                    f"筛出 {len(current_items)} 条相关素材。"
+                ),
+                "scanned_count": len(current_rows),
+                "parsed_count": parsed_count,
+                "deduped_count": len(current_rows),
+                "direct_match_count": len(current_items),
+                "out_of_window_count": out_of_window_count,
+                "invalid_count": max(0, len(current_rows) - parsed_count),
+                "duplicate_count": duplicate_count,
+                "irrelevant_count": filter_counts.get("relevance", 0),
+            }
+            progress_callback(event_base)
+            for item in current_items:
+                if item.platform_item_id in emitted_candidate_ids:
+                    continue
+                emitted_candidate_ids.add(item.platform_item_id)
+                progress_callback(
+                    {
+                        **event_base,
+                        "stage": "candidate_found",
+                        "message": f"抖音已找到 {len(emitted_candidate_ids)} 条相关素材。",
+                        "candidate": item,
+                    }
+                )
 
         def refresh_network_rows() -> int:
             """Merge response rows while lazy loading is still in flight."""
@@ -2296,6 +2550,11 @@ class LocalDouyinBrowserSearchProvider:
                 item_id = str(row.get("item_id") or "")
                 if (
                     item_id
+                    and item_id in rows_by_id
+                ):
+                    duplicate_count += 1
+                elif (
+                    item_id
                     and item_id not in rows_by_id
                     and len(rows_by_id) < scan_limit
                 ):
@@ -2304,11 +2563,27 @@ class LocalDouyinBrowserSearchProvider:
 
             current_count = len(rows_by_id)
             current_rows = list(rows_by_id.values())
-            current_qualified_count = (
-                qualifying_count(current_rows)
-                if qualifying_count is not None
-                else current_count
-            )
+            if progress_callback is not None:
+                current_items, _errors, current_filter_counts, current_out_of_window = (
+                    self._to_public_search_items(
+                        current_rows,
+                        keyword=keyword,
+                        observed_at=observed_at or datetime.now().astimezone(),
+                        published_after=published_after,
+                        limit=target_limit,
+                    )
+                )
+                current_qualified_count = len(current_items)
+                notify_funnel(
+                    current_rows,
+                    current_items,
+                    current_filter_counts,
+                    current_out_of_window,
+                )
+            elif qualifying_count is not None:
+                current_qualified_count = qualifying_count(current_rows)
+            else:
+                current_qualified_count = current_count
             if current_qualified_count >= target_limit:
                 return list(rows_by_id.values()), None
             if current_count >= scan_limit:
@@ -2438,6 +2713,25 @@ class LocalDouyinBrowserSearchProvider:
                 f"未达到目标 {target_limit} 条。"
             ),
         )
+
+    @staticmethod
+    def _public_search_parsed_count(rows: list[dict[str, Any]]) -> int:
+        """Count cards with a usable id and readable title before filters."""
+        parsed = 0
+        seen: set[str] = set()
+        for row in rows:
+            item_id = str(row.get("item_id") or "")
+            match = _VIDEO_ID_RE.search(str(row.get("href") or ""))
+            item_id = item_id or (match.group(1) if match else "")
+            title = " ".join(
+                str(row.get(key) or "").strip()
+                for key in ("title", "description", "text", "aria")
+                if str(row.get(key) or "").strip()
+            )
+            if item_id and title and item_id not in seen:
+                seen.add(item_id)
+                parsed += 1
+        return parsed
 
     def _collect_scrolled_rows(
         self,
@@ -2612,11 +2906,10 @@ class LocalDouyinBrowserSearchProvider:
                     )
                 )
                 continue
-            # 官网搜索卡片会同时露出作者名；不能因为作者昵称里有关键词就
-            # 把无关视频带入。只保留标题/内联话题直接命中的作品。
-            if not title_matches_keyword(
-                title=title, keyword=keyword, require_intent=False
-            ):
+            # 官网搜索卡片会同时露出作者名；匹配只使用标题、描述和话题。
+            # 关键词可拆开命中，但不会因为作者昵称命中而放入无关视频。
+            match_mode = _public_search_keyword_match(row, keyword)
+            if match_mode is None:
                 filter_counts["relevance"] += 1
                 continue
             duration_seconds = LocalDouyinBrowserSearchProvider._as_int(
@@ -2633,6 +2926,7 @@ class LocalDouyinBrowserSearchProvider:
                 published_filtered_count += 1
                 continue
             seen.add(item_id)
+            row = {**row, "keyword_match_mode": match_mode}
             items.append(
                 LocalDouyinBrowserSearchProvider._to_public_provider_item(
                     row=row,
@@ -2711,6 +3005,7 @@ class LocalDouyinBrowserSearchProvider:
             ),
             evidence=(
                 f"douyin_public_search:关键词={keyword};来源=browser_rendered;"
+                f"关键词联合命中={'1' if row.get('keyword_match_mode') == 'token_union' else '0'};"
                 f"布局={'多列' if layout_mode == 'multi_column' else '单列' if layout_mode == 'single_column' else '未确认'};"
                 f"发布时间筛选={time_filter_receipt};"
                 f"发布时间={row.get('published_text') or '未返回'};"
@@ -3022,8 +3317,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
         """Keep the official-search login response free of legacy Hotspot wording."""
         return self._public_session_status(super()._start_browser(visible=visible))
 
-    @staticmethod
-    def _public_session_status(status: BrowserSessionStatus) -> BrowserSessionStatus:
+    def _public_session_status(self, status: BrowserSessionStatus) -> BrowserSessionStatus:
         if status.phase == "browser_closed":
             return BrowserSessionStatus(
                 status.enabled,
@@ -3051,7 +3345,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
                 status.phase,
                 "抖音官网登录窗口正在打开；请稍候在可见窗口扫码或完成验证。",
             )
-        if status.running and status.phase in {"browser_open", "ready"}:
+        if status.running and status.phase == "ready":
             return BrowserSessionStatus(
                 True,
                 True,
@@ -3059,6 +3353,43 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
                 True,
                 "ready",
                 "抖音登录搜索浏览器已启动；实际搜索时会核验登录状态或安全验证。",
+            )
+        if status.running and status.phase == "browser_open":
+            try:
+                with _LOCAL_DEBUG_OPENER.open(
+                    self._debug_pages_url(), timeout=1.5
+                ) as response:
+                    pages = json.loads(response.read().decode("utf-8"))
+                page_titles = " ".join(
+                    str(item.get("title") or "")
+                    for item in pages
+                    if isinstance(item, dict)
+                )
+                has_login_marker = any(
+                    marker in page_titles for marker in _PUBLIC_SEARCH_LOGIN_MARKERS
+                )
+                has_rate_limit = any(
+                    marker in page_titles
+                    for marker in _PUBLIC_SEARCH_RATE_LIMIT_MARKERS
+                )
+                if not has_login_marker and not has_rate_limit:
+                    return BrowserSessionStatus(
+                        True,
+                        True,
+                        False,
+                        True,
+                        "ready",
+                        "抖音登录搜索浏览器已启动；实际搜索时会核验登录状态或安全验证。",
+                    )
+            except (URLError, OSError, ValueError, json.JSONDecodeError):
+                pass
+            return BrowserSessionStatus(
+                True,
+                True,
+                True,
+                False,
+                "browser_open",
+                "抖音官网浏览器已打开，但未确认登录状态；请在窗口中完成登录后即可搜索。",
             )
         return status
 
@@ -3070,6 +3401,7 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
         limit: int,
         idempotency_key: str,
         hotspot_window_hours: int | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderSearchPage:
         return self.search_public(
             platform=platform,
@@ -3078,4 +3410,5 @@ class LocalDouyinPublicSearchProvider(LocalDouyinBrowserSearchProvider):
             limit=limit,
             idempotency_key=idempotency_key,
             hotspot_window_hours=hotspot_window_hours,
+            progress_callback=progress_callback,
         )

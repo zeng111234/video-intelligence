@@ -1,0 +1,244 @@
+{
+  "schema_version": "subtitle-cue-manifest-v1",
+  "clock": "final_output",
+  "playback_rate": 1.15,
+  "subtitle_style_id": "adaptive_talking_head_v1",
+  "style_fingerprint": {
+    "font_family": "Source Han Serif CN Heavy",
+    "palette_id": "neutral_tech_business_v1",
+    "entry_motion": "fade_in_120ms",
+    "emphasis_scale_range": [
+      1.05,
+      1.12
+    ]
+  },
+  "phrase_timing_source": "word_timestamps",
+  "cues": [
+    {
+      "start": 1.417,
+      "end": 3.07,
+      "lines": [
+        "最近广州冒出了一个"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 3.07,
+      "end": 4.391,
+      "lines": [
+        "挺特别的参与模式"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 4.739,
+      "end": 6.235,
+      "lines": [
+        "街上有家烧烤店"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 6.235,
+      "end": 7.209,
+      "lines": [
+        "才开一个月"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 7.557,
+      "end": 8.53,
+      "lines": [
+        "附近五公里的居民"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 8.53,
+      "end": 9.922,
+      "lines": [
+        "基本都成了它的回头客"
+      ],
+      "emphasis_range": {
+        "line_index": 0,
+        "start": 7,
+        "end": 10
+      },
+      "emphasis_style": {
+        "color": "#FFC857",
+        "scale": 1.08,
+        "animation": "soft_pop",
+        "duration_ms": 140,
+        "style_id": "adaptive_talking_head_v1"
+      },
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 10.583,
+      "end": 11.557,
+      "lines": [
+        "80%的顾客"
+      ],
+      "emphasis_range": {
+        "line_index": 0,
+        "start": 0,
+        "end": 3
+      },
+      "emphasis_style": {
+        "color": "#FFC857",
+        "scale": 1.08,
+        "animation": "soft_pop",
+        "duration_ms": 140,
+        "style_id": "adaptive_talking_head_v1"
+      },
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 11.557,
+      "end": 13.209,
+      "lines": [
+        "还主动加了店里的私域"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 13.435,
+      "end": 14.687,
+      "lines": [
+        "生意好得不行"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 14.948,
+      "end": 16.078,
+      "lines": [
+        "我也跑去试了几次"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 16.391,
+      "end": 17.974,
+      "lines": [
+        "才明白这模式有多厉害"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 5,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    },
+    {
+      "start": 18.148,
+      "end": 19.47,
+      "lines": [
+        "普通烧烤店"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 6,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment"
+    }
+  ],
+  "manifest_sha256": "16d86ae7bb514ac080b75819ce524ff84db1c2136e0be40350d402fa6ae61bc3",
+  "opening_offset_seconds": 1.4
+}

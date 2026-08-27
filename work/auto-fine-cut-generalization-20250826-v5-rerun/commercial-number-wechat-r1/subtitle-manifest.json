@@ -1,0 +1,305 @@
+{
+  "schema_version": "subtitle-cue-manifest-v1",
+  "clock": "final_output",
+  "playback_rate": 1.0,
+  "subtitle_style_id": "adaptive_talking_head_v1",
+  "style_fingerprint": {
+    "font_family": "Source Han Serif CN Heavy",
+    "palette_id": "neutral_tech_business_v1",
+    "entry_motion": "fade_in_120ms",
+    "emphasis_scale_range": [
+      1.05,
+      1.12
+    ]
+  },
+  "phrase_timing_source": "word_timestamps",
+  "cues": [
+    {
+      "start": 0.0,
+      "end": 1.3,
+      "lines": [
+        "很多朋友觉得车载"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.3,
+      "short_source_exception": false
+    },
+    {
+      "start": 1.3,
+      "end": 2.3,
+      "lines": [
+        "之下装起来麻烦"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.0,
+      "short_source_exception": false
+    },
+    {
+      "start": 2.3,
+      "end": 3.24,
+      "lines": [
+        "但这个不一样"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.94,
+      "short_source_exception": false
+    },
+    {
+      "start": 3.24,
+      "end": 4.6,
+      "lines": [
+        "拧一下就能锁紧"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.36,
+      "short_source_exception": false
+    },
+    {
+      "start": 4.6,
+      "end": 5.38,
+      "lines": [
+        "不用胶黏"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.78,
+      "short_source_exception": true
+    },
+    {
+      "start": 5.38,
+      "end": 6.84,
+      "lines": [
+        "也不会卡住出风口"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.46,
+      "short_source_exception": false
+    },
+    {
+      "start": 6.84,
+      "end": 7.68,
+      "lines": [
+        "更不用充电"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 5,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.84,
+      "short_source_exception": true
+    },
+    {
+      "start": 7.68,
+      "end": 9.38,
+      "lines": [
+        "随便找个平整的地方"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 6,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.7,
+      "short_source_exception": false
+    },
+    {
+      "start": 9.38,
+      "end": 10.38,
+      "lines": [
+        "一放就吸住了"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 7,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.0,
+      "short_source_exception": false
+    },
+    {
+      "start": 10.38,
+      "end": 11.24,
+      "lines": [
+        "想换个位置"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 8,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.86,
+      "short_source_exception": true
+    },
+    {
+      "start": 11.24,
+      "end": 12.72,
+      "lines": [
+        "反正拧一下就取下来"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 9,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.48,
+      "short_source_exception": false
+    },
+    {
+      "start": 12.72,
+      "end": 13.58,
+      "lines": [
+        "特别灵活"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 10,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.86,
+      "short_source_exception": true
+    },
+    {
+      "start": 13.58,
+      "end": 15.22,
+      "lines": [
+        "它的支撑臂可以多断条"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 11,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.64,
+      "short_source_exception": false
+    },
+    {
+      "start": 15.22,
+      "end": 16.4,
+      "lines": [
+        "不管什么车型"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 12,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.18,
+      "short_source_exception": false
+    },
+    {
+      "start": 16.4,
+      "end": 17.56,
+      "lines": [
+        "什么角度都能适应"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 13,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.16,
+      "short_source_exception": false
+    }
+  ],
+  "manifest_sha256": "a936ffa2d63bd29f21a143120bb4ae7f5d3a94dbe0e6185eeb8e35fd61b8f609",
+  "opening_offset_seconds": 0.0
+}

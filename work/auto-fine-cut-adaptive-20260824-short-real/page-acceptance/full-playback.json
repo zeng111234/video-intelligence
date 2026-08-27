@@ -1,0 +1,17 @@
+{
+  "page_url": "http://localhost:1001/video-editor",
+  "before": {
+    "src": "/api/v1/video-editor/jobs/edit-local-8c613466bd/media",
+    "duration": 19.713,
+    "readyState": 4
+  },
+  "playback": {
+    "ended": true,
+    "currentTime": 19.713,
+    "duration": 19.713,
+    "elapsed_ms": 19787,
+    "readyState": 4
+  },
+  "task_id": "edit-local-8c613466bd",
+  "selected_batch": "edit-batch-d7f8b08614c3"
+}

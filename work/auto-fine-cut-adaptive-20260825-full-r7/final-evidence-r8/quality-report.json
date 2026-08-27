@@ -1,0 +1,966 @@
+{
+  "passed": false,
+  "checks": {
+    "file_non_empty": true,
+    "video_stream": true,
+    "audio_stream": true,
+    "resolution": true,
+    "duration": true,
+    "visual_timing": true,
+    "audio_video_drift": true,
+    "subtitle_effect_gate": true,
+    "subtitle_timeline": true
+  },
+  "duration_seconds": 104.63,
+  "expected_duration_seconds": 104.66,
+  "duration_delta_seconds": 0.03,
+  "resolution": {
+    "width": 720,
+    "height": 1280
+  },
+  "visual_beat_count": 14,
+  "style_version": "talking_head_release_v2.0-director-timeline",
+  "bgm": {
+    "enabled": true,
+    "asset_id": "bgm-0eed3a5909e5",
+    "title": "百搭口播底色",
+    "source_provider": "manual",
+    "source_url": "",
+    "license_url": "",
+    "rights_holder": "本项目原创程序合成 · 无第三方采样",
+    "content_id_risk": "none",
+    "auto_eligible": true,
+    "authorization_status": "confirmed",
+    "voice_priority": true,
+    "ducking": {
+      "enabled": true,
+      "filter": "sidechaincompress",
+      "attack_ms": 20,
+      "release_ms": 450,
+      "mix_volume": 0.16
+    },
+    "publish_rights_gate_passed": true
+  },
+  "alignment": {
+    "method": "ffprobe_stream_start_end_pts",
+    "start_drift_ms": 0.0,
+    "end_drift_ms": 5.008,
+    "max_drift_ms": 5.008,
+    "threshold_ms": 67.0,
+    "passed": true
+  },
+  "shot_plan": {
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "shot_count": 28,
+    "degradation": {
+      "mode": "generated_image_broll",
+      "message": "生成图只用于本地验收，不代表发布授权。",
+      "publish_claim_allowed": false
+    }
+  },
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 55,
+    "duplicate_count": 0,
+    "checks": {
+      "monotonic_and_in_bounds": true,
+      "no_duplicate_cues": true
+    },
+    "phrase_cue_count": 55,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "max_phrase_duration_seconds": 2.36,
+    "cue_manifest_sha256": "220c82ae384d95ca46e82483f9df2b6fc769a5b622c479bc84f50a3d02a9e786",
+    "ass_sha256": "7f31b4616ec1bd90d226b943669675136ef436df2aa6f85cc5dd0fd1891f6d87",
+    "preview_render_manifest_equal": true,
+    "experience_gate": {
+      "passed": true,
+      "checks": {
+        "min_duration": true,
+        "max_duration": true,
+        "one_line": true,
+        "no_fragment_cues": true,
+        "lexical_boundary_integrity": true,
+        "no_orphan_prefix_suffix": true,
+        "preview_render_manifest_equal": true,
+        "cue_count_per_sentence": true
+      },
+      "min_duration_seconds": 0.631,
+      "max_duration_seconds": 2.36,
+      "one_line_ratio": 0.964,
+      "lexical_boundary_integrity": true,
+      "no_orphan_prefix_suffix": true,
+      "preview_render_manifest_equal": true,
+      "minimum_dwell_seconds": 0.9,
+      "maximum_dwell_seconds": 2.4,
+      "short_source_exception_allowed": true,
+      "cue_count_by_source_segment": {
+        "0": 2,
+        "1": 4,
+        "2": 5,
+        "3": 4,
+        "4": 3,
+        "5": 3,
+        "6": 2,
+        "7": 3,
+        "8": 2,
+        "9": 1,
+        "10": 5,
+        "11": 2,
+        "12": 3,
+        "13": 2,
+        "14": 3,
+        "15": 2,
+        "16": 1,
+        "17": 1,
+        "18": 3,
+        "19": 2,
+        "20": 2
+      },
+      "cue_count_gate_by_source_segment": {
+        "0": true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true,
+        "6": true,
+        "7": true,
+        "8": true,
+        "9": true,
+        "10": true,
+        "11": true,
+        "12": true,
+        "13": true,
+        "14": true,
+        "15": true,
+        "16": true,
+        "17": true,
+        "18": true,
+        "19": true,
+        "20": true
+      }
+    },
+    "text_integrity_gate": {
+      "passed": true,
+      "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+      "source_text_sha256": "4b6fbdb2deed605d38b545675d172cfea03d0b37e437f4c936d81a950bd6cf2c",
+      "cue_text_sha256": "4b6fbdb2deed605d38b545675d172cfea03d0b37e437f4c936d81a950bd6cf2c",
+      "source_char_count": 452,
+      "cue_char_count": 452,
+      "exact_ordered_match": true,
+      "duplicate_function_word_boundary": false
+    },
+    "audio_activity_gate": {
+      "passed": true,
+      "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+      "minimum_uncovered_seconds": 0.5,
+      "active_seconds": 79.1,
+      "covered_seconds": 79.1,
+      "uncovered_ranges": [],
+      "raw_vad_active_ranges": [
+        {
+          "start": 0.43,
+          "end": 3.45
+        },
+        {
+          "start": 4.16,
+          "end": 5.61
+        },
+        {
+          "start": 5.94,
+          "end": 6.66
+        },
+        {
+          "start": 7.1,
+          "end": 9.84
+        },
+        {
+          "start": 10.64,
+          "end": 13.58
+        },
+        {
+          "start": 14.47,
+          "end": 16.89
+        },
+        {
+          "start": 17.39,
+          "end": 19.03
+        },
+        {
+          "start": 19.96,
+          "end": 21.78
+        },
+        {
+          "start": 22.11,
+          "end": 23.14
+        },
+        {
+          "start": 23.57,
+          "end": 24.62
+        },
+        {
+          "start": 24.96,
+          "end": 25.6
+        },
+        {
+          "start": 26.4,
+          "end": 27.87
+        },
+        {
+          "start": 28.33,
+          "end": 30.88
+        },
+        {
+          "start": 31.48,
+          "end": 33.57
+        },
+        {
+          "start": 34.01,
+          "end": 35.38
+        },
+        {
+          "start": 36.21,
+          "end": 37.4
+        },
+        {
+          "start": 38.4,
+          "end": 41.27
+        },
+        {
+          "start": 42.12,
+          "end": 44.15
+        },
+        {
+          "start": 44.5,
+          "end": 46.72
+        },
+        {
+          "start": 47.55,
+          "end": 49.52
+        },
+        {
+          "start": 49.99,
+          "end": 50.92
+        },
+        {
+          "start": 51.36,
+          "end": 52.4
+        },
+        {
+          "start": 53.21,
+          "end": 55.11
+        },
+        {
+          "start": 55.8,
+          "end": 58.94
+        },
+        {
+          "start": 59.25,
+          "end": 60.18
+        },
+        {
+          "start": 60.9,
+          "end": 63.86
+        },
+        {
+          "start": 64.63,
+          "end": 66.78
+        },
+        {
+          "start": 67.21,
+          "end": 68.97
+        },
+        {
+          "start": 69.42,
+          "end": 71.35
+        },
+        {
+          "start": 71.97,
+          "end": 74.84
+        },
+        {
+          "start": 75.62,
+          "end": 76.14
+        },
+        {
+          "start": 76.57,
+          "end": 78.88
+        },
+        {
+          "start": 79.21,
+          "end": 80.95
+        },
+        {
+          "start": 81.75,
+          "end": 84.62
+        },
+        {
+          "start": 84.99,
+          "end": 86.32
+        },
+        {
+          "start": 86.69,
+          "end": 88.31
+        },
+        {
+          "start": 89.03,
+          "end": 94.0
+        },
+        {
+          "start": 94.68,
+          "end": 95.32
+        },
+        {
+          "start": 95.66,
+          "end": 96.05
+        },
+        {
+          "start": 96.5,
+          "end": 97.01
+        },
+        {
+          "start": 97.36,
+          "end": 97.77
+        },
+        {
+          "start": 98.08,
+          "end": 99.52
+        },
+        {
+          "start": 100.24,
+          "end": 102.87
+        },
+        {
+          "start": 103.26,
+          "end": 104.66
+        }
+      ],
+      "speech_candidate_ranges": [
+        {
+          "start": 0.44,
+          "end": 3.45
+        },
+        {
+          "start": 4.16,
+          "end": 5.61
+        },
+        {
+          "start": 5.94,
+          "end": 6.66
+        },
+        {
+          "start": 7.1,
+          "end": 9.84
+        },
+        {
+          "start": 11.04,
+          "end": 13.58
+        },
+        {
+          "start": 14.47,
+          "end": 16.89
+        },
+        {
+          "start": 17.39,
+          "end": 19.03
+        },
+        {
+          "start": 19.96,
+          "end": 21.78
+        },
+        {
+          "start": 22.11,
+          "end": 23.14
+        },
+        {
+          "start": 23.57,
+          "end": 24.62
+        },
+        {
+          "start": 24.96,
+          "end": 25.6
+        },
+        {
+          "start": 26.4,
+          "end": 27.87
+        },
+        {
+          "start": 28.33,
+          "end": 30.88
+        },
+        {
+          "start": 31.48,
+          "end": 33.57
+        },
+        {
+          "start": 34.01,
+          "end": 35.38
+        },
+        {
+          "start": 36.21,
+          "end": 37.4
+        },
+        {
+          "start": 38.4,
+          "end": 41.27
+        },
+        {
+          "start": 42.12,
+          "end": 44.15
+        },
+        {
+          "start": 44.5,
+          "end": 46.72
+        },
+        {
+          "start": 47.55,
+          "end": 49.52
+        },
+        {
+          "start": 49.99,
+          "end": 50.92
+        },
+        {
+          "start": 51.36,
+          "end": 52.4
+        },
+        {
+          "start": 53.21,
+          "end": 55.11
+        },
+        {
+          "start": 55.8,
+          "end": 58.94
+        },
+        {
+          "start": 59.25,
+          "end": 60.18
+        },
+        {
+          "start": 60.9,
+          "end": 63.86
+        },
+        {
+          "start": 64.67,
+          "end": 66.78
+        },
+        {
+          "start": 67.21,
+          "end": 68.97
+        },
+        {
+          "start": 69.42,
+          "end": 71.35
+        },
+        {
+          "start": 71.97,
+          "end": 74.84
+        },
+        {
+          "start": 75.62,
+          "end": 76.14
+        },
+        {
+          "start": 76.57,
+          "end": 78.88
+        },
+        {
+          "start": 79.21,
+          "end": 80.95
+        },
+        {
+          "start": 81.75,
+          "end": 84.62
+        },
+        {
+          "start": 84.99,
+          "end": 86.32
+        },
+        {
+          "start": 86.71,
+          "end": 88.31
+        },
+        {
+          "start": 89.08,
+          "end": 94.0
+        },
+        {
+          "start": 94.68,
+          "end": 95.32
+        },
+        {
+          "start": 95.66,
+          "end": 96.05
+        },
+        {
+          "start": 96.5,
+          "end": 97.01
+        },
+        {
+          "start": 97.36,
+          "end": 97.77
+        },
+        {
+          "start": 98.08,
+          "end": 99.52
+        },
+        {
+          "start": 100.24,
+          "end": 102.87
+        },
+        {
+          "start": 103.26,
+          "end": 104.66
+        }
+      ]
+    },
+    "subtitle_effect_gate": {
+      "passed": true,
+      "style_id": "adaptive_talking_head_v1",
+      "cue_count": 55,
+      "emphasis_count": 11,
+      "checks": {
+        "unified_adaptive_style": true,
+        "entry_motion_100_160ms": true,
+        "sparse_emphasis": true,
+        "emphasis_scale_105_112": true,
+        "no_routine_refresh_as_visual_effect": true
+      }
+    },
+    "word_timing_quality": {
+      "status": "verified",
+      "verified": true,
+      "source": "word_timestamps",
+      "alignment_method": "exact_compact_text_match",
+      "reviewed_text_sequence_alignment_fallback_count": 0,
+      "word_p95_ms": 240.0,
+      "mapping_error_frames": 14.4,
+      "matched_cue_count": 55,
+      "unmatched_cue_count": 0,
+      "fps": 30.0,
+      "checks": {
+        "word_p95_le_150ms": false,
+        "mapping_le_1_frame": false
+      }
+    },
+    "word_p95_ms": 240.0,
+    "mapping_error_frames": 14.4
+  },
+  "creative_checks": {
+    "director_assets_ready": false,
+    "minimum_real_visual_events": true,
+    "has_pip_visual": true,
+    "has_full_visual": true,
+    "pip_safe_area_no_face_or_subtitle_overlap": true,
+    "real_broll_coverage_template_policy": false,
+    "no_fixed_asset_loop": true,
+    "visual_origin_traceable": true,
+    "semantic_broll_match_explainable": true,
+    "semantic_visual_layer_safe": true,
+    "semantic_layers_not_counted_as_real_broll": true,
+    "visual_cadence_gate": true,
+    "hook_declared_once": true
+  },
+  "visual_gate_policy": {
+    "template_id": "adaptive_talking_head_v1",
+    "visual_density": "rich",
+    "min_real_events": 4,
+    "max_real_events": 8,
+    "min_coverage_ratio": 0.2,
+    "max_coverage_ratio": 0.35,
+    "pip_required": true,
+    "full_required": true,
+    "language": "长口播至少需要 4 个语义相关真实事件，覆盖 20%-35%，且至少包含 1 个 PiP 与 1 个全屏；不足时安全降级并失败视觉门。",
+    "real_event_count": 4,
+    "broll_count": 6,
+    "coverage_ratio": 0.195,
+    "actual_has_pip_visual": true,
+    "actual_has_full_visual": true,
+    "passed": false
+  },
+  "hard_checks": {
+    "has_pip_visual": true,
+    "has_full_visual": true,
+    "pip_required": true,
+    "full_required": true,
+    "actual_real_broll_event_count": 4,
+    "actual_real_broll_coverage_ratio": 0.195
+  },
+  "visual_cadence_gate": {
+    "passed": true,
+    "meaningful_visual_beat_count": 39,
+    "beat_starts_final_output": [
+      0.0,
+      3.0,
+      4.0,
+      6.68,
+      8.2,
+      11.04,
+      11.28,
+      16.36,
+      18.0,
+      19.96,
+      22.015,
+      22.96,
+      23.3,
+      26.28,
+      27.84,
+      28.16,
+      32.16,
+      38.39,
+      41.95,
+      44.11,
+      44.48,
+      45.0,
+      49.0,
+      53.11,
+      57.002,
+      57.51,
+      60.0,
+      64.0,
+      66.76,
+      68.67,
+      72.67,
+      78.0,
+      81.63,
+      82.0,
+      86.0,
+      92.42,
+      93.0,
+      97.0,
+      101.88
+    ],
+    "intervals_seconds": [
+      3.0,
+      1.0,
+      2.68,
+      1.52,
+      2.84,
+      0.24,
+      5.08,
+      1.64,
+      1.96,
+      2.055,
+      0.945,
+      0.34,
+      2.98,
+      1.56,
+      0.32,
+      4.0,
+      6.23,
+      3.56,
+      2.16,
+      0.37,
+      0.52,
+      4.0,
+      4.11,
+      3.892,
+      0.508,
+      2.49,
+      4.0,
+      2.76,
+      1.91,
+      4.0,
+      5.33,
+      3.63,
+      0.37,
+      4.0,
+      6.42,
+      0.58,
+      4.0,
+      4.88
+    ],
+    "max_gap_seconds": 6.42,
+    "recommended_max_gap_seconds": 6.0,
+    "hard_max_gap_seconds": 7.5,
+    "rhythm_hold_exception": true,
+    "routine_subtitle_refresh_counted": false,
+    "safe_degradation_allowed": true
+  },
+  "creative_passed": false,
+  "subtitle_word_gate_passed": false,
+  "publish_claim_allowed": false,
+  "v1_hard_gate_passed": false,
+  "local_visual_acceptance_passed": false,
+  "release_visual_gate_passed": false,
+  "semantic_match_gate": {
+    "passed": true,
+    "failures": []
+  },
+  "publish_rights_gate_passed": false,
+  "visual_origin_policy": {
+    "domestic_priority": [
+      "domestic_confirmed_real",
+      "domestic_authorized_generation",
+      "international_pexels_pixabay_fallback"
+    ],
+    "locale_does_not_prove_domestic_scene": true,
+    "public_douyin_bilibili_scraping": false,
+    "generated_images_count_as_local_visual_events": true,
+    "generated_images_do_not_satisfy_free_stock_video_gate": true,
+    "free_stock_video_gate": "not_applicable_generated_image_local_acceptance"
+  },
+  "visual_event_count": 27,
+  "visual_broll_event_count": 6,
+  "semantic_visual_layer_count": 7,
+  "semantic_visual_layer_geometry": {
+    "safe": true,
+    "reason": "lower_right_safe_zone",
+    "bbox": {
+      "left": 479,
+      "top": 774,
+      "right": 688,
+      "bottom": 957,
+      "width": 209,
+      "height": 183
+    },
+    "intersects_face_safe_bbox": false,
+    "intersects_subtitle_bbox": false,
+    "intersects_pip_bbox": false
+  },
+  "real_broll_event_count": 4,
+  "real_stock_video_event_count": 3,
+  "generated_image_event_count": 2,
+  "domestic_real_broll_event_count": 0,
+  "international_broll_event_count": 3,
+  "broll_context_counts": {
+    "domestic_real": 0,
+    "international_stock": 3,
+    "generated_image": 2,
+    "unknown": 1
+  },
+  "broll_origin_counts": {
+    "generated_image_asset": 2,
+    "stock_video_asset": 3,
+    "other_real_local_asset": 1
+  },
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-abc76c5b40",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill food preparation diners"
+      ],
+      "semantic_query": "barbecue restaurant grill food preparation diners",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-f847ed1e82",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": "客户会面与关系维护",
+      "keywords": [
+        "客户",
+        "商务会议",
+        "关系",
+        "会面",
+        "client",
+        "meeting",
+        "business"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 2,
+      "asset_id": "broll-4cca106b4b",
+      "mode": "full",
+      "asset_origin": "local_uploaded_asset",
+      "provider": "local_upload",
+      "license_name": "",
+      "license_url": "",
+      "source_url": "",
+      "authorization_status": "confirmed",
+      "publish_licensed": false,
+      "semantic_binding": null,
+      "keywords": [],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "domestic_context": "unknown",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 3,
+      "asset_id": "broll-a3f531bfd7",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "CRM dashboard customer database business analytics office data management"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 4,
+      "asset_id": "broll-6ed42b3d63",
+      "mode": "full",
+      "asset_origin": "generated_image_asset",
+      "provider": "built_in_image_generation",
+      "license_name": "",
+      "license_url": "",
+      "source_url": "",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "semantic_binding": "内容营销与短视频",
+      "keywords": [
+        "营销",
+        "短视频",
+        "内容",
+        "推广",
+        "品牌曝光",
+        "拍摄"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "domestic_context": "unknown",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 5,
+      "asset_id": "broll-90aa7677fe",
+      "mode": "full",
+      "asset_origin": "generated_image_asset",
+      "provider": "built_in_image_generation",
+      "license_name": "",
+      "license_url": "",
+      "source_url": "",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "semantic_binding": "客户服务与持续触达",
+      "keywords": [
+        "客服",
+        "客户服务",
+        "售后",
+        "触达",
+        "响应",
+        "服务"
+      ],
+      "semantic_query": "multi-industry retail business marketing",
+      "domestic_context": "unknown",
+      "domestic_scene": ""
+    }
+  ],
+  "real_broll_coverage_ratio": 0.195,
+  "visual_coverage_seconds": 20.4,
+  "vector_coverage_seconds": 0,
+  "broll_modes": {
+    "pip": 1,
+    "full": 5,
+    "vector_pip": 0
+  },
+  "pip_geometry": [
+    {
+      "event_index": 1,
+      "asset_id": "broll-f847ed1e82",
+      "safe": true,
+      "rendered": true,
+      "reason": "lower_side_safe_zone",
+      "bbox": {
+        "left": 252,
+        "top": 794,
+        "right": 468,
+        "bottom": 986,
+        "width": 216,
+        "height": 192,
+        "normalized": {
+          "left": 0.35,
+          "top": 0.6203,
+          "right": 0.65,
+          "bottom": 0.7703
+        }
+      },
+      "face_safe_bbox": {
+        "left": 86,
+        "top": 128,
+        "right": 648,
+        "bottom": 768
+      },
+      "subtitle_bbox": {
+        "left": 36,
+        "top": 1011,
+        "right": 684,
+        "bottom": 1216
+      },
+      "intersects_face_safe_bbox": false,
+      "intersects_subtitle_bbox": false
+    }
+  ],
+  "pip_safe_area_passed": true,
+  "media_passed": true,
+  "transcript_source_identity_gate": {
+    "enabled": true,
+    "passed": true,
+    "checks": {
+      "source_media_sha256": true,
+      "source_duration_matches_ffprobe": true,
+      "transcript_sha256": true,
+      "timing_source_declared": true
+    },
+    "source_media_identity": {
+      "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+      "source_duration_seconds": 104.72,
+      "transcript_sha256": "bbabf760bf35ece65b4d38ebfc8112c7b6112cf43311f783b321aae74d4e7cb0",
+      "transcript_timing_source": "word_timestamps",
+      "transcript_identity_scope": "task_subtitle_segments_v1"
+    }
+  },
+  "quality_report_version": "identity-gates-v2",
+  "audio_subtitle_semantic_gate": {
+    "passed": true,
+    "method": "local_transcript_text_overlap_spot_check",
+    "source_text": "最近广州冒出了一个挺特别的餐饮模式街上有家烧烤店才开一个月附近5公里的居民基本都成了他的回头客80的顾客还主动加了店里的私域生意好的不行我也跑去试了几次才明白这模式有多厉害普通烧烤店搞充值活动充100送10块充200送30早就过时了这家店推出了会员制花49块就能办个尊贵会员办完马上送一份招牌烧烤等于白送会员资格所以大多数人都办了但重头戏是后面的共享店长活动办会员的顾客自动升级成小店长立刻拿到6张无门槛优惠券小店长把券发到朋友圈或者群里别人一点券就成了他的粉丝以后这些粉丝到店消费每笔小店长都能拿10的现金奖励而且秒到账所有消费都是通过门店小程序完成的老板不用费心想推广方案会员们就像免费宣传员在社交圈里自然传播这种口碑效果比花大钱打广告强多了活动一推好几百人抢着办会员当小店长既吃美食又赚外快这些人又帮店里裂变出几千个新顾客不过这个活动要落地靠人工根本不行老板直接换掉了旧系统上了一套智慧门店系统自动执行不用人管除了餐饮水果生鲜美容便利店都能照搬如果你的店也想用这套系统搞活动评论区打个小店长就行",
+    "cue_text": "最近广州冒出了一个挺特别的餐饮模式街上有家烧烤店才开一个月附近5公里的居民基本都成了他的回头客80的顾客还主动加了店里的私域生意好的不行我也跑去试了几次才明白这模式有多厉害普通烧烤店搞充值活动充100送10块充200送30早就过时了这家店推出了会员制花49块就能办个尊贵会员办完马上送一份招牌烧烤等于白送会员资格所以大多数人都办了但重头戏是后面的共享店长活动办会员的顾客自动升级成小店长立刻拿到6张无门槛优惠券小店长把券发到朋友圈或者群里别人一点券就成了他的粉丝以后这些粉丝到店消费每笔小店长都能拿10的现金奖励而且秒到账所有消费都是通过门店小程序完成的老板不用费心想推广方案会员们就像免费宣传员在社交圈里自然传播这种口碑效果比花大钱打广告强多了活动一推好几百人抢着办会员当小店长既吃美食又赚外快这些人又帮店里裂变出几千个新顾客不过这个活动要落地靠人工根本不行老板直接换掉了旧系统上了一套智慧门店系统自动执行不用人管除了餐饮水果生鲜美容便利店都能照搬如果你的店也想用这套系统搞活动评论区打个小店长就行",
+    "overlap_ratio": 1.0,
+    "minimum_overlap_ratio": 0.72
+  },
+  "edl_execution_gate": {
+    "passed": true,
+    "method": "shared_ffmpeg_audio_video_trim_plus_shot_plan",
+    "declared_source_range": {
+      "start": 0.0,
+      "end": 104.72
+    },
+    "expected_body_seconds": 104.72,
+    "executed_source_seconds": 104.72,
+    "opening_duration_seconds": 0.0,
+    "expected_output_seconds": 104.72,
+    "actual_output_seconds": 104.63,
+    "actual_body_seconds": 104.63
+  },
+  "transcript_accuracy_gate": {
+    "passed": true,
+    "method": "reviewed_transcript_correction_audit",
+    "source": "local_reviewed_homophone_correction",
+    "correction_count": 0,
+    "remaining_known_error_terms": []
+  },
+  "media_integrity_passed": true,
+  "subtitle_sync_passed": false,
+  "visual_release_passed": false
+}

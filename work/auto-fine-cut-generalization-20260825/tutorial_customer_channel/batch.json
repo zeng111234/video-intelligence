@@ -1,0 +1,1571 @@
+{
+  "batch_id": "edit-batch-c80da66af498",
+  "status": "running",
+  "target_platform": "douyin",
+  "subtitle_enabled": true,
+  "subtitle_model": "local-faster-whisper-base-word-timestamps",
+  "bgm_enabled": false,
+  "bgm_id": null,
+  "bgm_volume": 0.24,
+  "provider_mode": "local",
+  "output_profile": "720p",
+  "output_resolution": "720x1280",
+  "output_fps": 30,
+  "output_bitrate": "4M",
+  "visual_spec": {
+    "style_id": "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15",
+    "playback_rate": 1.15,
+    "canvas": {
+      "width": 720,
+      "height": 1280,
+      "pixel_aspect_ratio": "1:1"
+    },
+    "title": {
+      "visible_seconds": 2.5,
+      "fade_in_ms": 0,
+      "fade_out_ms": 0,
+      "max_lines": 1,
+      "max_chars_per_line": 12,
+      "font_family": "Source Han Serif CN Heavy",
+      "render_mode": "png_watermark",
+      "font_size": 44,
+      "line_height": 1.1,
+      "safe_top": 84,
+      "safe_left": 30,
+      "asset_width": 660,
+      "asset_height": 72,
+      "outline_width": 1,
+      "shadow": 1,
+      "color": "#FFFFFF"
+    },
+    "accent": {
+      "color": "transparent",
+      "width": 0,
+      "height": 0,
+      "gap": 0
+    },
+    "subtitle": {
+      "max_lines": 1,
+      "max_chars_per_line": 11,
+      "font_size": 52,
+      "safe_bottom": 170,
+      "outline_width": 1,
+      "shadow": 1,
+      "color": "#F8FAFC",
+      "emphasis_color": "#FFE16A"
+    }
+  },
+  "quote_id": null,
+  "cost_quote": null,
+  "actual_usage": {},
+  "billing_confirmation": {},
+  "billing_confirmed_at": null,
+  "idempotency_key": null,
+  "is_mock": false,
+  "bgm": null,
+  "items": [
+    {
+      "item_id": "edit-item-d1ce8c13dcb6",
+      "source_id": "upload:upload-2e3e1c993a",
+      "title": "我说句实话 树营八品不是",
+      "status": "rendering",
+      "analysis_id": null,
+      "subtitle_task_id": null,
+      "edit_task_id": "edit-local-4130f60968",
+      "title_candidates": [
+        "我说句实话 树营八品不是"
+      ],
+      "selected_title": "我说句实话 树营八品不是",
+      "selected_bgm_id": null,
+      "bgm_reason": null,
+      "provider_stage": "local_export_rendering",
+      "provider_job_ids": {},
+      "provider_payload": {
+        "render_manifest": {},
+        "local_export": {
+          "cost_cny": "0",
+          "reused_approved_subtitles": true,
+          "playback_rate": 1.15,
+          "style_version": "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock",
+          "smart_opening": {
+            "style_id": "suspense_reveal",
+            "hook_text": "我说句实话树营八品不是",
+            "duration_seconds": 1.4,
+            "sound_effect_id": "soft_whoosh",
+            "intensity": "medium",
+            "reason": "根据已审核文案自动选择克制的开场钩子，不改写人声内容。"
+          },
+          "broll": null
+        }
+      },
+      "render_manifest": null,
+      "actual_usage": {},
+      "edit_plan": {
+        "remove_ranges": [],
+        "source_media_identity": {
+          "transcript_sha256": "f9f149561ce9d29126cc71078cec3f5ef85bbea2fe3db20e9a03bccc784a9663",
+          "transcript_identity_scope": "task_subtitle_segments_v1"
+        },
+        "smart_opening": {
+          "style_id": "suspense_reveal",
+          "hook_text": "我说句实话树营八品不是",
+          "duration_seconds": 1.4,
+          "sound_effect_id": "soft_whoosh",
+          "intensity": "medium",
+          "reason": "根据已审核文案自动选择克制的开场钩子，不改写人声内容。"
+        },
+        "visual_beats": [
+          {
+            "segment_index": 0,
+            "start": 1.97,
+            "end": 6.75,
+            "treatment": "hook",
+            "label": "我说句实话树营八品不",
+            "emphasis_term": ""
+          },
+          {
+            "segment_index": 3,
+            "start": 17.55,
+            "end": 22.43,
+            "treatment": "punch_in",
+            "label": "他就远远不断来去惊重",
+            "emphasis_term": ""
+          }
+        ]
+      },
+      "enabled_plan_step_ids": [
+        "smart_opening",
+        "vertical_fit",
+        "subtitles"
+      ],
+      "subtitle_segments": [
+        {
+          "start": 1.97,
+          "end": 6.75,
+          "text": "我说句实话 树营八品不是给你打一针信分剂就完事了",
+          "words": [
+            {
+              "start": 1.97,
+              "end": 2.45,
+              "word": "我",
+              "probability": 0.548
+            },
+            {
+              "start": 2.45,
+              "end": 2.61,
+              "word": "说",
+              "probability": 0.9653
+            },
+            {
+              "start": 2.61,
+              "end": 2.75,
+              "word": "句",
+              "probability": 0.9485
+            },
+            {
+              "start": 2.75,
+              "end": 2.93,
+              "word": "实",
+              "probability": 0.9764
+            },
+            {
+              "start": 2.93,
+              "end": 3.11,
+              "word": "话",
+              "probability": 0.9993
+            },
+            {
+              "start": 3.61,
+              "end": 3.67,
+              "word": " 树",
+              "probability": 0.6029
+            },
+            {
+              "start": 3.67,
+              "end": 3.77,
+              "word": "营",
+              "probability": 0.6185
+            },
+            {
+              "start": 3.77,
+              "end": 3.95,
+              "word": "八",
+              "probability": 0.6568
+            },
+            {
+              "start": 3.95,
+              "end": 4.13,
+              "word": "品",
+              "probability": 0.3149
+            },
+            {
+              "start": 4.13,
+              "end": 4.55,
+              "word": "不是",
+              "probability": 0.9335
+            },
+            {
+              "start": 4.55,
+              "end": 4.75,
+              "word": "给",
+              "probability": 0.9811
+            },
+            {
+              "start": 4.75,
+              "end": 4.89,
+              "word": "你",
+              "probability": 0.9856
+            },
+            {
+              "start": 4.89,
+              "end": 5.07,
+              "word": "打",
+              "probability": 0.9427
+            },
+            {
+              "start": 5.07,
+              "end": 5.21,
+              "word": "一",
+              "probability": 0.7541
+            },
+            {
+              "start": 5.21,
+              "end": 5.33,
+              "word": "针",
+              "probability": 0.825
+            },
+            {
+              "start": 5.33,
+              "end": 5.55,
+              "word": "信",
+              "probability": 0.2224
+            },
+            {
+              "start": 5.55,
+              "end": 5.79,
+              "word": "分",
+              "probability": 0.5597
+            },
+            {
+              "start": 5.79,
+              "end": 5.93,
+              "word": "剂",
+              "probability": 0.6983
+            },
+            {
+              "start": 5.93,
+              "end": 6.25,
+              "word": "就",
+              "probability": 0.8232
+            },
+            {
+              "start": 6.25,
+              "end": 6.43,
+              "word": "完",
+              "probability": 0.6727
+            },
+            {
+              "start": 6.43,
+              "end": 6.65,
+              "word": "事",
+              "probability": 0.9427
+            },
+            {
+              "start": 6.65,
+              "end": 6.75,
+              "word": "了",
+              "probability": 0.9919
+            }
+          ]
+        },
+        {
+          "start": 6.75,
+          "end": 11.63,
+          "text": "他是帮你偷偷的扑一条自动化的这个货客通道",
+          "words": [
+            {
+              "start": 6.75,
+              "end": 7.41,
+              "word": "他是",
+              "probability": 0.5378
+            },
+            {
+              "start": 7.41,
+              "end": 7.79,
+              "word": "帮",
+              "probability": 0.9802
+            },
+            {
+              "start": 7.79,
+              "end": 8.03,
+              "word": "你",
+              "probability": 0.994
+            },
+            {
+              "start": 8.03,
+              "end": 8.41,
+              "word": "偷",
+              "probability": 0.9913
+            },
+            {
+              "start": 8.41,
+              "end": 8.71,
+              "word": "偷",
+              "probability": 0.9984
+            },
+            {
+              "start": 8.71,
+              "end": 8.89,
+              "word": "的",
+              "probability": 0.7731
+            },
+            {
+              "start": 8.89,
+              "end": 9.15,
+              "word": "扑",
+              "probability": 0.4851
+            },
+            {
+              "start": 9.15,
+              "end": 9.31,
+              "word": "一",
+              "probability": 0.9824
+            },
+            {
+              "start": 9.31,
+              "end": 9.45,
+              "word": "条",
+              "probability": 0.9857
+            },
+            {
+              "start": 9.45,
+              "end": 9.93,
+              "word": "自",
+              "probability": 0.9896
+            },
+            {
+              "start": 9.93,
+              "end": 10.13,
+              "word": "动",
+              "probability": 0.9964
+            },
+            {
+              "start": 10.13,
+              "end": 10.37,
+              "word": "化",
+              "probability": 0.8572
+            },
+            {
+              "start": 10.37,
+              "end": 10.75,
+              "word": "的",
+              "probability": 0.9939
+            },
+            {
+              "start": 10.75,
+              "end": 10.97,
+              "word": "这个",
+              "probability": 0.4339
+            },
+            {
+              "start": 10.97,
+              "end": 11.15,
+              "word": "货",
+              "probability": 0.7127
+            },
+            {
+              "start": 11.15,
+              "end": 11.29,
+              "word": "客",
+              "probability": 0.5769
+            },
+            {
+              "start": 11.29,
+              "end": 11.49,
+              "word": "通",
+              "probability": 0.9361
+            },
+            {
+              "start": 11.49,
+              "end": 11.63,
+              "word": "道",
+              "probability": 0.8081
+            }
+          ]
+        },
+        {
+          "start": 11.63,
+          "end": 17.55,
+          "text": "你把目标人群的 你把目标人群和广告内容设置好",
+          "words": [
+            {
+              "start": 11.63,
+              "end": 12.39,
+              "word": "你",
+              "probability": 0.8741
+            },
+            {
+              "start": 12.39,
+              "end": 12.55,
+              "word": "把",
+              "probability": 0.9889
+            },
+            {
+              "start": 12.55,
+              "end": 12.73,
+              "word": "目",
+              "probability": 0.9706
+            },
+            {
+              "start": 12.73,
+              "end": 12.87,
+              "word": "标",
+              "probability": 0.9981
+            },
+            {
+              "start": 12.87,
+              "end": 13.13,
+              "word": "人",
+              "probability": 0.9132
+            },
+            {
+              "start": 13.13,
+              "end": 13.41,
+              "word": "群",
+              "probability": 0.8044
+            },
+            {
+              "start": 13.41,
+              "end": 13.65,
+              "word": "的",
+              "probability": 0.9324
+            },
+            {
+              "start": 13.65,
+              "end": 14.49,
+              "word": " 你",
+              "probability": 0.2699
+            },
+            {
+              "start": 14.49,
+              "end": 14.63,
+              "word": "把",
+              "probability": 0.9821
+            },
+            {
+              "start": 14.63,
+              "end": 14.83,
+              "word": "目",
+              "probability": 0.9994
+            },
+            {
+              "start": 14.83,
+              "end": 14.99,
+              "word": "标",
+              "probability": 0.9999
+            },
+            {
+              "start": 14.99,
+              "end": 15.17,
+              "word": "人",
+              "probability": 0.9946
+            },
+            {
+              "start": 15.17,
+              "end": 15.47,
+              "word": "群",
+              "probability": 0.9999
+            },
+            {
+              "start": 15.47,
+              "end": 15.97,
+              "word": "和",
+              "probability": 0.9616
+            },
+            {
+              "start": 15.97,
+              "end": 16.21,
+              "word": "广",
+              "probability": 0.9874
+            },
+            {
+              "start": 16.21,
+              "end": 16.39,
+              "word": "告",
+              "probability": 0.9864
+            },
+            {
+              "start": 16.39,
+              "end": 16.59,
+              "word": "内",
+              "probability": 0.9832
+            },
+            {
+              "start": 16.59,
+              "end": 16.69,
+              "word": "容",
+              "probability": 0.9977
+            },
+            {
+              "start": 16.69,
+              "end": 17.23,
+              "word": "设",
+              "probability": 0.8959
+            },
+            {
+              "start": 17.23,
+              "end": 17.37,
+              "word": "置",
+              "probability": 0.9604
+            },
+            {
+              "start": 17.37,
+              "end": 17.55,
+              "word": "好",
+              "probability": 0.996
+            }
+          ]
+        },
+        {
+          "start": 17.55,
+          "end": 22.43,
+          "text": "他就远远不断来去惊重的处达 去排域 去预热",
+          "words": [
+            {
+              "start": 17.55,
+              "end": 17.91,
+              "word": "他",
+              "probability": 0.4012
+            },
+            {
+              "start": 17.91,
+              "end": 18.05,
+              "word": "就",
+              "probability": 0.9934
+            },
+            {
+              "start": 18.05,
+              "end": 18.27,
+              "word": "远",
+              "probability": 0.7727
+            },
+            {
+              "start": 18.27,
+              "end": 18.45,
+              "word": "远",
+              "probability": 0.9934
+            },
+            {
+              "start": 18.45,
+              "end": 18.63,
+              "word": "不",
+              "probability": 0.9907
+            },
+            {
+              "start": 18.63,
+              "end": 18.71,
+              "word": "断",
+              "probability": 0.5954
+            },
+            {
+              "start": 18.71,
+              "end": 18.85,
+              "word": "来",
+              "probability": 0.3603
+            },
+            {
+              "start": 18.85,
+              "end": 19.01,
+              "word": "去",
+              "probability": 0.9445
+            },
+            {
+              "start": 19.01,
+              "end": 19.27,
+              "word": "惊",
+              "probability": 0.5671
+            },
+            {
+              "start": 19.27,
+              "end": 19.51,
+              "word": "重",
+              "probability": 0.7121
+            },
+            {
+              "start": 19.51,
+              "end": 19.69,
+              "word": "的",
+              "probability": 0.6764
+            },
+            {
+              "start": 19.69,
+              "end": 20.05,
+              "word": "处",
+              "probability": 0.8875
+            },
+            {
+              "start": 20.05,
+              "end": 20.25,
+              "word": "达",
+              "probability": 0.8878
+            },
+            {
+              "start": 20.75,
+              "end": 20.87,
+              "word": " 去",
+              "probability": 0.9983
+            },
+            {
+              "start": 20.87,
+              "end": 21.13,
+              "word": "排",
+              "probability": 0.6918
+            },
+            {
+              "start": 21.13,
+              "end": 21.37,
+              "word": "域",
+              "probability": 0.8385
+            },
+            {
+              "start": 21.77,
+              "end": 21.85,
+              "word": " 去",
+              "probability": 0.992
+            },
+            {
+              "start": 21.85,
+              "end": 22.07,
+              "word": "预",
+              "probability": 0.9808
+            },
+            {
+              "start": 22.07,
+              "end": 22.43,
+              "word": "热",
+              "probability": 0.9038
+            }
+          ]
+        },
+        {
+          "start": 22.43,
+          "end": 24.97,
+          "text": "也认为你一次建设长期",
+          "words": [
+            {
+              "start": 22.43,
+              "end": 23.05,
+              "word": "也",
+              "probability": 0.0594
+            },
+            {
+              "start": 23.05,
+              "end": 23.17,
+              "word": "认",
+              "probability": 0.4865
+            },
+            {
+              "start": 23.17,
+              "end": 23.21,
+              "word": "为",
+              "probability": 0.9232
+            },
+            {
+              "start": 23.21,
+              "end": 23.39,
+              "word": "你",
+              "probability": 0.862
+            },
+            {
+              "start": 23.39,
+              "end": 23.73,
+              "word": "一次",
+              "probability": 0.9252
+            },
+            {
+              "start": 23.73,
+              "end": 24.03,
+              "word": "建",
+              "probability": 0.6592
+            },
+            {
+              "start": 24.03,
+              "end": 24.27,
+              "word": "设",
+              "probability": 0.9988
+            },
+            {
+              "start": 24.27,
+              "end": 24.79,
+              "word": "长",
+              "probability": 0.6436
+            },
+            {
+              "start": 24.79,
+              "end": 24.97,
+              "word": "期",
+              "probability": 0.3368
+            }
+          ]
+        }
+      ],
+      "preview_subtitle_segments": [
+        {
+          "start": 1.97,
+          "end": 6.75,
+          "text": "我说句实话 树营八品不是给你打一针信分剂就完事了",
+          "words": [
+            {
+              "start": 1.97,
+              "end": 2.45,
+              "word": "我",
+              "probability": 0.548
+            },
+            {
+              "start": 2.45,
+              "end": 2.61,
+              "word": "说",
+              "probability": 0.9653
+            },
+            {
+              "start": 2.61,
+              "end": 2.75,
+              "word": "句",
+              "probability": 0.9485
+            },
+            {
+              "start": 2.75,
+              "end": 2.93,
+              "word": "实",
+              "probability": 0.9764
+            },
+            {
+              "start": 2.93,
+              "end": 3.11,
+              "word": "话",
+              "probability": 0.9993
+            },
+            {
+              "start": 3.61,
+              "end": 3.67,
+              "word": " 树",
+              "probability": 0.6029
+            },
+            {
+              "start": 3.67,
+              "end": 3.77,
+              "word": "营",
+              "probability": 0.6185
+            },
+            {
+              "start": 3.77,
+              "end": 3.95,
+              "word": "八",
+              "probability": 0.6568
+            },
+            {
+              "start": 3.95,
+              "end": 4.13,
+              "word": "品",
+              "probability": 0.3149
+            },
+            {
+              "start": 4.13,
+              "end": 4.55,
+              "word": "不是",
+              "probability": 0.9335
+            },
+            {
+              "start": 4.55,
+              "end": 4.75,
+              "word": "给",
+              "probability": 0.9811
+            },
+            {
+              "start": 4.75,
+              "end": 4.89,
+              "word": "你",
+              "probability": 0.9856
+            },
+            {
+              "start": 4.89,
+              "end": 5.07,
+              "word": "打",
+              "probability": 0.9427
+            },
+            {
+              "start": 5.07,
+              "end": 5.21,
+              "word": "一",
+              "probability": 0.7541
+            },
+            {
+              "start": 5.21,
+              "end": 5.33,
+              "word": "针",
+              "probability": 0.825
+            },
+            {
+              "start": 5.33,
+              "end": 5.55,
+              "word": "信",
+              "probability": 0.2224
+            },
+            {
+              "start": 5.55,
+              "end": 5.79,
+              "word": "分",
+              "probability": 0.5597
+            },
+            {
+              "start": 5.79,
+              "end": 5.93,
+              "word": "剂",
+              "probability": 0.6983
+            },
+            {
+              "start": 5.93,
+              "end": 6.25,
+              "word": "就",
+              "probability": 0.8232
+            },
+            {
+              "start": 6.25,
+              "end": 6.43,
+              "word": "完",
+              "probability": 0.6727
+            },
+            {
+              "start": 6.43,
+              "end": 6.65,
+              "word": "事",
+              "probability": 0.9427
+            },
+            {
+              "start": 6.65,
+              "end": 6.75,
+              "word": "了",
+              "probability": 0.9919
+            }
+          ]
+        },
+        {
+          "start": 6.75,
+          "end": 11.63,
+          "text": "他是帮你偷偷的扑一条自动化的这个货客通道",
+          "words": [
+            {
+              "start": 6.75,
+              "end": 7.41,
+              "word": "他是",
+              "probability": 0.5378
+            },
+            {
+              "start": 7.41,
+              "end": 7.79,
+              "word": "帮",
+              "probability": 0.9802
+            },
+            {
+              "start": 7.79,
+              "end": 8.03,
+              "word": "你",
+              "probability": 0.994
+            },
+            {
+              "start": 8.03,
+              "end": 8.41,
+              "word": "偷",
+              "probability": 0.9913
+            },
+            {
+              "start": 8.41,
+              "end": 8.71,
+              "word": "偷",
+              "probability": 0.9984
+            },
+            {
+              "start": 8.71,
+              "end": 8.89,
+              "word": "的",
+              "probability": 0.7731
+            },
+            {
+              "start": 8.89,
+              "end": 9.15,
+              "word": "扑",
+              "probability": 0.4851
+            },
+            {
+              "start": 9.15,
+              "end": 9.31,
+              "word": "一",
+              "probability": 0.9824
+            },
+            {
+              "start": 9.31,
+              "end": 9.45,
+              "word": "条",
+              "probability": 0.9857
+            },
+            {
+              "start": 9.45,
+              "end": 9.93,
+              "word": "自",
+              "probability": 0.9896
+            },
+            {
+              "start": 9.93,
+              "end": 10.13,
+              "word": "动",
+              "probability": 0.9964
+            },
+            {
+              "start": 10.13,
+              "end": 10.37,
+              "word": "化",
+              "probability": 0.8572
+            },
+            {
+              "start": 10.37,
+              "end": 10.75,
+              "word": "的",
+              "probability": 0.9939
+            },
+            {
+              "start": 10.75,
+              "end": 10.97,
+              "word": "这个",
+              "probability": 0.4339
+            },
+            {
+              "start": 10.97,
+              "end": 11.15,
+              "word": "货",
+              "probability": 0.7127
+            },
+            {
+              "start": 11.15,
+              "end": 11.29,
+              "word": "客",
+              "probability": 0.5769
+            },
+            {
+              "start": 11.29,
+              "end": 11.49,
+              "word": "通",
+              "probability": 0.9361
+            },
+            {
+              "start": 11.49,
+              "end": 11.63,
+              "word": "道",
+              "probability": 0.8081
+            }
+          ]
+        },
+        {
+          "start": 11.63,
+          "end": 17.55,
+          "text": "你把目标人群的 你把目标人群和广告内容设置好",
+          "words": [
+            {
+              "start": 11.63,
+              "end": 12.39,
+              "word": "你",
+              "probability": 0.8741
+            },
+            {
+              "start": 12.39,
+              "end": 12.55,
+              "word": "把",
+              "probability": 0.9889
+            },
+            {
+              "start": 12.55,
+              "end": 12.73,
+              "word": "目",
+              "probability": 0.9706
+            },
+            {
+              "start": 12.73,
+              "end": 12.87,
+              "word": "标",
+              "probability": 0.9981
+            },
+            {
+              "start": 12.87,
+              "end": 13.13,
+              "word": "人",
+              "probability": 0.9132
+            },
+            {
+              "start": 13.13,
+              "end": 13.41,
+              "word": "群",
+              "probability": 0.8044
+            },
+            {
+              "start": 13.41,
+              "end": 13.65,
+              "word": "的",
+              "probability": 0.9324
+            },
+            {
+              "start": 13.65,
+              "end": 14.49,
+              "word": " 你",
+              "probability": 0.2699
+            },
+            {
+              "start": 14.49,
+              "end": 14.63,
+              "word": "把",
+              "probability": 0.9821
+            },
+            {
+              "start": 14.63,
+              "end": 14.83,
+              "word": "目",
+              "probability": 0.9994
+            },
+            {
+              "start": 14.83,
+              "end": 14.99,
+              "word": "标",
+              "probability": 0.9999
+            },
+            {
+              "start": 14.99,
+              "end": 15.17,
+              "word": "人",
+              "probability": 0.9946
+            },
+            {
+              "start": 15.17,
+              "end": 15.47,
+              "word": "群",
+              "probability": 0.9999
+            },
+            {
+              "start": 15.47,
+              "end": 15.97,
+              "word": "和",
+              "probability": 0.9616
+            },
+            {
+              "start": 15.97,
+              "end": 16.21,
+              "word": "广",
+              "probability": 0.9874
+            },
+            {
+              "start": 16.21,
+              "end": 16.39,
+              "word": "告",
+              "probability": 0.9864
+            },
+            {
+              "start": 16.39,
+              "end": 16.59,
+              "word": "内",
+              "probability": 0.9832
+            },
+            {
+              "start": 16.59,
+              "end": 16.69,
+              "word": "容",
+              "probability": 0.9977
+            },
+            {
+              "start": 16.69,
+              "end": 17.23,
+              "word": "设",
+              "probability": 0.8959
+            },
+            {
+              "start": 17.23,
+              "end": 17.37,
+              "word": "置",
+              "probability": 0.9604
+            },
+            {
+              "start": 17.37,
+              "end": 17.55,
+              "word": "好",
+              "probability": 0.996
+            }
+          ]
+        },
+        {
+          "start": 17.55,
+          "end": 22.43,
+          "text": "他就远远不断来去惊重的处达 去排域 去预热",
+          "words": [
+            {
+              "start": 17.55,
+              "end": 17.91,
+              "word": "他",
+              "probability": 0.4012
+            },
+            {
+              "start": 17.91,
+              "end": 18.05,
+              "word": "就",
+              "probability": 0.9934
+            },
+            {
+              "start": 18.05,
+              "end": 18.27,
+              "word": "远",
+              "probability": 0.7727
+            },
+            {
+              "start": 18.27,
+              "end": 18.45,
+              "word": "远",
+              "probability": 0.9934
+            },
+            {
+              "start": 18.45,
+              "end": 18.63,
+              "word": "不",
+              "probability": 0.9907
+            },
+            {
+              "start": 18.63,
+              "end": 18.71,
+              "word": "断",
+              "probability": 0.5954
+            },
+            {
+              "start": 18.71,
+              "end": 18.85,
+              "word": "来",
+              "probability": 0.3603
+            },
+            {
+              "start": 18.85,
+              "end": 19.01,
+              "word": "去",
+              "probability": 0.9445
+            },
+            {
+              "start": 19.01,
+              "end": 19.27,
+              "word": "惊",
+              "probability": 0.5671
+            },
+            {
+              "start": 19.27,
+              "end": 19.51,
+              "word": "重",
+              "probability": 0.7121
+            },
+            {
+              "start": 19.51,
+              "end": 19.69,
+              "word": "的",
+              "probability": 0.6764
+            },
+            {
+              "start": 19.69,
+              "end": 20.05,
+              "word": "处",
+              "probability": 0.8875
+            },
+            {
+              "start": 20.05,
+              "end": 20.25,
+              "word": "达",
+              "probability": 0.8878
+            },
+            {
+              "start": 20.75,
+              "end": 20.87,
+              "word": " 去",
+              "probability": 0.9983
+            },
+            {
+              "start": 20.87,
+              "end": 21.13,
+              "word": "排",
+              "probability": 0.6918
+            },
+            {
+              "start": 21.13,
+              "end": 21.37,
+              "word": "域",
+              "probability": 0.8385
+            },
+            {
+              "start": 21.77,
+              "end": 21.85,
+              "word": " 去",
+              "probability": 0.992
+            },
+            {
+              "start": 21.85,
+              "end": 22.07,
+              "word": "预",
+              "probability": 0.9808
+            },
+            {
+              "start": 22.07,
+              "end": 22.43,
+              "word": "热",
+              "probability": 0.9038
+            }
+          ]
+        },
+        {
+          "start": 22.43,
+          "end": 24.97,
+          "text": "也认为你一次建设长期",
+          "words": [
+            {
+              "start": 22.43,
+              "end": 23.05,
+              "word": "也",
+              "probability": 0.0594
+            },
+            {
+              "start": 23.05,
+              "end": 23.17,
+              "word": "认",
+              "probability": 0.4865
+            },
+            {
+              "start": 23.17,
+              "end": 23.21,
+              "word": "为",
+              "probability": 0.9232
+            },
+            {
+              "start": 23.21,
+              "end": 23.39,
+              "word": "你",
+              "probability": 0.862
+            },
+            {
+              "start": 23.39,
+              "end": 23.73,
+              "word": "一次",
+              "probability": 0.9252
+            },
+            {
+              "start": 23.73,
+              "end": 24.03,
+              "word": "建",
+              "probability": 0.6592
+            },
+            {
+              "start": 24.03,
+              "end": 24.27,
+              "word": "设",
+              "probability": 0.9988
+            },
+            {
+              "start": 24.27,
+              "end": 24.79,
+              "word": "长",
+              "probability": 0.6436
+            },
+            {
+              "start": 24.79,
+              "end": 24.97,
+              "word": "期",
+              "probability": 0.3368
+            }
+          ]
+        }
+      ],
+      "subtitle_preview_source": "current_asr",
+      "overlay_preview": {
+        "title": {
+          "lines": [
+            "我说句实话树营八品不是"
+          ],
+          "start": 0,
+          "end": 2.5
+        },
+        "cues": [
+          {
+            "start": 1.97,
+            "end": 3.84,
+            "lines": [
+              "我说句实话树营八品"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 0,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 3.84,
+            "end": 5.295,
+            "lines": [
+              "不是给你打一针"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 0,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 5.295,
+            "end": 6.75,
+            "lines": [
+              "信分剂就完事了"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 0,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 6.75,
+            "end": 8.458,
+            "lines": [
+              "他是帮你偷偷的"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 1,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 8.458,
+            "end": 9.922,
+            "lines": [
+              "扑一条自动化"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 1,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 9.922,
+            "end": 11.63,
+            "lines": [
+              "的这个货客通道"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 1,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 11.63,
+            "end": 13.603,
+            "lines": [
+              "你把目标人群的"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 2,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 13.603,
+            "end": 15.577,
+            "lines": [
+              "你把目标人群和"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 2,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 15.577,
+            "end": 17.55,
+            "lines": [
+              "广告内容设置好"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 2,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 17.55,
+            "end": 19.091,
+            "lines": [
+              "他就远远不断"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 3,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 19.091,
+            "end": 20.632,
+            "lines": [
+              "来去惊重的处"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 3,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 20.632,
+            "end": 22.43,
+            "lines": [
+              "达去排域去预热"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 3,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 22.43,
+            "end": 23.7,
+            "lines": [
+              "也认为你一"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 4,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          },
+          {
+            "start": 23.7,
+            "end": 24.97,
+            "lines": [
+              "次建设长期"
+            ],
+            "emphasis_range": null,
+            "emphasis_style": null,
+            "source_segment_index": 4,
+            "lexical_boundary_exception": null,
+            "entry_motion": {
+              "type": "fade_in",
+              "duration_ms": 120
+            },
+            "subtitle_style_id": "adaptive_talking_head_v1"
+          }
+        ],
+        "caption_group_source": "deterministic_fallback",
+        "phrase_timing_source": "word_timestamps",
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+          "font_family": "Source Han Serif CN Heavy",
+          "palette_id": "neutral_tech_business_v1",
+          "entry_motion": "fade_in_120ms",
+          "emphasis_scale_range": [
+            1.05,
+            1.12
+          ]
+        }
+      },
+      "review_snapshot": {
+        "confirmed": true,
+        "approval_mode": "local_word_timestamps_blind_test",
+        "source_range": {
+          "start": 0.0,
+          "end": 25.003
+        },
+        "source_media_identity": {
+          "source_media_sha256": "475fff0cf499b386c138b437a823a4263e88f12dc60ead0294e9e7eb3b8d3af1",
+          "transcript_sha256": "b7bf3f46838b343ca563277e3a7ac926c6494e0d27acc329b80bc61a734c1180",
+          "timing_source": "word_timestamps",
+          "transcript_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\unseen-tutorial.asr.json"
+        }
+      },
+      "review_confirmed_at": null,
+      "result_media_url": null,
+      "is_mock": false,
+      "publish_allowed": false,
+      "error_message": null,
+      "confirmed_at": null,
+      "analysis": null,
+      "job": {
+        "task_id": "edit-local-4130f60968",
+        "status": "queued",
+        "progress": 0,
+        "stage": "等待本机免费导出",
+        "error_message": null,
+        "result_size_bytes": null,
+        "media_url": null,
+        "download_url": null,
+        "source_id": "upload:upload-2e3e1c993a",
+        "analysis_id": null,
+        "publish_title": "我说句实话 树营八品不是",
+        "workflow": "local_preview_export",
+        "quality_report": {}
+      }
+    }
+  ],
+  "created_at": "2026-08-25T21:47:44.910858+08:00",
+  "updated_at": "2026-08-25T21:47:45.091452+08:00"
+}

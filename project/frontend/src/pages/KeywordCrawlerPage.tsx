@@ -27,7 +27,10 @@ import {
   SearchOutlined,
 } from "@ant-design/icons";
 import {
-  createCrawlerBatch,
+  createCrawlerProgressiveBatch,
+  createCrawlerKeywordQueue,
+  downloadCrawlerBatchCsv,
+  getCrawlerKeywordQueue,
   createPipelineFromCandidate,
   deleteCrawlerBatch,
   generateOriginalScript,
@@ -36,8 +39,13 @@ import {
   getCrawlerCapabilities,
   getCrawlerHotWords,
   listCrawlerBatches,
+  listCrawlerKeywordQueues,
+  pauseCrawlerKeywordQueue,
   previewCrawlerCandidateMedia,
   recheckCrawlerBatchLegacyNoText,
+  resumeCrawlerKeywordQueue,
+  cancelCrawlerKeywordQueue,
+  resetCrawlerBrowserLoginState,
   startCrawlerBrowserDiscovery,
 } from "../api/client";
 import type {
@@ -47,10 +55,13 @@ import type {
   CrawlerCandidateResult,
   CrawlerCapabilitiesResponse,
   CrawlerHotWordItem,
+  CrawlerKeywordQueueItem,
+  CrawlerKeywordQueueResponse,
   CrawlerOriginalScriptResponse,
   CrawlerPlatformRun,
   CrawlerSearchRequest,
 } from "../api/types";
+import { ApiRequestError } from "../api/client";
 import MaterialSearchExperience from "../components/MaterialSearchExperience";
 import { useToast } from "../components/Toast";
 import { useNavigate } from "react-router-dom";
@@ -71,6 +82,8 @@ const STATUS_COLOR: Record<string, string> = {
   cached: "cyan",
   blocked: "warning",
   outcome_unknown: "error",
+  paused: "warning",
+  cancelled: "default",
 };
 
 type HotspotWindowHours = 1 | 24 | 72 | 168;
@@ -184,7 +197,7 @@ function candidateIdentity(item: CrawlerCandidateResult) {
 
 function keywordMatchLabel(reason: string | null | undefined) {
   if (!reason) return null;
-  return /未(?:直接)?命中/.test(reason) ? "未命中关键词" : "命中关键词";
+  return /未(?:直接)?命中/.test(reason) ? "平台参考" : "命中关键词";
 }
 
 function dedupeCandidates(candidates: CrawlerCandidateResult[]) {
@@ -227,9 +240,11 @@ function statusLabel(status: string) {
     succeeded: "成功",
     partial: "部分成功",
     failed: "失败",
-    cached: "缓存命中",
+    cached: "使用近期结果",
     blocked: "已阻断",
     outcome_unknown: "结果未知",
+    paused: "已暂停",
+    cancelled: "已取消",
   };
   return labels[status] || status;
 }
@@ -264,12 +279,42 @@ function resultStateMessage(run: CrawlerPlatformRun) {
     provider_payload_invalid: "供应商有响应但未识别出候选列表；请核对响应结构与供应商接口变更。",
     all_out_of_window: `供应商返回了 ${run.raw_item_count} 条，但全部早于本次时间范围，未额外翻页以避免增加费用。`,
     all_invalid: "供应商返回的候选全部未通过平台、链接或去重校验，请核对供应商字段。",
-    all_irrelevant: `供应商返回了内容，但均未通过标题/话题的严格关键词匹配；已过滤 ${run.irrelevant_count ?? 0} 条。`,
+    all_irrelevant: `平台已返回搜索内容，但需要人工从中确认合适素材；已整理 ${run.irrelevant_count ?? 0} 条筛选信息。`,
     all_low_spoken_value: `找到了相关内容，但公开文字不足以支撑原创口播；已隐藏 ${run.low_spoken_value_count ?? 0} 条。`,
     all_below_heat_floor: `有 ${run.strict_relevant_count ?? 0} 条严格相关内容，但互动热度均低于 100，已不进入主榜。`,
+    reference_only: `平台已找到 ${run.reference_count ?? run.reference_candidates?.length ?? 0} 条搜索参考，请打开原视频确认后再继续。`,
     no_hot: "已得到候选，但没有达到本产品的热门/潜力阈值；它们不会被标为爆款。",
   };
   return messages[run.result_state] || "本次没有可展示候选，请查看诊断和供应商响应。";
+}
+
+function crawlerFunnelSummary(run: CrawlerPlatformRun) {
+  const raw = run.raw_discovered ?? run.raw_item_count ?? 0;
+  const parsed = run.parsed ?? run.parsed_item_count ?? 0;
+  const retained = run.retained ?? run.relevant_count ?? run.returned_count ?? 0;
+  const drops = [
+    [`不相关 ${run.relevance_filtered ?? run.irrelevant_count ?? 0}`, run.relevance_filtered ?? run.irrelevant_count ?? 0],
+    [`重复 ${run.duplicate_count ?? 0}`, run.duplicate_count ?? 0],
+    [`无效 ${run.invalid_fields ?? run.invalid_count ?? 0}`, run.invalid_fields ?? run.invalid_count ?? 0],
+    [`时长不符 ${run.duration_filtered ?? run.duration_filtered_count ?? 0}`, run.duration_filtered ?? run.duration_filtered_count ?? 0],
+    [`超出时间范围 ${run.out_of_window_count ?? 0}`, run.out_of_window_count ?? 0],
+  ] as const;
+  const details = drops.filter(([, count]) => count > 0).map(([label]) => label).join("、");
+  return `扫描 ${formatNumber(raw)} 条，解析 ${formatNumber(parsed)} 条，筛出 ${formatNumber(retained)} 条相关素材${details ? `；过滤：${details}` : ""}`;
+}
+
+const CRAWLER_STAGE_LABELS: Record<string, string> = {
+  browser_attach_or_reuse_ms: "连接/复用浏览器",
+  navigation_ms: "页面导航",
+  first_response_ms: "首个搜索响应（后端）",
+  first_result_ms: "首个解析结果（后端）",
+  scroll_loading_ms: "滚动加载",
+  parse_filter_ms: "解析与过滤",
+  total_ms: "采集总耗时",
+};
+
+function crawlerStageLabel(stage: string) {
+  return CRAWLER_STAGE_LABELS[stage] || stage;
 }
 
 function metricEntries(item: CrawlerCandidateResult, isHotspotLeaderboard = false) {
@@ -302,6 +347,7 @@ export default function KeywordCrawlerPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const searchInFlightRef = useRef(false);
+  const initializationStartedRef = useRef(false);
   const [capabilities, setCapabilities] = useState<CrawlerCapabilitiesResponse | null>(null);
   const [keyword, setKeyword] = useState("");
   const [platforms, setPlatforms] = useState<MaterialPlatform[]>([]);
@@ -317,8 +363,12 @@ export default function KeywordCrawlerPage() {
     platforms: MaterialPlatform[];
   } | null>(null);
   const [searchResultBatch, setSearchResultBatch] = useState<CrawlerBatchResponse | null>(null);
+  const [singleSearchQueueId, setSingleSearchQueueId] = useState<string | null>(null);
+  const [singleSearchQueue, setSingleSearchQueue] = useState<CrawlerKeywordQueueResponse | null>(null);
+  const [searchProgressError, setSearchProgressError] = useState<string | null>(null);
   const [probingCopy, setProbingCopy] = useState(false);
   const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+  const [openingBatchId, setOpeningBatchId] = useState<string | null>(null);
   const [mediaCandidate, setMediaCandidate] = useState<CrawlerCandidateResult | null>(null);
   const [mediaPreview, setMediaPreview] = useState<CrawlerCandidateMediaPreviewResponse | null>(null);
   const [mediaPreviewOpen, setMediaPreviewOpen] = useState(false);
@@ -332,6 +382,12 @@ export default function KeywordCrawlerPage() {
   const [originalScriptLoadingId, setOriginalScriptLoadingId] = useState<string | null>(null);
   const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
   const [connectingPlatform, setConnectingPlatform] = useState<BrowserPlatform | null>(null);
+  const [resettingPlatform, setResettingPlatform] = useState<BrowserPlatform | null>(null);
+  const [keywordQueueOpen, setKeywordQueueOpen] = useState(false);
+  const [keywordQueueText, setKeywordQueueText] = useState("");
+  const [keywordQueue, setKeywordQueue] = useState<CrawlerKeywordQueueResponse | null>(null);
+  const [keywordQueueLoading, setKeywordQueueLoading] = useState(false);
+  const [initializationError, setInitializationError] = useState<string | null>(null);
 
   const requestPayload = useMemo<CrawlerSearchRequest>(() => ({
     keyword: keyword.trim(),
@@ -366,38 +422,44 @@ export default function KeywordCrawlerPage() {
       .slice(0, 20));
   }, []);
 
-  const loadBatches = useCallback(async () => {
+  const loadBatches = useCallback(async (): Promise<unknown | null> => {
     setLoading(true);
     try {
       const list = await listCrawlerBatches();
       setBatches(list.items);
+      return null;
     } catch (err) {
-      toast.error((err as Error).message);
+      return err;
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
-  const loadSecondaryData = useCallback(async () => {
+  const loadSecondaryData = useCallback(async (): Promise<unknown | null> => {
     try {
       const caps = await getCrawlerCapabilities();
       setCapabilities(caps);
     } catch (err) {
       // The history table remains usable when the local browser status is
-      // temporarily unavailable.
-      toast.error(`发现能力加载失败：${(err as Error).message}`);
+      // temporarily unavailable; the caller aggregates the root cause once.
+      return err;
     }
 
     // Hot-word suggestions are optional and must never delay the main page.
     void getCrawlerHotWords()
       .then((response) => setHotWords(response.words))
       .catch(() => setHotWords([]));
-  }, [toast]);
+    return null;
+  }, []);
 
   const handleSendCandidateToWorkspace = (
     batchId: string,
     candidate: CrawlerCandidateResult,
   ) => {
+    if (candidate.selection_tier === "reserve") {
+      toast.info("这条是平台搜索参考，请先打开原视频确认相关性后再进入智能创作。" );
+      return;
+    }
     const query = new URLSearchParams({
       crawler_batch_id: batchId,
       candidate_id: candidate.video_id,
@@ -405,44 +467,94 @@ export default function KeywordCrawlerPage() {
     navigate(`/pipeline?${query.toString()}`);
   };
 
-  useEffect(() => {
-    void loadBatches();
-    void loadSecondaryData();
+  const runInitialLoad = useCallback(async () => {
+    const [historyError, capabilityError] = await Promise.all([
+      loadBatches(),
+      loadSecondaryData(),
+    ]);
+    const errors = [historyError, capabilityError].filter(Boolean);
+    if (!errors.length) {
+      setInitializationError(null);
+      return;
+    }
+    const uniqueMessages = Array.from(new Set(errors.map((error) => {
+      if (error instanceof ApiRequestError && error.status === 403) {
+        return error.message;
+      }
+      return error instanceof Error ? error.message : "页面初始化失败，请重新加载。";
+    })));
+    setInitializationError(uniqueMessages.join("；"));
   }, [loadBatches, loadSecondaryData]);
+
+  const retryInitialLoad = useCallback(() => {
+    setInitializationError(null);
+    void runInitialLoad();
+  }, [runInitialLoad]);
+
+  useEffect(() => {
+    // React StrictMode may replay the effect. Keep one request round and let
+    // the explicit retry button start a new round after a real user action.
+    if (initializationStartedRef.current) return;
+    initializationStartedRef.current = true;
+    void runInitialLoad();
+  }, [runInitialLoad]);
 
   const finishSearchReveal = useCallback((batch: CrawlerBatchResponse) => {
     setSelectedBatch(batch);
     upsertBatch(batch);
     setSearchResultBatch(null);
+    setSearchProgressError(null);
     setSearchProgress(null);
+    setSingleSearchQueueId(null);
+    setSingleSearchQueue(null);
     setSubmitting(false);
     searchInFlightRef.current = false;
     toast.success("已找到素材；可排序并点选查看。");
   }, [toast, upsertBatch]);
 
-  const handleSearch = async (keywordOverride?: string) => {
+  const handleSearch = async (
+    keywordOverride?: string,
+    forceRefresh = false,
+    platformOverride?: MaterialPlatform[],
+    filterOverrides?: Pick<CrawlerSearchRequest, "count_per_platform" | "published_window_days">,
+  ) => {
     if (searchInFlightRef.current) {
       toast.info("正在找素材，请稍等，不要重复提交。");
       return;
     }
     const searchKeyword = (keywordOverride ?? keyword).trim();
+    const searchPlatforms = platformOverride ?? platforms;
     if (searchKeyword.length < 1 || searchKeyword.length > 50) {
       toast.warning("关键词需为 1–50 个字符");
       return;
     }
-    if (!platforms.length) {
+    if (!searchPlatforms.length) {
       toast.warning("请至少选择一个平台");
       return;
     }
-    const payload: CrawlerSearchRequest = { ...requestPayload, keyword: searchKeyword };
+    const payload: CrawlerSearchRequest = {
+      ...requestPayload,
+      keyword: searchKeyword,
+      platforms: searchPlatforms,
+      force_refresh: forceRefresh,
+      ...filterOverrides,
+    };
     searchInFlightRef.current = true;
     setSubmitting(true);
     setKeyword(searchKeyword);
     setSearchResultBatch(null);
-    setSearchProgress({ startedAt: Date.now(), platforms: [...platforms] });
+    setSingleSearchQueueId(null);
+    setSingleSearchQueue(null);
+    setSearchProgress({ startedAt: Date.now(), platforms: [...searchPlatforms] });
     try {
-      const batch = await createCrawlerBatch(payload);
-      setSearchResultBatch(batch);
+      const task = await createCrawlerProgressiveBatch(payload);
+      if ((task as { progressive_task?: boolean }).progressive_task) {
+        setSingleSearchQueueId(task.queue_id);
+        setSingleSearchQueue(task.queue);
+      } else {
+        // Keeps test doubles and any older local client override compatible.
+        setSearchResultBatch(task as unknown as CrawlerBatchResponse);
+      }
     } catch (err) {
       if (!handleCreditsError(err, () => navigate("/admin"))) {
         toast.error((err as Error).message);
@@ -451,8 +563,92 @@ export default function KeywordCrawlerPage() {
       setSubmitting(false);
       setSearchProgress(null);
       setSearchResultBatch(null);
+      setSearchProgressError(null);
+      setSingleSearchQueueId(null);
+      setSingleSearchQueue(null);
     }
   };
+
+  useEffect(() => {
+    if (!singleSearchQueueId) return undefined;
+    let active = true;
+    const sync = async () => {
+      try {
+        const queue = await getCrawlerKeywordQueue(singleSearchQueueId);
+        if (!active) return;
+        const item = queue.items[0];
+        const terminal = ["succeeded", "partial", "failed", "cancelled", "paused"].includes(queue.status);
+        // Keep the last running queue visible while the durable terminal batch
+        // is fetched. Publishing the terminal queue first lets the reveal
+        // component finalize the previous in-progress snapshot prematurely.
+        if (!terminal) setSingleSearchQueue(queue);
+        const progressBatch = item ? buildProgressiveBatch(queue, item) : null;
+        const snapshots: CrawlerBatchResponse[] = [];
+        if (item?.batch_id || item?.partial_batch_ids?.length) {
+          const ids = [...new Set(
+            item.partial_batch_ids?.length
+              ? item.partial_batch_ids
+              : item.batch_id
+                ? [item.batch_id]
+                : [],
+          )];
+          const results = await Promise.allSettled(ids.map((id) => getCrawlerBatch(id)));
+          results.forEach((result) => {
+            if (result.status === "fulfilled") snapshots.push(result.value);
+          });
+          if (results.some((result) => result.status === "rejected")) {
+            setSearchProgressError((current) => current || "部分旧结果已失效，已保留仍能读取的素材。");
+          }
+        }
+        const partial = mergeCrawlerProgressSnapshots([
+          ...(progressBatch ? [progressBatch] : []),
+          ...snapshots,
+        ]);
+        if (active && partial) setSearchResultBatch(partial);
+        if (terminal) {
+          setSingleSearchQueue(queue);
+          searchInFlightRef.current = false;
+          setSubmitting(false);
+          setSingleSearchQueueId(null);
+          if (!item?.batch_id && !progressBatch) {
+            setSearchProgressError((current) => current || item?.progress_message || item?.error || "找素材没有完成，请稍后重试。");
+          }
+        }
+      } catch (err) {
+        if (active) setSearchProgressError((current) => current || `找素材进度读取失败：${(err as Error).message}`);
+      }
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 1500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [singleSearchQueueId]);
+
+  useEffect(() => {
+    let active = true;
+    void listCrawlerKeywordQueues().then((queues) => {
+      if (!active) return;
+      const queue = queues.find(
+        (item) => item.items.length === 1 && ["queued", "running"].includes(item.status),
+      );
+      if (!queue) return;
+      const item = queue.items[0];
+      setKeyword(item.keyword);
+      setSingleSearchQueue(queue);
+      setSingleSearchQueueId(queue.queue_id);
+      setSearchProgress({
+        startedAt: item.started_at ? new Date(item.started_at).getTime() : Date.now(),
+        platforms: queue.platforms as MaterialPlatform[],
+      });
+      searchInFlightRef.current = true;
+      setSubmitting(true);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleProbeCopy = async (batch: CrawlerBatchResponse) => {
     const isLegacyRecheck = (batch.copy_probe_recheckable_count ?? 0) > 0;
@@ -505,6 +701,32 @@ export default function KeywordCrawlerPage() {
     }
   };
 
+  const handleResetBrowserLoginState = (connection: CrawlerBrowserDiscoveryCapabilities) => {
+    const platform = connection.platform as BrowserPlatform | undefined;
+    if (!platform || !connection.enabled) {
+      return;
+    }
+    Modal.confirm({
+      title: `重置${connection.platform_label || "该平台"}登录状态？`,
+      content: "这只会退出该平台的专用浏览器登录状态，不会删除浏览器资料；完成后需要你人工重新登录。",
+      okText: "退出并重置",
+      cancelText: "取消",
+      onOk: async () => {
+        setResettingPlatform(platform);
+        try {
+          const reset = await resetCrawlerBrowserLoginState(platform);
+          const refreshed = await getCrawlerCapabilities();
+          setCapabilities(refreshed);
+          toast.success(reset.message);
+        } catch (err) {
+          toast.error((err as Error).message);
+        } finally {
+          setResettingPlatform(null);
+        }
+      },
+    });
+  };
+
   const handleDeleteBatch = (batch: CrawlerBatchResponse) => {
     Modal.confirm({
       title: "删除这条历史批次？",
@@ -532,12 +754,110 @@ export default function KeywordCrawlerPage() {
   };
 
   const handleOpenBatch = async (batch: CrawlerBatchResponse) => {
+    if (openingBatchId) return; // 防止连点同一批/不同批导致状态错乱
+    setOpeningBatchId(batch.batch_id);
+    // 详情卡死兜底: 后端 /crawler/batches/{id} 在大 batch 上有 N+1,
+    // 偶尔会卡到分钟级. 30 秒不返回就 abort, 让用户能重试.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
     try {
-      setSelectedBatch(await getCrawlerBatch(batch.batch_id));
+      setSelectedBatch(await getCrawlerBatch(batch.batch_id, { signal: controller.signal }));
       setKeyword(batch.keyword);
       setHistoryDrawerOpen(false);
     } catch (err) {
+      const message = (err as Error).message || String(err);
+      if (controller.signal.aborted) {
+        toast.error("详情加载超过 30 秒已中断，可稍后重试。");
+      } else {
+        toast.error(`打开详情失败：${message}`);
+      }
+    } finally {
+      window.clearTimeout(timeoutId);
+      setOpeningBatchId(null);
+    }
+  };
+
+  const handleExportBatch = async (batch: CrawlerBatchResponse) => {
+    try {
+      await downloadCrawlerBatchCsv(batch.batch_id);
+      toast.success("CSV 已导出；只包含公开素材字段。");
+    } catch (err) {
       toast.error((err as Error).message);
+    }
+  };
+
+  const handleCreateKeywordQueue = async () => {
+    if (!keywordQueueText.trim()) {
+      toast.warning("请粘贴至少一个关键词，每行一个即可。");
+      return;
+    }
+    if (!platforms.length) {
+      toast.warning("请先选择至少一个平台。");
+      return;
+    }
+    setKeywordQueueLoading(true);
+    try {
+      const created = await createCrawlerKeywordQueue({
+        keywords: keywordQueueText,
+        platforms,
+        published_window_days: publishedWindowDays,
+        count_per_platform: countPerPlatform,
+      });
+      setKeywordQueue(created);
+      setKeywordQueueText("");
+      toast.success(`已建立 ${created.total} 个关键词的找素材任务；会按低频顺序执行。`);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setKeywordQueueLoading(false);
+    }
+  };
+
+  const handleOpenKeywordQueue = async () => {
+    setKeywordQueueOpen(true);
+    setKeywordQueueLoading(true);
+    try {
+      const queues = await listCrawlerKeywordQueues();
+      const active = queues.find((item) => ["queued", "running", "paused"].includes(item.status));
+      setKeywordQueue(active || queues[0] || null);
+    } catch (err) {
+      toast.error(`批量任务读取失败：${(err as Error).message}`);
+    } finally {
+      setKeywordQueueLoading(false);
+    }
+  };
+
+  const refreshKeywordQueue = useCallback(async () => {
+    if (!keywordQueue) return;
+    try {
+      setKeywordQueue(await getCrawlerKeywordQueue(keywordQueue.queue_id));
+    } catch (err) {
+      toast.error(`批量进度读取失败：${(err as Error).message}`);
+    }
+  }, [keywordQueue, toast]);
+
+  useEffect(() => {
+    if (!keywordQueue || !["queued", "running"].includes(keywordQueue.status)) return undefined;
+    const timer = window.setInterval(() => void refreshKeywordQueue(), 2000);
+    return () => window.clearInterval(timer);
+  }, [keywordQueue, refreshKeywordQueue]);
+
+  const handleKeywordQueueAction = async (
+    action: "pause" | "resume" | "cancel",
+  ) => {
+    if (!keywordQueue) return;
+    setKeywordQueueLoading(true);
+    try {
+      const update = action === "pause"
+        ? await pauseCrawlerKeywordQueue(keywordQueue.queue_id)
+        : action === "resume"
+          ? await resumeCrawlerKeywordQueue(keywordQueue.queue_id)
+          : await cancelCrawlerKeywordQueue(keywordQueue.queue_id);
+      setKeywordQueue(update);
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setKeywordQueueLoading(false);
     }
   };
 
@@ -609,6 +929,9 @@ export default function KeywordCrawlerPage() {
     }
   };
 
+  const selectedBatchPlatforms = selectedBatch?.platforms?.length
+    ? selectedBatch.platforms
+    : selectedBatch?.platform_runs.map((run) => run.platform) || [];
 
   return (
     <div className="keyword-crawler-page">
@@ -617,10 +940,24 @@ export default function KeywordCrawlerPage() {
           <Title level={4}>找素材</Title>
           <Text type="secondary">本页找素材不消耗积分，也不会自动开启付费补充。</Text>
         </div>
-        <Button icon={<HistoryOutlined />} onClick={() => setHistoryDrawerOpen(true)}>
-          历史记录{batches.length ? ` ${batches.length}` : ""}
-        </Button>
+        <Space>
+          <Button onClick={() => void handleOpenKeywordQueue()}>批量找素材</Button>
+          <Button icon={<HistoryOutlined />} onClick={() => setHistoryDrawerOpen(true)}>
+            历史记录{batches.length ? ` ${batches.length}` : ""}
+          </Button>
+        </Space>
       </header>
+
+      {initializationError && (
+        <Alert
+          className="crawler-initialization-alert"
+          type="error"
+          showIcon
+          message="页面暂时没有完全加载"
+          description={initializationError}
+          action={<Button size="small" onClick={retryInitialLoad}>重新加载</Button>}
+        />
+      )}
 
       <div className="crawler-workspace">
         <aside className="crawler-control-rail" aria-label="找素材设置">
@@ -692,19 +1029,36 @@ export default function KeywordCrawlerPage() {
                     <Text className="crawler-platform-name">{option.label}</Text>
                     <Text type="secondary" className="crawler-platform-state">{status}</Text>
                     {connection?.enabled && !searchReady && (
-                      <Button
-                        type="link"
-                        size="small"
-                        loading={connectingPlatform === option.value}
-                        onClick={() => void handleStartBrowserConnection(connection)}
-                      >
-                        登录处理
-                      </Button>
+                      <>
+                        <Button
+                          type="link"
+                          size="small"
+                          loading={connectingPlatform === option.value}
+                          onClick={() => void handleStartBrowserConnection(connection)}
+                        >
+                          登录处理
+                        </Button>
+                        {connection.login_reset_available === true && (
+                          <Button
+                            type="link"
+                            size="small"
+                            danger
+                            loading={resettingPlatform === option.value}
+                            onClick={() => handleResetBrowserLoginState(connection)}
+                          >
+                            重置登录
+                          </Button>
+                        )}
+                      </>
                     )}
                   </div>
                 );
               })}
             </div>
+            <Text type="secondary" className="crawler-platform-filter-note">
+              {capabilities?.crawler_safety_policy ||
+                "同平台不额外冷却；同平台仍一次只运行一个任务，遇到验证码或访问异常会自动暂停。"}
+            </Text>
           </section>
 
           <section className="crawler-control-section crawler-target-section">
@@ -757,6 +1111,9 @@ export default function KeywordCrawlerPage() {
                 <Text type="secondary">结果</Text>
                 <Text>{selectedBatch.total_candidates} 条</Text>
               </div>
+              <Button size="small" onClick={() => void handleExportBatch(selectedBatch)}>
+                导出 CSV
+              </Button>
             </section>
           )}
 
@@ -769,6 +1126,13 @@ export default function KeywordCrawlerPage() {
               platforms={searchProgress.platforms}
               startedAt={searchProgress.startedAt}
               batch={searchResultBatch}
+              complete={singleSearchQueueId
+                ? Boolean(singleSearchQueue?.items[0]?.batch_id && singleSearchQueue && ["succeeded", "partial", "failed", "cancelled", "paused"].includes(singleSearchQueue.status))
+                : Boolean(searchResultBatch)}
+              progress={singleSearchQueue?.items[0]}
+              targetCount={singleSearchQueue?.count_per_platform || 30}
+              progressError={searchProgressError}
+              onCandidateClick={(candidate) => void handleOpenCandidateMedia(candidate)}
               onRevealComplete={finishSearchReveal}
             />
           ) : selectedBatch ? (
@@ -780,6 +1144,19 @@ export default function KeywordCrawlerPage() {
               originalScriptLoadingId={originalScriptLoadingId}
               onProbeCopy={handleProbeCopy}
               copyProbeLoading={probingCopy}
+               onRefreshSearch={() => void handleSearch(
+                selectedBatch.keyword,
+                true,
+                selectedBatchPlatforms as MaterialPlatform[],
+                {
+                  count_per_platform: selectedBatch.count_per_platform as MaterialCount,
+                  published_window_days: selectedBatch.published_window_days as PublishedWindowDays,
+                },
+               )}
+              onReconnectPlatform={(platform) => {
+                const connection = browserConnections.find((item) => item.platform === platform);
+                if (connection) void handleStartBrowserConnection(connection);
+              }}
               materialDisplaySettings={materialDisplaySettings}
               onSortChange={setMaterialSort}
             />
@@ -800,7 +1177,7 @@ export default function KeywordCrawlerPage() {
                 locale={{ emptyText: "还没有搜索记录，先在左侧输入关键词。" }}
                 renderItem={(batch) => (
                   <List.Item
-                    actions={[<Button key="open" type="link" onClick={() => void handleOpenBatch(batch)}>详情</Button>]}
+                    actions={[<Button key="open" type="link" loading={openingBatchId === batch.batch_id} onClick={() => void handleOpenBatch(batch)}>详情</Button>]}
                   >
                     <List.Item.Meta
                       title={batch.keyword}
@@ -835,7 +1212,7 @@ export default function KeywordCrawlerPage() {
           renderItem={(batch) => (
             <List.Item
               actions={[
-                <Button key="open" type="link" icon={<EyeOutlined />} onClick={() => void handleOpenBatch(batch)}>查看</Button>,
+                <Button key="open" type="link" icon={<EyeOutlined />} loading={openingBatchId === batch.batch_id} onClick={() => void handleOpenBatch(batch)}>查看</Button>,
                 <Tooltip key="delete" title="删除记录">
                   <Button
                     type="text"
@@ -856,6 +1233,72 @@ export default function KeywordCrawlerPage() {
           )}
         />
       </Drawer>
+
+      <Modal
+        title="批量找素材"
+        open={keywordQueueOpen}
+        onCancel={() => setKeywordQueueOpen(false)}
+        footer={null}
+        destroyOnClose={false}
+      >
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <Text type="secondary">
+            每行一个关键词，也可以用逗号分隔；系统会自动去重，最多一次处理 20 个。会复用当前已选平台和数量，不会导出登录信息。
+          </Text>
+          <Input.TextArea
+            aria-label="批量关键词"
+            value={keywordQueueText}
+            onChange={(event) => setKeywordQueueText(event.target.value)}
+            placeholder="餐饮获客\n门店短视频\n老板 IP"
+            autoSize={{ minRows: 5, maxRows: 10 }}
+            disabled={Boolean(keywordQueue && ["queued", "running"].includes(keywordQueue.status))}
+          />
+          <Space wrap>
+            <Text type="secondary">当前平台：{platforms.map(materialPlatformLabel).join("、") || "未选择"}</Text>
+            <Text type="secondary">每个平台：{countPerPlatform} 条</Text>
+          </Space>
+          {!keywordQueue && (
+            <Button type="primary" onClick={() => void handleCreateKeywordQueue()} loading={keywordQueueLoading}>
+              建立批量找素材任务
+            </Button>
+          )}
+          {keywordQueue && (
+            <Space direction="vertical" style={{ width: "100%" }}>
+              <Alert
+                type={keywordQueue.status === "failed" ? "error" : keywordQueue.status === "partial" ? "warning" : "info"}
+                showIcon
+                message={`已完成 ${keywordQueue.completed}/${keywordQueue.total} 个关键词 · ${statusLabel(keywordQueue.status)}`}
+                description={keywordQueue.message || "每个关键词完成后会自动保存；刷新页面也能继续查看。"}
+              />
+              <List
+                size="small"
+                dataSource={keywordQueue.items}
+                renderItem={(item) => (
+                  <List.Item>
+                    <Space>
+                      <Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag>
+                      <Text>{item.keyword}</Text>
+                      {item.error && <Text type="danger">{item.error}</Text>}
+                    </Space>
+                  </List.Item>
+                )}
+              />
+              <Space>
+                {(keywordQueue.status === "queued" || (keywordQueue.status === "running" && keywordQueue.worker_active !== false)) && (
+                  <Button onClick={() => void handleKeywordQueueAction("pause")} loading={keywordQueueLoading}>暂停</Button>
+                )}
+                {(keywordQueue.status === "paused" || keywordQueue.status === "failed" || keywordQueue.status === "partial" || (keywordQueue.status === "running" && keywordQueue.worker_active === false)) && (
+                  <Button type="primary" onClick={() => void handleKeywordQueueAction("resume")} loading={keywordQueueLoading}>继续</Button>
+                )}
+                {!['succeeded', 'cancelled'].includes(keywordQueue.status) && (
+                  <Button danger onClick={() => void handleKeywordQueueAction("cancel")} loading={keywordQueueLoading}>取消</Button>
+                )}
+                <Button onClick={() => setKeywordQueue(null)}>新建一批</Button>
+              </Space>
+            </Space>
+          )}
+        </Space>
+      </Modal>
 
       <Modal
         title="生成文案"
@@ -954,6 +1397,8 @@ function BatchDetail({
   originalScriptLoadingId,
   onProbeCopy,
   copyProbeLoading,
+  onRefreshSearch,
+  onReconnectPlatform,
   materialDisplaySettings,
   onSortChange,
 }: {
@@ -964,6 +1409,8 @@ function BatchDetail({
   originalScriptLoadingId: string | null;
   onProbeCopy: (batch: CrawlerBatchResponse) => void;
   copyProbeLoading: boolean;
+  onRefreshSearch: () => void;
+  onReconnectPlatform: (platform: string) => void;
   materialDisplaySettings: MaterialDisplaySettings;
   onSortChange: (value: MaterialSort) => void;
 }) {
@@ -998,9 +1445,10 @@ function BatchDetail({
               batchId={batch.batch_id}
               onResolveMedia={onResolveMedia}
               onSendToWorkspace={onSendToWorkspace}
-              onGenerateOriginalScript={onGenerateOriginalScript}
-              originalScriptLoadingId={originalScriptLoadingId}
-            />
+               onGenerateOriginalScript={onGenerateOriginalScript}
+               originalScriptLoadingId={originalScriptLoadingId}
+               onReconnectPlatform={onReconnectPlatform}
+             />
           ))}
         </Space>
       </Card>
@@ -1020,6 +1468,7 @@ function BatchDetail({
           </Text>
         </div>
         <Space wrap>
+          <Button size="small" onClick={onRefreshSearch}>刷新搜索</Button>
           <Button size="small" loading={copyProbeLoading} onClick={() => void onProbeCopy(batch)}>
             {copyProbeActionLabel}
           </Button>
@@ -1031,6 +1480,7 @@ function BatchDetail({
         onSendToWorkspace={onSendToWorkspace}
         onGenerateOriginalScript={onGenerateOriginalScript}
         originalScriptLoadingId={originalScriptLoadingId}
+        onReconnectPlatform={onReconnectPlatform}
         displaySettings={materialDisplaySettings}
         onSortChange={onSortChange}
       />
@@ -1046,6 +1496,9 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
       return `抖音登录搜索已暂停：${run.error}。`;
     }
     return `${run.platform_label}本次没有完成：${run.error}`;
+  }
+  if ((run.raw_discovered ?? run.raw_item_count) > 0) {
+    return `${run.platform_label}${crawlerFunnelSummary(run)}，详细原因见下方诊断。`;
   }
   if (run.raw_item_count > 0 && run.parsed_item_count === 0) {
     return `${run.platform_label}发现 ${run.raw_item_count} 条页面结果，但当时没有解析出可校验的标题和发布时间，未进入候选榜。`;
@@ -1066,7 +1519,119 @@ function emptyRunSummary(run: CrawlerPlatformRun) {
 
 function crawlShortfallSummary(run: CrawlerPlatformRun) {
   if (!run.crawl_stop_message || run.returned_count >= run.requested_count) return null;
-  return `${run.platform_label}已找到 ${run.returned_count} 条，未达到 ${run.requested_count} 条：${run.crawl_stop_message}`;
+  const found = run.returned_count > 0
+    ? `已找到 ${run.returned_count} 条`
+    : "暂未整理出可查看素材";
+  return `${run.platform_label}${found}，目标 ${run.requested_count} 条：${run.crawl_stop_message}`;
+}
+
+function buildProgressiveBatch(
+  queue: CrawlerKeywordQueueResponse,
+  item: CrawlerKeywordQueueItem,
+): CrawlerBatchResponse | null {
+  const candidates = item.progress_candidates || [];
+  const terminal = ["succeeded", "partial", "failed", "cancelled", "paused"].includes(queue.status);
+  const platformRuns: CrawlerPlatformRun[] = queue.platforms.map((platform) => {
+    const platformCandidates = candidates.filter((candidate) => candidate.platform === platform);
+    return {
+      run_id: `progress-${queue.queue_id}-${platform}`,
+      platform,
+      platform_label: materialPlatformLabel(platform),
+      provider: "free_multi_platform",
+      mode: "local_browser",
+      status: terminal ? "partial" : "running",
+      requested_count: queue.count_per_platform,
+      returned_count: platformCandidates.length,
+      raw_item_count: item.scanned_count || 0,
+      parsed_item_count: item.parsed_count || 0,
+      raw_discovered: item.scanned_count || 0,
+      parsed: item.parsed_count || 0,
+      retained: platformCandidates.length,
+      out_of_window_count: 0,
+      invalid_count: 0,
+      duplicate_count: 0,
+      result_state: "progressive_snapshot",
+      payload_diagnostic: null,
+      cache_hit: false,
+      cached_from_run_id: null,
+      api_call_count: 0,
+      billable_units: null,
+      quota_remaining: null,
+      error: null,
+      errors: [],
+      started_at: item.started_at,
+      finished_at: item.finished_at,
+      candidates: platformCandidates,
+      reference_count: 0,
+      reference_candidates: [],
+    };
+  });
+  return {
+    batch_id: item.batch_id || `progress-${queue.queue_id}`,
+    keyword: item.keyword,
+    platforms: queue.platforms,
+    published_window_days: queue.published_window_days,
+    count_per_platform: queue.count_per_platform,
+    provider: "free_multi_platform",
+    mode: "local_browser",
+    status: terminal ? queue.status : "running",
+    force_refresh: false,
+    created_at: queue.created_at,
+    finished_at: item.finished_at,
+    error: item.error,
+    platform_runs: platformRuns,
+    total_api_calls: 0,
+    total_candidates: candidates.length,
+    total_estimated_cost_cny: 0,
+    monitoring_policy: "free_single_snapshot_v1",
+  };
+}
+
+function mergeCrawlerProgressSnapshots(snapshots: CrawlerBatchResponse[]) {
+  if (!snapshots.length) return null;
+  const latest = snapshots[snapshots.length - 1];
+  const runs = new Map<string, CrawlerPlatformRun>();
+  snapshots.forEach((snapshot) => snapshot.platform_runs.forEach((run) => {
+    // The persisted progress snapshot and the later saved platform batch can
+    // describe the same platform with different run IDs. Merge by platform so
+    // a candidate does not briefly appear twice when the durable batch arrives.
+    const key = run.platform;
+    const previous = runs.get(key);
+    if (!previous) {
+      runs.set(key, {
+        ...run,
+        candidates: [...run.candidates],
+        reference_candidates: [...(run.reference_candidates || [])],
+        low_incremental_candidates: [...(run.low_incremental_candidates || [])],
+      });
+      return;
+    }
+    const candidates = new Map<string, CrawlerCandidateResult>();
+    [...previous.candidates, ...(previous.reference_candidates || []), ...(previous.low_incremental_candidates || []), ...run.candidates, ...(run.reference_candidates || []), ...(run.low_incremental_candidates || [])]
+      .forEach((candidate) => candidates.set(candidate.video_id, candidate));
+    const referenceIds = new Set(
+      [...(previous.reference_candidates || []), ...(run.reference_candidates || [])]
+        .map((candidate) => candidate.video_id),
+    );
+    const mergedCandidates = [...candidates.values()].filter((candidate) => !referenceIds.has(candidate.video_id));
+    const mergedReferences = [...candidates.values()].filter((candidate) => referenceIds.has(candidate.video_id));
+    runs.set(key, {
+      ...previous,
+      ...run,
+      run_id: run.run_id,
+      candidates: mergedCandidates,
+      reference_count: mergedReferences.length,
+      reference_candidates: mergedReferences,
+      low_incremental_candidates: [],
+      returned_count: Math.max(previous.returned_count, run.returned_count, mergedCandidates.length),
+      retained: Math.max(previous.retained || 0, run.retained || 0, mergedCandidates.length),
+    });
+  }));
+  return {
+    ...latest,
+    platform_runs: [...runs.values()],
+    total_candidates: [...runs.values()].reduce((sum, run) => sum + run.returned_count, 0),
+  };
 }
 
 function UnifiedPlatformResults({
@@ -1075,6 +1640,7 @@ function UnifiedPlatformResults({
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
+  onReconnectPlatform,
   displaySettings,
   onSortChange,
 }: {
@@ -1083,6 +1649,7 @@ function UnifiedPlatformResults({
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
+  onReconnectPlatform: (platform: string) => void;
   displaySettings: MaterialDisplaySettings;
   onSortChange: (value: MaterialSort) => void;
 }) {
@@ -1092,8 +1659,19 @@ function UnifiedPlatformResults({
     () => dedupeCandidates(runs.flatMap((run) => run.candidates)),
     [runs],
   );
-  const emptyRuns = runs.filter((run) => run.candidates.length === 0);
+  const referenceCandidates = useMemo(
+    () => dedupeCandidates(runs.flatMap((run) => run.reference_candidates || [])),
+    [runs],
+  );
+  const emptyRuns = runs.filter((run) => run.candidates.length === 0 && !(run.reference_candidates || []).length);
+  const xiaohongshuRuleFailures = runs.filter(
+    (run) => run.platform === "xiaohongshu" && run.payload_diagnostic === "页面结构发生变化，请重新连接",
+  );
+  const referenceRuns = runs.filter((run) => (run.reference_candidates || []).length > 0);
   const cachedRuns = runs.filter((run) => run.cache_hit);
+  const funnelSummaries = runs
+    .filter((run) => (run.raw_discovered ?? run.raw_item_count ?? 0) > 0)
+    .map((run) => `${run.platform_label}${crawlerFunnelSummary(run)}`);
   const platformShortfalls = runs
     .filter((run) => run.candidates.length > 0)
     .map(crawlShortfallSummary)
@@ -1113,19 +1691,22 @@ function UnifiedPlatformResults({
         <Space wrap size={[6, 6]}>
         {runs.map((run) => {
           const visibleCount = run.candidates.length;
+          const referenceCount = run.reference_candidates?.length || run.reference_count || 0;
           const label = visibleCount > 0
-            ? `${run.platform_label} ${visibleCount} 条`
+            ? `${run.platform_label} ${visibleCount} 条${referenceCount > 0 ? `高相关 · ${referenceCount} 条待确认` : ""}`
+            : referenceCount > 0
+              ? `${run.platform_label} ${referenceCount} 条（待确认）`
             : run.error
               ? `${run.platform_label} 未完成`
-            : run.raw_item_count > 0
-              ? `${run.platform_label} 发现 ${run.raw_item_count} 条 · 0 条符合`
+            : (run.raw_discovered ?? run.raw_item_count) > 0
+              ? `${run.platform_label} ${crawlerFunnelSummary(run)}`
               : `${run.platform_label} 暂无结果`;
           return (
             <Tooltip
               key={run.run_id}
-              title={visibleCount > 0 ? `${run.platform_label}提供 ${visibleCount} 条本次检测候选。` : emptyRunSummary(run)}
+              title={visibleCount > 0 ? `${run.platform_label}提供 ${visibleCount} 条可查看素材。` : referenceCount > 0 ? `平台已找到 ${referenceCount} 条搜索参考，请人工确认。` : emptyRunSummary(run)}
             >
-              <Tag color={visibleCount > 0 ? "success" : run.raw_item_count > 0 ? "warning" : "default"}>
+              <Tag color={visibleCount > 0 ? "success" : referenceCount > 0 ? "warning" : run.raw_item_count > 0 ? "warning" : "default"}>
                 {label}
               </Tag>
             </Tooltip>
@@ -1139,13 +1720,31 @@ function UnifiedPlatformResults({
         </Space>
         <Text type="secondary">已合并去重</Text>
       </div>
+      {funnelSummaries.length > 0 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message="本次采集漏斗"
+          description={funnelSummaries.join("；")}
+        />
+      )}
       {cachedRuns.length > 0 && (
         <Alert
           type="warning"
           showIcon
           style={{ marginBottom: 8 }}
-          message="刚刚已经搜索过，为避免访问过于频繁，本次没有重新访问平台"
+          message="使用近期结果，本次没有重新访问平台"
           description={`${cachedRuns.map((run) => run.platform_label).join("、")}复用了 ${RECENT_RESULT_REUSE_MINUTES} 分钟内的搜索结果；超过 ${RECENT_RESULT_REUSE_MINUTES} 分钟后再搜索会重新获取。`}
+        />
+      )}
+      {referenceRuns.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 8 }}
+          message={`另有 ${referenceCandidates.length} 条待确认素材`}
+          description={referenceRuns.map((run) => `${run.platform_label}有 ${run.reference_candidates?.length || run.reference_count || 0} 条待确认；请打开原视频确认相关性，确认前不会进入智能创作。`).join(" ")}
         />
       )}
       {(emptyRuns.length > 0 || missingSelectedPlatforms.length > 0 || platformShortfalls.length > 0) && (
@@ -1161,6 +1760,19 @@ function UnifiedPlatformResults({
             ].join(" ")}
           />
       )}
+      {xiaohongshuRuleFailures.length > 0 && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: candidates.length ? 8 : 0 }}
+          message="小红书页面结构发生变化，请重新连接"
+          description={(
+            <Button type="primary" onClick={() => onReconnectPlatform("xiaohongshu")}>
+              重新连接小红书
+            </Button>
+          )}
+        />
+      )}
       {candidates.length > 0 ? (
         <MaterialCandidateTable
           candidates={candidates}
@@ -1172,12 +1784,25 @@ function UnifiedPlatformResults({
           originalScriptLoadingId={originalScriptLoadingId}
           onSortChange={onSortChange}
         />
-      ) : (
+      ) : referenceCandidates.length === 0 ? (
         <Alert
           type="warning"
           showIcon
           message="本次没有返回可展示素材"
           description="换一个关键词，或完成上方提示的平台登录后再找。"
+        />
+      ) : null}
+      {referenceCandidates.length > 0 && (
+        <MaterialCandidateTable
+          candidates={referenceCandidates}
+          resultLabel="待确认素材"
+          batchId={batchId}
+          displaySettings={displaySettings}
+          onResolveMedia={onResolveMedia}
+          onSendToWorkspace={onSendToWorkspace}
+          onGenerateOriginalScript={onGenerateOriginalScript}
+          originalScriptLoadingId={originalScriptLoadingId}
+          onSortChange={onSortChange}
         />
       )}
     </div>
@@ -1186,6 +1811,7 @@ function UnifiedPlatformResults({
 
 function MaterialCandidateTable({
   candidates,
+  resultLabel = "本次结果",
   batchId,
   displaySettings,
   onResolveMedia,
@@ -1195,6 +1821,7 @@ function MaterialCandidateTable({
   onSortChange,
 }: {
   candidates: CrawlerCandidateResult[];
+  resultLabel?: string;
   batchId: string;
   displaySettings: MaterialDisplaySettings;
   onResolveMedia: (candidate: CrawlerCandidateResult) => void;
@@ -1241,9 +1868,9 @@ function MaterialCandidateTable({
       <section className="crawler-candidate-list-pane">
         <div className="crawler-candidate-toolbar">
           <div>
-            <Title level={5}>本次结果 · {rows.length} 条</Title>
+            <Title level={5}>{resultLabel} · {rows.length} 条</Title>
             <Space size={6} wrap>
-              <Text type="secondary">共抓取 {candidates.length} 条，点选一条查看详情。</Text>
+              <Text type="secondary">高相关 {candidates.length} 条，点选一条查看详情。</Text>
               <Text type="secondary">
                 {formatMetricCoverage("评论", metricCoverage.comments, candidates.length)} · {formatMetricCoverage("分享", metricCoverage.shares, candidates.length)} · {formatMetricCoverage("收藏", metricCoverage.favorites, candidates.length)}
               </Text>
@@ -1349,6 +1976,7 @@ function MaterialCandidatePreview({
     || Boolean(candidate?.media_transcription_task_id);
   const status = candidate ? copyStatus(candidate) : null;
   const keywordMatch = candidate ? keywordMatchLabel(candidate.relevance_reason) : null;
+  const isReferenceCandidate = candidate?.selection_tier === "reserve";
   const partialHeat = candidate ? hasPartialInteractionMetrics(candidate) : false;
 
   if (!candidate) {
@@ -1364,6 +1992,7 @@ function MaterialCandidatePreview({
         <Tag color="blue">{candidate.platform_label || candidate.platform}</Tag>
         {candidate.evidence?.startsWith("douyin_public_search:") && <Tag color="cyan">抖音登录搜索</Tag>}
         {keywordMatch && <Tag color="green">{keywordMatch}</Tag>}
+        {isReferenceCandidate && <Tag color="orange">待人工确认</Tag>}
         {status && <Tag color={status.color}>{status.label}</Tag>}
       </Space>
       <div className="crawler-preview-metrics">
@@ -1378,8 +2007,17 @@ function MaterialCandidatePreview({
         <Text type="secondary">分享 {formatCompactMaterialMetric(candidate.shares)}</Text>
         <Text type="secondary">收藏 {formatCompactMaterialMetric(candidate.favorites)}</Text>
       </Space>
+      {isReferenceCandidate && (
+        <Alert
+          type="warning"
+          showIcon
+          message="这是平台参考候选"
+          description="这是平台搜索参考。请先打开原视频确认相关性，确认前不能送入智能创作。"
+          style={{ marginTop: 12 }}
+        />
+      )}
       <div className="crawler-preview-actions">
-        {!isTopicOnly && (
+        {!isTopicOnly && !isReferenceCandidate && (
           <Button block type="primary" onClick={() => onSendToWorkspace(batchId, candidate)}>送入智能创作</Button>
         )}
         {candidate.source_url && <Button block href={candidate.source_url} target="_blank">打开原视频</Button>}
@@ -1413,6 +2051,7 @@ function PlatformRunDetail({
   onSendToWorkspace,
   onGenerateOriginalScript,
   originalScriptLoadingId,
+  onReconnectPlatform,
 }: {
   run: CrawlerPlatformRun;
   batchId: string;
@@ -1420,10 +2059,13 @@ function PlatformRunDetail({
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
+  onReconnectPlatform: (platform: string) => void;
 }) {
   const isHotspotRun = run.provider === "douyin_local_browser";
   const shortfallMessage = crawlShortfallSummary(run);
-  const totalRanked = [...run.candidates]
+  const referenceCandidates = run.reference_candidates || [];
+  const allCandidates = [...run.candidates, ...referenceCandidates];
+  const totalRanked = [...allCandidates]
     .sort((a, b) => isHotspotRun
       ? (b.new_plays ?? b.plays ?? 0) - (a.new_plays ?? a.plays ?? 0)
       : (b.effective_interactions ?? 0) - (a.effective_interactions ?? 0));
@@ -1433,7 +2075,7 @@ function PlatformRunDetail({
   return (
     <Card
       size="small"
-      title={<Space><Tag color="blue">{run.platform_label}</Tag><Tag color={STATUS_COLOR[run.status]}>{statusLabel(run.status)}</Tag>{run.cache_hit && <Tag color="cyan">缓存</Tag>}</Space>}
+      title={<Space><Tag color="blue">{run.platform_label}</Tag><Tag color={STATUS_COLOR[run.status]}>{statusLabel(run.status)}</Tag>{run.cache_hit && <Tag color="cyan">使用近期结果</Tag>}</Space>}
     >
       {isHotspotRun ? (
         <Space wrap size={[6, 6]}>
@@ -1443,18 +2085,47 @@ function PlatformRunDetail({
         </Space>
       ) : (
         <Descriptions size="small" column={{ xs: 1, md: 4 }}>
-          <Descriptions.Item label="主榜候选">{run.relevant_count ?? run.returned_count}/{run.requested_count}</Descriptions.Item>
-          <Descriptions.Item label="原始 / 解析">{run.raw_item_count} / {run.parsed_item_count}</Descriptions.Item>
-          <Descriptions.Item label="过滤">{`关键词不相关 ${run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 标题信息不足 ${run.low_spoken_value_count ?? 0} · 无效 ${run.invalid_count} · 重复 ${run.duplicate_count}`}</Descriptions.Item>
+          <Descriptions.Item label="高相关素材">{run.relevant_count ?? run.returned_count}/{run.requested_count}</Descriptions.Item>
+          <Descriptions.Item label="待确认素材">{referenceCandidates.length}</Descriptions.Item>
+          <Descriptions.Item label="采集漏斗">{crawlerFunnelSummary(run)}</Descriptions.Item>
+          <Descriptions.Item label="原始 / 解析 / 去重">{`${run.raw_discovered ?? run.raw_item_count} / ${run.parsed ?? run.parsed_item_count} / ${run.deduped ?? run.parsed_item_count}`}</Descriptions.Item>
+          <Descriptions.Item label="过滤">{`不相关 ${run.relevance_filtered ?? run.irrelevant_count ?? 0} · 互动热度不足 ${run.below_heat_floor_count ?? 0} · 标题信息不足 ${run.low_spoken_value_count ?? 0} · 无效 ${run.invalid_fields ?? run.invalid_count} · 重复 ${run.duplicate_count} · 时长 ${run.duration_filtered ?? run.duration_filtered_count ?? 0}`}</Descriptions.Item>
           <Descriptions.Item label="API 调用">{run.api_call_count}</Descriptions.Item>
           <Descriptions.Item label="额度">{run.quota_remaining ?? "未返回"}</Descriptions.Item>
           <Descriptions.Item label="估算费用">{formatCurrency(run.billable_units)}</Descriptions.Item>
         </Descriptions>
       )}
+      {run.stage_timings_ms && Object.keys(run.stage_timings_ms).length > 0 && (
+        <Descriptions size="small" column={{ xs: 1, md: 4 }} style={{ marginTop: 8 }} title="高级诊断（首个响应时间为后端记录）">
+          {Object.entries(run.stage_timings_ms).map(([stage, value]) => (
+            <Descriptions.Item key={stage} label={crawlerStageLabel(stage)}>{formatNumber(value)} ms</Descriptions.Item>
+          ))}
+          <Descriptions.Item label="规则版本">{run.rule_version || run.relevance_rule_version || "历史批次未记录"}</Descriptions.Item>
+          <Descriptions.Item label="会话">{run.session_recovered ? "已保留登录态软恢复" : run.browser_reused === false ? "新页面" : "复用页面"}</Descriptions.Item>
+        </Descriptions>
+      )}
       {run.error && <Alert style={{ marginTop: 12 }} type="error" showIcon message={run.error} />}
+      {referenceCandidates.length > 0 && (
+        <Alert
+          style={{ marginTop: 12 }}
+          type="warning"
+          showIcon
+          message={`另有 ${referenceCandidates.length} 条待确认素材`}
+          description="这些条目可以直接查看；请先打开原视频确认相关性，确认前不会进入智能创作。"
+        />
+      )}
       {shortfallMessage && <Alert style={{ marginTop: 12 }} type="info" showIcon message="本次暂未凑足目标" description={shortfallMessage} />}
       {run.payload_diagnostic && <Alert style={{ marginTop: 12 }} type="warning" showIcon message="供应商响应诊断" description={run.payload_diagnostic} />}
-      {run.candidates.length === 0 && isHotspotRun && lowIncrementalCandidates.length > 0 ? (
+      {run.platform === "xiaohongshu" && run.payload_diagnostic === "页面结构发生变化，请重新连接" && (
+        <Button
+          type="primary"
+          style={{ marginTop: 12 }}
+          onClick={() => onReconnectPlatform(run.platform)}
+        >
+          重新连接小红书
+        </Button>
+      )}
+      {allCandidates.length === 0 && isHotspotRun && lowIncrementalCandidates.length > 0 ? (
         <Space direction="vertical" style={{ width: "100%", marginTop: 16 }} size="middle">
           <Alert
             type="warning"
@@ -1470,7 +2141,7 @@ function PlatformRunDetail({
             originalScriptLoadingId={originalScriptLoadingId}
           />
         </Space>
-      ) : run.candidates.length === 0 && isHotspotRun ? (
+      ) : allCandidates.length === 0 && isHotspotRun ? (
         <Alert
           style={{ marginTop: 16 }}
           type="warning"
@@ -1478,7 +2149,7 @@ function PlatformRunDetail({
           message="暂时没有找到素材"
           description={run.error || "换一个词再找；也可以直接去抖音看看这个词的常见说法。"}
         />
-      ) : run.candidates.length === 0 ? (
+      ) : allCandidates.length === 0 ? (
         <Alert
           style={{ marginTop: 16 }}
           type="warning"
@@ -1773,6 +2444,7 @@ function CandidateListItem({
     Boolean(item.media_transcription_task_id);
   const materialStatus = item.spoken_material_status || "topic_only";
   const isTopicOnly = materialStatus === "topic_only";
+  const isReferenceCandidate = item.selection_tier === "reserve";
   const materialMessage = item.spoken_material_message || (isTopicOnly
     ? "仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。"
     : "已有可核验的文字素材，请先核对原意再继续创作。");
@@ -1810,7 +2482,7 @@ function CandidateListItem({
   return (
     <List.Item
       actions={[
-        !isTopicOnly ? (
+        !isTopicOnly && !isReferenceCandidate ? (
           <Button
             type="link"
             size="small"
@@ -1857,6 +2529,7 @@ function CandidateListItem({
               {isHotspotLeaderboard && <Tag color="magenta">浏览器爆款榜</Tag>}
               {isHotspotLeaderboard && item.hotspot_list_labels && item.hotspot_list_labels.length > 0 && <Tag color="purple">{item.hotspot_list_labels.join(" / ")}</Tag>}
               {isDouyinPublicSearch && <Tag color="cyan">抖音登录搜索</Tag>}
+              {isReferenceCandidate && <Tag color="orange">待人工确认</Tag>}
               {item.relevance_basis && (
                 <Tag color="green">{keywordMatchLabel(item.relevance_reason) || "命中关键词"}</Tag>
               )}
@@ -1873,6 +2546,7 @@ function CandidateListItem({
               作者：{item.author_name}{isHotspotLeaderboard ? `；${hotspotLabel}新增播放量：${formatNumber(item.new_plays ?? item.plays)}；时长：${formatNumber(item.duration_seconds)} 秒` : isDouyinPublicSearch && item.duration_seconds != null ? `；时长：${formatNumber(item.duration_seconds)} 秒` : ""}
             </Text>
             <Text type={isTopicOnly ? "warning" : "secondary"}>{materialMessage}</Text>
+            {isReferenceCandidate && <Text type="warning">这是平台搜索参考，请先打开原视频确认相关性，再进入智能创作。</Text>}
             <Text type={seedStatus === "writeable" ? "success" : "secondary"}>{item.spoken_seed_message}</Text>
             <Text type="secondary">{item.audio_message || "尚未检测文案。"}</Text>
             {item.copy_pool_status === "excluded" && item.copy_rejection_reason && (

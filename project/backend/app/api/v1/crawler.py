@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import csv
+import io
+import logging
 import subprocess
 import sys
 import os
 import shutil
 import re
 import hashlib
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +20,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from project.backend.app.core.deps import (
@@ -49,6 +54,10 @@ from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import (
     CopySource,
     CandidateCopyProbe,
+    CrawlerKeywordQueue,
+    CrawlerKeywordQueueItem,
+    KeywordQueueItemStatus,
+    KeywordQueueStatus,
     DataSource,
     NormalizedCandidate,
     Platform,
@@ -84,6 +93,12 @@ from src.services.commercial_search import (
 from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
+logger = logging.getLogger(__name__)
+
+_CRAWLER_QUEUE_MAX_ITEMS = 20
+_CRAWLER_QUEUE_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+_CRAWLER_QUEUE_LOCK = threading.Lock()
+_CRAWLER_QUEUE_FUTURES: dict[str, Any] = {}
 
 PLATFORM_LABELS: dict[str, str] = {
     "douyin": "抖音",
@@ -120,18 +135,39 @@ HOTSPOT_COOLDOWN_MAX_SECONDS = 60 * 60
 HOTSPOT_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
 HOTSPOT_LEASE_SECONDS = 10 * 60
 HOTSPOT_ROLLING_WINDOW_SECONDS = 24 * 60 * 60
-# 安全优先：每个平台每天只允许少量真实浏览器采集；缓存始终优先。
+# 安全优先：缓存始终优先；异常时暂停真实浏览器采集。
 HOTSPOT_MAX_REAL_RUNS_PER_WINDOW = 4
 HOTSPOT_PROVIDER_KEY = "douyin_hotspot_browser"
 BROWSER_CACHE_TTL_MINUTES = 10
-# 冷却用于防止浏览器被频繁启停；3 分钟足够防抖，不阻碍用户换词再搜。
-BROWSER_COOLDOWN_SECONDS = 3 * 60
+# 普通客户不额外等待；同平台互斥和验证码/访问异常暂停仍生效。
+BROWSER_COOLDOWN_SECONDS = 0
 BROWSER_SAFETY_PAUSE_SECONDS = 24 * 60 * 60
-# 安全优先：每个平台每天只允许少量真实浏览器采集；缓存始终优先。
-# 24 小时滚动窗口内默认 8 次，可在 .env 配置调整。
-BROWSER_MAX_REAL_RUNS_PER_WINDOW = int(
-    os.getenv("BROWSER_MAX_REAL_RUNS_PER_WINDOW", "8")
+def _optional_positive_env_int(name: str) -> int | None:
+    """Read an optional administrator guard; empty/zero means disabled."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+# 普通客户默认不设置 24 小时次数上限；管理员显式配置正整数后才启用。
+# 历史 SQLite 计数仍保留用于诊断，但不会在默认关闭时阻断新任务。
+BROWSER_MAX_REAL_RUNS_PER_WINDOW: int | None = _optional_positive_env_int(
+    "BROWSER_MAX_REAL_RUNS_PER_WINDOW"
 )
+
+
+def _browser_safety_policy_message() -> str:
+    if BROWSER_MAX_REAL_RUNS_PER_WINDOW is not None:
+        return (
+            f"同平台不额外冷却（同平台仍一次只运行一个任务）；管理员设置滚动24小时最多"
+            f"{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次；遇到验证码或访问异常会自动暂停。"
+        )
+    return "同平台不额外冷却（同平台仍一次只运行一个任务）；遇到验证码或访问异常会自动暂停。"
 BROWSER_LEASE_SECONDS = 15 * 60
 BROWSER_RESULT_LIMIT = 15
 # B站公开详情单次最多读取 10 条；按批次补全本次最多 100 条候选，避免
@@ -233,6 +269,16 @@ class CrawlerSearchRequest(BaseModel):
     )
 
 
+class CrawlerKeywordQueueRequest(BaseModel):
+    keywords: str = Field(..., min_length=1, max_length=2000)
+    platforms: list[Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"]] = Field(
+        default_factory=lambda: ["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+        min_length=1,
+    )
+    published_window_days: int = Field(0)
+    count_per_platform: int = Field(30, ge=1, le=100)
+
+
 class CrawlerPlatformPreview(BaseModel):
     platform: str
     platform_label: str
@@ -254,7 +300,7 @@ class CrawlerSafetyStatus(BaseModel):
     cooldown_remaining_seconds: int = 0
     next_available_at: datetime | None = None
     real_runs_in_window: int = 0
-    real_run_limit: int = HOTSPOT_MAX_REAL_RUNS_PER_WINDOW
+    real_run_limit: int | None = HOTSPOT_MAX_REAL_RUNS_PER_WINDOW
     rolling_window_ends_at: datetime | None = None
     message: str
 
@@ -326,6 +372,7 @@ class CrawlerCapabilitiesResponse(BaseModel):
     monthly_hard_limit_cost_cny: float
     cache_ttl_minutes: int
     supports_usage: bool
+    crawler_safety_policy: str = _browser_safety_policy_message()
     usage: dict[str, Any] | None = None
     official_hot_billboard: CrawlerOfficialHotCapability | None = None
     official_hot_words: CrawlerOfficialHotCapability | None = None
@@ -341,6 +388,7 @@ class CrawlerBrowserDiscoveryCapabilities(BaseModel):
     enabled: bool
     running: bool
     login_required: bool
+    login_reset_available: bool = False
     missing_configuration: list[str] = Field(default_factory=list)
     browser_channel: str = "chrome"
     ready_to_crawl: bool = False
@@ -352,6 +400,18 @@ class CrawlerBrowserDiscoveryCapabilities(BaseModel):
 
 class CrawlerBrowserDiscoveryStartResponse(CrawlerBrowserDiscoveryCapabilities):
     started: bool
+
+
+class CrawlerBrowserDiscoveryResetRequest(BaseModel):
+    confirmed: bool = False
+
+
+class CrawlerBrowserDiscoveryResetResponse(BaseModel):
+    platform: str
+    platform_label: str
+    reset: bool
+    manual_login_required: bool
+    message: str
 
 
 class CrawlerHotWordItem(BaseModel):
@@ -448,6 +508,8 @@ class CrawlerCandidateResult(BaseModel):
     audio_message: str = "尚未检测文案。"
     copy_pool_status: Literal["primary", "reserve", "excluded"] | None = None
     copy_rejection_reason: str | None = None
+    # 参考候选只能人工确认后进入后续流程；严格命中项保持默认空值。
+    selection_tier: Literal["priority", "reserve"] | None = None
     share_count: int | None = None
     collect_count: int | None = None
     relevance_basis: str | None = None
@@ -567,6 +629,15 @@ class CrawlerPlatformRunResponse(BaseModel):
     returned_count: int
     raw_item_count: int = 0
     parsed_item_count: int = 0
+    # 新漏斗字段：旧批次/旧接口缺失时均安全回退为 0 或现有计数。
+    raw_discovered: int = 0
+    parsed: int = 0
+    deduped: int = 0
+    direct_match: int = 0
+    relevance_filtered: int = 0
+    duration_filtered: int = 0
+    invalid_fields: int = 0
+    retained: int = 0
     out_of_window_count: int = 0
     invalid_count: int = 0
     duplicate_count: int = 0
@@ -582,6 +653,10 @@ class CrawlerPlatformRunResponse(BaseModel):
     crawl_stop_reason: str | None = None
     crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
+    stage_timings_ms: dict[str, int] = Field(default_factory=dict)
+    rule_version: str | None = None
+    browser_reused: bool | None = None
+    session_recovered: bool = False
     cache_hit: bool
     cached_from_run_id: str | None = None
     api_call_count: int
@@ -592,6 +667,9 @@ class CrawlerPlatformRunResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
+    # 严格关键词未命中时的少量公开搜索参考项；需要人工确认，不自动进入流水线。
+    reference_count: int = 0
+    reference_candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
     # 仅在热点宝主榜为空时返回：严格相关但新增播放量不超过 1,000 的参考视频。
     low_incremental_candidates: list[CrawlerCandidateResult] = Field(
         default_factory=list
@@ -654,6 +732,43 @@ class CrawlerBatchListResponse(BaseModel):
     total: int
 
 
+class CrawlerKeywordQueueItemResponse(BaseModel):
+    item_id: str
+    keyword: str
+    status: str
+    batch_id: str | None = None
+    partial_batch_ids: list[str] = Field(default_factory=list)
+    error: str | None = None
+    progress_stage: str = "queued"
+    progress_platform: str | None = None
+    progress_message: str | None = None
+    scanned_count: int = 0
+    parsed_count: int = 0
+    retained_count: int = 0
+    progress_candidates: list[CrawlerCandidateResult] = Field(default_factory=list)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class CrawlerKeywordQueueResponse(BaseModel):
+    queue_id: str
+    status: str
+    platforms: list[str]
+    published_window_days: int
+    count_per_platform: int
+    created_at: datetime
+    updated_at: datetime
+    finished_at: datetime | None = None
+    total: int
+    completed: int
+    queued: int
+    running: int
+    failed: int
+    worker_active: bool = False
+    items: list[CrawlerKeywordQueueItemResponse]
+    message: str | None = None
+
+
 class CrawlerBatchDeleteResponse(BaseModel):
     batch_id: str
     deleted: bool
@@ -701,6 +816,7 @@ def _browser_capability_payload(
         enabled=capability.enabled,
         running=bool(status and status.running),
         login_required=bool(status and status.login_required),
+        login_reset_available=bool(getattr(provider, "login_reset_available", False)),
         missing_configuration=getattr(capability, "missing_configuration", []),
         browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=bool(status and status.ready_to_crawl),
@@ -783,6 +899,7 @@ def _capability_payload(
         monthly_hard_limit_queries=MONTHLY_HARD_LIMIT_QUERIES,
         monthly_hard_limit_cost_cny=MONTHLY_HARD_LIMIT_COST_CNY,
         cache_ttl_minutes=CACHE_TTL_MINUTES,
+        crawler_safety_policy=_browser_safety_policy_message(),
         supports_usage=capability.supports_usage,
         usage=usage.model_dump(mode="json") if usage else None,
         official_hot_billboard=(
@@ -912,6 +1029,7 @@ def start_browser_discovery_login(
         enabled=status.enabled,
         running=status.running,
         login_required=status.login_required,
+        login_reset_available=bool(getattr(provider, "login_reset_available", False)),
         missing_configuration=getattr(capability, "missing_configuration", []),
         browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=status.ready_to_crawl,
@@ -990,6 +1108,7 @@ def start_platform_browser_discovery_login(
         enabled=capability.enabled,
         running=status.running,
         login_required=status.login_required,
+        login_reset_available=bool(getattr(provider, "login_reset_available", False)),
         missing_configuration=capability.missing_configuration,
         browser_channel=getattr(provider, "browser_channel", "chrome"),
         ready_to_crawl=status.ready_to_crawl,
@@ -998,6 +1117,46 @@ def start_platform_browser_discovery_login(
         provider_name=capability.provider_name,
         message=status.message,
         started=not bool(previous_status and previous_status.running),
+    )
+
+
+@router.post(
+    "/browser-discovery/{platform}/reset-login",
+    response_model=CrawlerBrowserDiscoveryResetResponse,
+)
+def reset_platform_browser_login_state(
+    platform: Literal["douyin", "xiaohongshu", "kuaishou", "bilibili"],
+    body: CrawlerBrowserDiscoveryResetRequest,
+    douyin_public_provider=Depends(get_douyin_public_browser_provider),
+    xiaohongshu_login_provider=Depends(get_xiaohongshu_login_browser_provider),
+    kuaishou_provider=Depends(get_kuaishou_browser_provider),
+    bilibili_provider=Depends(get_bilibili_browser_provider),
+):
+    """Explicit advanced action: reset only one platform's login state."""
+    provider = _select_platform_browser_provider(
+        platform,
+        douyin_public_provider,
+        xiaohongshu_login_provider,
+        kuaishou_provider,
+        bilibili_provider,
+    )
+    reset = getattr(provider, "reset_login_state", None)
+    if reset is None:
+        raise HTTPException(status_code=400, detail="该平台暂不支持单独重置登录状态。")
+    try:
+        status = reset(confirmed=body.confirmed)
+    except LicensedProviderError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return CrawlerBrowserDiscoveryResetResponse(
+        platform=platform,
+        platform_label=_platform_label(platform),
+        reset=True,
+        manual_login_required=True,
+        message=(
+            f"已重置{_platform_label(platform)}登录状态；请在专用浏览器中人工重新登录后继续。"
+            if status.login_required
+            else f"已清理{_platform_label(platform)}域名登录状态；请在专用浏览器中确认并重新登录后继续。"
+        ),
     )
 
 
@@ -1503,9 +1662,9 @@ def _browser_provider_key(platform: Platform) -> str:
 
 
 def _claim_browser_lease(platform: Platform, repo, now: datetime) -> str | None:
-    """为平台的真实浏览器采集抢占配额（并发互斥 + 24h 滚动次数上限）。
+    """为平台的真实浏览器采集抢占租约（并发互斥 + 可选滚动次数上限）。
 
-    返回租约 id 表示成功；返回 None 表示被限（冷却/运行中/今日次数用完）。
+    返回租约 id 表示成功；返回 None 表示被限（冷却/运行中/管理员次数上限）。
     调用方在 finally 中必须用同一租约 id 释放。
     """
     lease_id = f"browser-{uuid4().hex}"
@@ -1559,7 +1718,10 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
             message=f"{_platform_label(platform.value)}正在顺序采集，请等待结束。",
             **common,
         )
-    if real_runs >= BROWSER_MAX_REAL_RUNS_PER_WINDOW:
+    if (
+        BROWSER_MAX_REAL_RUNS_PER_WINDOW is not None
+        and real_runs >= BROWSER_MAX_REAL_RUNS_PER_WINDOW
+    ):
         remaining = (
             max(1, int((window_ends_at - now).total_seconds())) if window_ends_at else 1
         )
@@ -1586,9 +1748,8 @@ def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
     return CrawlerSafetyStatus(
         state="ready",
         message=(
-            f"{_platform_label(platform.value)}安全模式已就绪：最多15条、"
-            f"同平台搜索后短暂冷却 {max(1, BROWSER_COOLDOWN_SECONDS // 60)} 分钟、"
-            f"24小时最多{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次。"
+            f"{_platform_label(platform.value)}安全模式已就绪：最多15条；"
+            f"{_browser_safety_policy_message()}"
         ),
         **common,
     )
@@ -2130,8 +2291,14 @@ def _execute_free_multi_platform_batch(
     kuaishou_service,
     kuaishou_provider,
     repo,
+    progress_callback=None,
 ) -> CrawlerBatchResponse:
-    """Collect a bounded, broad-recall set from selected public platforms."""
+    """Collect a bounded, broad-recall set from selected public platforms.
+
+    ``progress_callback`` is internal-only and used by the persistent queue.
+    It reports completed platform batches; the synchronous HTTP contract remains
+    unchanged for older callers.
+    """
     selected_platforms = _selected_free_platforms(body)
     requested_count = _free_requested_count(body)
     batches: list[SearchBatch] = []
@@ -2144,6 +2311,33 @@ def _execute_free_multi_platform_batch(
         (Platform.BILIBILI, bilibili_service),
     )
     browser_cache_hits: dict[Platform, bool] = {}
+
+    def report_progress(
+        stage: str,
+        message: str,
+        current_batch=None,
+        candidate: CrawlerCandidateResult | None = None,
+        platform: str | None = None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, message, current_batch, candidate, platform)
+        except Exception:
+            # Diagnostics must never turn a successful platform search into a failure.
+            return
+
+    def report_platform_progress(event, current_batch) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            str(event.get("stage") or "scanning"),
+            str(event.get("message") or "正在扫描平台结果。"),
+            current_batch,
+            event.get("candidate"),
+            str(event.get("platform") or "") or None,
+        )
+
     for platform, service in browser_sources:
         if platform not in selected_platforms:
             continue
@@ -2215,13 +2409,16 @@ def _execute_free_multi_platform_batch(
             provider.capabilities().enabled and status and status.ready_to_crawl
         )
         if not ready and not cache_hit:
-            errors.append(
-                status.message
-                if status is not None
-                else f"{_platform_label(platform.value)}浏览器未连接。"
-            )
+            message = status.message if status is not None else f"{_platform_label(platform.value)}浏览器未连接。"
+            report_progress("paused", message, platform=platform.value)
+            errors.append(message)
             return None
-        # 真实浏览器采集前抢占平台配额（并发互斥 + 24h 次数上限）；
+        report_progress(
+            "opening_search",
+            f"正在打开{_platform_label(platform.value)}搜索页面。",
+            platform=platform.value,
+        )
+        # 真实浏览器采集前抢占平台租约（并发互斥 + 可选 24h 次数上限）；
         # 缓存命中不占用配额。被限时跳过该平台并提示，不影响其他平台。
         lease_id: str | None = None
         if not cache_hit:
@@ -2244,16 +2441,19 @@ def _execute_free_multi_platform_batch(
                 if platform == Platform.KUAISHOU
                 else {}
             )
-            batch = service.execute(
-                keyword=body.keyword,
-                published_window_days=effective_published_window_days,
-                count=count or requested_count,
-                force_refresh=body.force_refresh,
-                platforms=(platform,),
-                cache_ttl_minutes=BROWSER_CACHE_TTL_MINUTES,
-                schedule_recrawls=False,
+            execute_options = {
+                "keyword": body.keyword,
+                "published_window_days": effective_published_window_days,
+                "count": count or requested_count,
+                "force_refresh": body.force_refresh,
+                "platforms": (platform,),
+                "cache_ttl_minutes": BROWSER_CACHE_TTL_MINUTES,
+                "schedule_recrawls": False,
                 **search_options,
-            )
+            }
+            if platform == Platform.DOUYIN and progress_callback is not None:
+                execute_options["progress_callback"] = report_platform_progress
+            batch = service.execute(**execute_options)
         except ValueError as exc:
             errors.append(str(exc))
             return None
@@ -2278,6 +2478,42 @@ def _execute_free_multi_platform_batch(
         batches.append(batch)
         if batch.error:
             errors.append(batch.error)
+        runs = repo.list_platform_search_runs(batch.batch_id)
+        latest_run = runs[-1] if runs else None
+        if latest_run is not None:
+            snapshot = _batch_to_response(batch, repo)
+            response_run = next(
+                (run for run in snapshot.platform_runs if run.run_id == latest_run.run_id),
+                None,
+            )
+            if response_run is not None:
+                seen_candidate_ids: set[str] = set()
+                for candidate in [
+                    *response_run.candidates,
+                    *response_run.low_incremental_candidates,
+                ]:
+                    if candidate.video_id in seen_candidate_ids:
+                        continue
+                    seen_candidate_ids.add(candidate.video_id)
+                    report_progress(
+                        "candidate_found",
+                        (
+                            f"{_platform_label(platform.value)}已保留 "
+                            f"{len(seen_candidate_ids)} 条，正在继续整理。"
+                        ),
+                        batch,
+                        candidate,
+                        platform.value,
+                    )
+            report_progress(
+                "platform_complete",
+                (
+                    f"{_platform_label(platform.value)}已扫描 {latest_run.raw_item_count} 条，"
+                    f"解析 {latest_run.parsed_item_count} 条，保留 {latest_run.returned_count} 条。"
+                ),
+                batch,
+                platform=platform.value,
+            )
         return batch
 
     if Platform.DOUYIN in selected_platforms:
@@ -3457,6 +3693,678 @@ def _official_result_to_run(body: CrawlerSearchRequest, result, repo, *, now):
     )
 
 
+def _parse_keyword_queue(text: str) -> list[str]:
+    values = re.split(r"[\r\n,，;；、]+", text)
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        keyword = value.strip()
+        key = keyword.casefold()
+        if not keyword or key in seen:
+            continue
+        if len(keyword) > 50:
+            raise HTTPException(status_code=400, detail=f"关键词“{keyword[:20]}…”超过 50 个字符。")
+        seen.add(key)
+        result.append(keyword)
+    if not result:
+        raise HTTPException(status_code=400, detail="请至少输入一个关键词。")
+    if len(result) > _CRAWLER_QUEUE_MAX_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"一次最多处理 {_CRAWLER_QUEUE_MAX_ITEMS} 个关键词，请分批提交。",
+        )
+    return result
+
+
+def _crawler_queue_worker_active(queue_id: str) -> bool:
+    with _CRAWLER_QUEUE_LOCK:
+        future = _CRAWLER_QUEUE_FUTURES.get(queue_id)
+        return future is not None and not future.done()
+
+
+def _valid_crawler_queue_batch_ids(repo, queue: CrawlerKeywordQueue, item: CrawlerKeywordQueueItem) -> list[str]:
+    """Keep only saved batches belonging to this queue's keyword/platforms.
+
+    Older queue payloads do not have ``crawler_queue_id`` on their batches, so
+    keyword/platform checks remain the compatibility fallback. New progressive
+    batches are explicitly bound before their id is exposed to the queue.
+    """
+    ordered_ids = [item.batch_id, *item.partial_batch_ids]
+    valid: list[str] = []
+    seen: set[str] = set()
+    for batch_id in ordered_ids:
+        if not batch_id or batch_id in seen:
+            continue
+        seen.add(batch_id)
+        batch = repo.get_search_batch(batch_id)
+        if batch is None:
+            continue
+        owner = getattr(batch, "crawler_queue_id", None)
+        if owner and owner != queue.queue_id:
+            continue
+        if batch.keyword.casefold() != item.keyword.casefold():
+            continue
+        if batch.platforms and not set(batch.platforms).intersection(queue.platforms):
+            continue
+        valid.append(batch_id)
+    return valid
+
+
+def _sanitize_crawler_queue(repo, queue: CrawlerKeywordQueue) -> CrawlerKeywordQueue:
+    changed = False
+    items: list[CrawlerKeywordQueueItem] = []
+    for item in queue.items:
+        valid_ids = _valid_crawler_queue_batch_ids(repo, queue, item)
+        valid_primary = valid_ids[0] if valid_ids else None
+        next_item = item.model_copy(
+            update={
+                "batch_id": valid_primary,
+                "partial_batch_ids": valid_ids,
+            }
+        )
+        if next_item != item:
+            changed = True
+            logger.warning(
+                "crawler_queue_orphan_batch_ignored queue_id=%s item_id=%s keyword=%s",
+                queue.queue_id,
+                item.item_id,
+                item.keyword,
+            )
+        items.append(next_item)
+    if not changed:
+        return queue
+    sanitized = queue.model_copy(
+        update={"items": items, "updated_at": datetime.now().astimezone()}
+    )
+    repo.save_crawler_keyword_queue(sanitized)
+    return sanitized
+
+
+def _bind_crawler_batch_to_queue(
+    repo,
+    batch_id: str | None,
+    queue_id: str,
+    keyword: str,
+    platforms: list[Platform],
+) -> str | None:
+    """Bind and re-read a saved final batch before exposing its id to a queue."""
+    if not batch_id:
+        return None
+    batch = repo.get_search_batch(batch_id)
+    if batch is None or batch.keyword.casefold() != keyword.casefold():
+        return None
+    if batch.platforms and not set(batch.platforms).intersection(platforms):
+        return None
+    bound = batch.model_copy(update={"crawler_queue_id": queue_id})
+    repo.save_search_batch(bound)
+    verified = repo.get_search_batch(batch_id)
+    if verified is None or getattr(verified, "crawler_queue_id", None) != queue_id:
+        return None
+    return batch_id
+
+
+def _crawler_batch_failure_message(result: CrawlerBatchResponse) -> str:
+    """Return a user-actionable error even when a provider lost its detail.
+
+    A failed queue item must never be persisted with both ``error`` and
+    ``progress_message`` empty. Provider adapters may only set a structured
+    platform error, and older result objects may omit even that; preserve all
+    available detail and finish with a safe fallback.
+    """
+    messages: list[str] = []
+    for run in result.platform_runs:
+        run_messages: list[str] = []
+        if run.error:
+            run_messages.append(str(run.error).strip())
+        for error in run.errors or []:
+            if isinstance(error, dict):
+                message = error.get("message") or error.get("detail") or error.get("error")
+            else:
+                message = str(error)
+            if message:
+                run_messages.append(str(message).strip())
+        if run_messages:
+            label = run.platform_label or run.platform
+            messages.append(f"{label}：{'；'.join(run_messages)}")
+        elif run.status in {"failed", "blocked", "paused"}:
+            messages.append(f"{run.platform_label or run.platform}暂未完成搜索。")
+    if result.error:
+        messages.insert(0, str(result.error).strip())
+    unique_messages = list(dict.fromkeys(message for message in messages if message))
+    return "；".join(unique_messages) or "本次找素材未完成，请检查平台状态后再试。"
+
+
+def _progress_candidates(item: CrawlerKeywordQueueItem) -> list[CrawlerCandidateResult]:
+    candidates: list[CrawlerCandidateResult] = []
+    seen: set[str] = set()
+    for payload in item.progress_candidates:
+        try:
+            candidate = CrawlerCandidateResult.model_validate(payload)
+        except Exception:
+            continue
+        if candidate.video_id in seen:
+            continue
+        seen.add(candidate.video_id)
+        candidates.append(candidate)
+    return candidates
+
+
+def _progress_candidate_identity(payload: dict) -> str:
+    """Return a stable identity across provisional and completed candidates."""
+    video_id = str(payload.get("video_id") or "").strip()
+    platform = str(payload.get("platform") or "").strip().casefold()
+    prefix = f"{platform}-" if platform else ""
+    if prefix and video_id.casefold().startswith(prefix):
+        return video_id[len(prefix) :]
+    return video_id
+
+
+def _crawler_queue_response(
+    queue: CrawlerKeywordQueue,
+    repo=None,
+) -> CrawlerKeywordQueueResponse:
+    if repo is not None:
+        queue = _sanitize_crawler_queue(repo, queue)
+    completed_statuses = {
+        KeywordQueueItemStatus.SUCCEEDED,
+        KeywordQueueItemStatus.PARTIAL,
+    }
+    completed = sum(item.status in completed_statuses for item in queue.items)
+    return CrawlerKeywordQueueResponse(
+        queue_id=queue.queue_id,
+        status=queue.status.value,
+        platforms=[item.value for item in queue.platforms],
+        published_window_days=queue.published_window_days,
+        count_per_platform=queue.requested_count_per_platform,
+        created_at=queue.created_at,
+        updated_at=queue.updated_at,
+        finished_at=queue.finished_at,
+        total=len(queue.items),
+        completed=completed,
+        queued=sum(item.status == KeywordQueueItemStatus.QUEUED for item in queue.items),
+        running=sum(item.status == KeywordQueueItemStatus.RUNNING for item in queue.items),
+        failed=sum(item.status == KeywordQueueItemStatus.FAILED for item in queue.items),
+        worker_active=_crawler_queue_worker_active(queue.queue_id),
+        items=[
+            CrawlerKeywordQueueItemResponse(
+                item_id=item.item_id,
+                keyword=item.keyword,
+                status=item.status.value,
+                batch_id=item.batch_id,
+                partial_batch_ids=item.partial_batch_ids,
+                error=item.error,
+                progress_stage=item.progress_stage,
+                progress_platform=(
+                    item.progress_platform.value
+                    if isinstance(item.progress_platform, Platform)
+                    else item.progress_platform
+                ),
+                progress_message=item.progress_message,
+                scanned_count=item.scanned_count,
+                parsed_count=item.parsed_count,
+                retained_count=item.retained_count,
+                progress_candidates=_progress_candidates(item),
+                started_at=item.started_at,
+                finished_at=item.finished_at,
+            )
+            for item in queue.items
+        ],
+        message=queue.error,
+    )
+
+
+def _save_crawler_queue(repo, queue: CrawlerKeywordQueue, **updates) -> CrawlerKeywordQueue:
+    updated = queue.model_copy(
+        update={"updated_at": datetime.now().astimezone(), **updates}
+    )
+    repo.save_crawler_keyword_queue(updated)
+    return updated
+
+
+def _save_crawler_queue_item_result(
+    repo,
+    queue_id: str,
+    fallback_queue: CrawlerKeywordQueue,
+    item_update: CrawlerKeywordQueueItem,
+) -> CrawlerKeywordQueue:
+    # Pause/cancel can be clicked while the browser search is still running.
+    # Reload the queue before merging the result so the worker cannot overwrite
+    # the user's newer control state with its stale RUNNING snapshot.
+    latest_queue = repo.get_crawler_keyword_queue(queue_id) or fallback_queue
+    updated_items = [
+        item_update if value.item_id == item_update.item_id else value
+        for value in latest_queue.items
+    ]
+    return _save_crawler_queue(repo, latest_queue, items=updated_items)
+
+
+def _save_crawler_queue_item_progress(
+    repo,
+    queue_id: str,
+    item_id: str,
+    **updates,
+) -> CrawlerKeywordQueue | None:
+    """Persist progress without overwriting a user's pause/cancel decision."""
+    latest_queue = repo.get_crawler_keyword_queue(queue_id)
+    if latest_queue is None:
+        return None
+    current_item = next(
+        (item for item in latest_queue.items if item.item_id == item_id), None
+    )
+    if current_item is None:
+        return latest_queue
+    return _save_crawler_queue_item_result(
+        repo,
+        queue_id,
+        latest_queue,
+        current_item.model_copy(update=updates),
+    )
+
+
+def _run_crawler_keyword_queue(queue_id: str) -> None:
+    repo = get_repository()
+    try:
+        dependencies = {
+            "douyin_public_service": get_douyin_public_search_service(),
+            "douyin_public_provider": get_douyin_public_browser_provider(),
+            "bilibili_service": get_bilibili_browser_search_service(),
+            "bilibili_provider": get_bilibili_browser_provider(),
+            "bilibili_metrics_provider": get_bilibili_public_metrics_provider(),
+            "xiaohongshu_service": get_xiaohongshu_browser_search_service(),
+            "xiaohongshu_provider": get_xiaohongshu_browser_provider(),
+            "kuaishou_service": get_kuaishou_browser_search_service(),
+            "kuaishou_provider": get_kuaishou_browser_provider(),
+        }
+        while True:
+            queue = repo.get_crawler_keyword_queue(queue_id)
+            if queue is None or queue.status in {
+                KeywordQueueStatus.PAUSED,
+                KeywordQueueStatus.CANCELLED,
+            }:
+                return
+            queue = _sanitize_crawler_queue(repo, queue)
+            item = next(
+                (
+                    value
+                    for value in queue.items
+                    if value.status == KeywordQueueItemStatus.QUEUED
+                ),
+                None,
+            )
+            if item is None:
+                failed = any(value.status == KeywordQueueItemStatus.FAILED for value in queue.items)
+                partial = any(value.status == KeywordQueueItemStatus.PARTIAL for value in queue.items)
+                final_status = (
+                    KeywordQueueStatus.PARTIAL
+                    if failed or partial
+                    else KeywordQueueStatus.SUCCEEDED
+                )
+                _save_crawler_queue(
+                    repo,
+                    queue,
+                    status=final_status,
+                    finished_at=datetime.now().astimezone(),
+                )
+                return
+
+            started_at = datetime.now().astimezone()
+            running_item = item.model_copy(
+                update={"status": KeywordQueueItemStatus.RUNNING, "started_at": started_at}
+            )
+            running_items = [
+                running_item if value.item_id == item.item_id else value
+                for value in queue.items
+            ]
+            queue = _save_crawler_queue(
+                repo,
+                queue,
+                items=running_items,
+                status=KeywordQueueStatus.RUNNING,
+                finished_at=None,
+            )
+            _save_crawler_queue_item_progress(
+                repo,
+                queue_id,
+                item.item_id,
+                progress_stage="preparing",
+                progress_message="任务已保存，正在准备浏览器。",
+            )
+            body = CrawlerSearchRequest(
+                keyword=item.keyword,
+                platforms=[value.value for value in queue.platforms],
+                published_window_days=queue.published_window_days,
+                count_per_platform=queue.requested_count_per_platform,
+                target_main_count=queue.requested_count_per_platform,
+                mode="smart",
+                track_trend=False,
+                allow_paid_fallback=False,
+            )
+
+            def report_progress(
+                stage: str,
+                message: str,
+                current_batch=None,
+                candidate: CrawlerCandidateResult | None = None,
+                platform: str | None = None,
+            ) -> None:
+                latest_queue = repo.get_crawler_keyword_queue(queue_id)
+                latest_item = next(
+                    (
+                        value
+                        for value in (latest_queue.items if latest_queue else [])
+                        if value.item_id == item.item_id
+                    ),
+                    None,
+                )
+                scanned = latest_item.scanned_count if latest_item else 0
+                parsed = latest_item.parsed_count if latest_item else 0
+                retained = latest_item.retained_count if latest_item else 0
+                partial_batch_ids = list(latest_item.partial_batch_ids) if latest_item else []
+                progress_candidates = (
+                    list(latest_item.progress_candidates) if latest_item else []
+                )
+                if candidate is not None:
+                    if not isinstance(candidate, CrawlerCandidateResult):
+                        try:
+                            candidate = _provider_item_to_crawler_response(
+                                candidate,
+                                keyword=item.keyword,
+                            )
+                        except Exception:
+                            candidate = None
+                if candidate is not None:
+                    payload = candidate.model_dump(mode="json")
+                    candidate_id = _progress_candidate_identity(payload)
+                    replaced = False
+                    for index, existing in enumerate(progress_candidates):
+                        if _progress_candidate_identity(existing) == candidate_id:
+                            # Keep the provisional ID as the React/queue key while
+                            # replacing its fields with the completed candidate.
+                            # This prevents a platform prefix change from creating
+                            # a second visible item.
+                            if existing.get("video_id"):
+                                payload["video_id"] = existing["video_id"]
+                            progress_candidates[index] = payload
+                            replaced = True
+                            break
+                    if not replaced:
+                        progress_candidates.append(payload)
+                if current_batch is not None:
+                    # Bind the durable batch as soon as the service has saved it.
+                    # Provisional callback snapshots are ignored by the binder,
+                    # so an unsaved batch can never become a queue-owned record.
+                    _bind_crawler_batch_to_queue(
+                        repo,
+                        current_batch.batch_id,
+                        queue_id,
+                        item.keyword,
+                        queue.platforms,
+                    )
+                    runs = repo.list_platform_search_runs(current_batch.batch_id)
+                    if platform:
+                        runs = [run for run in runs if run.platform.value == platform]
+                    if runs:
+                        run = runs[-1]
+                        scanned = max(scanned, run.raw_item_count)
+                        parsed = max(parsed, run.parsed_item_count)
+                        retained = max(retained, run.returned_count)
+                _save_crawler_queue_item_progress(
+                    repo,
+                    queue_id,
+                    item.item_id,
+                    progress_stage=stage,
+                    progress_platform=platform or (
+                        latest_item.progress_platform if latest_item else None
+                    ),
+                    progress_message=message,
+                    partial_batch_ids=partial_batch_ids,
+                    scanned_count=scanned,
+                    parsed_count=parsed,
+                    retained_count=retained,
+                    progress_candidates=progress_candidates,
+                )
+
+            def current_item_snapshot() -> CrawlerKeywordQueueItem:
+                latest_queue = repo.get_crawler_keyword_queue(queue_id)
+                latest_item = next(
+                    (
+                        value
+                        for value in (latest_queue.items if latest_queue else [])
+                        if value.item_id == item.item_id
+                    ),
+                    None,
+                )
+                return latest_item or running_item
+
+            def report_platform_progress(event, current_batch) -> None:
+                report_progress(
+                    str(event.get("stage") or "scanning"),
+                    str(event.get("message") or "正在扫描平台结果。"),
+                    current_batch,
+                    event.get("candidate"),
+                    platform=str(event.get("platform") or "") or None,
+                )
+
+            try:
+                result = _execute_free_multi_platform_batch(
+                    body,
+                    repo=repo,
+                    progress_callback=report_progress,
+                    **dependencies,
+                )
+                canonical_batch_id = _bind_crawler_batch_to_queue(
+                    repo,
+                    result.batch_id,
+                    queue_id,
+                    item.keyword,
+                    queue.platforms,
+                )
+                item_status = (
+                    KeywordQueueItemStatus.PARTIAL
+                    if result.status == "partial"
+                    else KeywordQueueItemStatus.SUCCEEDED
+                    if result.status in {"succeeded", "cached"}
+                    else KeywordQueueItemStatus.FAILED
+                )
+                item_error = (
+                    _crawler_batch_failure_message(result)
+                    if item_status == KeywordQueueItemStatus.FAILED
+                    else None
+                )
+                item_update = current_item_snapshot().model_copy(
+                    update={
+                        "status": item_status,
+                        "batch_id": canonical_batch_id,
+                        "partial_batch_ids": (
+                            [canonical_batch_id] if canonical_batch_id else []
+                        ),
+                        "error": item_error,
+                        "progress_stage": "completed" if item_status != KeywordQueueItemStatus.FAILED else "failed",
+                        "progress_message": (
+                            "已整理最终结果。"
+                            if item_status != KeywordQueueItemStatus.FAILED
+                            else item_error
+                        ),
+                        "scanned_count": max(
+                            running_item.scanned_count,
+                            max(
+                                (run.raw_item_count for run in result.platform_runs),
+                                default=0,
+                            ),
+                        ),
+                        "parsed_count": max(
+                            running_item.parsed_count,
+                            max(
+                                (run.parsed_item_count for run in result.platform_runs),
+                                default=0,
+                            ),
+                        ),
+                        "retained_count": max(
+                            running_item.retained_count,
+                            result.total_candidates,
+                        ),
+                        "finished_at": datetime.now().astimezone(),
+                    }
+                )
+            except HTTPException as exc:
+                item_update = current_item_snapshot().model_copy(
+                    update={
+                        "status": KeywordQueueItemStatus.FAILED,
+                        "error": str(exc.detail),
+                        "progress_stage": "failed",
+                        "progress_message": str(exc.detail),
+                        "finished_at": datetime.now().astimezone(),
+                    }
+                )
+            except Exception as exc:
+                item_update = current_item_snapshot().model_copy(
+                    update={
+                        "status": KeywordQueueItemStatus.FAILED,
+                        "error": f"找素材失败：{str(exc)[:240] or '暂时无法完成'}",
+                        "progress_stage": "failed",
+                        "progress_message": f"找素材失败：{str(exc)[:240] or '暂时无法完成'}",
+                        "finished_at": datetime.now().astimezone(),
+                    }
+                )
+            _save_crawler_queue_item_result(repo, queue_id, queue, item_update)
+    finally:
+        should_restart = False
+        with _CRAWLER_QUEUE_LOCK:
+            _CRAWLER_QUEUE_FUTURES.pop(queue_id, None)
+            latest = repo.get_crawler_keyword_queue(queue_id)
+            should_restart = bool(
+                latest
+                and latest.status == KeywordQueueStatus.QUEUED
+                and any(
+                    item.status == KeywordQueueItemStatus.QUEUED
+                    for item in latest.items
+                )
+            )
+        # A pause/resume request can arrive while this worker is unwinding.
+        # Re-check after removing the finished future so resume cannot leave a
+        # queued task stranded behind a just-finished worker.
+        if should_restart:
+            _start_crawler_keyword_queue(queue_id)
+
+
+def _start_crawler_keyword_queue(queue_id: str) -> None:
+    with _CRAWLER_QUEUE_LOCK:
+        future = _CRAWLER_QUEUE_FUTURES.get(queue_id)
+        if future is not None and not future.done():
+            return
+        _CRAWLER_QUEUE_FUTURES[queue_id] = _CRAWLER_QUEUE_EXECUTOR.submit(
+            _run_crawler_keyword_queue, queue_id
+        )
+
+
+@router.post("/keyword-queues", response_model=CrawlerKeywordQueueResponse)
+def create_crawler_keyword_queue(
+    body: CrawlerKeywordQueueRequest,
+    repo=Depends(get_repository),
+):
+    keywords = _parse_keyword_queue(body.keywords)
+    queue = CrawlerKeywordQueue(
+        items=[CrawlerKeywordQueueItem(keyword=value) for value in keywords],
+        platforms=[Platform(value) for value in dict.fromkeys(body.platforms)],
+        published_window_days=body.published_window_days,
+        requested_count_per_platform=body.count_per_platform,
+    )
+    repo.save_crawler_keyword_queue(queue)
+    _start_crawler_keyword_queue(queue.queue_id)
+    return _crawler_queue_response(queue, repo)
+
+
+@router.get("/keyword-queues", response_model=list[CrawlerKeywordQueueResponse])
+def list_crawler_keyword_queues(
+    limit: int = 20,
+    repo=Depends(get_repository),
+):
+    safe_limit = max(1, min(limit, 50))
+    return [_crawler_queue_response(item, repo) for item in repo.list_crawler_keyword_queues(safe_limit)]
+
+
+@router.get("/keyword-queues/{queue_id}", response_model=CrawlerKeywordQueueResponse)
+def get_crawler_keyword_queue(queue_id: str, repo=Depends(get_repository)):
+    queue = repo.get_crawler_keyword_queue(queue_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="批量找素材任务不存在。")
+    return _crawler_queue_response(queue, repo)
+
+
+@router.post("/keyword-queues/{queue_id}/pause", response_model=CrawlerKeywordQueueResponse)
+def pause_crawler_keyword_queue(queue_id: str, repo=Depends(get_repository)):
+    queue = repo.get_crawler_keyword_queue(queue_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="批量找素材任务不存在。")
+    if queue.status in {KeywordQueueStatus.SUCCEEDED, KeywordQueueStatus.CANCELLED}:
+        return _crawler_queue_response(queue, repo)
+    return _crawler_queue_response(_save_crawler_queue(repo, queue, status=KeywordQueueStatus.PAUSED), repo)
+
+
+@router.post("/keyword-queues/{queue_id}/resume", response_model=CrawlerKeywordQueueResponse)
+def resume_crawler_keyword_queue(queue_id: str, repo=Depends(get_repository)):
+    queue = repo.get_crawler_keyword_queue(queue_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="批量找素材任务不存在。")
+    if queue.status == KeywordQueueStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="已取消的批量任务不能继续；请重新粘贴关键词。")
+    with _CRAWLER_QUEUE_LOCK:
+        active = (
+            (future := _CRAWLER_QUEUE_FUTURES.get(queue_id)) is not None
+            and not future.done()
+        )
+    # If the current keyword is still running, let it finish once and keep its
+    # RUNNING state. Resetting it here would cause a duplicate batch after a
+    # quick pause/resume click. A worker that was lost after a process restart
+    # has no active future, so its RUNNING item is safely re-queued.
+    reset_items = [
+        item.model_copy(
+            update={
+                "status": KeywordQueueItemStatus.QUEUED,
+                "batch_id": None,
+                "error": None,
+                "started_at": None,
+                "finished_at": None,
+            }
+        )
+        if item.status == KeywordQueueItemStatus.FAILED
+        or (item.status == KeywordQueueItemStatus.RUNNING and not active)
+        else item
+        for item in queue.items
+    ]
+    queue = _save_crawler_queue(
+        repo,
+        queue,
+        items=reset_items,
+        status=KeywordQueueStatus.QUEUED,
+        error=None,
+        finished_at=None,
+    )
+    _start_crawler_keyword_queue(queue.queue_id)
+    return _crawler_queue_response(queue, repo)
+
+
+@router.post("/keyword-queues/{queue_id}/cancel", response_model=CrawlerKeywordQueueResponse)
+def cancel_crawler_keyword_queue(queue_id: str, repo=Depends(get_repository)):
+    queue = repo.get_crawler_keyword_queue(queue_id)
+    if queue is None:
+        raise HTTPException(status_code=404, detail="批量找素材任务不存在。")
+    cancelled_items = [
+        item.model_copy(update={"status": KeywordQueueItemStatus.CANCELLED})
+        if item.status == KeywordQueueItemStatus.QUEUED
+        else item
+        for item in queue.items
+    ]
+    queue = _save_crawler_queue(
+        repo,
+        queue,
+        items=cancelled_items,
+        status=KeywordQueueStatus.CANCELLED,
+        finished_at=datetime.now().astimezone(),
+    )
+    return _crawler_queue_response(queue, repo)
+
+
 @router.get("/batches", response_model=CrawlerBatchListResponse)
 def list_crawler_batches(
     limit: int = 20,
@@ -3504,6 +4412,57 @@ def get_crawler_batch(
     if batch is None:
         raise HTTPException(status_code=404, detail="搜索批次不存在。")
     return _batch_to_response(batch, repo)
+
+
+@router.get("/batches/{batch_id}/export.csv")
+def export_crawler_batch_csv(
+    batch_id: str,
+    repo=Depends(get_repository),
+):
+    """导出当前批次可见候选的固定字段 CSV，不包含浏览器或认证信息。"""
+    batch = repo.get_search_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="搜索批次不存在。")
+    response = _batch_to_response(batch, repo)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(
+        ["关键词", "平台", "标题", "作者", "链接", "时间", "互动", "热度", "相关性", "质量说明"]
+    )
+    for run in response.platform_runs:
+        for candidate in [*run.candidates, *run.reference_candidates]:
+            quality = "；".join(
+                dict.fromkeys(
+                    [
+                        *candidate.data_quality_warnings,
+                        candidate.spoken_material_message,
+                    ]
+                )
+            )
+            writer.writerow(
+                [
+                    response.keyword,
+                    candidate.platform_label or candidate.platform,
+                    candidate.title,
+                    candidate.author_name,
+                    candidate.source_url or "",
+                    candidate.published_at.isoformat() if candidate.published_at else "",
+                    candidate.effective_interactions
+                    if candidate.effective_interactions is not None
+                    else "",
+                    candidate.heat_score if candidate.heat_score is not None else "",
+                    candidate.relevance_reason or candidate.relevance_basis or "",
+                    quality,
+                ]
+            )
+    content = output.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        iter([content]),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="crawler-{batch_id}.csv"'
+        },
+    )
 
 
 @router.post("/batches/{batch_id}/copy-probes", response_model=CrawlerBatchResponse)
@@ -4541,6 +5500,7 @@ def _candidate_to_response(
     keyword: str | None = None,
     relevance_basis: str | None = None,
     relevance_reason: str | None = None,
+    selection_tier: Literal["priority", "reserve"] | None = None,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
     hotspot_lists, evidence_duration_seconds, hotspot_window_hours = (
@@ -4671,7 +5631,9 @@ def _candidate_to_response(
         next_recrawl_at=trend.next_recrawl_at if trend else None,
         copy_source=copy_fields["copy_source"],
         is_original_transcript=copy_fields["is_original_transcript"],
-        needs_manual_review=copy_fields["needs_manual_review"],
+        needs_manual_review=(
+            True if selection_tier == "reserve" else copy_fields["needs_manual_review"]
+        ),
         spoken_material_status=spoken_material["status"],
         spoken_material_message=spoken_material["message"],
         spoken_seed_score=spoken_seed["score"],
@@ -4684,6 +5646,7 @@ def _candidate_to_response(
         relevance_basis=relevance_basis or ("title_or_hashtag" if keyword else None),
         relevance_reason=relevance_reason
         or (keyword_match_reason(keyword) if keyword else None),
+        selection_tier=selection_tier,
         trend_points=trend_points,
     )
 
@@ -4841,13 +5804,20 @@ def _batch_to_response(
         error=batch.error,
         platform_runs=run_items,
         total_api_calls=sum(item.api_call_count for item in run_items),
-        total_candidates=sum(item.relevant_count for item in run_items),
+        # 可查看数量包含严格命中和明确标记的参考候选；参考候选仍由
+        # platform_run.reference_count 单独说明，不把严格命中口径混在一起。
+        total_candidates=sum(
+            item.relevant_count + item.reference_count for item in run_items
+        ),
         total_estimated_cost_cny=round(
             sum(item.billable_units or 0.0 for item in run_items),
             4,
         ),
         monitoring_policy=batch.monitoring_policy,
         sampling_offsets_hours=batch.sampling_offsets_hours,
+        free_candidate_count=sum(
+            item.relevant_count + item.reference_count for item in run_items
+        ),
         trend_tracking_enabled=batch.monitoring_policy == "adaptive_three_sample_v1",
         tracking_status=tracking_status,
         next_tracking_at=min((item.due_at for item in pending_tracking), default=None),
@@ -4916,11 +5886,13 @@ def _with_copy_pool_metadata(
             ):
                 best_by_id[candidate.video_id] = candidate
 
+    # 批量预加载 copy probes, 一次 SQL 替代每个 candidate 都查一次 (原 N 次降为 1 次).
+    probes_by_id = repo.get_candidate_copy_probes_by_ids(list(best_by_id.keys()))
     probe_attempt_count = sum(
         1
         for candidate_id in best_by_id
         if (
-            (probe := repo.get_candidate_copy_probe(candidate_id)) is not None
+            (probe := probes_by_id.get(candidate_id)) is not None
             and _is_supported_copy_probe(probe)
         )
     )
@@ -4928,7 +5900,7 @@ def _with_copy_pool_metadata(
         1
         for candidate_id in best_by_id
         if _should_widen_legacy_no_text_probe(
-            repo.get_candidate_copy_probe(candidate_id)
+            probes_by_id.get(candidate_id)
         )
     )
     detected = sorted(
@@ -5039,8 +6011,12 @@ def _run_to_response(
     include_candidates: bool,
 ) -> CrawlerPlatformRunResponse:
     candidates: list[CrawlerCandidateResult] = []
+    reference_candidates: list[CrawlerCandidateResult] = []
     low_incremental_candidates: list[CrawlerCandidateResult] = []
     visible_matches: list[tuple[Any, Any]] = []
+    reference_item_ids = {
+        item.platform_item_id for item in getattr(run, "reference_items", [])
+    }
     if run.status in {
         PlatformRunStatus.SUCCEEDED,
         PlatformRunStatus.PARTIAL,
@@ -5048,19 +6024,35 @@ def _run_to_response(
     }:
         match_run_id = run.cached_from_run_id if run.cached_from_run_id else run.run_id
         matches = repo.list_candidate_matches(match_run_id)
+        # 批量预加载 candidates, 一次 SQL 替代每个 match 都触发
+        # candidates+metric_snapshots+heat_results 三次单条查询 (原 N*3 降为 3 次).
+        candidate_by_video_id = {
+            c.video_id: c
+            for c in repo.get_candidates_by_ids([m.video_id for m in matches])
+        }
         for match in sorted(matches, key=lambda item: item.platform_rank):
-            candidate = repo.get_candidate(match.video_id)
+            candidate = candidate_by_video_id.get(match.video_id)
             if candidate is None:
                 continue
             visible_matches.append((match, candidate))
 
+    strict_visible_matches = [
+        (match, candidate)
+        for match, candidate in visible_matches
+        if candidate.platform_item_id not in reference_item_ids
+    ]
+    reference_visible_matches = [
+        (match, candidate)
+        for match, candidate in visible_matches
+        if candidate.platform_item_id in reference_item_ids
+    ]
     strict_relevant_count = sum(
         _direct_match_keyword(batch, match, candidate) is not None
-        for match, candidate in visible_matches
+        for match, candidate in strict_visible_matches
     )
     below_heat_floor_count = sum(
         not _passes_main_board_heat_floor(candidate)
-        for match, candidate in visible_matches
+        for match, candidate in strict_visible_matches
     )
     low_spoken_value_count = sum(
         _spoken_seed_quality(
@@ -5069,12 +6061,18 @@ def _run_to_response(
             evidence=match.evidence or candidate.evidence,
         )["status"]
         != "writeable"
-        for match, candidate in visible_matches
+        for match, candidate in strict_visible_matches
     )
-    relevant_count = len(visible_matches)
+    reference_count = len(reference_visible_matches)
+    # returned/retained 保持主结果口径；待确认素材单独由 reference_count 返回，
+    # 避免把人工确认项混进“高相关素材”数量。
+    visible_count = len(strict_visible_matches)
+    relevant_count = len(strict_visible_matches)
     irrelevant_count = run.irrelevant_count
     result_state = run.result_state
-    if relevant_count and result_state.startswith("all_"):
+    if reference_visible_matches and not strict_visible_matches:
+        result_state = "reference_only"
+    elif relevant_count and result_state.startswith("all_"):
         result_state = "has_results"
 
     if include_candidates and visible_matches:
@@ -5110,32 +6108,39 @@ def _run_to_response(
             )
         }
         for match, candidate in visible_matches:
+            is_reference = candidate.platform_item_id in reference_item_ids
             direct_match_keyword = _direct_match_keyword(batch, match, candidate)
             matched_keyword = str(
                 getattr(match, "keyword", "") or batch.keyword
             ).strip()
             trend = trend_by_candidate.get(candidate.video_id)
-            candidates.append(
-                _candidate_to_response(
-                    candidate,
-                    repo=repo,
-                    trend=trend,
-                    platform_rank=match.platform_rank,
-                    provider_hot_rank=match.platform_rank,
-                    system_rank=system_rank_by_candidate.get(candidate.video_id),
-                    evidence=match.evidence or candidate.evidence,
-                    keyword=matched_keyword,
-                    relevance_basis=(
-                        "title_or_hashtag"
-                        if direct_match_keyword
-                        else "platform_search"
-                    ),
-                    relevance_reason=(
-                        keyword_match_reason(direct_match_keyword)
-                        if direct_match_keyword
+            response_candidate = _candidate_to_response(
+                candidate,
+                repo=repo,
+                trend=trend,
+                platform_rank=match.platform_rank,
+                provider_hot_rank=match.platform_rank,
+                system_rank=system_rank_by_candidate.get(candidate.video_id),
+                evidence=match.evidence or candidate.evidence,
+                keyword=matched_keyword,
+                relevance_basis=(
+                    "title_or_hashtag"
+                    if direct_match_keyword
+                    else "platform_search"
+                ),
+                relevance_reason=(
+                    keyword_match_reason(direct_match_keyword)
+                    if direct_match_keyword
+                    else (
+                        "平台搜索参考，请人工确认与当前关键词的相关性。"
+                        if is_reference
                         else f"平台搜索结果，标题/话题未直接命中“{batch.keyword.strip()}”。"
-                    ),
-                )
+                    )
+                ),
+                selection_tier="reserve" if is_reference else None,
+            )
+            (reference_candidates if is_reference else candidates).append(
+                response_candidate
             )
     if (
         include_candidates
@@ -5160,9 +6165,17 @@ def _run_to_response(
         mode=run.mode.value,
         status=run.status.value,
         requested_count=run.requested_count,
-        returned_count=relevant_count,
+        returned_count=visible_count,
         raw_item_count=run.raw_item_count,
         parsed_item_count=run.parsed_item_count,
+        raw_discovered=(run.raw_discovered_count or run.raw_item_count),
+        parsed=(run.parsed_item_count or run.raw_item_count),
+        deduped=(run.deduped_item_count or run.parsed_item_count),
+        direct_match=(run.direct_match_count or strict_relevant_count),
+        relevance_filtered=run.irrelevant_count,
+        duration_filtered=run.duration_filtered_count,
+        invalid_fields=run.invalid_count,
+        retained=visible_count,
         out_of_window_count=run.out_of_window_count,
         invalid_count=run.invalid_count,
         duplicate_count=run.duplicate_count,
@@ -5178,6 +6191,10 @@ def _run_to_response(
         crawl_stop_reason=run.crawl_stop_reason,
         crawl_stop_message=run.crawl_stop_message,
         payload_diagnostic=run.payload_diagnostic,
+        stage_timings_ms=run.stage_timings_ms,
+        rule_version=(run.adapter_rule_version or run.relevance_rule_version),
+        browser_reused=run.browser_reused,
+        session_recovered=run.session_recovered,
         cache_hit=run.cache_hit,
         cached_from_run_id=run.cached_from_run_id,
         api_call_count=run.api_call_count,
@@ -5188,5 +6205,7 @@ def _run_to_response(
         started_at=run.started_at,
         finished_at=run.finished_at,
         candidates=candidates,
+        reference_count=reference_count,
+        reference_candidates=reference_candidates,
         low_incremental_candidates=low_incremental_candidates,
     )

@@ -1,0 +1,10 @@
+{
+  "ass": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\commercial-number-wechat-r1\\rendered.ass",
+    "sha256": "943df748042f1686936d5232f39c496468471977a57a41c311f9baf6db2f373d"
+  },
+  "manifest": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\commercial-number-wechat-r1\\subtitle-manifest.json",
+    "sha256": "fc088e13b972aa3d78c9ac79ea7b4e97ce52d2c77c46052de8f05e2f0f3bc226"
+  }
+}

@@ -1,0 +1,590 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-25T14:44:54.456199+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\source.mp4",
+  "source_sha256": "cc7ef986eb69b81132fa77edff6fd00d66b6c589628209c04cfd582cde5a526f",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 20.011,
+  "segment_count": 9,
+  "word_count": 85,
+  "segments": [
+    {
+      "start": 1.36,
+      "end": 4.42,
+      "text": "最近广州冒出了一个挺特别的餐饮模式",
+      "words": [
+        {
+          "start": 1.36,
+          "end": 2.0,
+          "word": "最近",
+          "probability": 0.9973
+        },
+        {
+          "start": 2.0,
+          "end": 2.32,
+          "word": "广",
+          "probability": 0.9867
+        },
+        {
+          "start": 2.32,
+          "end": 2.48,
+          "word": "州",
+          "probability": 0.9977
+        },
+        {
+          "start": 2.48,
+          "end": 2.66,
+          "word": "冒",
+          "probability": 0.9962
+        },
+        {
+          "start": 2.66,
+          "end": 2.8,
+          "word": "出",
+          "probability": 0.9993
+        },
+        {
+          "start": 2.8,
+          "end": 2.9,
+          "word": "了",
+          "probability": 0.9998
+        },
+        {
+          "start": 2.9,
+          "end": 3.08,
+          "word": "一个",
+          "probability": 0.9998
+        },
+        {
+          "start": 3.08,
+          "end": 3.42,
+          "word": "挺",
+          "probability": 0.9993
+        },
+        {
+          "start": 3.42,
+          "end": 3.64,
+          "word": "特",
+          "probability": 0.9998
+        },
+        {
+          "start": 3.64,
+          "end": 3.8,
+          "word": "别",
+          "probability": 0.9999
+        },
+        {
+          "start": 3.8,
+          "end": 3.9,
+          "word": "的",
+          "probability": 1.0
+        },
+        {
+          "start": 3.9,
+          "end": 4.0,
+          "word": "餐",
+          "probability": 0.938
+        },
+        {
+          "start": 4.0,
+          "end": 4.1,
+          "word": "饮",
+          "probability": 0.9694
+        },
+        {
+          "start": 4.1,
+          "end": 4.22,
+          "word": "模",
+          "probability": 0.9997
+        },
+        {
+          "start": 4.22,
+          "end": 4.42,
+          "word": "式",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 4.8,
+      "end": 6.26,
+      "text": "街上有家烧烤店",
+      "words": [
+        {
+          "start": 4.8,
+          "end": 5.12,
+          "word": "街",
+          "probability": 0.9939
+        },
+        {
+          "start": 5.12,
+          "end": 5.38,
+          "word": "上",
+          "probability": 1.0
+        },
+        {
+          "start": 5.38,
+          "end": 5.58,
+          "word": "有",
+          "probability": 0.9999
+        },
+        {
+          "start": 5.58,
+          "end": 5.74,
+          "word": "家",
+          "probability": 0.9994
+        },
+        {
+          "start": 5.74,
+          "end": 5.96,
+          "word": "烧",
+          "probability": 0.9995
+        },
+        {
+          "start": 5.96,
+          "end": 6.08,
+          "word": "烤",
+          "probability": 0.9996
+        },
+        {
+          "start": 6.08,
+          "end": 6.26,
+          "word": "店",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 6.26,
+      "end": 7.18,
+      "text": "才开一个月",
+      "words": [
+        {
+          "start": 6.26,
+          "end": 6.64,
+          "word": "才",
+          "probability": 0.8327
+        },
+        {
+          "start": 6.64,
+          "end": 6.82,
+          "word": "开",
+          "probability": 0.999
+        },
+        {
+          "start": 6.82,
+          "end": 7.0,
+          "word": "一个",
+          "probability": 0.9995
+        },
+        {
+          "start": 7.0,
+          "end": 7.18,
+          "word": "月",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 7.18,
+      "end": 9.94,
+      "text": "附近5公里的居民基本都成了他的回头客",
+      "words": [
+        {
+          "start": 7.18,
+          "end": 7.64,
+          "word": "附",
+          "probability": 0.9896
+        },
+        {
+          "start": 7.64,
+          "end": 7.8,
+          "word": "近",
+          "probability": 0.9999
+        },
+        {
+          "start": 7.8,
+          "end": 7.94,
+          "word": "5",
+          "probability": 0.5627
+        },
+        {
+          "start": 7.94,
+          "end": 8.08,
+          "word": "公",
+          "probability": 0.9991
+        },
+        {
+          "start": 8.08,
+          "end": 8.18,
+          "word": "里",
+          "probability": 0.9996
+        },
+        {
+          "start": 8.18,
+          "end": 8.28,
+          "word": "的",
+          "probability": 0.9999
+        },
+        {
+          "start": 8.28,
+          "end": 8.4,
+          "word": "居",
+          "probability": 0.9996
+        },
+        {
+          "start": 8.4,
+          "end": 8.54,
+          "word": "民",
+          "probability": 0.9987
+        },
+        {
+          "start": 8.54,
+          "end": 8.94,
+          "word": "基本",
+          "probability": 0.9998
+        },
+        {
+          "start": 8.94,
+          "end": 9.12,
+          "word": "都",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.12,
+          "end": 9.26,
+          "word": "成",
+          "probability": 0.999
+        },
+        {
+          "start": 9.26,
+          "end": 9.36,
+          "word": "了",
+          "probability": 0.9995
+        },
+        {
+          "start": 9.36,
+          "end": 9.5,
+          "word": "他的",
+          "probability": 0.7295
+        },
+        {
+          "start": 9.5,
+          "end": 9.66,
+          "word": "回",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.66,
+          "end": 9.78,
+          "word": "头",
+          "probability": 0.9985
+        },
+        {
+          "start": 9.78,
+          "end": 9.94,
+          "word": "客",
+          "probability": 0.9975
+        }
+      ]
+    },
+    {
+      "start": 10.54,
+      "end": 13.24,
+      "text": "80%的顾客还主动加了店里的私欲",
+      "words": [
+        {
+          "start": 10.54,
+          "end": 10.86,
+          "word": "80",
+          "probability": 0.9933
+        },
+        {
+          "start": 10.86,
+          "end": 11.18,
+          "word": "%",
+          "probability": 0.9999
+        },
+        {
+          "start": 11.18,
+          "end": 11.32,
+          "word": "的",
+          "probability": 0.9995
+        },
+        {
+          "start": 11.32,
+          "end": 11.44,
+          "word": "顾",
+          "probability": 0.9988
+        },
+        {
+          "start": 11.44,
+          "end": 11.56,
+          "word": "客",
+          "probability": 0.9999
+        },
+        {
+          "start": 11.56,
+          "end": 11.74,
+          "word": "还",
+          "probability": 0.9994
+        },
+        {
+          "start": 11.74,
+          "end": 11.94,
+          "word": "主",
+          "probability": 1.0
+        },
+        {
+          "start": 11.94,
+          "end": 12.14,
+          "word": "动",
+          "probability": 0.9998
+        },
+        {
+          "start": 12.14,
+          "end": 12.32,
+          "word": "加",
+          "probability": 0.997
+        },
+        {
+          "start": 12.32,
+          "end": 12.46,
+          "word": "了",
+          "probability": 0.9989
+        },
+        {
+          "start": 12.46,
+          "end": 12.62,
+          "word": "店",
+          "probability": 0.9997
+        },
+        {
+          "start": 12.62,
+          "end": 12.78,
+          "word": "里",
+          "probability": 0.9995
+        },
+        {
+          "start": 12.78,
+          "end": 12.88,
+          "word": "的",
+          "probability": 1.0
+        },
+        {
+          "start": 12.88,
+          "end": 13.02,
+          "word": "私",
+          "probability": 0.9899
+        },
+        {
+          "start": 13.02,
+          "end": 13.24,
+          "word": "欲",
+          "probability": 0.8699
+        }
+      ]
+    },
+    {
+      "start": 13.76,
+      "end": 14.72,
+      "text": "生意好的不行",
+      "words": [
+        {
+          "start": 13.76,
+          "end": 14.08,
+          "word": "生",
+          "probability": 0.9989
+        },
+        {
+          "start": 14.08,
+          "end": 14.22,
+          "word": "意",
+          "probability": 0.9993
+        },
+        {
+          "start": 14.22,
+          "end": 14.44,
+          "word": "好的",
+          "probability": 0.9561
+        },
+        {
+          "start": 14.44,
+          "end": 14.72,
+          "word": "不行",
+          "probability": 0.9994
+        }
+      ]
+    },
+    {
+      "start": 14.72,
+      "end": 16.08,
+      "text": "我也跑去试了几次",
+      "words": [
+        {
+          "start": 14.72,
+          "end": 15.2,
+          "word": "我也",
+          "probability": 0.9529
+        },
+        {
+          "start": 15.2,
+          "end": 15.38,
+          "word": "跑",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.38,
+          "end": 15.54,
+          "word": "去",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.54,
+          "end": 15.7,
+          "word": "试",
+          "probability": 0.9998
+        },
+        {
+          "start": 15.7,
+          "end": 15.8,
+          "word": "了",
+          "probability": 1.0
+        },
+        {
+          "start": 15.8,
+          "end": 15.92,
+          "word": "几",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.92,
+          "end": 16.08,
+          "word": "次",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 16.08,
+      "end": 18.38,
+      "text": "才明白这模式有多厉害",
+      "words": [
+        {
+          "start": 16.08,
+          "end": 16.6,
+          "word": "才",
+          "probability": 0.9962
+        },
+        {
+          "start": 16.6,
+          "end": 16.9,
+          "word": "明白",
+          "probability": 0.9999
+        },
+        {
+          "start": 16.9,
+          "end": 17.08,
+          "word": "这",
+          "probability": 0.9994
+        },
+        {
+          "start": 17.08,
+          "end": 17.22,
+          "word": "模",
+          "probability": 0.9962
+        },
+        {
+          "start": 17.22,
+          "end": 17.38,
+          "word": "式",
+          "probability": 0.9986
+        },
+        {
+          "start": 17.38,
+          "end": 17.5,
+          "word": "有",
+          "probability": 1.0
+        },
+        {
+          "start": 17.5,
+          "end": 17.64,
+          "word": "多",
+          "probability": 0.9999
+        },
+        {
+          "start": 17.64,
+          "end": 17.82,
+          "word": "厉",
+          "probability": 0.9984
+        },
+        {
+          "start": 17.82,
+          "end": 18.38,
+          "word": "害",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 18.38,
+      "end": 19.98,
+      "text": "普通烧烤店搞充值",
+      "words": [
+        {
+          "start": 18.38,
+          "end": 18.84,
+          "word": "普",
+          "probability": 0.9939
+        },
+        {
+          "start": 18.84,
+          "end": 19.0,
+          "word": "通",
+          "probability": 0.9997
+        },
+        {
+          "start": 19.0,
+          "end": 19.18,
+          "word": "烧",
+          "probability": 0.9995
+        },
+        {
+          "start": 19.18,
+          "end": 19.32,
+          "word": "烤",
+          "probability": 1.0
+        },
+        {
+          "start": 19.32,
+          "end": 19.52,
+          "word": "店",
+          "probability": 1.0
+        },
+        {
+          "start": 19.52,
+          "end": 19.74,
+          "word": "搞",
+          "probability": 0.9969
+        },
+        {
+          "start": 19.74,
+          "end": 19.9,
+          "word": "充",
+          "probability": 0.8475
+        },
+        {
+          "start": 19.9,
+          "end": 19.98,
+          "word": "值",
+          "probability": 0.7852
+        }
+      ]
+    }
+  ]
+}

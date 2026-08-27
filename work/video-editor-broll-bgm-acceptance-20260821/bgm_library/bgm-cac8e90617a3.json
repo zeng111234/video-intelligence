@@ -1,0 +1,21 @@
+{
+  "asset_id": "bgm-cac8e90617a3",
+  "title": "licensed-bgm",
+  "original_name": "licensed-bgm.wav",
+  "stored_name": "bgm-cac8e90617a3.wav",
+  "media_type": "audio/wav",
+  "mood": "克制",
+  "rights_holder": "本地验收主体",
+  "rights_confirmed_at": "2026-08-21T13:16:01.647901+08:00",
+  "created_at": "2026-08-21T13:16:01.647901+08:00",
+  "duration_seconds": 4.0,
+  "voiceover_category": "通用口播",
+  "energy": "克制",
+  "tags": [
+    "克制"
+  ],
+  "source_provider": "manual",
+  "source_url": "",
+  "license_url": "",
+  "content_id_risk": "unknown"
+}

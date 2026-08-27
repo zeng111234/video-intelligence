@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from urllib.request import ProxyHandler
@@ -836,6 +837,56 @@ def test_public_search_does_not_navigate_again_after_goto_error(tmp_path, monkey
     assert len(goto_calls) == 1
 
 
+def test_public_search_reuses_healthy_same_domain_tab_without_navigation(tmp_path):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+    )
+    events: list[tuple[str, str]] = []
+
+    class Keyboard:
+        def press(self, key):
+            events.append(("press", key))
+
+        def type(self, value):
+            events.append(("type", value))
+
+    class Page:
+        url = "https://www.douyin.com/search/旧词?type=general"
+        keyboard = Keyboard()
+
+        def goto(self, *_args, **_kwargs):
+            raise AssertionError("healthy search tab must not navigate")
+
+        def evaluate(self, _script):
+            return True
+
+        def wait_for_timeout(self, _milliseconds):
+            return None
+
+    provider._prepare_public_search_input(Page(), "新词")
+
+    assert events == [
+        ("press", "Control+A"),
+        ("press", "Backspace"),
+        ("type", "新词"),
+        ("press", "Enter"),
+    ]
+
+
+def test_crawler_browser_paths_do_not_enable_stealth_flags():
+    root = Path(__file__).resolve().parents[1]
+    for relative_path in (
+        "src/adapters/douyin_browser_search.py",
+        "src/adapters/platform_browser_search.py",
+        "src/adapters/drission_browser.py",
+    ):
+        source = (root / relative_path).read_text(encoding="utf-8")
+        assert "AutomationControlled" not in source
+        assert "disable-infobars" not in source
+        assert "ANTI_DETECTION_INIT_SCRIPT" not in source
+
+
 def test_public_search_multi_layout_marks_data_availability_without_fake_metrics():
     observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
     items, errors, _, _ = LocalDouyinBrowserSearchProvider._to_public_search_items(
@@ -1038,6 +1089,16 @@ def test_browser_provider_checks_the_configured_browser_channel(tmp_path, monkey
     assert capability.missing_configuration == ["Microsoft Edge"]
 
 
+def test_browser_login_reset_never_runs_without_explicit_confirmation(tmp_path, monkeypatch):
+    provider = LocalDouyinBrowserSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29991,
+    )
+    with pytest.raises(LicensedProviderError, match="需要明确确认"):
+        provider.reset_login_state()
+
+
 def test_login_button_reveals_existing_browser_when_session_is_running(
     tmp_path, monkeypatch
 ):
@@ -1192,6 +1253,23 @@ def test_running_public_douyin_browser_is_ready_for_one_search_attempt(
         lambda _provider: raw_status,
     )
 
+    class _CleanPages:
+        def open(self, url, timeout=1.5):
+            return self
+
+        def read(self):
+            return '[{"title": "抖音 - 搜索结果"}]'.encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        douyin_browser_module, "_LOCAL_DEBUG_OPENER", _CleanPages()
+    )
+
     status = provider.session_status()
 
     assert status.running is True
@@ -1199,6 +1277,144 @@ def test_running_public_douyin_browser_is_ready_for_one_search_attempt(
     assert status.ready_to_crawl is True
     assert status.phase == "ready"
     assert "实际搜索时会核验登录状态或安全验证" in status.message
+
+
+def test_open_public_douyin_browser_requires_login_when_unconfirmed(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+    )
+    raw_status = BrowserSessionStatus(
+        True,
+        True,
+        True,
+        False,
+        "browser_open",
+        "Chrome 已打开。",
+    )
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "session_status",
+        lambda _provider: raw_status,
+    )
+
+    class _Unreachable:
+        def open(self, url, timeout=1.5):
+            raise OSError("connection refused")
+
+    monkeypatch.setattr(douyin_browser_module, "_LOCAL_DEBUG_OPENER", _Unreachable())
+
+    status = provider.session_status()
+
+    assert status.running is True
+    assert status.login_required is True
+    assert status.ready_to_crawl is False
+    assert status.phase == "browser_open"
+
+
+class _WaitFakePage:
+    """Fake Playwright page; wait_for_timeout advances the challenge counter."""
+
+    def __init__(self, counter: dict[str, int]):
+        self.counter = counter
+        self.closed = False
+
+    def wait_for_timeout(self, milliseconds):
+        self.counter["calls"] += 1
+
+    def is_closed(self):
+        return self.closed
+
+
+def _raise_while_count_lt(counter: dict[str, int], threshold: int):
+    def fake_block(_provider, page):
+        if counter["calls"] < threshold:
+            raise LicensedProviderError(
+                "抖音官网出现可见安全验证，后台检索已停止。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                code="public_search_verification",
+            )
+        return None
+
+    return fake_block
+
+
+def test_wait_for_manual_review_continues_once_slider_cleared(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+    )
+    counter = {"calls": 0}
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "_raise_for_public_search_block",
+        _raise_while_count_lt(counter, threshold=2),
+    )
+    monkeypatch.setattr(
+        douyin_browser_module, "reveal_browser_window", lambda *args, **kwargs: True
+    )
+
+    resolved = provider._wait_for_public_search_manual_review(
+        _WaitFakePage(counter), timeout_seconds=30
+    )
+
+    assert resolved is True
+    assert counter["calls"] >= 2
+
+
+def test_wait_for_manual_review_times_out_when_slider_never_clears(
+    tmp_path, monkeypatch
+):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+    )
+    counter = {"calls": 0}
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "_raise_for_public_search_block",
+        _raise_while_count_lt(counter, threshold=10 ** 9),
+    )
+    monkeypatch.setattr(
+        douyin_browser_module, "reveal_browser_window", lambda *args, **kwargs: True
+    )
+
+    resolved = provider._wait_for_public_search_manual_review(
+        _WaitFakePage(counter), timeout_seconds=2
+    )
+
+    assert resolved is False
+
+
+def test_wait_for_manual_review_aborts_when_window_closed(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True,
+        profile_dir=tmp_path / "profile",
+        debug_port=29986,
+    )
+    counter = {"calls": 0}
+    monkeypatch.setattr(
+        LocalDouyinBrowserSearchProvider,
+        "_raise_for_public_search_block",
+        _raise_while_count_lt(counter, threshold=10 ** 9),
+    )
+    monkeypatch.setattr(
+        douyin_browser_module, "reveal_browser_window", lambda *args, **kwargs: True
+    )
+
+    page = _WaitFakePage(counter)
+    page.closed = True
+
+    resolved = provider._wait_for_public_search_manual_review(
+        page, timeout_seconds=30
+    )
+
+    assert resolved is False
 
 
 def test_hotspot_keyword_is_typed_gradually_before_search():
@@ -1951,7 +2167,7 @@ def test_public_provider_accepts_up_to_100_candidates(tmp_path, monkeypatch):
     )
 
     assert page.items == []
-    assert captured == {"target_limit": 100, "scan_limit": 150}
+    assert captured == {"target_limit": 100, "scan_limit": 200}
     with pytest.raises(LicensedProviderError, match="100 条"):
         provider.search(
             Platform.DOUYIN,
@@ -2156,7 +2372,7 @@ def test_public_provider_does_not_mark_raw_count_as_target_after_filtering(
         idempotency_key="filtered-target",
     )
 
-    assert captured == {"target_limit": 2, "scan_limit": 100}
+    assert captured == {"target_limit": 2, "scan_limit": 200}
     assert [item.platform_item_id for item in page.items] == ["7538955201693994407"]
     assert page.crawl_stop_reason == "platform_end"
     assert page.crawl_stop_reason != "target_reached"
@@ -2723,6 +2939,42 @@ def test_public_search_reports_the_safety_loading_limit(tmp_path, monkeypatch):
     assert stop_error.kind == ProviderErrorKind.SERVICE
 
 
+def test_public_search_caps_an_unmet_target_at_200_scanned_rows(tmp_path, monkeypatch):
+    provider = LocalDouyinPublicSearchProvider(
+        enabled=True, profile_dir=tmp_path / "profile"
+    )
+    rows = [
+        {"item_id": f"row-{index}", "title": f"无关结果 {index}"}
+        for index in range(200)
+    ]
+
+    class Page:
+        def evaluate(self, script):
+            return None
+
+        def wait_for_timeout(self, delay):
+            return None
+
+    monkeypatch.setattr(provider, "_raise_for_public_search_block", lambda page: None)
+    monkeypatch.setattr(
+        provider,
+        "_extract_public_douyin_search_rows",
+        lambda page: rows,
+    )
+
+    collected, stop_error = provider._collect_public_douyin_search_rows(
+        Page(),
+        target_limit=30,
+        scan_limit=999,
+        qualifying_count=lambda candidate_rows: 0,
+    )
+
+    assert len(collected) == 200
+    assert stop_error is not None
+    assert stop_error.code == "public_search_safety_limit"
+    assert "扫描 200/200 条" in stop_error.message
+
+
 def test_public_search_api_url_detection():
     from src.adapters.douyin_browser_search import (
         LocalDouyinBrowserSearchProvider,
@@ -2796,7 +3048,8 @@ def test_public_search_payload_parsing(tmp_path):
         },
     }
     rows = provider._rows_from_public_search_payload(payload, keyword="餐饮获客")
-    assert len(rows) == 1
+    assert len(rows) == 2
+    assert rows[1]["title"]
     row = rows[0]
     assert row["item_id"] == "7351234567890123456"
     assert row["title"] == "餐饮获客新思路分享 #餐饮"
@@ -2808,7 +3061,39 @@ def test_public_search_payload_parsing(tmp_path):
     assert row["shares"] == 7
     assert row["source_kind"] == "search_api"
     # 不匹配关键词的标题被过滤;无效 id 与非 dict 被过滤
-    assert not any(r["item_id"] == "7351234567890123457" for r in rows)
+    items, errors, counts, _ = provider._to_public_search_items(
+        rows,
+        keyword=row["title"],
+        observed_at=datetime.fromisoformat("2026-08-03T12:00:00+08:00"),
+        published_after=None,
+        limit=10,
+    )
+    assert errors == []
+    assert len(items) == 1
+    assert counts["relevance"] == 1
+
+
+def test_public_search_allows_split_keyword_across_description_and_topics():
+    observed_at = datetime.fromisoformat("2026-08-03T12:00:00+08:00")
+    items, errors, counts, _ = LocalDouyinPublicSearchProvider._to_public_search_items(
+        [
+            {
+                "item_id": "7538955201693994999",
+                "title": "餐饮门店怎么做短视频",
+                "description": "帮助老板选择设备",
+                "hashtags": ["餐饮", "门店经营"],
+            }
+        ],
+        keyword="餐饮设备",
+        observed_at=observed_at,
+        published_after=None,
+        limit=30,
+    )
+
+    assert errors == []
+    assert counts["relevance"] == 0
+    assert len(items) == 1
+    assert "关键词联合命中=1" in (items[0].evidence or "")
 
 
 def test_scroll_and_wait_for_new_rows_returns_when_rows_appear(tmp_path, monkeypatch):

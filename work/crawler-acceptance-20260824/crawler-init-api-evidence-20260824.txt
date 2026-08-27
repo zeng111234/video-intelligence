@@ -1,0 +1,21 @@
+VideoInsight crawler initialization acceptance evidence
+Date: 2026-08-24
+Backend process: unified scripts/start_all_services.ps1 -BackendOnly -SkipBrowser
+Backend PID observed after restart: 8816
+Backend mode from GET /health:
+{"status":"ok","service":"videoinsight-desktop-api","desktop_protocol":"2","desktop_client":true,"desktop_demo":true,"control_plane_enabled":false}
+
+Customer-session requests after local demo activation (from data/logs/services/fastapi-backend-20260824-145058.stdout.log):
+GET /api/v1/crawler/batches 200 OK
+GET /api/v1/crawler/capabilities 200 OK
+GET /api/v1/crawler/keyword-queues 200 OK
+GET /api/v1/credits 200 OK
+GET /api/v1/crawler/hotwords 200 OK
+
+The earlier 401 lines in the same log occurred before the local activation screen
+was completed and are not part of the customer-session acceptance. The later
+200 lines include one normal initial load and one intentional page refresh; no
+frontend error toast was shown for either load.
+
+Screenshot:
+work/crawler-acceptance-20260824/crawler-page-no-init-errors.png

@@ -1,0 +1,608 @@
+{
+  "passed": false,
+  "checks": {
+    "file_non_empty": true,
+    "video_stream": true,
+    "audio_stream": true,
+    "resolution": true,
+    "duration": true,
+    "visual_timing": true,
+    "audio_video_drift": true,
+    "subtitle_effect_gate": true,
+    "subtitle_timeline": true
+  },
+  "duration_seconds": 16.87,
+  "expected_duration_seconds": 16.89,
+  "duration_delta_seconds": 0.02,
+  "resolution": {
+    "width": 720,
+    "height": 1280
+  },
+  "visual_beat_count": 4,
+  "style_version": "talking_head_release_v2.0-director-timeline",
+  "bgm": {
+    "enabled": true,
+    "asset_id": "bgm-84fc2b37a837",
+    "title": "数字微风",
+    "source_provider": "manual",
+    "source_url": "",
+    "license_url": "",
+    "rights_holder": "本项目原创程序合成 · 无第三方采样",
+    "content_id_risk": "none",
+    "auto_eligible": true,
+    "authorization_status": "confirmed",
+    "voice_priority": true,
+    "ducking": {
+      "enabled": true,
+      "filter": "sidechaincompress",
+      "attack_ms": 20,
+      "release_ms": 450,
+      "mix_volume": 0.16
+    },
+    "publish_rights_gate_passed": true
+  },
+  "alignment": {
+    "method": "ffprobe_stream_start_end_pts",
+    "start_drift_ms": 0.0,
+    "end_drift_ms": 1.016,
+    "max_drift_ms": 1.016,
+    "threshold_ms": 67.0,
+    "passed": true
+  },
+  "shot_plan": {
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "shot_count": 10,
+    "degradation": {
+      "mode": "authorized_real_broll",
+      "message": "已按模板策略绑定语义相关且来源可追溯的真实素材。",
+      "publish_claim_allowed": false
+    }
+  },
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 13,
+    "duplicate_count": 0,
+    "checks": {
+      "monotonic_and_in_bounds": true,
+      "no_duplicate_cues": true
+    },
+    "phrase_cue_count": 13,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "max_phrase_duration_seconds": 2.0,
+    "cue_manifest_sha256": "7c17e98126f9faf0692578b219b1e03abe9d092e0859271430be5ad9c4776e53",
+    "ass_sha256": "5d19bfae9a6dd4a23368450039c00d391f590f92726f577e375d6d5c35c8024f",
+    "preview_render_manifest_equal": true,
+    "experience_gate": {
+      "passed": true,
+      "checks": {
+        "min_duration": true,
+        "max_duration": true,
+        "one_line": true,
+        "no_fragment_cues": true,
+        "lexical_boundary_integrity": true,
+        "no_orphan_prefix_suffix": true,
+        "preview_render_manifest_equal": true,
+        "cue_count_per_sentence": true
+      },
+      "min_duration_seconds": 0.52,
+      "max_duration_seconds": 2.0,
+      "one_line_ratio": 1.0,
+      "lexical_boundary_integrity": true,
+      "no_orphan_prefix_suffix": true,
+      "preview_render_manifest_equal": true,
+      "minimum_dwell_seconds": 0.9,
+      "maximum_dwell_seconds": 2.4,
+      "short_source_exception_allowed": true,
+      "cue_count_by_source_segment": {
+        "0": 2,
+        "1": 1,
+        "2": 1,
+        "3": 1,
+        "4": 1,
+        "5": 1,
+        "6": 2,
+        "7": 2,
+        "8": 1,
+        "9": 1
+      },
+      "cue_count_gate_by_source_segment": {
+        "0": true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true,
+        "6": true,
+        "7": true,
+        "8": true,
+        "9": true
+      }
+    },
+    "text_integrity_gate": {
+      "passed": true,
+      "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+      "source_text_sha256": "d97d58ec7115a5c9eb047471231aae0691d93db4055d6a0be1851abac7400128",
+      "cue_text_sha256": "d97d58ec7115a5c9eb047471231aae0691d93db4055d6a0be1851abac7400128",
+      "source_char_count": 103,
+      "cue_char_count": 103,
+      "exact_ordered_match": true,
+      "duplicate_function_word_boundary": false
+    },
+    "audio_activity_gate": {
+      "passed": true,
+      "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+      "minimum_uncovered_seconds": 0.5,
+      "active_seconds": 16.86,
+      "covered_seconds": 16.86,
+      "uncovered_ranges": [],
+      "raw_vad_active_ranges": [
+        {
+          "start": 0.0,
+          "end": 16.89
+        }
+      ],
+      "speech_candidate_ranges": [
+        {
+          "start": 0.0,
+          "end": 2.98
+        },
+        {
+          "start": 2.98,
+          "end": 4.98
+        },
+        {
+          "start": 4.98,
+          "end": 5.74
+        },
+        {
+          "start": 5.74,
+          "end": 6.26
+        },
+        {
+          "start": 6.26,
+          "end": 7.36
+        },
+        {
+          "start": 7.36,
+          "end": 8.88
+        },
+        {
+          "start": 8.88,
+          "end": 11.1
+        },
+        {
+          "start": 11.1,
+          "end": 13.36
+        },
+        {
+          "start": 13.36,
+          "end": 15.2
+        },
+        {
+          "start": 15.2,
+          "end": 16.86
+        }
+      ]
+    },
+    "subtitle_effect_gate": {
+      "passed": true,
+      "style_id": "adaptive_talking_head_v1",
+      "cue_count": 13,
+      "emphasis_count": 0,
+      "checks": {
+        "unified_adaptive_style": true,
+        "entry_motion_100_160ms": true,
+        "sparse_emphasis": true,
+        "emphasis_scale_105_112": true,
+        "no_routine_refresh_as_visual_effect": true
+      }
+    },
+    "word_timing_quality": {
+      "status": "verified",
+      "verified": true,
+      "source": "word_timestamps",
+      "alignment_method": "exact_compact_text_match",
+      "reviewed_text_sequence_alignment_fallback_count": 0,
+      "word_p95_ms": 0.0,
+      "mapping_error_frames": 0.0,
+      "matched_cue_count": 13,
+      "unmatched_cue_count": 0,
+      "fps": 30.0,
+      "checks": {
+        "word_p95_le_150ms": true,
+        "mapping_le_1_frame": true
+      }
+    },
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 0.0
+  },
+  "semantic_visual_rejection_log": [],
+  "creative_checks": {
+    "director_assets_ready": false,
+    "minimum_real_visual_events": false,
+    "has_pip_visual": false,
+    "has_full_visual": true,
+    "pip_safe_area_no_face_or_subtitle_overlap": true,
+    "real_broll_coverage_template_policy": false,
+    "effective_visual_coverage_policy": true,
+    "no_fixed_asset_loop": true,
+    "visual_origin_traceable": true,
+    "semantic_broll_match_explainable": true,
+    "semantic_visual_layer_safe": true,
+    "semantic_layers_not_counted_as_real_broll": true,
+    "visual_cadence_gate": true,
+    "hook_declared_once": true,
+    "visual_pipeline_executed": true,
+    "provider_search_log_complete": true
+  },
+  "visual_gate_policy": {
+    "template_id": "adaptive_talking_head_v1",
+    "visual_density": "rich",
+    "min_real_events": 3,
+    "max_real_events": 6,
+    "min_coverage_ratio": 0.25,
+    "max_coverage_ratio": 0.4,
+    "min_effective_coverage_ratio": 0.45,
+    "max_effective_coverage_ratio": 0.65,
+    "pip_required": true,
+    "full_required": true,
+    "language": "丰富自适应模式至少需要 3 个语义相关真实事件，且至少包含 1 个全屏和 1 个真实 PiP；素材不足只能安全降级并失败视觉发布门。",
+    "real_event_count": 1,
+    "broll_count": 1,
+    "coverage_ratio": 0.1091,
+    "effective_coverage_ratio": 0.5311,
+    "effective_coverage_seconds": 8.96,
+    "actual_has_pip_visual": false,
+    "actual_has_full_visual": true,
+    "passed": false
+  },
+  "hard_checks": {
+    "has_pip_visual": false,
+    "has_full_visual": true,
+    "pip_required": true,
+    "full_required": true,
+    "actual_real_broll_event_count": 1,
+    "actual_real_broll_coverage_ratio": 0.1091,
+    "effective_visual_coverage_ratio": 0.5311
+  },
+  "visual_cadence_gate": {
+    "passed": true,
+    "meaningful_visual_beat_count": 6,
+    "beat_starts_final_output": [
+      0.0,
+      0.55,
+      4.0,
+      6.35,
+      8.88,
+      13.36
+    ],
+    "intervals_seconds": [
+      0.55,
+      3.45,
+      2.35,
+      2.53,
+      4.48
+    ],
+    "max_gap_seconds": 4.48,
+    "recommended_max_gap_seconds": 6.0,
+    "hard_max_gap_seconds": 7.5,
+    "rhythm_hold_exception": false,
+    "routine_subtitle_refresh_counted": false,
+    "safe_degradation_allowed": true
+  },
+  "visual_requests": [
+    {
+      "source_segment_index": 1,
+      "source_segment_indices": [
+        1
+      ],
+      "retrieval_context_segment_indices": [
+        0,
+        1
+      ],
+      "start": 2.98,
+      "end": 4.98,
+      "visual_type": "process",
+      "chinese_concepts": [
+        "process"
+      ],
+      "search_queries": [
+        "workflow process demonstration",
+        "hands using an app",
+        "business process close up"
+      ],
+      "expected_subject": "hands, interface, or clearly ordered process steps",
+      "expected_action": "这是个完整的商业计划案了",
+      "expected_context": "workflow process",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "transcript_text": "这是个完整的商业计划案了"
+    },
+    {
+      "source_segment_index": 8,
+      "source_segment_indices": [
+        8
+      ],
+      "retrieval_context_segment_indices": [
+        7,
+        8
+      ],
+      "start": 15.42,
+      "end": 17.26,
+      "visual_type": "pet_scene",
+      "chinese_concepts": [
+        "pet_scene"
+      ],
+      "search_queries": [
+        "pet fish feeding",
+        "aquarium fish close up",
+        "pet care scene"
+      ],
+      "expected_subject": "the named animal and the described care action",
+      "expected_action": "就是做那个宠物搬砖",
+      "expected_context": "pet scene",
+      "preferred_mode": "full",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "transcript_text": "就是做那个宠物搬砖"
+    }
+  ],
+  "provider_search_log": [
+    {
+      "source_segment_index": 1,
+      "source_segment_indices": [
+        1
+      ],
+      "start": 2.98,
+      "end": 4.98,
+      "visual_type": "process",
+      "chinese_concepts": [
+        "process"
+      ],
+      "search_queries": [
+        "workflow process demonstration",
+        "hands using an app",
+        "business process close up"
+      ],
+      "expected_subject": "hands, interface, or clearly ordered process steps",
+      "expected_action": "这是个完整的商业计划案了",
+      "expected_context": "workflow process",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "semantic_query": "这是个完整的商业计划案了 workflow process demonstration hands using an app business process close up",
+      "provider_query": "workflow process demonstration",
+      "local_candidate_count": 29,
+      "provider_attempted": false,
+      "provider": null,
+      "provider_status": "skipped_provider_disabled",
+      "provider_attempts": 0,
+      "provider_attempt_details": [],
+      "candidate_count": 0,
+      "candidate_metadata": [],
+      "candidate_scores": [],
+      "rejections": [
+        "no_authorized_semantic_match",
+        "no_generated_fallback_match"
+      ],
+      "final_asset_id": null,
+      "final_action": "safe_degradation"
+    },
+    {
+      "source_segment_index": 8,
+      "source_segment_indices": [
+        8
+      ],
+      "start": 15.42,
+      "end": 17.26,
+      "visual_type": "pet_scene",
+      "chinese_concepts": [
+        "pet_scene"
+      ],
+      "search_queries": [
+        "pet fish feeding",
+        "aquarium fish close up",
+        "pet care scene"
+      ],
+      "expected_subject": "the named animal and the described care action",
+      "expected_action": "就是做那个宠物搬砖",
+      "expected_context": "pet scene",
+      "preferred_mode": "full",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "semantic_query": "就是做那个宠物搬砖 pet fish feeding aquarium fish close up pet care scene",
+      "provider_query": "pet fish feeding",
+      "local_candidate_count": 29,
+      "provider_attempted": false,
+      "provider": "pexels",
+      "provider_status": "skipped_local_semantic_match",
+      "provider_attempts": 0,
+      "provider_attempt_details": [],
+      "candidate_count": 0,
+      "candidate_metadata": [],
+      "candidate_scores": [
+        {
+          "asset_id": "broll-0a0c344f15",
+          "score": 82,
+          "accepted": true,
+          "reason": [
+            "concrete_visual_intersection:pet_fish",
+            "keywords:petfishfeeding"
+          ]
+        }
+      ],
+      "rejections": [],
+      "final_asset_id": "broll-0a0c344f15",
+      "final_action": "bind_visual_asset",
+      "provider_source_url": "https://www.pexels.com/video/a-girl-feeding-a-fish-and-petting-a-dog-8433811/",
+      "provider_license": "Pexels License",
+      "final_mode": "full"
+    }
+  ],
+  "provider_search_gate": {
+    "passed": true,
+    "required_for_each_structured_request": true,
+    "unresolved_visual_request_count": 0,
+    "unresolved_visual_requests": []
+  },
+  "source_original_visual": {
+    "event_count": 0,
+    "counted_in_output_added_visual": false,
+    "note": "源视频自带画面、贴图、汽车图和特效不计入本次程序新增视觉成果。"
+  },
+  "output_added_visual": {
+    "event_count": 1,
+    "broll_event_count": 1,
+    "vector_event_count": 0,
+    "events": [
+      {
+        "event_id": "broll-0a0c344f15",
+        "start": 13.36,
+        "end": 15.2,
+        "mode": "full",
+        "asset_id": "broll-0a0c344f15",
+        "source": "pexels"
+      }
+    ]
+  },
+  "creative_passed": false,
+  "subtitle_word_gate_passed": true,
+  "publish_claim_allowed": false,
+  "v1_hard_gate_passed": false,
+  "local_visual_acceptance_passed": false,
+  "release_visual_gate_passed": false,
+  "semantic_match_gate": {
+    "passed": true,
+    "failures": []
+  },
+  "publish_rights_gate_passed": false,
+  "visual_origin_policy": {
+    "domestic_priority": [
+      "domestic_confirmed_real",
+      "domestic_authorized_generation",
+      "international_pexels_pixabay_fallback"
+    ],
+    "locale_does_not_prove_domestic_scene": true,
+    "public_douyin_bilibili_scraping": false,
+    "generated_images_count_as_local_visual_events": true,
+    "generated_images_do_not_satisfy_free_stock_video_gate": true,
+    "free_stock_video_gate": "blocked_missing_confirmed_pexels_or_pixabay_video"
+  },
+  "visual_event_count": 5,
+  "visual_broll_event_count": 1,
+  "semantic_visual_layer_count": 0,
+  "semantic_visual_layer_geometry": {
+    "safe": false,
+    "reason": "lower_left_safe_zone",
+    "bbox": {
+      "left": 36,
+      "top": 806,
+      "right": 396,
+      "bottom": 956,
+      "width": 360,
+      "height": 150
+    },
+    "intersects_face_safe_bbox": false,
+    "intersects_subtitle_bbox": false,
+    "intersects_pip_bbox": true
+  },
+  "real_broll_event_count": 1,
+  "real_stock_video_event_count": 1,
+  "generated_image_event_count": 0,
+  "domestic_real_broll_event_count": 0,
+  "international_broll_event_count": 1,
+  "broll_context_counts": {
+    "domestic_real": 0,
+    "international_stock": 1,
+    "generated_image": 0,
+    "unknown": 0
+  },
+  "broll_origin_counts": {
+    "generated_image_asset": 0,
+    "stock_video_asset": 1,
+    "other_real_local_asset": 0
+  },
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-0a0c344f15",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/a-girl-feeding-a-fish-and-petting-a-dog-8433811/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "pet fish feeding"
+      ],
+      "semantic_query": "pet fish feeding",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    }
+  ],
+  "real_broll_coverage_ratio": 0.1091,
+  "visual_coverage_seconds": 1.84,
+  "vector_coverage_seconds": 0,
+  "effective_visual_coverage_seconds": 8.96,
+  "effective_visual_coverage_ratio": 0.5311,
+  "broll_modes": {
+    "pip": 0,
+    "full": 1,
+    "vector_pip": 0
+  },
+  "pip_geometry": [],
+  "pip_safe_area_passed": true,
+  "media_passed": true,
+  "transcript_source_identity_gate": {
+    "enabled": true,
+    "passed": true,
+    "checks": {
+      "source_media_sha256": true,
+      "source_duration_matches_ffprobe": true,
+      "transcript_sha256": true,
+      "timing_source_declared": true
+    },
+    "source_media_identity": {
+      "source_media_sha256": "ce6b7e93281dbf345b8cab5e26d5c373f4365183691c67a36baf84f70b602a18",
+      "source_duration_seconds": 20.0,
+      "transcript_sha256": "6acb5b1e3d2b154c586efaf0ab7ee7bcfd8a74ab2eada0a6ab4f46926886fac3",
+      "transcript_timing_source": "word_timestamps",
+      "transcript_identity_scope": "task_subtitle_segments_v1"
+    }
+  },
+  "quality_report_version": "identity-gates-v2",
+  "audio_subtitle_semantic_gate": {
+    "passed": true,
+    "method": "local_transcript_text_overlap_spot_check",
+    "source_text": "捡钱啊牛逼牛逼你这套打法收徒弟都行这是个完整的商业计划案了张老师你好初一你好看了你很多视频我也是长了很多知识然后我今天上来就是说想请教你两个问题我们这块是那个做ai短视频的就是做那个宠物搬砖是打算做这个是吧不是已经在",
+    "cue_text": "捡钱啊牛逼牛逼你这套打法收徒弟都行这是个完整的商业计划案了张老师你好初一你好看了你很多视频我也是长了很多知识然后我今天上来就是说想请教你两个问题我们这块是那个做ai短视频的就是做那个宠物搬砖是打算做这个是吧",
+    "overlap_ratio": 1.0,
+    "minimum_overlap_ratio": 0.72
+  },
+  "edl_execution_gate": {
+    "passed": true,
+    "method": "shared_ffmpeg_audio_video_trim_plus_shot_plan",
+    "declared_source_range": {
+      "start": 0.0,
+      "end": 20.0
+    },
+    "expected_body_seconds": 16.86,
+    "executed_source_seconds": 16.86,
+    "opening_duration_seconds": 0.0,
+    "expected_output_seconds": 16.86,
+    "actual_output_seconds": 16.87,
+    "actual_body_seconds": 16.87
+  },
+  "transcript_accuracy_gate": {
+    "passed": true,
+    "method": "reviewed_transcript_correction_audit",
+    "source": "local_reviewed_homophone_correction",
+    "correction_count": 0,
+    "remaining_known_error_terms": []
+  },
+  "media_integrity_passed": true,
+  "subtitle_sync_passed": true,
+  "visual_release_passed": false
+}

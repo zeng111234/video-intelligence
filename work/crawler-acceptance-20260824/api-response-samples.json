@@ -1,0 +1,44 @@
+{
+  "single_keyword": {
+    "endpoint": "POST /api/v1/crawler/batches",
+    "status": 200,
+    "batch_id": "batch-64db2a736c58",
+    "status_value": "succeeded",
+    "platform_runs": [
+      {
+        "platform": "bilibili",
+        "status": "partial",
+        "returned_count": 7,
+        "cache_hit": false
+      }
+    ]
+  },
+  "batch_create": {
+    "endpoint": "POST /api/v1/crawler/keyword-queues",
+    "status": 200,
+    "queue_id": "crawler-queue-82edc450dae9",
+    "status_value": "queued",
+    "total": 2,
+    "platforms": ["bilibili"]
+  },
+  "recovery": {
+    "endpoint": "POST /api/v1/crawler/keyword-queues/crawler-queue-82edc450dae9/resume",
+    "status": 200,
+    "status_value": "queued",
+    "completed": 1,
+    "queued": 1,
+    "running": 0,
+    "failed": 0,
+    "items": [
+      {"keyword": "工厂短视频", "status": "succeeded"},
+      {"keyword": "小店短视频", "status": "queued"}
+    ]
+  },
+  "page_export": {
+    "endpoint": "GET /api/v1/crawler/batches/batch-64db2a736c58/export.csv",
+    "status": 200,
+    "download_bytes": 3774,
+    "utf8_bom": true,
+    "data_rows": 7
+  }
+}

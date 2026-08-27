@@ -1,0 +1,10 @@
+{
+  "ass": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\story-female-r2\\rendered.ass",
+    "sha256": "c85d7086470f13203aa09f7e096d253365a8a6cb81ef4fcef5a4cedc1818b218"
+  },
+  "manifest": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\story-female-r2\\subtitle-manifest.json",
+    "sha256": "adf0bd5b9098dbd0ca1e9addafdbbaec36a6da7d2753f3d9b0a9029a0d7dc23c"
+  }
+}

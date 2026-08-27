@@ -322,7 +322,7 @@ class PipelineWorker:
                         "rights_confirmed": True,
                         "rights_holder": config["rights_holder"],
                         "model_name": "large-v3-turbo",
-                        "target_length": 300,
+                        "target_length": 240,
                         "tone": "casual",
                         "target_audience": str(
                             config["profile"].get("target_audience") or ""
@@ -330,7 +330,7 @@ class PipelineWorker:
                         "style_prompt": str(
                             config["profile"].get("script_style") or ""
                         ),
-                        "variant_count": 2,
+                        "variant_count": 1,
                     },
                 },
             )
@@ -373,11 +373,11 @@ class PipelineWorker:
                 idempotency_key=f"worker-media-{run.run_id}",
                 model_name=str(request.get("model_name") or "large-v3-turbo"),
                 hotwords=str(request.get("hotwords") or "") or None,
-                target_length=int(request.get("target_length") or 300),
+                target_length=int(request.get("target_length") or 240),
                 tone=str(request.get("tone") or "casual"),
                 target_audience=str(request.get("target_audience") or ""),
                 style_prompt=str(request.get("style_prompt") or ""),
-                variant_count=int(request.get("variant_count") or 2),
+                variant_count=1,
                 existing_run=run,
             )
             return

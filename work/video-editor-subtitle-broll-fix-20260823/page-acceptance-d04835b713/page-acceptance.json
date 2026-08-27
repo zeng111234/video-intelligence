@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "video": {
+    "src": "http://127.0.0.1:1001/api/v1/video-editor/jobs/edit-local-d04835b713/media",
+    "duration": 31.5,
+    "currentTime": 4.159961,
+    "paused": false
+  },
+  "media": {
+    "status": 200,
+    "type": "video/mp4",
+    "length": "10390286"
+  },
+  "downloaded": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-subtitle-broll-fix-20260823\\page-acceptance-d04835b713\\downloaded-final.mp4",
+    "size": 10390286,
+    "sha256": "7b7881bf0226ef8038d5b116545a3438c54206cb09d9f1d5c45dbcf9aff7ece7",
+    "filename": "edit-local-d04835b713.mp4"
+  },
+  "selectedFinal": true,
+  "qualityGate": true,
+  "creditsZero": true,
+  "realCopy": true,
+  "semanticCopy": true,
+  "failures": []
+}

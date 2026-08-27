@@ -1,0 +1,28 @@
+{
+  "source": {
+    "path": "C:\\Users\\zeng\\Videos\\大树老师无剪辑素材7.13版.mp4",
+    "sha256": "d0866999ae1663811091964dc22ff8c33572969da0e79e20f51c29050b7cad33"
+  },
+  "output": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-6f033686da.mp4",
+    "sha256": "9746529ffebb24ed7e76733100c62bbf8898926299f987bf2d5d7c50f82aa821"
+  },
+  "broll": [
+    {"asset_id": "broll-14f7720cd1", "provider": "pexels", "license": "Pexels License", "authorization_status": "confirmed"},
+    {"asset_id": "broll-3344413315", "provider": "pexels", "license": "Pexels License", "authorization_status": "confirmed"},
+    {"asset_id": "broll-f847ed1e82", "provider": "pexels", "license": "Pexels License", "authorization_status": "confirmed"}
+  ],
+  "semantic_visual_layer": {
+    "renderer": "semantic_info_band",
+    "asset_origin": "code_drawn_semantic_layer_no_asset_rights_claim",
+    "position": "lower_left_safe",
+    "face_subtitle_pip_overlap": false
+  },
+  "generated_assets": {
+    "used": [],
+    "manifest": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+    "rights_status": "generated_for_local_acceptance",
+    "publish_licensed": false
+  },
+  "local_only": {"ffmpeg_renderer": true, "new_cloud_calls": 0, "new_cost_cny": 0, "publish_clicked": false}
+}

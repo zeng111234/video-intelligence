@@ -479,11 +479,11 @@ class PipelineService:
         idempotency_key: str,
         model_name: str = "large-v3-turbo",
         hotwords: str | None = None,
-        target_length: int = 300,
+        target_length: int = 240,
         tone: str = "casual",
         target_audience: str = "",
         style_prompt: str = "",
-        variant_count: int = 2,
+        variant_count: int = 1,
         existing_run: PipelineRun | None = None,
     ) -> PipelineRun:
         """从单条候选执行：补媒体 -> 转写 -> 文案改写 -> 等待人工审核。
@@ -734,10 +734,13 @@ class PipelineService:
             run = self.update_stage(run, PipelineStage.COPYWRITING, TaskStatus.RUNNING)
             rewrite_goal = (
                 "仅在 AI 质检和人工确认转写后，基于真实转写整理数字人口播稿。"
-                "保留可确认事实，重新组织开头、信息顺序和句式，改成自然口语；"
+                "将长转写压缩成一份不超过约60秒的最终口播稿，内容不足时自然缩短；保留可确认事实，"
+                "用原文事实重新组织前3秒钩子、信息顺序和句式，改成自然口语；"
                 "删除口头禅、重复句和噪声，避免连续照搬原文表达；"
-                "不得补写未在转写中出现的事实、数据、案例或效果承诺。"
-                "输出可人工审核的口播文案，不要 Markdown。"
+                "没有强钩子时只能用问题、反差或痛点重组，不得补写未在转写中出现的事实、"
+                "数据、案例或效果承诺。结尾补一个基于原文的自然行动引导或下一步建议；"
+                "原文没有明确行动时使用中性总结，不得凭空添加购买、私信、关注、收益或效果承诺。"
+                "只输出一份可人工审核的纯口播文案，不要多个版本或 Markdown。"
             )
             copy_task = self.copywriting_service.rewrite(
                 source_text=source_text,
@@ -1011,9 +1014,9 @@ class PipelineService:
                 or profile.get("script_style")
                 or ""
             ),
-            target_length=int(request.get("target_length") or 300),
+            target_length=int(request.get("target_length") or 240),
             tone=str(request.get("tone") or "casual"),
-            variant_count=int(request.get("variant_count") or 2),
+            variant_count=1,
             source_text_override=text,
         )
 

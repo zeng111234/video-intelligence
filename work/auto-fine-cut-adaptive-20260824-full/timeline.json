@@ -1,0 +1,91 @@
+{
+  "schema_version": "canonical-director-timeline-v1",
+  "clock": "final_output",
+  "source_media": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\avatar_results\\avatar-2704b95149a3.mp4",
+    "sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+    "duration_seconds": 104.72
+  },
+  "transcript": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260824-short-real\\asr-full.json",
+    "sha256": "6185a31fa2de8801a08b6233dde2f11d28f77017570e6b4a5f1aad624fff3dd7",
+    "timing_source": "word_timestamps",
+    "segment_count": 7,
+    "cue_count": 42
+  },
+  "output": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-full-adaptive-20260824.mp4",
+    "duration_seconds": 104.7
+  },
+  "broll_events": [
+    {
+      "path": "C:\\Users\\zeng\\Desktop\\video\\data\\creative_assets\\broll-7fd2b32907.mp4",
+      "start": 3.4,
+      "end": 6.2,
+      "mode": "pip",
+      "media_kind": "video"
+    },
+    {
+      "path": "C:\\Users\\zeng\\Desktop\\video\\data\\creative_assets\\broll-a6ba6cdd89.mp4",
+      "start": 6.7,
+      "end": 9.5,
+      "mode": "full",
+      "media_kind": "video"
+    },
+    {
+      "path": "C:\\Users\\zeng\\Desktop\\video\\data\\creative_assets\\broll-abc76c5b40.mp4",
+      "start": 10.5,
+      "end": 13.2,
+      "mode": "pip",
+      "media_kind": "video"
+    }
+  ],
+  "reframe_events": [
+    {
+      "start": 14.18,
+      "end": 15.98,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 26.12,
+      "end": 27.92,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 38.76,
+      "end": 40.559999999999995,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 50.0,
+      "end": 51.8,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 62.0,
+      "end": 63.8,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 74.0,
+      "end": 75.8,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 85.64,
+      "end": 87.44,
+      "treatment": "safe_reframe"
+    },
+    {
+      "start": 100.14,
+      "end": 101.94,
+      "treatment": "safe_reframe"
+    }
+  ],
+  "bgm": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\bgm_library\\bgm-0eed3a5909e5.mp3",
+    "mix_volume": 0.16,
+    "ducking": true
+  },
+  "provider_calls": 0
+}

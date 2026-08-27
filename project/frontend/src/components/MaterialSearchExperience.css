@@ -211,7 +211,12 @@
   border: 1px solid #eceaf3;
   border-radius: 8px;
   animation: material-entry 260ms ease-out both;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+
+.material-unified-item:hover { border-color: #a99ae8; }
 
 .material-unified-check { color: #21a66b; }
 

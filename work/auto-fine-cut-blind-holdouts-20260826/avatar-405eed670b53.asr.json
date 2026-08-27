@@ -1,0 +1,647 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-26T09:19:17.753375+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\data\\avatar_results\\avatar-405eed670b53.mp4",
+  "source_sha256": "c90b39c20a6d90523006feb87686582d7ca4cbe88b38232560ae0bf47cb05849",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 28.05,
+  "segment_count": 6,
+  "word_count": 98,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.0,
+      "text": "你发现没,机器人最近也被裁员了。",
+      "words": [
+        {
+          "start": 0.0,
+          "end": 0.24,
+          "word": "你",
+          "probability": 0.9407
+        },
+        {
+          "start": 0.24,
+          "end": 0.42,
+          "word": "发",
+          "probability": 0.9989
+        },
+        {
+          "start": 0.42,
+          "end": 0.64,
+          "word": "现",
+          "probability": 0.9996
+        },
+        {
+          "start": 0.64,
+          "end": 0.88,
+          "word": "没,",
+          "probability": 0.9959
+        },
+        {
+          "start": 1.28,
+          "end": 1.38,
+          "word": "机",
+          "probability": 0.9989
+        },
+        {
+          "start": 1.38,
+          "end": 1.54,
+          "word": "器",
+          "probability": 0.999
+        },
+        {
+          "start": 1.54,
+          "end": 1.74,
+          "word": "人",
+          "probability": 1.0
+        },
+        {
+          "start": 1.74,
+          "end": 2.08,
+          "word": "最近",
+          "probability": 0.9997
+        },
+        {
+          "start": 2.08,
+          "end": 2.26,
+          "word": "也",
+          "probability": 0.9997
+        },
+        {
+          "start": 2.26,
+          "end": 2.42,
+          "word": "被",
+          "probability": 0.9998
+        },
+        {
+          "start": 2.42,
+          "end": 2.6,
+          "word": "裁",
+          "probability": 0.9991
+        },
+        {
+          "start": 2.6,
+          "end": 2.82,
+          "word": "员",
+          "probability": 0.9972
+        },
+        {
+          "start": 2.82,
+          "end": 3.0,
+          "word": "了。",
+          "probability": 0.9983
+        }
+      ]
+    },
+    {
+      "start": 3.54,
+      "end": 11.26,
+      "text": "以前都说机器取代工人,结果现在工厂倒闭潮一来,大量工业机器人被荡废铁卖。",
+      "words": [
+        {
+          "start": 3.54,
+          "end": 3.94,
+          "word": "以前",
+          "probability": 0.9938
+        },
+        {
+          "start": 3.94,
+          "end": 4.12,
+          "word": "都",
+          "probability": 0.9999
+        },
+        {
+          "start": 4.12,
+          "end": 4.46,
+          "word": "说",
+          "probability": 0.9999
+        },
+        {
+          "start": 4.46,
+          "end": 4.78,
+          "word": "机",
+          "probability": 0.9313
+        },
+        {
+          "start": 4.78,
+          "end": 5.0,
+          "word": "器",
+          "probability": 0.9995
+        },
+        {
+          "start": 5.0,
+          "end": 5.18,
+          "word": "取",
+          "probability": 0.998
+        },
+        {
+          "start": 5.18,
+          "end": 5.34,
+          "word": "代",
+          "probability": 0.9994
+        },
+        {
+          "start": 5.34,
+          "end": 5.52,
+          "word": "工",
+          "probability": 0.9992
+        },
+        {
+          "start": 5.52,
+          "end": 5.78,
+          "word": "人,",
+          "probability": 0.9998
+        },
+        {
+          "start": 6.18,
+          "end": 6.36,
+          "word": "结",
+          "probability": 0.9992
+        },
+        {
+          "start": 6.36,
+          "end": 6.54,
+          "word": "果",
+          "probability": 1.0
+        },
+        {
+          "start": 6.54,
+          "end": 6.8,
+          "word": "现在",
+          "probability": 0.9981
+        },
+        {
+          "start": 6.8,
+          "end": 7.08,
+          "word": "工",
+          "probability": 0.9999
+        },
+        {
+          "start": 7.08,
+          "end": 7.36,
+          "word": "厂",
+          "probability": 0.9993
+        },
+        {
+          "start": 7.36,
+          "end": 7.64,
+          "word": "倒",
+          "probability": 0.999
+        },
+        {
+          "start": 7.64,
+          "end": 7.84,
+          "word": "闭",
+          "probability": 0.9814
+        },
+        {
+          "start": 7.84,
+          "end": 8.06,
+          "word": "潮",
+          "probability": 0.9111
+        },
+        {
+          "start": 8.06,
+          "end": 8.22,
+          "word": "一",
+          "probability": 0.4712
+        },
+        {
+          "start": 8.22,
+          "end": 8.46,
+          "word": "来,",
+          "probability": 0.9997
+        },
+        {
+          "start": 8.84,
+          "end": 9.02,
+          "word": "大",
+          "probability": 0.9997
+        },
+        {
+          "start": 9.02,
+          "end": 9.16,
+          "word": "量",
+          "probability": 0.9998
+        },
+        {
+          "start": 9.16,
+          "end": 9.34,
+          "word": "工",
+          "probability": 1.0
+        },
+        {
+          "start": 9.34,
+          "end": 9.5,
+          "word": "业",
+          "probability": 0.9992
+        },
+        {
+          "start": 9.5,
+          "end": 9.66,
+          "word": "机",
+          "probability": 0.9998
+        },
+        {
+          "start": 9.66,
+          "end": 9.84,
+          "word": "器",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.84,
+          "end": 10.1,
+          "word": "人",
+          "probability": 1.0
+        },
+        {
+          "start": 10.1,
+          "end": 10.4,
+          "word": "被",
+          "probability": 0.9999
+        },
+        {
+          "start": 10.4,
+          "end": 10.58,
+          "word": "荡",
+          "probability": 0.7497
+        },
+        {
+          "start": 10.58,
+          "end": 10.78,
+          "word": "废",
+          "probability": 0.9619
+        },
+        {
+          "start": 10.78,
+          "end": 11.0,
+          "word": "铁",
+          "probability": 0.9974
+        },
+        {
+          "start": 11.0,
+          "end": 11.26,
+          "word": "卖。",
+          "probability": 0.9985
+        }
+      ]
+    },
+    {
+      "start": 11.86,
+      "end": 16.36,
+      "text": "为什么?因为机器能替代岗位,但替代不了市场。",
+      "words": [
+        {
+          "start": 11.86,
+          "end": 12.26,
+          "word": "为什么?",
+          "probability": 0.9985
+        },
+        {
+          "start": 12.9,
+          "end": 13.3,
+          "word": "因为",
+          "probability": 0.9995
+        },
+        {
+          "start": 13.3,
+          "end": 13.54,
+          "word": "机",
+          "probability": 0.9999
+        },
+        {
+          "start": 13.54,
+          "end": 13.78,
+          "word": "器",
+          "probability": 0.9999
+        },
+        {
+          "start": 13.78,
+          "end": 13.96,
+          "word": "能",
+          "probability": 0.9997
+        },
+        {
+          "start": 13.96,
+          "end": 14.14,
+          "word": "替",
+          "probability": 0.9997
+        },
+        {
+          "start": 14.14,
+          "end": 14.3,
+          "word": "代",
+          "probability": 0.9995
+        },
+        {
+          "start": 14.3,
+          "end": 14.52,
+          "word": "岗",
+          "probability": 0.9975
+        },
+        {
+          "start": 14.52,
+          "end": 14.76,
+          "word": "位,",
+          "probability": 0.9998
+        },
+        {
+          "start": 15.06,
+          "end": 15.22,
+          "word": "但",
+          "probability": 0.9996
+        },
+        {
+          "start": 15.22,
+          "end": 15.44,
+          "word": "替",
+          "probability": 1.0
+        },
+        {
+          "start": 15.44,
+          "end": 15.62,
+          "word": "代",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.62,
+          "end": 15.82,
+          "word": "不了",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.82,
+          "end": 16.12,
+          "word": "市",
+          "probability": 1.0
+        },
+        {
+          "start": 16.12,
+          "end": 16.36,
+          "word": "场。",
+          "probability": 0.9996
+        }
+      ]
+    },
+    {
+      "start": 16.82,
+      "end": 19.08,
+      "text": "人没了收入,哪来的消费?",
+      "words": [
+        {
+          "start": 16.82,
+          "end": 17.2,
+          "word": "人",
+          "probability": 0.9998
+        },
+        {
+          "start": 17.2,
+          "end": 17.36,
+          "word": "没",
+          "probability": 0.9993
+        },
+        {
+          "start": 17.36,
+          "end": 17.48,
+          "word": "了",
+          "probability": 1.0
+        },
+        {
+          "start": 17.48,
+          "end": 17.64,
+          "word": "收",
+          "probability": 0.9999
+        },
+        {
+          "start": 17.64,
+          "end": 17.9,
+          "word": "入,",
+          "probability": 0.9995
+        },
+        {
+          "start": 18.18,
+          "end": 18.38,
+          "word": "哪",
+          "probability": 0.9977
+        },
+        {
+          "start": 18.38,
+          "end": 18.56,
+          "word": "来",
+          "probability": 0.9989
+        },
+        {
+          "start": 18.56,
+          "end": 18.66,
+          "word": "的",
+          "probability": 0.966
+        },
+        {
+          "start": 18.66,
+          "end": 18.84,
+          "word": "消",
+          "probability": 0.9998
+        },
+        {
+          "start": 18.84,
+          "end": 19.08,
+          "word": "费?",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 19.52,
+      "end": 23.48,
+      "text": "工厂没订单,在智能的设备也是一堆废铁。",
+      "words": [
+        {
+          "start": 19.52,
+          "end": 19.92,
+          "word": "工",
+          "probability": 0.9997
+        },
+        {
+          "start": 19.92,
+          "end": 20.12,
+          "word": "厂",
+          "probability": 0.9997
+        },
+        {
+          "start": 20.12,
+          "end": 20.3,
+          "word": "没",
+          "probability": 0.9998
+        },
+        {
+          "start": 20.3,
+          "end": 20.48,
+          "word": "订",
+          "probability": 0.9978
+        },
+        {
+          "start": 20.48,
+          "end": 20.7,
+          "word": "单,",
+          "probability": 0.9998
+        },
+        {
+          "start": 21.14,
+          "end": 21.32,
+          "word": "在",
+          "probability": 0.7606
+        },
+        {
+          "start": 21.32,
+          "end": 21.5,
+          "word": "智",
+          "probability": 0.9972
+        },
+        {
+          "start": 21.5,
+          "end": 21.64,
+          "word": "能",
+          "probability": 0.9991
+        },
+        {
+          "start": 21.64,
+          "end": 21.76,
+          "word": "的",
+          "probability": 0.9993
+        },
+        {
+          "start": 21.76,
+          "end": 21.96,
+          "word": "设",
+          "probability": 0.9998
+        },
+        {
+          "start": 21.96,
+          "end": 22.22,
+          "word": "备",
+          "probability": 0.9995
+        },
+        {
+          "start": 22.22,
+          "end": 22.66,
+          "word": "也是",
+          "probability": 0.999
+        },
+        {
+          "start": 22.66,
+          "end": 22.82,
+          "word": "一",
+          "probability": 1.0
+        },
+        {
+          "start": 22.82,
+          "end": 22.98,
+          "word": "堆",
+          "probability": 0.9995
+        },
+        {
+          "start": 22.98,
+          "end": 23.18,
+          "word": "废",
+          "probability": 0.9998
+        },
+        {
+          "start": 23.18,
+          "end": 23.48,
+          "word": "铁。",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 23.96,
+      "end": 27.38,
+      "text": "说到底,让人有活干,企业才有未来。",
+      "words": [
+        {
+          "start": 23.96,
+          "end": 24.34,
+          "word": "说",
+          "probability": 0.9992
+        },
+        {
+          "start": 24.34,
+          "end": 24.72,
+          "word": "到底,",
+          "probability": 0.9998
+        },
+        {
+          "start": 25.04,
+          "end": 25.2,
+          "word": "让",
+          "probability": 0.9999
+        },
+        {
+          "start": 25.2,
+          "end": 25.34,
+          "word": "人",
+          "probability": 1.0
+        },
+        {
+          "start": 25.34,
+          "end": 25.48,
+          "word": "有",
+          "probability": 0.9999
+        },
+        {
+          "start": 25.48,
+          "end": 25.68,
+          "word": "活",
+          "probability": 0.9991
+        },
+        {
+          "start": 25.68,
+          "end": 25.92,
+          "word": "干,",
+          "probability": 0.9975
+        },
+        {
+          "start": 26.18,
+          "end": 26.46,
+          "word": "企",
+          "probability": 0.9998
+        },
+        {
+          "start": 26.46,
+          "end": 26.66,
+          "word": "业",
+          "probability": 0.9999
+        },
+        {
+          "start": 26.66,
+          "end": 26.8,
+          "word": "才",
+          "probability": 0.9988
+        },
+        {
+          "start": 26.8,
+          "end": 26.96,
+          "word": "有",
+          "probability": 0.9999
+        },
+        {
+          "start": 26.96,
+          "end": 27.12,
+          "word": "未",
+          "probability": 0.9996
+        },
+        {
+          "start": 27.12,
+          "end": 27.38,
+          "word": "来。",
+          "probability": 0.9999
+        }
+      ]
+    }
+  ]
+}

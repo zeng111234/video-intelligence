@@ -258,6 +258,11 @@ def test_desktop_demo_customer_can_use_business_api_but_not_admin(
     tasks = test_client.get("/api/v1/tasks", headers=headers)
     assert tasks.status_code == 200
 
+    capabilities = test_client.get("/api/v1/crawler/capabilities", headers=headers)
+    history = test_client.get("/api/v1/crawler/batches", headers=headers)
+    assert capabilities.status_code == 200
+    assert history.status_code == 200
+
     media = test_client.get(
         "/api/v1/nonexistent/media",
         headers={"Cookie": f"vi_customer_media_token={token}"},

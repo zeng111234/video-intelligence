@@ -1,0 +1,32 @@
+{
+  "passed": false,
+  "publish_claim_allowed": false,
+  "media_integrity_passed": true,
+  "subtitle_sync_passed": false,
+  "visual_release_passed": false,
+  "creative_passed": false,
+  "publish_rights_gate_passed": false,
+  "duration_seconds": 25.033333,
+  "real_broll_event_count": 2,
+  "real_broll_coverage_ratio": 0.2613,
+  "broll_modes": {"pip": 3, "full": 0},
+  "visual_event_count": 7,
+  "subtitle": {
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "cue_count": 20,
+    "preview_render_manifest_equal": true,
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 3.6,
+    "audio_activity_gate_passed": true
+  },
+  "visual_gate": {
+    "min_real_events": 2,
+    "min_coverage_ratio": 0.25,
+    "pip_required": true,
+    "full_required": true,
+    "actual_has_pip_visual": true,
+    "actual_has_full_visual": false
+  },
+  "failure_reason": "subtitle_sync、visual_release、creative、publish_rights"
+}

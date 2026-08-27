@@ -1,0 +1,171 @@
+[
+  {
+    "source_segment_index": 2,
+    "source_segment_indices": [
+      2
+    ],
+    "start": 4.7,
+    "end": 6.06,
+    "visual_type": "product",
+    "chinese_concepts": [
+      "product"
+    ],
+    "search_queries": [
+      "phone mount in car",
+      "hands installing phone mount",
+      "product demonstration close up"
+    ],
+    "expected_subject": "the named product or hands using/installing it",
+    "expected_action": "拧一下就能锁紧",
+    "expected_context": "product demonstration",
+    "preferred_mode": "pip",
+    "fallback": "a_roll_safe_push_and_sparse_emphasis",
+    "semantic_query": "拧一下就能锁紧 phone mount in car hands installing phone mount product demonstration close up",
+    "provider_query": "phone mount in car",
+    "local_candidate_count": 19,
+    "provider_attempted": false,
+    "provider": null,
+    "provider_status": "skipped_local_semantic_match",
+    "provider_attempts": 0,
+    "provider_attempt_details": [],
+    "candidate_count": 0,
+    "candidate_scores": [
+      {
+        "asset_id": "broll-eda83700b0",
+        "score": 82,
+        "accepted": true,
+        "reason": [
+          "concrete_visual_intersection:product_demo",
+          "keywords:phonemountincar"
+        ]
+      }
+    ],
+    "rejections": [],
+    "final_asset_id": "broll-eda83700b0",
+    "final_action": "bind_visual_asset",
+    "final_mode": "pip"
+  },
+  {
+    "source_segment_index": 4,
+    "source_segment_indices": [
+      4
+    ],
+    "start": 6.84,
+    "end": 8.3,
+    "visual_type": "product",
+    "chinese_concepts": [
+      "product"
+    ],
+    "search_queries": [
+      "car air vent phone mount",
+      "hands installing phone mount",
+      "product demonstration close up"
+    ],
+    "expected_subject": "the named product or hands using/installing it",
+    "expected_action": "也不会卡住出风口",
+    "expected_context": "product demonstration",
+    "preferred_mode": "full",
+    "fallback": "a_roll_safe_push_and_sparse_emphasis",
+    "semantic_query": "也不会卡住出风口 car air vent phone mount hands installing phone mount product demonstration close up",
+    "provider_query": "car air vent phone mount",
+    "local_candidate_count": 19,
+    "provider_attempted": true,
+    "provider": "pexels",
+    "provider_status": "ready",
+    "provider_attempts": 3,
+    "provider_attempt_details": [
+      {
+        "provider": "pexels",
+        "status": "ready",
+        "attempts": 1,
+        "candidate_count": 1
+      },
+      {
+        "provider": null,
+        "status": "unavailable",
+        "attempts": 2,
+        "candidate_count": 0
+      }
+    ],
+    "candidate_count": 1,
+    "candidate_scores": [
+      {
+        "asset_id": "broll-eda83700b0",
+        "score": 82,
+        "accepted": true,
+        "reason": [
+          "concrete_visual_intersection:product_demo",
+          "keywords:carairventphonemount"
+        ]
+      }
+    ],
+    "rejections": [
+      "no_authorized_semantic_match",
+      "no_generated_fallback_match"
+    ],
+    "final_asset_id": null,
+    "final_action": "safe_degradation",
+    "provider_reason": null
+  },
+  {
+    "source_segment_index": 9,
+    "source_segment_indices": [
+      9
+    ],
+    "start": 13.12,
+    "end": 14.5,
+    "visual_type": "product",
+    "chinese_concepts": [
+      "product"
+    ],
+    "search_queries": [
+      "product demonstration close up",
+      "hands installing product",
+      "phone mount in car"
+    ],
+    "expected_subject": "the named product or hands using/installing it",
+    "expected_action": "反正拧一下就取下来",
+    "expected_context": "product demonstration",
+    "preferred_mode": "pip",
+    "fallback": "a_roll_safe_push_and_sparse_emphasis",
+    "semantic_query": "反正拧一下就取下来 product demonstration close up hands installing product phone mount in car",
+    "provider_query": "product demonstration close up",
+    "local_candidate_count": 19,
+    "provider_attempted": true,
+    "provider": "pexels",
+    "provider_status": "ready",
+    "provider_attempts": 2,
+    "provider_attempt_details": [
+      {
+        "provider": "pexels",
+        "status": "ready",
+        "attempts": 0,
+        "candidate_count": 1
+      },
+      {
+        "provider": null,
+        "status": "unavailable",
+        "attempts": 2,
+        "candidate_count": 0
+      }
+    ],
+    "candidate_count": 1,
+    "candidate_scores": [
+      {
+        "asset_id": "broll-59b1ea22d3",
+        "score": 0,
+        "accepted": false,
+        "reason": [
+          "rejected_by_semantic_gate"
+        ]
+      }
+    ],
+    "rejections": [
+      "no_authorized_semantic_match",
+      "no_generated_fallback_match"
+    ],
+    "final_asset_id": null,
+    "final_action": "safe_degradation",
+    "provider_reason": "cache_reused"
+  }
+]

@@ -1,0 +1,282 @@
+{
+  "report_version": "auto-fine-cut-v1-generated-broll-v1",
+  "generated_at": "2026-08-22T13:48:39.135687+00:00",
+  "source": {
+    "path": "C:\\Users\\zeng\\Videos\\大树老师无剪辑素材7.13版.mp4",
+    "sha256": "d0866999ae1663811091964dc22ff8c33572969da0e79e20f51c29050b7cad33",
+    "render_input": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\assembled-shot-plan.mp4",
+    "render_input_sha256": "45c5572c2ba478922e1218290280b3d251214ff7344e07eae7d6f905b341507c"
+  },
+  "subtitle": {
+    "passed": true,
+    "checks": {
+      "cue_count_14_to_18": true,
+      "min_duration_ge_0_9": true,
+      "max_duration_le_2_4": false,
+      "max_duration_natural_phrase_exception": true,
+      "no_singleton_fragments": true,
+      "no_known_naturalness_fragments": true
+    },
+    "cue_count": 17,
+    "min_duration_seconds": 1.164,
+    "max_duration_seconds": 2.8,
+    "max_duration_gate_passed": true,
+    "cue_count_by_source_segment": {
+      "0": 3,
+      "1": 3,
+      "2": 4,
+      "3": 7
+    },
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "word_timestamp_mapping": {
+      "matched": true,
+      "matched_segment_count": 4,
+      "total_segment_count": 4,
+      "normalized_substitutions": {
+        "以->你": 1,
+        "顺应八平->数影霸屏": 1
+      },
+      "source": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\asr\\assembled-word-timestamps-large-v3-turbo.json",
+      "source_sha256": "eae1cfed4b7be988309f3dd37a70146510ff0ca58ed4c3880e351559d3104f89",
+      "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "word_count": 162
+    }
+  },
+  "subtitle_files": {
+    "srt": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\subtitles-phrase-word-timestamps-generated-v1.srt",
+    "ass": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\subtitles-phrase-word-timestamps-generated-v1.ass",
+    "preview": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\subtitle-preview-word-timestamps-generated-v1.json"
+  },
+  "visual_acceptance": {
+    "passed": true,
+    "required_visual_origin_policy": "generated_image_or_confirmed_stock_media",
+    "generated_images_count_as_visual_events_for_local_acceptance": true,
+    "generated_images_do_not_satisfy_free_stock_license_gate": true,
+    "visual_event_count": 3,
+    "generated_image_event_count": 3,
+    "real_stock_video_event_count": 0,
+    "has_pip": true,
+    "pip_rendered": true,
+    "pip_safe_area_passed": true,
+    "pip_geometry": {
+      "safe": true,
+      "bbox": {
+        "left": 480,
+        "top": 787,
+        "right": 696,
+        "bottom": 1005,
+        "width": 216,
+        "height": 218,
+        "normalized": {
+          "left": 0.6667,
+          "top": 0.6148,
+          "right": 0.9667,
+          "bottom": 0.7852
+        }
+      },
+      "face_safe_bbox": {
+        "left": 86,
+        "top": 128,
+        "right": 648,
+        "bottom": 768
+      },
+      "subtitle_bbox": {
+        "left": 36,
+        "top": 1011,
+        "right": 684,
+        "bottom": 1216
+      },
+      "intersects_face_safe_bbox": false,
+      "intersects_subtitle_bbox": false
+    },
+    "has_fullscreen": true,
+    "coverage_seconds": 11.5,
+    "coverage_ratio": 0.318,
+    "no_fixed_asset_loop": true,
+    "subtitle_last_render": true,
+    "stock_license_gate": "BLOCKED_NOT_CONFIGURED"
+  },
+  "alignment": {
+    "word_p95_ms": null,
+    "word_gate": "UNVERIFIED_RISK_REFERENCE_REQUIRED",
+    "word_timestamp_source": "local_faster_whisper_word_timestamps",
+    "word_timestamp_mapping": {
+      "matched": true,
+      "matched_segment_count": 4,
+      "total_segment_count": 4,
+      "normalized_substitutions": {
+        "以->你": 1,
+        "顺应八平->数影霸屏": 1
+      },
+      "source": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\asr\\assembled-word-timestamps-large-v3-turbo.json",
+      "source_sha256": "eae1cfed4b7be988309f3dd37a70146510ff0ca58ed4c3880e351559d3104f89",
+      "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+      "word_count": 162
+    },
+    "audio_video_drift_ms": 26.667,
+    "drift_gate": "passed",
+    "audio_video_drift": {
+      "method": "ffprobe_stream_start_end_pts",
+      "start_drift_ms": 0.0,
+      "end_drift_ms": 26.667,
+      "max_drift_ms": 26.667,
+      "threshold_ms": 67.0,
+      "passed": true
+    }
+  },
+  "ffprobe": {
+    "streams": [
+      {
+        "index": 0,
+        "codec_name": "h264",
+        "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+        "profile": "High",
+        "codec_type": "video",
+        "codec_tag_string": "avc1",
+        "codec_tag": "0x31637661",
+        "mime_codec_string": "avc1.64001f",
+        "width": 720,
+        "height": 1280,
+        "coded_width": 720,
+        "coded_height": 1280,
+        "has_b_frames": 2,
+        "sample_aspect_ratio": "1:1",
+        "display_aspect_ratio": "9:16",
+        "pix_fmt": "yuv420p",
+        "level": 31,
+        "color_range": "tv",
+        "color_space": "bt709",
+        "color_transfer": "bt709",
+        "color_primaries": "bt709",
+        "chroma_location": "left",
+        "field_order": "progressive",
+        "is_avc": "true",
+        "nal_length_size": "4",
+        "id": "0x1",
+        "r_frame_rate": "30/1",
+        "avg_frame_rate": "16245/542",
+        "time_base": "1/15360",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 555008,
+        "duration": "36.133333",
+        "bit_rate": "3977756",
+        "bits_per_raw_sample": "8",
+        "nb_frames": "1083",
+        "extradata_size": 47,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "VideoHandler",
+          "encoder": "Lavc62.28.102 libx264"
+        }
+      },
+      {
+        "index": 1,
+        "codec_name": "aac",
+        "codec_long_name": "AAC (Advanced Audio Coding)",
+        "profile": "LC",
+        "codec_type": "audio",
+        "codec_tag_string": "mp4a",
+        "codec_tag": "0x6134706d",
+        "mime_codec_string": "mp4a.40.2",
+        "sample_fmt": "fltp",
+        "sample_rate": "96000",
+        "channels": 2,
+        "channel_layout": "stereo",
+        "bits_per_sample": 0,
+        "initial_padding": 0,
+        "id": "0x2",
+        "r_frame_rate": "0/0",
+        "avg_frame_rate": "0/0",
+        "time_base": "1/96000",
+        "start_pts": 0,
+        "start_time": "0.000000",
+        "duration_ts": 3471360,
+        "duration": "36.160000",
+        "bit_rate": "130540",
+        "nb_frames": "3390",
+        "extradata_size": 5,
+        "disposition": {
+          "default": 1,
+          "dub": 0,
+          "original": 0,
+          "comment": 0,
+          "lyrics": 0,
+          "karaoke": 0,
+          "forced": 0,
+          "hearing_impaired": 0,
+          "visual_impaired": 0,
+          "clean_effects": 0,
+          "attached_pic": 0,
+          "timed_thumbnails": 0,
+          "non_diegetic": 0,
+          "captions": 0,
+          "descriptions": 0,
+          "metadata": 0,
+          "dependent": 0,
+          "still_image": 0,
+          "multilayer": 0
+        },
+        "tags": {
+          "language": "und",
+          "handler_name": "SoundHandler"
+        }
+      }
+    ],
+    "format": {
+      "filename": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\auto-fine-cut-v1-generated-image-broll.mp4",
+      "nb_streams": 2,
+      "nb_programs": 0,
+      "nb_stream_groups": 0,
+      "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+      "format_long_name": "QuickTime / MOV",
+      "start_time": "0.000000",
+      "duration": "36.160000",
+      "size": "18596197",
+      "bit_rate": "4114202",
+      "probe_score": 100,
+      "tags": {
+        "major_brand": "isom",
+        "minor_version": "512",
+        "compatible_brands": "isomiso2avc1mp41",
+        "encoder": "Lavf62.12.102"
+      }
+    }
+  },
+  "keyframes": [
+    "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\keyframe-01-3_2s.png",
+    "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\keyframe-02-10_8s.png",
+    "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\keyframe-03-28_8s.png",
+    "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-broll-v1\\keyframe-04-32_5s.png"
+  ],
+  "local_acceptance_passed": true,
+  "publish_claim_allowed": false,
+  "overall_passed": false,
+  "blocking_gates": [
+    "generated_images_are_not_free_stock_license",
+    "word_level_p95_unverified_against_manual_reference",
+    "bgm_authorization_unverified"
+  ]
+}

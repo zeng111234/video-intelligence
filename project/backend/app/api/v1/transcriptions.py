@@ -62,12 +62,15 @@ class ManualTextImportRequest(BaseModel):
 class VoiceoverDraftRequest(BaseModel):
     """从已批准转写生成短数字人口播稿。"""
 
-    target_seconds: int = 45
+    # 默认将长转写压缩为一条约 60 秒的最终口播稿；保留请求字段以兼容
+    # 已有客户端的显式时长设置。
+    target_seconds: int = 60
     speech_rate: float = 1.0
     platform: str = "douyin"
     target_audience: str = ""
     tone: str = "casual"
-    variant_count: int = 2
+    # 新主路径只生成一份最终文案；字段保留用于兼容旧客户端请求。
+    variant_count: int = 1
 
 
 class VoiceoverDraftResponse(BaseModel):
@@ -594,11 +597,15 @@ def create_voiceover_draft(
         min(800, round(body.target_seconds * 4 * body.speech_rate)),
     )
     rewrite_goal = (
-        f"生成约 {body.target_seconds} 秒、约 {target_characters} 字的数字人口播稿。"
+        f"生成不超过约 {body.target_seconds} 秒、约 {target_characters} 字的数字人口播稿；内容不足时自然缩短，不要灌水。"
         "删除口头禅、寒暄、重复句和与主旨无关的绕话；合并重复观点。"
+        "开头前3秒必须用原文可确认的信息重写一个有吸引力的钩子；"
+        "如果原文没有强钩子，只能用问题、反差或痛点重组，不能编造事实。"
         "保留原文中可确认的核心观点、数字、专有名词和必要限定条件；"
         "不得把低置信或不确定内容补写成事实，不得虚构案例、效果或承诺。"
-        "输出自然连续的纯口播正文，不要标题、分镜说明、括号注释或 Markdown。"
+        "结尾补一个基于原文的自然行动引导或下一步建议；原文没有明确行动时使用中性总结，"
+        "不得凭空添加购买、私信、关注、收益或效果承诺。"
+        "只输出一份自然连续的纯口播正文，不要多个版本、标题、分镜说明、括号注释或 Markdown。"
     )
     task = copywriting_service.rewrite(
         source_text=source_text,
@@ -608,7 +615,7 @@ def create_voiceover_draft(
         target_length=target_characters,
         tone=body.tone,
         rewrite_goal=rewrite_goal,
-        variant_count=body.variant_count,
+        variant_count=1,
         source_task_id=task_id,
         source_revision_id=revision.revision_id,
     )

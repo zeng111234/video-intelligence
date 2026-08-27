@@ -520,6 +520,13 @@ class ProviderSearchPage(BaseModel):
     has_more: bool = False
     raw_item_count: int = Field(default=0, ge=0)
     parsed_item_count: int = Field(default=0, ge=0)
+    # 公开浏览器采集漏斗。新字段均有默认值，保证旧 JSON/SQLite 批次仍可读取。
+    raw_discovered_count: int = Field(default=0, ge=0)
+    deduped_item_count: int = Field(default=0, ge=0)
+    direct_match_count: int = Field(default=0, ge=0)
+    out_of_window_count: int = Field(default=0, ge=0)
+    invalid_count: int = Field(default=0, ge=0)
+    duplicate_count: int = Field(default=0, ge=0)
     duration_filtered_count: int = Field(default=0, ge=0)
     incremental_play_filtered_count: int = Field(default=0, ge=0)
     relevance_filtered_count: int = Field(default=0, ge=0)
@@ -529,6 +536,10 @@ class ProviderSearchPage(BaseModel):
     ] | None = None
     crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
+    stage_timings_ms: dict[str, int] = Field(default_factory=dict)
+    adapter_rule_version: str | None = None
+    browser_reused: bool | None = None
+    session_recovered: bool = False
     errors: list[ProviderSearchError] = Field(default_factory=list)
 
 
@@ -783,6 +794,9 @@ class DiscoveryResult(BaseModel):
     duplicate_count: int = Field(default=0, ge=0)
     raw_item_count: int = Field(default=0, ge=0)
     parsed_item_count: int = Field(default=0, ge=0)
+    raw_discovered_count: int = Field(default=0, ge=0)
+    deduped_item_count: int = Field(default=0, ge=0)
+    direct_match_count: int = Field(default=0, ge=0)
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     irrelevant_count: int = Field(default=0, ge=0)
@@ -795,6 +809,10 @@ class DiscoveryResult(BaseModel):
     ] | None = None
     crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
+    stage_timings_ms: dict[str, int] = Field(default_factory=dict)
+    adapter_rule_version: str | None = None
+    browser_reused: bool | None = None
+    session_recovered: bool = False
     user_notice: str | None = None
     exhausted: bool = False
     partial: bool = False
@@ -847,6 +865,8 @@ class SearchBatch(BaseModel):
     # 只有用户在批次详情中明确确认后，才允许定时任务发起后续付费采样。
     tracking_authorized: bool = False
     tracking_parent_batch_id: str | None = None
+    # 渐进找素材队列的归属标记；旧批次缺失时按关键词和平台兼容读取。
+    crawler_queue_id: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     finished_at: datetime | None = None
     error: str | None = None
@@ -859,6 +879,63 @@ class SearchBatch(BaseModel):
             )
         if self.hotspot_window_hours not in {None, 1, 24, 72, 168}:
             raise ValueError("热点宝榜单周期只支持近 1 小时、近 1 天、近 3 天或近 7 天。")
+        return self
+
+
+class KeywordQueueStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    PAUSED = "paused"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class KeywordQueueItemStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CrawlerKeywordQueueItem(BaseModel):
+    item_id: str = Field(default_factory=lambda: f"keyword-{uuid4().hex[:12]}")
+    keyword: str = Field(min_length=1, max_length=50)
+    status: KeywordQueueItemStatus = KeywordQueueItemStatus.QUEUED
+    batch_id: str | None = None
+    partial_batch_ids: list[str] = Field(default_factory=list, max_length=20)
+    error: str | None = None
+    progress_stage: str = "queued"
+    progress_platform: Platform | None = None
+    progress_message: str | None = None
+    scanned_count: int = Field(default=0, ge=0)
+    parsed_count: int = Field(default=0, ge=0)
+    retained_count: int = Field(default=0, ge=0)
+    # 已经真实形成并去重的候选快照；旧队列缺失时安全回退为空。
+    progress_candidates: list[dict[str, Any]] = Field(default_factory=list, max_length=400)
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class CrawlerKeywordQueue(BaseModel):
+    queue_id: str = Field(default_factory=lambda: f"crawler-queue-{uuid4().hex[:12]}")
+    items: list[CrawlerKeywordQueueItem] = Field(min_length=1, max_length=20)
+    platforms: list[Platform] = Field(min_length=1)
+    published_window_days: int = 0
+    requested_count_per_platform: int = Field(default=30, ge=1, le=100)
+    status: KeywordQueueStatus = KeywordQueueStatus.QUEUED
+    created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    finished_at: datetime | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def validate_window(self):
+        if self.published_window_days not in {0, 1, 3, 7, 30, 180, 300}:
+            raise ValueError("发布时间范围不受支持。")
         return self
 
 
@@ -922,13 +999,21 @@ class PlatformSearchRun(BaseModel):
     returned_count: int = Field(default=0, ge=0, le=100)
     raw_item_count: int = Field(default=0, ge=0)
     parsed_item_count: int = Field(default=0, ge=0)
+    raw_discovered_count: int = Field(default=0, ge=0)
+    deduped_item_count: int = Field(default=0, ge=0)
+    direct_match_count: int = Field(default=0, ge=0)
     out_of_window_count: int = Field(default=0, ge=0)
     invalid_count: int = Field(default=0, ge=0)
     duplicate_count: int = Field(default=0, ge=0)
-    irrelevant_count: int = Field(default=0, ge=0, le=100)
+    # This is a funnel count over scanned rows, not the returned-candidate
+    # limit. It must remain able to represent the 200-row Douyin scan cap.
+    irrelevant_count: int = Field(default=0, ge=0)
     duration_filtered_count: int = Field(default=0, ge=0)
     incremental_play_filtered_count: int = Field(default=0, ge=0)
     low_incremental_items: list[ProviderSearchItem] = Field(default_factory=list)
+    # 严格关键词为 0 时保留的少量公开搜索参考项。它们只供人工确认，
+    # 不计入 returned_count，也不会自动进入后续流水线；旧批次缺失时为空。
+    reference_items: list[NormalizedCandidate] = Field(default_factory=list)
     relevance_rule_version: str | None = None
     result_state: str = "historical_unknown"
     crawl_stop_reason: Literal[
@@ -936,6 +1021,10 @@ class PlatformSearchRun(BaseModel):
     ] | None = None
     crawl_stop_message: str | None = None
     payload_diagnostic: str | None = None
+    stage_timings_ms: dict[str, int] = Field(default_factory=dict)
+    adapter_rule_version: str | None = None
+    browser_reused: bool | None = None
+    session_recovered: bool = False
     api_call_count: int = Field(default=0, ge=0, le=1)
     billable_units: float | None = Field(default=None, ge=0)
     quota_remaining: int | None = Field(default=None, ge=0)
@@ -1016,6 +1105,9 @@ class TranscriptSegment(BaseModel):
     quality_source: str = "primary_asr"
     quality_note: str | None = None
     alternatives: list[str] = Field(default_factory=list)
+    # Optional provider-native word timing.  An empty list means that this
+    # segment only has sentence timing; callers must not infer word precision.
+    words: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_time_range(self):
@@ -1103,6 +1195,7 @@ class TranscriptionTask(TaskRecord):
     source_kind: str = "asr"
     source_url: str | None = None
     timing_available: bool = True
+    word_timestamps_available: bool = False
     approved_revision_id: str | None = None
     auto_reviewed: bool = False
     uncertain_segment_count: int = Field(default=0, ge=0)

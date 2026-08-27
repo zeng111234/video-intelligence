@@ -1,0 +1,116 @@
+{
+  "source_video": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_uploads\\upload-4c188f4d4d-_7.13_.mp4",
+    "sha256": "d0866999ae1663811091964dc22ff8c33572969da0e79e20f51c29050b7cad33"
+  },
+  "output_video": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-75f103b7cc.mp4",
+    "sha256": "e299df6ec4ebe2ea013581cea397e5befd2f4b26a895587e5fec3242fc8a22f6",
+    "format": "mp4"
+  },
+  "renderer": "local_ffmpeg",
+  "broll": {
+    "origin_counts": {
+      "generated_image_asset": 0,
+      "stock_video_asset": 3,
+      "other_real_local_asset": 0
+    },
+    "assets": [
+      {
+        "timeline": {
+          "shot_id": "shot-02",
+          "asset_id": "broll-14f7720cd1",
+          "start": 2.6,
+          "end": 6.16,
+          "mode": "full"
+        },
+        "asset_id": "broll-14f7720cd1",
+        "name": "Pexels 高科技工厂生产线",
+        "stored_name": "broll-14f7720cd1-pexels-factory-32386533.mp4",
+        "source_provider": "pexels",
+        "source_url": "https://www.pexels.com/video/automated-industrial-production-line-in-action-32386533/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "authorization_status": "confirmed",
+        "rights_status": "provider_license",
+        "publish_licensed": true,
+        "sha256": "14f7720cd1498b46962363545ec10ea2d0b0ca168ef557e8ce95ea2533052079",
+        "duration_seconds": 10.22,
+        "width": 3840,
+        "height": 2160,
+        "aspect_ratio": 1.7778,
+        "cache_path": "C:/Users/zeng/Desktop/video/data/creative_assets/broll-14f7720cd1-pexels-factory-32386533.mp4"
+      },
+      {
+        "timeline": {
+          "shot_id": "shot-05",
+          "asset_id": "broll-3344413315",
+          "start": 14.36,
+          "end": 16.96,
+          "mode": "pip"
+        },
+        "asset_id": "broll-3344413315",
+        "name": "Pexels 办公室电脑协作",
+        "stored_name": "broll-3344413315-pexels-office-computers-6803585.mp4",
+        "source_provider": "pexels",
+        "source_url": "https://www.pexels.com/video/men-using-computer-in-office-6803585/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "authorization_status": "confirmed",
+        "rights_status": "provider_license",
+        "publish_licensed": true,
+        "sha256": "3344413315c6ed5c324aed2ea14e44201e4adc2dad934d64df356f7aef97fd0a",
+        "duration_seconds": 27.92,
+        "width": 4096,
+        "height": 2160,
+        "aspect_ratio": 1.8963,
+        "cache_path": "C:/Users/zeng/Desktop/video/data/creative_assets/broll-3344413315-pexels-office-computers-6803585.mp4"
+      },
+      {
+        "timeline": {
+          "shot_id": "shot-08",
+          "asset_id": "broll-f847ed1e82",
+          "start": 24.56,
+          "end": 28.16,
+          "mode": "full"
+        },
+        "asset_id": "broll-f847ed1e82",
+        "name": "Pexels 客户商务会议",
+        "stored_name": "broll-f847ed1e82-pexels-client-meeting-18435111.mp4",
+        "source_provider": "pexels",
+        "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "authorization_status": "confirmed",
+        "rights_status": "provider_license",
+        "publish_licensed": true,
+        "sha256": "f847ed1e822a9771721a9eb768adc3257b132b33b715e5bbff5eb3a56afe4400",
+        "duration_seconds": 24.873,
+        "width": 1280,
+        "height": 720,
+        "aspect_ratio": 1.7778,
+        "cache_path": "C:/Users/zeng/Desktop/video/data/creative_assets/broll-f847ed1e82-pexels-client-meeting-18435111.mp4"
+      }
+    ],
+    "license_note": "Pexels provider license metadata retained; no platform upload performed."
+  },
+  "bgm": {
+    "enabled": true,
+    "asset_id": "bgm-a40b291dc5b1",
+    "title": "tech-city-local-acceptance-confirmed",
+    "source_provider": "manual",
+    "authorization_status": "confirmed",
+    "voice_priority": true,
+    "ducking": {
+      "enabled": true,
+      "filter": "sidechaincompress",
+      "attack_ms": 20,
+      "release_ms": 450,
+      "mix_volume": 0.16
+    },
+    "publish_rights_gate_passed": true
+  },
+  "new_cloud_calls": 0,
+  "new_cost_cny": 0,
+  "publish_allowed": true
+}

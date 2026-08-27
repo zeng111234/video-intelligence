@@ -1,0 +1,9 @@
+{
+  "stage": "ims_submit",
+  "error": "IMS SubmitMediaProducingJob 请求失败：{\"RequestId\":\"01A03BC8-0C35-57F9-9312-4F54ECB2A4FD\",\"HostId\":\"ice.cn-beijing.aliyuncs.com\",\"Code\":\"Forbidden\",\"Message\":\"User not authorized to operate on the specified resource.\",\"Recommend\":\"https://api.aliyun.com/troubleshoot?q=Forbidden",
+  "timings": {
+    "upload_source.mp4": 1.623,
+    "upload_broll-pexels-phone-mount.mp4": 2.143,
+    "upload_bgm-local-acceptance.mp3": 1.436
+  }
+}

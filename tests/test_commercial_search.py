@@ -7,6 +7,7 @@ import pytest
 from src.adapters.licensed import LicensedProviderError, SandboxLicensedSearchProvider
 from src.models import (
     DataSource,
+    EligibilityStatus,
     Platform,
     PlatformSearchRun,
     PlatformRunStatus,
@@ -24,6 +25,7 @@ from src.repositories import MockRepository, SQLiteRepository
 from src.services import HeatService, KeywordTrendService, SourceService
 from src.services.commercial_search import (
     CommercialSearchService,
+    bilibili_relevance_tier,
     title_matches_keyword,
 )
 
@@ -45,6 +47,7 @@ class FixtureProvider:
             enabled=True,
             supported_platforms=[
                 Platform.DOUYIN,
+                Platform.BILIBILI,
                 Platform.XIAOHONGSHU,
                 Platform.WECHAT_CHANNELS,
             ],
@@ -121,6 +124,8 @@ def _url(platform: Platform, item_id: str) -> str:
         return f"https://www.douyin.com/video/{item_id}"
     if platform == Platform.XIAOHONGSHU:
         return f"https://www.xiaohongshu.com/explore/{item_id}"
+    if platform == Platform.BILIBILI:
+        return f"https://www.bilibili.com/video/{item_id}"
     return f"https://channels.weixin.qq.com/platform/post/{item_id}"
 
 
@@ -147,6 +152,22 @@ def _douyin_only_service(
         KeywordTrendService(repository, clock=lambda: now),
         provider,
         active_platforms=(Platform.DOUYIN,),
+        clock=lambda: now,
+    )
+
+
+def _bilibili_only_service(
+    repository,
+    provider,
+    now: datetime,
+) -> CommercialSearchService:
+    source = SourceService(repository, HeatService())
+    return CommercialSearchService(
+        repository,
+        source,
+        KeywordTrendService(repository, clock=lambda: now),
+        provider,
+        active_platforms=(Platform.BILIBILI,),
         clock=lambda: now,
     )
 
@@ -383,7 +404,7 @@ def test_force_refresh_within_sixty_seconds_is_blocked_across_batches() -> None:
     assert len(provider.search_calls) == 3
 
 
-def test_connection_failure_is_not_retried_for_paid_post() -> None:
+def test_connection_failure_is_retried_once_and_rate_limit_is_not_retried() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     retry_repository = MockRepository(candidates=[], tasks=[])
     retry_provider = FixtureProvider(now)
@@ -391,10 +412,10 @@ def test_connection_failure_is_not_retried_for_paid_post() -> None:
     retried = _service(retry_repository, retry_provider, now).execute(keyword="二手车")
 
     assert all(
-        run.status == PlatformRunStatus.FAILED
+        run.status == PlatformRunStatus.PARTIAL
         for run in retry_repository.list_platform_search_runs(retried.batch_id)
     )
-    assert len(retry_provider.search_calls) == 3
+    assert len(retry_provider.search_calls) == 6
 
     limited_repository = MockRepository(candidates=[], tasks=[])
     limited_provider = FixtureProvider(now)
@@ -846,6 +867,237 @@ def test_bilibili_nonmatching_search_card_is_never_imported() -> None:
     assert errors == []
     assert [item.platform_item_id for item in normalized] == ["BVmatch"]
     assert counts["irrelevant_count"] == 1
+
+
+def test_bilibili_strict_empty_keeps_bounded_manual_reference_cards() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id=f"BV-reference-{index}",
+                title=f"美业老板分享经营经验 {index}",
+                author_id=f"author-reference-{index}",
+                author_name="参考作者",
+                published_at=now,
+                source_url=f"https://www.bilibili.com/video/BV-reference-{index}",
+                provider_rank=index,
+                metrics={
+                    "item_id": f"BV-reference-{index}",
+                    "sampled_at": now,
+                    "confidence": 0.9,
+                },
+            )
+            for index in range(1, 38)
+        ],
+        observed_at=now,
+        request_id="bilibili-reference-only",
+        raw_item_count=7,
+        parsed_item_count=7,
+    )
+
+    batch = _bilibili_only_service(repository, provider, now).execute(
+        keyword="美业工厂",
+        count=3,
+    )
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.returned_count == 0
+    assert len(run.reference_items) == 30
+    assert all(
+        item.eligibility_status == EligibilityStatus.PENDING_REVIEW
+        for item in run.reference_items
+    )
+    assert len(repository.list_candidates()) == 30
+    assert len(repository.list_candidate_matches(run.run_id)) == 30
+
+
+def test_bilibili_relevance_has_high_review_and_irrelevant_tiers() -> None:
+    assert (
+        bilibili_relevance_tier(
+            title="化妆品源头工厂",
+            keyword="美业工厂",
+            evidence="bilibili:browser_search_response;bilibili_match_text=化妆品源头工厂 美业供应链;",
+        )
+        == "high"
+    )
+    assert (
+        bilibili_relevance_tier(title="美业老板怎么做IP", keyword="美业工厂")
+        == "review"
+    )
+    assert (
+        bilibili_relevance_tier(title="机械键盘智能工厂", keyword="美业工厂")
+        == "irrelevant"
+    )
+    assert bilibili_relevance_tier(title="美业工厂真实案例", keyword="美业工厂") == "high"
+
+
+def test_bilibili_normalization_keeps_high_and_review_cards_separately() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    page = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BV-high-related",
+                title="化妆品源头工厂",
+                author_id="author-high",
+                author_name="作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BV-high-related",
+                provider_rank=1,
+                metrics={"item_id": "BV-high-related", "sampled_at": now, "confidence": 0.9},
+                evidence="bilibili:browser_search_response;bilibili_match_text=化妆品源头工厂 美业供应链;",
+            ),
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BV-review",
+                title="美业老板怎么做IP",
+                author_id="author-review",
+                author_name="作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BV-review",
+                provider_rank=2,
+                metrics={"item_id": "BV-review", "sampled_at": now, "confidence": 0.9},
+            ),
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BV-irrelevant",
+                title="机械键盘智能工厂",
+                author_id="author-irrelevant",
+                author_name="作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BV-irrelevant",
+                provider_rank=3,
+                metrics={"item_id": "BV-irrelevant", "sampled_at": now, "confidence": 0.9},
+            ),
+        ],
+        observed_at=now,
+        request_id="bilibili-three-tiers",
+    )
+
+    normalized, errors, counts = CommercialSearchService._normalize_page(
+        page,
+        platform=Platform.BILIBILI,
+        keyword="美业工厂",
+        provider="fixture_vendor",
+        source_type=DataSource.PUBLIC_RESEARCH,
+        published_after=None,
+        limit=10,
+    )
+
+    assert errors == []
+    assert [item.platform_item_id for item in normalized] == ["BV-high-related"]
+    assert [item.platform_item_id for item in counts["reference_items"]] == ["BV-review"]
+    assert counts["irrelevant_count"] == 1
+    assert (
+        counts["reference_items"][0].eligibility_status
+        == EligibilityStatus.PENDING_REVIEW
+    )
+
+
+def test_bilibili_adapter_direct_match_marker_keeps_description_match() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    page = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BVdescription-match",
+                title="工厂案例分享",
+                author_id="author-description",
+                author_name="案例作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BVdescription-match",
+                provider_rank=1,
+                metrics={
+                    "item_id": "BVdescription-match",
+                    "sampled_at": now,
+                    "confidence": 0.9,
+                },
+                evidence="bilibili:browser_search_response;direct_match=1;time=platform;",
+            )
+        ],
+        observed_at=now,
+        request_id="bilibili-description-match",
+    )
+
+    normalized, errors, counts = CommercialSearchService._normalize_page(
+        page,
+        platform=Platform.BILIBILI,
+        keyword="工厂短视频",
+        provider="fixture_vendor",
+        source_type=DataSource.PUBLIC_RESEARCH,
+        published_after=None,
+        limit=1,
+    )
+
+    assert errors == []
+    assert len(normalized) == 1
+    assert counts["irrelevant_count"] == 0
+
+
+def test_bilibili_run_funnel_uses_same_direct_match_rule_as_normalization() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = FixtureProvider(now)
+    provider.page_override = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="fixture_vendor",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BV-title-match",
+                title="工厂短视频案例",
+                author_id="author-title",
+                author_name="作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BV-title-match",
+                provider_rank=1,
+                metrics={
+                    "item_id": "BV-title-match",
+                    "sampled_at": now,
+                    "confidence": 0.9,
+                },
+            ),
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id="BV-noise",
+                title="完全无关视频",
+                author_id="author-noise",
+                author_name="作者",
+                published_at=now,
+                source_url="https://www.bilibili.com/video/BV-noise",
+                provider_rank=2,
+                metrics={
+                    "item_id": "BV-noise",
+                    "sampled_at": now,
+                    "confidence": 0.9,
+                },
+            ),
+        ],
+        observed_at=now,
+        request_id="bilibili-funnel-rule",
+        raw_item_count=2,
+        parsed_item_count=2,
+        direct_match_count=0,
+    )
+
+    batch = _bilibili_only_service(repository, provider, now).execute(
+        keyword="工厂短视频",
+        count=2,
+    )
+    run = repository.list_platform_search_runs(batch.batch_id)[0]
+
+    assert run.direct_match_count == 1
+    assert run.irrelevant_count == 1
+    assert run.direct_match_count + run.irrelevant_count == run.parsed_item_count
 
 
 def test_items_outside_requested_window_are_diagnosed_without_extra_pages() -> None:

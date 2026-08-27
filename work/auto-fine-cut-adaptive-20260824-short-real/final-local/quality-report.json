@@ -1,0 +1,46 @@
+{
+  "media_integrity_passed": true,
+  "subtitle_sync_passed": true,
+  "visual_release_passed": false,
+  "passed": false,
+  "publish_claim_allowed": false,
+  "transcript_source_identity_gate": {
+    "passed": true,
+    "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+    "source_duration_seconds": 104.721,
+    "timing_source": "word_timestamps"
+  },
+  "audio_subtitle_semantic_gate": {
+    "passed": true,
+    "method": "local_ASR_word_ranges_plus_reviewed_transcript",
+    "cue_count": 13,
+    "unrelated_script_rejected": true
+  },
+  "edl_execution_gate": {
+    "passed": true,
+    "source_range": [
+      0.0,
+      21.0
+    ],
+    "audio_range": [
+      0.0,
+      21.0
+    ],
+    "output_duration_seconds": 21.0
+  },
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 13,
+    "min_duration_seconds": 1.0,
+    "max_duration_seconds": 1.8199999999999998,
+    "phrase_timing_source": "word_timestamps",
+    "one_line_ratio": 1.0
+  },
+  "visual_event_count": 5,
+  "real_broll_event_count": 0,
+  "data_chart_event_count": 2,
+  "safe_degradation": "no_reliable_semantic_restaurant_broll",
+  "broll_provenance": [],
+  "output_sha256": "04c65ae910b0dcd34bb85c23ea0550ce231a96aa2c30dc29f55c694493b9247c",
+  "source_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5"
+}

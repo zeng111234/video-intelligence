@@ -1,0 +1,84 @@
+{
+  "source_video": {
+    "path": "C:\\Users\\zeng\\Videos\\大树老师无剪辑素材7.13版.mp4",
+    "sha256": "d0866999ae1663811091964dc22ff8c33572969da0e79e20f51c29050b7cad33"
+  },
+  "output_video": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-1010d91e64.mp4",
+    "sha256": "f5585ede58e7115785cc02a5b1fc74aed87ef00742826a2c56edc5b6cdb579cc"
+  },
+  "renderer": "local_ffmpeg",
+  "new_cloud_calls": 0,
+  "new_cost_cny": 0,
+  "publish_allowed": false,
+  "broll": {
+    "origin_counts": {
+      "generated_image_asset": 3,
+      "stock_video_asset": 0,
+      "other_real_local_asset": 0
+    },
+    "generated_manifest": {
+      "manifest_version": "generated-broll-assets-v1",
+      "created_at": "2026-08-22",
+      "source_type": "built_in_image_generation",
+      "rights_status": "generated_for_local_acceptance",
+      "cloud_upload": false,
+      "paid_stock_call": false,
+      "assets": [
+        {
+          "asset_id": "generated-crm-database-01",
+          "path": "crm-database-generated.png",
+          "sha256": "00366AF2E11F33C44C52BC2194589FE445E7C69771BC4CC54C8FD487195380DC",
+          "role": "fullscreen_broll",
+          "semantic_binding": "客户数据库"
+        },
+        {
+          "asset_id": "generated-customer-relationship-02",
+          "path": "customer-relationship-generated.png",
+          "sha256": "9400811E11C201BE4133382B336B02EBF439A69697EA952E3CCAD2B8E4B4F624",
+          "role": "pip_broll",
+          "semantic_binding": "客户关系沉淀"
+        },
+        {
+          "asset_id": "generated-factory-products-03",
+          "path": "factory-products-generated.png",
+          "sha256": "AA1B944E2D58A25EE5A63448B3F167AF77C2DDA40DC160722ACC8D5677517D40",
+          "role": "fullscreen_broll",
+          "semantic_binding": "工厂品牌产品"
+        }
+      ]
+    },
+    "rights_note": "generated_for_local_acceptance，不是 stock license，不代表发布授权。"
+  },
+  "bgm": {
+    "asset_id": "bgm-07dfb2b9b6ef",
+    "metadata": {
+      "asset_id": "bgm-07dfb2b9b6ef",
+      "title": "tech-city",
+      "original_name": "tech-city.mp3",
+      "stored_name": "bgm-07dfb2b9b6ef.mp3",
+      "media_type": "audio/mpeg",
+      "mood": "活力合成器流行 科技城市",
+      "rights_holder": "待核验：用户提供；未确认商用授权",
+      "rights_confirmed_at": "",
+      "created_at": "2026-08-21T16:23:02.926361+08:00",
+      "duration_seconds": 138.46,
+      "voiceover_category": "科技未来",
+      "energy": "平稳",
+      "tags": [
+        "活力合成器流行",
+        "科技城市"
+      ],
+      "source_provider": "manual",
+      "source_url": "",
+      "license_url": "",
+      "content_id_risk": "unknown",
+      "authorization_status": "unverified",
+      "auto_eligible": false,
+      "candidate_only": true
+    },
+    "selected_for_local_acceptance": true,
+    "ducking_renderer": "sidechaincompress + voice-priority mix",
+    "publish_license_claim": false
+  }
+}

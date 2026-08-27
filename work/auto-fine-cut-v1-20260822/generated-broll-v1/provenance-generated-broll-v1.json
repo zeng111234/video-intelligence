@@ -1,0 +1,134 @@
+{
+  "provenance_version": "generated-broll-acceptance-v1",
+  "generated_at": "2026-08-22T13:48:38.971649+00:00",
+  "source_video": {
+    "path": "C:\\Users\\zeng\\Videos\\大树老师无剪辑素材7.13版.mp4",
+    "sha256": "d0866999ae1663811091964dc22ff8c33572969da0e79e20f51c29050b7cad33",
+    "render_input": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\assembled-shot-plan.mp4",
+    "render_input_sha256": "45c5572c2ba478922e1218290280b3d251214ff7344e07eae7d6f905b341507c"
+  },
+  "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+  "manifest_source_type": "built_in_image_generation",
+  "manifest_rights_status": "generated_for_local_acceptance",
+  "cloud_upload": false,
+  "paid_stock_call": false,
+  "assets": [
+    {
+      "asset_id": "generated-crm-database-01",
+      "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\crm-database-generated.png",
+      "sha256": "00366af2e11f33c44c52bc2194589fe445e7c69771bc4cc54c8fd487195380dc",
+      "role": "fullscreen_broll",
+      "semantic_binding": "客户数据库",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false
+    },
+    {
+      "asset_id": "generated-customer-relationship-02",
+      "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\customer-relationship-generated.png",
+      "sha256": "9400811e11c201be4133382b336b02ebf439a69697ea952e3ccad2b8e4b4f624",
+      "role": "pip_broll",
+      "semantic_binding": "客户关系沉淀",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false
+    },
+    {
+      "asset_id": "generated-factory-products-03",
+      "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\factory-products-generated.png",
+      "sha256": "aa1b944e2d58a25ee5a63448b3f167af77c2dda40dc160722acc8d5677517d40",
+      "role": "fullscreen_broll",
+      "semantic_binding": "工厂品牌产品",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false
+    }
+  ],
+  "bindings": [
+    {
+      "event_id": "generated-visual-01",
+      "asset_id": "generated-crm-database-01",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "客户数据库",
+      "start": 2.8,
+      "end": 6.1,
+      "mode": "fullscreen",
+      "motion": "ken_burns_slow_zoom_in",
+      "subtitle_layer": "after_visual_overlay"
+    },
+    {
+      "event_id": "generated-visual-02",
+      "asset_id": "generated-customer-relationship-02",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "客户关系沉淀",
+      "start": 9.3,
+      "end": 13.5,
+      "mode": "pip",
+      "motion": "ken_burns_slow_pan",
+      "subtitle_layer": "after_visual_overlay",
+      "pip_geometry": {
+        "safe": true,
+        "bbox": {
+          "left": 480,
+          "top": 787,
+          "right": 696,
+          "bottom": 1005,
+          "width": 216,
+          "height": 218,
+          "normalized": {
+            "left": 0.6667,
+            "top": 0.6148,
+            "right": 0.9667,
+            "bottom": 0.7852
+          }
+        },
+        "face_safe_bbox": {
+          "left": 86,
+          "top": 128,
+          "right": 648,
+          "bottom": 768
+        },
+        "subtitle_bbox": {
+          "left": 36,
+          "top": 1011,
+          "right": 684,
+          "bottom": 1216
+        },
+        "intersects_face_safe_bbox": false,
+        "intersects_subtitle_bbox": false
+      },
+      "rendered": true
+    },
+    {
+      "event_id": "generated-visual-03",
+      "asset_id": "generated-factory-products-03",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "工厂品牌产品",
+      "start": 27.5,
+      "end": 31.5,
+      "mode": "fullscreen",
+      "motion": "ken_burns_slow_zoom_out",
+      "subtitle_layer": "after_visual_overlay"
+    }
+  ],
+  "word_timestamp_mapping": {
+    "matched": true,
+    "matched_segment_count": 4,
+    "total_segment_count": 4,
+    "normalized_substitutions": {
+      "以->你": 1,
+      "顺应八平->数影霸屏": 1
+    },
+    "source": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\asr\\assembled-word-timestamps-large-v3-turbo.json",
+    "source_sha256": "eae1cfed4b7be988309f3dd37a70146510ff0ca58ed4c3880e351559d3104f89",
+    "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "word_count": 162
+  },
+  "bgm": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\bgm_library\\bgm-07dfb2b9b6ef.mp3",
+    "sha256": "012943cd55d33ecbbed70400f3e99a5650ae9011e5e10be0e2ffa08bbabc1470",
+    "provider": "local_ffmpeg",
+    "ducking_enabled": true,
+    "authorization_status": "unverified"
+  }
+}

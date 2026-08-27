@@ -530,6 +530,167 @@ def test_xiaohongshu_payload_rejects_items_without_video_type():
     assert provider._rows_from_payload(payload) == []
 
 
+def test_xiaohongshu_video_filter_requires_and_confirms_selected_state():
+    provider = _provider(Platform.XIAOHONGSHU)
+
+    class Control:
+        def __init__(self):
+            self.class_name = "channel"
+
+        def is_visible(self):
+            return True
+
+        def inner_text(self):
+            return "视频"
+
+        def get_attribute(self, name):
+            return self.class_name if name == "class" else None
+
+        def locator(self, selector):
+            assert selector == ".."
+            return self
+
+        def click(self, *, timeout):
+            assert timeout == 3000
+            self.class_name = "channel active"
+
+    class Matches:
+        def __init__(self, control):
+            self.control = control
+
+        def count(self):
+            return 1
+
+        def nth(self, _index):
+            return self.control
+
+    class Page:
+        url = "https://www.xiaohongshu.com/search_result?keyword=贴标机&type=51"
+
+        def __init__(self):
+            self.control = Control()
+
+        def locator(self, selector):
+            assert "#video.channel" in selector
+            return Matches(self.control)
+
+        def wait_for_timeout(self, _timeout):
+            pass
+
+    page = Page()
+    assert provider._select_xiaohongshu_video_filter(page) is True
+    assert page.control.class_name == "channel active"
+
+
+def test_xiaohongshu_filter_flow_reports_time_success_and_failure_fallback(
+    monkeypatch,
+):
+    provider = _provider(Platform.XIAOHONGSHU)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        provider,
+        "_select_xiaohongshu_video_filter",
+        lambda _page: calls.append("video") or True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "_select_xiaohongshu_time_filter",
+        lambda _page, _days: calls.append("time") or "最近一周",
+    )
+
+    notes = provider._apply_platform_filters(
+        object(),
+        search_filters={"published_days": "7"},
+    )
+
+    assert calls == ["video", "time"]
+    assert provider._xiaohongshu_video_filter_confirmed is True
+    assert provider._xiaohongshu_time_filter_confirmed is True
+    assert notes == ["已选择小红书“视频”筛选", "已选择小红书发布时间“最近一周”"]
+
+    monkeypatch.setattr(
+        provider,
+        "_select_xiaohongshu_time_filter",
+        lambda _page, _days: None,
+    )
+    notes = provider._apply_platform_filters(
+        object(),
+        search_filters={"published_days": "7"},
+    )
+    assert provider._xiaohongshu_time_filter_confirmed is False
+    assert notes[-1] == "平台时间筛选未生效，正在本地过滤"
+
+
+def test_xiaohongshu_time_filter_failure_uses_local_publish_time_filter(monkeypatch):
+    provider = _provider(Platform.XIAOHONGSHU)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    provider._xiaohongshu_time_filter_confirmed = False
+    monkeypatch.setattr(
+        provider,
+        "_collect_rows",
+        lambda _keyword, **_kwargs: [
+            {
+                "item_id": "xhs-recent-video",
+                "title": "最近视频",
+                "source_url": "https://www.xiaohongshu.com/explore/xhs-recent-video",
+                "published_at": now - timedelta(days=2),
+                "time_confident": True,
+                "is_video": True,
+                "evidence": "browser_search_response",
+            },
+            {
+                "item_id": "xhs-old-video",
+                "title": "较早视频",
+                "source_url": "https://www.xiaohongshu.com/explore/xhs-old-video",
+                "published_at": now - timedelta(days=9),
+                "time_confident": True,
+                "is_video": True,
+                "evidence": "browser_search_response",
+            },
+        ],
+    )
+
+    page = provider.search(
+        Platform.XIAOHONGSHU,
+        "贴标机",
+        now - timedelta(days=7),
+        1,
+        "xhs-local-time-fallback",
+    )
+
+    assert [item.platform_item_id for item in page.items] == ["xhs-recent-video"]
+
+
+def test_xiaohongshu_unknown_page_is_payload_invalid_diagnostic(monkeypatch):
+    provider = _provider(Platform.XIAOHONGSHU)
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+
+    def collect(_keyword, **_kwargs):
+        provider._collection_rule_failure = "页面结构发生变化，请重新连接"
+        return []
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+    page = provider.search(
+        Platform.XIAOHONGSHU,
+        "贴标机",
+        None,
+        1,
+        "xhs-unknown-page",
+    )
+
+    assert page.items == []
+    assert page.payload_diagnostic == "页面结构发生变化，请重新连接"
+
+
 def test_platform_filter_days_only_maps_native_date_options():
     observed_at = datetime(2026, 8, 14, 12, tzinfo=timezone.utc)
 
@@ -1278,13 +1439,18 @@ def test_bilibili_network_rows_require_direct_normalized_keyword_matches():
         "BV1TITLE2026",
         "BV1TOPIC2026",
         "BV1DESC02026",
+        "BV1AUTHOR026",
     ]
+    assert [row["direct_match"] for row in rows] == [True, True, True, False]
     items = provider._to_items(
         rows,
         observed_at=datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
         limit=30,
     )
     evidence_by_id = {item.platform_item_id: item.evidence or "" for item in items}
+    assert "direct_match=1" in evidence_by_id["BV1TITLE2026"]
+    assert "direct_match=1" in evidence_by_id["BV1TOPIC2026"]
+    assert "direct_match=1" in evidence_by_id["BV1DESC02026"]
     assert "严格话题=1" not in evidence_by_id["BV1TITLE2026"]
     assert "严格话题=1" in evidence_by_id["BV1TOPIC2026"]
     assert "严格话题=1" in evidence_by_id["BV1DESC02026"]
@@ -1346,13 +1512,61 @@ def test_bilibili_collection_prefers_network_rows_and_loads_later_pages(monkeypa
 
     rows = provider._collect_rows("餐饮获客", target=3)
 
-    assert [row["item_id"] for row in rows] == ["BV1NETWORK01", "BV1NETWORK02"]
+    assert [row["item_id"] for row in rows] == [
+        "BV1NETWORK01",
+        "BV1UNRELATED",
+        "BV1NETWORK02",
+    ]
+    assert [row["direct_match"] for row in rows] == [True, False, True]
     assert [parse_qs(urlparse(url).query)["page"][0] for url in page.goto_urls] == [
         "1",
         "2",
     ]
     assert provider._collection_stop_reason == "platform_end"
     assert provider._collection_stop_message == "已经没有更多符合条件的视频。"
+
+
+def test_bilibili_collection_does_not_scan_beyond_two_pages_for_sparse_matches(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    page = _CollectionPage(
+        "https://www.bilibili.com/",
+        response_payloads={
+            page_number: [
+                {
+                    "data": {
+                        "numPages": 10,
+                        "result": [
+                            {
+                                "bvid": f"BV1SPARSE{page_number:02d}",
+                                "title": "没有严格命中的公开视频",
+                            }
+                        ],
+                    }
+                }
+            ]
+            for page_number in (1, 2, 3)
+        },
+    )
+    context = _CollectionContext([page], _CollectionPage("about:blank"))
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+
+    rows = provider._collect_rows(
+        "稀疏关键词",
+        target=60,
+        qualified_target=30,
+        qualifying_count=lambda values: sum(bool(value.get("direct_match")) for value in values),
+    )
+
+    assert len(rows) == 2
+    assert [parse_qs(urlparse(url).query)["page"][0] for url in page.goto_urls] == ["1", "2"]
+    assert provider._collection_stop_reason == "safety_limit"
 
 
 @pytest.mark.parametrize("key", ["duration_ms", "durationMs"])
@@ -1407,7 +1621,28 @@ def test_rendered_card_date_keeps_spaces_before_trailing_like_count():
     assert published_at == datetime(2026, 6, 24, tzinfo=timezone.utc)
 
 
-def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
+def test_rendered_card_huge_relative_time_does_not_crash_collection():
+    """卡片文案里超大"X天前"等相对时间不得让整次采集抛 date value out of range。
+
+    平台卡片文本不可控，标题/描述里可能混入超大数字。过去该异常会从
+    _rendered_rows 一路冒到 commercial_search，被兜底成"供应商响应状态
+    不明确"，导致整次小红书搜索 0 条。相对时间超出可表示范围时应忽略。
+    """
+    observed_at = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+
+    for text in (
+        "餐饮获客 99999999999天前 作者",
+        "餐饮获客 888888888888888888888888888888分钟前 作者",
+        "餐饮获客 777777777777777777777小时前 作者",
+        "餐饮获客 1234567890123456789天前 点赞 47",
+    ):
+        assert (
+            LocalPlatformBrowserSearchProvider._parse_published_at(text, observed_at)
+            is None
+        )
+
+
+def test_bilibili_search_keeps_raw_scan_pool_close_to_requested_target(monkeypatch):
     provider = _provider(Platform.BILIBILI)
     captured: dict[str, int] = {}
     monkeypatch.setattr(
@@ -1429,7 +1664,241 @@ def test_platform_search_collects_a_larger_raw_pool(monkeypatch):
         "larger-pool",
     )
 
-    assert captured["target"] == 300
+    assert captured["target"] == 60
+
+
+def test_bilibili_search_exposes_funnel_and_stage_timings(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    rows = [
+        {
+            "item_id": "BV1funnel01",
+            "title": "贴标机应用案例",
+            "source_url": "https://www.bilibili.com/video/BV1funnel01",
+            "published_at": now,
+            "time_confident": True,
+            "direct_match": True,
+        }
+    ]
+
+    def collect(_keyword, *, target, **_kwargs):
+        assert target == 30
+        provider._collection_metrics = {
+            "raw_discovered_count": 86,
+            "deduped_item_count": 60,
+            "direct_match_count": 20,
+            "browser_reused": True,
+            "stage_timings_ms": {
+                "browser_attach_or_reuse_ms": 20,
+                "navigation_ms": 900,
+                "first_response_ms": 1100,
+                "scroll_loading_ms": 0,
+                "total_ms": 1200,
+            },
+        }
+        return rows
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+    page = provider.search(Platform.BILIBILI, "贴标机", None, 10, "funnel")
+
+    assert page.raw_discovered_count == 86
+    assert page.deduped_item_count == 60
+    assert page.direct_match_count == 20
+    assert page.stage_timings_ms["first_response_ms"] == 1100
+    assert page.adapter_rule_version == provider.adapter_version
+
+
+def test_bilibili_direct_matches_are_prioritized_inside_bounded_parse_pool():
+    provider = _provider(Platform.BILIBILI)
+    now = datetime(2026, 7, 30, 12, tzinfo=timezone.utc)
+    rows = [
+        {
+            "item_id": f"BVnoise{index:03d}",
+            "title": f"无关视频 {index}",
+            "source_url": f"https://www.bilibili.com/video/BVnoise{index:03d}",
+            "published_at": now,
+            "time_confident": True,
+            "direct_match": False,
+        }
+        for index in range(100)
+    ] + [
+        {
+            "item_id": f"BVdirect{index:03d}",
+            "title": f"工厂短视频应用案例 {index}",
+            "source_url": f"https://www.bilibili.com/video/BVdirect{index:03d}",
+            "published_at": now - timedelta(days=30),
+            "time_confident": True,
+            "direct_match": True,
+        }
+        for index in range(5)
+    ]
+
+    items = provider._to_items(rows, observed_at=now, limit=100)
+
+    assert len(items) == 100
+    assert sum("direct_match=1" in (item.evidence or "") for item in items) == 5
+    assert all("BVdirect" in str(item.platform_item_id) for item in items[:5])
+
+
+def test_bilibili_collection_stops_when_direct_match_target_is_reached(monkeypatch):
+    provider = _provider(Platform.BILIBILI)
+    page = _CollectionPage(
+        "https://www.bilibili.com/",
+        response_payloads={
+            1: [
+                {
+                    "data": {
+                        "numPages": 5,
+                        "result": [
+                            {"bvid": "BV1EARLY01", "title": "Alpha 门店案例"},
+                            {"bvid": "BV1EARLY02", "title": "Alpha 工厂案例"},
+                            {"bvid": "BV1NOPE01", "title": "完全无关"},
+                        ],
+                    }
+                }
+            ]
+        },
+    )
+    context = _CollectionContext([page], _CollectionPage("about:blank"))
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+
+    rows = provider._collect_rows(
+        "Alpha",
+        target=8,
+        qualified_target=2,
+        qualifying_count=lambda values: sum(bool(value.get("direct_match")) for value in values),
+    )
+
+    assert [row["item_id"] for row in rows] == [
+        "BV1EARLY01",
+        "BV1EARLY02",
+        "BV1NOPE01",
+    ]
+    assert [parse_qs(urlparse(url).query)["page"][0] for url in page.goto_urls] == ["1"]
+    assert provider._collection_stop_reason == "target_reached"
+
+
+def test_bilibili_page_fault_rebuilds_page_without_clearing_context(monkeypatch):
+    from playwright.sync_api import Error as PlaywrightError
+
+    class BrokenPage(_CollectionPage):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.failed_once = False
+
+        def goto(self, url: str, *, wait_until: str):
+            if not self.failed_once:
+                self.failed_once = True
+                raise PlaywrightError("page closed")
+            return super().goto(url, wait_until=wait_until)
+
+    provider = _provider(Platform.BILIBILI)
+    broken = BrokenPage("https://www.bilibili.com/")
+    recovered = _CollectionPage(
+        "about:blank",
+        response_payloads={
+            1: [
+                {
+                    "data": {
+                        "numPages": 1,
+                        "result": [{"bvid": "BV1RECOVER", "title": "Alpha 案例"}],
+                    }
+                }
+            ]
+        },
+    )
+    context = _CollectionContext([broken], recovered)
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright",
+        lambda: _CollectionPlaywrightManager(_CollectionBrowser(context)),
+    )
+    monkeypatch.setattr(
+        "src.adapters.platform_browser_search.minimize_browser_window",
+        lambda _port: True,
+    )
+
+    rows = provider._collect_rows("Alpha", target=1)
+
+    assert [row["item_id"] for row in rows] == ["BV1RECOVER"]
+    assert context.new_page_calls == 1
+    assert provider._collection_metrics["session_recovered"] is True
+    assert recovered.closed is True
+
+
+def test_platform_login_reset_is_confirmed_and_domain_scoped(monkeypatch):
+    class ResetPage:
+        def __init__(self, url: str) -> None:
+            self.url = url
+            self.evaluations: list[str] = []
+
+        def evaluate(self, script: str) -> None:
+            self.evaluations.append(script)
+
+    class ResetContext:
+        def __init__(self) -> None:
+            self.pages = [
+                ResetPage("https://www.bilibili.com/search?keyword=test"),
+                ResetPage("https://example.com/other-platform"),
+            ]
+            self.cookie_domains: list[str] = []
+
+        def clear_cookies(self, *, domain: str) -> None:
+            self.cookie_domains.append(domain)
+
+    class ResetBrowser:
+        def __init__(self, context: ResetContext) -> None:
+            self.contexts = [context]
+
+    class ResetPlaywright:
+        def __init__(self, browser: ResetBrowser) -> None:
+            self.chromium = self
+            self.browser = browser
+
+        def connect_over_cdp(self, _endpoint: str, *, timeout: int):
+            assert timeout == 2500
+            return self.browser
+
+    context = ResetContext()
+    browser = ResetBrowser(context)
+
+    class ResetManager:
+        def __enter__(self):
+            return ResetPlaywright(browser)
+
+        def __exit__(self, *_args) -> None:
+            pass
+
+    provider = _provider(Platform.BILIBILI)
+    provider.login_reset_available = True
+    ready = BrowserSessionStatus(True, True, False, True, "ready", "已连接")
+    monkeypatch.setattr(provider, "session_status", lambda: ready)
+    monkeypatch.setattr(
+        "playwright.sync_api.sync_playwright", lambda: ResetManager()
+    )
+
+    with pytest.raises(LicensedProviderError, match="需要明确确认"):
+        provider.reset_login_state()
+    assert context.cookie_domains == []
+
+    status = provider.reset_login_state(confirmed=True)
+
+    assert status == ready
+    assert context.cookie_domains == ["bilibili.com"]
+    assert len(context.pages[0].evaluations) == 1
+    assert context.pages[1].evaluations == []
+    assert provider.login_reset_available is False
 
 
 def test_bilibili_raw_pool_never_assigns_a_provider_rank_above_100(monkeypatch):

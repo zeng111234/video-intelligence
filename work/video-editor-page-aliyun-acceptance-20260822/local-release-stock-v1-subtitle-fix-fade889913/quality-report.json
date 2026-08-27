@@ -1,0 +1,110 @@
+{
+  "evidence_version": "local-release-stock-acceptance-v3-subtitle-fix",
+  "task_id": "edit-local-fade889913",
+  "batch_id": "edit-batch-8f50dd7285d2",
+  "item_id": "edit-item-7c9f98af435a",
+  "status": "succeeded",
+  "provider_stage": "local_export_complete",
+  "quality_report": {
+    "passed": true,
+    "media_passed": true,
+    "creative_passed": true,
+    "publish_claim_allowed": true,
+    "release_visual_gate_passed": true,
+    "publish_rights_gate_passed": true,
+    "real_stock_video_event_count": 3,
+    "generated_image_event_count": 0,
+    "broll_origin_counts": {
+      "generated_image_asset": 0,
+      "stock_video_asset": 3,
+      "other_real_local_asset": 0
+    },
+    "real_broll_coverage_ratio": 0.3098,
+    "broll_modes": {
+      "pip": 1,
+      "full": 2,
+      "vector_pip": 0
+    },
+    "subtitle_timeline": {
+      "passed": true,
+      "phrase_cue_count": 17,
+      "phrase_timing_source": "word_timestamps",
+      "estimated_phrase_timestamps": false,
+      "max_phrase_duration_seconds": 2.4,
+      "experience_gate": {
+        "passed": true,
+        "checks": {
+          "min_duration": true,
+          "max_duration": true,
+          "one_line": true,
+          "no_fragment_cues": true,
+          "cue_count_per_sentence": true
+        },
+        "min_duration_seconds": 0.9,
+        "max_duration_seconds": 2.4,
+        "one_line_ratio": 0.882,
+        "cue_count_by_source_segment": {
+          "0": 3,
+          "1": 3,
+          "2": 4,
+          "3": 4,
+          "4": 3
+        }
+      },
+      "semantic_word_timestamp_fix": "merged the complete clause 还是沉淀在咱们公司的数据库 into one two-line cue"
+    },
+    "alignment": {
+      "method": "ffprobe_stream_start_end_pts",
+      "max_drift_ms": 0.0,
+      "threshold_ms": 67.0,
+      "passed": true
+    },
+    "creative_checks": {
+      "minimum_real_visual_events": true,
+      "has_pip_visual": true,
+      "has_full_visual": true,
+      "pip_safe_area_no_face_or_subtitle_overlap": true,
+      "real_broll_coverage_20_to_35_percent": true,
+      "no_fixed_asset_loop": true,
+      "visual_origin_traceable": true,
+      "hook_declared_once": true
+    },
+    "pip_geometry": [
+      {
+        "asset_id": "broll-3344413315",
+        "safe": true,
+        "bbox": {"left": 480, "top": 787, "right": 696, "bottom": 1005},
+        "face_safe_bbox": {"left": 86, "top": 128, "right": 648, "bottom": 768},
+        "subtitle_bbox": {"left": 36, "top": 1011, "right": 684, "bottom": 1216},
+        "intersects_face_safe_bbox": false,
+        "intersects_subtitle_bbox": false
+      }
+    ],
+    "bgm": {
+      "asset_id": "bgm-a40b291dc5b1",
+      "title": "tech-city-local-acceptance-confirmed",
+      "authorization_status": "confirmed",
+      "voice_priority": true,
+      "ducking": {"filter": "sidechaincompress", "attack_ms": 20, "release_ms": 450, "mix_volume": 0.16},
+      "publish_rights_gate_passed": true
+    }
+  },
+  "page_evidence": {
+    "scope": "read-only local page verification of the final MP4 in the 成片 tab",
+    "screenshot": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-page-aliyun-acceptance-20260822\\page-stock-final-fixed-readonly.png",
+    "text": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-page-aliyun-acceptance-20260822\\page-stock-final-fixed-readonly.txt",
+    "bound_broll_text": "真实授权 B-roll 3/3",
+    "new_cost_displayed": "0 积分",
+    "preview_keyframes": [
+      {"seconds": 4.0, "path": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-page-aliyun-acceptance-20260822\\page-stock-final-fixed-4s.png"},
+      {"seconds": 13.5, "path": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-page-aliyun-acceptance-20260822\\page-stock-final-fixed-13_5s.png"},
+      {"seconds": 22.0, "path": "C:\\Users\\zeng\\Desktop\\video\\work\\video-editor-page-aliyun-acceptance-20260822\\page-stock-final-fixed-22s.png"}
+    ]
+  },
+  "local_only": {
+    "ffmpeg_renderer": true,
+    "new_cloud_calls": 0,
+    "new_cost_cny": 0,
+    "publish_clicked": false
+  }
+}

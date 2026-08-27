@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from src.adapters.video_editor_cloud import build_cloud_providers
 from src.models import VideoEditorBatch, VideoEditorBatchItem
@@ -66,6 +68,12 @@ def _source(service: VideoEditorWorkflowService) -> str:
         rights_holder="测试公司",
     )
     return uploaded["source_id"]
+
+
+def _png_bytes() -> bytes:
+    stream = BytesIO()
+    Image.new("RGB", (128, 128), "#1677ff").save(stream, format="PNG")
+    return stream.getvalue()
 
 
 def _quote(
@@ -208,7 +216,7 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
     assert reviewed_item["review_snapshot"]["approval_mode"] == "manual"
     assert reviewed_item["subtitle_segments"][0]["emphasis_terms"] == ["演示"]
     assert reviewed_item["status"] == "configuration_required"
-    assert reviewed_item["render_manifest"] == {
+    expected_render_manifest = {
         "visual_style_id": "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15",
         "subtitle_format": "ass",
         "title_render_mode": "png_watermark",
@@ -220,6 +228,13 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
         "source_kept_ranges": [{"start": 0.0, "end": 2.25}],
         "estimated_output_seconds": 2.25,
     }
+    assert {
+        key: reviewed_item["render_manifest"][key]
+        for key in expected_render_manifest
+    } == expected_render_manifest
+    assert reviewed_item["render_manifest"]["source_media_identity"][
+        "transcript_timing_source"
+    ] == "sentence_timestamps"
     assert reviewed_item["result_media_url"] is None
     assert reviewed_item["publish_allowed"] is False
 
@@ -228,6 +243,48 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
             created["batch_id"],
             [item["item_id"]],
         )
+
+
+def test_broll_review_forces_local_renderer_instead_of_dropping_overlay(
+    tmp_path: Path,
+):
+    service = _service(tmp_path)
+    source_id = _source(service)
+    broll = service.upload_visual_asset(
+        kind="broll",
+        file_name="authorized-broll.png",
+        media_type="image/png",
+        media_bytes=_png_bytes(),
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+    quote = _quote(service, source_id, "720p")
+    created = _create(service, source_id, quote, key="sandbox-broll-local-fallback")
+    item = created["items"][0]
+
+    reviewed = service.review_cloud_batch_item(
+        created["batch_id"],
+        item["item_id"],
+        subtitle_segments=[
+            {"start": 0, "end": 2, "text": "人工确认的 B-roll 字幕"}
+        ],
+        enabled_plan_step_ids=item["edit_plan"]["enabled_steps"],
+        selected_title=item["selected_title"],
+        selected_bgm_id=None,
+        broll_placement={
+            "asset_id": broll["asset_id"],
+            "start": 2,
+            "end": 5,
+            "mode": "pip",
+        },
+        confirmed=True,
+    )
+
+    reviewed_item = reviewed["items"][0]
+    assert reviewed_item["status"] == "outcome_unknown"
+    assert reviewed_item["provider_stage"] == "local_export_ready"
+    assert reviewed_item["review_snapshot"]["broll"]["mode"] == "pip"
+    assert reviewed_item["publish_allowed"] is False
 
 
 def test_cloud_flow_automatically_selects_bgm_from_transcript_and_title(tmp_path: Path):

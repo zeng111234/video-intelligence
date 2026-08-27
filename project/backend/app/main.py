@@ -436,6 +436,13 @@ async def health():
         "status": "ok",
         "service": "videoinsight-desktop-api",
         "desktop_protocol": "2",
+        # 仅返回非敏感启动模式，供本地启动器拒绝复用错误环境；不返回
+        # owner、API Key、Token 或运行目录。
+        "desktop_client": os.getenv("VIDEOINSIGHT_DESKTOP_CLIENT", "").strip().casefold()
+        in {"1", "true", "yes", "on"},
+        "desktop_demo": os.getenv("VIDEOINSIGHT_DESKTOP_DEMO", "").strip().casefold()
+        in {"1", "true", "yes", "on"},
+        "control_plane_enabled": control_plane_enabled(),
     }
 
 

@@ -1,0 +1,395 @@
+{
+  "case": "tutorial_customer_channel_turbo",
+  "batch_id": "edit-batch-6e88626096fe",
+  "item_id": "edit-item-3adf21169bd4",
+  "source_id": "upload:upload-2e3e1c993a",
+  "media": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\unseen-tutorial.mp4",
+  "asr": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\unseen-tutorial.turbo.asr.json",
+  "task_id": "edit-local-cc17bc3f99",
+  "item_status": "failed",
+  "result_path": null,
+  "task_status": "failed",
+  "quality_report": {
+    "passed": false,
+    "checks": {
+      "file_non_empty": true,
+      "video_stream": true,
+      "audio_stream": true,
+      "resolution": true,
+      "duration": true,
+      "visual_timing": true,
+      "audio_video_drift": true,
+      "subtitle_effect_gate": true,
+      "subtitle_timeline": false
+    },
+    "duration_seconds": 23.17,
+    "expected_duration_seconds": 23.14,
+    "duration_delta_seconds": 0.03,
+    "resolution": {
+      "width": 720,
+      "height": 1280
+    },
+    "visual_beat_count": 5,
+    "style_version": "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock",
+    "bgm": {
+      "enabled": false,
+      "asset_id": null,
+      "title": null,
+      "source_provider": null,
+      "source_url": null,
+      "license_url": null,
+      "rights_holder": null,
+      "content_id_risk": null,
+      "auto_eligible": false,
+      "authorization_status": null,
+      "voice_priority": false,
+      "ducking": {
+        "enabled": false,
+        "filter": "sidechaincompress",
+        "attack_ms": 20,
+        "release_ms": 450,
+        "mix_volume": 0.16
+      },
+      "publish_rights_gate_passed": true
+    },
+    "alignment": {
+      "method": "ffprobe_stream_start_end_pts",
+      "start_drift_ms": 0.0,
+      "end_drift_ms": 6.984,
+      "max_drift_ms": 6.984,
+      "threshold_ms": 67.0,
+      "passed": true
+    },
+    "subtitle_timeline": {
+      "passed": false,
+      "cue_count": 13,
+      "duplicate_count": 0,
+      "checks": {
+        "monotonic_and_in_bounds": true,
+        "no_duplicate_cues": true
+      },
+      "phrase_cue_count": 13,
+      "phrase_timing_source": "word_timestamps",
+      "estimated_phrase_timestamps": false,
+      "max_phrase_duration_seconds": 2.33,
+      "cue_manifest_sha256": "cefe873514e2ce25b2b916884fcc7314ed093330d23cdac8ba69e55f4d755a6b",
+      "ass_sha256": "3dd6decdbebc785a4a97e97da27388d985b7b3a149516b8277e69ba463f6ffc6",
+      "preview_render_manifest_equal": true,
+      "experience_gate": {
+        "passed": true,
+        "checks": {
+          "min_duration": true,
+          "max_duration": true,
+          "one_line": true,
+          "no_fragment_cues": true,
+          "lexical_boundary_integrity": true,
+          "no_orphan_prefix_suffix": true,
+          "preview_render_manifest_equal": true,
+          "cue_count_per_sentence": true
+        },
+        "min_duration_seconds": 0.87,
+        "max_duration_seconds": 2.33,
+        "one_line_ratio": 1.0,
+        "lexical_boundary_integrity": true,
+        "no_orphan_prefix_suffix": true,
+        "preview_render_manifest_equal": true,
+        "minimum_dwell_seconds": 0.9,
+        "maximum_dwell_seconds": 2.4,
+        "short_source_exception_allowed": true,
+        "cue_count_by_source_segment": {
+          "0": 1,
+          "1": 2,
+          "2": 2,
+          "3": 1,
+          "4": 2,
+          "5": 2,
+          "6": 1,
+          "7": 1,
+          "8": 1
+        },
+        "cue_count_gate_by_source_segment": {
+          "0": true,
+          "1": true,
+          "2": true,
+          "3": true,
+          "4": true,
+          "5": true,
+          "6": true,
+          "7": true,
+          "8": true
+        }
+      },
+      "text_integrity_gate": {
+        "passed": false,
+        "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+        "source_text_sha256": "3bad31b038c486694e51206e9bf83ad6e40e07965a25638d1fa1d1c7ff5a57c7",
+        "cue_text_sha256": "595b6eb213de0da61424ae5b8f47165fe95e0cb5e59201bd5b6caa543dbbc857",
+        "source_char_count": 93,
+        "cue_char_count": 92,
+        "exact_ordered_match": false,
+        "duplicate_function_word_boundary": false
+      },
+      "audio_activity_gate": {
+        "passed": true,
+        "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+        "minimum_uncovered_seconds": 0.5,
+        "active_seconds": 0.0,
+        "covered_seconds": 0.0,
+        "uncovered_ranges": [],
+        "raw_vad_active_ranges": [
+          {
+            "start": 3.461,
+            "end": 4.13
+          },
+          {
+            "start": 4.435,
+            "end": 7.235
+          },
+          {
+            "start": 7.678,
+            "end": 11.513
+          },
+          {
+            "start": 11.991,
+            "end": 13.357
+          },
+          {
+            "start": 13.852,
+            "end": 14.887
+          },
+          {
+            "start": 15.217,
+            "end": 16.07
+          },
+          {
+            "start": 16.348,
+            "end": 16.661
+          },
+          {
+            "start": 16.939,
+            "end": 19.139
+          },
+          {
+            "start": 19.504,
+            "end": 20.026
+          },
+          {
+            "start": 20.357,
+            "end": 20.852
+          },
+          {
+            "start": 21.374,
+            "end": 22.53
+          },
+          {
+            "start": 22.826,
+            "end": 23.139
+          }
+        ],
+        "speech_candidate_ranges": []
+      },
+      "subtitle_effect_gate": {
+        "passed": true,
+        "style_id": "adaptive_talking_head_v1",
+        "cue_count": 13,
+        "emphasis_count": 0,
+        "checks": {
+          "unified_adaptive_style": true,
+          "entry_motion_100_160ms": true,
+          "sparse_emphasis": true,
+          "emphasis_scale_105_112": true,
+          "no_routine_refresh_as_visual_effect": true
+        }
+      },
+      "word_timing_quality": {
+        "status": "verified",
+        "verified": true,
+        "source": "word_timestamps",
+        "alignment_method": "exact_compact_text_match",
+        "reviewed_text_sequence_alignment_fallback_count": 0,
+        "word_p95_ms": 157.0,
+        "mapping_error_frames": 4.71,
+        "matched_cue_count": 13,
+        "unmatched_cue_count": 0,
+        "fps": 30.0,
+        "checks": {
+          "word_p95_le_150ms": false,
+          "mapping_le_1_frame": false
+        }
+      },
+      "word_p95_ms": 157.0,
+      "mapping_error_frames": 4.71
+    },
+    "semantic_visual_rejection_log": [],
+    "creative_checks": {
+      "director_assets_ready": true,
+      "minimum_real_visual_events": true,
+      "has_pip_visual": false,
+      "has_full_visual": false,
+      "pip_safe_area_no_face_or_subtitle_overlap": true,
+      "real_broll_coverage_template_policy": true,
+      "no_fixed_asset_loop": true,
+      "visual_origin_traceable": true,
+      "semantic_broll_match_explainable": true,
+      "semantic_visual_layer_safe": true,
+      "semantic_layers_not_counted_as_real_broll": true,
+      "visual_cadence_gate": true,
+      "hook_declared_once": true
+    },
+    "visual_gate_policy": {
+      "template_id": "legacy_talking_head",
+      "visual_density": "safe_preview",
+      "min_real_events": 0,
+      "max_real_events": 3,
+      "min_coverage_ratio": 0.0,
+      "max_coverage_ratio": 0.3,
+      "pip_required": false,
+      "full_required": false,
+      "language": "无可靠素材时安全降级为 A-roll。",
+      "real_event_count": 0,
+      "broll_count": 0,
+      "coverage_ratio": 0.0,
+      "actual_has_pip_visual": false,
+      "actual_has_full_visual": false,
+      "passed": true
+    },
+    "hard_checks": {
+      "has_pip_visual": false,
+      "has_full_visual": false,
+      "pip_required": false,
+      "full_required": false,
+      "actual_real_broll_event_count": 0,
+      "actual_real_broll_coverage_ratio": 0.0
+    },
+    "visual_cadence_gate": {
+      "passed": true,
+      "meaningful_visual_beat_count": 5,
+      "beat_starts_final_output": [
+        4.878,
+        8.196,
+        11.513,
+        14.991,
+        19.043
+      ],
+      "intervals_seconds": [
+        3.318,
+        3.317,
+        3.478,
+        4.052
+      ],
+      "max_gap_seconds": 4.052,
+      "recommended_max_gap_seconds": 6.0,
+      "hard_max_gap_seconds": 7.5,
+      "rhythm_hold_exception": false,
+      "routine_subtitle_refresh_counted": false,
+      "safe_degradation_allowed": true
+    },
+    "creative_passed": false,
+    "subtitle_word_gate_passed": false,
+    "publish_claim_allowed": false,
+    "v1_hard_gate_passed": false,
+    "local_visual_acceptance_passed": false,
+    "release_visual_gate_passed": true,
+    "semantic_match_gate": {
+      "passed": true,
+      "failures": []
+    },
+    "publish_rights_gate_passed": true,
+    "visual_origin_policy": {
+      "domestic_priority": [
+        "domestic_confirmed_real",
+        "domestic_authorized_generation",
+        "international_pexels_pixabay_fallback"
+      ],
+      "locale_does_not_prove_domestic_scene": true,
+      "public_douyin_bilibili_scraping": false,
+      "generated_images_count_as_local_visual_events": true,
+      "generated_images_do_not_satisfy_free_stock_video_gate": true,
+      "free_stock_video_gate": "passed"
+    },
+    "visual_event_count": 5,
+    "visual_broll_event_count": 0,
+    "semantic_visual_layer_count": 0,
+    "semantic_visual_layer_geometry": {
+      "safe": false,
+      "reason": "lower_left_safe_zone",
+      "bbox": {
+        "left": 36,
+        "top": 806,
+        "right": 396,
+        "bottom": 956,
+        "width": 360,
+        "height": 150
+      },
+      "intersects_face_safe_bbox": false,
+      "intersects_subtitle_bbox": false,
+      "intersects_pip_bbox": true
+    },
+    "real_broll_event_count": 0,
+    "real_stock_video_event_count": 0,
+    "generated_image_event_count": 0,
+    "domestic_real_broll_event_count": 0,
+    "international_broll_event_count": 0,
+    "broll_context_counts": {
+      "domestic_real": 0,
+      "international_stock": 0,
+      "generated_image": 0,
+      "unknown": 0
+    },
+    "broll_origin_counts": {
+      "generated_image_asset": 0,
+      "stock_video_asset": 0,
+      "other_real_local_asset": 0
+    },
+    "broll_provenance": [],
+    "real_broll_coverage_ratio": 0.0,
+    "visual_coverage_seconds": 0,
+    "vector_coverage_seconds": 0,
+    "broll_modes": {
+      "pip": 0,
+      "full": 0,
+      "vector_pip": 0
+    },
+    "pip_geometry": [],
+    "pip_safe_area_passed": true,
+    "media_passed": false,
+    "transcript_source_identity_gate": {
+      "enabled": true,
+      "passed": false,
+      "checks": {
+        "source_media_sha256": false,
+        "source_duration_matches_ffprobe": false,
+        "transcript_sha256": true,
+        "timing_source_declared": false
+      },
+      "source_media_identity": {
+        "transcript_sha256": "0f8ae99e786696e1096788751b70c055e5c6c3ab0257bfaccfc2aee8b1d230f9",
+        "transcript_identity_scope": "task_subtitle_segments_v1"
+      }
+    },
+    "quality_report_version": "identity-gates-v2",
+    "audio_subtitle_semantic_gate": {
+      "passed": true,
+      "method": "local_transcript_text_overlap_spot_check",
+      "source_text": "我说句实话树影八评不是给你打一针兴奋剂就完事了它是帮你偷偷的铺一条自动化的这个获客通道你把目标人群的你把目标人群和广告内容呢设置好它就源源不断的去精种的触打去排域去预热也就是说你一次建设",
+      "cue_text": "我说句实话树影八评不是给你打一针兴奋剂就完事了它是帮你偷偷的铺一条自动化的这个获客通道你把目标人群的你把目标人群和广告内容设置好它就源源不断的去精种的触打去排域去预热也就是说你一次建设",
+      "overlap_ratio": 1.0,
+      "minimum_overlap_ratio": 0.72
+    },
+    "edl_execution_gate": {
+      "passed": false,
+      "method": "missing_declared_source_range"
+    },
+    "transcript_accuracy_gate": {
+      "passed": false,
+      "method": "reviewed_transcript_correction_audit",
+      "source": "unreviewed",
+      "correction_count": 0,
+      "remaining_known_error_terms": []
+    },
+    "media_integrity_passed": false,
+    "subtitle_sync_passed": false,
+    "visual_release_passed": false
+  },
+  "created_at": "2026-08-25T21:57:02.421256+08:00"
+}

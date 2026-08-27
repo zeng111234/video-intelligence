@@ -1,0 +1,8 @@
+{
+  "source": "C:\\Users\\zeng\\Desktop\\video\\data\\avatar_results\\avatar-2704b95149a3.mp4",
+  "source_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+  "asr": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260824-short-real\\asr-full.json",
+  "output": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-real-avatar-short-20260824.mp4",
+  "output_sha256": "04c65ae910b0dcd34bb85c23ea0550ce231a96aa2c30dc29f55c694493b9247c",
+  "rights": "local acceptance only; no cloud upload; no publish"
+}

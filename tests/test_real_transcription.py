@@ -148,6 +148,60 @@ def test_accuracy_model_and_hotwords_are_forwarded_without_rewriting() -> None:
     }
 
 
+def test_word_timestamps_are_opt_in_and_preserved_from_provider() -> None:
+    seen_options: dict[str, object] = {}
+
+    class WordModel:
+        def transcribe(self, path: str, **options):
+            seen_options.update(options)
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.2,
+                        text=" 客户数据库 ",
+                        avg_logprob=-0.1,
+                        words=[
+                            SimpleNamespace(
+                                start=0.0,
+                                end=0.32,
+                                word="客户",
+                                probability=0.98,
+                            ),
+                            SimpleNamespace(
+                                start=0.34,
+                                end=0.72,
+                                word="数据库",
+                                probability=0.97,
+                            ),
+                        ],
+                    )
+                ],
+                SimpleNamespace(language="zh"),
+            )
+
+    service = TranscriptionService(
+        MockRepository(candidates=[], tasks=[]),
+        model_loader=lambda _name: WordModel(),
+        command_runner=fake_media_runner([]),
+    )
+    task = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        include_word_timestamps=True,
+    )
+
+    assert seen_options["word_timestamps"] is True
+    assert task.word_timestamps_available is True
+    assert task.segments[0].words == [
+        {"start": 0.0, "end": 0.32, "text": "客户", "probability": 0.98},
+        {"start": 0.34, "end": 0.72, "text": "数据库", "probability": 0.97},
+    ]
+
+
 def test_unknown_asr_model_is_rejected_before_processing() -> None:
     service = TranscriptionService(MockRepository(candidates=[], tasks=[]))
 

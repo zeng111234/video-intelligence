@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { StrictMode } from "react";
 import { Modal } from "antd";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -8,14 +9,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import KeywordCrawlerPage from "./KeywordCrawlerPage";
 import { ToastProvider } from "../components/Toast";
 import {
-  createCrawlerBatch,
+  createCrawlerProgressiveBatch,
   deleteCrawlerBatch,
   getCrawlerBatch,
   getCrawlerCapabilities,
   getCrawlerHotWords,
+  getCrawlerKeywordQueue,
   listCrawlerBatches,
+  listCrawlerKeywordQueues,
   probeCrawlerBatchCopy,
   recheckCrawlerBatchLegacyNoText,
+  resetCrawlerBrowserLoginState,
   startCrawlerBrowserDiscovery,
 } from "../api/client";
 import type {
@@ -28,14 +32,17 @@ vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
     ...actual,
-    createCrawlerBatch: vi.fn(),
+    createCrawlerProgressiveBatch: vi.fn(),
     deleteCrawlerBatch: vi.fn(),
     getCrawlerBatch: vi.fn(),
     getCrawlerCapabilities: vi.fn(),
     getCrawlerHotWords: vi.fn(),
+    getCrawlerKeywordQueue: vi.fn(),
     listCrawlerBatches: vi.fn(),
+    listCrawlerKeywordQueues: vi.fn(),
     probeCrawlerBatchCopy: vi.fn(),
     recheckCrawlerBatchLegacyNoText: vi.fn(),
+    resetCrawlerBrowserLoginState: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
   };
 });
@@ -63,6 +70,8 @@ const batch = {
 
 const capabilities = {
   mode: "local_browser",
+  crawler_safety_policy:
+    "同平台不额外冷却（同平台仍一次只运行一个任务）；遇到验证码或访问异常会自动暂停。",
   hotspot_browser: null,
   platform_browsers: [
     {
@@ -108,6 +117,7 @@ const capabilities = {
       enabled: true,
       running: false,
       login_required: true,
+      login_reset_available: true,
       ready_to_crawl: false,
       missing_configuration: [],
       browser_channel: "chrome",
@@ -362,15 +372,16 @@ function LocationProbe() {
   return <div data-testid="location">{`${location.pathname}${location.search}`}</div>;
 }
 
-function renderPage() {
-  return render(
+function renderPage(options: { strictMode?: boolean } = {}) {
+  const page = (
     <MemoryRouter initialEntries={["/crawler"]}>
       <ToastProvider>
         <KeywordCrawlerPage />
         <LocationProbe />
       </ToastProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  return render(options.strictMode ? <StrictMode>{page}</StrictMode> : page);
 }
 
 async function makePlatformSearchReady(label: string, platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili") {
@@ -396,13 +407,21 @@ describe("KeywordCrawlerPage performance behavior", () => {
       })),
     });
     vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [batch], total: 1 });
-    vi.mocked(createCrawlerBatch).mockResolvedValue(freeMultiPlatformBatch);
+    vi.mocked(listCrawlerKeywordQueues).mockResolvedValue([]);
+    vi.mocked(createCrawlerProgressiveBatch).mockResolvedValue(freeMultiPlatformBatch as never);
     vi.mocked(probeCrawlerBatchCopy).mockResolvedValue(copyPoolBatch);
     vi.mocked(recheckCrawlerBatchLegacyNoText).mockResolvedValue(copyPoolBatch);
     vi.mocked(getCrawlerBatch).mockResolvedValue(batchWithCandidate);
     vi.mocked(getCrawlerCapabilities).mockResolvedValue(capabilities);
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(deleteCrawlerBatch).mockResolvedValue({ batch_id: batch.batch_id, deleted: true });
+    vi.mocked(resetCrawlerBrowserLoginState).mockResolvedValue({
+      platform: "bilibili",
+      platform_label: "B站",
+      reset: true,
+      manual_login_required: true,
+      message: "已重置B站登录状态；请人工重新登录。",
+    });
     vi.mocked(startCrawlerBrowserDiscovery).mockImplementation(async (platform) => {
       const connection = capabilities.platform_browsers?.find((item) => item.platform === platform);
       if (!connection) throw new Error(`缺少 ${platform} 浏览器配置`);
@@ -427,10 +446,53 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(getCrawlerHotWords).not.toHaveBeenCalled();
   });
 
+  it("aggregates duplicate initial permission failures into one inline alert under StrictMode", async () => {
+    const failure = new Error("客户工作区正在升级数据隔离，当前仅可查看余额和充值申请。");
+    vi.mocked(listCrawlerBatches).mockRejectedValue(failure);
+    vi.mocked(getCrawlerCapabilities).mockRejectedValue(failure);
+
+    renderPage({ strictMode: true });
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), {
+      target: { value: "门店短视频" },
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText(failure.message)).toBeTruthy();
+    expect(screen.queryAllByText(failure.message)).toHaveLength(1);
+    expect(document.querySelectorAll(".vi-toast-item")).toHaveLength(0);
+    expect(listCrawlerBatches).toHaveBeenCalledTimes(1);
+    expect(getCrawlerCapabilities).toHaveBeenCalledTimes(1);
+    expect((screen.getByPlaceholderText("例如：餐饮获客") as HTMLInputElement).value).toBe("门店短视频");
+
+    fireEvent.click(within(alert).getByRole("button", { name: "重新加载" }));
+    await waitFor(() => {
+      expect(listCrawlerBatches).toHaveBeenCalledTimes(2);
+      expect(getCrawlerCapabilities).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("keeps history visible when capability loading fails", async () => {
+    vi.mocked(getCrawlerCapabilities).mockRejectedValue(
+      new Error("发现能力暂时不可用，请稍后重试。"),
+    );
+
+    renderPage();
+
+    expect(await screen.findByText("企业获客")).toBeTruthy();
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(document.querySelectorAll(".vi-toast-item")).toHaveLength(0);
+  });
+
   it("requires a platform that is ready to search before it can be selected", async () => {
     renderPage();
 
     expect(await screen.findByRole("complementary", { name: "找素材设置" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "同平台不额外冷却（同平台仍一次只运行一个任务）；遇到验证码或访问异常会自动暂停。",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/24小时最多8次/)).toBeNull();
     expect(screen.queryByText("从已选平台的公开页面找素材，结果由你挑选确认。")).toBeNull();
     expect(screen.queryByText(/本次会搜索已选平台/)).toBeNull();
     expect(screen.queryByText("点击“找素材”后生效；平台实际返回可能更少。")).toBeNull();
@@ -450,6 +512,23 @@ describe("KeywordCrawlerPage performance behavior", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "小红书" }));
     expect((screen.getByRole("button", { name: "找素材" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.getByText("可搜索")).toBeTruthy();
+  });
+
+  it("requires confirmation before resetting one platform login state", async () => {
+    renderPage();
+
+    const row = await screen.findByText("B站");
+    const platformRow = row.closest(".crawler-platform-row") as HTMLElement;
+    fireEvent.click(within(platformRow).getByRole("button", { name: "重置登录" }));
+
+    await waitFor(() => expect(screen.getAllByText("重置B站登录状态？").length).toBeGreaterThan(0));
+    expect(resetCrawlerBrowserLoginState).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "退出并重置" }));
+
+    await waitFor(() => {
+      expect(resetCrawlerBrowserLoginState).toHaveBeenCalledWith("bilibili");
+    });
+    expect(await screen.findByText("已重置B站登录状态；请人工重新登录。")).toBeTruthy();
   });
 
   it("submits selected platforms without automatically probing copy", async () => {
@@ -474,13 +553,13 @@ describe("KeywordCrawlerPage performance behavior", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "B站" }));
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+    await waitFor(() => expect(createCrawlerProgressiveBatch).toHaveBeenCalledWith(expect.objectContaining({
       keyword: "获客",
       platforms: ["douyin", "xiaohongshu", "bilibili"],
       count_per_platform: 30,
       published_window_days: 180,
     })));
-    const submittedPayload = vi.mocked(createCrawlerBatch).mock.calls[0][0];
+    const submittedPayload = vi.mocked(createCrawlerProgressiveBatch).mock.calls[0][0];
     expect(submittedPayload).not.toHaveProperty("hotspot_window_hours");
     expect(submittedPayload).not.toHaveProperty("hotspot_result_limit");
     expect(submittedPayload).not.toHaveProperty("kuaishou_sort");
@@ -494,7 +573,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     const pendingBatch = new Promise<CrawlerBatchResponse>((resolve) => {
       resolveBatch = resolve;
     });
-    vi.mocked(createCrawlerBatch).mockReturnValue(pendingBatch);
+    vi.mocked(createCrawlerProgressiveBatch).mockReturnValue(pendingBatch as never);
 
     renderPage();
 
@@ -509,8 +588,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
 
     expect(screen.getByRole("status").textContent).toContain("正在从抖音、快手找素材");
     expect(screen.getByRole("status").textContent).toContain("已等待 0秒");
-    expect(screen.getByRole("status").textContent).toContain("正在等待平台返回结果");
-    expect(screen.getByRole("status").textContent).toContain("暂不显示完成进度");
+    expect(screen.getByRole("status").textContent).toContain("结果会在扫描到合格素材时逐条出现");
 
     act(() => {
       vi.advanceTimersByTime(12_000);
@@ -520,25 +598,219 @@ describe("KeywordCrawlerPage performance behavior", () => {
     await act(async () => {
       resolveBatch(freeMultiPlatformBatch);
       await pendingBatch;
+      await Promise.resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(1_000);
     });
 
-    expect(screen.getByRole("status").textContent).toContain("平台已经返回");
-    act(() => {
-      vi.advanceTimersByTime(120);
-    });
-    expect(screen.getByRole("status").textContent).toContain("已找到 1 条");
-    act(() => {
-      vi.advanceTimersByTime(200);
-    });
     expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("本次结果 · 1 条")).toBeTruthy();
   });
+
+  it("polls persisted platform progress and keeps partial results visible until completion", async () => {
+    let resolveTerminalBatch: (value: CrawlerBatchResponse) => void = () => undefined;
+    const terminalBatch = new Promise<CrawlerBatchResponse>((resolve) => {
+      resolveTerminalBatch = resolve;
+    });
+    let currentQueue: any = {
+      queue_id: "queue-progressive-single",
+      status: "running",
+      platforms: ["bilibili"],
+      published_window_days: 0,
+      count_per_platform: 30,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      finished_at: null,
+      total: 1,
+      completed: 0,
+      queued: 0,
+      running: 1,
+      failed: 0,
+      items: [{
+        item_id: "item-progressive-single",
+        keyword: "获客",
+        status: "running",
+        batch_id: null,
+        partial_batch_ids: [],
+        error: null,
+        progress_stage: "opening_search",
+        progress_message: "正在打开B站搜索页面。",
+        scanned_count: 0,
+        parsed_count: 0,
+        retained_count: 0,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+      }],
+      message: null,
+    };
+    vi.mocked(createCrawlerProgressiveBatch).mockResolvedValue({
+      progressive_task: true,
+      queue_id: currentQueue.queue_id,
+      queue: currentQueue,
+    } as never);
+    vi.mocked(getCrawlerKeywordQueue).mockImplementation(async () => currentQueue);
+    vi.mocked(getCrawlerBatch).mockImplementation(async () => (
+      currentQueue.status === "succeeded" ? terminalBatch : freeMultiPlatformBatch
+    ));
+
+    renderPage();
+    await screen.findByText("企业获客");
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    await makePlatformSearchReady("B站", "bilibili");
+    fireEvent.click(screen.getByRole("checkbox", { name: "B站" }));
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(screen.getByRole("status").textContent).toContain("正在从B站找素材");
+    currentQueue = {
+      ...currentQueue,
+      items: [{ ...currentQueue.items[0], batch_id: "batch-progressive", partial_batch_ids: ["batch-progressive"], progress_stage: "platform_complete", progress_message: "B站已扫描 86 条，解析 30 条，保留 12 条。", scanned_count: 86, parsed_count: 30, retained_count: 12 }],
+    };
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("已扫描 86 条"), { timeout: 4000 });
+    expect(screen.getByRole("status").textContent).toContain("B站已扫描 86 条");
+
+    currentQueue = {
+      ...currentQueue,
+      status: "succeeded",
+      completed: 1,
+      running: 0,
+      items: [{ ...currentQueue.items[0], status: "succeeded", progress_stage: "completed", progress_message: "已整理最终结果。", finished_at: new Date().toISOString() }],
+    };
+    const batchReadsBeforeTerminal = vi.mocked(getCrawlerBatch).mock.calls.length;
+    await waitFor(
+      () => expect(vi.mocked(getCrawlerBatch).mock.calls.length).toBeGreaterThan(batchReadsBeforeTerminal),
+      { timeout: 4000 },
+    );
+    expect(screen.getByRole("status").textContent).toContain("已扫描 86 条");
+    await act(async () => {
+      resolveTerminalBatch(freeMultiPlatformBatch);
+      await terminalBatch;
+    });
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 5000 });
+  });
+
+  it("shows persisted candidates in order, tolerates orphan batches, and stops after terminal state", async () => {
+    const secondCandidate = { ...candidate, video_id: "candidate-002", title: "第二条真实候选" };
+    const updatedSecondCandidate = { ...secondCandidate, title: "第二条字段补全" };
+    const thirdCandidate = { ...candidate, video_id: "candidate-003", title: "第三条真实候选" };
+    let currentQueue: any = {
+      queue_id: "queue-incremental-order",
+      status: "running",
+      platforms: ["douyin"],
+      published_window_days: 0,
+      count_per_platform: 30,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      finished_at: null,
+      total: 1,
+      completed: 0,
+      queued: 0,
+      running: 1,
+      failed: 0,
+      items: [{
+        item_id: "item-incremental-order",
+        keyword: "获客",
+        status: "running",
+        batch_id: null,
+        partial_batch_ids: [],
+        progress_candidates: [],
+        error: null,
+        progress_stage: "opening_search",
+        progress_message: "正在打开抖音搜索页面。",
+        scanned_count: 0,
+        parsed_count: 0,
+        retained_count: 0,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+      }],
+      message: null,
+    };
+    vi.mocked(createCrawlerProgressiveBatch).mockResolvedValue({
+      progressive_task: true,
+      queue_id: currentQueue.queue_id,
+      queue: currentQueue,
+    } as never);
+    vi.mocked(getCrawlerKeywordQueue).mockImplementation(async () => currentQueue);
+    vi.mocked(getCrawlerBatch).mockImplementation(async (batchId) => {
+      if (batchId === "batch-missing") throw new Error("搜索批次不存在");
+      return batchWithCandidate;
+    });
+
+    renderPage();
+    await screen.findByText("企业获客");
+    fireEvent.change(screen.getByPlaceholderText("例如：餐饮获客"), { target: { value: "获客" } });
+    await makePlatformSearchReady("抖音", "douyin");
+    fireEvent.click(screen.getByRole("checkbox", { name: "抖音" }));
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    currentQueue = {
+      ...currentQueue,
+      items: [{
+        ...currentQueue.items[0],
+        progress_candidates: [candidate],
+        progress_message: "抖音已保留 1 条。",
+        scanned_count: 3,
+        parsed_count: 2,
+        retained_count: 1,
+      }],
+    };
+    expect((await screen.findAllByText("企业获客案例")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("已找到 1 条")).toBeTruthy();
+
+    currentQueue = {
+      ...currentQueue,
+      items: [{
+        ...currentQueue.items[0],
+        progress_candidates: [candidate, secondCandidate],
+        progress_message: "抖音已保留 2 条。",
+        retained_count: 2,
+      }],
+    };
+    await waitFor(() => expect(screen.getAllByText("第二条真实候选").length).toBeGreaterThan(0), { timeout: 3000 });
+    expect((await screen.findAllByText("企业获客案例")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("已找到 2 条", {}, { timeout: 3000 })).toBeTruthy();
+
+    currentQueue = {
+      ...currentQueue,
+      items: [{
+        ...currentQueue.items[0],
+        partial_batch_ids: ["batch-missing"],
+        progress_candidates: [candidate, updatedSecondCandidate, thirdCandidate],
+        progress_message: "抖音已保留 3 条。",
+        retained_count: 3,
+      }],
+    };
+    await waitFor(() => expect(screen.getAllByText("第三条真实候选").length).toBeGreaterThan(0), { timeout: 3000 });
+    expect((await screen.findAllByText("第二条字段补全", {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    expect(screen.queryByText("第二条真实候选")).toBeNull();
+    expect(await screen.findByText("部分旧结果已失效，已保留仍能读取的素材。")).toBeTruthy();
+    expect([...document.querySelectorAll(".vi-toast-msg")].some((node) => node.textContent?.includes("搜索批次不存在"))).toBe(false);
+
+    currentQueue = {
+      ...currentQueue,
+      status: "succeeded",
+      completed: 1,
+      running: 0,
+      items: [{
+        ...currentQueue.items[0],
+        status: "succeeded",
+        batch_id: "batch-final",
+        partial_batch_ids: ["batch-final", "batch-missing"],
+        finished_at: new Date().toISOString(),
+      }],
+    };
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull(), { timeout: 5000 });
+    const queuePollsAfterTerminal = vi.mocked(getCrawlerKeywordQueue).mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(vi.mocked(getCrawlerKeywordQueue).mock.calls.length).toBe(queuePollsAfterTerminal);
+  }, 15000);
 
   it("does not submit the same search again while the first request is pending", async () => {
     let resolveBatch: (value: CrawlerBatchResponse) => void = () => undefined;
     const pendingBatch = new Promise<CrawlerBatchResponse>((resolve) => {
       resolveBatch = resolve;
     });
-    vi.mocked(createCrawlerBatch).mockReturnValue(pendingBatch);
+    vi.mocked(createCrawlerProgressiveBatch).mockReturnValue(pendingBatch as never);
 
     renderPage();
 
@@ -550,7 +822,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
     fireEvent.keyDown(keywordInput, { key: "Enter", code: "Enter", charCode: 13 });
 
-    expect(createCrawlerBatch).toHaveBeenCalledTimes(1);
+    expect(createCrawlerProgressiveBatch).toHaveBeenCalledTimes(1);
     expect(screen.getByText("正在找素材，请稍等，不要重复提交。")).toBeTruthy();
 
     await act(async () => {
@@ -564,7 +836,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     const pendingBatch = new Promise<CrawlerBatchResponse>((_resolve, reject) => {
       rejectBatch = reject;
     });
-    vi.mocked(createCrawlerBatch).mockReturnValue(pendingBatch);
+    vi.mocked(createCrawlerProgressiveBatch).mockReturnValue(pendingBatch as never);
 
     renderPage();
 
@@ -600,11 +872,11 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText("快手不支持发布时间筛选，将按不限时间搜索。")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
-    await waitFor(() => expect(createCrawlerBatch).toHaveBeenCalledWith(expect.objectContaining({
+    await waitFor(() => expect(createCrawlerProgressiveBatch).toHaveBeenCalledWith(expect.objectContaining({
       platforms: ["kuaishou"],
       published_window_days: 7,
     })));
-    const request = vi.mocked(createCrawlerBatch).mock.calls[0]?.[0];
+    const request = vi.mocked(createCrawlerProgressiveBatch).mock.calls[0]?.[0];
     expect(request).not.toHaveProperty("kuaishou_sort");
     expect(request).not.toHaveProperty("kuaishou_duration_bucket");
   });
@@ -739,10 +1011,10 @@ describe("KeywordCrawlerPage performance behavior", () => {
 
     expect(await screen.findByText("本次结果 · 1 条")).toBeTruthy();
     expect(screen.getByText("抖音 1 条")).toBeTruthy();
-    expect(screen.getByText("B站 发现 39 条 · 0 条符合")).toBeTruthy();
+    expect(screen.getByText("B站 扫描 39 条，解析 0 条，筛出 0 条相关素材")).toBeTruthy();
     expect(screen.getByText("快手 未完成")).toBeTruthy();
     expect(screen.getByText(/快手已选中但本次未完成搜索/)).toBeTruthy();
-    expect(screen.getByText(/B站已找到 0 条，未达到 30 条：已经没有更多符合条件的视频。/)).toBeTruthy();
+    expect(screen.getByText(/B站暂未整理出可查看素材，目标 30 条：已经没有更多符合条件的视频。/)).toBeTruthy();
     expect(screen.getByText("评论 200")).toBeTruthy();
     expect(screen.queryByText("主榜候选")).toBeNull();
     expect(screen.queryByRole("button", { name: "付费自动解析" })).toBeNull();
@@ -760,8 +1032,28 @@ describe("KeywordCrawlerPage performance behavior", () => {
     await screen.findByText("企业获客");
     fireEvent.click(screen.getByRole("button", { name: /详情/ }));
 
-    expect(await screen.findByText("刚刚已经搜索过，为避免访问过于频繁，本次没有重新访问平台")).toBeTruthy();
+    expect(await screen.findByText("使用近期结果，本次没有重新访问平台")).toBeTruthy();
     expect(screen.getByText("抖音复用了 10 分钟内的搜索结果；超过 10 分钟后再搜索会重新获取。")).toBeTruthy();
+  });
+
+  it("offers an explicit refresh search action for a recent result", async () => {
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [freeMultiPlatformBatch], total: 1 });
+    vi.mocked(getCrawlerBatch).mockResolvedValue(freeMultiPlatformBatch);
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+    expect(await screen.findByRole("button", { name: "刷新搜索" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "刷新搜索" }));
+
+    await waitFor(() => expect(createCrawlerProgressiveBatch).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: freeMultiPlatformBatch.keyword,
+      platforms: ["douyin", "bilibili"],
+      count_per_platform: freeMultiPlatformBatch.count_per_platform,
+      published_window_days: freeMultiPlatformBatch.published_window_days,
+      force_refresh: true,
+    })));
   });
 
   it("clearly marks a selected Douyin search that this old batch never executed", async () => {
@@ -815,7 +1107,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
       const sortedHeatRow = screen.getAllByText("综合热度最高")[0].closest(".crawler-candidate-row");
       expect(sortedLikesRow?.compareDocumentPosition(sortedHeatRow!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
-    expect(createCrawlerBatch).not.toHaveBeenCalled();
+    expect(createCrawlerProgressiveBatch).not.toHaveBeenCalled();
     expect(probeCrawlerBatchCopy).not.toHaveBeenCalled();
   });
 
@@ -888,7 +1180,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText("命中关键词")).toBeTruthy();
     fireEvent.click(screen.getAllByText("检测失败候选")[0].closest(".crawler-candidate-row")!);
     expect(await screen.findByText("检测失败")).toBeTruthy();
-    expect(screen.getByText("未命中关键词")).toBeTruthy();
+    expect(screen.getByText("平台参考")).toBeTruthy();
     expect(screen.queryByText(/找素材不会自动检测文案/)).toBeNull();
     expect(screen.queryByText("评论数未返回，不会显示为 0。")).toBeNull();
     expect(screen.getByRole("button", { name: "重新检测文案（前10秒）" })).toBeTruthy();
@@ -930,5 +1222,37 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.queryByText("浏览器爆款榜")).toBeNull();
     expect(screen.getAllByText("48秒").length).toBeGreaterThan(0);
     expect(screen.queryByText(/找素材不会自动检测文案/)).toBeNull();
+  });
+
+  it("keeps review candidates visible beside the high-relevance count", async () => {
+    const reviewCandidate: CrawlerCandidateResult = {
+      ...candidate,
+      video_id: "candidate-review",
+      title: "美业老板怎么做IP",
+      selection_tier: "reserve",
+      relevance_reason: "B站仅命中部分相关概念，请人工确认。",
+    };
+    vi.mocked(getCrawlerBatch).mockResolvedValue({
+      ...batchWithCandidate,
+      total_candidates: 2,
+      platform_runs: [
+        {
+          ...batchWithCandidate.platform_runs[0],
+          candidates: [candidate],
+          reference_count: 1,
+          reference_candidates: [reviewCandidate],
+        },
+      ],
+    });
+    renderPage();
+
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    expect(await screen.findByText("高相关素材")).toBeTruthy();
+    expect(screen.getByText("待确认素材")).toBeTruthy();
+    expect(screen.getByText("1/10")).toBeTruthy();
+    expect(screen.getAllByText("美业老板怎么做IP").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/另有 1 条待确认素材/).length).toBeGreaterThan(0);
   });
 });

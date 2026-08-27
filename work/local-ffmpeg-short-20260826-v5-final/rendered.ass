@@ -1,0 +1,34 @@
+﻿[Script Info]
+Title: VideoInsight business talking-head overlay
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Title,Source Han Serif CN Heavy,44,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,1,7,30,30,84,1
+Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Caption,Source Han Serif CN Heavy,52,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0.12,0,1,1,1,2,58,58,170,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.00,0:00:00.98,Caption,,0,0,0,,{\fad(120,0)}玩截流的兄弟们
+Dialogue: 0,0:00:00.98,0:00:02.06,Caption,,0,0,0,,{\fad(120,0)}我刚刚发现一个
+Dialogue: 0,0:00:02.06,0:00:03.10,Caption,,0,0,0,,{\fad(120,0)}特别{\c&H0057C8FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}不要{\c&H00F8FAFC&\fscx100\fscy100}脸的玩法
+Dialogue: 0,0:00:03.10,0:00:04.44,Caption,,0,0,0,,{\fad(120,0)}像以前我们去截流
+Dialogue: 0,0:00:04.44,0:00:05.78,Caption,,0,0,0,,{\fad(120,0)}都是找同行的作品
+Dialogue: 0,0:00:05.78,0:00:06.78,Caption,,0,0,0,,{\fad(120,0)}看到同行评论
+Dialogue: 0,0:00:06.78,0:00:07.84,Caption,,0,0,0,,{\fad(120,0)}区有咨询的客户
+Dialogue: 0,0:00:07.84,0:00:09.34,Caption,,0,0,0,,{\fad(120,0)}就一个一个的去打招呼
+Dialogue: 0,0:00:09.34,0:00:11.04,Caption,,0,0,0,,{\fad(120,0)}现在已经是AI的时代
+Dialogue: 0,0:00:11.04,0:00:12.64,Caption,,0,0,0,,{\fad(120,0)}很多老板全在用AI去跑
+Dialogue: 0,0:00:12.64,0:00:13.72,Caption,,0,0,0,,{\fad(120,0)}操作也非常简单
+Dialogue: 0,0:00:13.72,0:00:15.52,Caption,,0,0,0,,{\fad(120,0)}把同行的链接放上去
+Dialogue: 0,0:00:15.52,0:00:16.82,Caption,,0,0,0,,{\fad(120,0)}输入行业{\c&H0057C8FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}关键{\c&H00F8FAFC&\fscx100\fscy100}词
+Dialogue: 0,0:00:16.82,0:00:18.50,Caption,,0,0,0,,{\fad(120,0)}让AI去帮你找那些刚刚
+Dialogue: 0,0:00:18.50,0:00:19.62,Caption,,0,0,0,,{\fad(120,0)}评论的客户就可以了
+Dialogue: 0,0:00:19.62,0:00:20.72,Caption,,0,0,0,,{\fad(120,0)}你只需要设置
+Dialogue: 0,0:00:20.72,0:00:21.70,Caption,,0,0,0,,{\fad(120,0)}好打招呼的话术
+Dialogue: 0,0:00:21.70,0:00:23.06,Caption,,0,0,0,,{\fad(120,0)}让AI去打招呼就够了
+Dialogue: 0,0:00:23.06,0:00:24.02,Caption,,0,0,0,,{\fad(120,0)}玩截流的都知道
+Dialogue: 0,0:00:24.02,0:00:24.98,Caption,,0,0,0,,{\fad(120,0)}找到客户的

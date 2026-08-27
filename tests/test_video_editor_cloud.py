@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -34,11 +35,14 @@ from src.services.video_editor_cloud import (
     TimeRange,
     build_business_talking_head_ass,
     build_business_talking_head_overlay_preview,
+    build_business_talking_head_srt,
     build_business_talking_head_title_png,
     build_safe_edit_plan,
+    build_visual_beats,
     build_smart_opening,
     create_cost_quote,
     get_cloud_capability,
+    _caption_lexical_words,
     retime_segments_after_cuts,
     validated_caption_emphasis,
     validated_caption_groups,
@@ -268,6 +272,28 @@ def test_safe_plan_only_cuts_long_internal_silence_with_edge_padding():
             not (cut.start < speech.end and speech.start < cut.end)
             for speech in plan.spoken_ranges
         )
+
+
+def test_visual_beats_are_sparse_automatic_and_bound_to_caption_terms():
+    segments = [
+        {"start": 0, "end": 2, "text": "今天讲一个门店做法。"},
+        {"start": 2, "end": 4, "text": "只需要49元就能参加活动。"},
+        {"start": 10, "end": 12, "text": "我们把流程分成三步。"},
+    ]
+
+    beats = build_visual_beats(
+        segments,
+        [{"segment_index": 0, "term": "49元", "kind": "number"}],
+    )
+
+    assert [item.treatment for item in beats] == [
+        "hook",
+        "keyword_card",
+        "punch_in",
+    ]
+    assert beats[0].start == 0
+    assert beats[1].label == "49元"
+    assert all(item.end <= 12 for item in beats)
 
 
 def test_edit_plan_model_rejects_deleting_spoken_content():
@@ -734,10 +760,11 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
         "end": 3,
     }
     assert preview["cues"][0]["emphasis_style"] == {
-        "color": "#FFE16A",
-        "scale": 1.5,
+        "color": "#FFD166",
+        "scale": 1.08,
         "animation": "soft_pop",
-        "duration_ms": 120,
+        "duration_ms": 140,
+        "style_id": "adaptive_talking_head_v1",
     }
 
 
@@ -879,7 +906,7 @@ def test_smart_opening_skips_a_context_free_transition_title():
     assert opening.hook_text != "但这个不一样"
 
 
-def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
+def test_ass_keyword_emphasis_uses_adaptive_light_pop_and_fade_in():
     segments = [{"start": 0, "end": 2, "text": "只需要49元就能参加活动。"}]
     ass = build_business_talking_head_ass(
         segments,
@@ -889,7 +916,9 @@ def test_ass_keyword_emphasis_uses_yellow_150_percent_scale_and_soft_pop():
         caption_emphasis=[{"segment_index": 0, "term": "49元", "kind": "number"}],
     ).decode("utf-8-sig")
 
-    assert r"{\c&H006AE1FF&\fscx100\fscy100\t(0,120,\fscx150\fscy150)}49元" in ass
+    assert r"{\fad(120,0)\fscx98\fscy98\t(0,120,\fscx100\fscy100)}" in ass
+    assert r"{\c&H0066D1FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}49元" in ass
+    assert r"\fscx108\fscy108" in ass
     assert r"{\c&H00F8FAFC&\fscx100\fscy100}" in ass
 
 
@@ -904,10 +933,11 @@ def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
     )
 
     assert preview["cues"][0]["emphasis_style"] == {
-        "color": "#FFE16A",
-        "scale": 1.5,
+        "color": "#FFD166",
+        "scale": 1.08,
         "animation": "soft_pop",
-        "duration_ms": 120,
+        "duration_ms": 140,
+        "style_id": "adaptive_talking_head_v1",
     }
     assert preview["cues"][0]["emphasis_range"] is not None
     assert any(cue["emphasis_range"] is not None for cue in preview["cues"][1:])
@@ -954,6 +984,66 @@ def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
         "start": 5,
         "end": 7,
     }
+
+
+def test_overlay_preview_uses_word_timestamps_instead_of_sentence_averaging():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 0,
+                "end": 4,
+                "text": "第一段内容，第二段内容",
+                "words": [
+                    {"start": 0, "end": 0.2, "text": "第"},
+                    {"start": 0.2, "end": 0.4, "text": "一"},
+                    {"start": 0.4, "end": 0.7, "text": "段"},
+                    {"start": 0.7, "end": 1.1, "text": "内容"},
+                    {"start": 1.1, "end": 1.2, "text": "，"},
+                    {"start": 2.0, "end": 2.2, "text": "第"},
+                    {"start": 2.2, "end": 2.4, "text": "二"},
+                    {"start": 2.4, "end": 2.7, "text": "段"},
+                    {"start": 2.7, "end": 3.8, "text": "内容"},
+                ],
+            }
+        ],
+        title="词级字幕",
+        output_profile="720p",
+        caption_groups=[{"segment_index": 0, "parts": ["第一段内容", "第二段内容"]}],
+    )
+
+    assert [(cue["start"], cue["end"]) for cue in preview["cues"]] == [
+        (0.0, 1.2),
+        (2.0, 3.8),
+    ]
+
+
+def test_word_timestamps_keep_business_clause_together_when_character_split_would_fragment_it():
+    text = "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？"
+    duration = 6.12
+    character_duration = duration / len(text)
+    words = [
+        {
+            "start": index * character_duration,
+            "end": (index + 1) * character_duration,
+            "text": character,
+        }
+        for index, character in enumerate(text)
+    ]
+
+    preview = build_business_talking_head_overlay_preview(
+        [{"start": 0.0, "end": duration, "text": text, "words": words}],
+        title="客户资源风险",
+        output_profile="720p",
+    )
+
+    texts = ["".join(cue["lines"]) for cue in preview["cues"]]
+    assert 2 <= len(texts) <= 4
+    assert any("数据库" in text for text in texts)
+    assert any("业务员" in text for text in texts)
+    assert all(
+        0.9 - 1e-6 <= cue["end"] - cue["start"] <= 2.4 + 1e-6
+        for cue in preview["cues"]
+    )
 
 
 def test_mps_request_uses_selected_profile_and_requires_human_review():
@@ -1098,19 +1188,19 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     )
     assert spec["playback_rate"] == 1.15
     assert spec["title"]["max_lines"] == 1
-    assert spec["title"]["max_chars_per_line"] == 14
+    assert spec["title"]["max_chars_per_line"] == 12
     assert spec["title"]["font_family"] == "Source Han Serif CN Heavy"
     assert spec["title"]["render_mode"] == "png_watermark"
     assert spec["subtitle"]["max_lines"] == 1
     assert spec["subtitle"]["max_chars_per_line"] == 11
     assert spec["subtitle"]["font_size"] == 52
-    assert spec["subtitle"]["outline_width"] == 2
-    assert "Style: Title,YaHei,44" in ass
+    assert spec["subtitle"]["outline_width"] == 1
+    assert "Style: Title,Source Han Serif CN Heavy,44" in ass
     assert "Style: Accent,Arial,1" in ass
-    assert "Style: Caption,YaHei,52" in ass
-    assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.18" in ass
+    assert "Style: Caption,Source Han Serif CN Heavy,52" in ass
+    assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.12" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
-    assert r"\fad" not in ass
+    assert r"\fad(120,0)" in ass
     assert r"\N" not in ass
     assert r"\\N" not in ass
 
@@ -1137,6 +1227,18 @@ def test_business_talking_head_title_png_uses_brand_font_and_profile_size():
     assert len(title_png) > 10_000
 
 
+def test_title_preview_uses_short_single_line_without_ellipsis():
+    preview = build_business_talking_head_overlay_preview(
+        [{"start": 0, "end": 2, "text": "最近广州冒出了一个挺特别的参与模式"}],
+        title="最近广州冒出了一个挺特别的参与模式",
+        output_profile="720p",
+    )
+    title_lines = preview["title"]["lines"]
+    assert len(title_lines) == 1
+    assert 6 <= len(title_lines[0]) <= 12
+    assert "…" not in title_lines[0]
+
+
 def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuation():
     segments = [
         {
@@ -1157,7 +1259,9 @@ def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuat
         output_profile="720p",
     ).decode("utf-8-sig")
 
-    assert preview["title"]["lines"] == ["机器人也被裁员？真相令人深思"]
+    assert len(preview["title"]["lines"]) == 1
+    assert 6 <= len(preview["title"]["lines"][0]) <= 12
+    assert "…" not in preview["title"]["lines"][0]
     assert [cue["lines"] for cue in preview["cues"]] == [
         ["你发现没"],
         ["机器人最近也被裁员了"],
@@ -1173,10 +1277,9 @@ def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuat
         "start": 6,
         "end": 9,
     }
-    assert (
-        r"{\c&H006AE1FF&\fscx100\fscy100\t(0,120,\fscx150\fscy150)}"
-        r"被裁员{\c&H00F8FAFC&\fscx100\fscy100}"
-    ) in ass
+    assert r"\fad(120,0)" in ass
+    assert r"\t(0,140,\fscx108\fscy108)" in ass
+    assert r"{\c&H00F8FAFC&\fscx100\fscy100}" in ass
 
 
 def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
@@ -1201,6 +1304,21 @@ def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
     assert cues[0]["start"] == 1.25
     assert cues[-1]["end"] == 5.75
     assert all(left["end"] == right["start"] for left, right in zip(cues, cues[1:]))
+
+
+def test_lexical_word_projection_keeps_numeric_suffix_when_provider_omits_it():
+    projected = _caption_lexical_words(
+        [
+            {"text": "80", "start": 0.0, "end": 0.3},
+            {"text": "的", "start": 0.3, "end": 0.6},
+            {"text": "客户", "start": 0.6, "end": 1.2},
+        ],
+        text="80%的客户",
+        segment_start=0.0,
+        segment_end=1.2,
+    )
+
+    assert [item["text"] for item in projected] == ["80%", "的", "客户"]
 
 
 def test_caption_balances_long_phrases_without_one_or_two_character_orphans():
@@ -1228,6 +1346,212 @@ def test_caption_balances_long_phrases_without_one_or_two_character_orphans():
     ]
     assert "铁卖" not in lines
     assert all(len(line) >= 4 for line in lines)
+
+
+def test_sentence_only_long_caption_uses_short_estimated_phrase_cues():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 0,
+                "end": 14.8,
+                "text": "客户资源到底掌握在业务员手里还是沉淀在公司数据库里面这是很多老板都忽略的风险",
+            }
+        ],
+        title="客户资源风险",
+        output_profile="720p",
+    )
+
+    assert preview["phrase_timing_source"] == "estimated_phrase_timestamps"
+    assert 6 <= len(preview["cues"]) <= 8
+    assert all(0.9 <= cue["end"] - cue["start"] <= 2.4 for cue in preview["cues"])
+    assert all(len(cue["lines"]) == 1 for cue in preview["cues"])
+    assert "客户资源" in "".join(cue["lines"][0] for cue in preview["cues"])
+
+
+def test_sentence_only_business_copy_uses_semantic_groups_without_tail_fragments():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 0.0,
+                "end": 6.12,
+                "text": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？",
+            },
+            {
+                "start": 6.12,
+                "end": 12.2,
+                "text": "业务员呢，他一旦离职，你会发现聊天记录没了，客户的关系也就跟着断掉了。",
+            },
+            {
+                "start": 12.92,
+                "end": 20.52,
+                "text": "企业真正需要的不只是业务员个人维护，而是一套呢可以沉淀用户、持续触达的营销机制。",
+            },
+            {
+                "start": 20.8,
+                "end": 35.68,
+                "text": "数影霸屏呢，我们可以配合我们企业的整个客户的数据库，对合规客户呢，这些人群呢，进行持续的、精准的曝光，让客户认识的不只是某个业务员，更是你整个工厂、品牌、产品。",
+            },
+        ],
+        title="客户资源风险",
+        output_profile="720p",
+    )
+
+    cues = preview["cues"]
+    texts = ["".join(cue["lines"]) for cue in cues]
+    assert 14 <= len(cues) <= 21
+    assert min(cue["end"] - cue["start"] for cue in cues) >= 0.9
+    assert max(cue["end"] - cue["start"] for cue in cues) <= 2.4 + 1e-6
+    assert "业务员呢" not in texts
+    assert any("业务员他一旦离职" in text for text in texts)
+    assert all(text not in {"的", "个"} for text in texts)
+    assert any("工厂品牌产品" in text for text in texts)
+    assert any("数据库" in text for text in texts)
+    assert "只是某个业务员" not in texts
+    assert (
+        "让客户认识的" in texts
+        or "让客户认识的不只是某个业务员" in texts
+    )
+    assert (
+        "不只是某个业务员" in texts
+        or "让客户认识的不只是某个业务员" in texts
+    )
+
+
+@pytest.mark.parametrize(
+    "spoken_text",
+    [
+        "门店每天都要把新客沉淀下来",
+        "客户关系不能只放在个人手机里",
+        "先把会员制和优惠券讲清楚",
+        "数据报表要能看出复购趋势",
+        "员工离职以后客户还要有人接手",
+        "小程序可以承接线上预约和核销",
+        "不要把品牌和产品拆成孤立字幕",
+        "从旧系统迁移到智慧门店需要步骤",
+        "朋友圈传播要和到店行为连起来",
+        "这套方法适合餐饮美容和便利店",
+    ],
+)
+def test_unseen_chinese_copy_uses_generic_caption_boundaries_without_overfit(
+    spoken_text: str,
+):
+    duration = max(3.0, len(spoken_text) * 0.24)
+    preview = build_business_talking_head_overlay_preview(
+        [{"start": 0.0, "end": duration, "text": spoken_text}],
+        title="通用口播",
+        output_profile="720p",
+    )
+    cues = preview["cues"]
+    assert cues
+    assert all(len(cue["lines"]) == 1 for cue in cues)
+    assert all(
+        not any(mark in "".join(cue["lines"]) for mark in "，。！？、,.!?；;：:")
+        for cue in cues
+    )
+    assert all(
+        0.9 <= float(cue["end"]) - float(cue["start"]) <= 2.4 + 1e-6
+        for cue in cues
+    )
+    assert all("".join(cue["lines"]) not in {"的", "地", "个", "品牌", "产品"} for cue in cues)
+    assert "".join("".join(cue["lines"]) for cue in cues) == spoken_text
+
+
+@pytest.mark.parametrize(
+    "category,spoken_text",
+    [
+        ("life", "周末去菜市场买菜，回家以后再做一锅热汤"),
+        ("beauty", "做完护理以后先观察皮肤状态，再决定是否补水"),
+        ("tutorial", "打开设置页面，先检查网络权限，再保存新的配置"),
+    ],
+)
+def test_unfamiliar_life_beauty_tutorial_copy_uses_jieba_boundaries(
+    category: str,
+    spoken_text: str,
+):
+    duration = max(4.0, len(spoken_text) * 0.24)
+    preview = build_business_talking_head_overlay_preview(
+        [{"start": 0.0, "end": duration, "text": spoken_text}],
+        title="",
+        output_profile="720p",
+    )
+    cues = preview["cues"]
+    expected = re.sub(r"[，。！？；：、,.!?;:]", "", spoken_text)
+    rendered = "".join("".join(cue["lines"]) for cue in cues)
+    assert rendered == expected
+    assert all(len(cue["lines"]) == 1 for cue in cues)
+    assert all(
+        0.9 <= float(cue["end"]) - float(cue["start"]) <= 2.4 + 1e-6
+        for cue in cues
+    ), category
+    assert all(
+        not any(mark in "".join(cue["lines"]) for mark in "，。！？；：、,.!?;:")
+        for cue in cues
+    )
+
+
+def test_caption_glossary_is_per_transcript_and_reaches_ass_rendering():
+    spoken_text = "业务员离职后客户关系不应断开"
+    words = [
+        {"text": character, "start": index * 0.42, "end": (index + 1) * 0.42}
+        for index, character in enumerate(spoken_text)
+    ]
+    glossary = ["业务员", "客户关系"]
+    segments = [{"start": 0.0, "end": 4.2, "text": spoken_text, "words": words}]
+    preview = build_business_talking_head_overlay_preview(
+        segments,
+        title="",
+        output_profile="720p",
+        caption_glossary=glossary,
+    )
+    cue_texts = ["".join(cue["lines"]) for cue in preview["cues"]]
+    boundaries = []
+    cursor = 0
+    for text in cue_texts[:-1]:
+        cursor += len(text)
+        boundaries.append(cursor)
+    for term in glossary:
+        start = spoken_text.index(term)
+        assert not any(start < boundary < start + len(term) for boundary in boundaries)
+    ass = build_business_talking_head_ass(
+        segments,
+        title="",
+        output_profile="720p",
+        caption_glossary=glossary,
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+    assert "业务员" in ass
+    assert "客户关系" in ass
+
+
+def test_caption_domain_terms_are_not_global_core_rules():
+    source = Path("src/services/video_editor_cloud.py").read_text(encoding="utf-8")
+    assert "_CAPTION_COMPOUND_WORDS" not in source
+    assert '"客户资源"' not in source.split("_CAPTION_BREAK_AFTER_TOKENS", 1)[1].split(")", 1)[0]
+    assert '"手里"' not in source.split("_CAPTION_BREAK_AFTER_TOKENS", 1)[1].split(")", 1)[0]
+    assert '"持续"' not in source.split("_CAPTION_BREAK_BEFORE_TOKENS", 1)[1].split(")", 1)[0]
+
+
+def test_caption_production_has_no_sample_sentence_overfit_branches():
+    source = (Path("src/services/video_editor_cloud.py")).read_text(encoding="utf-8")
+    forbidden_literals = (
+        "客户资源是掌握在业务员的手里呢还是沉淀在咱们公司的数据库",
+        "让客户认识的不只是某个业务员更是你整个工厂品牌产品",
+        "企业真正需要的不只是业务员个人维护而是一套能沉淀用户持续触达的营销机制",
+        "而且秒到账所有消费都是通过门店小程序完成的",
+        "除了餐饮水果生鲜美容便利店都能找它",
+    )
+    assert all(literal not in source for literal in forbidden_literals)
+
+
+def test_srt_uses_same_short_cues_as_ass_preview():
+    srt = build_business_talking_head_srt(
+        [{"start": 0, "end": 4.0, "text": "客户资源掌握在谁手里，决定公司风险。"}],
+        output_profile="720p",
+    ).decode("utf-8-sig")
+
+    assert "00:00:00,000 -->" in srt
+    assert "客户资源掌握" in srt
+    assert "\n\n" in srt
 
 
 def test_caption_keeps_basic_together_and_prefers_the_phrase_boundary():
@@ -1297,14 +1621,18 @@ def test_caption_avoids_dangling_particles_prefixes_and_classifiers():
     )
 
     lines = [cue["lines"][0] for cue in preview["cues"]]
-    assert "但重头戏是" in lines
-    assert "后面的共享店长活动" in lines
-    assert "立刻拿到" in lines
-    assert "6张无门槛优惠券" in lines
-    assert "这种口碑效果" in lines
-    assert "比花大钱打广告强多了" in lines
-    assert "如果你的店" in lines
-    assert "也想用这套系统搞活动" in lines
+    joined = "".join(lines)
+    assert "但重头戏是" in joined
+    # This domain phrase is not a global break rule.  It remains contiguous;
+    # reviewed media may protect it through transcript_glossary when needed.
+    assert "后面的共享店长活动" in joined
+    assert "立刻拿到" in joined
+    assert "6张无门槛优惠券" in joined
+    assert "这种口碑效果" in joined
+    assert "比花大钱打广告强多了" in joined
+    assert "如果你的店" in joined
+    assert "也想用这套系统搞活动" in joined
+    assert all(len(line) >= 3 for line in lines)
 
 
 def test_oss_presigned_read_url_is_short_lived_and_not_serialized():

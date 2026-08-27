@@ -8,6 +8,7 @@ from src.mock_data import build_mock_candidates, build_mock_tasks
 from src.models import (
     CandidateMatch,
     CandidateCopyProbe,
+    CrawlerKeywordQueue,
     DiscoveryResult,
     HotWordRecord,
     KeywordTrendResult,
@@ -58,6 +59,7 @@ class MockRepository:
         self._sampling_checkpoints: dict[str, SamplingCheckpoint] = {}
         self._discovery_request_guards: dict[str, tuple[str, datetime]] = {}
         self._search_batches: dict[str, SearchBatch] = {}
+        self._crawler_keyword_queues: dict[str, CrawlerKeywordQueue] = {}
         self._platform_search_runs: dict[str, PlatformSearchRun] = {}
         self._provider_request_guards: dict[str, tuple[str, datetime, str]] = {}
         self._provider_safety_states: dict[str, ProviderSafetyState] = {}
@@ -473,6 +475,19 @@ class MockRepository:
             reverse=True,
         )[:limit]
 
+    def save_crawler_keyword_queue(self, queue: CrawlerKeywordQueue) -> None:
+        self._crawler_keyword_queues[queue.queue_id] = queue
+
+    def get_crawler_keyword_queue(self, queue_id: str) -> CrawlerKeywordQueue | None:
+        return self._crawler_keyword_queues.get(queue_id)
+
+    def list_crawler_keyword_queues(self, limit: int = 20) -> list[CrawlerKeywordQueue]:
+        return sorted(
+            self._crawler_keyword_queues.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
+
     def get_publish_safety_state(
         self, platform: str, account_id: str
     ) -> PublishSafetyState | None:
@@ -513,7 +528,11 @@ class MockRepository:
             and now - window_start < timedelta(seconds=rolling_window_seconds)
         )
         current_runs = state.real_runs_in_window if state and active_window else 0
-        if max_runs_in_window is not None and current_runs >= max_runs_in_window:
+        if (
+            max_runs_in_window is not None
+            and max_runs_in_window > 0
+            and current_runs >= max_runs_in_window
+        ):
             return False
         self._provider_safety_states[provider] = ProviderSafetyState(
             provider=provider,
@@ -562,7 +581,7 @@ class MockRepository:
                 if current and current.active_run_id != run_id
                 else None
             ),
-            next_allowed_at=now + timedelta(seconds=max(1, cooldown_seconds)),
+            next_allowed_at=now + timedelta(seconds=max(0, cooldown_seconds)),
             blocked_until=blocked_until,
             blocked_reason=safety_reason
             if requested_block

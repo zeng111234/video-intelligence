@@ -1,0 +1,656 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-26T09:31:41.976934+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_uploads\\upload-e4eb099b07-source.mp4",
+  "source_sha256": "a95e511410c353a2514924ef1b26bce6f7e3bb0a47cb0d393a21d6fdda9fe277",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 20.011,
+  "segment_count": 15,
+  "word_count": 89,
+  "segments": [
+    {
+      "start": 1.46,
+      "end": 3.76,
+      "text": "很多朋友觉得车载之下装起来麻烦",
+      "words": [
+        {
+          "start": 1.46,
+          "end": 1.94,
+          "word": "很多",
+          "probability": 0.9776
+        },
+        {
+          "start": 1.94,
+          "end": 2.14,
+          "word": "朋友",
+          "probability": 0.9998
+        },
+        {
+          "start": 2.14,
+          "end": 2.36,
+          "word": "觉得",
+          "probability": 0.9997
+        },
+        {
+          "start": 2.36,
+          "end": 2.6,
+          "word": "车",
+          "probability": 0.9976
+        },
+        {
+          "start": 2.6,
+          "end": 2.76,
+          "word": "载",
+          "probability": 0.9074
+        },
+        {
+          "start": 2.76,
+          "end": 2.88,
+          "word": "之",
+          "probability": 0.8767
+        },
+        {
+          "start": 2.88,
+          "end": 3.02,
+          "word": "下",
+          "probability": 0.7657
+        },
+        {
+          "start": 3.02,
+          "end": 3.22,
+          "word": "装",
+          "probability": 0.9987
+        },
+        {
+          "start": 3.22,
+          "end": 3.32,
+          "word": "起",
+          "probability": 0.9999
+        },
+        {
+          "start": 3.32,
+          "end": 3.42,
+          "word": "来",
+          "probability": 0.9982
+        },
+        {
+          "start": 3.42,
+          "end": 3.56,
+          "word": "麻",
+          "probability": 0.9971
+        },
+        {
+          "start": 3.56,
+          "end": 3.76,
+          "word": "烦",
+          "probability": 0.9996
+        }
+      ]
+    },
+    {
+      "start": 3.76,
+      "end": 4.7,
+      "text": "但这个不一样",
+      "words": [
+        {
+          "start": 3.76,
+          "end": 4.14,
+          "word": "但",
+          "probability": 0.9618
+        },
+        {
+          "start": 4.14,
+          "end": 4.34,
+          "word": "这个",
+          "probability": 0.9998
+        },
+        {
+          "start": 4.34,
+          "end": 4.46,
+          "word": "不",
+          "probability": 0.9999
+        },
+        {
+          "start": 4.46,
+          "end": 4.56,
+          "word": "一",
+          "probability": 0.9963
+        },
+        {
+          "start": 4.56,
+          "end": 4.7,
+          "word": "样",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 4.7,
+      "end": 6.06,
+      "text": "拧一下就能锁紧",
+      "words": [
+        {
+          "start": 4.7,
+          "end": 5.14,
+          "word": "拧",
+          "probability": 0.8069
+        },
+        {
+          "start": 5.14,
+          "end": 5.42,
+          "word": "一下",
+          "probability": 0.9971
+        },
+        {
+          "start": 5.42,
+          "end": 5.62,
+          "word": "就",
+          "probability": 0.9994
+        },
+        {
+          "start": 5.62,
+          "end": 5.74,
+          "word": "能",
+          "probability": 1.0
+        },
+        {
+          "start": 5.74,
+          "end": 5.9,
+          "word": "锁",
+          "probability": 0.9987
+        },
+        {
+          "start": 5.9,
+          "end": 6.06,
+          "word": "紧",
+          "probability": 0.9967
+        }
+      ]
+    },
+    {
+      "start": 6.06,
+      "end": 6.84,
+      "text": "不用胶黏",
+      "words": [
+        {
+          "start": 6.06,
+          "end": 6.42,
+          "word": "不用",
+          "probability": 0.9705
+        },
+        {
+          "start": 6.42,
+          "end": 6.6,
+          "word": "胶",
+          "probability": 0.8954
+        },
+        {
+          "start": 6.6,
+          "end": 6.84,
+          "word": "黏",
+          "probability": 0.7227
+        }
+      ]
+    },
+    {
+      "start": 6.84,
+      "end": 8.3,
+      "text": "也不会卡住出风口",
+      "words": [
+        {
+          "start": 6.84,
+          "end": 7.24,
+          "word": "也",
+          "probability": 0.9956
+        },
+        {
+          "start": 7.24,
+          "end": 7.44,
+          "word": "不会",
+          "probability": 0.9998
+        },
+        {
+          "start": 7.44,
+          "end": 7.72,
+          "word": "卡",
+          "probability": 0.9999
+        },
+        {
+          "start": 7.72,
+          "end": 7.86,
+          "word": "住",
+          "probability": 0.9996
+        },
+        {
+          "start": 7.86,
+          "end": 7.98,
+          "word": "出",
+          "probability": 0.9862
+        },
+        {
+          "start": 7.98,
+          "end": 8.08,
+          "word": "风",
+          "probability": 0.9937
+        },
+        {
+          "start": 8.08,
+          "end": 8.3,
+          "word": "口",
+          "probability": 0.9994
+        }
+      ]
+    },
+    {
+      "start": 8.3,
+      "end": 9.14,
+      "text": "更不用充电",
+      "words": [
+        {
+          "start": 8.3,
+          "end": 8.6,
+          "word": "更",
+          "probability": 0.9988
+        },
+        {
+          "start": 8.6,
+          "end": 8.82,
+          "word": "不用",
+          "probability": 0.9999
+        },
+        {
+          "start": 8.82,
+          "end": 8.92,
+          "word": "充",
+          "probability": 0.9997
+        },
+        {
+          "start": 8.92,
+          "end": 9.14,
+          "word": "电",
+          "probability": 0.9995
+        }
+      ]
+    },
+    {
+      "start": 9.14,
+      "end": 10.84,
+      "text": "随便找个平整的地方",
+      "words": [
+        {
+          "start": 9.14,
+          "end": 9.74,
+          "word": "随",
+          "probability": 0.9997
+        },
+        {
+          "start": 9.74,
+          "end": 9.9,
+          "word": "便",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.9,
+          "end": 10.08,
+          "word": "找",
+          "probability": 0.9999
+        },
+        {
+          "start": 10.08,
+          "end": 10.22,
+          "word": "个",
+          "probability": 0.9993
+        },
+        {
+          "start": 10.22,
+          "end": 10.36,
+          "word": "平",
+          "probability": 0.9838
+        },
+        {
+          "start": 10.36,
+          "end": 10.5,
+          "word": "整",
+          "probability": 0.8848
+        },
+        {
+          "start": 10.5,
+          "end": 10.6,
+          "word": "的",
+          "probability": 0.9999
+        },
+        {
+          "start": 10.6,
+          "end": 10.84,
+          "word": "地方",
+          "probability": 1.0
+        }
+      ]
+    },
+    {
+      "start": 10.84,
+      "end": 11.84,
+      "text": "一放就吸住了",
+      "words": [
+        {
+          "start": 10.84,
+          "end": 11.08,
+          "word": "一",
+          "probability": 0.9977
+        },
+        {
+          "start": 11.08,
+          "end": 11.24,
+          "word": "放",
+          "probability": 0.9996
+        },
+        {
+          "start": 11.24,
+          "end": 11.42,
+          "word": "就",
+          "probability": 0.9996
+        },
+        {
+          "start": 11.42,
+          "end": 11.56,
+          "word": "吸",
+          "probability": 0.9436
+        },
+        {
+          "start": 11.56,
+          "end": 11.7,
+          "word": "住",
+          "probability": 0.9846
+        },
+        {
+          "start": 11.7,
+          "end": 11.84,
+          "word": "了",
+          "probability": 1.0
+        }
+      ]
+    },
+    {
+      "start": 12.26,
+      "end": 13.12,
+      "text": "想换个位置",
+      "words": [
+        {
+          "start": 12.26,
+          "end": 12.58,
+          "word": "想",
+          "probability": 0.9982
+        },
+        {
+          "start": 12.58,
+          "end": 12.7,
+          "word": "换",
+          "probability": 0.9997
+        },
+        {
+          "start": 12.7,
+          "end": 12.8,
+          "word": "个",
+          "probability": 0.9992
+        },
+        {
+          "start": 12.8,
+          "end": 12.94,
+          "word": "位",
+          "probability": 0.9999
+        },
+        {
+          "start": 12.94,
+          "end": 13.12,
+          "word": "置",
+          "probability": 0.9989
+        }
+      ]
+    },
+    {
+      "start": 13.12,
+      "end": 14.6,
+      "text": "反正拧一下就取下来",
+      "words": [
+        {
+          "start": 13.12,
+          "end": 13.48,
+          "word": "反",
+          "probability": 0.9994
+        },
+        {
+          "start": 13.48,
+          "end": 13.64,
+          "word": "正",
+          "probability": 0.9993
+        },
+        {
+          "start": 13.64,
+          "end": 13.8,
+          "word": "拧",
+          "probability": 0.9948
+        },
+        {
+          "start": 13.8,
+          "end": 14.0,
+          "word": "一下",
+          "probability": 0.9999
+        },
+        {
+          "start": 14.0,
+          "end": 14.16,
+          "word": "就",
+          "probability": 0.9998
+        },
+        {
+          "start": 14.16,
+          "end": 14.3,
+          "word": "取",
+          "probability": 0.9992
+        },
+        {
+          "start": 14.3,
+          "end": 14.44,
+          "word": "下",
+          "probability": 0.9992
+        },
+        {
+          "start": 14.44,
+          "end": 14.6,
+          "word": "来",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 14.6,
+      "end": 15.46,
+      "text": "特别灵活",
+      "words": [
+        {
+          "start": 14.6,
+          "end": 14.94,
+          "word": "特",
+          "probability": 0.9963
+        },
+        {
+          "start": 14.94,
+          "end": 15.14,
+          "word": "别",
+          "probability": 0.9999
+        },
+        {
+          "start": 15.14,
+          "end": 15.28,
+          "word": "灵",
+          "probability": 0.9995
+        },
+        {
+          "start": 15.28,
+          "end": 15.46,
+          "word": "活",
+          "probability": 0.9923
+        }
+      ]
+    },
+    {
+      "start": 15.46,
+      "end": 17.1,
+      "text": "它的支撑臂可以多断条",
+      "words": [
+        {
+          "start": 15.46,
+          "end": 16.0,
+          "word": "它的",
+          "probability": 0.928
+        },
+        {
+          "start": 16.0,
+          "end": 16.16,
+          "word": "支",
+          "probability": 0.9846
+        },
+        {
+          "start": 16.16,
+          "end": 16.28,
+          "word": "撑",
+          "probability": 0.9833
+        },
+        {
+          "start": 16.28,
+          "end": 16.38,
+          "word": "臂",
+          "probability": 0.8081
+        },
+        {
+          "start": 16.38,
+          "end": 16.58,
+          "word": "可以",
+          "probability": 0.9992
+        },
+        {
+          "start": 16.58,
+          "end": 16.76,
+          "word": "多",
+          "probability": 0.9998
+        },
+        {
+          "start": 16.76,
+          "end": 16.9,
+          "word": "断",
+          "probability": 0.909
+        },
+        {
+          "start": 16.9,
+          "end": 17.1,
+          "word": "条",
+          "probability": 0.9874
+        }
+      ]
+    },
+    {
+      "start": 17.1,
+      "end": 18.28,
+      "text": "不管什么车型",
+      "words": [
+        {
+          "start": 17.1,
+          "end": 17.6,
+          "word": "不管",
+          "probability": 0.999
+        },
+        {
+          "start": 17.6,
+          "end": 17.9,
+          "word": "什么",
+          "probability": 0.9992
+        },
+        {
+          "start": 17.9,
+          "end": 18.12,
+          "word": "车",
+          "probability": 0.9997
+        },
+        {
+          "start": 18.12,
+          "end": 18.28,
+          "word": "型",
+          "probability": 0.9867
+        }
+      ]
+    },
+    {
+      "start": 18.28,
+      "end": 19.44,
+      "text": "什么角度都能适应",
+      "words": [
+        {
+          "start": 18.28,
+          "end": 18.54,
+          "word": "什么",
+          "probability": 0.9956
+        },
+        {
+          "start": 18.54,
+          "end": 18.72,
+          "word": "角",
+          "probability": 0.9999
+        },
+        {
+          "start": 18.72,
+          "end": 18.88,
+          "word": "度",
+          "probability": 0.9999
+        },
+        {
+          "start": 18.88,
+          "end": 19.02,
+          "word": "都",
+          "probability": 0.9999
+        },
+        {
+          "start": 19.02,
+          "end": 19.14,
+          "word": "能",
+          "probability": 0.9999
+        },
+        {
+          "start": 19.14,
+          "end": 19.32,
+          "word": "适",
+          "probability": 0.999
+        },
+        {
+          "start": 19.32,
+          "end": 19.44,
+          "word": "应",
+          "probability": 0.9995
+        }
+      ]
+    },
+    {
+      "start": 19.44,
+      "end": 19.98,
+      "text": "坐在",
+      "words": [
+        {
+          "start": 19.44,
+          "end": 19.88,
+          "word": "坐",
+          "probability": 0.9739
+        },
+        {
+          "start": 19.88,
+          "end": 19.98,
+          "word": "在",
+          "probability": 0.9991
+        }
+      ]
+    }
+  ]
+}

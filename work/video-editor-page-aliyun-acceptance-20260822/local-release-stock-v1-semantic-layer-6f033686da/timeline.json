@@ -1,0 +1,30 @@
+{
+  "task_id": "edit-local-6f033686da",
+  "template_id": "pain_point_solution",
+  "template_version": "talking-head-release-v1.0",
+  "director_timeline_source": "approved_shot_plan_plus_local_semantic_layer_compatibility",
+  "shot_count": 10,
+  "subtitle_timeline": {
+    "phrase_cue_count": 18,
+    "cue_count_by_source_segment": [3, 3, 4, 4, 4],
+    "min_duration_seconds": 0.9,
+    "max_duration_seconds": 2.4,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "experience_gate_passed": true
+  },
+  "release_brolls": [
+    {"asset_id": "broll-14f7720cd1", "start": 2.6, "end": 6.16, "mode": "full", "semantic_role": "customer_database"},
+    {"asset_id": "broll-3344413315", "start": 14.36, "end": 16.96, "mode": "pip", "semantic_role": "business_person_maintenance"},
+    {"asset_id": "broll-f847ed1e82", "start": 24.56, "end": 29.56, "mode": "full", "semantic_role": "customer_exposure"}
+  ],
+  "semantic_visual_layers": [
+    {"event_id": "semantic-layer-01", "start": 2.6, "end": 6.16, "mode": "info_band", "text": "客户数据库", "renderer": "semantic_info_band", "position": "lower_left_safe"},
+    {"event_id": "semantic-layer-02", "start": 14.36, "end": 16.96, "mode": "info_band", "text": "客户关系沉淀", "renderer": "semantic_info_band", "position": "lower_left_safe"},
+    {"event_id": "semantic-layer-03", "start": 24.56, "end": 29.56, "mode": "info_band", "text": "工厂品牌产品", "renderer": "semantic_info_band", "position": "lower_left_safe"}
+  ],
+  "pip_geometry_passed": true,
+  "semantic_geometry_passed": true,
+  "alignment_max_drift_ms": 0.0,
+  "new_cloud_calls": 0
+}

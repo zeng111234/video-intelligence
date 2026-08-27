@@ -1,0 +1,500 @@
+{
+  "timeline_source": "canonical_release_director_timeline",
+  "task_id": "edit-local-1e78ba0fca",
+  "source_media_identity": {
+    "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+    "source_duration_seconds": 104.72,
+    "transcript_sha256": "582282fc9c45318b565c305f972950f2b642d5145dd9af7b03b0688c0bca2ba2",
+    "transcript_timing_source": "word_timestamps"
+  },
+  "source_range": {
+    "start": 0.0,
+    "end": 21.0
+  },
+  "final_output": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-1e78ba0fca.mp4",
+    "duration_seconds": 18.37,
+    "resolution": {
+      "width": 720,
+      "height": 1280
+    },
+    "fps": 30,
+    "playback_rate": 1.0
+  },
+  "shot_plan": {
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 0,
+        "knowledge_howto": 2,
+        "story_resonance": 0
+      },
+      "reason": "出现步骤/序号/要点结构，适合结论先行再拆解。",
+      "legacy_template_id": "knowledge_howto",
+      "compatibility_alias": "knowledge_howto",
+      "override_available": true
+    },
+    "content_blocks": [
+      "conclusion",
+      "point_1",
+      "point_2",
+      "point_3",
+      "summary"
+    ],
+    "hook_source": {
+      "source_start": 0.02,
+      "source_end": 3.42,
+      "text": "最近广州冒出了一个挺特别的参与模式"
+    },
+    "retained_ranges": [
+      {
+        "start": 0.02,
+        "end": 3.42,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 3.88,
+        "end": 6.7,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 6.7,
+        "end": 9.8,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 10.48,
+        "end": 13.56,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 14.18,
+        "end": 16.9,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 16.9,
+        "end": 19.1,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 19.64,
+        "end": 20.78,
+        "reason": "按原时间轴保留"
+      }
+    ],
+    "reordered_ranges": [
+      {
+        "start": 0.02,
+        "end": 3.42,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 3.88,
+        "end": 6.7,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 6.7,
+        "end": 9.8,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 10.48,
+        "end": 13.56,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 14.18,
+        "end": 16.9,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 16.9,
+        "end": 19.1,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 19.64,
+        "end": 20.78,
+        "reason": "按原时间轴保留"
+      }
+    ],
+    "deleted_ranges": [
+      {
+        "start": 0,
+        "end": 0.02,
+        "reason": "片头无口播静段"
+      }
+    ],
+    "shots": [
+      {
+        "shot_id": "shot-01",
+        "source_start": 0.02,
+        "source_end": 3.02,
+        "timeline_start": 0.0,
+        "timeline_end": 3.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "hard_cut",
+        "visual_emphasis": "hook_underliner",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-02",
+        "source_start": 3.02,
+        "source_end": 3.42,
+        "timeline_start": 3.0,
+        "timeline_end": 3.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 0.4,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-03",
+        "source_start": 3.88,
+        "source_end": 6.7,
+        "timeline_start": 3.4,
+        "timeline_end": 6.22,
+        "role": "B-roll",
+        "asset_id": "broll-7fd2b32907",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_pip",
+        "fallback": "none",
+        "overlay_mode": "pip",
+        "duration_seconds": 2.82,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-04",
+        "source_start": 6.7,
+        "source_end": 9.8,
+        "timeline_start": 6.22,
+        "timeline_end": 9.32,
+        "role": "B-roll",
+        "asset_id": "broll-a6ba6cdd89",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 3.1,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-05",
+        "source_start": 10.48,
+        "source_end": 13.48,
+        "timeline_start": 9.32,
+        "timeline_end": 12.32,
+        "role": "B-roll",
+        "asset_id": "broll-abc76c5b40",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_pip",
+        "fallback": "none",
+        "overlay_mode": "pip",
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-06",
+        "source_start": 14.18,
+        "source_end": 16.9,
+        "timeline_start": 12.32,
+        "timeline_end": 15.04,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.72,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-07",
+        "source_start": 16.9,
+        "source_end": 19.1,
+        "timeline_start": 15.04,
+        "timeline_end": 17.24,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-08",
+        "source_start": 19.64,
+        "source_end": 20.78,
+        "timeline_start": 17.24,
+        "timeline_end": 18.38,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.14,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      }
+    ],
+    "assets": [
+      {
+        "asset_id": "broll-7fd2b32907",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904827/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "barbecue restaurant grill diners"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "街上有家烧烤店才开一个月",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:restaurant"
+        ],
+        "provider_attempts": 0,
+        "mode": "pip"
+      },
+      {
+        "asset_id": "broll-a6ba6cdd89",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904814/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "barbecue restaurant grill diners"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "附近五公里的居民基本都成了它的回头客",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:restaurant"
+        ],
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-abc76c5b40",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "barbecue restaurant grill diners"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "80%的顾客还主动加了店里的私域",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:restaurant"
+        ],
+        "provider_attempts": 0,
+        "mode": "pip"
+      }
+    ],
+    "subtitle": {
+      "style_id": "adaptive_white_base",
+      "hook_style_id": "adaptive_original_quote",
+      "style_tokens": {
+        "subtitle_style_id": "adaptive_white_base",
+        "hook_style_id": "adaptive_original_quote",
+        "transition_policy": "semantic_action_adaptive",
+        "insert_policy": "semantic_peak_broll_1_to_3",
+        "bgm_profile": "commercial_low_intrusion",
+        "entry_motion": "fade_in_120ms",
+        "emphasis_style": "semantic_local_color",
+        "palette_id": "neutral_tech_business_v1",
+        "visual_intents": [
+          "speaker",
+          "evidence_broll",
+          "data_chart",
+          "concept_card",
+          "speaker_pip"
+        ]
+      },
+      "max_lines": 1,
+      "safe_area": "lower_third_without_face",
+      "visual_emphasis": "sparse_keyword_only"
+    },
+    "transition_policy": "semantic_action_adaptive",
+    "insert_policy": "semantic_peak_broll_1_to_3",
+    "bgm_profile": "commercial_low_intrusion",
+    "bgm": {
+      "track_id": "bgm-0eed3a5909e5",
+      "title": "百搭口播底色",
+      "source": "manual",
+      "authorization_status": "confirmed",
+      "auto_eligible": true,
+      "start_seconds": 0.0,
+      "energy_segments": [
+        {
+          "start": 0.0,
+          "end": 18.46,
+          "energy": "克制"
+        }
+      ],
+      "ducking": {
+        "enabled": true,
+        "voice_priority": true,
+        "target_db": -24,
+        "attack_ms": 20,
+        "release_ms": 450
+      },
+      "fade": {
+        "in_seconds": 0.5,
+        "out_seconds": 0.8
+      }
+    },
+    "degradation": {
+      "mode": "broll",
+      "is_broll": true,
+      "is_stock_broll": true,
+      "message": "已使用用户确认授权的本地 B-roll。"
+    },
+    "source_duration_seconds": 104.72,
+    "timeline_duration_seconds": 18.46,
+    "title": "广州烧烤店的回头客模式",
+    "visual_density": "rich"
+  },
+  "release_brolls": [
+    {
+      "shot_id": "shot-03",
+      "asset_id": "broll-7fd2b32907",
+      "start": 3.4,
+      "end": 6.22,
+      "mode": "pip",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904827/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill diners"
+      ],
+      "semantic_query": "街上有家烧烤店才开一个月",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:restaurant"
+      ]
+    },
+    {
+      "shot_id": "shot-04",
+      "asset_id": "broll-a6ba6cdd89",
+      "start": 6.22,
+      "end": 9.32,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904814/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill diners"
+      ],
+      "semantic_query": "附近五公里的居民基本都成了它的回头客",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:restaurant"
+      ]
+    }
+  ],
+  "subtitle_manifest_sha256": "287b10363a522843c04ce7ba67604adb1c5630d32ab8be853c360b59949d2b4a",
+  "ass_sha256": "14df6819d000b53e2d1df90ee48d6a20b6219ecbce1c68285d6a3a2dcecf63da"
+}

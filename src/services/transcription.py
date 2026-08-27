@@ -152,6 +152,7 @@ class TranscriptionService:
         source_url: str | None = None,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
         async_processing: bool = False,
+        include_word_timestamps: bool = False,
     ) -> TranscriptionTask:
         if not rights_confirmed:
             raise TranscriptionError(
@@ -255,6 +256,7 @@ class TranscriptionService:
                     wav_path,
                     normalized_hotwords,
                     language=language,
+                    include_word_timestamps=include_word_timestamps,
                 )
                 self._validate_segments(segments)
                 task = self._update_task(
@@ -277,6 +279,9 @@ class TranscriptionService:
                     "updated_at": datetime.now().astimezone(),
                     "elapsed_seconds": round(monotonic() - started, 2),
                     "segments": segments,
+                    "word_timestamps_available": any(
+                        bool(segment.words) for segment in segments
+                    ),
                     "language": language,
                     **review_summary,
                 }
@@ -833,9 +838,16 @@ class TranscriptionService:
         hotwords: str = "",
         *,
         language: str = "zh",
+        include_word_timestamps: bool = False,
     ) -> tuple[list[TranscriptSegment], str]:
         model = self._load_asr_model(model_name)
-        return self._transcribe_with_model(model, wav_path, hotwords, language=language)
+        return self._transcribe_with_model(
+            model,
+            wav_path,
+            hotwords,
+            language=language,
+            include_word_timestamps=include_word_timestamps,
+        )
 
     def _transcribe_with_model(
         self,
@@ -844,6 +856,7 @@ class TranscriptionService:
         hotwords: str = "",
         *,
         language: str = "zh",
+        include_word_timestamps: bool = False,
     ) -> tuple[list[TranscriptSegment], str]:
         try:
             options: dict[str, Any] = {"vad_filter": True, "beam_size": 5}
@@ -851,6 +864,8 @@ class TranscriptionService:
                 options["language"] = language
             if hotwords:
                 options["hotwords"] = hotwords
+            if include_word_timestamps:
+                options["word_timestamps"] = True
             raw_segments, info = model.transcribe(str(wav_path), **options)
         except Exception as exc:
             raise TranscriptionError(
@@ -863,6 +878,40 @@ class TranscriptionService:
             if not text:
                 continue
             confidence = max(0.0, min(1.0, math.exp(float(item.avg_logprob))))
+            words: list[dict[str, Any]] = []
+            if include_word_timestamps:
+                for raw_word in getattr(item, "words", None) or []:
+                    try:
+                        word_start = float(getattr(raw_word, "start"))
+                        word_end = float(getattr(raw_word, "end"))
+                    except (TypeError, ValueError, AttributeError):
+                        continue
+                    word_text = str(
+                        getattr(raw_word, "word", getattr(raw_word, "text", ""))
+                    ).strip()
+                    if (
+                        not word_text
+                        or not math.isfinite(word_start)
+                        or not math.isfinite(word_end)
+                        or word_end <= word_start
+                        or word_start < float(item.start)
+                        or word_end > float(item.end)
+                    ):
+                        continue
+                    probability = getattr(raw_word, "probability", None)
+                    word: dict[str, Any] = {
+                        "start": round(word_start, 3),
+                        "end": round(word_end, 3),
+                        "text": word_text,
+                    }
+                    if probability is not None:
+                        try:
+                            word["probability"] = max(
+                                0.0, min(1.0, float(probability))
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                    words.append(word)
             segments.append(
                 TranscriptSegment(
                     start=float(item.start),
@@ -870,6 +919,7 @@ class TranscriptionService:
                     text=text,
                     confidence=confidence,
                     needs_review=confidence < 0.75,
+                    words=words,
                 )
             )
         if not segments:

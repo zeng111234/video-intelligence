@@ -1,0 +1,13 @@
+{
+  "before": {
+    "src": "/api/v1/video-editor/jobs/edit-local-4ae0005eca/media",
+    "duration": 31.5
+  },
+  "after": {
+    "currentTime": 31.5,
+    "duration": 31.5,
+    "paused": true,
+    "ended": true
+  },
+  "played_seconds": 31.5
+}

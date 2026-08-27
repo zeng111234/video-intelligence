@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import json
+import io
+import hashlib
 import re
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +30,289 @@ from src.services.video_editor_workflow import (
     VideoEditorWorkflowService,
 )
 import src.services.video_editor_workflow as workflow_module
+
+
+def test_visual_gate_policy_is_template_adaptive() -> None:
+    business = workflow_module._visual_gate_policy_for_template(
+        "pain_point_solution"
+    )
+    tutorial = workflow_module._visual_gate_policy_for_template(
+        "knowledge_howto"
+    )
+    story = workflow_module._visual_gate_policy_for_template("story_resonance")
+
+    assert business["min_real_events"] == 1
+    assert business["max_coverage_ratio"] == pytest.approx(0.20)
+    assert tutorial["min_real_events"] == 0
+    assert tutorial["max_coverage_ratio"] == pytest.approx(0.30)
+    assert story["min_real_events"] == 0
+    assert story["max_coverage_ratio"] == pytest.approx(0.18)
+    assert tutorial["pip_required"] is False
+    assert story["pip_required"] is False
+
+
+def test_rich_adaptive_policy_requires_real_pip_and_full_visuals() -> None:
+    policy = workflow_module._visual_gate_policy_for_template(
+        "adaptive_talking_head_v1",
+        visual_density="rich",
+    )
+
+    assert policy["min_real_events"] == 3
+    assert policy["min_coverage_ratio"] == pytest.approx(0.45)
+    assert policy["max_coverage_ratio"] == pytest.approx(0.65)
+    assert policy["min_effective_coverage_ratio"] == pytest.approx(0.45)
+    assert policy["max_effective_coverage_ratio"] == pytest.approx(0.65)
+    assert policy["pip_required"] is True
+    assert policy["full_required"] is True
+    assert policy["min_pip_events"] == 1
+    assert policy["min_full_events"] == 1
+
+
+def test_adaptive_pipeline_marker_cannot_fall_back_to_legacy_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video = tmp_path / "clean-avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    repo.save_task(_avatar_task("adaptive-route-avatar", video, title="干净口播"))
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_media",
+        lambda _path: {
+            "duration_seconds": 12.0,
+            "width": 720,
+            "height": 1280,
+            "fps": 30.0,
+            "orientation": "vertical",
+            "has_audio": True,
+            "size_bytes": 5,
+        },
+    )
+    now = datetime.now().astimezone()
+    item = VideoEditorBatchItem(
+        source_id="avatar:adaptive-route-avatar",
+        title="干净口播",
+        selected_title="干净口播",
+        subtitle_segments=[
+            {
+                "start": 0.0,
+                "end": 2.4,
+                "text": "这是一段测试口播",
+                "words": [
+                    {"start": index * 0.3, "end": (index + 1) * 0.3, "text": char}
+                    for index, char in enumerate("这是一段测试口播")
+                ],
+            }
+        ],
+        review_snapshot={"confirmed": True},
+        provider_payload={"requested_pipeline": "adaptive_fine_cut_v1"},
+        enabled_plan_step_ids=["smart_opening", "vertical_fit", "subtitles"],
+        edit_plan={"remove_ranges": []},
+        publish_allowed=False,
+        updated_at=now,
+    )
+    batch = VideoEditorBatch(
+        provider_mode="local",
+        output_profile="720p",
+        output_resolution="720x1280",
+        output_fps=30,
+        output_bitrate="1M",
+        is_mock=False,
+        items=[item],
+        created_at=now,
+        updated_at=now,
+    )
+    repo.save_video_editor_batch(batch)
+
+    with pytest.raises(
+        VideoEditorWorkflowError, match="VISUAL_PIPELINE_NOT_EXECUTED"
+    ):
+        service.create_local_preview_export(
+            batch.batch_id,
+            item.item_id,
+            run_inline=True,
+        )
+
+
+def test_long_rich_adaptive_policy_uses_distributed_asset_clusters() -> None:
+    policy = workflow_module._visual_gate_policy_for_template(
+        "adaptive_talking_head_v1",
+        visual_density="rich",
+        duration_seconds=104.7,
+    )
+
+    assert policy["min_real_events"] == 4
+    assert policy["max_real_events"] == 12
+    assert policy["min_coverage_ratio"] == pytest.approx(0.45)
+    assert policy["max_coverage_ratio"] == pytest.approx(0.65)
+    assert policy["min_effective_coverage_ratio"] == pytest.approx(0.45)
+    assert policy["max_effective_coverage_ratio"] == pytest.approx(0.65)
+    assert policy["pip_required"] is True
+    assert policy["full_required"] is True
+    assert policy["min_pip_events"] == 2
+    assert policy["min_full_events"] == 2
+
+
+def test_long_semantic_binding_can_use_eight_distinct_cached_clusters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Long-form rich mode may fill its ceiling without blind rotation."""
+
+    from PIL import Image
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    image_path = tmp_path / "cache.png"
+    image = Image.new("RGB", (128, 128), "#1677ff")
+    for x in range(0, 128, 8):
+        for y in range(0, 128, 8):
+            image.putpixel((x, y), ((x * 2) % 255, (y * 2) % 255, 80))
+    image.save(image_path)
+
+    bindings = (
+        "烧烤餐厅顾客",
+        "客户会面关系",
+        "客户数据库",
+        "客户关系触达",
+    ) * 2
+    assets = [
+        {
+            "asset_id": f"cached-{index}",
+            "_path": str(image_path),
+            "media_type": "image/png",
+            "duration_seconds": 2.0,
+            "authorization_status": "confirmed",
+            "publish_licensed": True,
+            "asset_origin": "stock_video_asset",
+            "source_provider": "pexels",
+            "source_type": "local_cache",
+            "semantic_binding": binding,
+            "keywords": [],
+        }
+        for index, binding in enumerate(bindings)
+    ]
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: assets)
+    monkeypatch.setenv("VIDEO_EDITOR_LOCAL_ACCEPTANCE_NO_PROVIDER", "1")
+    shot_plan = {
+        "timeline_duration_seconds": 104.7,
+        "shots": [
+            {
+                "shot_id": f"shot-{index:02d}",
+                "role": "A-roll",
+                "duration_seconds": 2.0,
+                "timeline_start": start,
+                "source_start": start,
+                "source_end": start + 2.0,
+            }
+            for index, start in enumerate((2, 16, 30, 44, 58, 72, 86, 100))
+        ],
+    }
+    text_by_index = (
+        "烧烤店顾客成为回头客",
+        "客户会面沟通关系",
+        "客户数据库持续管理",
+        "会员优惠券和口碑传播",
+    ) * 2
+    segments = [
+        {"start": start, "end": start + 2.0, "text": text}
+        for start, text in zip((2, 16, 30, 44, 58, 72, 86, 100), text_by_index)
+    ]
+
+    result = service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=segments,
+    )
+
+    assert len(result) == 8
+    assert len({item["asset_id"] for item in result.values()}) == 8
+    assert all(int(item["match_score"]) > 0 for item in result.values())
+
+
+def test_adaptive_cadence_uses_sparse_reframes_not_caption_refreshes() -> None:
+    preview = {
+        "cues": [
+            {"start": 0.0, "end": 1.2, "emphasis_style": None},
+            {"start": 1.2, "end": 2.4, "emphasis_style": {"scale": 1.08}},
+            {"start": 2.4, "end": 3.6, "emphasis_style": None},
+        ]
+    }
+    gate = workflow_module._visual_cadence_gate(
+        duration_seconds=31.5,
+        brolls=[
+            {"start": 4.0, "end": 6.0},
+            {"start": 11.0, "end": 13.0},
+            {"start": 18.0, "end": 20.0},
+            {"start": 25.0, "end": 27.0},
+        ],
+        vector_items=[],
+        subtitle_preview=preview,
+        has_hook=True,
+        a_roll_shots=[],
+        playback_rate=1.0,
+    )
+    assert gate["passed"] is True
+    assert gate["meaningful_visual_beat_count"] <= 8
+    assert gate["routine_subtitle_refresh_counted"] is False
+
+
+def test_adaptive_reframe_events_count_as_camera_beats_once() -> None:
+    gate = workflow_module._visual_cadence_gate(
+        duration_seconds=19.7,
+        brolls=[{"start": 3.84, "end": 6.68}],
+        vector_items=[],
+        subtitle_preview={"cues": []},
+        has_hook=True,
+        reframe_events=[
+            {"start": 7.08, "end": 8.5},
+            {"start": 10.56, "end": 12.0},
+            {"start": 14.58, "end": 16.0},
+            {"start": 19.26, "end": 20.7},
+        ],
+        playback_rate=1.0,
+    )
+    assert gate["passed"] is True
+    assert gate["meaningful_visual_beat_count"] == 6
+    assert gate["routine_subtitle_refresh_counted"] is False
+
+
+def test_effective_visual_coverage_uses_non_overlapping_rendered_events() -> None:
+    intervals = [
+        {"start": 0.0, "end": 3.0},
+        {"start": 2.0, "end": 5.0},
+        {"start": 7.0, "end": 8.5},
+    ]
+    covered = workflow_module._interval_union_seconds(
+        intervals,
+        duration_seconds=10.0,
+    )
+    assert covered == pytest.approx(6.5)
+
+
+def test_broad_semantic_opportunities_become_short_sparse_reframes() -> None:
+    selected = workflow_module._select_sparse_reframe_events(
+        [
+            {"start": 10.0, "end": 25.0, "treatment": "keyword_card"},
+            {"start": 12.0, "end": 18.0, "treatment": "punch_in"},
+            {"start": 26.0, "end": 55.0, "treatment": "keyword_card"},
+        ],
+        duration_seconds=60.0,
+    )
+    assert [(item["start"], item["end"]) for item in selected] == [
+        (10.0, 11.8),
+        (26.0, 27.8),
+    ]
+    assert all(item["treatment"] == "safe_reframe" for item in selected)
 
 
 class _TranscriptionStub:
@@ -268,7 +555,7 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert task.outputs["workflow"] == "local_preview_export"
     assert (
         task.outputs["style_version"]
-        == "business_talking_head_v9.1-smart-opening-clean-hook-speed-1.15"
+        == "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock"
     )
     assert task.outputs["playback_rate"] == "1.15"
     assert "最近广州有一家烧烤店" in task.outputs["subtitle_segments_json"]
@@ -277,6 +564,382 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert opening["style_id"] == "number_focus"
     assert opening["hook_text"] == "49元变小店长吃烧烤还能赚钱"[:14]
     assert submitted == [task.task_id]
+
+
+def test_local_rhythm_filter_uses_complete_source_timeline_with_safe_reframe():
+    rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=24.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.15,
+        subtitle_filter="approved.ass",
+        source_width=960,
+        source_height=720,
+    )
+
+    assert "split=5[scene0][scene1][scene2][scene3][scene4]" in rendered
+    assert "trim=start=0.000:end=4.800" in rendered
+    assert "trim=start=19.200:end=24.000" in rendered
+    assert "split=2[foreground0][background0]" in rendered
+    assert "boxblur=18:2" in rendered
+    assert "scale=720:540:force_original_aspect_ratio=decrease" in rendered
+    assert "overlay=(W-w)/2:281" in rendered
+    assert "pad=720:540" not in rendered
+    assert "scale=820:1459:force_original_aspect_ratio=increase" not in rendered
+    assert "concat=n=5:v=1:a=0" in rendered
+    assert "setpts=PTS/1.150" in rendered
+    assert "subtitles='approved.ass'" in rendered
+
+
+def test_local_rhythm_filter_fits_portrait_source_without_foreground_crop():
+    rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=8.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.15,
+        subtitle_filter="approved.ass",
+        source_width=720,
+        source_height=1280,
+    )
+
+    assert "scale=w='trunc(720*(1+0.010*sin(PI*t/4.000))/2)*2':" in rendered
+    assert "crop=720:1280:x='(iw-ow)/2+3*sin(PI*t/4.000)':y=0" in rendered
+
+
+def test_adaptive_reframe_filter_uses_safe_camera_motion_without_cards():
+    rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=8.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        reframe_events=[{"start": 3.0, "end": 4.5, "treatment": "safe_reframe"}],
+        source_width=720,
+        source_height=1280,
+    )
+
+    assert "scale=w='trunc(720*(1+0.035*if(lt(t,3.000)" in rendered
+    assert "crop=720:1280:(iw-ow)/2:0" in rendered
+    assert "beatcard" not in rendered
+    assert "subtitles='approved.ass'" in rendered
+
+
+def test_local_export_quality_report_requires_audio_and_expected_canvas():
+    report = VideoEditorWorkflowService._local_export_quality_report(
+        {
+            "size_bytes": 100,
+            "width": 720,
+            "height": 1280,
+            "duration_seconds": 10.1,
+            "has_audio": True,
+        },
+        expected_width=720,
+        expected_height=1280,
+        expected_duration=10,
+        source_has_audio=True,
+        visual_beats=[{"start": 1, "end": 2}],
+    )
+
+    assert report["passed"] is True
+    assert all(report["checks"].values())
+    assert report["visual_beat_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "with_broll,with_words",
+    [(False, False), (True, False), (False, True)],
+)
+def test_sentence_level_local_export_keeps_subtitle_gate_with_or_without_pip(
+    tmp_path: Path,
+    with_broll: bool,
+    with_words: bool,
+):
+    """A long sentence clock must render the same readable ASS timeline.
+
+    This is deliberately an end-to-end local FFmpeg check.  It exercises the
+    exact page path after review confirmation, while making no provider call.
+    """
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("FFmpeg is required for the local export regression.")
+    source = tmp_path / "sentence-level.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-nostdin",
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=0x243447:s=720x1280:r=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-t",
+            "16.5",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-shortest",
+            str(source),
+        ],
+        check=True,
+    )
+
+    repo = MockRepository(tasks=[])
+    avatar = _avatar_task("avatar-sentence-level-local", source)
+    repo.save_task(avatar)
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "outputs"),
+        _TranscriptionStub(),
+        None,
+    )
+    broll = None
+    if with_broll:
+        from PIL import Image
+
+        image_bytes = io.BytesIO()
+        Image.new("RGB", (480, 640), (33, 122, 92)).save(image_bytes, format="PNG")
+        broll = service.upload_visual_asset(
+            kind="broll",
+            file_name="customer-relationship.png",
+            media_type="image/png",
+            media_bytes=image_bytes.getvalue(),
+            rights_confirmed=True,
+            rights_holder="generated_for_local_acceptance",
+        )
+
+    now = datetime.now().astimezone()
+    segments = [
+        {
+            "start": 0.0,
+            "end": 5.5,
+            "text": "你公司的客户资源是掌握在业务员手里还是沉淀在公司数据库",
+        },
+        {
+            "start": 5.5,
+            "end": 11.5,
+            "text": "业务员一旦离职聊天记录没了客户关系也跟着断掉了",
+        },
+        {
+            "start": 11.5,
+            "end": 16.3,
+            "text": "企业真正需要的不是业务员个人维护而是一套能沉淀用户持续触达的营销机制",
+        },
+    ]
+    if with_words:
+        for segment in segments:
+            text = str(segment["text"])
+            duration = float(segment["end"]) - float(segment["start"])
+            character_duration = duration / max(len(text), 1)
+            segment["words"] = [
+                {
+                    "start": segment["start"] + index * character_duration,
+                    "end": segment["start"] + (index + 1) * character_duration,
+                    "text": character,
+                }
+                for index, character in enumerate(text)
+            ]
+    review_snapshot = {"confirmed": True}
+    if broll:
+        review_snapshot["broll"] = {
+            "asset_id": broll["asset_id"],
+            "start": 1.0,
+            "end": 3.5,
+            "mode": "pip",
+        }
+    item = VideoEditorBatchItem(
+        source_id=f"avatar:{avatar.task_id}",
+        title="客户资源风险",
+        selected_title="客户资源风险",
+        subtitle_segments=segments,
+        review_snapshot=review_snapshot,
+        review_confirmed_at=now,
+        enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
+        edit_plan={"remove_ranges": []},
+        publish_allowed=False,
+    )
+    batch = VideoEditorBatch(
+        provider_mode="local",
+        output_profile="720p",
+        output_resolution="720x1280",
+        output_fps=30,
+        output_bitrate="1M",
+        is_mock=False,
+        items=[item],
+        created_at=now,
+        updated_at=now,
+    )
+    repo.save_video_editor_batch(batch)
+
+    payload = service.create_local_preview_export(
+        batch.batch_id,
+        item.item_id,
+        run_inline=True,
+    )
+    rendered_item = payload["items"][0]
+    task = repo.get_task(rendered_item["edit_task_id"])
+    assert isinstance(task, VideoEditTask)
+    assert task.status == TaskStatus.SUCCEEDED, task.error_message
+    assert task.result_path and Path(task.result_path).is_file()
+    quality = json.loads(task.outputs["quality_report"])
+    assert quality["subtitle_timeline"]["passed"] is True
+    assert quality["subtitle_timeline"]["experience_gate"]["passed"] is True
+    assert quality["subtitle_timeline"]["phrase_cue_count"] >= 2
+    assert quality["subtitle_timeline"]["phrase_cue_count"] <= 18
+    assert quality["subtitle_word_gate_passed"] is with_words
+    # Preview/word timing is separate from publish rights and visual gates.
+    assert quality["publish_claim_allowed"] is False
+    if with_broll:
+        assert quality["broll_modes"]["pip"] == 1
+    else:
+        assert quality["broll_modes"]["pip"] == 0
+
+
+def test_subtitle_word_timing_report_verifies_real_word_boundaries():
+    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
+
+    segment = {
+        "start": 0.0,
+        "end": 2.0,
+        "text": "客户关系沉淀在公司数据库",
+        "words": [
+            {"start": 0.0, "end": 0.5, "text": "客户关系"},
+            {"start": 0.5, "end": 1.1, "text": "沉淀在"},
+            {"start": 1.1, "end": 2.0, "text": "公司数据库"},
+        ],
+    }
+    preview = build_business_talking_head_overlay_preview(
+        [segment],
+        title="",
+        output_profile="720p",
+        caption_groups=[
+            {"segment_index": 0, "parts": ["客户关系沉淀在", "公司数据库"]}
+        ],
+    )
+
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+
+    assert report["status"] == "verified"
+    assert report["word_p95_ms"] == 0.0
+    assert report["mapping_error_frames"] == 0.0
+    assert report["checks"] == {
+        "word_p95_le_150ms": True,
+        "mapping_le_1_frame": True,
+    }
+
+
+def test_subtitle_word_timing_report_keeps_sentence_only_as_unverified():
+    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
+
+    segment = {
+        "start": 0.0,
+        "end": 2.0,
+        "text": "客户关系沉淀在公司数据库",
+    }
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+
+    assert report["status"] == "unverified_sentence_level"
+    assert report["verified"] is False
+    assert report["word_p95_ms"] is None
+    assert report["mapping_error_frames"] is None
+    assert report["checks"] == {
+        "word_p95_le_150ms": None,
+        "mapping_le_1_frame": None,
+    }
+
+
+def test_short_reviewed_phrase_uses_exact_word_clock_with_explicit_dwell_exception():
+    segment = {
+        "start": 0.0,
+        "end": 1.2,
+        "text": "普通烧烤店",
+        "words": [
+            {"start": 0.4, "end": 0.56, "text": "通"},
+            {"start": 0.56, "end": 0.78, "text": "烧烤"},
+            {"start": 0.78, "end": 1.14, "text": "店"},
+        ],
+    }
+    preview = {
+        "phrase_timing_source": "word_timestamps",
+        "cues": [
+            {
+                "source_segment_index": 0,
+                "start": 0.0,
+                "end": 1.2,
+                "lines": ["普通烧烤店"],
+            }
+        ],
+    }
+
+    snapped = VideoEditorWorkflowService._snap_preview_cues_to_reviewed_word_clock(
+        [segment], preview
+    )
+    cue = snapped["cues"][0]
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], snapped, fps=30.0
+    )
+    experience = VideoEditorWorkflowService._subtitle_experience_gate(
+        [segment], snapped
+    )
+
+    assert cue["start"] == 0.4
+    assert cue["end"] == 1.14
+    assert cue["short_source_exception"] is True
+    assert report["verified"] is True
+    assert report["word_p95_ms"] == 0.0
+    assert report["mapping_error_frames"] == 0.0
+    assert experience["passed"] is True
+    assert experience["checks"]["min_duration"] is True
+
+
+def test_long_raw_word_pause_does_not_reinflate_readable_phrase_clock():
+    segment = {
+        "start": 0.0,
+        "end": 3.0,
+        "text": "普通烧烤店搞充值活动",
+        "words": [
+            {"start": 0.0, "end": 0.25, "text": "普通"},
+            {"start": 0.25, "end": 0.55, "text": "烧烤店"},
+            {"start": 0.55, "end": 1.0, "text": "搞"},
+            {"start": 1.0, "end": 3.0, "text": "充值活动"},
+        ],
+    }
+    preview = {
+        "phrase_timing_source": "word_timestamps",
+        "cues": [
+            {
+                "source_segment_index": 0,
+                "start": 0.0,
+                "end": 2.3,
+                "lines": ["普通烧烤店搞充值活动"],
+            }
+        ],
+    }
+    snapped = VideoEditorWorkflowService._snap_preview_cues_to_reviewed_word_clock(
+        [segment], preview
+    )
+    cue = snapped["cues"][0]
+    assert cue["end"] - cue["start"] <= 2.4
+    assert cue["word_clock_mapping"] == "lexical_preview_clock_preserved_over_pause"
 
 
 def test_production_export_builds_current_single_line_clean_caption_contract(
@@ -346,7 +1009,7 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
         ],
     )
 
-    assert task.outputs["style_version"].startswith("business_talking_head_v9.1")
+    assert task.outputs["style_version"].startswith("business_talking_head_v11.8")
     assert task.outputs["workflow"] == "local_preview_export"
     assert task.outputs["publish_title"] == "餐饮门店同城获客"
     assert json.loads(task.outputs["subtitle_segments_json"])[0]["start"] == 0.8
@@ -525,6 +1188,7 @@ def test_generated_media_uses_a_larger_transcription_limit_than_manual_upload(
     assert transcript_id == "transcript-long-avatar"
     assert captured["media_bytes"] == b"video"
     assert captured["max_media_bytes"] == 8
+    assert captured["include_word_timestamps"] is True
 
 
 def test_product_showcase_uses_authorized_visual_assets_without_restarting_avatar(
@@ -593,6 +1257,1087 @@ def test_visual_asset_rejects_a_file_with_an_incorrect_image_signature(tmp_path:
             rights_confirmed=True,
             rights_holder="测试公司",
         )
+
+
+def test_broll_asset_accepts_authorized_image_and_renders_before_subtitles(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    asset = service.upload_visual_asset(
+        kind="broll",
+        file_name="demo.png",
+        media_type="image/png",
+        media_bytes=b"\x89PNG\r\n\x1a\ndemo",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+
+    assert asset["kind"] == "broll"
+    assert asset["media_kind"] == "image"
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.15,
+        subtitle_filter="approved.ass",
+        broll={"start": 1.0, "end": 3.0, "mode": "pip"},
+    )
+    assert "overlay=252:794" in rendered
+    assert "drawbox=x=1:y=1:w=iw-2:h=ih-2:color=white@0.55:t=2" in rendered
+    assert "fade=t=in:st=0.870:d=0.20:alpha=1" in rendered
+    assert "fade=t=out:st=2.409:d=0.20:alpha=1" in rendered
+    assert "enable='between(t,0.870,2.609)'" in rendered
+    assert rendered.index("[with_broll]") < rendered.index("subtitles='approved.ass'")
+
+
+def test_cached_stock_broll_uses_visual_asset_namespace_and_resolves(
+    tmp_path: Path,
+):
+    from src.services.stock_broll_provider import StockBrollProvider
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    cache = service._visual_asset_directory()
+    payload = {
+        "videos": [
+            {
+                "id": 7,
+                "url": "https://www.pexels.com/video/7/",
+                "duration": 5,
+                "video_files": [
+                    {
+                        "link": "https://cdn.example.test/7.mp4",
+                        "width": 720,
+                        "height": 1280,
+                    }
+                ],
+            }
+        ]
+    }
+
+    class Response:
+        def __init__(self, data: bytes):
+            self.data = data
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _limit=-1):
+            return self.data
+
+    def opener(request, timeout=0):
+        if request.full_url.startswith("https://api.pexels.com/"):
+            return Response(json.dumps(payload).encode())
+        return Response(b"x" * 2048)
+
+    def runner(*_args, **_kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "format": {"duration": "5.0"},
+                    "streams": [
+                        {"codec_type": "video", "width": 720, "height": 1280}
+                    ],
+                }
+            ),
+            stderr="",
+        )
+
+    result = StockBrollProvider(
+        cache,
+        pexels_key="test-key",
+        opener=opener,
+        runner=runner,
+    ).search_and_cache("客户关系")
+    assert result.status == "ready"
+
+    listed = service.list_visual_assets("broll")
+    assert len(listed) == 1
+    resolved = service.resolve_visual_asset(
+        listed[0]["asset_id"], expected_kind="broll"
+    )
+    assert resolved["asset_origin"] == "stock_video_asset"
+    assert resolved["publish_licensed"] is True
+
+
+def test_image_broll_uses_motion_and_fade_before_subtitles(tmp_path: Path):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=12,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        brolls=[
+            {"start": 2.0, "end": 4.5, "mode": "full", "media_kind": "image"},
+            {"start": 7.0, "end": 9.5, "mode": "pip", "media_kind": "image"},
+        ],
+    )
+
+    assert "20*sin(2*PI*t/4.0)" in rendered
+    assert "10*sin(2*PI*t/3.6)" in rendered
+    assert "crop=216:192" in rendered
+    assert "overlay=252:794" in rendered
+    assert "fade=t=in:st=2.000:d=0.28:alpha=1" in rendered
+    assert "fade=t=in:st=7.000:d=0.20:alpha=1" in rendered
+    assert "fade=t=out:st=9.300:d=0.20:alpha=1" in rendered
+    assert rendered.index("subtitles='approved.ass'") > rendered.index("[with_broll1]")
+
+
+def test_release_auto_binding_ignores_unconfirmed_or_generated_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from PIL import Image
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    image_path = tmp_path / "real.png"
+    Image.new("RGB", (160, 240), (40, 120, 180)).save(image_path)
+    asset = {
+        "asset_id": "broll-confirmed01",
+        "_path": str(image_path),
+        "media_type": "image/png",
+        "media_kind": "image",
+        "authorization_status": "generated_for_local_acceptance",
+        "asset_origin": "generated_image_asset",
+    }
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: [asset])
+    monkeypatch.setattr(
+        service,
+        "_visual_asset_directory",
+        lambda create=True: tmp_path,
+    )
+    shot_plan = {
+        "title": "客户数据库",
+        "shots": [
+            {"shot_id": "shot-01", "role": "A-roll", "duration_seconds": 2, "timeline_start": 0},
+            {"shot_id": "shot-02", "role": "A-roll", "duration_seconds": 2, "timeline_start": 2},
+            {"shot_id": "shot-03", "role": "A-roll", "duration_seconds": 2, "timeline_start": 4},
+            {"shot_id": "shot-04", "role": "A-roll", "duration_seconds": 2, "timeline_start": 6},
+        ],
+    }
+
+    assert service._auto_bind_release_broll_assets(shot_plan) == {}
+
+
+def test_release_local_acceptance_registers_three_generated_assets_and_maps_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from PIL import Image
+
+    generated_dir = tmp_path / "generated-assets"
+    generated_dir.mkdir()
+    manifest_assets = []
+    for index, binding in enumerate(("客户数据库", "客户关系沉淀", "工厂品牌产品")):
+        path = generated_dir / f"asset-{index}.png"
+        image = Image.new("RGB", (320, 480), (30 + index * 40, 90, 150))
+        for band in range(12):
+            image.paste(
+                (30 + index * 40 + band * 3, 90 + band * 4, 150 - band * 3),
+                (band * 26, 0, (band + 1) * 26, 480),
+            )
+        image.save(path)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        manifest_assets.append(
+            {
+                "asset_id": f"generated-{index}",
+                "path": path.name,
+                "sha256": digest,
+                "semantic_binding": binding,
+            }
+        )
+    manifest_path = generated_dir / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "source_type": "built_in_image_generation",
+                "rights_status": "generated_for_local_acceptance",
+                "cloud_upload": False,
+                "paid_stock_call": False,
+                "assets": manifest_assets,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("VIDEOINSIGHT_GENERATED_ASSET_MANIFEST", str(manifest_path))
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+
+    registered = service._register_local_generated_acceptance_assets()
+    assert len(registered) == 3
+    assert {item["asset_origin"] for item in registered} == {"generated_image_asset"}
+    assert {item["authorization_status"] for item in registered} == {
+        "generated_for_local_acceptance"
+    }
+    shot_plan = {
+        "shots": [
+            {
+                "shot_id": f"shot-{index:02d}",
+                "role": "A-roll",
+                "duration_seconds": 2,
+                "timeline_start": index * 2,
+            }
+            for index in range(10)
+        ]
+    }
+    bindings = service._auto_bind_release_broll_assets(
+        shot_plan,
+        include_generated_images=True,
+    )
+    assert len(bindings) == 3
+    assert len({item["asset_id"] for item in bindings.values()}) == 3
+    assert [item["mode"] for item in bindings.values()] == ["pip", "full", "pip"]
+
+
+def test_release_selection_prefers_three_publishable_cached_stock_videos(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    explicit_generated = {
+        "asset_id": "broll-local-only",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": False,
+    }
+    stock = [
+        {
+            "asset_id": f"broll-stock-{index}",
+            "asset_origin": "stock_video_asset",
+            "source_provider": "pexels",
+            "authorization_status": "confirmed",
+            "publish_licensed": True,
+        }
+        for index in range(3)
+    ]
+    generated = [
+        {
+            "asset_id": "broll-generated-fallback",
+            "asset_origin": "generated_image_asset",
+            "authorization_status": "generated_for_local_acceptance",
+            "publish_licensed": False,
+        }
+    ]
+
+    selected = service._select_release_broll_assets(
+        explicit_generated,
+        stock,
+        generated,
+    )
+
+    assert [item["asset_id"] for item in selected] == [
+        "broll-stock-0",
+        "broll-stock-1",
+        "broll-stock-2",
+    ]
+    assert [service._release_broll_mode(item, index) for index, item in enumerate(selected)] == [
+        "full",
+        "pip",
+        "full",
+    ]
+
+
+def test_release_selection_puts_explicit_domestic_real_before_international_stock(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    domestic = {
+        "asset_id": "broll-domestic",
+        "asset_origin": "local_uploaded_asset",
+        "domestic_context": "domestic",
+        "authorization_status": "confirmed",
+        "publish_licensed": False,
+    }
+    stock = [
+        {
+            "asset_id": f"broll-foreign-{index}",
+            "asset_origin": "stock_video_asset",
+            "source_provider": "pexels",
+            "domestic_context": "international",
+            "authorization_status": "confirmed",
+            "publish_licensed": True,
+        }
+        for index in range(3)
+    ]
+    selected = service._select_release_broll_assets(None, stock + [domestic], [])
+    assert selected[0]["asset_id"] == "broll-domestic"
+
+
+def test_release_selection_puts_explicit_domestic_generated_before_international_stock(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    stock = [
+        {
+            "asset_id": f"broll-foreign-{index}",
+            "asset_origin": "stock_video_asset",
+            "source_provider": "pexels",
+            "domestic_context": "international",
+            "authorization_status": "confirmed",
+            "publish_licensed": True,
+        }
+        for index in range(3)
+    ]
+    generated_domestic = {
+        "asset_id": "broll-domestic-generated",
+        "asset_origin": "generated_image_asset",
+        "domestic_context": "domestic",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": False,
+    }
+    selected = service._select_release_broll_assets(
+        None,
+        stock,
+        [generated_domestic],
+    )
+    assert selected[0]["asset_id"] == "broll-domestic-generated"
+    assert selected[0]["publish_licensed"] is False
+
+
+def test_release_broll_placement_caps_each_event_for_coverage_gate():
+    placements = VideoEditorWorkflowService._shot_broll_placements(
+        {
+            "shots": [
+                {
+                    "shot_id": "shot-01",
+                    "role": "B-roll",
+                    "asset_id": "broll-aaaaaaaaaa",
+                    "timeline_start": 2.0,
+                    "timeline_end": 9.0,
+                    "overlay_mode": "full",
+                }
+            ]
+        }
+    )
+    assert placements == [
+        {
+            "shot_id": "shot-01",
+            "asset_id": "broll-aaaaaaaaaa",
+            "start": 2.0,
+            "end": 5.6,
+            "mode": "full",
+        }
+    ]
+
+
+def test_rich_release_keeps_third_semantic_cluster_but_bounds_short_events():
+    placements = [
+        {"asset_id": f"broll-{index}", "start": start, "end": end, "mode": "full"}
+        for index, (start, end) in enumerate(
+            ((3.4, 6.22), (6.22, 9.32), (9.32, 12.32))
+        )
+    ]
+    bounded = VideoEditorWorkflowService._bound_short_rich_release_brolls(placements)
+    assert len(bounded) == 3
+    assert [item["end"] for item in bounded] == [5.8, 8.62, 11.72]
+    assert sum(item["end"] - item["start"] for item in bounded) == pytest.approx(7.2)
+    assert all(item["coverage_trimmed_for_short_adaptive_rich"] for item in bounded)
+
+
+def test_release_stock_search_uses_overlapping_spoken_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    queries: list[str] = []
+    limits: list[int] = []
+
+    class FakeProvider:
+        def __init__(self, _cache):
+            pass
+
+        def search_and_cache(self, query, *, max_results, provider=None):
+            queries.append(query)
+            limits.append(max_results)
+            return SimpleNamespace(status="unavailable", items=[])
+
+    monkeypatch.setattr(workflow_module, "StockBrollProvider", FakeProvider)
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: [])
+    shot_plan = {
+        "title": "商业口播",
+        "shots": [
+            {"shot_id": "shot-01", "role": "A-roll", "duration_seconds": 2, "timeline_start": 0, "source_start": 0, "source_end": 2},
+            {"shot_id": "shot-02", "role": "A-roll", "duration_seconds": 2, "timeline_start": 2, "source_start": 2, "source_end": 4},
+            {"shot_id": "shot-03", "role": "A-roll", "duration_seconds": 2, "timeline_start": 4, "source_start": 4, "source_end": 6},
+            {"shot_id": "shot-04", "role": "A-roll", "duration_seconds": 2, "timeline_start": 6, "source_start": 6, "source_end": 8},
+            {"shot_id": "shot-05", "role": "A-roll", "duration_seconds": 2, "timeline_start": 8, "source_start": 8, "source_end": 10},
+        ],
+    }
+    segments = [
+        {"start": 2, "end": 4, "text": "客户数据库要沉淀"},
+        {"start": 8, "end": 10, "text": "工厂品牌产品持续曝光"},
+    ]
+
+    assert service._auto_bind_release_broll_assets(
+        shot_plan, transcript_segments=segments
+    ) == {}
+    assert queries[0].startswith("CRM dashboard customer database")
+    assert "product in real setting" in queries
+    assert all(limit == 8 for limit in limits)
+
+
+def test_release_semantic_search_runs_even_when_authorized_cache_has_three_items(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from PIL import Image
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    image = tmp_path / "cached.png"
+    Image.new("RGB", (128, 128), "#1677ff").save(image)
+    image_obj = Image.open(image)
+    for x in range(0, 128, 16):
+        for y in range(0, 128, 16):
+            image_obj.putpixel((x, y), ((x * 2) % 255, (y * 2) % 255, 80))
+    image_obj.save(image)
+    queries: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, _cache):
+            pass
+
+        def search_and_cache(self, query, *, max_results):
+            queries.append(query)
+            return SimpleNamespace(
+                status="ready",
+                attempts=1,
+                items=[
+                    {
+                        "asset_id": "broll-pexels-new",
+                        "name": "CRM customer database dashboard",
+                        "original_name": "crm-customer-database-dashboard.mp4",
+                        "source_provider": "pexels",
+                        "source_type": "provider_cache",
+                        "source_url": "https://www.pexels.com/video/123/",
+                        "license_name": "Pexels License",
+                        "license_url": "https://www.pexels.com/license/",
+                        "authorization_status": "confirmed",
+                        "publish_licensed": True,
+                        "asset_origin": "stock_video_asset",
+                        "cache_path": str(image),
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(workflow_module, "StockBrollProvider", FakeProvider)
+    cached = [
+        {
+            "asset_id": f"broll-cached-{index}",
+            "_path": str(image),
+            "media_type": "image/png",
+            "authorization_status": "confirmed",
+            "publish_licensed": True,
+            "asset_origin": "stock_video_asset",
+            "source_provider": "pexels",
+        }
+        for index in range(3)
+    ]
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: cached)
+    shot_plan = {
+        "shots": [
+            {
+                "shot_id": f"shot-{index:02d}",
+                "role": "A-roll",
+                "duration_seconds": 2,
+                "timeline_start": index * 2,
+                "source_start": index * 2,
+                "source_end": index * 2 + 2,
+            }
+            for index in range(10)
+        ]
+    }
+    bindings = service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=[
+            {"start": 2, "end": 4, "text": "客户数据库持续沉淀"},
+        ],
+    )
+
+    assert len(queries) == 1
+    assert queries[0].startswith("CRM dashboard customer database")
+    assert bindings["shot-01"]["source_provider"] == "pexels"
+    assert bindings["shot-01"]["license_name"] == "Pexels License"
+    assert bindings["shot-01"]["source_url"].endswith("/123/")
+
+
+def test_release_searches_each_structured_visual_request_when_cache_has_no_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    from PIL import Image
+
+    image = tmp_path / "provider-cache.png"
+    Image.new("RGB", (128, 128), "#1677ff").save(image)
+    calls: list[tuple[str, str | None, int]] = []
+
+    class FakeProvider:
+        def __init__(self, _cache):
+            pass
+
+        def search_and_cache(self, query, *, max_results, provider=None):
+            calls.append((query, provider, max_results))
+            if provider == "pixabay":
+                return SimpleNamespace(
+                    provider="pixabay", status="unavailable", attempts=0, items=[]
+                )
+            is_process = "workflow" in query or "process" in query
+            return SimpleNamespace(
+                provider="pexels",
+                status="ready",
+                attempts=1,
+                items=[
+                    {
+                        "asset_id": "broll-provider-process" if is_process else "broll-provider-crm",
+                        "name": "workflow process demonstration"
+                        if is_process
+                        else "CRM customer database dashboard",
+                        "source_provider": "pexels",
+                        "source_type": "provider_cache",
+                        "source_url": "https://www.pexels.com/video/provider/",
+                        "license_name": "Pexels License",
+                        "authorization_status": "confirmed",
+                        "publish_licensed": True,
+                        "asset_origin": "stock_video_asset",
+                        "cache_path": str(image),
+                    }
+                ],
+            )
+
+    monkeypatch.setattr(workflow_module, "StockBrollProvider", FakeProvider)
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: [])
+    shot_plan = {
+        "timeline_duration_seconds": 20.0,
+        "shots": [
+            {
+                "shot_id": f"shot-{index:02d}",
+                "role": "A-roll",
+                "duration_seconds": 2.0,
+                "timeline_start": float(index * 6 + 2),
+                "source_start": float(index * 6 + 2),
+                "source_end": float(index * 6 + 4),
+            }
+            for index in range(3)
+        ],
+    }
+    bindings = service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=[
+            {"start": 2.0, "end": 4.0, "text": "客户数据库持续沉淀"},
+            {"start": 8.0, "end": 10.0, "text": "教程设置自动提醒步骤"},
+        ],
+    )
+
+    assert set(bindings) == {"shot-00", "shot-01"}
+    assert len({item[0] for item in calls}) == 2
+    assert all(item[2] == 8 for item in calls)
+    assert {item["source_provider"] for item in bindings.values()} == {"pexels"}
+    assert {item["asset_id"] for item in bindings.values()} == {
+        "broll-provider-crm",
+        "broll-provider-process",
+    }
+
+
+def test_release_long_form_cached_visuals_are_temporally_spread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A long plan must not spend every semantic visual slot at its opening."""
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    asset_path = tmp_path / "stock.mp4"
+    asset_path.write_bytes(b"test-media")
+    asset = {
+        "asset_id": "broll-stock",
+        "_path": str(asset_path),
+        "media_type": "video/mp4",
+        "authorization_status": "confirmed",
+        "publish_licensed": True,
+        "asset_origin": "stock_video_asset",
+        "source_provider": "pexels",
+    }
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: [asset])
+    monkeypatch.setattr(workflow_module, "local_broll_is_real", lambda *_args: True)
+    monkeypatch.setattr(
+        workflow_module,
+        "match_local_visual_asset",
+        lambda *_args, **_kwargs: {
+            **asset,
+            "match_score": 80,
+            "match_reason": ["concrete_visual_intersection:scene"],
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "query_visual_concepts",
+        lambda _query: {"scene"},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "StockBrollProvider",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    shots = [
+        {
+            "shot_id": f"shot-{index:02d}",
+            "role": "A-roll",
+            "duration_seconds": 2.5,
+            "timeline_start": float(index * 5 + 1),
+            "source_start": float(index * 5 + 1),
+            "source_end": float(index * 5 + 3.5),
+        }
+        for index in range(32)
+    ]
+    shot_plan = {
+        "timeline_duration_seconds": 104.0,
+        "shots": shots,
+    }
+    semantic_texts = [
+        "顾客扫码加入会员",
+        "餐厅顾客就餐",
+        "门店小程序操作",
+        "会员关系持续触达",
+    ]
+    segments = [
+        {
+            "start": shot["source_start"],
+            "end": shot["source_end"],
+            "text": semantic_texts[index % len(semantic_texts)],
+        }
+        for index, shot in enumerate(shots)
+    ]
+
+    service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=segments,
+    )
+
+    selected_starts = sorted(
+        float(request["start"])
+        for request in shot_plan["visual_requests"]
+    )
+    assert len(selected_starts) == 12
+    assert selected_starts[-1] >= 90.0
+    assert all(
+        right - left >= 7.5
+        for left, right in zip(selected_starts, selected_starts[1:])
+    )
+
+
+def test_release_reuses_semantically_tagged_cache_before_stock_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from PIL import Image
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    image = tmp_path / "cached.png"
+    Image.new("RGB", (128, 128), "#1677ff").save(image)
+    image_obj = Image.open(image)
+    for x in range(0, 128, 16):
+        for y in range(0, 128, 16):
+            image_obj.putpixel((x, y), ((x * 2) % 255, (y * 2) % 255, 80))
+    image_obj.save(image)
+
+    class NoSearchProvider:
+        def __init__(self, _cache):
+            pass
+
+        def search_and_cache(self, *_args, **_kwargs):
+            raise AssertionError("semantic cache hit must not search")
+
+    monkeypatch.setattr(workflow_module, "StockBrollProvider", NoSearchProvider)
+    monkeypatch.setattr(
+        service,
+        "list_visual_assets",
+        lambda kind=None: [
+            {
+                "asset_id": "broll-cached-db",
+                "_path": str(image),
+                "media_type": "image/png",
+                "authorization_status": "confirmed",
+                "publish_licensed": True,
+                "asset_origin": "stock_video_asset",
+                "source_provider": "pexels",
+                "semantic_binding": "客户数据库",
+                "keywords": ["数据库", "客户"],
+            }
+        ],
+    )
+    shot_plan = {
+        "shots": [
+            {
+                "shot_id": "shot-01",
+                "role": "A-roll",
+                "duration_seconds": 2,
+                "timeline_start": 2,
+                "source_start": 2,
+                "source_end": 4,
+            },
+            {
+                "shot_id": "shot-02",
+                "role": "A-roll",
+                "duration_seconds": 2,
+                "timeline_start": 4,
+                "source_start": 4,
+                "source_end": 6,
+            },
+        ]
+    }
+
+    bindings = service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=[{"start": 2, "end": 4, "text": "客户数据库持续沉淀"}],
+    )
+
+    assert bindings["shot-01"]["asset_id"] == "broll-cached-db"
+
+
+def test_release_missing_stock_keys_keeps_safe_degradation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "list_visual_assets", lambda kind=None: [])
+    shot_plan = {
+        "shots": [
+            {
+                "shot_id": "shot-01",
+                "role": "A-roll",
+                "duration_seconds": 2,
+                "timeline_start": 2,
+                "source_start": 2,
+                "source_end": 4,
+            }
+        ]
+    }
+
+    assert service._auto_bind_release_broll_assets(
+        shot_plan,
+        transcript_segments=[{"start": 2, "end": 4, "text": "无授权素材的主题"}],
+    ) == {}
+
+
+def test_visual_requests_are_structured_and_unrelated_gap_is_not_a_request():
+    segments = [
+        {"start": 2.0, "end": 4.0, "text": "客户数据库持续沉淀"},
+        {"start": 8.0, "end": 10.0, "text": "工厂品牌产品持续曝光"},
+    ]
+    database = workflow_module._build_visual_request(
+        {"source_start": 2.0, "source_end": 4.0}, segments
+    )
+    gap = workflow_module._build_visual_request(
+        {"source_start": 4.0, "source_end": 6.0}, segments
+    )
+    product = workflow_module._build_visual_request(
+        {"source_start": 8.0, "source_end": 10.0}, segments
+    )
+    assert database["visual_type"] == "data"
+    assert database["search_queries"][:2] == [
+        "CRM dashboard customer database",
+        "business analytics dashboard",
+    ]
+    assert gap["visual_type"] == "abstract"
+    assert gap["search_queries"] == []
+    assert product["visual_type"] == "product"
+    assert product["preferred_mode"] == "full"
+    assert all(len(query.split()) <= 5 for query in product["search_queries"])
+
+
+def test_visual_request_uses_concrete_factory_robot_scene_queries():
+    request = workflow_module._build_visual_request(
+        {
+            "source_start": 0.0,
+            "source_end": 3.0,
+        },
+        [
+            {
+                "start": 0.0,
+                "end": 3.0,
+                "text": "工业机器人进入工厂流水线",
+            }
+        ],
+    )
+
+    assert request["visual_type"] == "scene"
+    assert request["preferred_mode"] == "full"
+    assert request["search_queries"] == [
+        "industrial robot factory floor",
+        "robot manufacturing automation",
+        "factory production line robotics",
+    ]
+    assert "robot" in request["expected_subject"]
+
+
+def test_visual_request_uses_generic_vehicle_scene_queries_without_product_dashboard_guess():
+    request = workflow_module._build_visual_request(
+        {"source_start": 4.0, "source_end": 7.0},
+        [{"start": 4.0, "end": 7.0, "text": "买二手车要先研究新车行情和车况"}],
+    )
+
+    assert request["visual_type"] == "vehicle_scene"
+    assert request["preferred_mode"] == "full"
+    assert request["search_queries"] == [
+        "used car inspection",
+        "used car buyer checking vehicle",
+        "second hand car dealership",
+    ]
+
+
+def test_default_local_filter_has_no_broll_overlay(tmp_path: Path):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.15,
+        subtitle_filter="approved.ass",
+    )
+    assert "overlay=W-w-28:90" not in rendered
+    assert "subtitles='approved.ass'" in rendered
+
+
+def test_release_filter_supports_multiple_pip_and_full_visual_events(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        brolls=[
+            {"start": 1.0, "end": 2.5, "mode": "pip", "input_index": 2},
+            {"start": 3.0, "end": 5.0, "mode": "full", "input_index": 3},
+        ],
+    )
+
+    assert "[2:v]setpts=PTS-STARTPTS" in rendered
+    assert "overlay=252:794" in rendered
+    assert "[3:v]setpts=PTS-STARTPTS" in rendered
+    assert "overlay=0:0" in rendered
+    assert rendered.index("[with_broll0]") < rendered.index("[with_broll1]")
+    assert rendered.index("subtitles='approved.ass'") > rendered.index("[with_broll1]")
+
+
+def test_pip_geometry_avoids_face_and_subtitle_and_skips_unsafe_canvas(
+    tmp_path: Path,
+):
+    geometry = workflow_module._portrait_pip_geometry(720, 1280)
+    assert geometry["safe"] is True
+    assert geometry["bbox"]["width"] / 720 == pytest.approx(0.30, abs=0.01)
+    assert geometry["intersects_face_safe_bbox"] is False
+    assert geometry["intersects_subtitle_bbox"] is False
+
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=1000,
+        height=1000,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        brolls=[{"start": 1.0, "end": 3.0, "mode": "pip", "input_index": 2}],
+    )
+    assert "overlay=252:794" not in rendered
+    assert "subtitles='approved.ass'" in rendered
+
+
+def test_semantic_info_geometry_avoids_face_pip_and_subtitle_safe_areas():
+    geometry = workflow_module._semantic_info_geometry(720, 1280)
+
+    assert geometry["safe"] is False
+    assert geometry["reason"] == "lower_left_safe_zone"
+    assert geometry["intersects_face_safe_bbox"] is False
+    assert geometry["intersects_pip_bbox"] is True
+    assert geometry["intersects_subtitle_bbox"] is False
+    assert geometry["bbox"]["left"] == 36
+    assert geometry["bbox"]["right"] == 396
+
+
+def test_release_filter_keeps_transparent_vector_track_before_subtitles(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        vectors=[
+            {"start": 1.0, "end": 3.0, "mode": "pip", "input_index": 2},
+        ],
+        vector_input_index=2,
+    )
+
+    assert "rotate=0.035*sin(2*PI*t/2)" in rendered
+    assert "color=0x00000000" in rendered
+    assert "overlay=W-w-42:70" in rendered
+    assert rendered.index("[with_vector0]") < rendered.index("subtitles='approved.ass'")
+
+
+def test_release_filter_renders_semantic_info_band_after_broll_before_subtitles(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        brolls=[{"start": 1.0, "end": 3.0, "mode": "pip", "input_index": 2}],
+        semantic_layers=[
+            {
+                "start": 1.0,
+                "end": 3.0,
+                "renderer": "semantic_info_band",
+                "input_index": 3,
+            }
+        ],
+        semantic_input_index=3,
+    )
+
+    assert "[3:v]format=rgba,fade=t=in:st=0:d=0.24:alpha=1[semantic0]" in rendered
+    assert "overlay=0:0" in rendered
+    assert rendered.index("[with_semantic0]") < rendered.index("subtitles='approved.ass'")
+
+
+def test_release_template_replaces_sticker_like_vectors_with_semantic_layer_by_default(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+
+    vector_track, assets = service._ensure_release_creative_assets(
+        "企业客户增长和销售管理",
+        shot_plan={
+            "shots": [
+                {
+                    "role": "A-roll",
+                    "timeline_start": 2.0,
+                    "duration_seconds": 2.5,
+                    "timeline_end": 4.5,
+                }
+            ]
+        },
+    )
+
+    assert assets == []
+    assert vector_track["items"] == []
+    assert vector_track["asset_count"] == 0
+    assert vector_track["kind"] == "semantic_motion_layer"
+    assert vector_track["source_policy"] == "safe_subject_motion_without_invented_facts"
 
 
 def test_batch_waits_for_subtitle_then_confirms_result(
@@ -875,6 +2620,52 @@ def test_bgm_recommendation_prefers_ai_voiceover_category(
     assert "理性干货" in reason
 
 
+def test_bgm_recommendation_defaults_business_talking_head_to_low_intrusion_tech_track(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_probe_bgm_duration", lambda _: 120.0)
+    tech = service.upload_bgm(
+        file_name="tech-business.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"tech-business",
+        mood="科技·未来·舒缓·商务",
+        rights_confirmed=True,
+        rights_holder="本机验收授权",
+        voiceover_category="科技未来",
+        energy="平稳",
+    )
+    service.upload_bgm(
+        file_name="business-forward.mp3",
+        media_type="audio/mpeg",
+        media_bytes=b"business-forward",
+        mood="商业·增长·有推动感",
+        rights_confirmed=True,
+        rights_holder="本机验收授权",
+        voiceover_category="商业表达",
+        energy="有推动感",
+    )
+
+    selected, reason = service._recommend_bgm_asset(
+        {
+            "transcript": "客户资源沉淀在企业数据库，工厂和品牌需要持续触达。",
+            "media": {"duration_seconds": 60},
+        },
+        "企业客户数据库营销机制",
+    )
+
+    assert selected is not None
+    assert selected["asset_id"] == tech["asset_id"]
+    assert selected["voiceover_category"] == "科技未来"
+    assert "科技未来" in reason
+
+
 def test_retired_bgm_is_hidden_but_stays_resolvable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -917,6 +2708,7 @@ def test_retired_bgm_is_hidden_but_stays_resolvable(
     listed_ids = {item["asset_id"] for item in service.list_bgm_assets()}
 
     assert active["asset_id"] in listed_ids
+    assert active["generated"] is False
     assert retired["asset_id"] not in listed_ids
     assert (
         service.resolve_bgm_asset(retired["asset_id"])["asset_id"]
@@ -1044,3 +2836,339 @@ def test_asr_model_status_detects_complete_snapshot(tmp_path: Path):
     assert status["installed"] is True
     assert status["device"] == "cpu"
     assert status["compute_type"] == "int8"
+
+
+def test_full_review_transcript_corrects_homophones_without_changing_word_clock():
+    raw = {
+        "start": 26.12,
+        "end": 55.02,
+        "text": "这家店推出了会员质,花49块,就能半个尊贵会员,半完马上送一份招牌烧烤,等于百送会员资格,但中头戏是后面的共享店长活动,立刻拿到六张无门槛又会劝,小店长把劝发到朋友圈或者群里",
+        "reviewed_text": "这家店推出了会员制,花49块,就能办个尊贵会员,办完马上送一份招牌烧烤,等于白送会员资格,但重头戏是后面的共享店长活动,立刻拿到六张无门槛优惠券,小店长把券发到朋友圈或者群里",
+        "reviewed_text_corrections": [
+            {"from": "会员质", "to": "会员制", "reason": "human_listening_review"},
+            {"from": "半个尊贵会员", "to": "办个尊贵会员", "reason": "human_listening_review"},
+            {"from": "半完马上", "to": "办完马上", "reason": "human_listening_review"},
+            {"from": "等于百送", "to": "等于白送", "reason": "human_listening_review"},
+            {"from": "中头戏", "to": "重头戏", "reason": "human_listening_review"},
+            {"from": "又会劝", "to": "优惠券", "reason": "human_listening_review"},
+            {"from": "把劝发到", "to": "把券发到", "reason": "human_listening_review"},
+        ],
+        "words": [
+            {"start": 26.12, "end": 26.3, "word": "会员质"},
+            {"start": 26.3, "end": 26.5, "word": ","},
+            {"start": 26.5, "end": 26.7, "word": "花"},
+            {"start": 26.7, "end": 26.9, "word": "49"},
+            {"start": 26.9, "end": 27.1, "word": "块"},
+            {"start": 27.1, "end": 27.4, "word": "半个尊贵会员"},
+            {"start": 27.4, "end": 27.8, "word": "半完马上"},
+            {"start": 27.8, "end": 28.2, "word": "送一份招牌烧烤"},
+            {"start": 28.2, "end": 28.6, "word": "等于百送"},
+            {"start": 28.6, "end": 29.0, "word": "会员资格"},
+            {"start": 29.0, "end": 29.4, "word": "中头戏"},
+            {"start": 29.4, "end": 30.0, "word": "立刻拿到六张无门槛又会劝"},
+            {"start": 30.0, "end": 30.6, "word": "小店长把劝发到"},
+            {"start": 30.6, "end": 31.0, "word": "朋友圈或者群里"},
+        ],
+    }
+    reviewed, corrections = workflow_module._review_transcript_segments([raw])
+    assert len(reviewed) == 1
+    text = reviewed[0]["text"]
+    assert "会员制" in text
+    assert "办个尊贵会员" in text
+    assert "优惠券" in text
+    assert "中头戏" not in text
+    assert len(corrections) >= 6
+    assert len(re.sub(r"[^\\w\\u4e00-\\u9fff]", "", raw["text"])) == len(
+        re.sub(r"[^\\w\\u4e00-\\u9fff]", "", text)
+    )
+
+
+def test_full_transcript_builds_grounded_visual_intents_across_late_timeline():
+    asr = json.loads(
+        Path("work/auto-fine-cut-adaptive-20260824-short-real/asr-full.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reviewed, _ = workflow_module._review_transcript_segments(asr["segments"])
+    intents = workflow_module._build_adaptive_visual_intents(reviewed)
+    assert intents
+    assert any(item["fact"] == "80%" for item in intents)
+    assert any(item["visual_intent"] in {"data_chart", "concept_card", "network", "transition", "cta"} for item in intents)
+    assert max(float(item["end"]) for item in intents) > 90
+    assert all(item["grounded_in_text"] is True for item in intents)
+    assert all(item["renderer"] == "data_visual_card" for item in intents)
+    assert all(item["mode"] == "full" for item in intents)
+
+
+def test_adaptive_visual_card_geometry_avoids_face_pip_and_subtitles():
+    geometry = workflow_module._adaptive_visual_card_geometry(720, 1280)
+    assert geometry["safe"] is True
+    assert geometry["intersects_face_safe_bbox"] is False
+    assert geometry["intersects_subtitle_bbox"] is False
+    assert geometry["intersects_pip_bbox"] is False
+
+
+def test_subtitle_audio_activity_gate_rejects_uncovered_speech_gap():
+    cues = [{"start": 0.0, "end": 2.0}, {"start": 7.0, "end": 9.0}]
+    active = [{"start": 0.0, "end": 9.0}]
+    result = workflow_module.VideoEditorWorkflowService._subtitle_audio_activity_gate(
+        cues, active
+    )
+    assert result["passed"] is False
+    assert result["uncovered_ranges"] == [{"start": 2.0, "end": 7.0}]
+
+
+def test_subtitle_text_integrity_gate_rejects_duplicate_or_missing_text():
+    source = [{"text": "通过门店小程序完成的", "start": 0, "end": 2}]
+    duplicate = {"cues": [{"lines": ["通过门店小程序完成的的"], "start": 0, "end": 2}]}
+    result = workflow_module.VideoEditorWorkflowService._subtitle_text_integrity_gate(
+        source, duplicate
+    )
+    assert result["passed"] is False
+    assert result["duplicate_function_word_boundary"] is True
+
+
+def test_generated_explainer_defaults_to_full_cutaway_not_pip():
+    assert (
+        VideoEditorWorkflowService._release_broll_mode(
+            {
+                "asset_origin": "generated_image_asset",
+                "manifest_role": "pip_broll",
+            },
+            0,
+        )
+        == "full"
+    )
+    assert (
+        VideoEditorWorkflowService._release_broll_mode(
+            {"visual_intent": "speaker_pip"},
+            0,
+        )
+        == "pip"
+    )
+
+
+def test_adaptive_visual_intents_are_generic_and_not_sample_answers():
+    segments = [
+        {"start": 1.0, "end": 3.0, "text": "订单转化率提升到80%"},
+        {"start": 6.0, "end": 9.0, "text": "步骤流程然后执行支付"},
+        {"start": 12.0, "end": 15.0, "text": "评论区告诉我你的问题"},
+    ]
+    intents = workflow_module._build_adaptive_visual_intents(segments)
+    assert {item["visual_intent"] for item in intents} >= {
+        "data_chart",
+        "concept_card",
+        "cta",
+    }
+    assert all(item["mode"] == "full" for item in intents)
+    assert all(item["position"] == "full_cutaway" for item in intents)
+    source = Path("src/services/video_editor_workflow.py").read_text(encoding="utf-8")
+    assert "广州烧烤店" not in source
+    assert "客户数据库" not in source
+
+
+def test_visual_card_rejects_scene_descriptions_and_empty_or_repeated_cards():
+    scene = [
+        {"start": 0.0, "end": 3.0, "text": "广州出现一种特别的餐饮模式"},
+    ]
+    assert workflow_module._build_adaptive_visual_intents(scene) == []
+
+    empty_chart, empty_reason = workflow_module._sanitize_adaptive_visual_item(
+        {
+            "renderer": "data_visual_card",
+            "visual_intent": "data_chart",
+            "semantic_text": "特别的餐饮模式",
+            "source_text": "今天介绍一种特别的餐饮模式",
+        }
+    )
+    assert empty_chart is None
+    assert empty_reason == "data_chart_without_grounded_fact"
+
+    repeated_card, repeated_reason = workflow_module._sanitize_adaptive_visual_item(
+        {
+            "renderer": "data_visual_card",
+            "visual_intent": "concept_card",
+            "semantic_text": "小程序",
+            "source_text": "小程序",
+            "diagram_labels": ["小程序", "小程序"],
+        }
+    )
+    assert repeated_card is None
+    assert repeated_reason == "card_repeats_full_spoken_text"
+
+
+def test_data_card_has_one_grounded_metric_and_no_unlabelled_bar_motif():
+    item, reason = workflow_module._sanitize_adaptive_visual_item(
+        {
+            "renderer": "data_visual_card",
+            "visual_intent": "data_chart",
+            "semantic_text": "客户主动加了80%的私域",
+            "fact": "80%",
+            "source_text": "客户主动加了80%的私域",
+        }
+    )
+    assert reason is None
+    assert item["semantic_text"] == "80%"
+    source = Path("src/services/video_editor_workflow.py").read_text(encoding="utf-8")
+    assert "for index, ratio in enumerate((0.38, 0.62, 0.84))" not in source
+
+
+def test_adaptive_visual_card_is_not_enabled_on_the_default_render_path(monkeypatch):
+    monkeypatch.delenv("VIDEO_EDITOR_ENABLE_ADAPTIVE_VISUAL_CARD", raising=False)
+    assert workflow_module._adaptive_visual_card_opted_in() is False
+
+    monkeypatch.setenv("VIDEO_EDITOR_ENABLE_ADAPTIVE_VISUAL_CARD", "true")
+    assert workflow_module._adaptive_visual_card_opted_in() is True
+
+
+def test_reviewed_word_clock_uses_following_word_after_an_audio_pause():
+    source_segments = [
+        {
+            "text": "甲乙丙丁",
+            "start": 0.0,
+            "end": 2.0,
+            "words": [
+                {"text": "甲乙", "start": 0.0, "end": 0.4},
+                {"text": "丙丁", "start": 1.0, "end": 1.4},
+            ],
+        }
+    ]
+    preview = {
+        "cues": [
+            {
+                "start": 0.0,
+                "end": 0.4,
+                "lines": ["甲乙"],
+                "source_segment_index": 0,
+            },
+            {
+                "start": 0.4,
+                "end": 1.4,
+                "lines": ["丙丁"],
+                "source_segment_index": 0,
+            },
+        ]
+    }
+
+    snapped = workflow_module.VideoEditorWorkflowService._snap_preview_cues_to_reviewed_word_clock(
+        source_segments,
+        preview,
+    )
+
+    assert snapped["cues"][0]["start"] == pytest.approx(0.0)
+    assert snapped["cues"][0]["end"] == pytest.approx(0.4)
+    assert snapped["cues"][1]["start"] == pytest.approx(1.0)
+    assert snapped["cues"][1]["end"] == pytest.approx(1.4)
+    timing = workflow_module.VideoEditorWorkflowService._subtitle_word_timing_quality(
+        source_segments,
+        snapped,
+        fps=30.0,
+    )
+    assert timing["word_p95_ms"] == pytest.approx(0.0)
+    assert timing["mapping_error_frames"] == pytest.approx(0.0)
+
+
+def test_caption_groups_remove_only_repeated_boundary_character():
+    from src.services.video_editor_cloud import _normalize_preview_cue_texts
+
+    segments = [
+        {
+            "start": 0.0,
+            "end": 2.0,
+            "text": "完成的老板不用费心",
+            "words": [
+                {"text": "完成的", "start": 0.0, "end": 0.8},
+                {"text": "老板不用费心", "start": 0.8, "end": 1.8},
+            ],
+        }
+    ]
+    cues = [
+        {"start": 0.0, "end": 0.8, "lines": ["完成的"], "source_segment_index": 0},
+        {
+            "start": 0.8,
+            "end": 1.8,
+            "lines": ["的老板不用费心"],
+            "source_segment_index": 0,
+        },
+    ]
+    normalized = _normalize_preview_cue_texts(cues, segments, max_chars=11)
+    texts = ["".join(cue["lines"]) for cue in normalized]
+    assert texts == ["完成的", "老板不用费心"]
+    assert "".join(texts) == "完成的老板不用费心"
+
+
+def test_word_alias_and_attached_punctuation_keep_exact_caption_clock():
+    from src.services.video_editor_cloud import (
+        _caption_cue_timings_from_words,
+        _caption_lexical_words,
+    )
+
+    words = [
+        {"start": 0.0, "end": 0.4, "word": "客户"},
+        {"start": 0.4, "end": 0.5, "word": "，"},
+        {"start": 0.8, "end": 1.2, "word": "数据库。"},
+    ]
+    lexical = _caption_lexical_words(
+        words,
+        text="客户数据库。",
+        segment_start=0.0,
+        segment_end=1.2,
+    )
+    assert "".join(item["text"] for item in lexical) == "客户数据库"
+    assert _caption_cue_timings_from_words(
+        ["客户", "数据库"],
+        words,
+        segment_start=0.0,
+        segment_end=1.2,
+    ) == [(0.0, 0.5), (0.8, 1.2)]
+
+
+def test_lexical_clock_handles_mixed_token_granularity_without_splitting_compounds():
+    from src.services.video_editor_cloud import _caption_lexical_words
+
+    words = [
+        {"start": 0.0, "end": 0.4, "word": "你的"},
+        {"start": 0.4, "end": 0.6, "word": "店"},
+        {"start": 0.6, "end": 0.8, "word": "系"},
+        {"start": 0.8, "end": 1.0, "word": "统"},
+    ]
+    lexical = _caption_lexical_words(
+        words,
+        text="你的店系统",
+        segment_start=0.0,
+        segment_end=1.0,
+    )
+
+    assert [item["text"] for item in lexical] == ["你", "的", "店", "系统"]
+    assert lexical[-1]["start"] == pytest.approx(0.6)
+    assert lexical[-1]["end"] == pytest.approx(1.0)
+
+
+def test_long_character_token_segment_uses_lexical_word_clock_partition():
+    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
+
+    text = "这是一个用于验证长段词序时钟的通用教程内容没有特殊答案并且保持完整顺序"
+    segment = {"start": 0.0, "end": len(text) * 0.3, "text": text, "words": []}
+    for index, character in enumerate(text):
+        segment["words"].append(
+            {
+                "start": index * 0.3,
+                "end": (index + 1) * 0.3,
+                "text": character,
+            }
+        )
+
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+
+    assert len(preview["cues"]) == 5
+    assert all(
+        cue["word_clock_mapping"] == "exact_or_reviewed_text_sequence_alignment"
+        for cue in preview["cues"]
+    )
+    assert max(cue["end"] - cue["start"] for cue in preview["cues"]) <= 2.4
+    assert report["unmatched_cue_count"] == 0

@@ -1,0 +1,3045 @@
+{
+  "timeline_version": "local-release-timeline-v1",
+  "clock": "final_output",
+  "output_duration_seconds": 104.633008,
+  "source_id": "upload:upload-a88ae01012",
+  "source_media_identity": {
+    "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+    "source_duration_seconds": 104.72,
+    "transcript_sha256": "bbabf760bf35ece65b4d38ebfc8112c7b6112cf43311f783b321aae74d4e7cb0",
+    "transcript_timing_source": "word_timestamps",
+    "transcript_identity_scope": "task_subtitle_segments_v1"
+  },
+  "source_range": {
+    "start": 0.0,
+    "end": 104.72
+  },
+  "shot_plan": {
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 0,
+        "knowledge_howto": 2,
+        "story_resonance": 0
+      },
+      "reason": "出现步骤/序号/要点结构，适合结论先行再拆解。",
+      "legacy_template_id": "knowledge_howto",
+      "compatibility_alias": "knowledge_howto",
+      "override_available": true
+    },
+    "content_blocks": [
+      "conclusion",
+      "point_1",
+      "point_2",
+      "point_3",
+      "summary"
+    ],
+    "hook_source": {
+      "source_start": 100.16,
+      "source_end": 104.68,
+      "text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。"
+    },
+    "retained_ranges": [
+      {
+        "start": 0.0,
+        "end": 104.72,
+        "reason": "完整源时钟保留"
+      }
+    ],
+    "reordered_ranges": [
+      {
+        "start": 0.0,
+        "end": 104.72,
+        "reason": "完整源时钟保留"
+      }
+    ],
+    "deleted_ranges": [
+      {
+        "start": 0,
+        "end": 0.44,
+        "reason": "片头无口播静段"
+      }
+    ],
+    "shots": [
+      {
+        "shot_id": "shot-01",
+        "source_start": 0.0,
+        "source_end": 3.0,
+        "timeline_start": 0.0,
+        "timeline_end": 3.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "hard_cut",
+        "visual_emphasis": "hook_underliner",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-02",
+        "source_start": 3.0,
+        "source_end": 7.2,
+        "timeline_start": 3.0,
+        "timeline_end": 7.2,
+        "role": "B-roll",
+        "asset_id": "broll-abc76c5b40",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-03",
+        "source_start": 7.2,
+        "source_end": 10.4,
+        "timeline_start": 7.2,
+        "timeline_end": 10.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-04",
+        "source_start": 10.4,
+        "source_end": 15.0,
+        "timeline_start": 10.4,
+        "timeline_end": 15.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-05",
+        "source_start": 15.0,
+        "source_end": 18.0,
+        "timeline_start": 15.0,
+        "timeline_end": 18.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-06",
+        "source_start": 18.0,
+        "source_end": 22.2,
+        "timeline_start": 18.0,
+        "timeline_end": 22.2,
+        "role": "B-roll",
+        "asset_id": "broll-f847ed1e82",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_pip",
+        "fallback": "none",
+        "overlay_mode": "pip",
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-07",
+        "source_start": 22.2,
+        "source_end": 25.4,
+        "timeline_start": 22.2,
+        "timeline_end": 25.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-08",
+        "source_start": 25.4,
+        "source_end": 30.0,
+        "timeline_start": 25.4,
+        "timeline_end": 30.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-09",
+        "source_start": 30.0,
+        "source_end": 33.0,
+        "timeline_start": 30.0,
+        "timeline_end": 33.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-10",
+        "source_start": 33.0,
+        "source_end": 37.2,
+        "timeline_start": 33.0,
+        "timeline_end": 37.2,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-11",
+        "source_start": 37.2,
+        "source_end": 40.4,
+        "timeline_start": 37.2,
+        "timeline_end": 40.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-12",
+        "source_start": 40.4,
+        "source_end": 45.0,
+        "timeline_start": 40.4,
+        "timeline_end": 45.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-13",
+        "source_start": 45.0,
+        "source_end": 48.0,
+        "timeline_start": 45.0,
+        "timeline_end": 48.0,
+        "role": "B-roll",
+        "asset_id": "broll-4cca106b4b",
+        "asset_source": "local_upload",
+        "asset_origin": "local_uploaded_asset",
+        "authorization_status": "confirmed",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-14",
+        "source_start": 48.0,
+        "source_end": 52.2,
+        "timeline_start": 48.0,
+        "timeline_end": 52.2,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-15",
+        "source_start": 52.2,
+        "source_end": 55.4,
+        "timeline_start": 52.2,
+        "timeline_end": 55.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-16",
+        "source_start": 55.4,
+        "source_end": 60.0,
+        "timeline_start": 55.4,
+        "timeline_end": 60.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-17",
+        "source_start": 60.0,
+        "source_end": 63.0,
+        "timeline_start": 60.0,
+        "timeline_end": 63.0,
+        "role": "B-roll",
+        "asset_id": "broll-a3f531bfd7",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-18",
+        "source_start": 63.0,
+        "source_end": 67.2,
+        "timeline_start": 63.0,
+        "timeline_end": 67.2,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-19",
+        "source_start": 67.2,
+        "source_end": 70.4,
+        "timeline_start": 67.2,
+        "timeline_end": 70.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-20",
+        "source_start": 70.4,
+        "source_end": 75.0,
+        "timeline_start": 70.4,
+        "timeline_end": 75.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-21",
+        "source_start": 75.0,
+        "source_end": 78.0,
+        "timeline_start": 75.0,
+        "timeline_end": 78.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-22",
+        "source_start": 78.0,
+        "source_end": 82.2,
+        "timeline_start": 78.0,
+        "timeline_end": 82.2,
+        "role": "B-roll",
+        "asset_id": "broll-6ed42b3d63",
+        "asset_source": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-23",
+        "source_start": 82.2,
+        "source_end": 85.4,
+        "timeline_start": 82.2,
+        "timeline_end": 85.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-24",
+        "source_start": 85.4,
+        "source_end": 90.0,
+        "timeline_start": 85.4,
+        "timeline_end": 90.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.6,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-25",
+        "source_start": 90.0,
+        "source_end": 93.0,
+        "timeline_start": 90.0,
+        "timeline_end": 93.0,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.0,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-26",
+        "source_start": 93.0,
+        "source_end": 97.2,
+        "timeline_start": 93.0,
+        "timeline_end": 97.2,
+        "role": "B-roll",
+        "asset_id": "broll-90aa7677fe",
+        "asset_source": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 4.2,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-27",
+        "source_start": 97.2,
+        "source_end": 100.4,
+        "timeline_start": 97.2,
+        "timeline_end": 100.4,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-28",
+        "source_start": 100.4,
+        "source_end": 104.72,
+        "timeline_start": 100.4,
+        "timeline_end": 104.72,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.32,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      }
+    ],
+    "assets": [
+      {
+        "asset_id": "broll-abc76c5b40",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "barbecue restaurant grill food preparation diners"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "barbecue restaurant grill food preparation diners",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 82,
+        "match_reason": [
+          "concrete_visual_intersection:restaurant",
+          "keywords:barbecuerestaurantgrillfoodpreparationdiners"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": null,
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-f847ed1e82",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": "客户会面与关系维护",
+        "keywords": [
+          "客户",
+          "商务会议",
+          "关系",
+          "会面",
+          "client",
+          "meeting",
+          "business"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 48,
+        "match_reason": [
+          "concrete_visual_compatibility:relationship↔meeting"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": null,
+        "provider_attempts": 0,
+        "mode": "pip"
+      },
+      {
+        "asset_id": "broll-4cca106b4b",
+        "source": "local_upload",
+        "source_provider": "local_upload",
+        "asset_origin": "local_uploaded_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": false,
+        "source_url": "",
+        "license_name": "",
+        "license_url": "",
+        "semantic_binding": null,
+        "keywords": [],
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": null,
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-a3f531bfd7",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "CRM dashboard customer database business analytics office data management"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 82,
+        "match_reason": [
+          "concrete_visual_intersection:office_data",
+          "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": null,
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-6ed42b3d63",
+        "source": "built_in_image_generation",
+        "source_provider": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": false,
+        "source_url": "",
+        "license_name": "",
+        "license_url": "",
+        "semantic_binding": "内容营销与短视频",
+        "keywords": [
+          "营销",
+          "短视频",
+          "内容",
+          "推广",
+          "品牌曝光",
+          "拍摄"
+        ],
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": "pip_broll",
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-90aa7677fe",
+        "source": "built_in_image_generation",
+        "source_provider": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": false,
+        "source_url": "",
+        "license_name": "",
+        "license_url": "",
+        "semantic_binding": "客户服务与持续触达",
+        "keywords": [
+          "客服",
+          "客户服务",
+          "售后",
+          "触达",
+          "响应",
+          "服务"
+        ],
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "semantic_query": "multi-industry retail business marketing",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": "pip_broll",
+        "provider_attempts": 0,
+        "mode": "full"
+      }
+    ],
+    "subtitle": {
+      "style_id": "adaptive_white_base",
+      "hook_style_id": "adaptive_original_quote",
+      "style_tokens": {
+        "subtitle_style_id": "adaptive_white_base",
+        "hook_style_id": "adaptive_original_quote",
+        "transition_policy": "semantic_action_adaptive",
+        "insert_policy": "semantic_peak_broll_1_to_3",
+        "bgm_profile": "commercial_low_intrusion",
+        "entry_motion": "fade_in_120ms",
+        "emphasis_style": "semantic_local_color",
+        "palette_id": "neutral_tech_business_v1",
+        "visual_intents": [
+          "speaker",
+          "evidence_broll",
+          "data_chart",
+          "concept_card",
+          "speaker_pip"
+        ]
+      },
+      "max_lines": 1,
+      "safe_area": "lower_third_without_face",
+      "visual_emphasis": "sparse_keyword_only"
+    },
+    "transition_policy": "semantic_action_adaptive",
+    "insert_policy": "semantic_peak_broll_1_to_3",
+    "bgm_profile": "commercial_low_intrusion",
+    "bgm": {
+      "track_id": "bgm-0eed3a5909e5",
+      "title": "百搭口播底色",
+      "source": "manual",
+      "authorization_status": "confirmed",
+      "auto_eligible": true,
+      "start_seconds": 0.0,
+      "energy_segments": [
+        {
+          "start": 0.0,
+          "end": 104.72,
+          "energy": "克制"
+        }
+      ],
+      "ducking": {
+        "enabled": true,
+        "voice_priority": true,
+        "target_db": -24,
+        "attack_ms": 20,
+        "release_ms": 450
+      },
+      "fade": {
+        "in_seconds": 0.5,
+        "out_seconds": 0.8
+      }
+    },
+    "degradation": {
+      "mode": "generated_image_broll",
+      "is_broll": true,
+      "is_stock_broll": true,
+      "message": "已绑定生成图，仅用于本地验收，不代表免费素材库或发布授权。"
+    },
+    "source_duration_seconds": 104.72,
+    "timeline_duration_seconds": 104.72,
+    "title": "最近广州冒出了一个挺特别的餐饮模式",
+    "visual_density": "rich"
+  },
+  "director_plan": {
+    "plan_version": "director-plan-v3.0",
+    "target_platform": "douyin",
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 0,
+        "knowledge_howto": 2,
+        "story_resonance": 0
+      },
+      "reason": "出现步骤/序号/要点结构，适合结论先行再拆解。",
+      "legacy_template_id": "knowledge_howto",
+      "compatibility_alias": "knowledge_howto",
+      "override_available": true
+    },
+    "hook": {
+      "source": {
+        "source_start": 100.16,
+        "source_end": 104.68,
+        "text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。"
+      },
+      "audio_strategy": "extract_original_phrase",
+      "visual_treatment": "hook_statement",
+      "must_appear_once": true
+    },
+    "scenes": [
+      {
+        "scene_id": "scene-01",
+        "purpose": "hook",
+        "source_start": 0.0,
+        "source_end": 3.0,
+        "timeline_start": 0.0,
+        "timeline_end": 3.0,
+        "duration_seconds": 3.0,
+        "text": "最近广州冒出了一个挺特别的餐饮模式。",
+        "role": "A-roll",
+        "visual_type": "hook_statement",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "underline_and_soft_scale",
+        "transition": "hard_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-02",
+        "purpose": "supporting_visual",
+        "source_start": 3.0,
+        "source_end": 7.2,
+        "timeline_start": 3.0,
+        "timeline_end": 7.2,
+        "duration_seconds": 4.2,
+        "text": "最近广州冒出了一个挺特别的餐饮模式。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-abc76c5b40"
+      },
+      {
+        "scene_id": "scene-03",
+        "purpose": "spoken_point",
+        "source_start": 7.2,
+        "source_end": 10.4,
+        "timeline_start": 7.2,
+        "timeline_end": 10.4,
+        "duration_seconds": 3.2,
+        "text": "街上有家烧烤店，才开一个月，附近5公里的居民基本都成了他的回头客。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-04",
+        "purpose": "spoken_point",
+        "source_start": 10.4,
+        "source_end": 15.0,
+        "timeline_start": 10.4,
+        "timeline_end": 15.0,
+        "duration_seconds": 4.6,
+        "text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-05",
+        "purpose": "spoken_point",
+        "source_start": 15.0,
+        "source_end": 18.0,
+        "timeline_start": 15.0,
+        "timeline_end": 18.0,
+        "duration_seconds": 3.0,
+        "text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-06",
+        "purpose": "supporting_visual",
+        "source_start": 18.0,
+        "source_end": 22.2,
+        "timeline_start": 18.0,
+        "timeline_end": 22.2,
+        "duration_seconds": 4.2,
+        "text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+        "role": "B-roll",
+        "visual_type": "broll_pip",
+        "visual_intent": "speaker_pip",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-f847ed1e82"
+      },
+      {
+        "scene_id": "scene-07",
+        "purpose": "spoken_point",
+        "source_start": 22.2,
+        "source_end": 25.4,
+        "timeline_start": 22.2,
+        "timeline_end": 25.4,
+        "duration_seconds": 3.2,
+        "text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-08",
+        "purpose": "spoken_point",
+        "source_start": 25.4,
+        "source_end": 30.0,
+        "timeline_start": 25.4,
+        "timeline_end": 30.0,
+        "duration_seconds": 4.6,
+        "text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-09",
+        "purpose": "spoken_point",
+        "source_start": 30.0,
+        "source_end": 33.0,
+        "timeline_start": 30.0,
+        "timeline_end": 33.0,
+        "duration_seconds": 3.0,
+        "text": "这家店推出了会员制，花49块就能办个尊贵会员。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-10",
+        "purpose": "spoken_point",
+        "source_start": 33.0,
+        "source_end": 37.2,
+        "timeline_start": 33.0,
+        "timeline_end": 37.2,
+        "duration_seconds": 4.2,
+        "text": "办完马上送一份招牌烧烤，等于白送会员资格，所以大多数人都办了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-11",
+        "purpose": "spoken_point",
+        "source_start": 37.2,
+        "source_end": 40.4,
+        "timeline_start": 37.2,
+        "timeline_end": 40.4,
+        "duration_seconds": 3.2,
+        "text": "办完马上送一份招牌烧烤，等于白送会员资格，所以大多数人都办了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-12",
+        "purpose": "spoken_point",
+        "source_start": 40.4,
+        "source_end": 45.0,
+        "timeline_start": 40.4,
+        "timeline_end": 45.0,
+        "duration_seconds": 4.6,
+        "text": "但重头戏是后面的共享店长活动。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-13",
+        "purpose": "supporting_visual",
+        "source_start": 45.0,
+        "source_end": 48.0,
+        "timeline_start": 45.0,
+        "timeline_end": 48.0,
+        "duration_seconds": 3.0,
+        "text": "办会员的顾客自动升级成小店长，立刻拿到6张无门槛优惠券。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-4cca106b4b"
+      },
+      {
+        "scene_id": "scene-14",
+        "purpose": "spoken_point",
+        "source_start": 48.0,
+        "source_end": 52.2,
+        "timeline_start": 48.0,
+        "timeline_end": 52.2,
+        "duration_seconds": 4.2,
+        "text": "小店长把券发到朋友圈或者群里。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-15",
+        "purpose": "spoken_point",
+        "source_start": 52.2,
+        "source_end": 55.4,
+        "timeline_start": 52.2,
+        "timeline_end": 55.4,
+        "duration_seconds": 3.2,
+        "text": "别人一点券，就成了他的粉丝。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-16",
+        "purpose": "spoken_point",
+        "source_start": 55.4,
+        "source_end": 60.0,
+        "timeline_start": 55.4,
+        "timeline_end": 60.0,
+        "duration_seconds": 4.6,
+        "text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "data_chart",
+        "visual_intent_rule": "transcript_grounded_numeric_or_step_signal",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-17",
+        "purpose": "supporting_visual",
+        "source_start": 60.0,
+        "source_end": 63.0,
+        "timeline_start": 60.0,
+        "timeline_end": 63.0,
+        "duration_seconds": 3.0,
+        "text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-a3f531bfd7"
+      },
+      {
+        "scene_id": "scene-18",
+        "purpose": "spoken_point",
+        "source_start": 63.0,
+        "source_end": 67.2,
+        "timeline_start": 63.0,
+        "timeline_end": 67.2,
+        "duration_seconds": 4.2,
+        "text": "所有消费都是通过门店小程序完成的。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-19",
+        "purpose": "spoken_point",
+        "source_start": 67.2,
+        "source_end": 70.4,
+        "timeline_start": 67.2,
+        "timeline_end": 70.4,
+        "duration_seconds": 3.2,
+        "text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-20",
+        "purpose": "spoken_point",
+        "source_start": 70.4,
+        "source_end": 75.0,
+        "timeline_start": 70.4,
+        "timeline_end": 75.0,
+        "duration_seconds": 4.6,
+        "text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-21",
+        "purpose": "spoken_point",
+        "source_start": 75.0,
+        "source_end": 78.0,
+        "timeline_start": 75.0,
+        "timeline_end": 78.0,
+        "duration_seconds": 3.0,
+        "text": "活动一推，好几百人抢着办会员当小店长，既吃美食又赚外快。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-22",
+        "purpose": "supporting_visual",
+        "source_start": 78.0,
+        "source_end": 82.2,
+        "timeline_start": 78.0,
+        "timeline_end": 82.2,
+        "duration_seconds": 4.2,
+        "text": "活动一推，好几百人抢着办会员当小店长，既吃美食又赚外快。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-6ed42b3d63"
+      },
+      {
+        "scene_id": "scene-23",
+        "purpose": "spoken_point",
+        "source_start": 82.2,
+        "source_end": 85.4,
+        "timeline_start": 82.2,
+        "timeline_end": 85.4,
+        "duration_seconds": 3.2,
+        "text": "这些人又帮店里裂变出几千个新顾客。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-24",
+        "purpose": "spoken_point",
+        "source_start": 85.4,
+        "source_end": 90.0,
+        "timeline_start": 85.4,
+        "timeline_end": 90.0,
+        "duration_seconds": 4.6,
+        "text": "不过这个活动要落地。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-25",
+        "purpose": "spoken_point",
+        "source_start": 90.0,
+        "source_end": 93.0,
+        "timeline_start": 90.0,
+        "timeline_end": 93.0,
+        "duration_seconds": 3.0,
+        "text": "老板直接换掉了旧系统，上了一套智慧门店系统，自动执行，不用人管。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-26",
+        "purpose": "supporting_visual",
+        "source_start": 93.0,
+        "source_end": 97.2,
+        "timeline_start": 93.0,
+        "timeline_end": 97.2,
+        "duration_seconds": 4.2,
+        "text": "老板直接换掉了旧系统，上了一套智慧门店系统，自动执行，不用人管。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-90aa7677fe"
+      },
+      {
+        "scene_id": "scene-27",
+        "purpose": "spoken_point",
+        "source_start": 97.2,
+        "source_end": 100.4,
+        "timeline_start": 97.2,
+        "timeline_end": 100.4,
+        "duration_seconds": 3.2,
+        "text": "除了餐饮、水果、生鲜、美容、便利店都能照搬。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-28",
+        "purpose": "spoken_point",
+        "source_start": 100.4,
+        "source_end": 104.72,
+        "timeline_start": 100.4,
+        "timeline_end": 104.72,
+        "duration_seconds": 4.32,
+        "text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      }
+    ],
+    "visual_events": [
+      {
+        "event_id": "visual-01",
+        "scene_id": "scene-01",
+        "start": 0.0,
+        "end": 3.0,
+        "type": "hook_statement",
+        "asset_id": null,
+        "mode": null,
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true,
+        "visual_intent": "speaker"
+      },
+      {
+        "event_id": "visual-02",
+        "scene_id": "scene-02",
+        "start": 3.0,
+        "end": 7.2,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-abc76c5b40",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "visual-06",
+        "scene_id": "scene-06",
+        "start": 18.0,
+        "end": 22.2,
+        "type": "broll_pip",
+        "asset_id": "broll-f847ed1e82",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true,
+        "visual_intent": "speaker_pip"
+      },
+      {
+        "event_id": "visual-13",
+        "scene_id": "scene-13",
+        "start": 45.0,
+        "end": 48.0,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-4cca106b4b",
+        "mode": null,
+        "asset_origin": "local_uploaded_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "visual-17",
+        "scene_id": "scene-17",
+        "start": 60.0,
+        "end": 63.0,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-a3f531bfd7",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "visual-22",
+        "scene_id": "scene-22",
+        "start": 78.0,
+        "end": 82.2,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-6ed42b3d63",
+        "mode": null,
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "visual-26",
+        "scene_id": "scene-26",
+        "start": 93.0,
+        "end": 97.2,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-90aa7677fe",
+        "mode": null,
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "vector-01",
+        "start": 16.36,
+        "end": 19.16,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "80%的顾客还主动加了店里的私域生意",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-02",
+        "start": 22.96,
+        "end": 25.76,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "普通烧烤店搞充值活动充100送10块",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-03",
+        "start": 28.16,
+        "end": 30.96,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "这家店推出了会员制花49块就能办个尊",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-04",
+        "start": 44.11,
+        "end": 46.91,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "办会员的顾客自动升级成小店长立刻拿到",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-05",
+        "start": 57.51,
+        "end": 60.31,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "以后这些粉丝到店消费每笔小店长都能拿",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-06",
+        "start": 68.67,
+        "end": 71.47,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "老板不用费心想推广方案会员们就像免费",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-07",
+        "start": 101.88,
+        "end": 104.68,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "如果你的店也想用这套系统搞活动评论区",
+        "grounded_in_text": true
+      }
+    ],
+    "asset_requests": [],
+    "subtitle_policy": {
+      "source_of_truth": "word_timestamps_then_sentence_timestamps",
+      "max_lines": 2,
+      "min_visible_seconds": 0.8,
+      "max_chars_per_cue": 14,
+      "no_duplicate_text_on_visual_cut": true,
+      "safe_area": "lower_third_without_face"
+    },
+    "audio_policy": {
+      "voice_priority": true,
+      "bgm": {
+        "track_id": "bgm-0eed3a5909e5",
+        "title": "百搭口播底色",
+        "source": "manual",
+        "authorization_status": "confirmed",
+        "auto_eligible": true,
+        "start_seconds": 0.0,
+        "energy_segments": [
+          {
+            "start": 0.0,
+            "end": 104.72,
+            "energy": "克制"
+          }
+        ],
+        "ducking": {
+          "enabled": true,
+          "voice_priority": true,
+          "target_db": -24,
+          "attack_ms": 20,
+          "release_ms": 450
+        },
+        "fade": {
+          "in_seconds": 0.5,
+          "out_seconds": 0.8
+        }
+      },
+      "no_unverified_auto_bgm": true
+    },
+    "degradation": {
+      "mode": "broll_plus_transparent_vector",
+      "publish_claim_allowed": true,
+      "local_visual_event_count": 6,
+      "generated_image_event_count": 2,
+      "publishable_visual_event_count": 3,
+      "message": "矢量素材已绑定到独立视觉轨道；矢量不计入真实 B-roll 验收。"
+    },
+    "quality_targets": {
+      "minimum_creative_score": 90,
+      "minimum_real_visual_events": 0,
+      "minimum_local_visual_events": 0,
+      "generated_images_count_as_local_visual_events": true,
+      "generated_images_do_not_satisfy_publish_rights_gate": true,
+      "minimum_real_visual_coverage_ratio": 0.2,
+      "maximum_real_visual_coverage_ratio": 0.35,
+      "subtitle_mapping_error_frames": 1,
+      "max_audio_video_drift_ms": 67,
+      "required_hard_gates": [
+        "no_duplicate_subtitle_cues",
+        "no_repeated_audio_ranges",
+        "no_face_crop_without_safe_region",
+        "audio_stream_present",
+        "assets_do_not_cover_subtitles",
+        "semantic_visual_change_or_safe_subject_motion",
+        "real_broll_is_semantically_grounded_when_present",
+        "no_fixed_asset_loop"
+      ]
+    },
+    "timeline_duration_seconds": 104.72,
+    "source_duration_seconds": 104.72,
+    "source_media_identity": {
+      "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+      "source_duration_seconds": 104.72,
+      "transcript_sha256": "427deff4d418c8d5156576972ebd4b72edc35fdd08d4de01a166bc78778331f8",
+      "transcript_timing_source": "word_timestamps"
+    },
+    "vector_track": {
+      "track_id": "adaptive-visual-system-v1",
+      "kind": "grounded_data_visual_layer",
+      "theme": "business",
+      "items": [
+        {
+          "event_id": "adaptive-visual-01",
+          "start": 16.36,
+          "end": 19.16,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "80%的顾客还主动加了店里的私域生意",
+          "fact": "80%",
+          "visual_intent": "data_chart",
+          "source_segment_index": 2,
+          "source_text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-02",
+          "start": 22.96,
+          "end": 25.76,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "普通烧烤店搞充值活动充100送10块",
+          "fact": "10块",
+          "visual_intent": "data_chart",
+          "source_segment_index": 3,
+          "source_text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-03",
+          "start": 28.16,
+          "end": 30.96,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "这家店推出了会员制花49块就能办个尊",
+          "fact": "49块",
+          "visual_intent": "data_chart",
+          "source_segment_index": 4,
+          "source_text": "这家店推出了会员制，花49块就能办个尊贵会员。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-04",
+          "start": 44.11,
+          "end": 46.91,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "办会员的顾客自动升级成小店长立刻拿到",
+          "fact": "6张",
+          "visual_intent": "data_chart",
+          "source_segment_index": 7,
+          "source_text": "办会员的顾客自动升级成小店长，立刻拿到6张无门槛优惠券。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-05",
+          "start": 57.51,
+          "end": 60.31,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "以后这些粉丝到店消费每笔小店长都能拿",
+          "fact": "10%",
+          "visual_intent": "data_chart",
+          "source_segment_index": 10,
+          "source_text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-06",
+          "start": 68.67,
+          "end": 71.47,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "老板不用费心想推广方案会员们就像免费",
+          "fact": "",
+          "visual_intent": "network",
+          "source_segment_index": 12,
+          "source_text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-07",
+          "start": 101.88,
+          "end": 104.68,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "如果你的店也想用这套系统搞活动评论区",
+          "fact": "",
+          "visual_intent": "cta",
+          "source_segment_index": 20,
+          "source_text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        }
+      ],
+      "asset_count": 0,
+      "library_degradation": "按已审核口播中的数字、步骤、转折和具体事实生成程序化视觉层；不虚构事实，不把视觉层计为真实 B-roll。",
+      "typography": {
+        "theme": "business",
+        "font_family": "Source Han Serif CN Heavy",
+        "font_path": "C:\\Users\\zeng\\Desktop\\video\\assets\\fonts\\SourceHanSerifCN-Heavy.otf",
+        "source": "local-project-font",
+        "license": "OFL-1.1"
+      },
+      "source_policy": "transcript_grounded_code_drawn_visuals",
+      "semantic_info_band_disabled": "real_broll_present"
+    },
+    "asset_matching": {
+      "version": "local-visual-matcher-v1",
+      "strategy": "semantic_binding_then_keywords_then_deterministic_fallback",
+      "decisions": [
+        {
+          "shot_id": "shot-02",
+          "asset_id": "broll-abc76c5b40",
+          "query": "barbecue restaurant grill food preparation diners",
+          "match_type": "precise",
+          "match_score": 82,
+          "match_reason": [
+            "concrete_visual_intersection:restaurant",
+            "keywords:barbecuerestaurantgrillfoodpreparationdiners"
+          ],
+          "provider": "pexels",
+          "license_name": "Pexels License",
+          "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-06",
+          "asset_id": "broll-f847ed1e82",
+          "query": "customer relationship marketing loyalty coupon referral social sharing",
+          "match_type": "precise",
+          "match_score": 48,
+          "match_reason": [
+            "concrete_visual_compatibility:relationship↔meeting"
+          ],
+          "provider": "pexels",
+          "license_name": "Pexels License",
+          "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-13",
+          "asset_id": "broll-4cca106b4b",
+          "query": "customer relationship marketing loyalty coupon referral social sharing",
+          "match_type": "precise",
+          "match_score": 56,
+          "match_reason": [
+            "concrete_visual_intersection:relationship"
+          ],
+          "provider": "local_upload",
+          "license_name": "",
+          "source_url": "",
+          "domestic_context": "unknown",
+          "domestic_scene": "",
+          "visual_asset_priority": 3,
+          "publish_claim_allowed": false
+        },
+        {
+          "shot_id": "shot-17",
+          "asset_id": "broll-a3f531bfd7",
+          "query": "CRM dashboard customer database business analytics office data management",
+          "match_type": "precise",
+          "match_score": 82,
+          "match_reason": [
+            "concrete_visual_intersection:office_data",
+            "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+          ],
+          "provider": "pexels",
+          "license_name": "Pexels License",
+          "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-22",
+          "asset_id": "broll-6ed42b3d63",
+          "query": "customer relationship marketing loyalty coupon referral social sharing",
+          "match_type": "precise",
+          "match_score": 56,
+          "match_reason": [
+            "concrete_visual_intersection:relationship"
+          ],
+          "provider": "built_in_image_generation",
+          "license_name": "",
+          "source_url": "",
+          "domestic_context": "unknown",
+          "domestic_scene": "",
+          "visual_asset_priority": 3,
+          "publish_claim_allowed": false
+        },
+        {
+          "shot_id": "shot-26",
+          "asset_id": "broll-90aa7677fe",
+          "query": "multi-industry retail business marketing",
+          "match_type": "precise",
+          "match_score": 56,
+          "match_reason": [
+            "concrete_visual_intersection:relationship"
+          ],
+          "provider": "built_in_image_generation",
+          "license_name": "",
+          "source_url": "",
+          "domestic_context": "unknown",
+          "domestic_scene": "",
+          "visual_asset_priority": 3,
+          "publish_claim_allowed": false
+        }
+      ],
+      "generated_assets_publish_licensed": false,
+      "keyword_generation": {
+        "enabled": false,
+        "query": "",
+        "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+        "provider_calls": 0,
+        "action": "safe_degradation",
+        "blocking_reason": "explicit_keyword_generation_switch_off"
+      }
+    },
+    "visual_intents": [
+      {
+        "event_id": "adaptive-visual-01",
+        "start": 16.36,
+        "end": 19.16,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "80%的顾客还主动加了店里的私域生意",
+        "fact": "80%",
+        "visual_intent": "data_chart",
+        "source_segment_index": 2,
+        "source_text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-02",
+        "start": 22.96,
+        "end": 25.76,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "普通烧烤店搞充值活动充100送10块",
+        "fact": "10块",
+        "visual_intent": "data_chart",
+        "source_segment_index": 3,
+        "source_text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-03",
+        "start": 28.16,
+        "end": 30.96,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "这家店推出了会员制花49块就能办个尊",
+        "fact": "49块",
+        "visual_intent": "data_chart",
+        "source_segment_index": 4,
+        "source_text": "这家店推出了会员制，花49块就能办个尊贵会员。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-04",
+        "start": 44.11,
+        "end": 46.91,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "办会员的顾客自动升级成小店长立刻拿到",
+        "fact": "6张",
+        "visual_intent": "data_chart",
+        "source_segment_index": 7,
+        "source_text": "办会员的顾客自动升级成小店长，立刻拿到6张无门槛优惠券。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-05",
+        "start": 57.51,
+        "end": 60.31,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "以后这些粉丝到店消费每笔小店长都能拿",
+        "fact": "10%",
+        "visual_intent": "data_chart",
+        "source_segment_index": 10,
+        "source_text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-06",
+        "start": 68.67,
+        "end": 71.47,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "老板不用费心想推广方案会员们就像免费",
+        "fact": "",
+        "visual_intent": "network",
+        "source_segment_index": 12,
+        "source_text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-07",
+        "start": 101.88,
+        "end": 104.68,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "如果你的店也想用这套系统搞活动评论区",
+        "fact": "",
+        "visual_intent": "cta",
+        "source_segment_index": 20,
+        "source_text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      }
+    ]
+  },
+  "release_brolls": [
+    {
+      "shot_id": "shot-02",
+      "asset_id": "broll-abc76c5b40",
+      "start": 3.0,
+      "end": 6.6,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill food preparation diners"
+      ],
+      "semantic_query": "barbecue restaurant grill food preparation diners",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:restaurant",
+        "keywords:barbecuerestaurantgrillfoodpreparationdiners"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false
+    },
+    {
+      "shot_id": "shot-06",
+      "asset_id": "broll-f847ed1e82",
+      "start": 18.0,
+      "end": 21.6,
+      "mode": "pip",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": "客户会面与关系维护",
+      "keywords": [
+        "客户",
+        "商务会议",
+        "关系",
+        "会面",
+        "client",
+        "meeting",
+        "business"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 48,
+      "match_reason": [
+        "concrete_visual_compatibility:relationship↔meeting"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false
+    },
+    {
+      "shot_id": "shot-13",
+      "asset_id": "broll-4cca106b4b",
+      "start": 45.0,
+      "end": 48.0,
+      "mode": "full",
+      "source": "local_upload",
+      "source_provider": "local_upload",
+      "asset_origin": "local_uploaded_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": null,
+      "keywords": [],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false
+    },
+    {
+      "shot_id": "shot-17",
+      "asset_id": "broll-a3f531bfd7",
+      "start": 60.0,
+      "end": 63.0,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "CRM dashboard customer database business analytics office data management"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:office_data",
+        "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false
+    },
+    {
+      "shot_id": "shot-22",
+      "asset_id": "broll-6ed42b3d63",
+      "start": 78.0,
+      "end": 81.6,
+      "mode": "full",
+      "source": "built_in_image_generation",
+      "source_provider": "built_in_image_generation",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": "内容营销与短视频",
+      "keywords": [
+        "营销",
+        "短视频",
+        "内容",
+        "推广",
+        "品牌曝光",
+        "拍摄"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": "pip_broll",
+      "coverage_trimmed_for_short_adaptive_rich": false
+    },
+    {
+      "shot_id": "shot-26",
+      "asset_id": "broll-90aa7677fe",
+      "start": 93.0,
+      "end": 96.6,
+      "mode": "full",
+      "source": "built_in_image_generation",
+      "source_provider": "built_in_image_generation",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": "客户服务与持续触达",
+      "keywords": [
+        "客服",
+        "客户服务",
+        "售后",
+        "触达",
+        "响应",
+        "服务"
+      ],
+      "semantic_query": "multi-industry retail business marketing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": "pip_broll",
+      "coverage_trimmed_for_short_adaptive_rich": false
+    }
+  ],
+  "final_output_brolls": [
+    {
+      "shot_id": "shot-02",
+      "asset_id": "broll-abc76c5b40",
+      "start": 3.0,
+      "end": 6.6,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill food preparation diners"
+      ],
+      "semantic_query": "barbecue restaurant grill food preparation diners",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:restaurant",
+        "keywords:barbecuerestaurantgrillfoodpreparationdiners"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 3.0,
+      "source_end": 6.6,
+      "final_output_start": 3.0,
+      "final_output_end": 6.6
+    },
+    {
+      "shot_id": "shot-06",
+      "asset_id": "broll-f847ed1e82",
+      "start": 18.0,
+      "end": 21.6,
+      "mode": "pip",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": "客户会面与关系维护",
+      "keywords": [
+        "客户",
+        "商务会议",
+        "关系",
+        "会面",
+        "client",
+        "meeting",
+        "business"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 48,
+      "match_reason": [
+        "concrete_visual_compatibility:relationship↔meeting"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 18.0,
+      "source_end": 21.6,
+      "final_output_start": 18.0,
+      "final_output_end": 21.6
+    },
+    {
+      "shot_id": "shot-13",
+      "asset_id": "broll-4cca106b4b",
+      "start": 45.0,
+      "end": 48.0,
+      "mode": "full",
+      "source": "local_upload",
+      "source_provider": "local_upload",
+      "asset_origin": "local_uploaded_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": null,
+      "keywords": [],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 45.0,
+      "source_end": 48.0,
+      "final_output_start": 45.0,
+      "final_output_end": 48.0
+    },
+    {
+      "shot_id": "shot-17",
+      "asset_id": "broll-a3f531bfd7",
+      "start": 60.0,
+      "end": 63.0,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "CRM dashboard customer database business analytics office data management"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:office_data",
+        "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 60.0,
+      "source_end": 63.0,
+      "final_output_start": 60.0,
+      "final_output_end": 63.0
+    },
+    {
+      "shot_id": "shot-22",
+      "asset_id": "broll-6ed42b3d63",
+      "start": 78.0,
+      "end": 81.6,
+      "mode": "full",
+      "source": "built_in_image_generation",
+      "source_provider": "built_in_image_generation",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": "内容营销与短视频",
+      "keywords": [
+        "营销",
+        "短视频",
+        "内容",
+        "推广",
+        "品牌曝光",
+        "拍摄"
+      ],
+      "semantic_query": "customer relationship marketing loyalty coupon referral social sharing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": "pip_broll",
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 78.0,
+      "source_end": 81.6,
+      "final_output_start": 78.0,
+      "final_output_end": 81.6
+    },
+    {
+      "shot_id": "shot-26",
+      "asset_id": "broll-90aa7677fe",
+      "start": 93.0,
+      "end": 96.6,
+      "mode": "full",
+      "source": "built_in_image_generation",
+      "source_provider": "built_in_image_generation",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": "客户服务与持续触达",
+      "keywords": [
+        "客服",
+        "客户服务",
+        "售后",
+        "触达",
+        "响应",
+        "服务"
+      ],
+      "semantic_query": "multi-industry retail business marketing",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 56,
+      "match_reason": [
+        "concrete_visual_intersection:relationship"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": "pip_broll",
+      "coverage_trimmed_for_short_adaptive_rich": false,
+      "source_start": 93.0,
+      "source_end": 96.6,
+      "final_output_start": 93.0,
+      "final_output_end": 96.6
+    }
+  ],
+  "clock_mapping": {
+    "source_to_final": "final = opening_duration + source / playback_rate",
+    "playback_rate": 1.0,
+    "opening_duration_seconds": 0.0
+  },
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 55,
+    "duplicate_count": 0,
+    "checks": {
+      "monotonic_and_in_bounds": true,
+      "no_duplicate_cues": true
+    },
+    "phrase_cue_count": 55,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "max_phrase_duration_seconds": 2.36,
+    "cue_manifest_sha256": "220c82ae384d95ca46e82483f9df2b6fc769a5b622c479bc84f50a3d02a9e786",
+    "ass_sha256": "7f31b4616ec1bd90d226b943669675136ef436df2aa6f85cc5dd0fd1891f6d87",
+    "preview_render_manifest_equal": true,
+    "experience_gate": {
+      "passed": true,
+      "checks": {
+        "min_duration": true,
+        "max_duration": true,
+        "one_line": true,
+        "no_fragment_cues": true,
+        "lexical_boundary_integrity": true,
+        "no_orphan_prefix_suffix": true,
+        "preview_render_manifest_equal": true,
+        "cue_count_per_sentence": true
+      },
+      "min_duration_seconds": 0.631,
+      "max_duration_seconds": 2.36,
+      "one_line_ratio": 0.964,
+      "lexical_boundary_integrity": true,
+      "no_orphan_prefix_suffix": true,
+      "preview_render_manifest_equal": true,
+      "minimum_dwell_seconds": 0.9,
+      "maximum_dwell_seconds": 2.4,
+      "short_source_exception_allowed": true,
+      "cue_count_by_source_segment": {
+        "0": 2,
+        "1": 4,
+        "2": 5,
+        "3": 4,
+        "4": 3,
+        "5": 3,
+        "6": 2,
+        "7": 3,
+        "8": 2,
+        "9": 1,
+        "10": 5,
+        "11": 2,
+        "12": 3,
+        "13": 2,
+        "14": 3,
+        "15": 2,
+        "16": 1,
+        "17": 1,
+        "18": 3,
+        "19": 2,
+        "20": 2
+      },
+      "cue_count_gate_by_source_segment": {
+        "0": true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true,
+        "5": true,
+        "6": true,
+        "7": true,
+        "8": true,
+        "9": true,
+        "10": true,
+        "11": true,
+        "12": true,
+        "13": true,
+        "14": true,
+        "15": true,
+        "16": true,
+        "17": true,
+        "18": true,
+        "19": true,
+        "20": true
+      }
+    },
+    "text_integrity_gate": {
+      "passed": true,
+      "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+      "source_text_sha256": "4b6fbdb2deed605d38b545675d172cfea03d0b37e437f4c936d81a950bd6cf2c",
+      "cue_text_sha256": "4b6fbdb2deed605d38b545675d172cfea03d0b37e437f4c936d81a950bd6cf2c",
+      "source_char_count": 452,
+      "cue_char_count": 452,
+      "exact_ordered_match": true,
+      "duplicate_function_word_boundary": false
+    },
+    "audio_activity_gate": {
+      "passed": true,
+      "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+      "minimum_uncovered_seconds": 0.5,
+      "active_seconds": 79.1,
+      "covered_seconds": 79.1,
+      "uncovered_ranges": [],
+      "raw_vad_active_ranges": [
+        {
+          "start": 0.43,
+          "end": 3.45
+        },
+        {
+          "start": 4.16,
+          "end": 5.61
+        },
+        {
+          "start": 5.94,
+          "end": 6.66
+        },
+        {
+          "start": 7.1,
+          "end": 9.84
+        },
+        {
+          "start": 10.64,
+          "end": 13.58
+        },
+        {
+          "start": 14.47,
+          "end": 16.89
+        },
+        {
+          "start": 17.39,
+          "end": 19.03
+        },
+        {
+          "start": 19.96,
+          "end": 21.78
+        },
+        {
+          "start": 22.11,
+          "end": 23.14
+        },
+        {
+          "start": 23.57,
+          "end": 24.62
+        },
+        {
+          "start": 24.96,
+          "end": 25.6
+        },
+        {
+          "start": 26.4,
+          "end": 27.87
+        },
+        {
+          "start": 28.33,
+          "end": 30.88
+        },
+        {
+          "start": 31.48,
+          "end": 33.57
+        },
+        {
+          "start": 34.01,
+          "end": 35.38
+        },
+        {
+          "start": 36.21,
+          "end": 37.4
+        },
+        {
+          "start": 38.4,
+          "end": 41.27
+        },
+        {
+          "start": 42.12,
+          "end": 44.15
+        },
+        {
+          "start": 44.5,
+          "end": 46.72
+        },
+        {
+          "start": 47.55,
+          "end": 49.52
+        },
+        {
+          "start": 49.99,
+          "end": 50.92
+        },
+        {
+          "start": 51.36,
+          "end": 52.4
+        },
+        {
+          "start": 53.21,
+          "end": 55.11
+        },
+        {
+          "start": 55.8,
+          "end": 58.94
+        },
+        {
+          "start": 59.25,
+          "end": 60.18
+        },
+        {
+          "start": 60.9,
+          "end": 63.86
+        },
+        {
+          "start": 64.63,
+          "end": 66.78
+        },
+        {
+          "start": 67.21,
+          "end": 68.97
+        },
+        {
+          "start": 69.42,
+          "end": 71.35
+        },
+        {
+          "start": 71.97,
+          "end": 74.84
+        },
+        {
+          "start": 75.62,
+          "end": 76.14
+        },
+        {
+          "start": 76.57,
+          "end": 78.88
+        },
+        {
+          "start": 79.21,
+          "end": 80.95
+        },
+        {
+          "start": 81.75,
+          "end": 84.62
+        },
+        {
+          "start": 84.99,
+          "end": 86.32
+        },
+        {
+          "start": 86.69,
+          "end": 88.31
+        },
+        {
+          "start": 89.03,
+          "end": 94.0
+        },
+        {
+          "start": 94.68,
+          "end": 95.32
+        },
+        {
+          "start": 95.66,
+          "end": 96.05
+        },
+        {
+          "start": 96.5,
+          "end": 97.01
+        },
+        {
+          "start": 97.36,
+          "end": 97.77
+        },
+        {
+          "start": 98.08,
+          "end": 99.52
+        },
+        {
+          "start": 100.24,
+          "end": 102.87
+        },
+        {
+          "start": 103.26,
+          "end": 104.66
+        }
+      ],
+      "speech_candidate_ranges": [
+        {
+          "start": 0.44,
+          "end": 3.45
+        },
+        {
+          "start": 4.16,
+          "end": 5.61
+        },
+        {
+          "start": 5.94,
+          "end": 6.66
+        },
+        {
+          "start": 7.1,
+          "end": 9.84
+        },
+        {
+          "start": 11.04,
+          "end": 13.58
+        },
+        {
+          "start": 14.47,
+          "end": 16.89
+        },
+        {
+          "start": 17.39,
+          "end": 19.03
+        },
+        {
+          "start": 19.96,
+          "end": 21.78
+        },
+        {
+          "start": 22.11,
+          "end": 23.14
+        },
+        {
+          "start": 23.57,
+          "end": 24.62
+        },
+        {
+          "start": 24.96,
+          "end": 25.6
+        },
+        {
+          "start": 26.4,
+          "end": 27.87
+        },
+        {
+          "start": 28.33,
+          "end": 30.88
+        },
+        {
+          "start": 31.48,
+          "end": 33.57
+        },
+        {
+          "start": 34.01,
+          "end": 35.38
+        },
+        {
+          "start": 36.21,
+          "end": 37.4
+        },
+        {
+          "start": 38.4,
+          "end": 41.27
+        },
+        {
+          "start": 42.12,
+          "end": 44.15
+        },
+        {
+          "start": 44.5,
+          "end": 46.72
+        },
+        {
+          "start": 47.55,
+          "end": 49.52
+        },
+        {
+          "start": 49.99,
+          "end": 50.92
+        },
+        {
+          "start": 51.36,
+          "end": 52.4
+        },
+        {
+          "start": 53.21,
+          "end": 55.11
+        },
+        {
+          "start": 55.8,
+          "end": 58.94
+        },
+        {
+          "start": 59.25,
+          "end": 60.18
+        },
+        {
+          "start": 60.9,
+          "end": 63.86
+        },
+        {
+          "start": 64.67,
+          "end": 66.78
+        },
+        {
+          "start": 67.21,
+          "end": 68.97
+        },
+        {
+          "start": 69.42,
+          "end": 71.35
+        },
+        {
+          "start": 71.97,
+          "end": 74.84
+        },
+        {
+          "start": 75.62,
+          "end": 76.14
+        },
+        {
+          "start": 76.57,
+          "end": 78.88
+        },
+        {
+          "start": 79.21,
+          "end": 80.95
+        },
+        {
+          "start": 81.75,
+          "end": 84.62
+        },
+        {
+          "start": 84.99,
+          "end": 86.32
+        },
+        {
+          "start": 86.71,
+          "end": 88.31
+        },
+        {
+          "start": 89.08,
+          "end": 94.0
+        },
+        {
+          "start": 94.68,
+          "end": 95.32
+        },
+        {
+          "start": 95.66,
+          "end": 96.05
+        },
+        {
+          "start": 96.5,
+          "end": 97.01
+        },
+        {
+          "start": 97.36,
+          "end": 97.77
+        },
+        {
+          "start": 98.08,
+          "end": 99.52
+        },
+        {
+          "start": 100.24,
+          "end": 102.87
+        },
+        {
+          "start": 103.26,
+          "end": 104.66
+        }
+      ]
+    },
+    "subtitle_effect_gate": {
+      "passed": true,
+      "style_id": "adaptive_talking_head_v1",
+      "cue_count": 55,
+      "emphasis_count": 11,
+      "checks": {
+        "unified_adaptive_style": true,
+        "entry_motion_100_160ms": true,
+        "sparse_emphasis": true,
+        "emphasis_scale_105_112": true,
+        "no_routine_refresh_as_visual_effect": true
+      }
+    },
+    "word_timing_quality": {
+      "status": "verified",
+      "verified": true,
+      "source": "word_timestamps",
+      "alignment_method": "exact_compact_text_match",
+      "reviewed_text_sequence_alignment_fallback_count": 0,
+      "word_p95_ms": 240.0,
+      "mapping_error_frames": 14.4,
+      "matched_cue_count": 55,
+      "unmatched_cue_count": 0,
+      "fps": 30.0,
+      "checks": {
+        "word_p95_le_150ms": false,
+        "mapping_le_1_frame": false
+      }
+    },
+    "word_p95_ms": 240.0,
+    "mapping_error_frames": 14.4
+  },
+  "asset_matching": {
+    "version": "local-visual-matcher-v1",
+    "strategy": "semantic_binding_then_keywords_then_deterministic_fallback",
+    "decisions": [
+      {
+        "shot_id": "shot-02",
+        "asset_id": "broll-abc76c5b40",
+        "query": "barbecue restaurant grill food preparation diners",
+        "match_type": "precise",
+        "match_score": 82,
+        "match_reason": [
+          "concrete_visual_intersection:restaurant",
+          "keywords:barbecuerestaurantgrillfoodpreparationdiners"
+        ],
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      },
+      {
+        "shot_id": "shot-06",
+        "asset_id": "broll-f847ed1e82",
+        "query": "customer relationship marketing loyalty coupon referral social sharing",
+        "match_type": "precise",
+        "match_score": 48,
+        "match_reason": [
+          "concrete_visual_compatibility:relationship↔meeting"
+        ],
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      },
+      {
+        "shot_id": "shot-13",
+        "asset_id": "broll-4cca106b4b",
+        "query": "customer relationship marketing loyalty coupon referral social sharing",
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "provider": "local_upload",
+        "license_name": "",
+        "source_url": "",
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "publish_claim_allowed": false
+      },
+      {
+        "shot_id": "shot-17",
+        "asset_id": "broll-a3f531bfd7",
+        "query": "CRM dashboard customer database business analytics office data management",
+        "match_type": "precise",
+        "match_score": 82,
+        "match_reason": [
+          "concrete_visual_intersection:office_data",
+          "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+        ],
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      },
+      {
+        "shot_id": "shot-22",
+        "asset_id": "broll-6ed42b3d63",
+        "query": "customer relationship marketing loyalty coupon referral social sharing",
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "provider": "built_in_image_generation",
+        "license_name": "",
+        "source_url": "",
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "publish_claim_allowed": false
+      },
+      {
+        "shot_id": "shot-26",
+        "asset_id": "broll-90aa7677fe",
+        "query": "multi-industry retail business marketing",
+        "match_type": "precise",
+        "match_score": 56,
+        "match_reason": [
+          "concrete_visual_intersection:relationship"
+        ],
+        "provider": "built_in_image_generation",
+        "license_name": "",
+        "source_url": "",
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "publish_claim_allowed": false
+      }
+    ],
+    "generated_assets_publish_licensed": false,
+    "keyword_generation": {
+      "enabled": false,
+      "query": "",
+      "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+      "provider_calls": 0,
+      "action": "safe_degradation",
+      "blocking_reason": "explicit_keyword_generation_switch_off"
+    }
+  }
+}

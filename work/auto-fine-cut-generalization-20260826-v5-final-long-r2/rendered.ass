@@ -1,0 +1,68 @@
+﻿[Script Info]
+Title: VideoInsight business talking-head overlay
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Title,Source Han Serif CN Heavy,44,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,1,7,30,30,84,1
+Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Caption,Source Han Serif CN Heavy,52,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0.12,0,1,1,1,2,58,58,170,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.02,0:00:01.92,Caption,,0,0,0,,{\fad(120,0)}最近广州冒出了一个
+Dialogue: 0,0:00:01.92,0:00:03.44,Caption,,0,0,0,,{\fad(120,0)}挺特别的参与模式
+Dialogue: 0,0:00:03.84,0:00:05.56,Caption,,0,0,0,,{\fad(120,0)}街上有家烧烤店
+Dialogue: 0,0:00:05.56,0:00:06.68,Caption,,0,0,0,,{\fad(120,0)}才开一个月
+Dialogue: 0,0:00:07.08,0:00:08.20,Caption,,0,0,0,,{\fad(120,0)}附近五公里的居民
+Dialogue: 0,0:00:08.20,0:00:09.80,Caption,,0,0,0,,{\fad(120,0)}基本都成了他的{\c&H0057C8FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}回头客{\c&H00F8FAFC&\fscx100\fscy100}
+Dialogue: 0,0:00:10.56,0:00:11.68,Caption,,0,0,0,,{\fad(120,0)}{\c&H0066D1FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}80%{\c&H00F8FAFC&\fscx100\fscy100}的顾客
+Dialogue: 0,0:00:11.68,0:00:13.58,Caption,,0,0,0,,{\fad(120,0)}还主动加了店里的私域
+Dialogue: 0,0:00:13.84,0:00:15.28,Caption,,0,0,0,,{\fad(120,0)}生意好的不行
+Dialogue: 0,0:00:15.58,0:00:16.88,Caption,,0,0,0,,{\fad(120,0)}我也跑去试了几次
+Dialogue: 0,0:00:17.24,0:00:19.06,Caption,,0,0,0,,{\fad(120,0)}才明白这模式有多厉害
+Dialogue: 0,0:00:19.26,0:00:20.78,Caption,,0,0,0,,{\fad(120,0)}普通烧烤店
+Dialogue: 0,0:00:20.78,0:00:21.74,Caption,,0,0,0,,{\fad(120,0)}搞充值活动
+Dialogue: 0,0:00:22.08,0:00:23.08,Caption,,0,0,0,,{\fad(120,0)}充一百送十块
+Dialogue: 0,0:00:23.54,0:00:24.52,Caption,,0,0,0,,{\fad(120,0)}充两百送三十
+Dialogue: 0,0:00:24.94,0:00:25.64,Caption,,0,0,0,,{\fad(120,0)}早就过时了
+Dialogue: 0,0:00:26.12,0:00:27.84,Caption,,0,0,0,,{\fad(120,0)}这家店推出了会员质
+Dialogue: 0,0:00:28.12,0:00:29.58,Caption,,0,0,0,,{\fad(120,0)}花49块就
+Dialogue: 0,0:00:29.58,0:00:30.82,Caption,,0,0,0,,{\fad(120,0)}能半个尊贵会员
+Dialogue: 0,0:00:31.30,0:00:33.54,Caption,,0,0,0,,{\fad(120,0)}半完马上送一份招牌烧烤
+Dialogue: 0,0:00:33.86,0:00:35.38,Caption,,0,0,0,,{\fad(120,0)}等于百送会员资格
+Dialogue: 0,0:00:35.98,0:00:37.48,Caption,,0,0,0,,{\fad(120,0)}所以大多数人都办了
+Dialogue: 0,0:00:37.76,0:00:39.56,Caption,,0,0,0,,{\fad(120,0)}但中头戏是
+Dialogue: 0,0:00:39.56,0:00:41.26,Caption,,0,0,0,,{\fad(120,0)}后面的共享店长活动
+Dialogue: 0,0:00:41.98,0:00:42.98,Caption,,0,0,0,,{\fad(120,0)}半会员的顾客
+Dialogue: 0,0:00:42.98,0:00:44.16,Caption,,0,0,0,,{\fad(120,0)}自动升级成小店长
+Dialogue: 0,0:00:44.48,0:00:46.70,Caption,,0,0,0,,{\fad(120,0)}立刻拿到六张无门槛又会\N劝
+Dialogue: 0,0:00:46.92,0:00:48.60,Caption,,0,0,0,,{\fad(120,0)}小店长把劝发到
+Dialogue: 0,0:00:48.60,0:00:49.52,Caption,,0,0,0,,{\fad(120,0)}朋友圈或者群里
+Dialogue: 0,0:00:49.94,0:00:52.30,Caption,,0,0,0,,{\fad(120,0)}别人一点劝就成了他的粉\N丝
+Dialogue: 0,0:00:52.98,0:00:55.02,Caption,,0,0,0,,{\fad(120,0)}以后这些粉丝到店消费
+Dialogue: 0,0:00:55.64,0:00:57.24,Caption,,0,0,0,,{\fad(120,0)}每一笔小店长都能
+Dialogue: 0,0:00:57.24,0:00:58.92,Caption,,0,0,0,,{\fad(120,0)}拿{\c&H0066D1FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}10%{\c&H00F8FAFC&\fscx100\fscy100}的现金奖励
+Dialogue: 0,0:00:59.20,0:01:00.16,Caption,,0,0,0,,{\fad(120,0)}而且秒道账
+Dialogue: 0,0:01:00.70,0:01:01.86,Caption,,0,0,0,,{\fad(120,0)}所有消费都是
+Dialogue: 0,0:01:01.86,0:01:03.92,Caption,,0,0,0,,{\fad(120,0)}通过门店小程序完成的
+Dialogue: 0,0:01:04.48,0:01:05.58,Caption,,0,0,0,,{\fad(120,0)}老板不用费
+Dialogue: 0,0:01:05.58,0:01:06.76,Caption,,0,0,0,,{\fad(120,0)}心想推广方案
+Dialogue: 0,0:01:07.18,0:01:09.00,Caption,,0,0,0,,{\fad(120,0)}会员们就向{\c&H0057C8FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}免费{\c&H00F8FAFC&\fscx100\fscy100}宣传员
+Dialogue: 0,0:01:09.28,0:01:11.28,Caption,,0,0,0,,{\fad(120,0)}在社交圈里自然传播
+Dialogue: 0,0:01:11.76,0:01:12.88,Caption,,0,0,0,,{\fad(120,0)}这种口碑效果
+Dialogue: 0,0:01:12.88,0:01:14.86,Caption,,0,0,0,,{\fad(120,0)}比花大钱打广告强多了
+Dialogue: 0,0:01:15.36,0:01:17.18,Caption,,0,0,0,,{\fad(120,0)}活动一推好几百人
+Dialogue: 0,0:01:17.18,0:01:18.96,Caption,,0,0,0,,{\fad(120,0)}抢着办会员当小店长
+Dialogue: 0,0:01:19.24,0:01:20.90,Caption,,0,0,0,,{\fad(120,0)}继吃美食又赚外快
+Dialogue: 0,0:01:25.64,0:01:27.38,Caption,,0,0,0,,{\fad(120,0)}活动要落地靠人工
+Dialogue: 0,0:01:27.38,0:01:29.68,Caption,,0,0,0,,{\fad(120,0)}根本不行老板直接
+Dialogue: 0,0:01:29.68,0:01:31.82,Caption,,0,0,0,,{\fad(120,0)}换掉了旧系统上了一套智\N慧
+Dialogue: 0,0:01:31.82,0:01:33.96,Caption,,0,0,0,,{\fad(120,0)}门店系统自动执行不用人\N管
+Dialogue: 0,0:01:34.44,0:01:36.02,Caption,,0,0,0,,{\fad(120,0)}除了餐饮水果
+Dialogue: 0,0:01:36.54,0:01:37.68,Caption,,0,0,0,,{\fad(120,0)}身仙美容
+Dialogue: 0,0:01:38.08,0:01:39.48,Caption,,0,0,0,,{\fad(120,0)}便利店都能找班
+Dialogue: 0,0:01:40.14,0:01:42.30,Caption,,0,0,0,,{\fad(120,0)}如果你的店也想用这套系
+Dialogue: 0,0:01:42.30,0:01:44.64,Caption,,0,0,0,,{\fad(120,0)}统搞活动评论去打个小店\N长就行

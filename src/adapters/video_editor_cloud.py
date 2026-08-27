@@ -41,6 +41,7 @@ from src.services.video_editor_cloud import (
     RenderRequest,
     TimeRange,
     TranscriptSegment,
+    TranscriptWord,
     build_safe_edit_plan,
     build_smart_opening,
     kept_ranges_for_plan,
@@ -727,6 +728,7 @@ class AliyunFunASRProvider(CloudASRProvider):
                 speaker_id = sentence.get("speaker_id")
                 words = sentence.get("words")
                 word_ranges: list[TimeRange] = []
+                word_items: list[TranscriptWord] = []
                 word_confidences: list[float] = []
                 if isinstance(words, list):
                     for word in words:
@@ -741,6 +743,17 @@ class AliyunFunASRProvider(CloudASRProvider):
                             word_ranges.append(
                                 TimeRange(start=word_start, end=word_end),
                             )
+                            word_text = str(
+                                word.get("text") or word.get("word") or ""
+                            ).strip()
+                            if word_text:
+                                word_items.append(
+                                    TranscriptWord(
+                                        start=word_start,
+                                        end=word_end,
+                                        text=word_text,
+                                    )
+                                )
                         try:
                             word_confidence = float(word.get("confidence"))
                         except (TypeError, ValueError):
@@ -763,6 +776,7 @@ class AliyunFunASRProvider(CloudASRProvider):
                         start=start,
                         end=end,
                         text=text,
+                        words=word_items,
                         speaker_id=(
                             int(speaker_id)
                             if isinstance(speaker_id, (int, str))
@@ -889,7 +903,7 @@ class AliyunEditPlanProvider(EditPlanProvider):
             "按完整语义短语分组，不拆数字、英文、专有名词或双字词，"
             "不要让助词、介词、量词或单字悬空。"
             "caption_emphasis 用于克制的口播关键词强调，格式为 "
-            '[{"segment_index":0,"term":"49元","kind":"number"}]。'
+            '[{"segment_index":0,"term":"<原文数字或金额>","kind":"number"}]。'
             "term 必须是对应字幕中的连续原文，最多 6 个字，每个字幕片段最多一个；"
             "每 3 个字幕片段最多选择一个，优先具体数字、金额、比例、核心利益点、"
             "风险警示或结论，不要选择虚词和普通动词。kind 只能取 "

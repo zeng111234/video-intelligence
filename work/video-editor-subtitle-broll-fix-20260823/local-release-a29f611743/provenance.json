@@ -1,0 +1,79 @@
+{
+  "provenance_version": "local-release-provenance-v1",
+  "cloud_calls": 0,
+  "publish_action": "not_performed",
+  "source_video": "upload:upload-4c188f4d4d",
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-0c880bf42b",
+      "mode": "pip",
+      "asset_origin": "generated_image_asset",
+      "provider": "built_in_image_generation",
+      "license_name": "",
+      "license_url": "",
+      "source_url": "",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "semantic_binding": "经营数据与分析",
+      "keywords": [
+        "数据",
+        "分析",
+        "经营",
+        "报表",
+        "增长",
+        "指标"
+      ],
+      "semantic_query": "你公司的客户资源是掌握在业务员的手里呢 还是沉淀在咱们公司的数据库",
+      "domestic_context": "unknown",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-f847ed1e82",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": "客户会面与关系维护",
+      "keywords": [
+        "客户",
+        "商务会议",
+        "关系",
+        "会面",
+        "client",
+        "meeting",
+        "business"
+      ],
+      "semantic_query": "企业真正需要的 不只是业务员个人维护 而是一套呢 可以沉淀用户 持续触达的营销机制",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 2,
+      "asset_id": "broll-00366af2e1",
+      "mode": "pip",
+      "asset_origin": "generated_image_asset",
+      "provider": "built_in_image_generation",
+      "license_name": "",
+      "license_url": "",
+      "source_url": "",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "semantic_binding": "客户数据库",
+      "keywords": [],
+      "semantic_query": "数影霸屏呢 我们可以配合我们企业的整个客户的数据库 对合规客户呢 这些人群呢 进行持续的 精准的",
+      "domestic_context": "unknown",
+      "domestic_scene": ""
+    }
+  ],
+  "generated_asset_policy": {
+    "generated_for_local_acceptance": true,
+    "publish_licensed": false,
+    "cannot_satisfy_publish_rights_gate": true
+  }
+}

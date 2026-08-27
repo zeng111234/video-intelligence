@@ -1,0 +1,7 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "video", "codec_name": "h264", "width": 720, "height": 1280, "r_frame_rate": "30/1", "duration": "31.500000"},
+    {"index": 1, "codec_type": "audio", "codec_name": "aac", "sample_rate": "96000", "channels": 2, "duration": "31.500000"}
+  ],
+  "format": {"filename": "data/video_edits/edit-local-6f033686da.mp4", "duration": "31.500000", "size": "10471622", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"}
+}

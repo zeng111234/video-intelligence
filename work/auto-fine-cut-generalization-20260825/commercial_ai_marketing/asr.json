@@ -1,0 +1,942 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-25T13:46:06.576429+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\candidate-short-b.mp4",
+  "source_sha256": "e9788b16a8fa32c8f0766205ffd6d26050d8ecac06201e65c4eee5485794ffb7",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--Systran--faster-whisper-base\\snapshots\\ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+  "model": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 25.008,
+  "segment_count": 13,
+  "word_count": 139,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.08,
+      "text": "玩节六的兄弟们我刚刚发现一个特别不要脸的玩法",
+      "words": [
+        {
+          "start": 0.0,
+          "end": 0.26,
+          "word": "玩",
+          "probability": 0.4792
+        },
+        {
+          "start": 0.26,
+          "end": 0.4,
+          "word": "节",
+          "probability": 0.4116
+        },
+        {
+          "start": 0.4,
+          "end": 0.48,
+          "word": "六",
+          "probability": 0.3006
+        },
+        {
+          "start": 0.48,
+          "end": 0.6,
+          "word": "的",
+          "probability": 0.5932
+        },
+        {
+          "start": 0.6,
+          "end": 0.76,
+          "word": "兄",
+          "probability": 0.9571
+        },
+        {
+          "start": 0.76,
+          "end": 0.84,
+          "word": "弟",
+          "probability": 0.9986
+        },
+        {
+          "start": 0.84,
+          "end": 0.98,
+          "word": "们",
+          "probability": 0.997
+        },
+        {
+          "start": 0.98,
+          "end": 1.24,
+          "word": "我",
+          "probability": 0.7637
+        },
+        {
+          "start": 1.24,
+          "end": 1.36,
+          "word": "刚",
+          "probability": 0.9923
+        },
+        {
+          "start": 1.36,
+          "end": 1.48,
+          "word": "刚",
+          "probability": 0.9943
+        },
+        {
+          "start": 1.48,
+          "end": 1.6,
+          "word": "发",
+          "probability": 0.9722
+        },
+        {
+          "start": 1.6,
+          "end": 1.76,
+          "word": "现",
+          "probability": 0.9983
+        },
+        {
+          "start": 1.76,
+          "end": 2.04,
+          "word": "一个",
+          "probability": 0.9855
+        },
+        {
+          "start": 2.04,
+          "end": 2.26,
+          "word": "特",
+          "probability": 0.9895
+        },
+        {
+          "start": 2.26,
+          "end": 2.36,
+          "word": "别",
+          "probability": 0.9981
+        },
+        {
+          "start": 2.36,
+          "end": 2.54,
+          "word": "不要",
+          "probability": 0.8526
+        },
+        {
+          "start": 2.54,
+          "end": 2.68,
+          "word": "脸",
+          "probability": 0.9934
+        },
+        {
+          "start": 2.68,
+          "end": 2.8,
+          "word": "的",
+          "probability": 0.9912
+        },
+        {
+          "start": 2.8,
+          "end": 2.9,
+          "word": "玩",
+          "probability": 0.9474
+        },
+        {
+          "start": 2.9,
+          "end": 3.08,
+          "word": "法",
+          "probability": 0.994
+        }
+      ]
+    },
+    {
+      "start": 3.08,
+      "end": 5.8,
+      "text": "像以前我们去节六都是找同行的作品",
+      "words": [
+        {
+          "start": 3.08,
+          "end": 3.38,
+          "word": "像",
+          "probability": 0.2708
+        },
+        {
+          "start": 3.38,
+          "end": 3.62,
+          "word": "以前",
+          "probability": 0.9808
+        },
+        {
+          "start": 3.62,
+          "end": 3.94,
+          "word": "我们",
+          "probability": 0.9868
+        },
+        {
+          "start": 3.94,
+          "end": 4.14,
+          "word": "去",
+          "probability": 0.9599
+        },
+        {
+          "start": 4.14,
+          "end": 4.28,
+          "word": "节",
+          "probability": 0.9612
+        },
+        {
+          "start": 4.28,
+          "end": 4.4,
+          "word": "六",
+          "probability": 0.6365
+        },
+        {
+          "start": 4.4,
+          "end": 4.74,
+          "word": "都是",
+          "probability": 0.9492
+        },
+        {
+          "start": 4.74,
+          "end": 5.0,
+          "word": "找",
+          "probability": 0.8761
+        },
+        {
+          "start": 5.0,
+          "end": 5.24,
+          "word": "同",
+          "probability": 0.9215
+        },
+        {
+          "start": 5.24,
+          "end": 5.34,
+          "word": "行",
+          "probability": 0.3885
+        },
+        {
+          "start": 5.34,
+          "end": 5.46,
+          "word": "的",
+          "probability": 0.9949
+        },
+        {
+          "start": 5.46,
+          "end": 5.6,
+          "word": "作",
+          "probability": 0.9252
+        },
+        {
+          "start": 5.6,
+          "end": 5.8,
+          "word": "品",
+          "probability": 0.9974
+        }
+      ]
+    },
+    {
+      "start": 5.8,
+      "end": 7.84,
+      "text": "看到同行评论区有自循的客户",
+      "words": [
+        {
+          "start": 5.8,
+          "end": 6.2,
+          "word": "看到",
+          "probability": 0.9632
+        },
+        {
+          "start": 6.2,
+          "end": 6.42,
+          "word": "同",
+          "probability": 0.9924
+        },
+        {
+          "start": 6.42,
+          "end": 6.5,
+          "word": "行",
+          "probability": 0.9722
+        },
+        {
+          "start": 6.5,
+          "end": 6.66,
+          "word": "评",
+          "probability": 0.969
+        },
+        {
+          "start": 6.66,
+          "end": 6.76,
+          "word": "论",
+          "probability": 0.9994
+        },
+        {
+          "start": 6.76,
+          "end": 6.9,
+          "word": "区",
+          "probability": 0.7822
+        },
+        {
+          "start": 6.9,
+          "end": 7.08,
+          "word": "有",
+          "probability": 0.9957
+        },
+        {
+          "start": 7.08,
+          "end": 7.26,
+          "word": "自",
+          "probability": 0.4775
+        },
+        {
+          "start": 7.26,
+          "end": 7.36,
+          "word": "循",
+          "probability": 0.6318
+        },
+        {
+          "start": 7.36,
+          "end": 7.5,
+          "word": "的",
+          "probability": 0.9951
+        },
+        {
+          "start": 7.5,
+          "end": 7.62,
+          "word": "客",
+          "probability": 0.9635
+        },
+        {
+          "start": 7.62,
+          "end": 7.84,
+          "word": "户",
+          "probability": 0.9989
+        }
+      ]
+    },
+    {
+      "start": 7.84,
+      "end": 9.32,
+      "text": "就一个一个的去打招呼",
+      "words": [
+        {
+          "start": 7.84,
+          "end": 8.2,
+          "word": "就",
+          "probability": 0.9284
+        },
+        {
+          "start": 8.2,
+          "end": 8.4,
+          "word": "一个",
+          "probability": 0.8952
+        },
+        {
+          "start": 8.4,
+          "end": 8.6,
+          "word": "一个",
+          "probability": 0.9177
+        },
+        {
+          "start": 8.6,
+          "end": 8.78,
+          "word": "的",
+          "probability": 0.715
+        },
+        {
+          "start": 8.78,
+          "end": 8.86,
+          "word": "去",
+          "probability": 0.9906
+        },
+        {
+          "start": 8.86,
+          "end": 9.02,
+          "word": "打",
+          "probability": 0.9921
+        },
+        {
+          "start": 9.02,
+          "end": 9.14,
+          "word": "招",
+          "probability": 0.9358
+        },
+        {
+          "start": 9.14,
+          "end": 9.32,
+          "word": "呼",
+          "probability": 0.9977
+        }
+      ]
+    },
+    {
+      "start": 9.32,
+      "end": 11.02,
+      "text": "现在已经是AI的时代",
+      "words": [
+        {
+          "start": 9.32,
+          "end": 9.72,
+          "word": "现在",
+          "probability": 0.9882
+        },
+        {
+          "start": 9.72,
+          "end": 10.06,
+          "word": "已经",
+          "probability": 0.9839
+        },
+        {
+          "start": 10.06,
+          "end": 10.42,
+          "word": "是",
+          "probability": 0.9975
+        },
+        {
+          "start": 10.42,
+          "end": 10.58,
+          "word": "AI",
+          "probability": 0.8938
+        },
+        {
+          "start": 10.58,
+          "end": 10.78,
+          "word": "的",
+          "probability": 0.9017
+        },
+        {
+          "start": 10.78,
+          "end": 10.92,
+          "word": "时",
+          "probability": 0.9813
+        },
+        {
+          "start": 10.92,
+          "end": 11.02,
+          "word": "代",
+          "probability": 0.9918
+        }
+      ]
+    },
+    {
+      "start": 11.02,
+      "end": 12.62,
+      "text": "很多老板全在用AI去跑",
+      "words": [
+        {
+          "start": 11.02,
+          "end": 11.4,
+          "word": "很多",
+          "probability": 0.967
+        },
+        {
+          "start": 11.4,
+          "end": 11.56,
+          "word": "老",
+          "probability": 0.9904
+        },
+        {
+          "start": 11.56,
+          "end": 11.68,
+          "word": "板",
+          "probability": 0.9678
+        },
+        {
+          "start": 11.68,
+          "end": 11.88,
+          "word": "全",
+          "probability": 0.8986
+        },
+        {
+          "start": 11.88,
+          "end": 12.0,
+          "word": "在",
+          "probability": 0.8782
+        },
+        {
+          "start": 12.0,
+          "end": 12.14,
+          "word": "用",
+          "probability": 0.9917
+        },
+        {
+          "start": 12.14,
+          "end": 12.3,
+          "word": "AI",
+          "probability": 0.9401
+        },
+        {
+          "start": 12.3,
+          "end": 12.48,
+          "word": "去",
+          "probability": 0.9888
+        },
+        {
+          "start": 12.48,
+          "end": 12.62,
+          "word": "跑",
+          "probability": 0.9834
+        }
+      ]
+    },
+    {
+      "start": 12.62,
+      "end": 13.7,
+      "text": "操作也非常简单",
+      "words": [
+        {
+          "start": 12.62,
+          "end": 12.9,
+          "word": "操",
+          "probability": 0.9403
+        },
+        {
+          "start": 12.9,
+          "end": 13.04,
+          "word": "作",
+          "probability": 0.9991
+        },
+        {
+          "start": 13.04,
+          "end": 13.14,
+          "word": "也",
+          "probability": 0.9956
+        },
+        {
+          "start": 13.14,
+          "end": 13.34,
+          "word": "非常",
+          "probability": 0.9955
+        },
+        {
+          "start": 13.34,
+          "end": 13.54,
+          "word": "简",
+          "probability": 0.9988
+        },
+        {
+          "start": 13.54,
+          "end": 13.7,
+          "word": "单",
+          "probability": 0.9943
+        }
+      ]
+    },
+    {
+      "start": 13.7,
+      "end": 15.52,
+      "text": "把同行的链接放上去",
+      "words": [
+        {
+          "start": 13.7,
+          "end": 14.04,
+          "word": "把",
+          "probability": 0.9886
+        },
+        {
+          "start": 14.04,
+          "end": 14.28,
+          "word": "同",
+          "probability": 0.9991
+        },
+        {
+          "start": 14.28,
+          "end": 14.38,
+          "word": "行",
+          "probability": 0.9979
+        },
+        {
+          "start": 14.38,
+          "end": 14.52,
+          "word": "的",
+          "probability": 0.9944
+        },
+        {
+          "start": 14.52,
+          "end": 14.64,
+          "word": "链",
+          "probability": 0.8402
+        },
+        {
+          "start": 14.64,
+          "end": 14.84,
+          "word": "接",
+          "probability": 0.9708
+        },
+        {
+          "start": 14.84,
+          "end": 15.14,
+          "word": "放",
+          "probability": 0.9435
+        },
+        {
+          "start": 15.14,
+          "end": 15.26,
+          "word": "上",
+          "probability": 0.9799
+        },
+        {
+          "start": 15.26,
+          "end": 15.52,
+          "word": "去",
+          "probability": 0.9968
+        }
+      ]
+    },
+    {
+      "start": 15.52,
+      "end": 16.8,
+      "text": "熟路行业关键词",
+      "words": [
+        {
+          "start": 15.52,
+          "end": 15.92,
+          "word": "熟",
+          "probability": 0.5827
+        },
+        {
+          "start": 15.92,
+          "end": 16.04,
+          "word": "路",
+          "probability": 0.6894
+        },
+        {
+          "start": 16.04,
+          "end": 16.22,
+          "word": "行",
+          "probability": 0.4646
+        },
+        {
+          "start": 16.22,
+          "end": 16.34,
+          "word": "业",
+          "probability": 0.9612
+        },
+        {
+          "start": 16.34,
+          "end": 16.48,
+          "word": "关",
+          "probability": 0.6882
+        },
+        {
+          "start": 16.48,
+          "end": 16.58,
+          "word": "键",
+          "probability": 0.9939
+        },
+        {
+          "start": 16.58,
+          "end": 16.8,
+          "word": "词",
+          "probability": 0.9379
+        }
+      ]
+    },
+    {
+      "start": 16.8,
+      "end": 19.66,
+      "text": "让AI去帮你找那些刚刚评论的客户就可以了",
+      "words": [
+        {
+          "start": 16.8,
+          "end": 17.04,
+          "word": "让",
+          "probability": 0.9714
+        },
+        {
+          "start": 17.04,
+          "end": 17.24,
+          "word": "AI",
+          "probability": 0.969
+        },
+        {
+          "start": 17.24,
+          "end": 17.46,
+          "word": "去",
+          "probability": 0.9853
+        },
+        {
+          "start": 17.46,
+          "end": 17.64,
+          "word": "帮",
+          "probability": 0.9944
+        },
+        {
+          "start": 17.64,
+          "end": 17.76,
+          "word": "你",
+          "probability": 0.9744
+        },
+        {
+          "start": 17.76,
+          "end": 17.94,
+          "word": "找",
+          "probability": 0.9979
+        },
+        {
+          "start": 17.94,
+          "end": 18.1,
+          "word": "那",
+          "probability": 0.9142
+        },
+        {
+          "start": 18.1,
+          "end": 18.22,
+          "word": "些",
+          "probability": 0.9993
+        },
+        {
+          "start": 18.22,
+          "end": 18.36,
+          "word": "刚",
+          "probability": 0.9155
+        },
+        {
+          "start": 18.36,
+          "end": 18.48,
+          "word": "刚",
+          "probability": 0.999
+        },
+        {
+          "start": 18.48,
+          "end": 18.64,
+          "word": "评",
+          "probability": 0.9971
+        },
+        {
+          "start": 18.64,
+          "end": 18.76,
+          "word": "论",
+          "probability": 0.9998
+        },
+        {
+          "start": 18.76,
+          "end": 18.86,
+          "word": "的",
+          "probability": 0.9949
+        },
+        {
+          "start": 18.86,
+          "end": 19.0,
+          "word": "客",
+          "probability": 0.9981
+        },
+        {
+          "start": 19.0,
+          "end": 19.08,
+          "word": "户",
+          "probability": 0.9999
+        },
+        {
+          "start": 19.08,
+          "end": 19.38,
+          "word": "就可以",
+          "probability": 0.9865
+        },
+        {
+          "start": 19.38,
+          "end": 19.66,
+          "word": "了",
+          "probability": 0.9978
+        }
+      ]
+    },
+    {
+      "start": 19.66,
+      "end": 21.66,
+      "text": "你只需要设置好打招呼的话数",
+      "words": [
+        {
+          "start": 19.66,
+          "end": 19.88,
+          "word": "你",
+          "probability": 0.9773
+        },
+        {
+          "start": 19.88,
+          "end": 20.06,
+          "word": "只",
+          "probability": 0.9978
+        },
+        {
+          "start": 20.06,
+          "end": 20.36,
+          "word": "需要",
+          "probability": 0.995
+        },
+        {
+          "start": 20.36,
+          "end": 20.58,
+          "word": "设",
+          "probability": 0.7455
+        },
+        {
+          "start": 20.58,
+          "end": 20.7,
+          "word": "置",
+          "probability": 0.981
+        },
+        {
+          "start": 20.7,
+          "end": 20.84,
+          "word": "好",
+          "probability": 0.9939
+        },
+        {
+          "start": 20.84,
+          "end": 21.04,
+          "word": "打",
+          "probability": 0.9936
+        },
+        {
+          "start": 21.04,
+          "end": 21.16,
+          "word": "招",
+          "probability": 0.9933
+        },
+        {
+          "start": 21.16,
+          "end": 21.26,
+          "word": "呼",
+          "probability": 0.9986
+        },
+        {
+          "start": 21.26,
+          "end": 21.48,
+          "word": "的话",
+          "probability": 0.3933
+        },
+        {
+          "start": 21.48,
+          "end": 21.66,
+          "word": "数",
+          "probability": 0.7653
+        }
+      ]
+    },
+    {
+      "start": 21.66,
+      "end": 23.06,
+      "text": "让AI去打招呼就够了",
+      "words": [
+        {
+          "start": 21.66,
+          "end": 21.86,
+          "word": "让",
+          "probability": 0.985
+        },
+        {
+          "start": 21.86,
+          "end": 22.1,
+          "word": "AI",
+          "probability": 0.9709
+        },
+        {
+          "start": 22.1,
+          "end": 22.3,
+          "word": "去",
+          "probability": 0.9882
+        },
+        {
+          "start": 22.3,
+          "end": 22.42,
+          "word": "打",
+          "probability": 0.9984
+        },
+        {
+          "start": 22.42,
+          "end": 22.56,
+          "word": "招",
+          "probability": 0.9988
+        },
+        {
+          "start": 22.56,
+          "end": 22.66,
+          "word": "呼",
+          "probability": 0.9999
+        },
+        {
+          "start": 22.66,
+          "end": 22.78,
+          "word": "就",
+          "probability": 0.9906
+        },
+        {
+          "start": 22.78,
+          "end": 22.92,
+          "word": "够",
+          "probability": 0.9495
+        },
+        {
+          "start": 22.92,
+          "end": 23.06,
+          "word": "了",
+          "probability": 0.9984
+        }
+      ]
+    },
+    {
+      "start": 23.06,
+      "end": 24.98,
+      "text": "玩节六的都知道找到客户的",
+      "words": [
+        {
+          "start": 23.06,
+          "end": 23.3,
+          "word": "玩",
+          "probability": 0.9743
+        },
+        {
+          "start": 23.3,
+          "end": 23.44,
+          "word": "节",
+          "probability": 0.999
+        },
+        {
+          "start": 23.44,
+          "end": 23.52,
+          "word": "六",
+          "probability": 0.9962
+        },
+        {
+          "start": 23.52,
+          "end": 23.64,
+          "word": "的",
+          "probability": 0.9671
+        },
+        {
+          "start": 23.64,
+          "end": 23.74,
+          "word": "都",
+          "probability": 0.9941
+        },
+        {
+          "start": 23.74,
+          "end": 24.0,
+          "word": "知道",
+          "probability": 0.9853
+        },
+        {
+          "start": 24.0,
+          "end": 24.36,
+          "word": "找",
+          "probability": 0.9362
+        },
+        {
+          "start": 24.36,
+          "end": 24.5,
+          "word": "到",
+          "probability": 0.9912
+        },
+        {
+          "start": 24.5,
+          "end": 24.7,
+          "word": "客",
+          "probability": 0.9975
+        },
+        {
+          "start": 24.7,
+          "end": 24.86,
+          "word": "户",
+          "probability": 0.9999
+        },
+        {
+          "start": 24.86,
+          "end": 24.98,
+          "word": "的",
+          "probability": 0.981
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "playback": {
+    "src": "http://localhost:1001/api/v1/video-editor/jobs/edit-local-df373ea5cc/media",
+    "duration": 18.366016,
+    "currentTime": 1.056162,
+    "paused": false,
+    "readyState": 4
+  },
+  "download": {
+    "download_event": true,
+    "suggestedFilename": "edit-local-df373ea5cc.mp4",
+    "savedPath": "C:/Users/zeng/Desktop/video/work/auto-fine-cut-adaptive-20260824-short-rich-pip/final-evidence-edit-local-df373ea5cc/page-acceptance/downloaded-final.mp4",
+    "http": {
+      "status": 200,
+      "ok": true,
+      "contentType": "video/mp4",
+      "contentLength": "9831446"
+    }
+  }
+}

@@ -24,7 +24,10 @@ from project.backend.app.core.config import (  # noqa: E402
     CopywritingProviderMode,
     CrawlerProviderMode,
 )
-from src.adapters.licensed import SandboxLicensedSearchProvider  # noqa: E402
+from src.adapters.licensed import (  # noqa: E402
+    LicensedProviderError,
+    SandboxLicensedSearchProvider,
+)
 from src.adapters.oneapi import OneApiLicensedSearchProvider  # noqa: E402
 from project.backend.app.core import config as backend_config  # noqa: E402
 from src.models import (  # noqa: E402
@@ -38,6 +41,7 @@ from src.models import (  # noqa: E402
     PipelineStepResult,
     Platform,
     ProviderCapability,
+    ProviderErrorKind,
     ProviderMode,
     ProviderSearchItem,
     ProviderSearchPage,
@@ -742,6 +746,7 @@ class TestCrawlerBatches:
                 self.public_start_calls = 0
                 self.visible_open_calls = 0
                 self.published_after_values = []
+                self.reset_calls = 0
 
             def capabilities(self):
                 return ProviderCapability(
@@ -804,6 +809,22 @@ class TestCrawlerBatches:
                 self.start_calls += 1
                 self.running = True
                 return self.session_status()
+
+            def reset_login_state(self, *, confirmed=False):
+                if not confirmed:
+                    raise LicensedProviderError(
+                        "需要明确确认", kind=ProviderErrorKind.VALIDATION
+                    )
+                self.reset_calls += 1
+                self.running = False
+                return SimpleNamespace(
+                    enabled=True,
+                    running=False,
+                    login_required=True,
+                    ready_to_crawl=False,
+                    phase="waiting_login",
+                    message="已重置，请人工重新登录。",
+                )
 
             def start_public_browser(self):
                 self.public_start_calls += 1
@@ -989,6 +1010,7 @@ class TestCrawlerBatches:
             FakeOfficialAdapter("douyin_hot_words")
         )
         yield SimpleNamespace(
+            douyin_provider=douyin_public_provider,
             xiaohongshu_provider=xiaohongshu_provider,
             xiaohongshu_login_provider=xiaohongshu_login_provider,
             bilibili_metrics_provider=bilibili_metrics_provider,
@@ -1138,6 +1160,26 @@ class TestCrawlerBatches:
         )
         assert bilibili_resp.status_code == 200
         assert bilibili_resp.json()["platform"] == "bilibili"
+
+    def test_browser_login_reset_requires_confirmation_and_is_platform_scoped(
+        self, client: TestClient, crawler_sandbox
+    ):
+        rejected = client.post(
+            "/api/v1/crawler/browser-discovery/douyin/reset-login",
+            json={"confirmed": False},
+        )
+        assert rejected.status_code == 400
+        assert crawler_sandbox.douyin_provider.reset_calls == 0
+
+        reset = client.post(
+            "/api/v1/crawler/browser-discovery/douyin/reset-login",
+            json={"confirmed": True},
+        )
+        assert reset.status_code == 200
+        assert reset.json()["reset"] is True
+        assert reset.json()["manual_login_required"] is True
+        assert "人工重新登录" in reset.json()["message"]
+        assert crawler_sandbox.douyin_provider.reset_calls == 1
 
     def test_browser_login_endpoint_prefers_visible_window(self, client: TestClient):
         class VisibleBrowserProvider:

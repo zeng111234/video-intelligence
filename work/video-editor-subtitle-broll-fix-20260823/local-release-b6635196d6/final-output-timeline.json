@@ -1,0 +1,119 @@
+{
+  "timeline_version": "final-output-timeline-v1",
+  "playback_rate": 1.15,
+  "duration_seconds": 31.5,
+  "shots": [
+    {
+      "shot_id": "shot-01",
+      "role": "A-roll",
+      "final_output_start": 0.0,
+      "final_output_end": 2.261,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-02",
+      "role": "B-roll",
+      "final_output_start": 2.261,
+      "final_output_end": 5.357,
+      "asset_id": "broll-a3f531bfd7",
+      "mode": "pip"
+    },
+    {
+      "shot_id": "shot-03",
+      "role": "A-roll",
+      "final_output_start": 5.357,
+      "final_output_end": 8.139,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-04",
+      "role": "A-roll",
+      "final_output_start": 8.139,
+      "final_output_end": 12.487,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-05",
+      "role": "B-roll",
+      "final_output_start": 12.487,
+      "final_output_end": 14.748,
+      "asset_id": "broll-f847ed1e82",
+      "mode": "full"
+    },
+    {
+      "shot_id": "shot-06",
+      "role": "A-roll",
+      "final_output_start": 14.748,
+      "final_output_end": 18.574,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-07",
+      "role": "A-roll",
+      "final_output_start": 18.574,
+      "final_output_end": 21.357,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-08",
+      "role": "B-roll",
+      "final_output_start": 21.357,
+      "final_output_end": 25.704,
+      "asset_id": "broll-00366af2e1",
+      "mode": "pip"
+    },
+    {
+      "shot_id": "shot-09",
+      "role": "A-roll",
+      "final_output_start": 25.704,
+      "final_output_end": 27.965,
+      "asset_id": null,
+      "mode": null
+    },
+    {
+      "shot_id": "shot-10",
+      "role": "A-roll",
+      "final_output_start": 27.965,
+      "final_output_end": 31.461,
+      "asset_id": null,
+      "mode": null
+    }
+  ],
+  "release_brolls": [
+    {
+      "shot_id": "shot-02",
+      "asset_id": "broll-a3f531bfd7",
+      "final_output_start": 2.261,
+      "final_output_end": 5.357,
+      "mode": "pip",
+      "provider": "pexels",
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "publish_licensed": true
+    },
+    {
+      "shot_id": "shot-05",
+      "asset_id": "broll-f847ed1e82",
+      "final_output_start": 12.487,
+      "final_output_end": 14.748,
+      "mode": "full",
+      "provider": "pexels",
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "publish_licensed": true
+    },
+    {
+      "shot_id": "shot-08",
+      "asset_id": "broll-00366af2e1",
+      "final_output_start": 21.357,
+      "final_output_end": 24.487,
+      "mode": "pip",
+      "provider": "built_in_image_generation",
+      "source_url": "",
+      "publish_licensed": false
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import {
   getVideoEditorBatchItemDownloadUrl,
   listVideoEditorBatches,
   listVideoEditorBgm,
+  listVideoEditorVisualAssets,
   listVideoEditorSources,
   getVideoCapabilities,
   preflightVideoEditor,
@@ -38,6 +39,7 @@ vi.mock("../api/client", () => ({
   ),
   listVideoEditorBatches: vi.fn(),
   listVideoEditorBgm: vi.fn(),
+  listVideoEditorVisualAssets: vi.fn(),
   listVideoEditorSources: vi.fn(),
   preflightVideoEditor: vi.fn(),
   retryVideoEditorBatchItem: vi.fn(),
@@ -188,7 +190,7 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
         asset_width: 520,
         asset_height: 150,
         outline_width: 1,
-        shadow: 3,
+        shadow: 1,
         color: "#FFFFFF",
       },
       accent: { color: "transparent", width: 0, height: 0, gap: 0 },
@@ -198,7 +200,7 @@ function sandboxBatch(status = "awaiting_subtitle_review"): VideoEditorBatch {
         font_size: 52,
         safe_bottom: 170,
         outline_width: 2,
-        shadow: 3,
+        shadow: 1,
         color: "#F8FAFC",
         emphasis_color: "#FFE16A",
       },
@@ -291,6 +293,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
     vi.mocked(getVideoCapabilities).mockResolvedValue(sandboxCapabilities);
     vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(listVideoEditorBgm).mockResolvedValue({ items: [], total: 0 });
+    vi.mocked(listVideoEditorVisualAssets).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(preflightVideoEditor).mockResolvedValue(quote("720p"));
     vi.mocked(createVideoEditorBatch).mockResolvedValue(sandboxBatch());
     vi.mocked(reviewVideoEditorBatchItem).mockResolvedValue(sandboxBatch("configuration_required"));
@@ -381,6 +384,23 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(await screen.findByRole("dialog", { name: "智能剪辑任务历史" })).toBeTruthy();
   });
 
+  it("keeps completed local batches visible in task history", async () => {
+    const local = sandboxBatch("awaiting_output_confirmation");
+    local.batch_id = "batch-local-1";
+    local.provider_mode = "local";
+    local.is_mock = false;
+    local.cost_quote = null;
+    local.items[0].status = "awaiting_output_confirmation";
+    local.items[0].provider_stage = "local_export_complete";
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [local], total: 1 });
+
+    renderPage();
+
+    fireEvent.click(await screen.findByRole("button", { name: /任务历史/ }));
+    const dialog = await screen.findByRole("dialog", { name: "智能剪辑任务历史" });
+    expect(within(dialog).getByText(/测试口播素材/)).toBeTruthy();
+  });
+
   it("does not expose unfinished advanced music settings", async () => {
     renderPage();
 
@@ -452,6 +472,9 @@ describe("VideoEditorPage cloud-light workflow", () => {
     fireEvent.click(primary);
     const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
     expect(within(drawer).getByText("这是一段待人工确认的字幕")).toBeTruthy();
+    fireEvent.click(within(drawer).getByRole("tab", { name: "自动方案" }));
+    expect(within(drawer).getByText("系统自动组织剪辑方案并做发布门禁检查")).toBeTruthy();
+    expect(within(drawer).queryAllByRole("checkbox")).toHaveLength(0);
     fireEvent.click(within(drawer).getByRole("button", { name: "保存体验方案" }));
 
     await waitFor(() => {
@@ -507,6 +530,15 @@ describe("VideoEditorPage cloud-light workflow", () => {
       analysis_id: null,
       publish_title: "测试口播标题",
       workflow: "local_preview_export",
+      quality_report: {
+        passed: true,
+        real_broll_event_count: 3,
+        domestic_real_broll_event_count: 0,
+        international_broll_event_count: 3,
+        generated_image_event_count: 0,
+        real_broll_coverage_ratio: 0.3098,
+        broll_modes: { pip: 1, full: 2 },
+      },
     };
     vi.mocked(createVideoEditorLocalExport).mockResolvedValue(rendering);
     renderPage();
@@ -523,6 +555,9 @@ describe("VideoEditorPage cloud-light workflow", () => {
       );
       expect(screen.getByText("本次下载新增费用")).toBeTruthy();
     });
+    expect((await screen.findByTestId("local-quality-summary")).textContent).toContain("质量门通过");
+    expect(screen.getByTestId("local-quality-summary").textContent).toContain("国际 3");
+    expect(screen.getByTestId("local-quality-summary").textContent).toContain("PiP 1 个");
     expect(screen.getByTestId("prior-cloud-quote").textContent).toContain("0.05 积分");
     expect(screen.queryByText("¥0 只表示当前下载不会重复计费，不代表此前云端处理免费。")).toBeNull();
     expect(screen.queryByRole("dialog", { name: "确认预计费用" })).toBeNull();

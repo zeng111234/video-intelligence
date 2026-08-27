@@ -1,0 +1,717 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-25T14:47:59.841417+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\source.mp4",
+  "source_sha256": "12b5a406f8ef5c195e795db3aabc4393e8add81a4ecff005d7f555f950cfd169",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 20.0,
+  "segment_count": 10,
+  "word_count": 105,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.64,
+      "text": "你公司的客户资源是掌握在业务员的手里",
+      "words": [
+        {
+          "start": 0.0,
+          "end": 0.08,
+          "word": "你",
+          "probability": 0.468
+        },
+        {
+          "start": 0.08,
+          "end": 0.32,
+          "word": "公",
+          "probability": 0.9955
+        },
+        {
+          "start": 0.32,
+          "end": 0.52,
+          "word": "司",
+          "probability": 0.9981
+        },
+        {
+          "start": 0.52,
+          "end": 0.64,
+          "word": "的",
+          "probability": 0.9965
+        },
+        {
+          "start": 0.64,
+          "end": 0.78,
+          "word": "客",
+          "probability": 0.9986
+        },
+        {
+          "start": 0.78,
+          "end": 0.92,
+          "word": "户",
+          "probability": 0.997
+        },
+        {
+          "start": 0.92,
+          "end": 1.08,
+          "word": "资",
+          "probability": 0.9953
+        },
+        {
+          "start": 1.08,
+          "end": 1.26,
+          "word": "源",
+          "probability": 0.9988
+        },
+        {
+          "start": 1.26,
+          "end": 1.54,
+          "word": "是",
+          "probability": 0.9767
+        },
+        {
+          "start": 1.54,
+          "end": 1.72,
+          "word": "掌",
+          "probability": 0.9995
+        },
+        {
+          "start": 1.72,
+          "end": 1.88,
+          "word": "握",
+          "probability": 0.9978
+        },
+        {
+          "start": 1.88,
+          "end": 2.0,
+          "word": "在",
+          "probability": 0.9965
+        },
+        {
+          "start": 2.0,
+          "end": 2.18,
+          "word": "业",
+          "probability": 0.9785
+        },
+        {
+          "start": 2.18,
+          "end": 2.26,
+          "word": "务",
+          "probability": 0.9999
+        },
+        {
+          "start": 2.26,
+          "end": 2.34,
+          "word": "员",
+          "probability": 0.9978
+        },
+        {
+          "start": 2.34,
+          "end": 2.42,
+          "word": "的",
+          "probability": 0.9226
+        },
+        {
+          "start": 2.42,
+          "end": 2.5,
+          "word": "手",
+          "probability": 0.9981
+        },
+        {
+          "start": 2.5,
+          "end": 2.64,
+          "word": "里",
+          "probability": 0.9946
+        }
+      ]
+    },
+    {
+      "start": 2.64,
+      "end": 5.18,
+      "text": "还是沉淀在咱们公司的数据库",
+      "words": [
+        {
+          "start": 2.64,
+          "end": 3.14,
+          "word": "还是",
+          "probability": 0.3755
+        },
+        {
+          "start": 3.14,
+          "end": 3.72,
+          "word": "沉",
+          "probability": 0.9889
+        },
+        {
+          "start": 3.72,
+          "end": 3.9,
+          "word": "淀",
+          "probability": 0.9895
+        },
+        {
+          "start": 3.9,
+          "end": 4.1,
+          "word": "在",
+          "probability": 0.9875
+        },
+        {
+          "start": 4.1,
+          "end": 4.44,
+          "word": "咱",
+          "probability": 0.9879
+        },
+        {
+          "start": 4.44,
+          "end": 4.52,
+          "word": "们",
+          "probability": 0.9979
+        },
+        {
+          "start": 4.52,
+          "end": 4.64,
+          "word": "公",
+          "probability": 0.9898
+        },
+        {
+          "start": 4.64,
+          "end": 4.76,
+          "word": "司",
+          "probability": 0.9996
+        },
+        {
+          "start": 4.76,
+          "end": 4.84,
+          "word": "的",
+          "probability": 0.9747
+        },
+        {
+          "start": 4.84,
+          "end": 4.9,
+          "word": "数",
+          "probability": 0.955
+        },
+        {
+          "start": 4.9,
+          "end": 5.04,
+          "word": "据",
+          "probability": 0.9992
+        },
+        {
+          "start": 5.04,
+          "end": 5.18,
+          "word": "库",
+          "probability": 0.9993
+        }
+      ]
+    },
+    {
+      "start": 5.18,
+      "end": 6.82,
+      "text": "业务员他一旦离职",
+      "words": [
+        {
+          "start": 5.18,
+          "end": 5.42,
+          "word": "业",
+          "probability": 0.873
+        },
+        {
+          "start": 5.42,
+          "end": 5.52,
+          "word": "务",
+          "probability": 1.0
+        },
+        {
+          "start": 5.52,
+          "end": 5.74,
+          "word": "员",
+          "probability": 0.9999
+        },
+        {
+          "start": 5.74,
+          "end": 5.9,
+          "word": "他",
+          "probability": 0.6885
+        },
+        {
+          "start": 5.9,
+          "end": 6.2,
+          "word": "一",
+          "probability": 0.9919
+        },
+        {
+          "start": 6.2,
+          "end": 6.48,
+          "word": "旦",
+          "probability": 0.9948
+        },
+        {
+          "start": 6.48,
+          "end": 6.66,
+          "word": "离",
+          "probability": 0.999
+        },
+        {
+          "start": 6.66,
+          "end": 6.82,
+          "word": "职",
+          "probability": 0.9887
+        }
+      ]
+    },
+    {
+      "start": 6.82,
+      "end": 8.36,
+      "text": "你会发现聊天记录没了",
+      "words": [
+        {
+          "start": 6.82,
+          "end": 6.94,
+          "word": "你",
+          "probability": 0.8226
+        },
+        {
+          "start": 6.94,
+          "end": 7.04,
+          "word": "会",
+          "probability": 0.999
+        },
+        {
+          "start": 7.04,
+          "end": 7.18,
+          "word": "发",
+          "probability": 0.998
+        },
+        {
+          "start": 7.18,
+          "end": 7.34,
+          "word": "现",
+          "probability": 0.9994
+        },
+        {
+          "start": 7.34,
+          "end": 7.64,
+          "word": "聊",
+          "probability": 0.9897
+        },
+        {
+          "start": 7.64,
+          "end": 7.86,
+          "word": "天",
+          "probability": 1.0
+        },
+        {
+          "start": 7.86,
+          "end": 8.0,
+          "word": "记",
+          "probability": 0.2013
+        },
+        {
+          "start": 8.0,
+          "end": 8.1,
+          "word": "录",
+          "probability": 0.825
+        },
+        {
+          "start": 8.1,
+          "end": 8.24,
+          "word": "没",
+          "probability": 0.9866
+        },
+        {
+          "start": 8.24,
+          "end": 8.36,
+          "word": "了",
+          "probability": 0.9979
+        }
+      ]
+    },
+    {
+      "start": 8.36,
+      "end": 10.52,
+      "text": "客户的关系也就跟着断掉了",
+      "words": [
+        {
+          "start": 8.36,
+          "end": 8.68,
+          "word": "客",
+          "probability": 0.9074
+        },
+        {
+          "start": 8.68,
+          "end": 8.8,
+          "word": "户",
+          "probability": 0.9997
+        },
+        {
+          "start": 8.8,
+          "end": 8.86,
+          "word": "的",
+          "probability": 0.9809
+        },
+        {
+          "start": 8.86,
+          "end": 9.0,
+          "word": "关",
+          "probability": 0.9991
+        },
+        {
+          "start": 9.0,
+          "end": 9.18,
+          "word": "系",
+          "probability": 0.9965
+        },
+        {
+          "start": 9.18,
+          "end": 9.4,
+          "word": "也",
+          "probability": 0.9689
+        },
+        {
+          "start": 9.4,
+          "end": 9.54,
+          "word": "就",
+          "probability": 0.9953
+        },
+        {
+          "start": 9.54,
+          "end": 9.72,
+          "word": "跟",
+          "probability": 0.9961
+        },
+        {
+          "start": 9.72,
+          "end": 9.96,
+          "word": "着",
+          "probability": 0.9975
+        },
+        {
+          "start": 9.96,
+          "end": 10.16,
+          "word": "断",
+          "probability": 0.994
+        },
+        {
+          "start": 10.16,
+          "end": 10.36,
+          "word": "掉",
+          "probability": 0.9866
+        },
+        {
+          "start": 10.36,
+          "end": 10.52,
+          "word": "了",
+          "probability": 0.9964
+        }
+      ]
+    },
+    {
+      "start": 11.04,
+      "end": 12.42,
+      "text": "企业真正需要的",
+      "words": [
+        {
+          "start": 11.04,
+          "end": 11.36,
+          "word": "企",
+          "probability": 0.995
+        },
+        {
+          "start": 11.36,
+          "end": 11.56,
+          "word": "业",
+          "probability": 0.9995
+        },
+        {
+          "start": 11.56,
+          "end": 11.78,
+          "word": "真",
+          "probability": 0.9969
+        },
+        {
+          "start": 11.78,
+          "end": 12.02,
+          "word": "正",
+          "probability": 1.0
+        },
+        {
+          "start": 12.02,
+          "end": 12.24,
+          "word": "需要",
+          "probability": 0.9979
+        },
+        {
+          "start": 12.24,
+          "end": 12.42,
+          "word": "的",
+          "probability": 0.9993
+        }
+      ]
+    },
+    {
+      "start": 12.42,
+      "end": 14.3,
+      "text": "不只是业务员个人维护",
+      "words": [
+        {
+          "start": 12.42,
+          "end": 12.74,
+          "word": "不",
+          "probability": 0.9568
+        },
+        {
+          "start": 12.74,
+          "end": 13.02,
+          "word": "只是",
+          "probability": 0.9698
+        },
+        {
+          "start": 13.02,
+          "end": 13.26,
+          "word": "业",
+          "probability": 0.9991
+        },
+        {
+          "start": 13.26,
+          "end": 13.38,
+          "word": "务",
+          "probability": 1.0
+        },
+        {
+          "start": 13.38,
+          "end": 13.56,
+          "word": "员",
+          "probability": 1.0
+        },
+        {
+          "start": 13.56,
+          "end": 13.82,
+          "word": "个",
+          "probability": 0.9926
+        },
+        {
+          "start": 13.82,
+          "end": 14.0,
+          "word": "人",
+          "probability": 0.9999
+        },
+        {
+          "start": 14.0,
+          "end": 14.14,
+          "word": "维",
+          "probability": 0.9685
+        },
+        {
+          "start": 14.14,
+          "end": 14.3,
+          "word": "护",
+          "probability": 0.998
+        }
+      ]
+    },
+    {
+      "start": 14.3,
+      "end": 15.82,
+      "text": "而是一套可以沉淀用户",
+      "words": [
+        {
+          "start": 14.3,
+          "end": 14.46,
+          "word": "而",
+          "probability": 0.9902
+        },
+        {
+          "start": 14.46,
+          "end": 14.58,
+          "word": "是",
+          "probability": 0.9993
+        },
+        {
+          "start": 14.58,
+          "end": 14.66,
+          "word": "一",
+          "probability": 0.9956
+        },
+        {
+          "start": 14.66,
+          "end": 14.76,
+          "word": "套",
+          "probability": 0.9991
+        },
+        {
+          "start": 14.76,
+          "end": 15.02,
+          "word": "可以",
+          "probability": 0.9057
+        },
+        {
+          "start": 15.02,
+          "end": 15.3,
+          "word": "沉",
+          "probability": 0.9991
+        },
+        {
+          "start": 15.3,
+          "end": 15.46,
+          "word": "淀",
+          "probability": 0.998
+        },
+        {
+          "start": 15.46,
+          "end": 15.62,
+          "word": "用",
+          "probability": 0.9982
+        },
+        {
+          "start": 15.62,
+          "end": 15.82,
+          "word": "户",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 15.82,
+      "end": 17.84,
+      "text": "持续触达的营销机制",
+      "words": [
+        {
+          "start": 15.82,
+          "end": 16.24,
+          "word": "持",
+          "probability": 0.9587
+        },
+        {
+          "start": 16.24,
+          "end": 16.52,
+          "word": "续",
+          "probability": 0.9989
+        },
+        {
+          "start": 16.52,
+          "end": 16.78,
+          "word": "触",
+          "probability": 0.9445
+        },
+        {
+          "start": 16.78,
+          "end": 16.96,
+          "word": "达",
+          "probability": 0.9694
+        },
+        {
+          "start": 16.96,
+          "end": 17.1,
+          "word": "的",
+          "probability": 0.9963
+        },
+        {
+          "start": 17.1,
+          "end": 17.34,
+          "word": "营",
+          "probability": 0.9917
+        },
+        {
+          "start": 17.34,
+          "end": 17.52,
+          "word": "销",
+          "probability": 0.9997
+        },
+        {
+          "start": 17.52,
+          "end": 17.64,
+          "word": "机",
+          "probability": 0.9882
+        },
+        {
+          "start": 17.64,
+          "end": 17.84,
+          "word": "制",
+          "probability": 0.9943
+        }
+      ]
+    },
+    {
+      "start": 17.84,
+      "end": 19.98,
+      "text": "顺应八平我们可以配合我们企业的",
+      "words": [
+        {
+          "start": 17.84,
+          "end": 18.24,
+          "word": "顺",
+          "probability": 0.8218
+        },
+        {
+          "start": 18.24,
+          "end": 18.34,
+          "word": "应",
+          "probability": 0.3229
+        },
+        {
+          "start": 18.34,
+          "end": 18.44,
+          "word": "八",
+          "probability": 0.3636
+        },
+        {
+          "start": 18.44,
+          "end": 18.56,
+          "word": "平",
+          "probability": 0.1582
+        },
+        {
+          "start": 18.56,
+          "end": 18.82,
+          "word": "我们",
+          "probability": 0.8442
+        },
+        {
+          "start": 18.82,
+          "end": 19.0,
+          "word": "可以",
+          "probability": 0.9967
+        },
+        {
+          "start": 19.0,
+          "end": 19.16,
+          "word": "配",
+          "probability": 0.994
+        },
+        {
+          "start": 19.16,
+          "end": 19.34,
+          "word": "合",
+          "probability": 0.9965
+        },
+        {
+          "start": 19.34,
+          "end": 19.46,
+          "word": "我们",
+          "probability": 0.9551
+        },
+        {
+          "start": 19.46,
+          "end": 19.76,
+          "word": "企",
+          "probability": 0.9881
+        },
+        {
+          "start": 19.76,
+          "end": 19.88,
+          "word": "业",
+          "probability": 0.9997
+        },
+        {
+          "start": 19.88,
+          "end": 19.98,
+          "word": "的",
+          "probability": 0.9976
+        }
+      ]
+    }
+  ]
+}

@@ -183,3 +183,46 @@ def test_admin_usage_groups_real_debits_by_project_and_customer(client: TestClie
 def test_admin_usage_requires_admin_login(client: TestClient) -> None:
     response = client.get("/api/v1/credits/admin/usage", headers=TEST_API_HEADERS)
     assert response.status_code == 401
+
+
+def test_admin_usage_nets_avatar_settlement_refund_against_reserve(
+    client: TestClient,
+) -> None:
+    token = _login(client)
+    headers = _admin_headers(token)
+    client.post(
+        "/api/v1/credits/adjust",
+        json={"amount": "10", "reason": "充值", "owner": "CUSTOMER-A"},
+        headers=headers,
+    )
+    client.post(
+        "/api/v1/credits/adjust",
+        json={
+            "amount": "-5",
+            "reason": "数字人成片费用预留",
+            "owner": "CUSTOMER-A",
+            "ref_type": "avatar_reserve",
+            "ref_id": "job-1",
+        },
+        headers=headers,
+    )
+    client.post(
+        "/api/v1/credits/adjust",
+        json={
+            "amount": "2",
+            "reason": "数字人成片费用结算退款",
+            "owner": "CUSTOMER-A",
+            "ref_type": "avatar_settlement",
+            "ref_id": "job-1",
+        },
+        headers=headers,
+    )
+
+    response = client.get("/api/v1/credits/admin/usage", headers=headers)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total_consumed"] == "3"
+    by_project = {item["name"]: item["consumed"] for item in payload["by_project"]}
+    # 预留与结算退款应合并到同一个"数字人成片"，并只统计净消耗 3，而不是预留额 5。
+    assert by_project == {"数字人成片": "3"}
+    assert payload["by_customer"][0]["consumed"] == "3"

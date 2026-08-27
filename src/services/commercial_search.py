@@ -4,6 +4,8 @@ import hashlib
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any, Callable
+from urllib.parse import unquote
 
 from src.adapters.licensed import LicensedProviderError
 from src.contracts import CandidateRepository, LicensedSearchProvider
@@ -50,7 +52,11 @@ RANKING_MODE = "keyword_hot"
 KEYWORD_HOT_SORT_TYPE = 0
 # 规则版本同时是公共搜索缓存键的一部分。升级为“标题/话题直接命中”后，
 # 旧的宽召回结果不能继续作为本次搜索结果复用。
-RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v3"
+RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v4"
+# B 站结果分为高相关、待确认和明显无关。待确认项只进入参考素材区，
+# 不计入主榜，也不会自动送入智能创作。
+# 一页最多展示目标数量（上限 30），避免把数百条页面卡片全部灌入结果区。
+BILIBILI_REFERENCE_FALLBACK_LIMIT = 30
 _NON_CACHEABLE_PUBLIC_SEARCH_CODES = frozenset(
     {
         "public_search_multi_column_unavailable",
@@ -68,6 +74,29 @@ _BUSINESS_INTENT_SUFFIXES = (
     "营销",
     "运营",
 )
+_BILIBILI_HIGH_RELEVANCE = "high"
+_BILIBILI_REVIEW_RELEVANCE = "review"
+_BILIBILI_IRRELEVANT_RELEVANCE = "irrelevant"
+
+# 只用于拆分中文复合关键词，不会放宽其它平台的筛选。行业词和对象/意图词
+# 必须形成组合，才能进入 B 站主结果。
+_BILIBILI_INDUSTRY_GROUPS = {
+    "美业": ("美业", "美容", "美发", "美妆", "美甲", "化妆品", "医美"),
+    "餐饮": ("餐饮", "餐馆", "饭店", "茶饮", "咖啡"),
+    "服装": ("服装", "女装", "男装", "童装", "鞋服"),
+    "教育": ("教育", "教培", "培训", "课程", "招生"),
+    "家居": ("家居", "家具", "装修", "家装"),
+    "母婴": ("母婴", "孕婴", "育儿"),
+    "健身": ("健身", "瑜伽", "运动"),
+    "汽车": ("汽车", "汽修", "洗车", "二手车"),
+}
+_BILIBILI_OBJECT_GROUPS = {
+    "工厂": ("工厂", "供应链", "源头", "oem", "生产", "加工", "代工"),
+    "获客": ("获客", "引流", "营销", "运营", "招生", "带货"),
+    "门店": ("门店", "店铺", "门店经营"),
+    "IP": ("ip", "人设", "个人品牌"),
+}
+_BILIBILI_GENERIC_TERMS = ("智能", "老板", "案例", "短视频", "直播", "批发", "零售")
 # 新批次采用自适应三点采样：首次 2 小时后复搜；第二个间隔按真实互动
 # 变化缩短为 4 小时或延长为 12 小时。保留窗口映射仅供历史入口兼容。
 ADAPTIVE_FIRST_RECRAWL_HOURS = 2
@@ -93,6 +122,85 @@ def normalized_keyword_text(value: str) -> str:
         if not character.isspace()
         and not unicodedata.category(character).startswith(("P", "Z"))
     )
+
+
+def _bilibili_match_text_from_evidence(evidence: str | None) -> str:
+    """Recover visible title/topic/description text attached by the B 站 adapter."""
+    if not evidence:
+        return ""
+    for part in evidence.split(";"):
+        if part.startswith("bilibili_match_text="):
+            return unquote(part.split("=", 1)[1])
+    return ""
+
+
+def _bilibili_matching_groups(
+    text: str, groups: dict[str, tuple[str, ...]]
+) -> set[str]:
+    normalized = normalized_keyword_text(text)
+    return {
+        name
+        for name, aliases in groups.items()
+        if any(normalized_keyword_text(alias) in normalized for alias in aliases)
+    }
+
+
+def _bilibili_query_terms(keyword: str) -> tuple[set[str], set[str], set[str]]:
+    normalized = normalized_keyword_text(keyword)
+    industries = _bilibili_matching_groups(normalized, _BILIBILI_INDUSTRY_GROUPS)
+    objects = _bilibili_matching_groups(normalized, _BILIBILI_OBJECT_GROUPS)
+    generic = {
+        term
+        for term in _BILIBILI_GENERIC_TERMS
+        if normalized_keyword_text(term) in normalized
+    }
+    return industries, objects, generic
+
+
+def bilibili_relevance_tier(
+    *, title: str, keyword: str, evidence: str | None = None
+) -> str:
+    """Classify one B 站 card as high, reviewable, or unrelated."""
+    normalized_keyword = normalized_keyword_text(keyword)
+    if not normalized_keyword:
+        return _BILIBILI_IRRELEVANT_RELEVANCE
+    match_text = " ".join(
+        value for value in (title, _bilibili_match_text_from_evidence(evidence)) if value
+    )
+    normalized_text = normalized_keyword_text(match_text)
+    if normalized_keyword in normalized_text:
+        return _BILIBILI_HIGH_RELEVANCE
+    if evidence and "direct_match=1" in evidence:
+        return _BILIBILI_HIGH_RELEVANCE
+
+    query_industries, query_objects, query_generic = _bilibili_query_terms(keyword)
+    matched_industries = _bilibili_matching_groups(
+        normalized_text,
+        {group: _BILIBILI_INDUSTRY_GROUPS[group] for group in query_industries},
+    )
+    matched_objects = _bilibili_matching_groups(
+        normalized_text,
+        {group: _BILIBILI_OBJECT_GROUPS[group] for group in query_objects},
+    )
+    matched_generic = {
+        term
+        for term in query_generic
+        if normalized_keyword_text(term) in normalized_text
+    }
+
+    if query_industries:
+        if matched_industries and matched_objects:
+            return _BILIBILI_HIGH_RELEVANCE
+        if matched_industries:
+            return _BILIBILI_REVIEW_RELEVANCE
+        return _BILIBILI_IRRELEVANT_RELEVANCE
+
+    # 无已知行业维度的关键词保留旧的精确匹配习惯，同时允许拆开的多概念命中。
+    if query_objects and matched_objects and (not query_generic or matched_generic):
+        return _BILIBILI_HIGH_RELEVANCE
+    if matched_objects or matched_generic:
+        return _BILIBILI_REVIEW_RELEVANCE
+    return _BILIBILI_IRRELEVANT_RELEVANCE
 
 
 def title_matches_keyword(
@@ -136,8 +244,19 @@ def item_matches_keyword(
     board.  Their titles can be intentionally short, so title-only filtering
     would discard valid candidates such as a video inside “餐饮获客”.
     """
-    return title_matches_keyword(title=title, keyword=keyword) or "严格话题=1" in (
-        evidence or ""
+    if (evidence or "").startswith("bilibili:"):
+        return (
+            bilibili_relevance_tier(title=title, keyword=keyword, evidence=evidence)
+            == _BILIBILI_HIGH_RELEVANCE
+        )
+    return (
+        title_matches_keyword(title=title, keyword=keyword)
+        or "严格话题=1" in (evidence or "")
+        or "关键词联合命中=1" in (evidence or "")
+        or (
+            (evidence or "").startswith("bilibili:")
+            and "direct_match=1" in (evidence or "")
+        )
     )
 
 
@@ -294,6 +413,7 @@ class CommercialSearchService:
         tracking_parent_batch_id: str | None = None,
         kuaishou_sort: str = "platform",
         kuaishou_duration_bucket: str = "all",
+        progress_callback: Callable[[dict[str, Any], SearchBatch], None] | None = None,
     ) -> SearchBatch:
         keyword = self._validate_request(
             keyword, published_window_days, count, hotspot_window_hours
@@ -349,6 +469,7 @@ class CommercialSearchService:
                     tracking_parent_batch_id=tracking_parent_batch_id,
                     kuaishou_sort=kuaishou_sort,
                     kuaishou_duration_bucket=kuaishou_duration_bucket,
+                    progress_callback=progress_callback,
                 )
             )
 
@@ -554,6 +675,7 @@ class CommercialSearchService:
         tracking_parent_batch_id: str | None,
         kuaishou_sort: str,
         kuaishou_duration_bucket: str,
+        progress_callback: Callable[[dict[str, Any], SearchBatch], None] | None = None,
     ) -> PlatformSearchRun:
         capability = self.provider.capabilities()
         started_at = self.clock()
@@ -612,6 +734,9 @@ class CommercialSearchService:
                 returned_count=cached.returned_count,
                 raw_item_count=cached.raw_item_count,
                 parsed_item_count=cached.parsed_item_count,
+                raw_discovered_count=cached.raw_discovered_count,
+                deduped_item_count=cached.deduped_item_count,
+                direct_match_count=cached.direct_match_count,
                 out_of_window_count=cached.out_of_window_count,
                 invalid_count=cached.invalid_count,
                 duplicate_count=cached.duplicate_count,
@@ -619,11 +744,16 @@ class CommercialSearchService:
                 duration_filtered_count=cached.duration_filtered_count,
                 incremental_play_filtered_count=cached.incremental_play_filtered_count,
                 low_incremental_items=cached.low_incremental_items,
+                reference_items=cached.reference_items,
                 relevance_rule_version=cached.relevance_rule_version,
                 result_state=cached.result_state,
                 payload_diagnostic=cached.payload_diagnostic,
                 crawl_stop_reason=cached.crawl_stop_reason,
                 crawl_stop_message=cached.crawl_stop_message,
+                stage_timings_ms=cached.stage_timings_ms,
+                adapter_rule_version=cached.adapter_rule_version,
+                browser_reused=cached.browser_reused,
+                session_recovered=cached.session_recovered,
                 cached_from_run_id=cached.run_id,
                 cache_hit=True,
             )
@@ -689,6 +819,67 @@ class CommercialSearchService:
         # 找素材不消耗客户积分；供应商侧仍受前面的防重复、缓存及月预算限制。
         run = run.model_copy(update={"status": PlatformRunStatus.RUNNING})
         self.repository.save_platform_search_run(run)
+
+        def emit_progress(event: dict[str, Any]) -> None:
+            """Persist the live funnel before forwarding it to the queue."""
+            updates = {
+                "returned_count": max(
+                    run.returned_count,
+                    int(event.get("retained_count") or event.get("direct_match_count") or 0),
+                ),
+                "raw_item_count": max(
+                    run.raw_item_count,
+                    int(event.get("scanned_count") or 0),
+                ),
+                "parsed_item_count": max(
+                    run.parsed_item_count,
+                    int(event.get("parsed_count") or 0),
+                ),
+                "raw_discovered_count": max(
+                    run.raw_discovered_count,
+                    int(event.get("scanned_count") or 0),
+                ),
+                "deduped_item_count": max(
+                    run.deduped_item_count,
+                    int(event.get("deduped_count") or 0),
+                ),
+                "direct_match_count": max(
+                    run.direct_match_count,
+                    int(event.get("direct_match_count") or 0),
+                ),
+                "out_of_window_count": max(
+                    run.out_of_window_count,
+                    int(event.get("out_of_window_count") or 0),
+                ),
+                "invalid_count": max(
+                    run.invalid_count,
+                    int(event.get("invalid_count") or 0),
+                ),
+                "duplicate_count": max(
+                    run.duplicate_count,
+                    int(event.get("duplicate_count") or 0),
+                ),
+                "irrelevant_count": max(
+                    run.irrelevant_count,
+                    int(event.get("irrelevant_count") or 0),
+                ),
+            }
+            self.repository.save_platform_search_run(run.model_copy(update=updates))
+            if progress_callback is not None:
+                try:
+                    progress_callback(event, batch)
+                except Exception:
+                    # A UI/queue observer must never turn a successful crawl into
+                    # a provider failure.
+                    pass
+
+        emit_progress(
+            {
+                "stage": "scanning",
+                "platform": platform.value,
+                "message": "已打开搜索页面，正在扫描结果。",
+            }
+        )
         published_after = (
             None
             if published_window_days == 0
@@ -711,6 +902,11 @@ class CommercialSearchService:
                     "kuaishou_sort": kuaishou_sort,
                     "kuaishou_duration_bucket": kuaishou_duration_bucket,
                 }
+            if (
+                progress_callback is not None
+                and capability.provider_name == "douyin_public_browser_v2"
+            ):
+                search_kwargs["progress_callback"] = emit_progress
             page = self._search_with_retry(
                 **search_kwargs,
             )
@@ -727,6 +923,10 @@ class CommercialSearchService:
                 published_after=published_after,
                 limit=count,
             )
+            reference_items = validation_counts.pop("reference_items", [])
+            if platform != Platform.BILIBILI:
+                reference_items = []
+            all_import_items = [*normalized, *reference_items]
             provider_errors = [*page.errors, *validation_errors]
             effective_raw_item_count = (
                 page.raw_item_count if page.raw_item_count else len(page.items)
@@ -742,9 +942,9 @@ class CommercialSearchService:
                 )
                 for error in provider_errors
             ]
-            source_page = SourcePage(items=normalized, errors=import_errors)
+            source_page = SourcePage(items=all_import_items, errors=import_errors)
             report = (
-                self.source_service.import_page(source_page) if normalized else None
+                self.source_service.import_page(source_page) if all_import_items else None
             )
             discovery = DiscoveryResult(
                 request_id=run.run_id,
@@ -758,6 +958,33 @@ class CommercialSearchService:
                 duplicate_count=validation_counts["duplicate_count"],
                 raw_item_count=effective_raw_item_count,
                 parsed_item_count=effective_parsed_item_count,
+                raw_discovered_count=(
+                    page.raw_discovered_count or effective_raw_item_count
+                ),
+                deduped_item_count=(
+                    page.deduped_item_count or len(page.items)
+                ),
+                direct_match_count=(
+                    sum(
+                        bilibili_relevance_tier(
+                            title=item.title,
+                            keyword=keyword,
+                            evidence=item.evidence,
+                        )
+                        == _BILIBILI_HIGH_RELEVANCE
+                        for item in page.items
+                    )
+                    if platform == Platform.BILIBILI
+                    else page.direct_match_count
+                    or sum(
+                        item_matches_keyword(
+                            title=item.title,
+                            keyword=keyword,
+                            evidence=item.evidence,
+                        )
+                        for item in page.items
+                    )
+                ),
                 out_of_window_count=validation_counts["out_of_window_count"],
                 invalid_count=validation_counts["invalid_count"],
                 irrelevant_count=validation_counts["irrelevant_count"],
@@ -788,6 +1015,10 @@ class CommercialSearchService:
                 payload_diagnostic=page.payload_diagnostic,
                 crawl_stop_reason=page.crawl_stop_reason,
                 crawl_stop_message=page.crawl_stop_message,
+                stage_timings_ms=page.stage_timings_ms,
+                adapter_rule_version=page.adapter_rule_version,
+                browser_reused=page.browser_reused,
+                session_recovered=page.session_recovered,
             )
             self.repository.save_discovery_result(discovery)
             self._save_matches_and_checkpoints(
@@ -804,6 +1035,19 @@ class CommercialSearchService:
                 },
                 schedule_recrawls=schedule_recrawls,
                 tracking_parent_batch_id=tracking_parent_batch_id,
+            )
+            self._save_reference_matches(
+                discovery=discovery,
+                normalized=reference_items,
+                platform=platform,
+                provider=capability.provider_name,
+                keyword=keyword,
+                published_window_days=published_window_days,
+                rank_by_item={
+                    item.platform_item_id: item.provider_rank
+                    for item in page.items
+                    if item.platform == platform
+                },
             )
             trends = (
                 []
@@ -842,6 +1086,31 @@ class CommercialSearchService:
                 errors=provider_errors,
                 raw_item_count=effective_raw_item_count,
                 parsed_item_count=effective_parsed_item_count,
+                raw_discovered_count=(
+                    page.raw_discovered_count or effective_raw_item_count
+                ),
+                deduped_item_count=(page.deduped_item_count or len(page.items)),
+                direct_match_count=(
+                    sum(
+                        bilibili_relevance_tier(
+                            title=item.title,
+                            keyword=keyword,
+                            evidence=item.evidence,
+                        )
+                        == _BILIBILI_HIGH_RELEVANCE
+                        for item in page.items
+                    )
+                    if platform == Platform.BILIBILI
+                    else page.direct_match_count
+                    or sum(
+                        item_matches_keyword(
+                            title=item.title,
+                            keyword=keyword,
+                            evidence=item.evidence,
+                        )
+                        for item in page.items
+                    )
+                ),
                 out_of_window_count=validation_counts["out_of_window_count"],
                 invalid_count=validation_counts["invalid_count"],
                 duplicate_count=validation_counts["duplicate_count"],
@@ -855,6 +1124,11 @@ class CommercialSearchService:
                 crawl_stop_reason=page.crawl_stop_reason,
                 crawl_stop_message=page.crawl_stop_message,
                 payload_diagnostic=page.payload_diagnostic,
+                stage_timings_ms=page.stage_timings_ms,
+                adapter_rule_version=page.adapter_rule_version,
+                browser_reused=page.browser_reused,
+                session_recovered=page.session_recovered,
+                reference_items=reference_items,
             )
             self.repository.mark_platform_search_request(
                 fingerprint, "succeeded", finished.finished_at or self.clock()
@@ -910,24 +1184,37 @@ class CommercialSearchService:
             return finished
 
     def _search_with_retry(self, **kwargs) -> ProviderSearchPage:
-        try:
-            return self.provider.search(**kwargs)
-        except LicensedProviderError:
-            raise
-        except (ConnectionError, TimeoutError) as exc:
-            raise LicensedProviderError(
-                f"连接商业数据接口失败：{exc}",
-                kind=ProviderErrorKind.CONNECTION,
-                retryable=False,
-                outcome_unknown=True,
-            ) from exc
-        except OSError as exc:
-            raise LicensedProviderError(
-                f"商业数据接口连接异常：{exc}",
-                kind=ProviderErrorKind.CONNECTION,
-                retryable=False,
-                outcome_unknown=True,
-            ) from exc
+        # 连接问题最多自动重试一次；登录、验证码、频繁访问和校验错误不重试。
+        for attempt in range(2):
+            try:
+                return self.provider.search(**kwargs)
+            except LicensedProviderError as exc:
+                if (
+                    exc.kind == ProviderErrorKind.CONNECTION
+                    and exc.retryable
+                    and attempt == 0
+                ):
+                    continue
+                raise
+            except (ConnectionError, TimeoutError) as exc:
+                if attempt == 0:
+                    continue
+                raise LicensedProviderError(
+                    f"连接商业数据接口失败：{exc}",
+                    kind=ProviderErrorKind.CONNECTION,
+                    retryable=False,
+                    outcome_unknown=True,
+                ) from exc
+            except OSError as exc:
+                if attempt == 0:
+                    continue
+                raise LicensedProviderError(
+                    f"商业数据接口连接异常：{exc}",
+                    kind=ProviderErrorKind.CONNECTION,
+                    retryable=False,
+                    outcome_unknown=True,
+                ) from exc
+        raise AssertionError("unreachable connection retry state")
 
     @staticmethod
     def _normalize_page(
@@ -939,12 +1226,12 @@ class CommercialSearchService:
         source_type: DataSource,
         published_after: datetime | None,
         limit: int,
-    ) -> tuple[list[NormalizedCandidate], list[ProviderSearchError], dict[str, int]]:
+    ) -> tuple[list[NormalizedCandidate], list[ProviderSearchError], dict[str, object]]:
         errors: list[ProviderSearchError] = []
         counts = {
-            "out_of_window_count": 0,
-            "invalid_count": 0,
-            "duplicate_count": 0,
+            "out_of_window_count": page.out_of_window_count,
+            "invalid_count": page.invalid_count,
+            "duplicate_count": page.duplicate_count,
             "irrelevant_count": page.relevance_filtered_count,
             "duration_filtered_count": page.duration_filtered_count,
             "incremental_play_filtered_count": page.incremental_play_filtered_count,
@@ -955,6 +1242,7 @@ class CommercialSearchService:
                 kind=ProviderErrorKind.VALIDATION,
             )
         normalized: list[NormalizedCandidate] = []
+        reference_items: list[NormalizedCandidate] = []
         seen: set[str] = set()
         for index, item in enumerate(page.items):
             reason = None
@@ -995,16 +1283,52 @@ class CommercialSearchService:
                     )
                 )
                 continue
-            direct_keyword_match = item_matches_keyword(
-                title=item.title,
-                keyword=keyword,
-                evidence=item.evidence,
-            )
+            if platform == Platform.BILIBILI:
+                relevance_tier = bilibili_relevance_tier(
+                    title=item.title,
+                    keyword=keyword,
+                    evidence=item.evidence,
+                )
+                direct_keyword_match = relevance_tier == _BILIBILI_HIGH_RELEVANCE
+            else:
+                relevance_tier = _BILIBILI_HIGH_RELEVANCE
+                direct_keyword_match = item_matches_keyword(
+                    title=item.title,
+                    keyword=keyword,
+                    evidence=item.evidence,
+                )
             seen.add(item.platform_item_id)
-            # B站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。即使底层页面
-            # 误回传，也绝不能让未直接命中关键词的结果进入素材库。
-            if platform == Platform.BILIBILI and not direct_keyword_match:
-                counts["irrelevant_count"] += 1
+            # B 站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。高相关进入主榜，
+            # 行业概念命中但对象不完整的卡片进入待确认，其余直接丢弃。
+            if platform == Platform.BILIBILI and relevance_tier != _BILIBILI_HIGH_RELEVANCE:
+                if relevance_tier == _BILIBILI_IRRELEVANT_RELEVANCE:
+                    counts["irrelevant_count"] += 1
+                    continue
+                if len(reference_items) < BILIBILI_REFERENCE_FALLBACK_LIMIT:
+                    warnings = list(item.data_quality_warnings)
+                    warnings.append(
+                        f"B站仅命中部分相关概念“{keyword}”；请打开原视频确认是否相关。"
+                    )
+                    reference_items.append(
+                        NormalizedCandidate(
+                            platform_item_id=item.platform_item_id,
+                            title=item.title,
+                            author_id=item.author_id,
+                            author_name=item.author_name,
+                            platform=platform,
+                            category=f"关键词参考/{keyword}",
+                            published_at=item.published_at,
+                            duration_seconds=item.duration_seconds,
+                            source_url=item.source_url,
+                            source_type=source_type,
+                            metrics=item.metrics,
+                            matched_by=[keyword],
+                            cohort_key=f"{provider}:{platform.value}:keyword-reference:{keyword.casefold()}",
+                            eligibility_status=EligibilityStatus.PENDING_REVIEW,
+                            evidence=item.evidence,
+                            data_quality_warnings=warnings,
+                        )
+                    )
                 continue
             warnings = list(item.data_quality_warnings)
             if not direct_keyword_match:
@@ -1050,6 +1374,7 @@ class CommercialSearchService:
             )
             if len(normalized) >= limit:
                 break
+        counts["reference_items"] = reference_items
         return normalized, errors, counts
 
     @staticmethod
@@ -1209,6 +1534,43 @@ class CommercialSearchService:
                     self.repository.save_sampling_checkpoint(
                         checkpoint.model_copy(update={"status": SamplingStatus.MISSED})
                     )
+
+    def _save_reference_matches(
+        self,
+        *,
+        discovery: DiscoveryResult,
+        normalized: list[NormalizedCandidate],
+        platform: Platform,
+        provider: str,
+        keyword: str,
+        published_window_days: int,
+        rank_by_item: dict[str, int],
+    ) -> None:
+        """Persist bounded reference cards without scheduling recrawls."""
+        keyword_key = keyword.casefold()
+        for fallback_rank, item in enumerate(normalized, start=1):
+            video_id = self.repository.resolve_candidate_id(
+                platform.value, item.platform_item_id
+            )
+            if not video_id:
+                continue
+            self.repository.save_candidate_match(
+                CandidateMatch(
+                    request_id=discovery.request_id,
+                    video_id=video_id,
+                    keyword=keyword_key,
+                    cohort_key=f"{provider}:{platform.value}:keyword-reference:{keyword_key}",
+                    platform=platform,
+                    provider_name=provider,
+                    platform_rank=rank_by_item.get(
+                        item.platform_item_id, fallback_rank
+                    ),
+                    observed_at=item.metrics.sampled_at,
+                    publish_time=published_window_days,
+                    sort_type=KEYWORD_HOT_SORT_TYPE,
+                    evidence=item.evidence,
+                )
+            )
 
     def _cached_run(
         self,

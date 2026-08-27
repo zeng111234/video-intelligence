@@ -1,0 +1,272 @@
+{
+  "action": "SubmitMediaProducingJob",
+  "timeline": {
+    "VideoTracks": [
+      {
+        "MainTrack": true,
+        "VideoTrackClips": [
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/source.mp4",
+            "Type": "Video",
+            "In": 1.46,
+            "Out": 14.5,
+            "TimelineIn": 0.0,
+            "TimelineOut": 13.04
+          }
+        ]
+      },
+      {
+        "MainTrack": false,
+        "VideoTrackClips": [
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/broll-pexels-phone-mount.mp4",
+            "Type": "Video",
+            "In": 0.0,
+            "Out": 2.6,
+            "TimelineIn": 3.24,
+            "TimelineOut": 5.84,
+            "AdaptMode": "Cover",
+            "Width": 720,
+            "Height": 1280
+          }
+        ]
+      }
+    ],
+    "SubtitleTracks": [
+      {
+        "SubtitleTrackClips": [
+          {
+            "Text": "很多朋友觉得车载之下装起来麻烦",
+            "TimelineIn": 0.0,
+            "TimelineOut": 2.3
+          },
+          {
+            "Text": "但这个不一样",
+            "TimelineIn": 2.3,
+            "TimelineOut": 3.24
+          },
+          {
+            "Text": "拧一下就能锁紧",
+            "TimelineIn": 3.24,
+            "TimelineOut": 4.6
+          },
+          {
+            "Text": "不用胶黏",
+            "TimelineIn": 4.6,
+            "TimelineOut": 5.38
+          },
+          {
+            "Text": "也不会卡住出风口",
+            "TimelineIn": 5.38,
+            "TimelineOut": 6.84
+          },
+          {
+            "Text": "更不用充电",
+            "TimelineIn": 6.84,
+            "TimelineOut": 7.68
+          },
+          {
+            "Text": "随便找个平整的地方",
+            "TimelineIn": 7.68,
+            "TimelineOut": 9.38
+          },
+          {
+            "Text": "一放就吸住了",
+            "TimelineIn": 9.38,
+            "TimelineOut": 10.38
+          },
+          {
+            "Text": "想换个位置",
+            "TimelineIn": 10.8,
+            "TimelineOut": 11.66
+          },
+          {
+            "Text": "反正拧一下就取下来",
+            "TimelineIn": 11.66,
+            "TimelineOut": 13.04
+          },
+          {
+            "Type": "Text",
+            "Content": "锁紧",
+            "X": 0.12,
+            "Y": 0.16,
+            "FontSize": 72,
+            "FontColor": "#FFD447",
+            "TimelineIn": 3.24,
+            "TimelineOut": 4.6
+          }
+        ]
+      }
+    ],
+    "AudioTracks": [
+      {
+        "AudioTrackClips": [
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 0.0,
+            "Out": 2.3,
+            "TimelineIn": 0.0,
+            "TimelineOut": 2.3,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 2.3,
+            "Out": 3.24,
+            "TimelineIn": 2.3,
+            "TimelineOut": 3.24,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 3.24,
+            "Out": 4.6,
+            "TimelineIn": 3.24,
+            "TimelineOut": 4.6,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 4.6,
+            "Out": 5.38,
+            "TimelineIn": 4.6,
+            "TimelineOut": 5.38,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 5.38,
+            "Out": 6.84,
+            "TimelineIn": 5.38,
+            "TimelineOut": 6.84,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 6.84,
+            "Out": 7.68,
+            "TimelineIn": 6.84,
+            "TimelineOut": 7.68,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 7.68,
+            "Out": 9.38,
+            "TimelineIn": 7.68,
+            "TimelineOut": 9.38,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 9.38,
+            "Out": 10.38,
+            "TimelineIn": 9.38,
+            "TimelineOut": 10.38,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 10.38,
+            "Out": 10.8,
+            "TimelineIn": 10.38,
+            "TimelineOut": 10.8,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.24
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 10.8,
+            "Out": 11.66,
+            "TimelineIn": 10.8,
+            "TimelineOut": 11.66,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          },
+          {
+            "MediaURL": "https://zeng111234.oss-cn-beijing.aliyuncs.com/videoinsight/ims-cloud-short-acceptance-20260826/bgm-local-acceptance.mp3",
+            "Type": "Video",
+            "In": 11.66,
+            "Out": 13.04,
+            "TimelineIn": 11.66,
+            "TimelineOut": 13.04,
+            "Effects": [
+              {
+                "Type": "Volume",
+                "Gain": 0.12
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "EffectTracks": []
+  },
+  "source_of_truth": "canonical_director_timeline",
+  "renderer_only": true,
+  "cloud_call_made": false,
+  "forbidden_action": "SubmitBatchMediaProducingJob",
+  "docs": {
+    "submit": "https://help.aliyun.com/zh/ims/developer-reference/api-ice-2020-11-09-submitmediaproducingjob",
+    "timeline": "https://help.aliyun.com/zh/ims/developer-reference/timeline-configuration-description",
+    "pricing": "https://help.aliyun.com/zh/ims/video-clip"
+  }
+}

@@ -1,5 +1,60 @@
 # VideoInsight 项目交接（0.2.40）
 
+## 当前视频精剪暂停点（2026-08-25）
+
+> 本节是当前自动口播精剪 Goal 的最新交接；下方 0.2.40 发布信息是历史发布交接，不能覆盖本节的实时状态。
+
+### 目标与边界
+
+- 当前 Goal 仍为 `active`：修复 104.7 秒完整自动口播的生产路径，用真实源音频和统一导演时间线生成可验收成片，修正视觉事件分布、字幕错词/断词/标点与质量门假阳性，并完成 localhost:1001 页面播放、关键时段检查和下载验收。
+- 不得在未实际观看完整片和页面证据齐全前宣称完成；不调用新的付费/云端任务，不发布，不 push，不 reset/checkout/clean，不覆盖其他 crawler/frontend 改动。
+- 用户最新决定：继续使用现有 `jieba==0.42.1` 通用断句；核心规则只保留普适中文边界，业务术语改为可注入的 transcript glossary，不为样片新增固定答案。
+
+### 暂停时实时状态
+
+- 工作树：`main...origin/main`，存在大量既有未提交改动和未跟踪证据/测试文件，必须保留。
+- 当前没有 `ffmpeg`、`ffprobe`、`pytest` 或云端任务在运行；只观察到 Node 前后端常驻进程。
+- 最近一次轻量核验：`git diff --check` 退出成功，仅有 Git 的 LF/CRLF 警告。
+- 不需要恢复或终止任何渲染任务；下次可直接从“核心字幕词表收窄与 glossary 注入”开始。
+
+### 最近成功产物（不是最终通过）
+
+- MP4：`C:\Users\zeng\Desktop\video\data\video_edits\edit-local-74e45f22bf.mp4`
+- ASS：`C:\Users\zeng\Desktop\video\data\video_edits\edit-local-74e45f22bf.ass`
+- 字幕 manifest：`C:\Users\zeng\Desktop\video\data\video_edits\edit-local-74e45f22bf.subtitle-manifest.json`
+- FFprobe：104.633008 秒，720x1280，H.264 + AAC，文件 54,151,227 字节。
+- SHA256：
+  - MP4 `B03BEE3CE7D045AA10F4B98F966D3EA50F5BA9FDB7F82F1B91F3BA39FDCA5267`
+  - ASS `F51D7F3C1C96EB44C6BB41EE0A09015281DF316AF4F83895E8D542857ED21415`
+  - manifest `58EC9C3D4759CEA66D3C80FBEBF739CBEA300445AA61847FB6EB4BF37FE05AE5`
+- 上一轮已记录定向结果：字幕云服务相关 14 项通过，工作流相关 6 项通过；这些测试不能替代完整片和页面验收。
+
+### 尚未通过的硬门
+
+- 最近质量结果仍为整体 `passed=false`、`publish_claim_allowed=false`。
+- `transcript_source_identity_gate` 的 source SHA、时长、时间源通过，但 transcript SHA 未通过；需要让任务输出的 reviewed transcript、字幕 manifest、烧录 ASS 和 identity hash 使用同一份事实源，不能放宽门禁。
+- 视觉门仍未通过：最近记录的真实 B-roll 为 3 个、覆盖约 6.88%，虽然视觉节奏事件和安全重构图存在，但尚未完成后半段真实语义视觉的完整人工验收。
+- 当前没有本轮修复后的 104.7 秒新片、10 秒抽帧证据、页面播放/拖拽/下载证据；因此 Goal 必须保持 active。
+
+### 下次安全执行顺序
+
+1. 检查 `src/services/video_editor_cloud.py` 的 `_CAPTION_BREAK_*`、`_CAPTION_COMPOUND_WORDS`，移除样本驱动的客户/企业/数据库/工厂等业务词，只保留通用规则。
+2. 给现有 jieba 词法辅助函数增加可选 `transcript_glossary` 注入，并沿 preview、ASS、质量报告使用同一参数；不新增整句特判。
+3. 补生活、美业、知识教程三类陌生文本测试，以及 glossary 复合词不拆、反过拟合静态测试。
+4. 修复 reviewed transcript 到任务 `subtitle_segments_json` 的持久化，使 transcript identity hash 与实际烧录源一致；再跑定向测试。
+5. 仅在代码门通过后，重渲染同一 104.7 秒源片，生成新的独立证据目录；用 ffprobe、关键帧和实际页面验证，失败则如实保持 active。
+
+### 重要恢复命令
+
+```powershell
+cd C:\Users\zeng\Desktop\video
+git status --short --branch
+$env:VIDEO_EDITOR_LOCAL_ACCEPTANCE_NO_PROVIDER='1'
+python -u -c "from project.backend.app.core.deps import get_repository,get_video_editing_service; from src.services.video_editor_workflow import VideoEditorWorkflowService; repo=get_repository(); svc=VideoEditorWorkflowService(repo,get_video_editing_service(),None,None); svc._run_local_preview_export('edit-local-74e45f22bf'); print('rerendered')"
+```
+
+上述渲染命令会重新生成同一任务产物，只有在确认要继续验收时运行；不要重复发起云端任务。
+
 > 最后核验：2026-08-15 18:25（Asia/Shanghai）
 > 这是后续维护的首要交接文档。开始操作前先读根目录 `AGENTS.md`；实时 Git、服务器和公网状态与本文冲突时，以实时只读检查为准。
 

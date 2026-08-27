@@ -1,0 +1,297 @@
+[
+  {
+    "case_id": "commercial-number-wechat",
+    "category": "商业数字/产品观点",
+    "source_note": "无复杂贴图；保留原生字幕，适合盲测",
+    "route": "local_preview_export",
+    "template_id": "adaptive_talking_head_v1",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\source.mp4",
+    "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-ebbc435bb1.mp4",
+    "result_sha256": "45dc3ed1cd5ea67c112caac097445edc312100900ae1ae8285b294e4eda09cb0",
+    "ffprobe": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\ffprobe.json",
+    "contact_sheet": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\contact-sheet.jpg",
+    "timeline": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\timeline.json",
+    "director_plan": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\director-plan.json",
+    "quality_report": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\commercial-number-wechat\\quality-report.json",
+    "output_added_visual": {
+      "event_count": 0,
+      "broll_event_count": 0,
+      "vector_event_count": 0,
+      "events": []
+    },
+    "broll_provenance": [],
+    "subtitle_sync_passed": true,
+    "subtitle_timeline_passed": true,
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 0.0,
+    "visual_release_passed": false,
+    "publish_claim_allowed": false,
+    "real_broll_event_count": 0,
+    "broll_modes": {
+      "pip": 0,
+      "full": 0,
+      "vector_pip": 0
+    },
+    "real_broll_coverage_ratio": 0.0,
+    "failure_reasons": {
+      "quality_passed": false,
+      "creative_passed": false,
+      "visual_gate": false,
+      "subtitle": true
+    }
+  },
+  {
+    "case_id": "product-intro-wechat",
+    "category": "商业经营/场景观点",
+    "source_note": "无复杂贴图；保留原生字幕，适合盲测",
+    "route": "local_preview_export",
+    "template_id": "adaptive_talking_head_v1",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\source.mp4",
+    "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-3540663d2d.mp4",
+    "result_sha256": "8ace21d077d1f8ef4a29647c90a3f27c94d8fa9608794376d00488454e83743d",
+    "ffprobe": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\ffprobe.json",
+    "contact_sheet": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\contact-sheet.jpg",
+    "timeline": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\timeline.json",
+    "director_plan": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\director-plan.json",
+    "quality_report": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\product-intro-wechat\\quality-report.json",
+    "output_added_visual": {
+      "event_count": 1,
+      "broll_event_count": 1,
+      "vector_event_count": 0,
+      "events": [
+        {
+          "event_id": "broll-abc76c5b40",
+          "start": 5.38,
+          "end": 8.14,
+          "mode": "full",
+          "asset_id": "broll-abc76c5b40",
+          "source": "pexels"
+        }
+      ]
+    },
+    "broll_provenance": [
+      {
+        "event_index": 0,
+        "asset_id": "broll-abc76c5b40",
+        "mode": "full",
+        "asset_origin": "stock_video_asset",
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904820/",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "semantic_binding": null,
+        "keywords": [
+          "barbecue restaurant grill food preparation diners"
+        ],
+        "semantic_query": "barbecue restaurant grill food preparation diners",
+        "domestic_context": "international",
+        "domestic_scene": ""
+      }
+    ],
+    "subtitle_sync_passed": true,
+    "subtitle_timeline_passed": true,
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 0.0,
+    "visual_release_passed": false,
+    "publish_claim_allowed": false,
+    "real_broll_event_count": 1,
+    "broll_modes": {
+      "pip": 0,
+      "full": 1,
+      "vector_pip": 0
+    },
+    "real_broll_coverage_ratio": 0.1614,
+    "failure_reasons": {
+      "quality_passed": false,
+      "creative_passed": false,
+      "visual_gate": false,
+      "subtitle": true
+    }
+  },
+  {
+    "case_id": "abstract-viewpoint-wechat",
+    "category": "故事/普通观点",
+    "source_note": "宠物场景口播；无程序外复杂包装",
+    "route": "local_preview_export",
+    "template_id": "adaptive_talking_head_v1",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\source.mp4",
+    "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-978b66f218.mp4",
+    "result_sha256": "f63ef9686c982391fa2ad3119c2c155fabb2435e74f24b333f60912319dee77c",
+    "ffprobe": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\ffprobe.json",
+    "contact_sheet": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\contact-sheet.jpg",
+    "timeline": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\timeline.json",
+    "director_plan": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\director-plan.json",
+    "quality_report": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\abstract-viewpoint-wechat\\quality-report.json",
+    "output_added_visual": {
+      "event_count": 0,
+      "broll_event_count": 0,
+      "vector_event_count": 0,
+      "events": []
+    },
+    "broll_provenance": [],
+    "subtitle_sync_passed": false,
+    "subtitle_timeline_passed": true,
+    "word_p95_ms": 240.0,
+    "mapping_error_frames": 7.2,
+    "visual_release_passed": false,
+    "publish_claim_allowed": false,
+    "real_broll_event_count": 0,
+    "broll_modes": {
+      "pip": 0,
+      "full": 0,
+      "vector_pip": 0
+    },
+    "real_broll_coverage_ratio": 0.0,
+    "failure_reasons": {
+      "quality_passed": false,
+      "creative_passed": false,
+      "visual_gate": false,
+      "subtitle": false
+    }
+  },
+  {
+    "case_id": "knowledge-white-shirt",
+    "category": "知识/经营观点",
+    "source_note": "无复杂贴图；保留原生字幕，适合盲测",
+    "route": "local_preview_export",
+    "template_id": "adaptive_talking_head_v1",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\source.mp4",
+    "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-84f8f739b9.mp4",
+    "result_sha256": "217fa6c2996294bbecb3196689bdbc9ead6929e1866dd4c65c118d6a1f3003c3",
+    "ffprobe": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\ffprobe.json",
+    "contact_sheet": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\contact-sheet.jpg",
+    "timeline": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\timeline.json",
+    "director_plan": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\director-plan.json",
+    "quality_report": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\knowledge-white-shirt\\quality-report.json",
+    "output_added_visual": {
+      "event_count": 2,
+      "broll_event_count": 2,
+      "vector_event_count": 0,
+      "events": [
+        {
+          "event_id": "broll-a3f531bfd7",
+          "start": 2.64,
+          "end": 5.18,
+          "mode": "full",
+          "asset_id": "broll-a3f531bfd7",
+          "source": "pexels"
+        },
+        {
+          "event_id": "broll-0c880bf42b",
+          "start": 15.3,
+          "end": 17.32,
+          "mode": "full",
+          "asset_id": "broll-0c880bf42b",
+          "source": "built_in_image_generation"
+        }
+      ]
+    },
+    "broll_provenance": [
+      {
+        "event_index": 0,
+        "asset_id": "broll-a3f531bfd7",
+        "mode": "full",
+        "asset_origin": "stock_video_asset",
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "semantic_binding": null,
+        "keywords": [
+          "CRM dashboard customer database business analytics office data management"
+        ],
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "domestic_context": "international",
+        "domestic_scene": ""
+      },
+      {
+        "event_index": 1,
+        "asset_id": "broll-0c880bf42b",
+        "mode": "full",
+        "asset_origin": "generated_image_asset",
+        "provider": "built_in_image_generation",
+        "license_name": "",
+        "license_url": "",
+        "source_url": "",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": false,
+        "semantic_binding": "经营数据与分析",
+        "keywords": [
+          "数据",
+          "分析",
+          "经营",
+          "报表",
+          "增长",
+          "指标"
+        ],
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "domestic_context": "unknown",
+        "domestic_scene": ""
+      }
+    ],
+    "subtitle_sync_passed": false,
+    "subtitle_timeline_passed": true,
+    "word_p95_ms": 180.0,
+    "mapping_error_frames": 5.4,
+    "visual_release_passed": false,
+    "publish_claim_allowed": false,
+    "real_broll_event_count": 1,
+    "broll_modes": {
+      "pip": 0,
+      "full": 2,
+      "vector_pip": 0
+    },
+    "real_broll_coverage_ratio": 0.2338,
+    "failure_reasons": {
+      "quality_passed": false,
+      "creative_passed": false,
+      "visual_gate": false,
+      "subtitle": false
+    }
+  },
+  {
+    "case_id": "tutorial-original",
+    "category": "教程/流程",
+    "source_note": "淘汰为程序新增视觉证据：原片自带猫咪插片",
+    "route": "local_preview_export",
+    "template_id": "adaptive_talking_head_v1",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\source.mp4",
+    "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-916a59486e.mp4",
+    "result_sha256": "620b2bf7fecd31a5f9d00c98725cf733b760a3cb635888e4c364438c4b423e1c",
+    "ffprobe": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\ffprobe.json",
+    "contact_sheet": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\contact-sheet.jpg",
+    "timeline": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\timeline.json",
+    "director_plan": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\director-plan.json",
+    "quality_report": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\5-samples-20250825\\tutorial-original\\quality-report.json",
+    "output_added_visual": {
+      "event_count": 0,
+      "broll_event_count": 0,
+      "vector_event_count": 0,
+      "events": []
+    },
+    "broll_provenance": [],
+    "subtitle_sync_passed": false,
+    "subtitle_timeline_passed": true,
+    "word_p95_ms": 160.0,
+    "mapping_error_frames": 4.8,
+    "visual_release_passed": false,
+    "publish_claim_allowed": false,
+    "real_broll_event_count": 0,
+    "broll_modes": {
+      "pip": 0,
+      "full": 0,
+      "vector_pip": 0
+    },
+    "real_broll_coverage_ratio": 0.0,
+    "failure_reasons": {
+      "quality_passed": false,
+      "creative_passed": false,
+      "visual_gate": false,
+      "subtitle": false
+    }
+  }
+]

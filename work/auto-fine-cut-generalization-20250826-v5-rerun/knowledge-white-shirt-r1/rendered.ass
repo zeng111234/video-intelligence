@@ -1,0 +1,28 @@
+﻿[Script Info]
+Title: VideoInsight business talking-head overlay
+ScriptType: v4.00+
+PlayResX: 720
+PlayResY: 1280
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Title,Source Han Serif CN Heavy,44,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,1,7,30,30,84,1
+Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: Caption,Source Han Serif CN Heavy,52,&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0.12,0,1,1,1,2,58,58,170,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.00,0:00:01.54,Caption,,0,0,0,,{\fad(120,0)}你公司的客户资源是
+Dialogue: 0,0:00:01.54,0:00:02.64,Caption,,0,0,0,,{\fad(120,0)}掌握在业务员的手里
+Dialogue: 0,0:00:02.64,0:00:03.90,Caption,,0,0,0,,{\fad(120,0)}还是沉淀
+Dialogue: 0,0:00:03.90,0:00:05.18,Caption,,0,0,0,,{\fad(120,0)}在咱们公司的数据库
+Dialogue: 0,0:00:05.18,0:00:06.82,Caption,,0,0,0,,{\fad(120,0)}业务员他一旦离职
+Dialogue: 0,0:00:06.82,0:00:08.36,Caption,,0,0,0,,{\fad(120,0)}你会发现聊天记录没了
+Dialogue: 0,0:00:08.36,0:00:09.40,Caption,,0,0,0,,{\fad(120,0)}客户的关系也
+Dialogue: 0,0:00:09.40,0:00:10.52,Caption,,0,0,0,,{\fad(120,0)}就跟着断掉了
+Dialogue: 0,0:00:10.52,0:00:11.90,Caption,,0,0,0,,{\fad(120,0)}企业真正需要的
+Dialogue: 0,0:00:11.90,0:00:13.78,Caption,,0,0,0,,{\fad(120,0)}不只是业务员个人维护
+Dialogue: 0,0:00:13.78,0:00:15.30,Caption,,0,0,0,,{\fad(120,0)}而是一套可以沉淀用户
+Dialogue: 0,0:00:15.30,0:00:17.32,Caption,,0,0,0,,{\fad(120,0)}持续触达的营销机制
+Dialogue: 0,0:00:17.32,0:00:18.30,Caption,,0,0,0,,{\fad(120,0)}顺应八平我们
+Dialogue: 0,0:00:18.30,0:00:19.46,Caption,,0,0,0,,{\fad(120,0)}可以配合我们企业的

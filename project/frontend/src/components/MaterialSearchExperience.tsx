@@ -1,5 +1,5 @@
-import { CheckCircleFilled, ClockCircleOutlined, LoadingOutlined, PlayCircleOutlined } from "@ant-design/icons";
-import { Button } from "antd";
+import { CheckCircleFilled, ClockCircleOutlined, CloseCircleFilled, LoadingOutlined, PlayCircleOutlined } from "@ant-design/icons";
+import { Alert } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { SiBilibili, SiKuaishou, SiTiktok, SiXiaohongshu } from "react-icons/si";
 
@@ -33,7 +33,11 @@ function formatElapsed(startedAt: number) {
 }
 
 function runCandidates(run: CrawlerPlatformRun) {
-  const items = [...(run.candidates || []), ...(run.low_incremental_candidates || [])];
+  const items = [
+    ...(run.candidates || []),
+    ...(run.reference_candidates || []),
+    ...(run.low_incremental_candidates || []),
+  ];
   const seen = new Set<string>();
   return items.filter((candidate) => {
     if (seen.has(candidate.video_id)) return false;
@@ -52,6 +56,18 @@ interface MaterialSearchExperienceProps {
   platforms: MaterialSearchPlatform[];
   startedAt: number;
   batch?: CrawlerBatchResponse | null;
+  complete?: boolean;
+  progress?: {
+    progress_stage?: string;
+    progress_platform?: string | null;
+    progress_message?: string | null;
+    scanned_count?: number;
+    parsed_count?: number;
+    retained_count?: number;
+  };
+  targetCount?: number;
+  progressError?: string | null;
+  onCandidateClick?: (candidate: CrawlerCandidateResult) => void;
   onRevealComplete: (batch: CrawlerBatchResponse) => void;
   compact?: boolean;
 }
@@ -61,12 +77,17 @@ export default function MaterialSearchExperience({
   platforms,
   startedAt,
   batch,
+  complete = true,
+  progress,
+  targetCount = 30,
   onRevealComplete,
+  progressError = null,
+  onCandidateClick,
   compact = false,
 }: MaterialSearchExperienceProps) {
-  const [visibleCount, setVisibleCount] = useState(0);
   const [elapsed, setElapsed] = useState(() => formatElapsed(startedAt));
   const [completedBatchId, setCompletedBatchId] = useState<string | null>(null);
+  const [revealedIds, setRevealedIds] = useState<string[]>([]);
 
   const entries = useMemo<CandidateEntry[]>(() => {
     if (!batch) return [];
@@ -78,6 +99,15 @@ export default function MaterialSearchExperience({
       }));
     });
   }, [batch, platforms]);
+  const primaryEntries = useMemo(
+    () => entries.filter(({ candidate }) => candidate.selection_tier !== "reserve"),
+    [entries],
+  );
+  const referenceEntries = useMemo(
+    () => entries.filter(({ candidate }) => candidate.selection_tier === "reserve"),
+    [entries],
+  );
+  const allEntriesRevealed = entries.every(({ candidate }) => revealedIds.includes(candidate.video_id));
 
   useEffect(() => {
     const updateElapsed = () => setElapsed(formatElapsed(startedAt));
@@ -87,43 +117,55 @@ export default function MaterialSearchExperience({
   }, [startedAt]);
 
   useEffect(() => {
-    setVisibleCount(0);
     setCompletedBatchId(null);
+    setRevealedIds([]);
   }, [batch?.batch_id]);
 
   useEffect(() => {
-    if (!batch || visibleCount >= entries.length) return undefined;
-    const revealDelay = Math.max(30, Math.min(120, Math.floor(800 / Math.max(1, entries.length))));
-    const timer = window.setTimeout(
-      () => setVisibleCount((current) => Math.min(entries.length, current + 1)),
-      visibleCount === 0 ? 100 : revealDelay,
-    );
-    return () => window.clearTimeout(timer);
-  }, [batch, entries.length, visibleCount]);
-
-  useEffect(() => {
-    if (!batch || completedBatchId === batch.batch_id) return undefined;
-    if (entries.length > 0 && visibleCount < entries.length) return undefined;
-    const timer = window.setTimeout(() => {
-      setCompletedBatchId(batch.batch_id);
-      onRevealComplete(batch);
-    }, entries.length ? 120 : 260);
-    return () => window.clearTimeout(timer);
-  }, [batch, completedBatchId, entries.length, onRevealComplete, visibleCount]);
-
-  const visibleEntries = entries.slice(0, visibleCount);
-  const visibleByPlatform = new Map<MaterialSearchPlatform, number>();
-  visibleEntries.forEach((entry) => {
-    visibleByPlatform.set(entry.platform, (visibleByPlatform.get(entry.platform) || 0) + 1);
-  });
-
-  const finishNow = () => {
-    if (!batch || completedBatchId === batch.batch_id) return;
-    setVisibleCount(entries.length);
+    if (!batch || !complete || !allEntriesRevealed || completedBatchId === batch.batch_id) return undefined;
     setCompletedBatchId(batch.batch_id);
     onRevealComplete(batch);
-  };
+    return undefined;
+  }, [allEntriesRevealed, batch, complete, completedBatchId, onRevealComplete]);
 
+  useEffect(() => {
+    const currentIds = new Set(entries.map(({ candidate }) => candidate.video_id));
+    setRevealedIds((previous) => {
+      const filtered = previous.filter((id) => currentIds.has(id));
+      return filtered.length === previous.length ? previous : filtered;
+    });
+  }, [entries]);
+
+  useEffect(() => {
+    const unrevealed = entries.filter(({ candidate }) => !revealedIds.includes(candidate.video_id));
+    if (unrevealed.length === 0) return undefined;
+    // 首批 ≤8 条立刻整批入场, 避免按钮点完后 1.8 秒还看不到第一张卡;
+    // 超过 8 条时, 先入前 8 条整批, 之后保持 180ms 节奏逐条追加.
+    if (revealedIds.length === 0 && unrevealed.length <= 8) {
+      setRevealedIds((previous) => [
+        ...previous,
+        ...unrevealed.map(({ candidate }) => candidate.video_id),
+      ]);
+      return undefined;
+    }
+    const nextEntry = unrevealed[0];
+    const timer = window.setTimeout(() => {
+      setRevealedIds((previous) => (
+        previous.includes(nextEntry.candidate.video_id)
+          ? previous
+          : [...previous, nextEntry.candidate.video_id]
+      ));
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [entries, revealedIds]);
+
+  const visibleEntries = entries.filter(({ candidate }) => revealedIds.includes(candidate.video_id));
+  const scannedCount = progress?.scanned_count || 0;
+  const parsedCount = progress?.parsed_count || 0;
+  const retainedCount = progress?.retained_count ?? primaryEntries.length;
+  const activePlatformLabel = progress?.progress_platform
+    ? PLATFORM_LABELS[progress.progress_platform as MaterialSearchPlatform] || progress.progress_platform
+    : null;
   return (
     <section
       className={`material-search-experience${compact ? " compact" : ""}`}
@@ -137,39 +179,55 @@ export default function MaterialSearchExperience({
           <h3>正在为“{keyword}”寻找视频</h3>
           <p>
             {batch
-              ? "平台已经返回，真实视频正在逐条进入候选区。"
-              : `正在从${platforms.map((platform) => PLATFORM_LABELS[platform]).join("、")}找素材，正在等待平台返回结果。平台未返回时暂不显示完成进度；返回后真实视频会逐条进入。`}
+              ? complete
+                ? "平台已经返回，真实视频正在逐条进入候选区。"
+                : (progress?.progress_message || "已显示已完成的平台结果，其他平台仍在继续扫描。")
+              : `正在从${platforms.map((platform) => PLATFORM_LABELS[platform]).join("、")}找素材，结果会在扫描到合格素材时逐条出现。`}
           </p>
         </div>
         <span className="material-search-elapsed"><ClockCircleOutlined /> 已等待 {elapsed}</span>
       </header>
 
+      {progress ? (
+        <div className="material-search-progress-counts">
+          {activePlatformLabel ? `当前平台：${activePlatformLabel} · ` : ""}
+          {progress.progress_message || "正在扫描平台结果。"} · 已扫描 {scannedCount} 条 · 已解析 {parsedCount} 条 · 已找到 {retainedCount}/{targetCount} 条
+        </div>
+      ) : null}
+      {progressError && (
+        <Alert
+          type="info"
+          showIcon
+          message={progressError}
+          style={{ marginBottom: 12 }}
+        />
+      )}
+
       <div className="material-platform-lanes">
         {platforms.map((platform) => {
           const run = batch?.platform_runs.find((item) => item.platform === platform);
           const platformEntries = entries.filter((entry) => entry.platform === platform);
-          const platformVisible = visibleByPlatform.get(platform) || 0;
           const returned = run?.returned_count ?? platformEntries.length;
           const failed = Boolean(
             batch && (!run || ((run.status === "failed" || run.error) && returned === 0)),
           );
-          const entering = Boolean(batch && platformVisible < platformEntries.length);
-          const complete = Boolean(batch && run && !failed && !entering);
+          const entering = entries.some(({ candidate }) => !revealedIds.includes(candidate.video_id));
+          const platformComplete = Boolean(complete && batch && run && !failed && !entering);
           const recent = visibleEntries.filter((entry) => entry.platform === platform).slice(-2);
           return (
             <article className={`material-platform-lane platform-${platform}`} key={platform}>
               <div className="material-platform-lane-heading">
                 <span className="material-platform-logo">{platformIcon(platform)}</span>
                 <strong>{PLATFORM_LABELS[platform]}</strong>
-                <span className={`material-platform-run-state${failed ? " failed" : complete ? " complete" : ""}`}>
+                <span className={`material-platform-run-state${failed ? " failed" : platformComplete ? " complete" : ""}`}>
                   {failed ? (
-                    "未完成"
-                  ) : complete ? (
-                    <><CheckCircleFilled /> {returned > 0 ? `已找到 ${returned} 条` : "本次未找到"}</>
+                    <><CloseCircleFilled /> 失败 · 可稍后重试</>
+                  ) : platformComplete ? (
+                    <><CheckCircleFilled /> {returned > 0 ? `已返回 ${returned} 条` : "本次未找到候选"}</>
                   ) : batch ? (
-                    <><LoadingOutlined spin /> 视频进入中</>
+                    <><LoadingOutlined spin /> 抓取中 · {elapsed}</>
                   ) : (
-                    <><LoadingOutlined spin /> 等待返回</>
+                    <><LoadingOutlined spin /> 等待启动 · {elapsed}</>
                   )}
                 </span>
               </div>
@@ -185,7 +243,13 @@ export default function MaterialSearchExperience({
                 )) : (
                   <div className="material-lane-waiting">
                     <span className="material-lane-pulse" />
-                    <span>{failed ? "可稍后检查平台连接" : "正在等待平台页面响应"}</span>
+                    <span>
+                      {failed
+                        ? "该平台本次未能完成，可稍后重试"
+                        : activePlatformLabel === PLATFORM_LABELS[platform]
+                          ? `${elapsed} 抓取中，首批结果通常 30 秒内到达`
+                          : `${elapsed} 等待其他平台`}
+                    </span>
                   </div>
                 )}
               </div>
@@ -198,17 +262,18 @@ export default function MaterialSearchExperience({
         <div className="material-unified-heading">
           <div>
             <strong>候选素材正在汇入</strong>
-            <span>{visibleCount ? ` 已进入 ${visibleCount} 条` : " 平台返回后从这里出现"}</span>
+            <span>{entries.length ? ` 已进入 ${primaryEntries.length} 条高相关素材` : " 平台返回后从这里出现"}</span>
           </div>
-          {batch && visibleCount > 0 && visibleCount < entries.length && (
-            <Button type="primary" onClick={finishNow}>先看已找到的 {visibleCount} 条</Button>
-          )}
+          <span>{` 已找到 ${progress?.retained_count ?? primaryEntries.length} 条`}</span>
+          <span>{` · 高相关 ${primaryEntries.length} 条 · 待确认 ${referenceEntries.length} 条`}</span>
         </div>
         <div className="material-unified-items">
-          {visibleEntries.slice(-4).map(({ candidate, platform }) => (
-            <div
+          {visibleEntries.map(({ candidate, platform }) => (
+            <button
+              type="button"
               className="material-unified-item"
               key={candidate.video_id}
+              onClick={() => onCandidateClick?.(candidate)}
             >
               <span className="material-unified-platform">{platformIcon(platform)}</span>
               <span>
@@ -216,11 +281,11 @@ export default function MaterialSearchExperience({
                 <small>{PLATFORM_LABELS[platform]} · {candidate.author_name || "作者未返回"}</small>
               </span>
               <CheckCircleFilled className="material-unified-check" />
-            </div>
+            </button>
           ))}
           {!visibleEntries.length && (
             <div className="material-unified-empty">
-              <LoadingOutlined spin /> 正在守候第一条真实视频
+              <LoadingOutlined spin /> 已等待 {elapsed}，首批结果通常在 30 秒内出现
             </div>
           )}
         </div>

@@ -1,0 +1,33 @@
+{
+  "page_url": "http://localhost:1001/video-editor",
+  "history_open_count": 18,
+  "selected_batch": "edit-batch-d7f8b08614c3",
+  "selected_task": "edit-local-8c613466bd",
+  "evidence": {
+    "status": 200,
+    "batch_status": "awaiting_output_confirmation",
+    "item_status": "awaiting_output_confirmation",
+    "task_id": "edit-local-8c613466bd",
+    "stage": "本机成片已生成，可直接下载",
+    "download_url": "/api/v1/video-editor/jobs/edit-local-8c613466bd/download",
+    "quality_passed": false,
+    "media_integrity_passed": true,
+    "subtitle_sync_passed": true,
+    "visual_release_passed": false,
+    "download": {
+      "status": 200,
+      "content_type": "video/mp4",
+      "bytes": 10780371
+    }
+  },
+  "videos": [
+    {
+      "src": "/api/v1/video-editor/sources/upload:upload-a88ae01012/media",
+      "duration": 104.721,
+      "readyState": 4
+    }
+  ],
+  "console_errors": [],
+  "screenshot": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260824-short-real\\page-acceptance\\video-editor-final-selected.png",
+  "text": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260824-short-real\\page-acceptance\\page-text-final.txt"
+}

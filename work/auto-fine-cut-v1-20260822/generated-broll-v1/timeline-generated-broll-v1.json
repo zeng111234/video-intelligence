@@ -1,0 +1,283 @@
+{
+  "timeline_version": "generated-broll-timeline-v1",
+  "source_path": "C:\\Users\\zeng\\Videos\\大树老师无剪辑素材7.13版.mp4",
+  "render_input": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\assembled-shot-plan.mp4",
+  "duration_seconds": 36.16,
+  "subtitle_preview": {
+    "title": {
+      "lines": [
+        "大树老师商业口播"
+      ],
+      "start": 0,
+      "end": 2.5
+    },
+    "cues": [
+      {
+        "start": 0.0,
+        "end": 1.42,
+        "lines": [
+          "你公司的客户资源"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 0
+      },
+      {
+        "start": 1.42,
+        "end": 3.14,
+        "lines": [
+          "是掌握在业务员的手里呢"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 0
+      },
+      {
+        "start": 3.14,
+        "end": 5.94,
+        "lines": [
+          "还是沉淀在咱们",
+          "公司的数据库"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 0
+      },
+      {
+        "start": 6.12,
+        "end": 7.756,
+        "lines": [
+          "业务员他一旦离职"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 1
+      },
+      {
+        "start": 7.756,
+        "end": 9.8,
+        "lines": [
+          "你会发现聊天记录没了"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 1
+      },
+      {
+        "start": 9.8,
+        "end": 12.2,
+        "lines": [
+          "客户关系也就跟着断掉了"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 1
+      },
+      {
+        "start": 12.92,
+        "end": 14.98,
+        "lines": [
+          "企业真正需要的不只是"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 2
+      },
+      {
+        "start": 14.98,
+        "end": 16.4,
+        "lines": [
+          "业务员个人维护"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 2
+      },
+      {
+        "start": 16.4,
+        "end": 18.16,
+        "lines": [
+          "而是一套可以沉淀用户"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 2
+      },
+      {
+        "start": 18.16,
+        "end": 20.46,
+        "lines": [
+          "持续触达的营销机制"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 2
+      },
+      {
+        "start": 20.8,
+        "end": 21.964,
+        "lines": [
+          "数影霸屏"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 21.964,
+        "end": 24.291,
+        "lines": [
+          "我们可以配合我们企业"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 24.291,
+        "end": 26.153,
+        "lines": [
+          "整个客户的数据库"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 26.153,
+        "end": 28.553,
+        "lines": [
+          "对合规客户呢这些人群呢"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 28.553,
+        "end": 30.88,
+        "lines": [
+          "进行持续的精准的曝光"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 30.88,
+        "end": 33.28,
+        "lines": [
+          "让客户认识的不只是",
+          "某个业务员"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      },
+      {
+        "start": 33.28,
+        "end": 35.68,
+        "lines": [
+          "更是你整个工厂品牌产品"
+        ],
+        "emphasis_range": null,
+        "emphasis_style": null,
+        "source_segment_index": 3
+      }
+    ],
+    "caption_group_source": "deterministic_fallback",
+    "phrase_timing_source": "word_timestamps"
+  },
+  "word_timestamps_available": true,
+  "word_timestamp_mapping": {
+    "matched": true,
+    "matched_segment_count": 4,
+    "total_segment_count": 4,
+    "normalized_substitutions": {
+      "以->你": 1,
+      "顺应八平->数影霸屏": 1
+    },
+    "source": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\asr\\assembled-word-timestamps-large-v3-turbo.json",
+    "source_sha256": "eae1cfed4b7be988309f3dd37a70146510ff0ca58ed4c3880e351559d3104f89",
+    "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "word_count": 162
+  },
+  "visual_events": [
+    {
+      "event_id": "generated-visual-01",
+      "asset_id": "generated-crm-database-01",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "客户数据库",
+      "start": 2.8,
+      "end": 6.1,
+      "mode": "fullscreen",
+      "motion": "ken_burns_slow_zoom_in",
+      "subtitle_layer": "after_visual_overlay"
+    },
+    {
+      "event_id": "generated-visual-02",
+      "asset_id": "generated-customer-relationship-02",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "客户关系沉淀",
+      "start": 9.3,
+      "end": 13.5,
+      "mode": "pip",
+      "motion": "ken_burns_slow_pan",
+      "subtitle_layer": "after_visual_overlay",
+      "pip_geometry": {
+        "safe": true,
+        "bbox": {
+          "left": 480,
+          "top": 787,
+          "right": 696,
+          "bottom": 1005,
+          "width": 216,
+          "height": 218,
+          "normalized": {
+            "left": 0.6667,
+            "top": 0.6148,
+            "right": 0.9667,
+            "bottom": 0.7852
+          }
+        },
+        "face_safe_bbox": {
+          "left": 86,
+          "top": 128,
+          "right": 648,
+          "bottom": 768
+        },
+        "subtitle_bbox": {
+          "left": 36,
+          "top": 1011,
+          "right": 684,
+          "bottom": 1216
+        },
+        "intersects_face_safe_bbox": false,
+        "intersects_subtitle_bbox": false
+      },
+      "rendered": true
+    },
+    {
+      "event_id": "generated-visual-03",
+      "asset_id": "generated-factory-products-03",
+      "asset_origin": "generated_image_asset",
+      "semantic_binding": "工厂品牌产品",
+      "start": 27.5,
+      "end": 31.5,
+      "mode": "fullscreen",
+      "motion": "ken_burns_slow_zoom_out",
+      "subtitle_layer": "after_visual_overlay"
+    }
+  ],
+  "subtitle_layer_order": [
+    "a_roll_safe_fit",
+    "generated_visual_events",
+    "subtitles_last"
+  ],
+  "degradation": {
+    "mode": "generated_image_local_acceptance",
+    "is_stock_broll": false,
+    "publish_claim_allowed": false,
+    "message": "生成图仅用于本地验收，未声明免费素材库或发布授权。"
+  }
+}

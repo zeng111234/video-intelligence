@@ -1,0 +1,145 @@
+{
+  "batch_id": "edit-batch-8f50dd7285d2",
+  "item_id": "edit-item-7c9f98af435a",
+  "task_id": "edit-local-1010d91e64",
+  "template_id": "pain_point_solution",
+  "template_version": "talking-head-release-v1.0",
+  "shot_plan": {
+    "template_id": "pain_point_solution",
+    "template_version": "talking-head-release-v1.0",
+    "shot_count": 10,
+    "degradation": {
+      "mode": "generated_image_broll",
+      "is_broll": true,
+      "is_stock_broll": false,
+      "message": "已绑定生成图，仅用于本地验收，不代表免费素材库或发布授权。"
+    }
+  },
+  "release_brolls": [
+    {
+      "shot_id": "shot-02",
+      "asset_id": "broll-00366af2e1",
+      "start": 2.6,
+      "end": 6.16,
+      "mode": "pip"
+    },
+    {
+      "shot_id": "shot-05",
+      "asset_id": "broll-9400811e11",
+      "start": 14.36,
+      "end": 16.96,
+      "mode": "full"
+    },
+    {
+      "shot_id": "shot-08",
+      "asset_id": "broll-aa1b944e2d",
+      "start": 24.56,
+      "end": 28.16,
+      "mode": "full"
+    }
+  ],
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 5,
+    "duplicate_count": 0,
+    "checks": {
+      "monotonic_and_in_bounds": true,
+      "no_duplicate_cues": true
+    },
+    "phrase_cue_count": 17,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "max_phrase_duration_seconds": 2.4,
+    "experience_gate": {
+      "passed": true,
+      "checks": {
+        "min_duration": true,
+        "max_duration": true,
+        "one_line": true,
+        "no_fragment_cues": true,
+        "cue_count_per_sentence": true
+      },
+      "min_duration_seconds": 1.113,
+      "max_duration_seconds": 2.4,
+      "one_line_ratio": 0.882,
+      "minimum_dwell_seconds": 0.9,
+      "maximum_dwell_seconds": 2.4,
+      "short_source_exception_allowed": true,
+      "cue_count_by_source_segment": {
+        "0": 3,
+        "1": 3,
+        "2": 4,
+        "3": 4,
+        "4": 3
+      },
+      "cue_count_gate_by_source_segment": {
+        "0": true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true
+      }
+    }
+  },
+  "alignment": {
+    "method": "ffprobe_stream_start_end_pts",
+    "start_drift_ms": 0.0,
+    "end_drift_ms": 0.0,
+    "max_drift_ms": 0.0,
+    "threshold_ms": 67.0,
+    "passed": true
+  },
+  "pip_geometry": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-00366af2e1",
+      "safe": true,
+      "rendered": true,
+      "reason": "lower_side_safe_zone",
+      "bbox": {
+        "left": 480,
+        "top": 787,
+        "right": 696,
+        "bottom": 1005,
+        "width": 216,
+        "height": 218,
+        "normalized": {
+          "left": 0.6667,
+          "top": 0.6148,
+          "right": 0.9667,
+          "bottom": 0.7852
+        }
+      },
+      "face_safe_bbox": {
+        "left": 86,
+        "top": 128,
+        "right": 648,
+        "bottom": 768
+      },
+      "subtitle_bbox": {
+        "left": 36,
+        "top": 1011,
+        "right": 684,
+        "bottom": 1216
+      },
+      "intersects_face_safe_bbox": false,
+      "intersects_subtitle_bbox": false
+    }
+  ],
+  "broll_modes": {
+    "pip": 1,
+    "full": 2,
+    "vector_pip": 2
+  },
+  "broll_coverage_ratio": 0.3098,
+  "source_kept_ranges": [
+    {
+      "start": 30.3,
+      "end": 36.46
+    },
+    {
+      "start": 0.28,
+      "end": 30.3
+    }
+  ]
+}

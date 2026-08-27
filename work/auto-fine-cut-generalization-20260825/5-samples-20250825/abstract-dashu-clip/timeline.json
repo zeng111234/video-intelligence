@@ -1,0 +1,1160 @@
+{
+  "remove_ranges": [],
+  "shot_plan": {
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 2,
+        "knowledge_howto": 0,
+        "story_resonance": 0
+      },
+      "reason": "问题/风险词与疑问句占比最高，适合先抛痛点再给方案。",
+      "legacy_template_id": "pain_point_solution",
+      "compatibility_alias": "pain_point_solution",
+      "override_available": true
+    },
+    "content_blocks": [
+      "hook",
+      "consequence",
+      "solution",
+      "conclusion"
+    ],
+    "hook_source": {
+      "source_start": 0.0,
+      "source_end": 0.98,
+      "text": "玩节流的兄弟们"
+    },
+    "retained_ranges": [
+      {
+        "start": 0.0,
+        "end": 0.98,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 0.98,
+        "end": 3.1,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 3.1,
+        "end": 5.78,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 5.78,
+        "end": 7.86,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 7.86,
+        "end": 9.36,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 9.36,
+        "end": 11.06,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 11.06,
+        "end": 12.64,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 12.64,
+        "end": 13.72,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 13.72,
+        "end": 15.52,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 15.52,
+        "end": 16.82,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 16.82,
+        "end": 19.64,
+        "reason": "按原时间轴保留"
+      }
+    ],
+    "reordered_ranges": [
+      {
+        "start": 0.0,
+        "end": 0.98,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 0.98,
+        "end": 3.1,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 3.1,
+        "end": 5.78,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 5.78,
+        "end": 7.86,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 7.86,
+        "end": 9.36,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 9.36,
+        "end": 11.06,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 11.06,
+        "end": 12.64,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 12.64,
+        "end": 13.72,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 13.72,
+        "end": 15.52,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 15.52,
+        "end": 16.82,
+        "reason": "按原时间轴保留"
+      },
+      {
+        "start": 16.82,
+        "end": 19.64,
+        "reason": "按原时间轴保留"
+      }
+    ],
+    "deleted_ranges": [],
+    "shots": [
+      {
+        "shot_id": "shot-01",
+        "source_start": 0.0,
+        "source_end": 0.98,
+        "timeline_start": 0.0,
+        "timeline_end": 0.98,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "hard_cut",
+        "visual_emphasis": "hook_underliner",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 0.98,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-02",
+        "source_start": 0.98,
+        "source_end": 3.1,
+        "timeline_start": 0.98,
+        "timeline_end": 3.1,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.12,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-03",
+        "source_start": 3.1,
+        "source_end": 5.78,
+        "timeline_start": 3.1,
+        "timeline_end": 5.78,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.68,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-04",
+        "source_start": 5.78,
+        "source_end": 7.86,
+        "timeline_start": 5.78,
+        "timeline_end": 7.86,
+        "role": "B-roll",
+        "asset_id": "broll-a3f531bfd7",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 2.08,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-05",
+        "source_start": 7.86,
+        "source_end": 9.36,
+        "timeline_start": 7.86,
+        "timeline_end": 9.36,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.5,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-06",
+        "source_start": 9.36,
+        "source_end": 11.06,
+        "timeline_start": 9.36,
+        "timeline_end": 11.06,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.7,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-07",
+        "source_start": 11.06,
+        "source_end": 12.64,
+        "timeline_start": 11.06,
+        "timeline_end": 12.64,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.58,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-08",
+        "source_start": 12.64,
+        "source_end": 13.72,
+        "timeline_start": 12.64,
+        "timeline_end": 13.72,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.08,
+        "rhythm_seconds": 4.6,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-09",
+        "source_start": 13.72,
+        "source_end": 15.52,
+        "timeline_start": 13.72,
+        "timeline_end": 15.52,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.8,
+        "rhythm_seconds": 3.0,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-10",
+        "source_start": 15.52,
+        "source_end": 16.82,
+        "timeline_start": 15.52,
+        "timeline_end": 16.82,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 1.3,
+        "rhythm_seconds": 4.2,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-11",
+        "source_start": 16.82,
+        "source_end": 19.64,
+        "timeline_start": 16.82,
+        "timeline_end": 19.64,
+        "role": "B-roll",
+        "asset_id": "broll-0c880bf42b",
+        "asset_source": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 2.82,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      }
+    ],
+    "assets": [
+      {
+        "asset_id": "broll-a3f531bfd7",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "CRM dashboard customer database business analytics office data management"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 82,
+        "match_reason": [
+          "concrete_visual_intersection:office_data",
+          "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": null,
+        "provider_attempts": 0,
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-0c880bf42b",
+        "source": "built_in_image_generation",
+        "source_provider": "built_in_image_generation",
+        "asset_origin": "generated_image_asset",
+        "authorization_status": "generated_for_local_acceptance",
+        "publish_licensed": false,
+        "source_url": "",
+        "license_name": "",
+        "license_url": "",
+        "semantic_binding": "经营数据与分析",
+        "keywords": [
+          "数据",
+          "分析",
+          "经营",
+          "报表",
+          "增长",
+          "指标"
+        ],
+        "domestic_context": "unknown",
+        "domestic_scene": "",
+        "visual_asset_priority": 3,
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "search_query": null,
+        "match_type": "precise",
+        "match_score": 112,
+        "match_reason": [
+          "concrete_visual_intersection:database,office_data"
+        ],
+        "visual_intent": null,
+        "visual_type": null,
+        "manifest_role": "pip_broll",
+        "provider_attempts": 1,
+        "mode": "full"
+      }
+    ],
+    "subtitle": {
+      "style_id": "adaptive_white_base",
+      "hook_style_id": "adaptive_original_quote",
+      "style_tokens": {
+        "subtitle_style_id": "adaptive_white_base",
+        "hook_style_id": "adaptive_original_quote",
+        "transition_policy": "semantic_action_adaptive",
+        "insert_policy": "semantic_peak_broll_1_to_3",
+        "bgm_profile": "commercial_low_intrusion",
+        "entry_motion": "fade_in_120ms",
+        "emphasis_style": "semantic_local_color",
+        "palette_id": "neutral_tech_business_v1",
+        "visual_intents": [
+          "speaker",
+          "evidence_broll",
+          "data_chart",
+          "concept_card",
+          "speaker_pip"
+        ]
+      },
+      "max_lines": 1,
+      "safe_area": "lower_third_without_face",
+      "visual_emphasis": "sparse_keyword_only"
+    },
+    "transition_policy": "semantic_action_adaptive",
+    "insert_policy": "semantic_peak_broll_1_to_3",
+    "bgm_profile": "commercial_low_intrusion",
+    "bgm": {
+      "track_id": "bgm-a40b291dc5b1",
+      "title": "tech-city-local-acceptance-confirmed",
+      "source": "manual",
+      "authorization_status": "confirmed",
+      "auto_eligible": true,
+      "start_seconds": 0.0,
+      "energy_segments": [
+        {
+          "start": 0.0,
+          "end": 19.64,
+          "energy": "克制"
+        }
+      ],
+      "ducking": {
+        "enabled": true,
+        "voice_priority": true,
+        "target_db": -24,
+        "attack_ms": 20,
+        "release_ms": 450
+      },
+      "fade": {
+        "in_seconds": 0.5,
+        "out_seconds": 0.8
+      }
+    },
+    "degradation": {
+      "mode": "generated_image_broll",
+      "is_broll": true,
+      "is_stock_broll": true,
+      "message": "已绑定生成图，仅用于本地验收，不代表免费素材库或发布授权。"
+    },
+    "source_duration_seconds": 20.0,
+    "timeline_duration_seconds": 19.64,
+    "title": "玩节流的兄弟们",
+    "visual_density": "rich"
+  },
+  "director_plan": {
+    "plan_version": "director-plan-v3.0",
+    "target_platform": "douyin",
+    "template_id": "adaptive_talking_head_v1",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 2,
+        "knowledge_howto": 0,
+        "story_resonance": 0
+      },
+      "reason": "问题/风险词与疑问句占比最高，适合先抛痛点再给方案。",
+      "legacy_template_id": "pain_point_solution",
+      "compatibility_alias": "pain_point_solution",
+      "override_available": true
+    },
+    "hook": {
+      "source": {
+        "source_start": 16.82,
+        "source_end": 19.64,
+        "text": "让AI去帮你找那些刚刚评论的客户就可以了"
+      },
+      "audio_strategy": "extract_original_phrase",
+      "visual_treatment": "hook_statement",
+      "must_appear_once": true
+    },
+    "scenes": [
+      {
+        "scene_id": "scene-01",
+        "purpose": "hook",
+        "source_start": 16.82,
+        "source_end": 19.64,
+        "timeline_start": 0.0,
+        "timeline_end": 2.82,
+        "duration_seconds": 2.82,
+        "text": "让AI去帮你找那些刚刚评论的客户就可以了",
+        "role": "A-roll",
+        "visual_type": "hook_statement",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "underline_and_soft_scale",
+        "transition": "hard_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-02",
+        "purpose": "spoken_point",
+        "source_start": 0.0,
+        "source_end": 4.2,
+        "timeline_start": 2.82,
+        "timeline_end": 7.02,
+        "duration_seconds": 4.2,
+        "text": "玩节流的兄弟们",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-03",
+        "purpose": "spoken_point",
+        "source_start": 4.2,
+        "source_end": 7.4,
+        "timeline_start": 7.02,
+        "timeline_end": 10.22,
+        "duration_seconds": 3.2,
+        "text": "像以前我们去节流都是找同行的作品",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-04",
+        "purpose": "supporting_visual",
+        "source_start": 7.4,
+        "source_end": 12.0,
+        "timeline_start": 10.22,
+        "timeline_end": 14.82,
+        "duration_seconds": 4.6,
+        "text": "看到同行评论区有咨询的客户",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "visual_intent": "evidence_broll",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-a3f531bfd7"
+      },
+      {
+        "scene_id": "scene-05",
+        "purpose": "spoken_point",
+        "source_start": 12.0,
+        "source_end": 15.0,
+        "timeline_start": 14.82,
+        "timeline_end": 17.82,
+        "duration_seconds": 3.0,
+        "text": "很多老板全在用AI去跑",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-06",
+        "purpose": "spoken_point",
+        "source_start": 15.0,
+        "source_end": 16.82,
+        "timeline_start": 17.82,
+        "timeline_end": 19.64,
+        "duration_seconds": 1.82,
+        "text": "把同行的链接放上去",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "visual_intent": "speaker",
+        "visual_intent_rule": "semantic_role_and_safe_subject_fallback",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      }
+    ],
+    "visual_events": [
+      {
+        "event_id": "visual-01",
+        "scene_id": "scene-01",
+        "start": 0.0,
+        "end": 2.82,
+        "type": "hook_statement",
+        "asset_id": null,
+        "mode": null,
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true,
+        "visual_intent": "speaker"
+      },
+      {
+        "event_id": "visual-04",
+        "scene_id": "scene-04",
+        "start": 10.22,
+        "end": 14.82,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-a3f531bfd7",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true,
+        "visual_intent": "evidence_broll"
+      },
+      {
+        "event_id": "vector-01",
+        "start": 5.78,
+        "end": 7.86,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "评论区有咨询的客户",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-02",
+        "start": 16.84,
+        "end": 19.64,
+        "type": "data_visual_card",
+        "asset_id": null,
+        "mode": "full",
+        "semantic_text": "评论的客户就可以了",
+        "grounded_in_text": true
+      }
+    ],
+    "asset_requests": [],
+    "subtitle_policy": {
+      "source_of_truth": "word_timestamps_then_sentence_timestamps",
+      "max_lines": 2,
+      "min_visible_seconds": 0.8,
+      "max_chars_per_cue": 14,
+      "no_duplicate_text_on_visual_cut": true,
+      "safe_area": "lower_third_without_face"
+    },
+    "audio_policy": {
+      "voice_priority": true,
+      "bgm": {
+        "track_id": "bgm-a40b291dc5b1",
+        "title": "tech-city-local-acceptance-confirmed",
+        "source": "manual",
+        "authorization_status": "confirmed",
+        "auto_eligible": true,
+        "start_seconds": 0.0,
+        "energy_segments": [
+          {
+            "start": 0.0,
+            "end": 19.64,
+            "energy": "克制"
+          }
+        ],
+        "ducking": {
+          "enabled": true,
+          "voice_priority": true,
+          "target_db": -24,
+          "attack_ms": 20,
+          "release_ms": 450
+        },
+        "fade": {
+          "in_seconds": 0.5,
+          "out_seconds": 0.8
+        }
+      },
+      "no_unverified_auto_bgm": true
+    },
+    "degradation": {
+      "mode": "broll_plus_transparent_vector",
+      "publish_claim_allowed": true,
+      "local_visual_event_count": 1,
+      "generated_image_event_count": 0,
+      "publishable_visual_event_count": 1,
+      "message": "矢量素材已绑定到独立视觉轨道；矢量不计入真实 B-roll 验收。"
+    },
+    "quality_targets": {
+      "minimum_creative_score": 90,
+      "minimum_real_visual_events": 0,
+      "minimum_local_visual_events": 0,
+      "generated_images_count_as_local_visual_events": true,
+      "generated_images_do_not_satisfy_publish_rights_gate": true,
+      "minimum_real_visual_coverage_ratio": 0.2,
+      "maximum_real_visual_coverage_ratio": 0.35,
+      "subtitle_mapping_error_frames": 1,
+      "max_audio_video_drift_ms": 67,
+      "required_hard_gates": [
+        "no_duplicate_subtitle_cues",
+        "no_repeated_audio_ranges",
+        "no_face_crop_without_safe_region",
+        "audio_stream_present",
+        "assets_do_not_cover_subtitles",
+        "semantic_visual_change_or_safe_subject_motion",
+        "real_broll_is_semantically_grounded_when_present",
+        "no_fixed_asset_loop"
+      ]
+    },
+    "timeline_duration_seconds": 19.64,
+    "source_duration_seconds": 20.0,
+    "source_media_identity": {
+      "source_media_sha256": "81c68254b63ac1b8fecf36c07bdf735ec1e194cfd2e91b98785efa3f79a1a180",
+      "source_duration_seconds": 20.0,
+      "transcript_sha256": "195456a57ef08c93c5b4434cefe71dfa65f96b0d099523017c328b9cb6260ecb",
+      "transcript_timing_source": "word_timestamps"
+    },
+    "vector_track": {
+      "track_id": "adaptive-visual-system-v1",
+      "kind": "grounded_data_visual_layer",
+      "theme": "business",
+      "items": [
+        {
+          "event_id": "adaptive-visual-01",
+          "start": 5.78,
+          "end": 7.86,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "评论区有咨询的客户",
+          "fact": "",
+          "visual_intent": "cta",
+          "source_segment_index": 3,
+          "source_text": "看到同行评论区有咨询的客户",
+          "diagram_labels": [],
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        },
+        {
+          "event_id": "adaptive-visual-02",
+          "start": 16.84,
+          "end": 19.64,
+          "mode": "full",
+          "renderer": "data_visual_card",
+          "semantic_text": "评论的客户就可以了",
+          "fact": "",
+          "visual_intent": "cta",
+          "source_segment_index": 10,
+          "source_text": "让AI去帮你找那些刚刚评论的客户就可以了",
+          "diagram_labels": [],
+          "grounded_in_text": true,
+          "position": "full_cutaway",
+          "opacity": 1.0
+        }
+      ],
+      "asset_count": 0,
+      "library_degradation": "按已审核口播中的数字、步骤、转折和具体事实生成程序化视觉层；不虚构事实，不把视觉层计为真实 B-roll。",
+      "typography": {
+        "theme": "business",
+        "font_family": "Source Han Serif CN Heavy",
+        "font_path": "C:\\Users\\zeng\\Desktop\\video\\assets\\fonts\\SourceHanSerifCN-Heavy.otf",
+        "source": "local-project-font",
+        "license": "OFL-1.1"
+      },
+      "source_policy": "transcript_grounded_code_drawn_visuals",
+      "semantic_info_band_disabled": "real_broll_present"
+    },
+    "asset_matching": {
+      "version": "local-visual-matcher-v1",
+      "strategy": "semantic_binding_then_keywords_then_deterministic_fallback",
+      "decisions": [
+        {
+          "shot_id": "shot-04",
+          "asset_id": "broll-a3f531bfd7",
+          "query": "CRM dashboard customer database business analytics office data management",
+          "match_type": "precise",
+          "match_score": 82,
+          "match_reason": [
+            "concrete_visual_intersection:office_data",
+            "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+          ],
+          "provider": "pexels",
+          "license_name": "Pexels License",
+          "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-11",
+          "asset_id": "broll-0c880bf42b",
+          "query": "CRM dashboard customer database business analytics office data management",
+          "match_type": "precise",
+          "match_score": 112,
+          "match_reason": [
+            "concrete_visual_intersection:database,office_data"
+          ],
+          "provider": "built_in_image_generation",
+          "license_name": "",
+          "source_url": "",
+          "domestic_context": "unknown",
+          "domestic_scene": "",
+          "visual_asset_priority": 3,
+          "publish_claim_allowed": false
+        }
+      ],
+      "generated_assets_publish_licensed": false,
+      "keyword_generation": {
+        "enabled": false,
+        "query": "",
+        "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+        "provider_calls": 0,
+        "action": "safe_degradation",
+        "blocking_reason": "explicit_keyword_generation_switch_off"
+      }
+    },
+    "visual_intents": [
+      {
+        "event_id": "adaptive-visual-01",
+        "start": 5.78,
+        "end": 7.86,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "评论区有咨询的客户",
+        "fact": "",
+        "visual_intent": "cta",
+        "source_segment_index": 3,
+        "source_text": "看到同行评论区有咨询的客户",
+        "diagram_labels": [],
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-02",
+        "start": 16.84,
+        "end": 19.64,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "评论的客户就可以了",
+        "fact": "",
+        "visual_intent": "cta",
+        "source_segment_index": 10,
+        "source_text": "让AI去帮你找那些刚刚评论的客户就可以了",
+        "diagram_labels": [],
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      }
+    ]
+  },
+  "template_id": "adaptive_talking_head_v1",
+  "template_version": "talking-head-release-v1.0",
+  "smart_opening": null,
+  "trim_silence_enabled": false,
+  "release_brolls": [
+    {
+      "shot_id": "shot-04",
+      "asset_id": "broll-a3f531bfd7",
+      "start": 5.78,
+      "end": 7.86,
+      "mode": "full",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "CRM dashboard customer database business analytics office data management"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "search_query": null,
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:office_data",
+        "keywords:crmdashboardcustomerdatabasebusinessanalyticsofficedatamanagement"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null
+    },
+    {
+      "shot_id": "shot-11",
+      "asset_id": "broll-0c880bf42b",
+      "start": 16.82,
+      "end": 19.64,
+      "mode": "full",
+      "source": "built_in_image_generation",
+      "source_provider": "built_in_image_generation",
+      "asset_origin": "generated_image_asset",
+      "authorization_status": "generated_for_local_acceptance",
+      "publish_licensed": false,
+      "source_url": "",
+      "license_name": "",
+      "license_url": "",
+      "semantic_binding": "经营数据与分析",
+      "keywords": [
+        "数据",
+        "分析",
+        "经营",
+        "报表",
+        "增长",
+        "指标"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "search_query": null,
+      "domestic_context": "unknown",
+      "domestic_scene": "",
+      "match_type": "precise",
+      "match_score": 112,
+      "match_reason": [
+        "concrete_visual_intersection:database,office_data"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": "pip_broll"
+    }
+  ],
+  "vector_track": {
+    "track_id": "adaptive-visual-system-v1",
+    "kind": "grounded_data_visual_layer",
+    "theme": "business",
+    "items": [
+      {
+        "event_id": "adaptive-visual-01",
+        "start": 5.78,
+        "end": 7.86,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "评论区有咨询的客户",
+        "fact": "",
+        "visual_intent": "cta",
+        "source_segment_index": 3,
+        "source_text": "看到同行评论区有咨询的客户",
+        "diagram_labels": [],
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      },
+      {
+        "event_id": "adaptive-visual-02",
+        "start": 16.84,
+        "end": 19.64,
+        "mode": "full",
+        "renderer": "data_visual_card",
+        "semantic_text": "评论的客户就可以了",
+        "fact": "",
+        "visual_intent": "cta",
+        "source_segment_index": 10,
+        "source_text": "让AI去帮你找那些刚刚评论的客户就可以了",
+        "diagram_labels": [],
+        "grounded_in_text": true,
+        "position": "full_cutaway",
+        "opacity": 1.0
+      }
+    ],
+    "asset_count": 0,
+    "library_degradation": "按已审核口播中的数字、步骤、转折和具体事实生成程序化视觉层；不虚构事实，不把视觉层计为真实 B-roll。",
+    "typography": {
+      "theme": "business",
+      "font_family": "Source Han Serif CN Heavy",
+      "font_path": "C:\\Users\\zeng\\Desktop\\video\\assets\\fonts\\SourceHanSerifCN-Heavy.otf",
+      "source": "local-project-font",
+      "license": "OFL-1.1"
+    },
+    "source_policy": "transcript_grounded_code_drawn_visuals",
+    "semantic_info_band_disabled": "real_broll_present"
+  },
+  "source_media_identity": {
+    "source_media_sha256": "81c68254b63ac1b8fecf36c07bdf735ec1e194cfd2e91b98785efa3f79a1a180",
+    "source_duration_seconds": 20.0,
+    "transcript_sha256": "68274b615447cd26e86a3d4fcce3bb3f8046118cf5a44b218d49b1f63d005f1f",
+    "transcript_timing_source": "word_timestamps",
+    "transcript_identity_scope": "task_subtitle_segments_v1"
+  },
+  "source_range": {
+    "start": 0.0,
+    "end": 20.0,
+    "clock": "source_media"
+  },
+  "creative_theme": "adaptive",
+  "typography": {
+    "theme": "business",
+    "font_family": "Source Han Serif CN Heavy",
+    "font_path": "C:\\Users\\zeng\\Desktop\\video\\assets\\fonts\\SourceHanSerifCN-Heavy.otf",
+    "source": "local-project-font",
+    "license": "OFL-1.1"
+  },
+  "duration_seconds": 19.64,
+  "estimated_output_seconds": 19.64,
+  "kept_ranges": [
+    {
+      "start": 0.0,
+      "end": 0.98
+    },
+    {
+      "start": 0.98,
+      "end": 3.1
+    },
+    {
+      "start": 3.1,
+      "end": 5.78
+    },
+    {
+      "start": 5.78,
+      "end": 7.86
+    },
+    {
+      "start": 7.86,
+      "end": 9.36
+    },
+    {
+      "start": 9.36,
+      "end": 11.06
+    },
+    {
+      "start": 11.06,
+      "end": 12.64
+    },
+    {
+      "start": 12.64,
+      "end": 13.72
+    },
+    {
+      "start": 13.72,
+      "end": 15.52
+    },
+    {
+      "start": 15.52,
+      "end": 16.82
+    },
+    {
+      "start": 16.82,
+      "end": 19.64
+    }
+  ],
+  "spoken_ranges": [
+    {
+      "start": 0.0,
+      "end": 0.98
+    },
+    {
+      "start": 0.98,
+      "end": 3.1
+    },
+    {
+      "start": 3.1,
+      "end": 5.78
+    },
+    {
+      "start": 5.78,
+      "end": 7.86
+    },
+    {
+      "start": 7.86,
+      "end": 9.36
+    },
+    {
+      "start": 9.36,
+      "end": 11.06
+    },
+    {
+      "start": 11.06,
+      "end": 12.64
+    },
+    {
+      "start": 12.64,
+      "end": 13.72
+    },
+    {
+      "start": 13.72,
+      "end": 15.52
+    },
+    {
+      "start": 15.52,
+      "end": 16.82
+    },
+    {
+      "start": 16.82,
+      "end": 19.64
+    }
+  ],
+  "visual_beats": [
+    {
+      "segment_index": 0,
+      "start": 0.0,
+      "end": 0.98,
+      "treatment": "hook",
+      "label": "玩节流的兄弟们",
+      "emphasis_term": ""
+    },
+    {
+      "segment_index": 1,
+      "start": 0.98,
+      "end": 3.1,
+      "treatment": "keyword_card",
+      "label": "不要",
+      "emphasis_term": "不要"
+    },
+    {
+      "segment_index": 5,
+      "start": 9.36,
+      "end": 11.06,
+      "treatment": "punch_in",
+      "label": "现在已经是AI的时代",
+      "emphasis_term": ""
+    },
+    {
+      "segment_index": 9,
+      "start": 15.52,
+      "end": 16.82,
+      "treatment": "keyword_card",
+      "label": "关键",
+      "emphasis_term": "关键"
+    }
+  ]
+}

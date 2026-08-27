@@ -5,7 +5,7 @@ switching between Playwright and DrissionPage engines.
 
 Configuration:
     Set environment variable BROWSER_ENGINE to choose engine:
-    - drission: Use DrissionPage (better anti-detection, recommended)
+    - drission: Use DrissionPage with a normal visible browser profile
     - playwright: Use Playwright (fallback)
 
 Usage:
@@ -27,8 +27,8 @@ from typing import Any, Optional
 # Engine selection via environment variable
 BROWSER_ENGINE = os.environ.get('BROWSER_ENGINE', 'drission').lower()
 
-# 反检测注入脚本:每次页面导航前由 Playwright add_init_script 注入,
-# 隐藏自动化特征,降低平台风控概率。任何一步失败都不影响页面加载。
+# 反检测注入脚本：每次页面导航前由 Playwright add_init_script 注入,
+# 隐藏自动化特征，降低平台风控概率。任何一步失败都不影响页面加载。
 ANTI_DETECTION_INIT_SCRIPT = """
 (() => {
   try {

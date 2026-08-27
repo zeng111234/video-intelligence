@@ -1,0 +1,975 @@
+{
+  "timeline_version": "local-release-timeline-v1",
+  "source_id": "upload:upload-4c188f4d4d",
+  "shot_plan": {
+    "template_id": "pain_point_solution",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 15,
+        "knowledge_howto": 0,
+        "story_resonance": 0
+      },
+      "reason": "问题/风险词与疑问句占比最高，适合先抛痛点再给方案。；识别到报号/新 take 标记。；结尾残句已安全舍弃。",
+      "override_available": true
+    },
+    "content_blocks": [
+      "hook",
+      "consequence",
+      "solution",
+      "conclusion"
+    ],
+    "hook_source": {
+      "source_start": 30.3,
+      "source_end": 36.46,
+      "text": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？"
+    },
+    "retained_ranges": [
+      {
+        "start": 30.3,
+        "end": 36.46,
+        "reason": "冷开场问题钩子",
+        "role": "A-roll"
+      },
+      {
+        "start": 0.28,
+        "end": 30.3,
+        "reason": "正文回接",
+        "role": "A-roll"
+      }
+    ],
+    "reordered_ranges": [
+      {
+        "start": 30.3,
+        "end": 36.46,
+        "reason": "冷开场问题钩子",
+        "role": "A-roll"
+      },
+      {
+        "start": 0.28,
+        "end": 30.3,
+        "reason": "正文回接",
+        "role": "A-roll"
+      }
+    ],
+    "deleted_ranges": [
+      {
+        "start": 0,
+        "end": 0.28,
+        "reason": "片头无口播静段"
+      },
+      {
+        "start": 38.64,
+        "end": 58.58,
+        "reason": "take 标记后的下一主题/残句不进入本条成片"
+      }
+    ],
+    "shots": [
+      {
+        "shot_id": "shot-01",
+        "source_start": 30.3,
+        "source_end": 32.9,
+        "timeline_start": 0.0,
+        "timeline_end": 2.6,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "hard_cut",
+        "visual_emphasis": "hook_underliner",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.6,
+        "rhythm_seconds": 2.6,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-02",
+        "source_start": 32.9,
+        "source_end": 36.46,
+        "timeline_start": 2.6,
+        "timeline_end": 6.16,
+        "role": "B-roll",
+        "asset_id": "broll-270d9707c8",
+        "asset_source": "user_uploaded_local",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 3.56,
+        "rhythm_seconds": 4.4,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-03",
+        "source_start": 0.28,
+        "source_end": 3.48,
+        "timeline_start": 6.16,
+        "timeline_end": 9.36,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-04",
+        "source_start": 3.48,
+        "source_end": 8.48,
+        "timeline_start": 9.36,
+        "timeline_end": 14.36,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 5.0,
+        "rhythm_seconds": 5.0,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-05",
+        "source_start": 8.48,
+        "source_end": 11.08,
+        "timeline_start": 14.36,
+        "timeline_end": 16.96,
+        "role": "B-roll",
+        "asset_id": "broll-14f7720cd1",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_pip",
+        "fallback": "none",
+        "overlay_mode": "pip",
+        "duration_seconds": 2.6,
+        "rhythm_seconds": 2.6,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-06",
+        "source_start": 11.08,
+        "source_end": 15.48,
+        "timeline_start": 16.96,
+        "timeline_end": 21.36,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.4,
+        "rhythm_seconds": 4.4,
+        "rhythm_variant": 1
+      },
+      {
+        "shot_id": "shot-07",
+        "source_start": 15.48,
+        "source_end": 18.68,
+        "timeline_start": 21.36,
+        "timeline_end": 24.56,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 3.2,
+        "rhythm_seconds": 3.2,
+        "rhythm_variant": 2
+      },
+      {
+        "shot_id": "shot-08",
+        "source_start": 18.68,
+        "source_end": 23.68,
+        "timeline_start": 24.56,
+        "timeline_end": 29.56,
+        "role": "B-roll",
+        "asset_id": "broll-3344413315",
+        "asset_source": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "asset_full",
+        "fallback": "none",
+        "overlay_mode": "full",
+        "duration_seconds": 5.0,
+        "rhythm_seconds": 5.0,
+        "rhythm_variant": 3
+      },
+      {
+        "shot_id": "shot-09",
+        "source_start": 23.68,
+        "source_end": 26.28,
+        "timeline_start": 29.56,
+        "timeline_end": 32.16,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "full_subject_safe",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_full_safe",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 2.6,
+        "rhythm_seconds": 2.6,
+        "rhythm_variant": 0
+      },
+      {
+        "shot_id": "shot-10",
+        "source_start": 26.28,
+        "source_end": 30.3,
+        "timeline_start": 32.16,
+        "timeline_end": 36.18,
+        "role": "A-roll",
+        "asset_id": null,
+        "asset_source": "none",
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "framing": "safe_push_no_face_crop",
+        "transition": "blur_slide_5_frames",
+        "visual_emphasis": "speaker_safe_push",
+        "fallback": "精剪口播降级",
+        "overlay_mode": null,
+        "duration_seconds": 4.02,
+        "rhythm_seconds": 4.4,
+        "rhythm_variant": 1
+      }
+    ],
+    "assets": [
+      {
+        "asset_id": "broll-270d9707c8",
+        "source": "user_uploaded_local",
+        "source_provider": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "rights_status": "provider_license",
+        "content_id_risk": null,
+        "source_url": "https://www.pexels.com/video/majestic-black-swans-on-tranquil-lake-in-autumn-34226228/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [
+          "客户数据库"
+        ],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "mode": "full"
+      },
+      {
+        "asset_id": "broll-14f7720cd1",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "rights_status": "provider_license",
+        "content_id_risk": null,
+        "source_url": "https://www.pexels.com/video/automated-industrial-production-line-in-action-32386533/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "mode": "pip"
+      },
+      {
+        "asset_id": "broll-3344413315",
+        "source": "pexels",
+        "source_provider": "pexels",
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "rights_status": "provider_license",
+        "content_id_risk": null,
+        "source_url": "https://www.pexels.com/video/men-using-computer-in-office-6803585/",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "semantic_binding": null,
+        "keywords": [],
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "mode": "full"
+      }
+    ],
+    "subtitle": {
+      "style_id": "business_talking_head_v2",
+      "max_lines": 1,
+      "safe_area": "lower_third_without_face",
+      "visual_emphasis": "sparse_keyword_only"
+    },
+    "bgm": {
+      "track_id": "bgm-a40b291dc5b1",
+      "title": "tech-city-local-acceptance-confirmed",
+      "source": "manual",
+      "authorization_status": "confirmed",
+      "auto_eligible": true,
+      "start_seconds": 0.0,
+      "energy_segments": [
+        {
+          "start": 0.0,
+          "end": 36.18,
+          "energy": "克制"
+        }
+      ],
+      "ducking": {
+        "enabled": true,
+        "voice_priority": true,
+        "target_db": -24,
+        "attack_ms": 20,
+        "release_ms": 450
+      },
+      "fade": {
+        "in_seconds": 0.5,
+        "out_seconds": 0.8
+      }
+    },
+    "degradation": {
+      "mode": "broll",
+      "is_broll": true,
+      "is_stock_broll": true,
+      "message": "已使用用户确认授权的本地 B-roll。"
+    },
+    "source_duration_seconds": 58.58,
+    "timeline_duration_seconds": 36.18,
+    "title": "客户资源别再靠业务员了"
+  },
+  "director_plan": {
+    "plan_version": "director-plan-v3.0",
+    "target_platform": "douyin",
+    "template_id": "pain_point_solution",
+    "template_version": "talking-head-release-v1.0",
+    "selection": {
+      "scores": {
+        "pain_point_solution": 15,
+        "knowledge_howto": 0,
+        "story_resonance": 0
+      },
+      "reason": "问题/风险词与疑问句占比最高，适合先抛痛点再给方案。；识别到报号/新 take 标记。；结尾残句已安全舍弃。",
+      "override_available": true
+    },
+    "hook": {
+      "source": {
+        "source_start": 30.3,
+        "source_end": 36.46,
+        "text": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？"
+      },
+      "audio_strategy": "extract_original_phrase",
+      "visual_treatment": "hook_statement",
+      "must_appear_once": true
+    },
+    "scenes": [
+      {
+        "scene_id": "scene-01",
+        "purpose": "hook",
+        "source_start": 30.3,
+        "source_end": 32.9,
+        "timeline_start": 0.0,
+        "timeline_end": 2.6,
+        "duration_seconds": 2.6,
+        "text": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？",
+        "role": "A-roll",
+        "visual_type": "hook_statement",
+        "motion": "underline_and_soft_scale",
+        "transition": "hard_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-02",
+        "purpose": "supporting_visual",
+        "source_start": 32.9,
+        "source_end": 36.46,
+        "timeline_start": 2.6,
+        "timeline_end": 6.16,
+        "duration_seconds": 3.56,
+        "text": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-270d9707c8"
+      },
+      {
+        "scene_id": "scene-03",
+        "purpose": "spoken_point",
+        "source_start": 0.28,
+        "source_end": 3.48,
+        "timeline_start": 6.16,
+        "timeline_end": 9.36,
+        "duration_seconds": 3.2,
+        "text": "业务员呢，他一旦离职，你会发现聊天记录没了，客户的关系也就跟着断掉了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-04",
+        "purpose": "spoken_point",
+        "source_start": 3.48,
+        "source_end": 8.48,
+        "timeline_start": 9.36,
+        "timeline_end": 14.36,
+        "duration_seconds": 5.0,
+        "text": "业务员呢，他一旦离职，你会发现聊天记录没了，客户的关系也就跟着断掉了。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-05",
+        "purpose": "supporting_visual",
+        "source_start": 8.48,
+        "source_end": 11.08,
+        "timeline_start": 14.36,
+        "timeline_end": 16.96,
+        "duration_seconds": 2.6,
+        "text": "企业真正需要的，不只是业务员个人维护，而是一套呢，可以沉淀用户、持续触达的营销机制。",
+        "role": "B-roll",
+        "visual_type": "broll_pip",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-14f7720cd1"
+      },
+      {
+        "scene_id": "scene-06",
+        "purpose": "spoken_point",
+        "source_start": 11.08,
+        "source_end": 15.48,
+        "timeline_start": 16.96,
+        "timeline_end": 21.36,
+        "duration_seconds": 4.4,
+        "text": "企业真正需要的，不只是业务员个人维护，而是一套呢，可以沉淀用户、持续触达的营销机制。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-07",
+        "purpose": "spoken_point",
+        "source_start": 15.48,
+        "source_end": 18.68,
+        "timeline_start": 21.36,
+        "timeline_end": 24.56,
+        "duration_seconds": 3.2,
+        "text": "数影霸屏呢，我们可以配合我们企业的整个客户的数据库，对合规客户呢，这些人群呢，进行持续的、精准的曝光。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-08",
+        "purpose": "supporting_visual",
+        "source_start": 18.68,
+        "source_end": 23.68,
+        "timeline_start": 24.56,
+        "timeline_end": 29.56,
+        "duration_seconds": 5.0,
+        "text": "数影霸屏呢，我们可以配合我们企业的整个客户的数据库，对合规客户呢，这些人群呢，进行持续的、精准的曝光。",
+        "role": "B-roll",
+        "visual_type": "broll_fullscreen",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": "broll-3344413315"
+      },
+      {
+        "scene_id": "scene-09",
+        "purpose": "spoken_point",
+        "source_start": 23.68,
+        "source_end": 26.28,
+        "timeline_start": 29.56,
+        "timeline_end": 32.16,
+        "duration_seconds": 2.6,
+        "text": "让客户认识的不只是某个业务员，更是你整个工厂、品牌、产品。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      },
+      {
+        "scene_id": "scene-10",
+        "purpose": "spoken_point",
+        "source_start": 26.28,
+        "source_end": 30.3,
+        "timeline_start": 32.16,
+        "timeline_end": 36.18,
+        "duration_seconds": 4.02,
+        "text": "让客户认识的不只是某个业务员，更是你整个工厂、品牌、产品。",
+        "role": "A-roll",
+        "visual_type": "safe_subject_motion",
+        "motion": "slow_pan_or_scale",
+        "transition": "soft_cut",
+        "asset_id": null
+      }
+    ],
+    "visual_events": [
+      {
+        "event_id": "visual-01",
+        "scene_id": "scene-01",
+        "start": 0.0,
+        "end": 2.6,
+        "type": "hook_statement",
+        "asset_id": null,
+        "mode": null,
+        "asset_origin": null,
+        "authorization_status": "not_applicable",
+        "publish_claim_allowed": false,
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "visual-02",
+        "scene_id": "scene-02",
+        "start": 2.6,
+        "end": 6.16,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-270d9707c8",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "visual-05",
+        "scene_id": "scene-05",
+        "start": 14.36,
+        "end": 16.96,
+        "type": "broll_pip",
+        "asset_id": "broll-14f7720cd1",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "visual-08",
+        "scene_id": "scene-08",
+        "start": 24.56,
+        "end": 29.56,
+        "type": "broll_fullscreen",
+        "asset_id": "broll-3344413315",
+        "mode": null,
+        "asset_origin": "stock_video_asset",
+        "authorization_status": "confirmed",
+        "publish_claim_allowed": true,
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-01",
+        "start": 2.6,
+        "end": 6.16,
+        "type": "semantic_info_band",
+        "asset_id": null,
+        "mode": "info_band",
+        "semantic_text": "客户数据库",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-02",
+        "start": 14.36,
+        "end": 16.96,
+        "type": "semantic_info_band",
+        "asset_id": null,
+        "mode": "info_band",
+        "semantic_text": "客户关系沉淀",
+        "grounded_in_text": true
+      },
+      {
+        "event_id": "vector-03",
+        "start": 24.56,
+        "end": 29.56,
+        "type": "semantic_info_band",
+        "asset_id": null,
+        "mode": "info_band",
+        "semantic_text": "工厂品牌产品",
+        "grounded_in_text": true
+      }
+    ],
+    "asset_requests": [],
+    "subtitle_policy": {
+      "source_of_truth": "word_timestamps_then_sentence_timestamps",
+      "max_lines": 2,
+      "min_visible_seconds": 0.8,
+      "max_chars_per_cue": 14,
+      "no_duplicate_text_on_visual_cut": true,
+      "safe_area": "lower_third_without_face"
+    },
+    "audio_policy": {
+      "voice_priority": true,
+      "bgm": {
+        "track_id": "bgm-a40b291dc5b1",
+        "title": "tech-city-local-acceptance-confirmed",
+        "source": "manual",
+        "authorization_status": "confirmed",
+        "auto_eligible": true,
+        "start_seconds": 0.0,
+        "energy_segments": [
+          {
+            "start": 0.0,
+            "end": 36.18,
+            "energy": "克制"
+          }
+        ],
+        "ducking": {
+          "enabled": true,
+          "voice_priority": true,
+          "target_db": -24,
+          "attack_ms": 20,
+          "release_ms": 450
+        },
+        "fade": {
+          "in_seconds": 0.5,
+          "out_seconds": 0.8
+        }
+      },
+      "no_unverified_auto_bgm": true
+    },
+    "degradation": {
+      "mode": "broll_plus_transparent_vector",
+      "publish_claim_allowed": true,
+      "local_visual_event_count": 3,
+      "generated_image_event_count": 0,
+      "publishable_visual_event_count": 3,
+      "message": "矢量素材已绑定到独立视觉轨道；矢量不计入真实 B-roll 验收。"
+    },
+    "quality_targets": {
+      "minimum_creative_score": 90,
+      "minimum_real_visual_events": 3,
+      "minimum_local_visual_events": 3,
+      "generated_images_count_as_local_visual_events": true,
+      "generated_images_do_not_satisfy_publish_rights_gate": true,
+      "minimum_real_visual_coverage_ratio": 0.2,
+      "maximum_real_visual_coverage_ratio": 0.35,
+      "subtitle_mapping_error_frames": 1,
+      "max_audio_video_drift_ms": 67,
+      "required_hard_gates": [
+        "no_duplicate_subtitle_cues",
+        "no_repeated_audio_ranges",
+        "no_face_crop_without_safe_region",
+        "audio_stream_present",
+        "assets_do_not_cover_subtitles",
+        "at_least_three_real_broll_events",
+        "at_least_one_pip_event",
+        "at_least_one_fullscreen_event",
+        "real_broll_coverage_20_to_35_percent",
+        "no_fixed_asset_loop"
+      ]
+    },
+    "timeline_duration_seconds": 36.18,
+    "source_duration_seconds": 58.58,
+    "vector_track": {
+      "track_id": "vector-visuals-v1",
+      "kind": "semantic_motion_layer",
+      "theme": "business",
+      "items": [
+        {
+          "event_id": "semantic-layer-01",
+          "start": 2.6,
+          "end": 6.16,
+          "mode": "info_band",
+          "renderer": "semantic_info_band",
+          "semantic_text": "客户数据库",
+          "position": "lower_left_safe",
+          "opacity": 0.78,
+          "linked_asset_id": "broll-270d9707c8",
+          "grounded_in_text": true
+        },
+        {
+          "event_id": "semantic-layer-02",
+          "start": 14.36,
+          "end": 16.96,
+          "mode": "info_band",
+          "renderer": "semantic_info_band",
+          "semantic_text": "客户关系沉淀",
+          "position": "lower_left_safe",
+          "opacity": 0.78,
+          "linked_asset_id": "broll-14f7720cd1",
+          "grounded_in_text": true
+        },
+        {
+          "event_id": "semantic-layer-03",
+          "start": 24.56,
+          "end": 29.56,
+          "mode": "info_band",
+          "renderer": "semantic_info_band",
+          "semantic_text": "工厂品牌产品",
+          "position": "lower_left_safe",
+          "opacity": 0.78,
+          "linked_asset_id": "broll-3344413315",
+          "grounded_in_text": true
+        }
+      ],
+      "asset_count": 0,
+      "library_degradation": "默认发布模板已关闭独立漂浮贴纸图标；改用与 B-roll/镜头同步的半透明语义信息层，并固定在左下安全区，避开人脸、PiP 和字幕。",
+      "typography": {
+        "theme": "business",
+        "font_family": "Source Han Serif CN Heavy",
+        "font_path": "C:\\Users\\zeng\\Desktop\\video\\assets\\fonts\\SourceHanSerifCN-Heavy.otf",
+        "source": "local-project-font",
+        "license": "OFL-1.1"
+      },
+      "source_policy": "code_drawn_semantic_layer_no_asset_rights_claim"
+    },
+    "asset_matching": {
+      "version": "local-visual-matcher-v1",
+      "strategy": "semantic_binding_then_keywords_then_deterministic_fallback",
+      "decisions": [
+        {
+          "shot_id": "shot-02",
+          "query": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？",
+          "asset_id": "broll-270d9707c8",
+          "match_type": "authorized_stock_priority",
+          "match_score": 0,
+          "match_reason": [
+            "no_local_semantic_metadata_keep_authorized_stock"
+          ],
+          "asset_origin": "stock_video_asset",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-05",
+          "query": "企业真正需要的，不只是业务员个人维护，而是一套呢，可以沉淀用户、持续触达的营销机制。",
+          "asset_id": "broll-14f7720cd1",
+          "match_type": "authorized_stock_priority",
+          "match_score": 0,
+          "match_reason": [
+            "no_local_semantic_metadata_keep_authorized_stock"
+          ],
+          "asset_origin": "stock_video_asset",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        },
+        {
+          "shot_id": "shot-08",
+          "query": "数影霸屏呢，我们可以配合我们企业的整个客户的数据库，对合规客户呢，这些人群呢，进行持续的、精准的曝光。",
+          "asset_id": "broll-3344413315",
+          "match_type": "authorized_stock_priority",
+          "match_score": 0,
+          "match_reason": [
+            "no_local_semantic_metadata_keep_authorized_stock"
+          ],
+          "asset_origin": "stock_video_asset",
+          "domestic_context": "international",
+          "domestic_scene": "",
+          "visual_asset_priority": 2,
+          "publish_claim_allowed": true
+        }
+      ],
+      "generated_assets_publish_licensed": false,
+      "keyword_generation": {
+        "enabled": false,
+        "query": "",
+        "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+        "provider_calls": 0,
+        "action": "safe_degradation",
+        "blocking_reason": "explicit_keyword_generation_switch_off"
+      }
+    }
+  },
+  "release_brolls": [
+    {
+      "shot_id": "shot-02",
+      "asset_id": "broll-270d9707c8",
+      "start": 2.6,
+      "end": 6.16,
+      "mode": "full"
+    },
+    {
+      "shot_id": "shot-05",
+      "asset_id": "broll-14f7720cd1",
+      "start": 14.36,
+      "end": 16.96,
+      "mode": "pip"
+    },
+    {
+      "shot_id": "shot-08",
+      "asset_id": "broll-3344413315",
+      "start": 24.56,
+      "end": 28.16,
+      "mode": "full"
+    }
+  ],
+  "subtitle_timeline": {
+    "passed": true,
+    "cue_count": 5,
+    "duplicate_count": 0,
+    "checks": {
+      "monotonic_and_in_bounds": true,
+      "no_duplicate_cues": true
+    },
+    "phrase_cue_count": 17,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "max_phrase_duration_seconds": 2.261,
+    "experience_gate": {
+      "passed": true,
+      "checks": {
+        "min_duration": true,
+        "max_duration": true,
+        "one_line": true,
+        "no_fragment_cues": true,
+        "cue_count_per_sentence": true
+      },
+      "min_duration_seconds": 0.939,
+      "max_duration_seconds": 2.261,
+      "one_line_ratio": 0.824,
+      "minimum_dwell_seconds": 0.9,
+      "maximum_dwell_seconds": 2.4,
+      "short_source_exception_allowed": true,
+      "cue_count_by_source_segment": {
+        "0": 3,
+        "1": 3,
+        "2": 4,
+        "3": 4,
+        "4": 3
+      },
+      "cue_count_gate_by_source_segment": {
+        "0": true,
+        "1": true,
+        "2": true,
+        "3": true,
+        "4": true
+      }
+    },
+    "word_timing_quality": {
+      "status": "verified",
+      "verified": true,
+      "source": "word_timestamps",
+      "word_p95_ms": 0.0,
+      "mapping_error_frames": 0.0,
+      "matched_cue_count": 17,
+      "unmatched_cue_count": 0,
+      "fps": 30.0,
+      "checks": {
+        "word_p95_le_150ms": true,
+        "mapping_le_1_frame": true
+      }
+    },
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 0.0
+  },
+  "asset_matching": {
+    "version": "local-visual-matcher-v1",
+    "strategy": "semantic_binding_then_keywords_then_deterministic_fallback",
+    "decisions": [
+      {
+        "shot_id": "shot-02",
+        "query": "你公司的客户资源是掌握在业务员的手里呢，还是沉淀在咱们公司的数据库？",
+        "asset_id": "broll-270d9707c8",
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "asset_origin": "stock_video_asset",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      },
+      {
+        "shot_id": "shot-05",
+        "query": "企业真正需要的，不只是业务员个人维护，而是一套呢，可以沉淀用户、持续触达的营销机制。",
+        "asset_id": "broll-14f7720cd1",
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "asset_origin": "stock_video_asset",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      },
+      {
+        "shot_id": "shot-08",
+        "query": "数影霸屏呢，我们可以配合我们企业的整个客户的数据库，对合规客户呢，这些人群呢，进行持续的、精准的曝光。",
+        "asset_id": "broll-3344413315",
+        "match_type": "authorized_stock_priority",
+        "match_score": 0,
+        "match_reason": [
+          "no_local_semantic_metadata_keep_authorized_stock"
+        ],
+        "asset_origin": "stock_video_asset",
+        "domestic_context": "international",
+        "domestic_scene": "",
+        "visual_asset_priority": 2,
+        "publish_claim_allowed": true
+      }
+    ],
+    "generated_assets_publish_licensed": false,
+    "keyword_generation": {
+      "enabled": false,
+      "query": "",
+      "manifest_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-v1-20260822\\generated-assets\\manifest.json",
+      "provider_calls": 0,
+      "action": "safe_degradation",
+      "blocking_reason": "explicit_keyword_generation_switch_off"
+    }
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "schema_version": "subtitle-cue-manifest-v1",
+  "clock": "final_output",
+  "playback_rate": 1.15,
+  "phrase_timing_source": "word_timestamps",
+  "cues": [
+    {
+      "start": 0.0,
+      "end": 1.461,
+      "lines": [
+        "你公司的客户资源"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 1.461,
+      "end": 2.852,
+      "lines": [
+        "是掌握在业务员的手里呢"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 3.026,
+      "end": 5.357,
+      "lines": [
+        "还是沉淀在咱们公司的数据库"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 5.357,
+      "end": 6.609,
+      "lines": [
+        "业务员他一旦"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 6.609,
+      "end": 7.583,
+      "lines": [
+        "离职你会发现"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 7.583,
+      "end": 9.357,
+      "lines": [
+        "聊天记录没了客户关系"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 9.357,
+      "end": 10.643,
+      "lines": [
+        "也就跟着断掉了"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 11.27,
+      "end": 12.522,
+      "lines": [
+        "企业真正需要的"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 12.696,
+      "end": 14.33,
+      "lines": [
+        "不只是业务员个人维护"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 14.435,
+      "end": 16.696,
+      "lines": [
+        "而是一套可以沉淀用户持续"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 16.696,
+      "end": 17.878,
+      "lines": [
+        "触达的营销机制"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 18.122,
+      "end": 19.652,
+      "lines": [
+        "数影霸屏我们可以配合我们"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 19.652,
+      "end": 21.426,
+      "lines": [
+        "企业的整个客户的数据库"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 21.67,
+      "end": 23.583,
+      "lines": [
+        "对合规客户呢这些人群"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 23.652,
+      "end": 25.461,
+      "lines": [
+        "进行持续的精准的曝光"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 25.809,
+      "end": 27.026,
+      "lines": [
+        "让客户认识的"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 27.026,
+      "end": 28.0,
+      "lines": [
+        "不只是某个业务员"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null
+    },
+    {
+      "start": 28.278,
+      "end": 31.061,
+      "lines": [
+        "更是你整个工厂品牌产品"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": "compound_phrase"
+    }
+  ],
+  "manifest_sha256": "a6d10640deb8fbc9ba8bb8c67c937c60a4f867239ef3f50fd8987d864c7150b8"
+}

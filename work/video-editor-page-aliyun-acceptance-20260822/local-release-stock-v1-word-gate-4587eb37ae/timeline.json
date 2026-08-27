@@ -1,0 +1,23 @@
+{
+  "task_id": "edit-local-4587eb37ae",
+  "template_id": "pain_point_solution",
+  "template_version": "talking-head-release-v1.0",
+  "shot_count": 10,
+  "subtitle_timeline": {
+    "phrase_cue_count": 18,
+    "cue_count_by_source_segment": [3, 3, 4, 4, 4],
+    "min_duration_seconds": 0.9,
+    "max_duration_seconds": 2.4,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "semantic_grouping_change": "candidate selection prefers a word-clock-valid 4-cue final sentence"
+  },
+  "release_brolls": [
+    {"asset_id": "broll-14f7720cd1", "mode": "full", "semantic_role": "customer_database"},
+    {"asset_id": "broll-3344413315", "mode": "pip", "semantic_role": "business_person_maintenance"},
+    {"asset_id": "broll-f847ed1e82", "mode": "full", "semantic_role": "customer_exposure"}
+  ],
+  "pip_geometry_passed": true,
+  "alignment_max_drift_ms": 0.0,
+  "new_cloud_calls": 0
+}

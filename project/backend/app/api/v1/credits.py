@@ -258,7 +258,23 @@ _CREDIT_PROJECT_NAMES = {
 def _credit_project(ref_type: str | None) -> tuple[str, str]:
     raw = (ref_type or "other").strip() or "other"
     key = raw.removesuffix("_refund").removesuffix("_release")
+    if key in {"avatar_reserve", "avatar_settlement"}:
+        key = "avatar"
     return key, _CREDIT_PROJECT_NAMES.get(key, "其他消费")
+
+
+def _is_credit_refund(ref_type: str | None) -> bool:
+    """True for refund/release transactions that offset an earlier charge.
+
+    数字人/转写/剪辑会先冻结或多扣，结算或失败后以正金额退款；充值、
+    激活赠送、管理员加分不属于退款，不计入。
+    """
+    ref = (ref_type or "").strip()
+    return bool(
+        ref.endswith("_refund")
+        or ref.endswith("_release")
+        or ref == "avatar_settlement"
+    )
 
 
 @router.get("/admin/usage", response_model=AdminCreditUsageResponse)
@@ -269,7 +285,6 @@ def get_admin_credit_usage(
 ) -> AdminCreditUsageResponse:
     """管理员查看真实扣减流水，按业务功能和客户汇总。"""
     rows = repo.list_all_credit_transactions(limit=max(1, min(limit, 2000)))
-    debits = [row for row in rows if Decimal(str(row["amount"])) < 0]
     project_totals: dict[str, dict[str, object]] = {}
     customer_totals: dict[str, dict[str, object]] = {}
     customer_names: dict[str, str] = {}
@@ -282,9 +297,18 @@ def get_admin_credit_usage(
 
     total = Decimal("0")
     recent: list[AdminCreditUsageTransactionResponse] = []
-    for row in debits:
-        consumed = abs(Decimal(str(row["amount"])))
-        total += consumed
+    for row in rows:
+        amount = Decimal(str(row["amount"]))
+        if amount < 0:
+            consumed_delta = -amount
+            is_deduction = True
+        elif _is_credit_refund(row.get("ref_type")):
+            consumed_delta = -amount
+            is_deduction = False
+        else:
+            # 充值、激活赠送、管理员加分不是消耗，不计入统计。
+            continue
+        total += consumed_delta
         project_key, project_name = _credit_project(row.get("ref_type"))
         project = project_totals.setdefault(
             project_key,
@@ -295,8 +319,7 @@ def get_admin_credit_usage(
                 "transaction_count": 0,
             },
         )
-        project["consumed"] = Decimal(str(project["consumed"])) + consumed
-        project["transaction_count"] = int(project["transaction_count"]) + 1
+        project["consumed"] = Decimal(str(project["consumed"])) + consumed_delta
         owner = str(row["owner"])
         customer = customer_totals.setdefault(
             owner,
@@ -307,15 +330,17 @@ def get_admin_credit_usage(
                 "transaction_count": 0,
             },
         )
-        customer["consumed"] = Decimal(str(customer["consumed"])) + consumed
-        customer["transaction_count"] = int(customer["transaction_count"]) + 1
-        if len(recent) < 100:
-            recent.append(
-                AdminCreditUsageTransactionResponse(
-                    **row,
-                    customer_name=customer_name(owner),
+        customer["consumed"] = Decimal(str(customer["consumed"])) + consumed_delta
+        if is_deduction:
+            project["transaction_count"] = int(project["transaction_count"]) + 1
+            customer["transaction_count"] = int(customer["transaction_count"]) + 1
+            if len(recent) < 100:
+                recent.append(
+                    AdminCreditUsageTransactionResponse(
+                        **row,
+                        customer_name=customer_name(owner),
+                    )
                 )
-            )
 
     def groups(values: dict[str, dict[str, object]]) -> list[CreditUsageGroupResponse]:
         ordered = sorted(
@@ -327,14 +352,16 @@ def get_admin_credit_usage(
             CreditUsageGroupResponse(
                 key=str(item["key"]),
                 name=str(item["name"]),
-                consumed=str(item["consumed"]),
+                # 窗口内退款可能多于扣费（如预留在窗口外、退款在窗口内），
+                # 展示时按 0 处理，避免出现负的"已用积分"。
+                consumed=str(max(Decimal("0"), Decimal(str(item["consumed"])))),
                 transaction_count=int(item["transaction_count"]),
             )
             for item in ordered
         ]
 
     return AdminCreditUsageResponse(
-        total_consumed=str(total),
+        total_consumed=str(max(Decimal("0"), total)),
         by_project=groups(project_totals),
         by_customer=groups(customer_totals),
         recent_transactions=recent,

@@ -1,0 +1,2303 @@
+{
+  "source": "cached_aliyun_sentence_transcript_plus_local_gap_whisper",
+  "gap_range": {
+    "start": 80.5,
+    "end": 85.9
+  },
+  "segments": [
+    {
+      "start": 0.44,
+      "end": 3.56,
+      "text": "最近广州冒出了一个挺特别的餐饮模式。",
+      "reviewed_text": "最近广州冒出了一个挺特别的餐饮模式。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 0.44,
+          "end": 0.7,
+          "word": "最近"
+        },
+        {
+          "start": 0.7,
+          "end": 1.0,
+          "word": "广"
+        },
+        {
+          "start": 1.0,
+          "end": 1.22,
+          "word": "州"
+        },
+        {
+          "start": 1.22,
+          "end": 1.4,
+          "word": "冒"
+        },
+        {
+          "start": 1.4,
+          "end": 1.6,
+          "word": "出"
+        },
+        {
+          "start": 1.6,
+          "end": 1.7,
+          "word": "了"
+        },
+        {
+          "start": 1.7,
+          "end": 1.92,
+          "word": "一个"
+        },
+        {
+          "start": 1.92,
+          "end": 2.3,
+          "word": "挺"
+        },
+        {
+          "start": 2.3,
+          "end": 2.6,
+          "word": "特"
+        },
+        {
+          "start": 2.6,
+          "end": 2.72,
+          "word": "别"
+        },
+        {
+          "start": 2.72,
+          "end": 2.88,
+          "word": "的"
+        },
+        {
+          "start": 2.88,
+          "end": 3.0,
+          "word": "参"
+        },
+        {
+          "start": 3.0,
+          "end": 3.08,
+          "word": "与"
+        },
+        {
+          "start": 3.08,
+          "end": 3.24,
+          "word": "模"
+        },
+        {
+          "start": 3.24,
+          "end": 3.44,
+          "word": "式,"
+        }
+      ]
+    },
+    {
+      "start": 4.0,
+      "end": 10.0,
+      "text": "街上有家烧烤店，才开一个月，附近5公里的居民基本都成了他的回头客。",
+      "reviewed_text": "街上有家烧烤店，才开一个月，附近5公里的居民基本都成了他的回头客。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 4.0,
+          "end": 4.28,
+          "word": "街"
+        },
+        {
+          "start": 4.28,
+          "end": 4.58,
+          "word": "上"
+        },
+        {
+          "start": 4.58,
+          "end": 4.8,
+          "word": "有"
+        },
+        {
+          "start": 4.8,
+          "end": 5.02,
+          "word": "家"
+        },
+        {
+          "start": 5.02,
+          "end": 5.22,
+          "word": "烧"
+        },
+        {
+          "start": 5.22,
+          "end": 5.38,
+          "word": "烤"
+        },
+        {
+          "start": 5.38,
+          "end": 5.56,
+          "word": "店"
+        },
+        {
+          "start": 5.56,
+          "end": 6.0,
+          "word": "才"
+        },
+        {
+          "start": 6.0,
+          "end": 6.2,
+          "word": "开"
+        },
+        {
+          "start": 6.2,
+          "end": 6.46,
+          "word": "一个"
+        },
+        {
+          "start": 6.46,
+          "end": 6.68,
+          "word": "月,"
+        },
+        {
+          "start": 7.08,
+          "end": 7.16,
+          "word": "附"
+        },
+        {
+          "start": 7.16,
+          "end": 7.32,
+          "word": "近"
+        },
+        {
+          "start": 7.32,
+          "end": 7.54,
+          "word": "五"
+        },
+        {
+          "start": 7.54,
+          "end": 7.64,
+          "word": "公"
+        },
+        {
+          "start": 7.64,
+          "end": 7.78,
+          "word": "里"
+        },
+        {
+          "start": 7.78,
+          "end": 7.9,
+          "word": "的"
+        },
+        {
+          "start": 7.9,
+          "end": 8.02,
+          "word": "居"
+        },
+        {
+          "start": 8.02,
+          "end": 8.2,
+          "word": "民"
+        },
+        {
+          "start": 8.2,
+          "end": 8.58,
+          "word": "基本"
+        },
+        {
+          "start": 8.58,
+          "end": 8.86,
+          "word": "都"
+        },
+        {
+          "start": 8.86,
+          "end": 9.04,
+          "word": "成"
+        },
+        {
+          "start": 9.04,
+          "end": 9.14,
+          "word": "了"
+        },
+        {
+          "start": 9.14,
+          "end": 9.3,
+          "word": "他的"
+        },
+        {
+          "start": 9.3,
+          "end": 9.5,
+          "word": "回"
+        },
+        {
+          "start": 9.5,
+          "end": 9.66,
+          "word": "头"
+        },
+        {
+          "start": 9.66,
+          "end": 9.8,
+          "word": "客,"
+        }
+      ]
+    },
+    {
+      "start": 11.04,
+      "end": 19.16,
+      "text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+      "reviewed_text": "80%的顾客还主动加了店里的私域，生意好的不行，我也跑去试了几次，才明白这模式有多厉害。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 11.04,
+          "end": 11.28,
+          "word": "%"
+        },
+        {
+          "start": 11.28,
+          "end": 11.38,
+          "word": "的"
+        },
+        {
+          "start": 11.38,
+          "end": 11.52,
+          "word": "顾"
+        },
+        {
+          "start": 11.52,
+          "end": 11.68,
+          "word": "客"
+        },
+        {
+          "start": 11.68,
+          "end": 11.86,
+          "word": "还"
+        },
+        {
+          "start": 11.86,
+          "end": 12.1,
+          "word": "主"
+        },
+        {
+          "start": 12.1,
+          "end": 12.3,
+          "word": "动"
+        },
+        {
+          "start": 12.3,
+          "end": 12.54,
+          "word": "加"
+        },
+        {
+          "start": 12.54,
+          "end": 12.72,
+          "word": "了"
+        },
+        {
+          "start": 12.72,
+          "end": 12.88,
+          "word": "店"
+        },
+        {
+          "start": 12.88,
+          "end": 13.06,
+          "word": "里"
+        },
+        {
+          "start": 13.06,
+          "end": 13.2,
+          "word": "的"
+        },
+        {
+          "start": 13.2,
+          "end": 13.38,
+          "word": "私"
+        },
+        {
+          "start": 13.38,
+          "end": 13.58,
+          "word": "域,"
+        },
+        {
+          "start": 13.84,
+          "end": 14.58,
+          "word": "生"
+        },
+        {
+          "start": 14.58,
+          "end": 14.72,
+          "word": "意"
+        },
+        {
+          "start": 14.72,
+          "end": 14.92,
+          "word": "好的"
+        },
+        {
+          "start": 14.92,
+          "end": 15.28,
+          "word": "不行,"
+        },
+        {
+          "start": 15.58,
+          "end": 15.86,
+          "word": "我也"
+        },
+        {
+          "start": 15.86,
+          "end": 16.06,
+          "word": "跑"
+        },
+        {
+          "start": 16.06,
+          "end": 16.24,
+          "word": "去"
+        },
+        {
+          "start": 16.24,
+          "end": 16.42,
+          "word": "试"
+        },
+        {
+          "start": 16.42,
+          "end": 16.56,
+          "word": "了"
+        },
+        {
+          "start": 16.56,
+          "end": 16.66,
+          "word": "几"
+        },
+        {
+          "start": 16.66,
+          "end": 16.88,
+          "word": "次,"
+        },
+        {
+          "start": 17.24,
+          "end": 17.46,
+          "word": "才"
+        },
+        {
+          "start": 17.46,
+          "end": 17.68,
+          "word": "明白"
+        },
+        {
+          "start": 17.68,
+          "end": 18.02,
+          "word": "这"
+        },
+        {
+          "start": 18.02,
+          "end": 18.2,
+          "word": "模"
+        },
+        {
+          "start": 18.2,
+          "end": 18.36,
+          "word": "式"
+        },
+        {
+          "start": 18.36,
+          "end": 18.5,
+          "word": "有"
+        },
+        {
+          "start": 18.5,
+          "end": 18.66,
+          "word": "多"
+        },
+        {
+          "start": 18.66,
+          "end": 18.88,
+          "word": "厉"
+        },
+        {
+          "start": 18.88,
+          "end": 19.06,
+          "word": "害,"
+        }
+      ]
+    },
+    {
+      "start": 19.96,
+      "end": 25.76,
+      "text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+      "reviewed_text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 19.96,
+          "end": 20.04,
+          "word": "普"
+        },
+        {
+          "start": 20.04,
+          "end": 20.2,
+          "word": "通"
+        },
+        {
+          "start": 20.2,
+          "end": 20.42,
+          "word": "烧"
+        },
+        {
+          "start": 20.42,
+          "end": 20.56,
+          "word": "烤"
+        },
+        {
+          "start": 20.56,
+          "end": 20.78,
+          "word": "店"
+        },
+        {
+          "start": 20.78,
+          "end": 21.06,
+          "word": "搞"
+        },
+        {
+          "start": 21.06,
+          "end": 21.28,
+          "word": "充"
+        },
+        {
+          "start": 21.28,
+          "end": 21.42,
+          "word": "值"
+        },
+        {
+          "start": 21.42,
+          "end": 21.58,
+          "word": "活"
+        },
+        {
+          "start": 21.58,
+          "end": 21.74,
+          "word": "动,"
+        },
+        {
+          "start": 22.08,
+          "end": 22.22,
+          "word": "充"
+        },
+        {
+          "start": 22.22,
+          "end": 22.38,
+          "word": "一"
+        },
+        {
+          "start": 22.38,
+          "end": 22.52,
+          "word": "百"
+        },
+        {
+          "start": 22.52,
+          "end": 22.74,
+          "word": "送"
+        },
+        {
+          "start": 22.74,
+          "end": 22.94,
+          "word": "十"
+        },
+        {
+          "start": 22.94,
+          "end": 23.08,
+          "word": "块,"
+        },
+        {
+          "start": 23.54,
+          "end": 23.66,
+          "word": "充"
+        },
+        {
+          "start": 23.66,
+          "end": 23.8,
+          "word": "两"
+        },
+        {
+          "start": 23.8,
+          "end": 24.0,
+          "word": "百"
+        },
+        {
+          "start": 24.0,
+          "end": 24.16,
+          "word": "送"
+        },
+        {
+          "start": 24.16,
+          "end": 24.32,
+          "word": "三"
+        },
+        {
+          "start": 24.32,
+          "end": 24.52,
+          "word": "十,"
+        },
+        {
+          "start": 24.94,
+          "end": 25.04,
+          "word": "早"
+        },
+        {
+          "start": 25.04,
+          "end": 25.18,
+          "word": "就"
+        },
+        {
+          "start": 25.18,
+          "end": 25.32,
+          "word": "过"
+        },
+        {
+          "start": 25.32,
+          "end": 25.48,
+          "word": "时"
+        },
+        {
+          "start": 25.48,
+          "end": 25.64,
+          "word": "了。"
+        }
+      ]
+    },
+    {
+      "start": 26.28,
+      "end": 30.96,
+      "text": "这家店推出了会员制，花49块就能办个尊贵会员。",
+      "reviewed_text": "这家店推出了会员制，花49块就能办个尊贵会员。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 26.28,
+          "end": 26.48,
+          "word": "这"
+        },
+        {
+          "start": 26.48,
+          "end": 26.62,
+          "word": "家"
+        },
+        {
+          "start": 26.62,
+          "end": 26.82,
+          "word": "店"
+        },
+        {
+          "start": 26.82,
+          "end": 27.16,
+          "word": "推"
+        },
+        {
+          "start": 27.16,
+          "end": 27.26,
+          "word": "出"
+        },
+        {
+          "start": 27.26,
+          "end": 27.38,
+          "word": "了"
+        },
+        {
+          "start": 27.38,
+          "end": 27.5,
+          "word": "会"
+        },
+        {
+          "start": 27.5,
+          "end": 27.64,
+          "word": "员"
+        },
+        {
+          "start": 27.64,
+          "end": 27.84,
+          "word": "质,"
+        },
+        {
+          "start": 28.12,
+          "end": 28.42,
+          "word": "花"
+        },
+        {
+          "start": 28.42,
+          "end": 28.84,
+          "word": "49"
+        },
+        {
+          "start": 28.84,
+          "end": 29.28,
+          "word": "块,"
+        },
+        {
+          "start": 29.48,
+          "end": 29.58,
+          "word": "就"
+        },
+        {
+          "start": 29.58,
+          "end": 29.72,
+          "word": "能"
+        },
+        {
+          "start": 29.72,
+          "end": 29.96,
+          "word": "半"
+        },
+        {
+          "start": 29.96,
+          "end": 30.16,
+          "word": "个"
+        },
+        {
+          "start": 30.16,
+          "end": 30.36,
+          "word": "尊"
+        },
+        {
+          "start": 30.36,
+          "end": 30.48,
+          "word": "贵"
+        },
+        {
+          "start": 30.48,
+          "end": 30.64,
+          "word": "会"
+        },
+        {
+          "start": 30.64,
+          "end": 30.82,
+          "word": "员,"
+        }
+      ]
+    },
+    {
+      "start": 31.32,
+      "end": 37.52,
+      "text": "办完马上送一份招牌烧烤，等于白送会员资格，所以大多数人都办了。",
+      "reviewed_text": "办完马上送一份招牌烧烤，等于白送会员资格，所以大多数人都办了。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 31.32,
+          "end": 31.58,
+          "word": "半"
+        },
+        {
+          "start": 31.58,
+          "end": 31.8,
+          "word": "完"
+        },
+        {
+          "start": 31.8,
+          "end": 32.1,
+          "word": "马"
+        },
+        {
+          "start": 32.1,
+          "end": 32.34,
+          "word": "上"
+        },
+        {
+          "start": 32.34,
+          "end": 32.56,
+          "word": "送"
+        },
+        {
+          "start": 32.56,
+          "end": 32.72,
+          "word": "一"
+        },
+        {
+          "start": 32.72,
+          "end": 32.84,
+          "word": "份"
+        },
+        {
+          "start": 32.84,
+          "end": 33.04,
+          "word": "招"
+        },
+        {
+          "start": 33.04,
+          "end": 33.2,
+          "word": "牌"
+        },
+        {
+          "start": 33.2,
+          "end": 33.38,
+          "word": "烧"
+        },
+        {
+          "start": 33.38,
+          "end": 33.54,
+          "word": "烤,"
+        },
+        {
+          "start": 33.86,
+          "end": 34.1,
+          "word": "等"
+        },
+        {
+          "start": 34.1,
+          "end": 34.26,
+          "word": "于"
+        },
+        {
+          "start": 34.26,
+          "end": 34.44,
+          "word": "百"
+        },
+        {
+          "start": 34.44,
+          "end": 34.68,
+          "word": "送"
+        },
+        {
+          "start": 34.68,
+          "end": 34.9,
+          "word": "会"
+        },
+        {
+          "start": 34.9,
+          "end": 35.06,
+          "word": "员"
+        },
+        {
+          "start": 35.06,
+          "end": 35.24,
+          "word": "资"
+        },
+        {
+          "start": 35.24,
+          "end": 35.38,
+          "word": "格,"
+        },
+        {
+          "start": 35.98,
+          "end": 36.28,
+          "word": "所以"
+        },
+        {
+          "start": 36.28,
+          "end": 36.52,
+          "word": "大"
+        },
+        {
+          "start": 36.52,
+          "end": 36.7,
+          "word": "多"
+        },
+        {
+          "start": 36.7,
+          "end": 36.86,
+          "word": "数"
+        },
+        {
+          "start": 36.86,
+          "end": 36.98,
+          "word": "人"
+        },
+        {
+          "start": 36.98,
+          "end": 37.12,
+          "word": "都"
+        },
+        {
+          "start": 37.12,
+          "end": 37.28,
+          "word": "办"
+        },
+        {
+          "start": 37.28,
+          "end": 37.48,
+          "word": "了,"
+        }
+      ]
+    },
+    {
+      "start": 38.39,
+      "end": 41.43,
+      "text": "但重头戏是后面的共享店长活动。",
+      "reviewed_text": "但重头戏是后面的共享店长活动。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 38.39,
+          "end": 38.54,
+          "word": "但"
+        },
+        {
+          "start": 38.54,
+          "end": 38.76,
+          "word": "中"
+        },
+        {
+          "start": 38.76,
+          "end": 39.02,
+          "word": "头"
+        },
+        {
+          "start": 39.02,
+          "end": 39.24,
+          "word": "戏"
+        },
+        {
+          "start": 39.24,
+          "end": 39.56,
+          "word": "是"
+        },
+        {
+          "start": 39.56,
+          "end": 39.84,
+          "word": "后"
+        },
+        {
+          "start": 39.84,
+          "end": 40.08,
+          "word": "面"
+        },
+        {
+          "start": 40.08,
+          "end": 40.26,
+          "word": "的"
+        },
+        {
+          "start": 40.26,
+          "end": 40.44,
+          "word": "共"
+        },
+        {
+          "start": 40.44,
+          "end": 40.66,
+          "word": "享"
+        },
+        {
+          "start": 40.66,
+          "end": 40.84,
+          "word": "店"
+        },
+        {
+          "start": 40.84,
+          "end": 40.98,
+          "word": "长"
+        },
+        {
+          "start": 40.98,
+          "end": 41.12,
+          "word": "活"
+        },
+        {
+          "start": 41.12,
+          "end": 41.26,
+          "word": "动,"
+        }
+      ]
+    },
+    {
+      "start": 41.95,
+      "end": 46.91,
+      "text": "办会员的顾客自动升级成小店长，立刻拿到6张无门槛优惠券。",
+      "reviewed_text": "办会员的顾客自动升级成小店长，立刻拿到6张无门槛优惠券。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 41.98,
+          "end": 42.22,
+          "word": "半"
+        },
+        {
+          "start": 42.22,
+          "end": 42.42,
+          "word": "会"
+        },
+        {
+          "start": 42.42,
+          "end": 42.54,
+          "word": "员"
+        },
+        {
+          "start": 42.54,
+          "end": 42.68,
+          "word": "的"
+        },
+        {
+          "start": 42.68,
+          "end": 42.82,
+          "word": "顾"
+        },
+        {
+          "start": 42.82,
+          "end": 42.98,
+          "word": "客"
+        },
+        {
+          "start": 42.98,
+          "end": 43.16,
+          "word": "自"
+        },
+        {
+          "start": 43.16,
+          "end": 43.28,
+          "word": "动"
+        },
+        {
+          "start": 43.28,
+          "end": 43.44,
+          "word": "升"
+        },
+        {
+          "start": 43.44,
+          "end": 43.56,
+          "word": "级"
+        },
+        {
+          "start": 43.56,
+          "end": 43.68,
+          "word": "成"
+        },
+        {
+          "start": 43.68,
+          "end": 43.82,
+          "word": "小"
+        },
+        {
+          "start": 43.82,
+          "end": 43.96,
+          "word": "店"
+        },
+        {
+          "start": 43.96,
+          "end": 44.16,
+          "word": "长,"
+        },
+        {
+          "start": 44.48,
+          "end": 44.64,
+          "word": "立"
+        },
+        {
+          "start": 44.64,
+          "end": 44.92,
+          "word": "刻"
+        },
+        {
+          "start": 44.92,
+          "end": 45.12,
+          "word": "拿"
+        },
+        {
+          "start": 45.12,
+          "end": 45.3,
+          "word": "到"
+        },
+        {
+          "start": 45.3,
+          "end": 45.48,
+          "word": "六"
+        },
+        {
+          "start": 45.48,
+          "end": 45.74,
+          "word": "张"
+        },
+        {
+          "start": 45.74,
+          "end": 45.98,
+          "word": "无"
+        },
+        {
+          "start": 45.98,
+          "end": 46.18,
+          "word": "门"
+        },
+        {
+          "start": 46.18,
+          "end": 46.26,
+          "word": "槛"
+        },
+        {
+          "start": 46.26,
+          "end": 46.42,
+          "word": "又"
+        },
+        {
+          "start": 46.42,
+          "end": 46.54,
+          "word": "会"
+        },
+        {
+          "start": 46.54,
+          "end": 46.7,
+          "word": "劝,"
+        }
+      ]
+    },
+    {
+      "start": 47.43,
+      "end": 49.59,
+      "text": "小店长把券发到朋友圈或者群里。",
+      "reviewed_text": "小店长把券发到朋友圈或者群里。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 47.43,
+          "end": 47.66,
+          "word": "小"
+        },
+        {
+          "start": 47.66,
+          "end": 47.8,
+          "word": "店"
+        },
+        {
+          "start": 47.8,
+          "end": 47.94,
+          "word": "长"
+        },
+        {
+          "start": 47.94,
+          "end": 48.08,
+          "word": "把"
+        },
+        {
+          "start": 48.08,
+          "end": 48.24,
+          "word": "劝"
+        },
+        {
+          "start": 48.24,
+          "end": 48.46,
+          "word": "发"
+        },
+        {
+          "start": 48.46,
+          "end": 48.6,
+          "word": "到"
+        },
+        {
+          "start": 48.6,
+          "end": 48.8,
+          "word": "朋友"
+        },
+        {
+          "start": 48.8,
+          "end": 48.94,
+          "word": "圈"
+        },
+        {
+          "start": 48.94,
+          "end": 49.18,
+          "word": "或者"
+        },
+        {
+          "start": 49.18,
+          "end": 49.34,
+          "word": "群"
+        },
+        {
+          "start": 49.34,
+          "end": 49.52,
+          "word": "里,"
+        }
+      ]
+    },
+    {
+      "start": 49.83,
+      "end": 52.51,
+      "text": "别人一点券，就成了他的粉丝。",
+      "reviewed_text": "别人一点券，就成了他的粉丝。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 49.94,
+          "end": 50.08,
+          "word": "别"
+        },
+        {
+          "start": 50.08,
+          "end": 50.28,
+          "word": "人"
+        },
+        {
+          "start": 50.28,
+          "end": 50.54,
+          "word": "一点"
+        },
+        {
+          "start": 50.54,
+          "end": 50.82,
+          "word": "劝"
+        },
+        {
+          "start": 50.82,
+          "end": 51.46,
+          "word": "就"
+        },
+        {
+          "start": 51.46,
+          "end": 51.66,
+          "word": "成"
+        },
+        {
+          "start": 51.66,
+          "end": 51.78,
+          "word": "了"
+        },
+        {
+          "start": 51.78,
+          "end": 51.94,
+          "word": "他的"
+        },
+        {
+          "start": 51.94,
+          "end": 52.12,
+          "word": "粉"
+        },
+        {
+          "start": 52.12,
+          "end": 52.3,
+          "word": "丝,"
+        }
+      ]
+    },
+    {
+      "start": 53.11,
+      "end": 60.31,
+      "text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+      "reviewed_text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 53.11,
+          "end": 53.28,
+          "word": "以"
+        },
+        {
+          "start": 53.28,
+          "end": 53.44,
+          "word": "后"
+        },
+        {
+          "start": 53.44,
+          "end": 53.6,
+          "word": "这"
+        },
+        {
+          "start": 53.6,
+          "end": 53.7,
+          "word": "些"
+        },
+        {
+          "start": 53.7,
+          "end": 53.88,
+          "word": "粉"
+        },
+        {
+          "start": 53.88,
+          "end": 54.06,
+          "word": "丝,"
+        },
+        {
+          "start": 54.28,
+          "end": 54.4,
+          "word": "到"
+        },
+        {
+          "start": 54.4,
+          "end": 54.66,
+          "word": "店"
+        },
+        {
+          "start": 54.66,
+          "end": 54.88,
+          "word": "消"
+        },
+        {
+          "start": 54.88,
+          "end": 55.02,
+          "word": "费,"
+        },
+        {
+          "start": 55.64,
+          "end": 55.92,
+          "word": "每"
+        },
+        {
+          "start": 55.92,
+          "end": 56.16,
+          "word": "一"
+        },
+        {
+          "start": 56.16,
+          "end": 56.24,
+          "word": "笔"
+        },
+        {
+          "start": 56.24,
+          "end": 56.48,
+          "word": "小"
+        },
+        {
+          "start": 56.48,
+          "end": 56.64,
+          "word": "店"
+        },
+        {
+          "start": 56.64,
+          "end": 56.82,
+          "word": "长"
+        },
+        {
+          "start": 56.82,
+          "end": 57.06,
+          "word": "都"
+        },
+        {
+          "start": 57.06,
+          "end": 57.24,
+          "word": "能"
+        },
+        {
+          "start": 57.24,
+          "end": 57.46,
+          "word": "拿"
+        },
+        {
+          "start": 57.46,
+          "end": 57.7,
+          "word": "10"
+        },
+        {
+          "start": 57.7,
+          "end": 57.88,
+          "word": "%"
+        },
+        {
+          "start": 57.88,
+          "end": 58.28,
+          "word": "的"
+        },
+        {
+          "start": 58.28,
+          "end": 58.44,
+          "word": "现"
+        },
+        {
+          "start": 58.44,
+          "end": 58.58,
+          "word": "金"
+        },
+        {
+          "start": 58.58,
+          "end": 58.76,
+          "word": "奖"
+        },
+        {
+          "start": 58.76,
+          "end": 58.92,
+          "word": "励,"
+        },
+        {
+          "start": 59.2,
+          "end": 59.5,
+          "word": "而且"
+        },
+        {
+          "start": 59.5,
+          "end": 59.74,
+          "word": "秒"
+        },
+        {
+          "start": 59.74,
+          "end": 59.98,
+          "word": "道"
+        },
+        {
+          "start": 59.98,
+          "end": 60.16,
+          "word": "账,"
+        }
+      ]
+    },
+    {
+      "start": 60.75,
+      "end": 63.99,
+      "text": "所有消费都是通过门店小程序完成的。",
+      "reviewed_text": "所有消费都是通过门店小程序完成的。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 60.75,
+          "end": 61.14,
+          "word": "所有"
+        },
+        {
+          "start": 61.14,
+          "end": 61.38,
+          "word": "消"
+        },
+        {
+          "start": 61.38,
+          "end": 61.54,
+          "word": "费"
+        },
+        {
+          "start": 61.54,
+          "end": 61.86,
+          "word": "都是"
+        },
+        {
+          "start": 61.86,
+          "end": 62.08,
+          "word": "通"
+        },
+        {
+          "start": 62.08,
+          "end": 62.3,
+          "word": "过"
+        },
+        {
+          "start": 62.3,
+          "end": 62.52,
+          "word": "门"
+        },
+        {
+          "start": 62.52,
+          "end": 62.72,
+          "word": "店"
+        },
+        {
+          "start": 62.72,
+          "end": 63.02,
+          "word": "小"
+        },
+        {
+          "start": 63.02,
+          "end": 63.22,
+          "word": "程"
+        },
+        {
+          "start": 63.22,
+          "end": 63.38,
+          "word": "序"
+        },
+        {
+          "start": 63.38,
+          "end": 63.68,
+          "word": "完成"
+        },
+        {
+          "start": 63.68,
+          "end": 63.92,
+          "word": "的。"
+        }
+      ]
+    },
+    {
+      "start": 64.67,
+      "end": 71.47,
+      "text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+      "reviewed_text": "老板不用费心想推广方案，会员们就像免费宣传员，在社交圈里自然传播。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 64.67,
+          "end": 64.74,
+          "word": "老"
+        },
+        {
+          "start": 64.74,
+          "end": 64.92,
+          "word": "板"
+        },
+        {
+          "start": 64.92,
+          "end": 65.3,
+          "word": "不用"
+        },
+        {
+          "start": 65.3,
+          "end": 65.58,
+          "word": "费"
+        },
+        {
+          "start": 65.58,
+          "end": 65.8,
+          "word": "心"
+        },
+        {
+          "start": 65.8,
+          "end": 66.06,
+          "word": "想"
+        },
+        {
+          "start": 66.06,
+          "end": 66.28,
+          "word": "推"
+        },
+        {
+          "start": 66.28,
+          "end": 66.42,
+          "word": "广"
+        },
+        {
+          "start": 66.42,
+          "end": 66.62,
+          "word": "方"
+        },
+        {
+          "start": 66.62,
+          "end": 66.76,
+          "word": "案,"
+        },
+        {
+          "start": 67.18,
+          "end": 67.28,
+          "word": "会"
+        },
+        {
+          "start": 67.28,
+          "end": 67.42,
+          "word": "员"
+        },
+        {
+          "start": 67.42,
+          "end": 67.58,
+          "word": "们"
+        },
+        {
+          "start": 67.58,
+          "end": 67.74,
+          "word": "就"
+        },
+        {
+          "start": 67.74,
+          "end": 67.94,
+          "word": "向"
+        },
+        {
+          "start": 67.94,
+          "end": 68.14,
+          "word": "免"
+        },
+        {
+          "start": 68.14,
+          "end": 68.36,
+          "word": "费"
+        },
+        {
+          "start": 68.36,
+          "end": 68.56,
+          "word": "宣"
+        },
+        {
+          "start": 68.56,
+          "end": 68.7,
+          "word": "传"
+        },
+        {
+          "start": 68.7,
+          "end": 69.0,
+          "word": "员,"
+        },
+        {
+          "start": 69.28,
+          "end": 69.56,
+          "word": "在"
+        },
+        {
+          "start": 69.56,
+          "end": 69.76,
+          "word": "社"
+        },
+        {
+          "start": 69.76,
+          "end": 69.94,
+          "word": "交"
+        },
+        {
+          "start": 69.94,
+          "end": 70.2,
+          "word": "圈"
+        },
+        {
+          "start": 70.2,
+          "end": 70.4,
+          "word": "里"
+        },
+        {
+          "start": 70.4,
+          "end": 70.66,
+          "word": "自"
+        },
+        {
+          "start": 70.66,
+          "end": 70.8,
+          "word": "然"
+        },
+        {
+          "start": 70.8,
+          "end": 71.06,
+          "word": "传"
+        },
+        {
+          "start": 71.06,
+          "end": 71.28,
+          "word": "播,"
+        }
+      ]
+    },
+    {
+      "start": 71.87,
+      "end": 74.95,
+      "text": "这种口碑效果比花大钱打广告强多了。",
+      "reviewed_text": "这种口碑效果比花大钱打广告强多了。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 71.87,
+          "end": 72.06,
+          "word": "这"
+        },
+        {
+          "start": 72.06,
+          "end": 72.22,
+          "word": "种"
+        },
+        {
+          "start": 72.22,
+          "end": 72.44,
+          "word": "口"
+        },
+        {
+          "start": 72.44,
+          "end": 72.5,
+          "word": "碑"
+        },
+        {
+          "start": 72.5,
+          "end": 72.7,
+          "word": "效"
+        },
+        {
+          "start": 72.7,
+          "end": 72.88,
+          "word": "果"
+        },
+        {
+          "start": 72.88,
+          "end": 73.08,
+          "word": "比"
+        },
+        {
+          "start": 73.08,
+          "end": 73.34,
+          "word": "花"
+        },
+        {
+          "start": 73.34,
+          "end": 73.54,
+          "word": "大"
+        },
+        {
+          "start": 73.54,
+          "end": 73.78,
+          "word": "钱"
+        },
+        {
+          "start": 73.78,
+          "end": 74.04,
+          "word": "打"
+        },
+        {
+          "start": 74.04,
+          "end": 74.16,
+          "word": "广"
+        },
+        {
+          "start": 74.16,
+          "end": 74.34,
+          "word": "告"
+        },
+        {
+          "start": 74.34,
+          "end": 74.52,
+          "word": "强"
+        },
+        {
+          "start": 74.52,
+          "end": 74.7,
+          "word": "多"
+        },
+        {
+          "start": 74.7,
+          "end": 74.86,
+          "word": "了,"
+        }
+      ]
+    },
+    {
+      "start": 75.43,
+      "end": 81.11,
+      "text": "活动一推，好几百人抢着办会员当小店长，既吃美食又赚外快。",
+      "reviewed_text": "活动一推，好几百人抢着办会员当小店长，既吃美食又赚外快。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 75.43,
+          "end": 75.68,
+          "word": "活"
+        },
+        {
+          "start": 75.68,
+          "end": 75.8,
+          "word": "动"
+        },
+        {
+          "start": 75.8,
+          "end": 75.94,
+          "word": "一"
+        },
+        {
+          "start": 75.94,
+          "end": 76.06,
+          "word": "推,"
+        },
+        {
+          "start": 76.5,
+          "end": 76.66,
+          "word": "好"
+        },
+        {
+          "start": 76.66,
+          "end": 76.84,
+          "word": "几"
+        },
+        {
+          "start": 76.84,
+          "end": 76.98,
+          "word": "百"
+        },
+        {
+          "start": 76.98,
+          "end": 77.18,
+          "word": "人"
+        },
+        {
+          "start": 77.18,
+          "end": 77.34,
+          "word": "抢"
+        },
+        {
+          "start": 77.34,
+          "end": 77.52,
+          "word": "着"
+        },
+        {
+          "start": 77.52,
+          "end": 77.66,
+          "word": "办"
+        },
+        {
+          "start": 77.66,
+          "end": 77.88,
+          "word": "会"
+        },
+        {
+          "start": 77.88,
+          "end": 78.04,
+          "word": "员"
+        },
+        {
+          "start": 78.04,
+          "end": 78.24,
+          "word": "当"
+        },
+        {
+          "start": 78.24,
+          "end": 78.5,
+          "word": "小"
+        },
+        {
+          "start": 78.5,
+          "end": 78.68,
+          "word": "店"
+        },
+        {
+          "start": 78.68,
+          "end": 78.96,
+          "word": "长,"
+        },
+        {
+          "start": 79.24,
+          "end": 79.32,
+          "word": "继"
+        },
+        {
+          "start": 79.32,
+          "end": 79.52,
+          "word": "吃"
+        },
+        {
+          "start": 79.52,
+          "end": 79.76,
+          "word": "美"
+        },
+        {
+          "start": 79.76,
+          "end": 79.96,
+          "word": "食"
+        },
+        {
+          "start": 79.96,
+          "end": 80.3,
+          "word": "又"
+        },
+        {
+          "start": 80.3,
+          "end": 80.54,
+          "word": "赚"
+        },
+        {
+          "start": 80.54,
+          "end": 80.76,
+          "word": "外"
+        },
+        {
+          "start": 80.76,
+          "end": 80.9,
+          "word": "快。"
+        }
+      ]
+    },
+    {
+      "start": 81.63,
+      "end": 84.71,
+      "text": "这些人又帮店里裂变出几千个新顾客。",
+      "reviewed_text": "这些人又帮店里裂变出几千个新顾客。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 81.63,
+          "end": 81.82,
+          "word": "这"
+        },
+        {
+          "start": 81.82,
+          "end": 81.98,
+          "word": "些"
+        },
+        {
+          "start": 81.98,
+          "end": 82.14,
+          "word": "人"
+        },
+        {
+          "start": 82.14,
+          "end": 82.32,
+          "word": "又"
+        },
+        {
+          "start": 82.32,
+          "end": 82.54,
+          "word": "帮"
+        },
+        {
+          "start": 82.54,
+          "end": 82.72,
+          "word": "店"
+        },
+        {
+          "start": 82.72,
+          "end": 82.92,
+          "word": "里"
+        },
+        {
+          "start": 82.92,
+          "end": 83.08,
+          "word": "裂"
+        },
+        {
+          "start": 83.08,
+          "end": 83.26,
+          "word": "变"
+        },
+        {
+          "start": 83.26,
+          "end": 83.42,
+          "word": "出"
+        },
+        {
+          "start": 83.42,
+          "end": 83.7,
+          "word": "几"
+        },
+        {
+          "start": 83.7,
+          "end": 83.9,
+          "word": "千"
+        },
+        {
+          "start": 83.9,
+          "end": 84.06,
+          "word": "个"
+        },
+        {
+          "start": 84.06,
+          "end": 84.24,
+          "word": "新"
+        },
+        {
+          "start": 84.24,
+          "end": 84.42,
+          "word": "顾"
+        },
+        {
+          "start": 84.42,
+          "end": 84.58,
+          "word": "客"
+        },
+        {
+          "start": 84.58,
+          "end": 84.71,
+          "word": "不"
+        }
+      ]
+    },
+    {
+      "start": 84.91,
+      "end": 86.39,
+      "text": "不过这个活动要落地。",
+      "reviewed_text": "不过这个活动要落地。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 84.91,
+          "end": 85.04,
+          "word": "不"
+        },
+        {
+          "start": 85.04,
+          "end": 85.24,
+          "word": "过"
+        },
+        {
+          "start": 85.24,
+          "end": 85.52,
+          "word": "这个"
+        },
+        {
+          "start": 85.52,
+          "end": 85.72,
+          "word": "活"
+        },
+        {
+          "start": 85.72,
+          "end": 85.88,
+          "word": "动"
+        },
+        {
+          "start": 86.0,
+          "end": 86.12,
+          "word": "落"
+        },
+        {
+          "start": 86.12,
+          "end": 86.3,
+          "word": "地,"
+        }
+      ]
+    },
+    {
+      "start": 86.71,
+      "end": 88.39,
+      "text": "靠人工根本不行。",
+      "reviewed_text": "靠人工根本不行。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 86.8,
+          "end": 86.88,
+          "word": "靠"
+        },
+        {
+          "start": 86.88,
+          "end": 87.14,
+          "word": "人"
+        },
+        {
+          "start": 87.14,
+          "end": 87.38,
+          "word": "工"
+        },
+        {
+          "start": 87.38,
+          "end": 87.68,
+          "word": "根"
+        },
+        {
+          "start": 87.68,
+          "end": 87.9,
+          "word": "本"
+        },
+        {
+          "start": 87.9,
+          "end": 88.26,
+          "word": "不行。"
+        }
+      ]
+    },
+    {
+      "start": 89.08,
+      "end": 94.16,
+      "text": "老板直接换掉了旧系统，上了一套智慧门店系统，自动执行，不用人管。",
+      "reviewed_text": "老板直接换掉了旧系统，上了一套智慧门店系统，自动执行，不用人管。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 89.08,
+          "end": 89.14,
+          "word": "老"
+        },
+        {
+          "start": 89.14,
+          "end": 89.28,
+          "word": "板"
+        },
+        {
+          "start": 89.28,
+          "end": 89.68,
+          "word": "直接"
+        },
+        {
+          "start": 89.68,
+          "end": 89.9,
+          "word": "换"
+        },
+        {
+          "start": 89.9,
+          "end": 90.06,
+          "word": "掉"
+        },
+        {
+          "start": 90.06,
+          "end": 90.22,
+          "word": "了"
+        },
+        {
+          "start": 90.22,
+          "end": 90.36,
+          "word": "旧"
+        },
+        {
+          "start": 90.36,
+          "end": 90.52,
+          "word": "系"
+        },
+        {
+          "start": 90.52,
+          "end": 90.66,
+          "word": "统,"
+        },
+        {
+          "start": 90.94,
+          "end": 91.06,
+          "word": "上"
+        },
+        {
+          "start": 91.06,
+          "end": 91.2,
+          "word": "了"
+        },
+        {
+          "start": 91.2,
+          "end": 91.32,
+          "word": "一"
+        },
+        {
+          "start": 91.32,
+          "end": 91.44,
+          "word": "套"
+        },
+        {
+          "start": 91.44,
+          "end": 91.66,
+          "word": "智"
+        },
+        {
+          "start": 91.66,
+          "end": 91.82,
+          "word": "慧"
+        },
+        {
+          "start": 91.82,
+          "end": 92.0,
+          "word": "门"
+        },
+        {
+          "start": 92.0,
+          "end": 92.12,
+          "word": "店"
+        },
+        {
+          "start": 92.12,
+          "end": 92.28,
+          "word": "系"
+        },
+        {
+          "start": 92.28,
+          "end": 92.42,
+          "word": "统"
+        },
+        {
+          "start": 92.42,
+          "end": 92.78,
+          "word": "自"
+        },
+        {
+          "start": 92.78,
+          "end": 92.9,
+          "word": "动"
+        },
+        {
+          "start": 92.9,
+          "end": 93.08,
+          "word": "执"
+        },
+        {
+          "start": 93.08,
+          "end": 93.24,
+          "word": "行"
+        },
+        {
+          "start": 93.24,
+          "end": 93.6,
+          "word": "不用"
+        },
+        {
+          "start": 93.6,
+          "end": 93.82,
+          "word": "人"
+        },
+        {
+          "start": 93.82,
+          "end": 93.96,
+          "word": "管。"
+        }
+      ]
+    },
+    {
+      "start": 94.56,
+      "end": 99.64,
+      "text": "除了餐饮、水果、生鲜、美容、便利店都能照搬。",
+      "reviewed_text": "除了餐饮、水果、生鲜、美容、便利店都能照搬。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 94.56,
+          "end": 94.76,
+          "word": "除"
+        },
+        {
+          "start": 94.76,
+          "end": 94.88,
+          "word": "了"
+        },
+        {
+          "start": 94.88,
+          "end": 95.08,
+          "word": "餐"
+        },
+        {
+          "start": 95.08,
+          "end": 95.28,
+          "word": "饮,"
+        },
+        {
+          "start": 95.76,
+          "end": 95.8,
+          "word": "水"
+        },
+        {
+          "start": 95.8,
+          "end": 96.02,
+          "word": "果,"
+        },
+        {
+          "start": 96.54,
+          "end": 96.62,
+          "word": "身"
+        },
+        {
+          "start": 96.62,
+          "end": 96.88,
+          "word": "仙,"
+        },
+        {
+          "start": 97.36,
+          "end": 97.5,
+          "word": "美"
+        },
+        {
+          "start": 97.5,
+          "end": 97.68,
+          "word": "容,"
+        },
+        {
+          "start": 98.08,
+          "end": 98.16,
+          "word": "便"
+        },
+        {
+          "start": 98.16,
+          "end": 98.34,
+          "word": "利"
+        },
+        {
+          "start": 98.34,
+          "end": 98.5,
+          "word": "店"
+        },
+        {
+          "start": 98.5,
+          "end": 98.92,
+          "word": "都"
+        },
+        {
+          "start": 98.92,
+          "end": 99.14,
+          "word": "能"
+        },
+        {
+          "start": 99.14,
+          "end": 99.32,
+          "word": "找"
+        },
+        {
+          "start": 99.32,
+          "end": 99.48,
+          "word": "班。"
+        }
+      ]
+    },
+    {
+      "start": 100.16,
+      "end": 104.68,
+      "text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
+      "reviewed_text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
+      "quality_status": "accepted_cached_transcript_plus_local_gap_review",
+      "words": [
+        {
+          "start": 100.16,
+          "end": 100.46,
+          "word": "如果"
+        },
+        {
+          "start": 100.46,
+          "end": 100.72,
+          "word": "你的"
+        },
+        {
+          "start": 100.72,
+          "end": 100.9,
+          "word": "店"
+        },
+        {
+          "start": 100.9,
+          "end": 101.3,
+          "word": "也"
+        },
+        {
+          "start": 101.3,
+          "end": 101.56,
+          "word": "想"
+        },
+        {
+          "start": 101.56,
+          "end": 101.76,
+          "word": "用"
+        },
+        {
+          "start": 101.76,
+          "end": 101.98,
+          "word": "这"
+        },
+        {
+          "start": 101.98,
+          "end": 102.14,
+          "word": "套"
+        },
+        {
+          "start": 102.14,
+          "end": 102.3,
+          "word": "系"
+        },
+        {
+          "start": 102.3,
+          "end": 102.4,
+          "word": "统"
+        },
+        {
+          "start": 102.4,
+          "end": 102.58,
+          "word": "搞"
+        },
+        {
+          "start": 102.58,
+          "end": 102.72,
+          "word": "活"
+        },
+        {
+          "start": 102.72,
+          "end": 102.84,
+          "word": "动,"
+        },
+        {
+          "start": 103.24,
+          "end": 103.34,
+          "word": "评"
+        },
+        {
+          "start": 103.34,
+          "end": 103.44,
+          "word": "论"
+        },
+        {
+          "start": 103.44,
+          "end": 103.58,
+          "word": "去"
+        },
+        {
+          "start": 103.58,
+          "end": 103.72,
+          "word": "打"
+        },
+        {
+          "start": 103.72,
+          "end": 103.84,
+          "word": "个"
+        },
+        {
+          "start": 103.84,
+          "end": 104.0,
+          "word": "小"
+        },
+        {
+          "start": 104.0,
+          "end": 104.16,
+          "word": "店"
+        },
+        {
+          "start": 104.16,
+          "end": 104.32,
+          "word": "长"
+        },
+        {
+          "start": 104.32,
+          "end": 104.48,
+          "word": "就"
+        },
+        {
+          "start": 104.48,
+          "end": 104.64,
+          "word": "行。"
+        }
+      ]
+    }
+  ]
+}

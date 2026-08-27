@@ -1,0 +1,457 @@
+{
+  "batch_id": "edit-batch-73332f81f527",
+  "item_id": "edit-item-29dd8006cc50",
+  "source_id": "upload:upload-ca379094eb",
+  "route": "create_release_template_local_export",
+  "payload_status": "awaiting_output_confirmation",
+  "task_id": "edit-local-66707eedb1",
+  "item_status": "awaiting_output_confirmation",
+  "result_path": "data\\video_edits\\edit-local-66707eedb1.mp4",
+  "task_status": "succeeded",
+  "quality_report": {
+    "passed": false,
+    "checks": {
+      "file_non_empty": true,
+      "video_stream": true,
+      "audio_stream": true,
+      "resolution": true,
+      "duration": true,
+      "visual_timing": true,
+      "audio_video_drift": true,
+      "subtitle_effect_gate": true,
+      "subtitle_timeline": true
+    },
+    "duration_seconds": 12.47,
+    "expected_duration_seconds": 12.49,
+    "duration_delta_seconds": 0.02,
+    "resolution": {
+      "width": 720,
+      "height": 1280
+    },
+    "visual_beat_count": 2,
+    "style_version": "talking_head_release_v2.0-director-timeline",
+    "bgm": {
+      "enabled": true,
+      "asset_id": "bgm-a40b291dc5b1",
+      "title": "tech-city-local-acceptance-confirmed",
+      "source_provider": "manual",
+      "source_url": "",
+      "license_url": "",
+      "rights_holder": "用户提供（本机验收）",
+      "content_id_risk": "unknown",
+      "auto_eligible": true,
+      "authorization_status": "confirmed",
+      "voice_priority": true,
+      "ducking": {
+        "enabled": true,
+        "filter": "sidechaincompress",
+        "attack_ms": 20,
+        "release_ms": 450,
+        "mix_volume": 0.16
+      },
+      "publish_rights_gate_passed": true
+    },
+    "alignment": {
+      "method": "ffprobe_stream_start_end_pts",
+      "start_drift_ms": 0.0,
+      "end_drift_ms": 1.016,
+      "max_drift_ms": 1.016,
+      "threshold_ms": 67.0,
+      "passed": true
+    },
+    "shot_plan": {
+      "template_id": "adaptive_talking_head_v1",
+      "template_version": "talking-head-release-v1.0",
+      "shot_count": 4,
+      "degradation": {
+        "mode": "authorized_real_broll",
+        "message": "已按模板策略绑定语义相关且来源可追溯的真实素材。",
+        "publish_claim_allowed": false
+      }
+    },
+    "subtitle_timeline": {
+      "passed": true,
+      "cue_count": 10,
+      "duplicate_count": 0,
+      "checks": {
+        "monotonic_and_in_bounds": true,
+        "no_duplicate_cues": true
+      },
+      "phrase_cue_count": 10,
+      "phrase_timing_source": "word_timestamps",
+      "estimated_phrase_timestamps": false,
+      "max_phrase_duration_seconds": 1.7,
+      "cue_manifest_sha256": "59db2b440a6f0df6961bb1184c09628020e92eca67d548b65b52371688771e82",
+      "ass_sha256": "452afb337e81b10af093b46d39747e41014ec16ba0b9b0eac5317c7f2092fd48",
+      "preview_render_manifest_equal": true,
+      "experience_gate": {
+        "passed": true,
+        "checks": {
+          "min_duration": true,
+          "max_duration": true,
+          "one_line": true,
+          "no_fragment_cues": true,
+          "lexical_boundary_integrity": true,
+          "no_orphan_prefix_suffix": true,
+          "preview_render_manifest_equal": true,
+          "cue_count_per_sentence": true
+        },
+        "min_duration_seconds": 0.98,
+        "max_duration_seconds": 1.7,
+        "one_line_ratio": 1.0,
+        "lexical_boundary_integrity": true,
+        "no_orphan_prefix_suffix": true,
+        "preview_render_manifest_equal": true,
+        "minimum_dwell_seconds": 0.9,
+        "maximum_dwell_seconds": 2.4,
+        "short_source_exception_allowed": true,
+        "cue_count_by_source_segment": {
+          "0": 1,
+          "1": 1,
+          "2": 2,
+          "3": 2,
+          "4": 2,
+          "5": 1,
+          "6": 1
+        },
+        "cue_count_gate_by_source_segment": {
+          "0": true,
+          "1": true,
+          "2": true,
+          "3": true,
+          "4": true,
+          "5": true,
+          "6": true
+        }
+      },
+      "text_integrity_gate": {
+        "passed": true,
+        "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+        "source_text_sha256": "16b25c4812afc81401d8d619cfdc4504d67078837dbd63b37b45be4acd478aa5",
+        "cue_text_sha256": "16b25c4812afc81401d8d619cfdc4504d67078837dbd63b37b45be4acd478aa5",
+        "source_char_count": 81,
+        "cue_char_count": 81,
+        "exact_ordered_match": true,
+        "duplicate_function_word_boundary": false
+      },
+      "audio_activity_gate": {
+        "passed": true,
+        "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+        "minimum_uncovered_seconds": 0.5,
+        "active_seconds": 11.82,
+        "covered_seconds": 11.82,
+        "uncovered_ranges": [],
+        "raw_vad_active_ranges": [
+          {
+            "start": 0.0,
+            "end": 7.21
+          },
+          {
+            "start": 7.51,
+            "end": 9.23
+          },
+          {
+            "start": 9.59,
+            "end": 12.49
+          }
+        ],
+        "speech_candidate_ranges": [
+          {
+            "start": 0.0,
+            "end": 1.42
+          },
+          {
+            "start": 1.42,
+            "end": 2.4
+          },
+          {
+            "start": 2.4,
+            "end": 4.52
+          },
+          {
+            "start": 4.52,
+            "end": 7.2
+          },
+          {
+            "start": 7.2,
+            "end": 7.21
+          },
+          {
+            "start": 7.51,
+            "end": 9.23
+          },
+          {
+            "start": 9.59,
+            "end": 10.78
+          },
+          {
+            "start": 10.78,
+            "end": 12.48
+          }
+        ]
+      },
+      "subtitle_effect_gate": {
+        "passed": true,
+        "style_id": "adaptive_talking_head_v1",
+        "cue_count": 10,
+        "emphasis_count": 1,
+        "checks": {
+          "unified_adaptive_style": true,
+          "entry_motion_100_160ms": true,
+          "sparse_emphasis": true,
+          "emphasis_scale_105_112": true,
+          "no_routine_refresh_as_visual_effect": true
+        }
+      },
+      "word_timing_quality": {
+        "status": "verified",
+        "verified": true,
+        "source": "word_timestamps",
+        "alignment_method": "exact_compact_text_match",
+        "reviewed_text_sequence_alignment_fallback_count": 0,
+        "word_p95_ms": 0.0,
+        "mapping_error_frames": 0.0,
+        "matched_cue_count": 10,
+        "unmatched_cue_count": 0,
+        "fps": 30.0,
+        "checks": {
+          "word_p95_le_150ms": true,
+          "mapping_le_1_frame": true
+        }
+      },
+      "word_p95_ms": 0.0,
+      "mapping_error_frames": 0.0
+    },
+    "semantic_visual_rejection_log": [
+      {
+        "start": 5.78,
+        "end": 7.84,
+        "visual_intent": "cta",
+        "reason": "adaptive_visual_card_disabled_by_default"
+      }
+    ],
+    "creative_checks": {
+      "director_assets_ready": false,
+      "minimum_real_visual_events": false,
+      "has_pip_visual": false,
+      "has_full_visual": true,
+      "pip_safe_area_no_face_or_subtitle_overlap": true,
+      "real_broll_coverage_template_policy": true,
+      "no_fixed_asset_loop": true,
+      "visual_origin_traceable": true,
+      "semantic_broll_match_explainable": true,
+      "semantic_visual_layer_safe": true,
+      "semantic_layers_not_counted_as_real_broll": true,
+      "visual_cadence_gate": true,
+      "hook_declared_once": true,
+      "visual_pipeline_executed": true
+    },
+    "visual_gate_policy": {
+      "template_id": "adaptive_talking_head_v1",
+      "visual_density": "rich",
+      "min_real_events": 2,
+      "max_real_events": 3,
+      "min_coverage_ratio": 0.25,
+      "max_coverage_ratio": 0.4,
+      "pip_required": true,
+      "full_required": true,
+      "language": "丰富自适应模式至少需要一组相关全屏和一组真实 PiP；素材不足只能安全降级并失败视觉发布门。",
+      "real_event_count": 1,
+      "broll_count": 1,
+      "coverage_ratio": 0.2887,
+      "actual_has_pip_visual": false,
+      "actual_has_full_visual": true,
+      "passed": false
+    },
+    "hard_checks": {
+      "has_pip_visual": false,
+      "has_full_visual": true,
+      "pip_required": true,
+      "full_required": true,
+      "actual_real_broll_event_count": 1,
+      "actual_real_broll_coverage_ratio": 0.2887
+    },
+    "visual_cadence_gate": {
+      "passed": true,
+      "meaningful_visual_beat_count": 5,
+      "beat_starts_final_output": [
+        0.0,
+        2.4,
+        3.48,
+        8.82,
+        10.78
+      ],
+      "intervals_seconds": [
+        2.4,
+        1.08,
+        5.34,
+        1.96
+      ],
+      "max_gap_seconds": 5.34,
+      "recommended_max_gap_seconds": 6.0,
+      "hard_max_gap_seconds": 7.5,
+      "rhythm_hold_exception": false,
+      "routine_subtitle_refresh_counted": false,
+      "safe_degradation_allowed": true
+    },
+    "source_original_visual": {
+      "event_count": 0,
+      "counted_in_output_added_visual": false,
+      "note": "源视频自带画面、贴图、汽车图和特效不计入本次程序新增视觉成果。"
+    },
+    "output_added_visual": {
+      "event_count": 1,
+      "broll_event_count": 1,
+      "vector_event_count": 0,
+      "events": [
+        {
+          "event_id": "broll-a3f531bfd7",
+          "start": 8.82,
+          "end": 12.42,
+          "mode": "full",
+          "asset_id": "broll-a3f531bfd7",
+          "source": "pexels"
+        }
+      ]
+    },
+    "creative_passed": false,
+    "subtitle_word_gate_passed": true,
+    "publish_claim_allowed": false,
+    "v1_hard_gate_passed": false,
+    "local_visual_acceptance_passed": false,
+    "release_visual_gate_passed": false,
+    "semantic_match_gate": {
+      "passed": true,
+      "failures": []
+    },
+    "publish_rights_gate_passed": false,
+    "visual_origin_policy": {
+      "domestic_priority": [
+        "domestic_confirmed_real",
+        "domestic_authorized_generation",
+        "international_pexels_pixabay_fallback"
+      ],
+      "locale_does_not_prove_domestic_scene": true,
+      "public_douyin_bilibili_scraping": false,
+      "generated_images_count_as_local_visual_events": true,
+      "generated_images_do_not_satisfy_free_stock_video_gate": true,
+      "free_stock_video_gate": "blocked_missing_confirmed_pexels_or_pixabay_video"
+    },
+    "visual_event_count": 3,
+    "visual_broll_event_count": 1,
+    "semantic_visual_layer_count": 0,
+    "semantic_visual_layer_geometry": {
+      "safe": false,
+      "reason": "lower_left_safe_zone",
+      "bbox": {
+        "left": 36,
+        "top": 806,
+        "right": 396,
+        "bottom": 956,
+        "width": 360,
+        "height": 150
+      },
+      "intersects_face_safe_bbox": false,
+      "intersects_subtitle_bbox": false,
+      "intersects_pip_bbox": true
+    },
+    "real_broll_event_count": 1,
+    "real_stock_video_event_count": 1,
+    "generated_image_event_count": 0,
+    "domestic_real_broll_event_count": 0,
+    "international_broll_event_count": 1,
+    "broll_context_counts": {
+      "domestic_real": 0,
+      "international_stock": 1,
+      "generated_image": 0,
+      "unknown": 0
+    },
+    "broll_origin_counts": {
+      "generated_image_asset": 0,
+      "stock_video_asset": 1,
+      "other_real_local_asset": 0
+    },
+    "broll_provenance": [
+      {
+        "event_index": 0,
+        "asset_id": "broll-a3f531bfd7",
+        "mode": "full",
+        "asset_origin": "stock_video_asset",
+        "provider": "pexels",
+        "license_name": "Pexels License",
+        "license_url": "https://www.pexels.com/license/",
+        "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+        "authorization_status": "confirmed",
+        "publish_licensed": true,
+        "semantic_binding": null,
+        "keywords": [
+          "CRM dashboard customer database business analytics office data management"
+        ],
+        "semantic_query": "CRM dashboard customer database business analytics office data management",
+        "domestic_context": "international",
+        "domestic_scene": ""
+      }
+    ],
+    "real_broll_coverage_ratio": 0.2887,
+    "visual_coverage_seconds": 3.6,
+    "vector_coverage_seconds": 0,
+    "broll_modes": {
+      "pip": 0,
+      "full": 1,
+      "vector_pip": 0
+    },
+    "pip_geometry": [],
+    "pip_safe_area_passed": true,
+    "media_passed": true,
+    "transcript_source_identity_gate": {
+      "enabled": true,
+      "passed": true,
+      "checks": {
+        "source_media_sha256": true,
+        "source_duration_matches_ffprobe": true,
+        "transcript_sha256": true,
+        "timing_source_declared": true
+      },
+      "source_media_identity": {
+        "source_media_sha256": "e7339e96b39e451fb9115e27b472bd7bae4e9f2f15730385cfd0c4ad0bd12fe6",
+        "source_duration_seconds": 12.5,
+        "transcript_sha256": "468ae6b960b87a349307cd12aba6b85ff33e3752fb9a695db12ea4056a3c5ce2",
+        "transcript_timing_source": "word_timestamps",
+        "transcript_identity_scope": "task_subtitle_segments_v1"
+      }
+    },
+    "quality_report_version": "identity-gates-v2",
+    "audio_subtitle_semantic_gate": {
+      "passed": true,
+      "method": "local_transcript_text_overlap_spot_check",
+      "source_text": "玩节流的兄弟们我刚刚发现一个特别不要脸的玩法像以前我们去节流都是找同行的作品看到同行评论区有咨询的客户就一个一个的去打招呼现在已经是ai的时代很多老板全在用ai去",
+      "cue_text": "很多老板全在用ai去玩节流的兄弟们我刚刚发现一个特别不要脸的玩法像以前我们去节流都是找同行的作品看到同行评论区有咨询的客户就一个一个的去打招呼现在已经是ai的时代",
+      "overlap_ratio": 1.0,
+      "minimum_overlap_ratio": 0.72
+    },
+    "edl_execution_gate": {
+      "passed": true,
+      "method": "shared_ffmpeg_audio_video_trim_plus_shot_plan",
+      "declared_source_range": {
+        "start": 0.0,
+        "end": 12.5
+      },
+      "expected_body_seconds": 12.48,
+      "executed_source_seconds": 12.48,
+      "opening_duration_seconds": 0.0,
+      "expected_output_seconds": 12.48,
+      "actual_output_seconds": 12.47,
+      "actual_body_seconds": 12.47
+    },
+    "transcript_accuracy_gate": {
+      "passed": true,
+      "method": "reviewed_transcript_correction_audit",
+      "source": "local_reviewed_homophone_correction",
+      "correction_count": 0,
+      "remaining_known_error_terms": []
+    },
+    "media_integrity_passed": true,
+    "subtitle_sync_passed": true,
+    "visual_release_passed": false
+  }
+}

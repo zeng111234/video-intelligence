@@ -19,7 +19,9 @@ from src.models import (
 )
 
 CHINA_TZ = timezone(timedelta(hours=8))
-NOW = datetime(2026, 7, 17, 16, 0, tzinfo=CHINA_TZ)
+# Keep demo records inside the default recent-search window as the calendar
+# advances; this is fixture data, not a historical production timestamp.
+NOW = datetime.now(CHINA_TZ)
 
 
 def build_mock_candidates(count: int = 24) -> list[VideoCandidate]:

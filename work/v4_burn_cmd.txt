@@ -1,0 +1,27 @@
+ffmpeg -y -i C:\Users\zeng\Desktop\video\data\avatar_results\avatar-2704b95149a3.mp4 -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_000.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_001.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_002.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_003.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_004.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_005.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_006.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_007.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_008.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_009.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_010.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_011.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_012.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_013.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_014.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_015.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_016.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_017.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_018.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_019.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_020.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_021.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_022.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_023.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_024.png -i C:\Users\zeng\Desktop\video\work\v4_subtitle_png\cue_025.png -filter_complex [0:v][1:v]overlay=enable='between(t,0.02,1.0)':x=0:y=0[v0];
+[v0][2:v]overlay=enable='between(t,1.0,1.92)':x=0:y=0[v1];
+[v1][3:v]overlay=enable='between(t,1.92,2.88)':x=0:y=0[v2];
+[v2][4:v]overlay=enable='between(t,2.88,4.28)':x=0:y=0[v3];
+[v3][5:v]overlay=enable='between(t,4.28,5.22)':x=0:y=0[v4];
+[v4][6:v]overlay=enable='between(t,5.22,6.2)':x=0:y=0[v5];
+[v5][7:v]overlay=enable='between(t,6.2,7.16)':x=0:y=0[v6];
+[v6][8:v]overlay=enable='between(t,7.16,8.2)':x=0:y=0[v7];
+[v7][9:v]overlay=enable='between(t,8.2,9.14)':x=0:y=0[v8];
+[v8][10:v]overlay=enable='between(t,9.14,10.92)':x=0:y=0[v9];
+[v9][11:v]overlay=enable='between(t,10.92,11.86)':x=0:y=0[v10];
+[v10][12:v]overlay=enable='between(t,11.86,12.88)':x=0:y=0[v11];
+[v11][13:v]overlay=enable='between(t,12.88,14.58)':x=0:y=0[v12];
+[v12][14:v]overlay=enable='between(t,14.58,15.86)':x=0:y=0[v13];
+[v13][15:v]overlay=enable='between(t,15.86,16.88)':x=0:y=0[v14];
+[v14][16:v]overlay=enable='between(t,17.24,18.2)':x=0:y=0[v15];
+[v15][17:v]overlay=enable='between(t,18.2,20.04)':x=0:y=0[v16];
+[v16][18:v]overlay=enable='between(t,20.04,21.06)':x=0:y=0[v17];
+[v17][19:v]overlay=enable='between(t,21.06,22.22)':x=0:y=0[v18];
+[v18][20:v]overlay=enable='between(t,22.22,23.66)':x=0:y=0[v19];
+[v19][21:v]overlay=enable='between(t,23.66,25.04)':x=0:y=0[v20];
+[v20][22:v]overlay=enable='between(t,25.04,26.48)':x=0:y=0[v21];
+[v21][23:v]overlay=enable='between(t,26.48,27.5)':x=0:y=0[v22];
+[v22][24:v]overlay=enable='between(t,27.5,28.42)':x=0:y=0[v23];
+[v23][25:v]overlay=enable='between(t,28.42,29.58)':x=0:y=0[v24];
+[v24][26:v]overlay=enable='between(t,29.58,30.48)':x=0:y=0[v25];
+[v25]null[out] -map [out] -map 0:a? -c:v libx264 -preset fast -crf 22 -c:a aac -b:a 132k -t 30 C:\Users\zeng\Desktop\video\work\r8-v4-sample-30s.mp4

@@ -1,0 +1,20 @@
+{
+  "page_url": "http://127.0.0.1:1001/video-editor",
+  "batch_id": "edit-batch-8f50dd7285d2",
+  "job_id": "edit-local-f693c1eb49",
+  "selected_title": "客户资源别再靠业务员了",
+  "preview_mode": "成片",
+  "media_url": "/api/v1/video-editor/jobs/edit-local-f693c1eb49/media",
+  "media_http_status": 200,
+  "media_content_type": "video/mp4",
+  "media_content_length": 10470250,
+  "playback_started": true,
+  "playback_current_time_seconds": 1.493,
+  "download_suggested_filename": "edit-local-f693c1eb49.mp4",
+  "download_failure": null,
+  "download_sha256": "19233912703d3a88cc0a2cba36d6ad9bf77c6db847eda2c7b3246443a646cf25",
+  "cloud_calls": 0,
+  "publish_clicked": false,
+  "additional_credit_cost": 0,
+  "visible_status": "质量门未通过（生成图仅本地验收，真实授权 B-roll 0/3）"
+}

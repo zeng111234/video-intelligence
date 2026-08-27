@@ -1,0 +1,10 @@
+{
+  "ass": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\commercial-dashu-r2\\rendered.ass",
+    "sha256": "15af7a898131ea570c190c3e9e9a38bb3f2baa145c94fbe7fd6115fa905eb978"
+  },
+  "manifest": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\commercial-dashu-r2\\subtitle-manifest.json",
+    "sha256": "e9948ee3199c3c539ac15b319ea874fcad31a03b0800fb06ceb001090a2c0645"
+  }
+}

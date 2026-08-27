@@ -61,6 +61,7 @@ class _HealthResponse(BytesIO):
 
 
 def test_desktop_health_requires_current_service_identity(monkeypatch):
+    monkeypatch.setenv("VIDEOINSIGHT_CONTROL_PLANE_ENABLED", "false")
     monkeypatch.setattr(
         desktop_launcher.urllib.request,
         "urlopen",
@@ -69,6 +70,9 @@ def test_desktop_health_requires_current_service_identity(monkeypatch):
                 "status": "ok",
                 "service": "videoinsight-desktop-api",
                 "desktop_protocol": "2",
+                "desktop_client": True,
+                "desktop_demo": True,
+                "control_plane_enabled": False,
             }
         ),
     )
@@ -80,6 +84,16 @@ def test_desktop_health_requires_current_service_identity(monkeypatch):
         lambda *_args, **_kwargs: _HealthResponse({"status": "ok"}),
     )
     assert desktop_launcher._health_ready() is False
+
+
+def test_source_startup_script_validates_mode_and_can_restart_backend_only():
+    script = (Path(__file__).resolve().parents[3] / "scripts" / "start_all_services.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "[switch]$BackendOnly" in script
+    assert "-RequireDesktopMode" in script
+    assert "desktop_client" in script
+    assert "ExpectedControlPlane" in script
 
 
 def test_desktop_control_plane_config_defaults_to_demo(tmp_path):

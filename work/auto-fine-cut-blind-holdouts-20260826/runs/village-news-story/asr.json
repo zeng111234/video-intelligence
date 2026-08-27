@@ -1,0 +1,304 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-26T09:19:35.753685+00:00",
+  "source_path": "C:\\Users\\zeng\\Desktop\\video\\data\\avatar_results\\avatar-d454a401b3a6.mp4",
+  "source_sha256": "0b365ed193cb489beffc34662e8b1f573d6e978f13ffe1a4a64f495b2e416db1",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 16.576,
+  "segment_count": 5,
+  "word_count": 42,
+  "segments": [
+    {
+      "start": 2.22,
+      "end": 4.08,
+      "text": "观众朋友们 大家晚上好",
+      "words": [
+        {
+          "start": 2.22,
+          "end": 2.68,
+          "word": "观",
+          "probability": 0.906
+        },
+        {
+          "start": 2.68,
+          "end": 2.84,
+          "word": "众",
+          "probability": 0.9995
+        },
+        {
+          "start": 2.84,
+          "end": 3.02,
+          "word": "朋友",
+          "probability": 0.9981
+        },
+        {
+          "start": 3.02,
+          "end": 3.26,
+          "word": "们",
+          "probability": 0.9996
+        },
+        {
+          "start": 3.32,
+          "end": 3.48,
+          "word": " 大家",
+          "probability": 0.9977
+        },
+        {
+          "start": 3.48,
+          "end": 3.78,
+          "word": "晚上",
+          "probability": 0.9997
+        },
+        {
+          "start": 3.78,
+          "end": 4.08,
+          "word": "好",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 4.08,
+      "end": 7.48,
+      "text": "欢迎准时收看二狗子村晚间新闻",
+      "words": [
+        {
+          "start": 4.08,
+          "end": 4.8,
+          "word": "欢",
+          "probability": 0.9816
+        },
+        {
+          "start": 4.8,
+          "end": 5.0,
+          "word": "迎",
+          "probability": 0.9997
+        },
+        {
+          "start": 5.0,
+          "end": 5.16,
+          "word": "准",
+          "probability": 0.999
+        },
+        {
+          "start": 5.16,
+          "end": 5.28,
+          "word": "时",
+          "probability": 0.9997
+        },
+        {
+          "start": 5.28,
+          "end": 5.64,
+          "word": "收看",
+          "probability": 0.9949
+        },
+        {
+          "start": 5.64,
+          "end": 6.02,
+          "word": "二",
+          "probability": 0.9395
+        },
+        {
+          "start": 6.02,
+          "end": 6.2,
+          "word": "狗",
+          "probability": 0.9903
+        },
+        {
+          "start": 6.2,
+          "end": 6.32,
+          "word": "子",
+          "probability": 0.9947
+        },
+        {
+          "start": 6.32,
+          "end": 6.5,
+          "word": "村",
+          "probability": 0.9983
+        },
+        {
+          "start": 6.5,
+          "end": 6.8,
+          "word": "晚",
+          "probability": 0.9947
+        },
+        {
+          "start": 6.8,
+          "end": 6.98,
+          "word": "间",
+          "probability": 0.9979
+        },
+        {
+          "start": 6.98,
+          "end": 7.2,
+          "word": "新",
+          "probability": 0.9993
+        },
+        {
+          "start": 7.2,
+          "end": 7.48,
+          "word": "闻",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 8.14,
+      "end": 9.78,
+      "text": "今天新闻的主要内容有",
+      "words": [
+        {
+          "start": 8.14,
+          "end": 8.44,
+          "word": "今天",
+          "probability": 0.9942
+        },
+        {
+          "start": 8.44,
+          "end": 8.76,
+          "word": "新",
+          "probability": 0.999
+        },
+        {
+          "start": 8.76,
+          "end": 8.9,
+          "word": "闻",
+          "probability": 1.0
+        },
+        {
+          "start": 8.9,
+          "end": 9.0,
+          "word": "的",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.0,
+          "end": 9.14,
+          "word": "主",
+          "probability": 1.0
+        },
+        {
+          "start": 9.14,
+          "end": 9.22,
+          "word": "要",
+          "probability": 0.9948
+        },
+        {
+          "start": 9.22,
+          "end": 9.34,
+          "word": "内",
+          "probability": 0.9978
+        },
+        {
+          "start": 9.34,
+          "end": 9.48,
+          "word": "容",
+          "probability": 0.9999
+        },
+        {
+          "start": 9.48,
+          "end": 9.78,
+          "word": "有",
+          "probability": 0.9876
+        }
+      ]
+    },
+    {
+      "start": 9.78,
+      "end": 11.68,
+      "text": "村里今天没啥事啊",
+      "words": [
+        {
+          "start": 9.78,
+          "end": 10.26,
+          "word": "村",
+          "probability": 0.4786
+        },
+        {
+          "start": 10.26,
+          "end": 10.42,
+          "word": "里",
+          "probability": 0.9951
+        },
+        {
+          "start": 10.42,
+          "end": 10.66,
+          "word": "今天",
+          "probability": 0.998
+        },
+        {
+          "start": 10.66,
+          "end": 10.94,
+          "word": "没",
+          "probability": 0.9735
+        },
+        {
+          "start": 10.94,
+          "end": 11.12,
+          "word": "啥",
+          "probability": 0.9765
+        },
+        {
+          "start": 11.12,
+          "end": 11.28,
+          "word": "事",
+          "probability": 0.988
+        },
+        {
+          "start": 11.28,
+          "end": 11.68,
+          "word": "啊",
+          "probability": 0.688
+        }
+      ]
+    },
+    {
+      "start": 11.68,
+      "end": 13.88,
+      "text": "好的 各位观众再见 谢谢",
+      "words": [
+        {
+          "start": 11.68,
+          "end": 12.4,
+          "word": "好的",
+          "probability": 0.9914
+        },
+        {
+          "start": 12.52,
+          "end": 12.66,
+          "word": " 各位",
+          "probability": 0.9999
+        },
+        {
+          "start": 12.66,
+          "end": 12.86,
+          "word": "观",
+          "probability": 0.9999
+        },
+        {
+          "start": 12.86,
+          "end": 13.08,
+          "word": "众",
+          "probability": 0.9999
+        },
+        {
+          "start": 13.08,
+          "end": 13.42,
+          "word": "再见",
+          "probability": 0.9198
+        },
+        {
+          "start": 13.42,
+          "end": 13.88,
+          "word": " 谢谢",
+          "probability": 0.9989
+        }
+      ]
+    }
+  ]
+}

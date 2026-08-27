@@ -1,0 +1,7 @@
+{
+  "streams": [
+    {"index": 0, "codec_type": "video", "width": 720, "height": 1280, "r_frame_rate": "30/1"},
+    {"index": 1, "codec_type": "audio"}
+  ],
+  "format": {"duration": "31.500000"}
+}

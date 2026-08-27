@@ -1,0 +1,1507 @@
+{
+  "batch_id": "edit-batch-c392630ad7d2",
+  "target_platform": "douyin",
+  "subtitle_enabled": true,
+  "subtitle_model": "local-faster-whisper-large-v3-turbo",
+  "bgm_enabled": false,
+  "bgm_id": null,
+  "bgm_volume": 0.0,
+  "steps": [
+    {
+      "id": "smart_opening"
+    },
+    {
+      "id": "vertical_fit"
+    },
+    {
+      "id": "subtitles"
+    }
+  ],
+  "output_format": "mp4",
+  "output_resolution": "720x1280",
+  "output_fps": 30,
+  "output_bitrate": "4M",
+  "provider_mode": "local",
+  "output_profile": "720p",
+  "quote_id": null,
+  "cost_quote": {},
+  "actual_usage": {},
+  "billing_confirmation": {},
+  "billing_confirmed_at": null,
+  "idempotency_key": null,
+  "is_mock": false,
+  "items": [
+    {
+      "item_id": "edit-item-cbcdd015b05c",
+      "source_id": "upload:upload-c32f23d00f",
+      "title": "老百姓消费者买二手车要想不被坑怎么办",
+      "status": "awaiting_output_confirmation",
+      "analysis_id": null,
+      "subtitle_task_id": null,
+      "edit_task_id": "edit-local-83d02fcffb",
+      "title_candidates": [],
+      "selected_title": "老百姓消费者买二手车要想不被坑怎么办",
+      "selected_bgm_id": null,
+      "bgm_reason": null,
+      "provider_stage": "local_export_complete",
+      "provider_job_ids": {},
+      "provider_payload": {
+        "render_manifest": {},
+        "local_export": {
+          "quality_report": {
+            "passed": false,
+            "checks": {
+              "file_non_empty": true,
+              "video_stream": true,
+              "audio_stream": true,
+              "resolution": true,
+              "duration": true,
+              "visual_timing": true,
+              "audio_video_drift": true,
+              "subtitle_effect_gate": true,
+              "subtitle_timeline": true
+            },
+            "duration_seconds": 21.97,
+            "expected_duration_seconds": 21.91,
+            "duration_delta_seconds": 0.06,
+            "resolution": {
+              "width": 720,
+              "height": 1280
+            },
+            "visual_beat_count": 4,
+            "style_version": "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock",
+            "bgm": {
+              "enabled": false,
+              "asset_id": null,
+              "title": null,
+              "source_provider": null,
+              "source_url": null,
+              "license_url": null,
+              "rights_holder": null,
+              "content_id_risk": null,
+              "auto_eligible": false,
+              "authorization_status": null,
+              "voice_priority": false,
+              "ducking": {
+                "enabled": false,
+                "filter": "sidechaincompress",
+                "attack_ms": 20,
+                "release_ms": 450,
+                "mix_volume": 0.16
+              },
+              "publish_rights_gate_passed": true
+            },
+            "alignment": {
+              "method": "ffprobe_stream_start_end_pts",
+              "start_drift_ms": 0.0,
+              "end_drift_ms": 7.667,
+              "max_drift_ms": 7.667,
+              "threshold_ms": 67.0,
+              "passed": true
+            },
+            "subtitle_timeline": {
+              "passed": true,
+              "cue_count": 20,
+              "duplicate_count": 0,
+              "checks": {
+                "monotonic_and_in_bounds": true,
+                "no_duplicate_cues": true
+              },
+              "phrase_cue_count": 20,
+              "phrase_timing_source": "word_timestamps",
+              "estimated_phrase_timestamps": false,
+              "max_phrase_duration_seconds": 1.461,
+              "cue_manifest_sha256": "cd8016893f34f57dbd42f217c7dbe05b92c8f4020049d5aba7093f77e053731c",
+              "ass_sha256": "a2e9585b6f03857765f639fe6b025a89a6c44219f6a4e82fa2b5e5deeac2bd83",
+              "preview_render_manifest_equal": true,
+              "experience_gate": {
+                "passed": true,
+                "checks": {
+                  "min_duration": true,
+                  "max_duration": true,
+                  "one_line": true,
+                  "no_fragment_cues": true,
+                  "lexical_boundary_integrity": true,
+                  "no_orphan_prefix_suffix": true,
+                  "preview_render_manifest_equal": true,
+                  "cue_count_per_sentence": true
+                },
+                "min_duration_seconds": 0.417,
+                "max_duration_seconds": 1.461,
+                "one_line_ratio": 1.0,
+                "lexical_boundary_integrity": true,
+                "no_orphan_prefix_suffix": true,
+                "preview_render_manifest_equal": true,
+                "minimum_dwell_seconds": 0.9,
+                "maximum_dwell_seconds": 2.4,
+                "short_source_exception_allowed": true,
+                "cue_count_by_source_segment": {
+                  "0": 2,
+                  "1": 1,
+                  "2": 1,
+                  "3": 1,
+                  "4": 1,
+                  "5": 1,
+                  "6": 1,
+                  "7": 1,
+                  "8": 1,
+                  "9": 1,
+                  "10": 1,
+                  "11": 1,
+                  "12": 1,
+                  "13": 1,
+                  "14": 2,
+                  "15": 1,
+                  "16": 1,
+                  "17": 1
+                },
+                "cue_count_gate_by_source_segment": {
+                  "0": true,
+                  "1": true,
+                  "2": true,
+                  "3": true,
+                  "4": true,
+                  "5": true,
+                  "6": true,
+                  "7": true,
+                  "8": true,
+                  "9": true,
+                  "10": true,
+                  "11": true,
+                  "12": true,
+                  "13": true,
+                  "14": true,
+                  "15": true,
+                  "16": true,
+                  "17": true
+                }
+              },
+              "text_integrity_gate": {
+                "passed": true,
+                "method": "ordered_compact_reviewed_transcript_equals_cue_manifest",
+                "source_text_sha256": "03bfdb1ee464d4d51c876f9cf78f662c055b15a3bc98a088b1385e6c300d1339",
+                "cue_text_sha256": "03bfdb1ee464d4d51c876f9cf78f662c055b15a3bc98a088b1385e6c300d1339",
+                "source_char_count": 169,
+                "cue_char_count": 169,
+                "exact_ordered_match": true,
+                "duplicate_function_word_boundary": false
+              },
+              "audio_activity_gate": {
+                "passed": true,
+                "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
+                "minimum_uncovered_seconds": 0.5,
+                "active_seconds": 0.0,
+                "covered_seconds": 0.0,
+                "uncovered_ranges": [],
+                "raw_vad_active_ranges": [
+                  {
+                    "start": 0.0,
+                    "end": 21.913
+                  }
+                ],
+                "speech_candidate_ranges": []
+              },
+              "subtitle_effect_gate": {
+                "passed": true,
+                "style_id": "adaptive_talking_head_v1",
+                "cue_count": 20,
+                "emphasis_count": 0,
+                "checks": {
+                  "unified_adaptive_style": true,
+                  "entry_motion_100_160ms": true,
+                  "sparse_emphasis": true,
+                  "emphasis_scale_105_112": true,
+                  "no_routine_refresh_as_visual_effect": true
+                }
+              },
+              "word_timing_quality": {
+                "status": "verified",
+                "verified": true,
+                "source": "word_timestamps",
+                "alignment_method": "exact_compact_text_match",
+                "reviewed_text_sequence_alignment_fallback_count": 0,
+                "word_p95_ms": 0.0,
+                "mapping_error_frames": 0.0,
+                "matched_cue_count": 20,
+                "unmatched_cue_count": 0,
+                "fps": 30.0,
+                "checks": {
+                  "word_p95_le_150ms": true,
+                  "mapping_le_1_frame": true
+                }
+              },
+              "word_p95_ms": 0.0,
+              "mapping_error_frames": 0.0
+            },
+            "semantic_visual_rejection_log": [],
+            "creative_checks": {
+              "director_assets_ready": true,
+              "minimum_real_visual_events": true,
+              "has_pip_visual": false,
+              "has_full_visual": false,
+              "pip_safe_area_no_face_or_subtitle_overlap": true,
+              "real_broll_coverage_template_policy": true,
+              "no_fixed_asset_loop": true,
+              "visual_origin_traceable": true,
+              "semantic_broll_match_explainable": true,
+              "semantic_visual_layer_safe": true,
+              "semantic_layers_not_counted_as_real_broll": true,
+              "visual_cadence_gate": true,
+              "hook_declared_once": true
+            },
+            "visual_gate_policy": {
+              "template_id": "legacy_talking_head",
+              "visual_density": "safe_preview",
+              "min_real_events": 0,
+              "max_real_events": 3,
+              "min_coverage_ratio": 0.0,
+              "max_coverage_ratio": 0.3,
+              "pip_required": false,
+              "full_required": false,
+              "language": "无可靠素材时安全降级为 A-roll。",
+              "real_event_count": 0,
+              "broll_count": 0,
+              "coverage_ratio": 0.0,
+              "actual_has_pip_visual": false,
+              "actual_has_full_visual": false,
+              "passed": true
+            },
+            "hard_checks": {
+              "has_pip_visual": false,
+              "has_full_visual": false,
+              "pip_required": false,
+              "full_required": false,
+              "actual_real_broll_event_count": 0,
+              "actual_real_broll_coverage_ratio": 0.0
+            },
+            "visual_cadence_gate": {
+              "passed": true,
+              "meaningful_visual_beat_count": 4,
+              "beat_starts_final_output": [
+                3.478,
+                8.157,
+                14.174,
+                17.652
+              ],
+              "intervals_seconds": [
+                4.679,
+                6.017,
+                3.478
+              ],
+              "max_gap_seconds": 6.017,
+              "recommended_max_gap_seconds": 6.0,
+              "hard_max_gap_seconds": 7.5,
+              "rhythm_hold_exception": true,
+              "routine_subtitle_refresh_counted": false,
+              "safe_degradation_allowed": true
+            },
+            "creative_passed": false,
+            "subtitle_word_gate_passed": true,
+            "publish_claim_allowed": false,
+            "v1_hard_gate_passed": false,
+            "local_visual_acceptance_passed": false,
+            "release_visual_gate_passed": true,
+            "semantic_match_gate": {
+              "passed": true,
+              "failures": []
+            },
+            "publish_rights_gate_passed": true,
+            "visual_origin_policy": {
+              "domestic_priority": [
+                "domestic_confirmed_real",
+                "domestic_authorized_generation",
+                "international_pexels_pixabay_fallback"
+              ],
+              "locale_does_not_prove_domestic_scene": true,
+              "public_douyin_bilibili_scraping": false,
+              "generated_images_count_as_local_visual_events": true,
+              "generated_images_do_not_satisfy_free_stock_video_gate": true,
+              "free_stock_video_gate": "passed"
+            },
+            "visual_event_count": 4,
+            "visual_broll_event_count": 0,
+            "semantic_visual_layer_count": 0,
+            "semantic_visual_layer_geometry": {
+              "safe": false,
+              "reason": "lower_left_safe_zone",
+              "bbox": {
+                "left": 36,
+                "top": 806,
+                "right": 396,
+                "bottom": 956,
+                "width": 360,
+                "height": 150
+              },
+              "intersects_face_safe_bbox": false,
+              "intersects_subtitle_bbox": false,
+              "intersects_pip_bbox": true
+            },
+            "real_broll_event_count": 0,
+            "real_stock_video_event_count": 0,
+            "generated_image_event_count": 0,
+            "domestic_real_broll_event_count": 0,
+            "international_broll_event_count": 0,
+            "broll_context_counts": {
+              "domestic_real": 0,
+              "international_stock": 0,
+              "generated_image": 0,
+              "unknown": 0
+            },
+            "broll_origin_counts": {
+              "generated_image_asset": 0,
+              "stock_video_asset": 0,
+              "other_real_local_asset": 0
+            },
+            "broll_provenance": [],
+            "real_broll_coverage_ratio": 0.0,
+            "visual_coverage_seconds": 0,
+            "vector_coverage_seconds": 0,
+            "broll_modes": {
+              "pip": 0,
+              "full": 0,
+              "vector_pip": 0
+            },
+            "pip_geometry": [],
+            "pip_safe_area_passed": true,
+            "media_passed": true,
+            "transcript_source_identity_gate": {
+              "enabled": true,
+              "passed": false,
+              "checks": {
+                "source_media_sha256": false,
+                "source_duration_matches_ffprobe": false,
+                "transcript_sha256": true,
+                "timing_source_declared": false
+              },
+              "source_media_identity": {
+                "transcript_sha256": "f23b5cb7d25452367fcd3fb5378d49e1cb998516e244e2f283fa36cfb0aef527",
+                "transcript_identity_scope": "task_subtitle_segments_v1"
+              }
+            },
+            "quality_report_version": "identity-gates-v2",
+            "audio_subtitle_semantic_gate": {
+              "passed": true,
+              "method": "local_transcript_text_overlap_spot_check",
+              "source_text": "老百姓消费者买二手车要想不被坑怎么办今天跟你说四句话记住这四句话一定要你买二手车我们比较第一件事你得搞清楚新车买多少钱买二手要研究新车行情吗当然得要我看到有个前天的一个速腾车员报价报十万多你叫速腾新车卖多少钱吗十五万八千九三百超越陈寰裸车也会五万裸车卖十八八千九你前连的车员好意思报十万多呀所以说各位研究清楚新车价格行情买二手车才不会买费",
+              "cue_text": "老百姓消费者买二手车要想不被坑怎么办今天跟你说四句话记住这四句话一定要你买二手车我们比较第一件事你得搞清楚新车买多少钱买二手要研究新车行情吗当然得要我看到有个前天的一个速腾车员报价报十万多你叫速腾新车卖多少钱吗十五万八千九三百超越陈寰裸车也会五万裸车卖十八八千九你前连的车员好意思报十万多呀所以说各位研究清楚新车价格行情买二手车才不会买费",
+              "overlap_ratio": 1.0,
+              "minimum_overlap_ratio": 0.72
+            },
+            "edl_execution_gate": {
+              "passed": false,
+              "method": "missing_declared_source_range"
+            },
+            "transcript_accuracy_gate": {
+              "passed": false,
+              "method": "reviewed_transcript_correction_audit",
+              "source": "unreviewed",
+              "correction_count": 0,
+              "remaining_known_error_terms": []
+            },
+            "media_integrity_passed": false,
+            "subtitle_sync_passed": false,
+            "visual_release_passed": false
+          },
+          "style_version": "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock",
+          "visual_beat_count": 4,
+          "template_id": "legacy_talking_head",
+          "template_version": "legacy",
+          "degradation": null,
+          "publish_claim_allowed": false
+        }
+      },
+      "actual_usage": {},
+      "edit_plan": {
+        "remove_ranges": [],
+        "source_media_identity": {
+          "transcript_sha256": "f23b5cb7d25452367fcd3fb5378d49e1cb998516e244e2f283fa36cfb0aef527",
+          "transcript_identity_scope": "task_subtitle_segments_v1"
+        },
+        "visual_beats": [
+          {
+            "segment_index": 0,
+            "start": 0.0,
+            "end": 2.8,
+            "treatment": "hook",
+            "label": "老百姓消费者买二手车",
+            "emphasis_term": ""
+          },
+          {
+            "segment_index": 7,
+            "start": 9.38,
+            "end": 10.08,
+            "treatment": "punch_in",
+            "label": "当然得要",
+            "emphasis_term": ""
+          },
+          {
+            "segment_index": 13,
+            "start": 16.3,
+            "end": 17.5,
+            "treatment": "punch_in",
+            "label": "裸车卖十八八千九",
+            "emphasis_term": ""
+          }
+        ]
+      },
+      "enabled_plan_step_ids": [
+        "smart_opening",
+        "vertical_fit",
+        "subtitles"
+      ],
+      "subtitle_segments": [
+        {
+          "start": 0.0,
+          "end": 2.8,
+          "text": "老百姓消费者买二手车要想不被坑怎么办",
+          "words": [
+            {
+              "start": 0.0,
+              "end": 0.2,
+              "word": "老",
+              "probability": 0.8557
+            },
+            {
+              "start": 0.2,
+              "end": 0.36,
+              "word": "百",
+              "probability": 0.9913
+            },
+            {
+              "start": 0.36,
+              "end": 0.48,
+              "word": "姓",
+              "probability": 0.9992
+            },
+            {
+              "start": 0.48,
+              "end": 0.64,
+              "word": "消",
+              "probability": 0.8587
+            },
+            {
+              "start": 0.64,
+              "end": 0.72,
+              "word": "费",
+              "probability": 0.9968
+            },
+            {
+              "start": 0.72,
+              "end": 0.8,
+              "word": "者",
+              "probability": 0.9783
+            },
+            {
+              "start": 0.8,
+              "end": 1.06,
+              "word": "买",
+              "probability": 0.9639
+            },
+            {
+              "start": 1.06,
+              "end": 1.26,
+              "word": "二",
+              "probability": 0.9646
+            },
+            {
+              "start": 1.26,
+              "end": 1.42,
+              "word": "手",
+              "probability": 0.9881
+            },
+            {
+              "start": 1.42,
+              "end": 1.62,
+              "word": "车",
+              "probability": 0.997
+            },
+            {
+              "start": 1.62,
+              "end": 1.78,
+              "word": "要",
+              "probability": 0.8023
+            },
+            {
+              "start": 1.78,
+              "end": 1.96,
+              "word": "想",
+              "probability": 0.904
+            },
+            {
+              "start": 1.96,
+              "end": 2.1,
+              "word": "不",
+              "probability": 0.9894
+            },
+            {
+              "start": 2.1,
+              "end": 2.24,
+              "word": "被",
+              "probability": 0.9173
+            },
+            {
+              "start": 2.24,
+              "end": 2.4,
+              "word": "坑",
+              "probability": 0.99
+            },
+            {
+              "start": 2.4,
+              "end": 2.62,
+              "word": "怎么",
+              "probability": 0.8434
+            },
+            {
+              "start": 2.62,
+              "end": 2.8,
+              "word": "办",
+              "probability": 0.9952
+            }
+          ]
+        },
+        {
+          "start": 2.8,
+          "end": 3.9,
+          "text": "今天跟你说四句话",
+          "words": [
+            {
+              "start": 2.8,
+              "end": 3.16,
+              "word": "今天",
+              "probability": 0.9217
+            },
+            {
+              "start": 3.16,
+              "end": 3.32,
+              "word": "跟你",
+              "probability": 0.9866
+            },
+            {
+              "start": 3.32,
+              "end": 3.54,
+              "word": "说",
+              "probability": 0.9973
+            },
+            {
+              "start": 3.54,
+              "end": 3.68,
+              "word": "四",
+              "probability": 0.953
+            },
+            {
+              "start": 3.68,
+              "end": 3.78,
+              "word": "句",
+              "probability": 0.9922
+            },
+            {
+              "start": 3.78,
+              "end": 3.9,
+              "word": "话",
+              "probability": 0.9997
+            }
+          ]
+        },
+        {
+          "start": 3.9,
+          "end": 4.7,
+          "text": "记住这四句话",
+          "words": [
+            {
+              "start": 3.9,
+              "end": 4.08,
+              "word": "记",
+              "probability": 0.9427
+            },
+            {
+              "start": 4.08,
+              "end": 4.22,
+              "word": "住",
+              "probability": 0.9996
+            },
+            {
+              "start": 4.22,
+              "end": 4.32,
+              "word": "这",
+              "probability": 0.9865
+            },
+            {
+              "start": 4.32,
+              "end": 4.42,
+              "word": "四",
+              "probability": 0.9961
+            },
+            {
+              "start": 4.42,
+              "end": 4.52,
+              "word": "句",
+              "probability": 0.9996
+            },
+            {
+              "start": 4.52,
+              "end": 4.7,
+              "word": "话",
+              "probability": 0.9996
+            }
+          ]
+        },
+        {
+          "start": 4.7,
+          "end": 5.72,
+          "text": "一定要你买二手车",
+          "words": [
+            {
+              "start": 4.7,
+              "end": 5.06,
+              "word": "一定要",
+              "probability": 0.6311
+            },
+            {
+              "start": 5.06,
+              "end": 5.28,
+              "word": "你",
+              "probability": 0.801
+            },
+            {
+              "start": 5.28,
+              "end": 5.4,
+              "word": "买",
+              "probability": 0.9987
+            },
+            {
+              "start": 5.4,
+              "end": 5.52,
+              "word": "二",
+              "probability": 0.9841
+            },
+            {
+              "start": 5.52,
+              "end": 5.58,
+              "word": "手",
+              "probability": 0.9962
+            },
+            {
+              "start": 5.58,
+              "end": 5.72,
+              "word": "车",
+              "probability": 0.9987
+            }
+          ]
+        },
+        {
+          "start": 5.72,
+          "end": 6.5,
+          "text": "我们比较第一件事",
+          "words": [
+            {
+              "start": 5.72,
+              "end": 5.88,
+              "word": "我们",
+              "probability": 0.4732
+            },
+            {
+              "start": 5.88,
+              "end": 6.0,
+              "word": "比",
+              "probability": 0.0464
+            },
+            {
+              "start": 6.0,
+              "end": 6.06,
+              "word": "较",
+              "probability": 0.9283
+            },
+            {
+              "start": 6.06,
+              "end": 6.24,
+              "word": "第一",
+              "probability": 0.9654
+            },
+            {
+              "start": 6.24,
+              "end": 6.4,
+              "word": "件",
+              "probability": 0.9919
+            },
+            {
+              "start": 6.4,
+              "end": 6.5,
+              "word": "事",
+              "probability": 0.9945
+            }
+          ]
+        },
+        {
+          "start": 6.5,
+          "end": 7.82,
+          "text": "你得搞清楚新车买多少钱",
+          "words": [
+            {
+              "start": 6.5,
+              "end": 6.62,
+              "word": "你",
+              "probability": 0.868
+            },
+            {
+              "start": 6.62,
+              "end": 6.7,
+              "word": "得",
+              "probability": 0.9984
+            },
+            {
+              "start": 6.7,
+              "end": 6.8,
+              "word": "搞",
+              "probability": 0.9765
+            },
+            {
+              "start": 6.8,
+              "end": 7.0,
+              "word": "清楚",
+              "probability": 0.9972
+            },
+            {
+              "start": 7.0,
+              "end": 7.22,
+              "word": "新",
+              "probability": 0.9744
+            },
+            {
+              "start": 7.22,
+              "end": 7.42,
+              "word": "车",
+              "probability": 0.9962
+            },
+            {
+              "start": 7.42,
+              "end": 7.52,
+              "word": "买",
+              "probability": 0.7994
+            },
+            {
+              "start": 7.52,
+              "end": 7.64,
+              "word": "多少",
+              "probability": 0.9984
+            },
+            {
+              "start": 7.64,
+              "end": 7.82,
+              "word": "钱",
+              "probability": 0.9995
+            }
+          ]
+        },
+        {
+          "start": 7.82,
+          "end": 9.38,
+          "text": "买二手要研究新车行情吗",
+          "words": [
+            {
+              "start": 7.82,
+              "end": 8.14,
+              "word": "买",
+              "probability": 0.9971
+            },
+            {
+              "start": 8.14,
+              "end": 8.32,
+              "word": "二",
+              "probability": 0.9987
+            },
+            {
+              "start": 8.32,
+              "end": 8.42,
+              "word": "手",
+              "probability": 0.9994
+            },
+            {
+              "start": 8.42,
+              "end": 8.54,
+              "word": "要",
+              "probability": 0.9814
+            },
+            {
+              "start": 8.54,
+              "end": 8.66,
+              "word": "研",
+              "probability": 0.9991
+            },
+            {
+              "start": 8.66,
+              "end": 8.78,
+              "word": "究",
+              "probability": 0.9999
+            },
+            {
+              "start": 8.78,
+              "end": 8.9,
+              "word": "新",
+              "probability": 0.9981
+            },
+            {
+              "start": 8.9,
+              "end": 9.02,
+              "word": "车",
+              "probability": 0.9958
+            },
+            {
+              "start": 9.02,
+              "end": 9.12,
+              "word": "行",
+              "probability": 0.9971
+            },
+            {
+              "start": 9.12,
+              "end": 9.24,
+              "word": "情",
+              "probability": 0.9419
+            },
+            {
+              "start": 9.24,
+              "end": 9.38,
+              "word": "吗",
+              "probability": 0.9869
+            }
+          ]
+        },
+        {
+          "start": 9.38,
+          "end": 10.08,
+          "text": "当然得要",
+          "words": [
+            {
+              "start": 9.38,
+              "end": 9.78,
+              "word": "当然",
+              "probability": 0.9813
+            },
+            {
+              "start": 9.78,
+              "end": 9.92,
+              "word": "得",
+              "probability": 0.9974
+            },
+            {
+              "start": 9.92,
+              "end": 10.08,
+              "word": "要",
+              "probability": 0.9984
+            }
+          ]
+        },
+        {
+          "start": 10.08,
+          "end": 11.76,
+          "text": "我看到有个前天的一个速腾车员",
+          "words": [
+            {
+              "start": 10.08,
+              "end": 10.44,
+              "word": "我",
+              "probability": 0.9961
+            },
+            {
+              "start": 10.44,
+              "end": 10.64,
+              "word": "看到",
+              "probability": 0.9499
+            },
+            {
+              "start": 10.64,
+              "end": 10.78,
+              "word": "有",
+              "probability": 0.9943
+            },
+            {
+              "start": 10.78,
+              "end": 10.86,
+              "word": "个",
+              "probability": 0.9722
+            },
+            {
+              "start": 10.86,
+              "end": 10.96,
+              "word": "前",
+              "probability": 0.9701
+            },
+            {
+              "start": 10.96,
+              "end": 11.06,
+              "word": "天",
+              "probability": 0.2095
+            },
+            {
+              "start": 11.06,
+              "end": 11.16,
+              "word": "的",
+              "probability": 0.5822
+            },
+            {
+              "start": 11.16,
+              "end": 11.24,
+              "word": "一个",
+              "probability": 0.6707
+            },
+            {
+              "start": 11.24,
+              "end": 11.36,
+              "word": "速",
+              "probability": 0.9854
+            },
+            {
+              "start": 11.36,
+              "end": 11.48,
+              "word": "腾",
+              "probability": 0.6482
+            },
+            {
+              "start": 11.48,
+              "end": 11.6,
+              "word": "车",
+              "probability": 0.995
+            },
+            {
+              "start": 11.6,
+              "end": 11.76,
+              "word": "员",
+              "probability": 0.9571
+            }
+          ]
+        },
+        {
+          "start": 11.76,
+          "end": 12.48,
+          "text": "报价报十万多",
+          "words": [
+            {
+              "start": 11.76,
+              "end": 11.88,
+              "word": "报",
+              "probability": 0.9863
+            },
+            {
+              "start": 11.88,
+              "end": 12.02,
+              "word": "价",
+              "probability": 0.9958
+            },
+            {
+              "start": 12.02,
+              "end": 12.12,
+              "word": "报",
+              "probability": 0.9837
+            },
+            {
+              "start": 12.12,
+              "end": 12.26,
+              "word": "十",
+              "probability": 0.5489
+            },
+            {
+              "start": 12.26,
+              "end": 12.36,
+              "word": "万",
+              "probability": 0.9965
+            },
+            {
+              "start": 12.36,
+              "end": 12.48,
+              "word": "多",
+              "probability": 0.9991
+            }
+          ]
+        },
+        {
+          "start": 12.48,
+          "end": 13.84,
+          "text": "你叫速腾新车卖多少钱吗",
+          "words": [
+            {
+              "start": 12.48,
+              "end": 12.9,
+              "word": "你",
+              "probability": 0.2959
+            },
+            {
+              "start": 12.9,
+              "end": 13.02,
+              "word": "叫",
+              "probability": 0.7239
+            },
+            {
+              "start": 13.02,
+              "end": 13.14,
+              "word": "速",
+              "probability": 0.998
+            },
+            {
+              "start": 13.14,
+              "end": 13.26,
+              "word": "腾",
+              "probability": 0.9989
+            },
+            {
+              "start": 13.26,
+              "end": 13.36,
+              "word": "新",
+              "probability": 0.9375
+            },
+            {
+              "start": 13.36,
+              "end": 13.44,
+              "word": "车",
+              "probability": 0.9841
+            },
+            {
+              "start": 13.44,
+              "end": 13.52,
+              "word": "卖",
+              "probability": 0.8693
+            },
+            {
+              "start": 13.52,
+              "end": 13.6,
+              "word": "多少",
+              "probability": 0.9874
+            },
+            {
+              "start": 13.6,
+              "end": 13.72,
+              "word": "钱",
+              "probability": 0.9997
+            },
+            {
+              "start": 13.72,
+              "end": 13.84,
+              "word": "吗",
+              "probability": 0.9905
+            }
+          ]
+        },
+        {
+          "start": 13.84,
+          "end": 15.36,
+          "text": "十五万八千九三百超越",
+          "words": [
+            {
+              "start": 13.84,
+              "end": 14.28,
+              "word": "十",
+              "probability": 0.6796
+            },
+            {
+              "start": 14.28,
+              "end": 14.38,
+              "word": "五",
+              "probability": 0.9882
+            },
+            {
+              "start": 14.38,
+              "end": 14.52,
+              "word": "万",
+              "probability": 0.9879
+            },
+            {
+              "start": 14.52,
+              "end": 14.58,
+              "word": "八",
+              "probability": 0.9874
+            },
+            {
+              "start": 14.58,
+              "end": 14.7,
+              "word": "千",
+              "probability": 0.9881
+            },
+            {
+              "start": 14.7,
+              "end": 14.82,
+              "word": "九",
+              "probability": 0.9925
+            },
+            {
+              "start": 14.82,
+              "end": 14.96,
+              "word": "三",
+              "probability": 0.8612
+            },
+            {
+              "start": 14.96,
+              "end": 15.08,
+              "word": "百",
+              "probability": 0.7365
+            },
+            {
+              "start": 15.08,
+              "end": 15.22,
+              "word": "超",
+              "probability": 0.9966
+            },
+            {
+              "start": 15.22,
+              "end": 15.36,
+              "word": "越",
+              "probability": 0.9807
+            }
+          ]
+        },
+        {
+          "start": 15.36,
+          "end": 16.3,
+          "text": "陈寰裸车也会五万",
+          "words": [
+            {
+              "start": 15.36,
+              "end": 15.66,
+              "word": "陈",
+              "probability": 0.6732
+            },
+            {
+              "start": 15.66,
+              "end": 15.78,
+              "word": "寰",
+              "probability": 0.5892
+            },
+            {
+              "start": 15.78,
+              "end": 15.86,
+              "word": "裸",
+              "probability": 0.6136
+            },
+            {
+              "start": 15.86,
+              "end": 15.98,
+              "word": "车",
+              "probability": 0.6283
+            },
+            {
+              "start": 15.98,
+              "end": 16.0,
+              "word": "也",
+              "probability": 0.293
+            },
+            {
+              "start": 16.0,
+              "end": 16.1,
+              "word": "会",
+              "probability": 0.8908
+            },
+            {
+              "start": 16.1,
+              "end": 16.2,
+              "word": "五",
+              "probability": 0.9316
+            },
+            {
+              "start": 16.2,
+              "end": 16.3,
+              "word": "万",
+              "probability": 0.9552
+            }
+          ]
+        },
+        {
+          "start": 16.3,
+          "end": 17.5,
+          "text": "裸车卖十八八千九",
+          "words": [
+            {
+              "start": 16.3,
+              "end": 16.64,
+              "word": "裸",
+              "probability": 0.9975
+            },
+            {
+              "start": 16.64,
+              "end": 16.76,
+              "word": "车",
+              "probability": 0.9915
+            },
+            {
+              "start": 16.76,
+              "end": 16.9,
+              "word": "卖",
+              "probability": 0.941
+            },
+            {
+              "start": 16.9,
+              "end": 17.06,
+              "word": "十",
+              "probability": 0.9852
+            },
+            {
+              "start": 17.06,
+              "end": 17.18,
+              "word": "八",
+              "probability": 0.6057
+            },
+            {
+              "start": 17.18,
+              "end": 17.28,
+              "word": "八",
+              "probability": 0.5703
+            },
+            {
+              "start": 17.28,
+              "end": 17.4,
+              "word": "千",
+              "probability": 0.995
+            },
+            {
+              "start": 17.4,
+              "end": 17.5,
+              "word": "九",
+              "probability": 0.9968
+            }
+          ]
+        },
+        {
+          "start": 17.5,
+          "end": 19.88,
+          "text": "你前连的车员好意思报十万多呀",
+          "words": [
+            {
+              "start": 17.5,
+              "end": 17.9,
+              "word": "你",
+              "probability": 0.9903
+            },
+            {
+              "start": 17.9,
+              "end": 18.1,
+              "word": "前",
+              "probability": 0.9156
+            },
+            {
+              "start": 18.1,
+              "end": 18.22,
+              "word": "连",
+              "probability": 0.6395
+            },
+            {
+              "start": 18.22,
+              "end": 18.3,
+              "word": "的",
+              "probability": 0.3551
+            },
+            {
+              "start": 18.3,
+              "end": 18.44,
+              "word": "车",
+              "probability": 0.9985
+            },
+            {
+              "start": 18.44,
+              "end": 18.66,
+              "word": "员",
+              "probability": 0.9986
+            },
+            {
+              "start": 18.66,
+              "end": 18.94,
+              "word": "好",
+              "probability": 0.959
+            },
+            {
+              "start": 18.94,
+              "end": 19.18,
+              "word": "意思",
+              "probability": 0.9904
+            },
+            {
+              "start": 19.18,
+              "end": 19.36,
+              "word": "报",
+              "probability": 0.9921
+            },
+            {
+              "start": 19.36,
+              "end": 19.5,
+              "word": "十",
+              "probability": 0.9932
+            },
+            {
+              "start": 19.5,
+              "end": 19.62,
+              "word": "万",
+              "probability": 0.9981
+            },
+            {
+              "start": 19.62,
+              "end": 19.74,
+              "word": "多",
+              "probability": 0.9992
+            },
+            {
+              "start": 19.74,
+              "end": 19.88,
+              "word": "呀",
+              "probability": 0.7581
+            }
+          ]
+        },
+        {
+          "start": 19.88,
+          "end": 20.36,
+          "text": "所以说各位",
+          "words": [
+            {
+              "start": 19.88,
+              "end": 20.14,
+              "word": "所以",
+              "probability": 0.4451
+            },
+            {
+              "start": 20.14,
+              "end": 20.26,
+              "word": "说",
+              "probability": 0.9397
+            },
+            {
+              "start": 20.26,
+              "end": 20.36,
+              "word": "各位",
+              "probability": 0.9962
+            }
+          ]
+        },
+        {
+          "start": 20.36,
+          "end": 21.68,
+          "text": "研究清楚新车价格行情",
+          "words": [
+            {
+              "start": 20.36,
+              "end": 20.72,
+              "word": "研",
+              "probability": 0.9682
+            },
+            {
+              "start": 20.72,
+              "end": 20.84,
+              "word": "究",
+              "probability": 1.0
+            },
+            {
+              "start": 20.84,
+              "end": 21.02,
+              "word": "清楚",
+              "probability": 0.5372
+            },
+            {
+              "start": 21.02,
+              "end": 21.14,
+              "word": "新",
+              "probability": 0.9972
+            },
+            {
+              "start": 21.14,
+              "end": 21.26,
+              "word": "车",
+              "probability": 0.9975
+            },
+            {
+              "start": 21.26,
+              "end": 21.36,
+              "word": "价",
+              "probability": 0.9889
+            },
+            {
+              "start": 21.36,
+              "end": 21.42,
+              "word": "格",
+              "probability": 0.9989
+            },
+            {
+              "start": 21.42,
+              "end": 21.52,
+              "word": "行",
+              "probability": 0.9982
+            },
+            {
+              "start": 21.52,
+              "end": 21.68,
+              "word": "情",
+              "probability": 0.7449
+            }
+          ]
+        },
+        {
+          "start": 21.68,
+          "end": 23.28,
+          "text": "买二手车才不会买费",
+          "words": [
+            {
+              "start": 21.68,
+              "end": 22.08,
+              "word": "买",
+              "probability": 0.9978
+            },
+            {
+              "start": 22.08,
+              "end": 22.24,
+              "word": "二",
+              "probability": 0.9994
+            },
+            {
+              "start": 22.24,
+              "end": 22.34,
+              "word": "手",
+              "probability": 1.0
+            },
+            {
+              "start": 22.34,
+              "end": 22.5,
+              "word": "车",
+              "probability": 0.9997
+            },
+            {
+              "start": 22.5,
+              "end": 22.72,
+              "word": "才",
+              "probability": 0.9967
+            },
+            {
+              "start": 22.72,
+              "end": 23.02,
+              "word": "不会",
+              "probability": 0.993
+            },
+            {
+              "start": 23.02,
+              "end": 23.16,
+              "word": "买",
+              "probability": 0.7878
+            },
+            {
+              "start": 23.16,
+              "end": 23.28,
+              "word": "费",
+              "probability": 0.7882
+            }
+          ]
+        }
+      ],
+      "review_snapshot": {
+        "confirmed": true,
+        "approval_mode": "local_word_timestamps_blind_test",
+        "source_media_identity": {
+          "source_media_sha256": "923b8794d69dc6133056372d605e71e2aee3ed4550e51cb352b5ef98f9b6bef9",
+          "transcript_sha256": "3001c0f097f533f507d5b49e17d75e203d8c0027837e058d16507b0b8fcce487",
+          "timing_source": "word_timestamps",
+          "transcript_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\unseen-story-extended.turbo.asr.json"
+        }
+      },
+      "review_confirmed_at": null,
+      "result_media_url": null,
+      "is_mock": false,
+      "publish_allowed": false,
+      "error_message": null,
+      "confirmed_at": null,
+      "updated_at": "2026-08-25T21:57:15.144271+08:00"
+    }
+  ],
+  "created_at": "2026-08-25T21:57:02.455263+08:00",
+  "updated_at": "2026-08-25T21:57:15.144271+08:00"
+}

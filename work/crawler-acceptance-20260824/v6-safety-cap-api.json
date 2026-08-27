@@ -1,0 +1,11 @@
+{
+  "keyword": "工厂短视频",
+  "platforms": ["bilibili"],
+  "count_per_platform": 30,
+  "force_refresh": true,
+  "api_http_status": 200,
+  "platform_runs": [],
+  "status": "failed",
+  "error": "B站滚动24小时已达到 8 次真实采集上限。",
+  "safety_interpretation": "请求在进入平台采集前被安全阈值拒绝；未修改计数、未重试、未清理 Cookie、未绕过限制。"
+}

@@ -12,6 +12,7 @@ from src.models import (
     AvatarTask,
     CandidateMatch,
     CandidateCopyProbe,
+    CrawlerKeywordQueue,
     CopywritingTask,
     DiscoveryResult,
     HeatLevel,
@@ -92,6 +93,7 @@ class SQLiteRepository:
             self._ensure_candidate_copy_probe_table()
             self._ensure_credit_tables()
             self._ensure_publish_safety_tables()
+            self._ensure_crawler_keyword_queue_table()
             return
         # 旧数据库（user_version == 0），执行完整内联迁移
         self._create_schema()
@@ -104,6 +106,23 @@ class SQLiteRepository:
         self._ensure_candidate_copy_probe_table()
         self._ensure_credit_tables()
         self._ensure_publish_safety_tables()
+        self._ensure_crawler_keyword_queue_table()
+
+    def _ensure_crawler_keyword_queue_table(self) -> None:
+        self.connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS crawler_keyword_queues (
+                queue_id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_crawler_keyword_queues_created
+            ON crawler_keyword_queues(created_at DESC);
+            """
+        )
+        self.connection.commit()
 
     def _ensure_candidate_copy_probe_table(self) -> None:
         self.connection.execute(
@@ -1223,6 +1242,140 @@ class SQLiteRepository:
         ).fetchone()
         return self._candidate_from_row(row) if row else None
 
+    @staticmethod
+    def _chunked(items: list[str], size: int = 500) -> list[list[str]]:
+        # SQLite 默认 SQLITE_MAX_VARIABLE_NUMBER=32766, 每次最多 500 个 video_id
+        # 三个表 (candidates / metric_snapshots / heat_results) 各一次 IN 查询
+        # 同时跑, 500 个 video_id 不会触顶.
+        return [items[i:i + size] for i in range(0, len(items), size)]
+
+    def list_snapshots_for_items(
+        self, item_ids: list[str]
+    ) -> dict[str, list[VideoMetricSnapshot]]:
+        """批量获取 items 的所有 metric_snapshots, 按 item_id 分组.
+
+        替代 _candidate_from_row 内部 list_snapshots() 的 N+1.
+        """
+        if not item_ids:
+            return {}
+        grouped: dict[str, list[VideoMetricSnapshot]] = {}
+        for chunk in self._chunked(item_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"SELECT * FROM metric_snapshots WHERE item_id IN ({placeholders}) "
+                "ORDER BY item_id, sampled_at",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                grouped.setdefault(row["item_id"], []).append(
+                    VideoMetricSnapshot(
+                        item_id=row["item_id"],
+                        sampled_at=row["sampled_at"],
+                        plays=row["plays"],
+                        likes=row["likes"],
+                        comments=row["comments"],
+                        shares=row["shares"],
+                        favorites=row["favorites"],
+                        followers=row["followers"],
+                        confidence=row["confidence"],
+                    )
+                )
+        return grouped
+
+    def list_latest_heat_for_items(
+        self, item_ids: list[str]
+    ) -> dict[str, HeatResult]:
+        """批量获取每个 item_id 最新一条 heat_result (按 computed_at 降序)."""
+        if not item_ids:
+            return {}
+        result: dict[str, HeatResult] = {}
+        for chunk in self._chunked(item_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"""
+                SELECT item_id, payload_json FROM (
+                  SELECT item_id, payload_json, computed_at,
+                         ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY computed_at DESC) AS rn
+                  FROM heat_results WHERE item_id IN ({placeholders})
+                ) WHERE rn = 1
+                """,
+                chunk,
+            ).fetchall()
+            for row in rows:
+                result[row["item_id"]] = HeatResult.model_validate_json(
+                    row["payload_json"]
+                )
+        return result
+
+    def get_candidates_by_ids(
+        self, video_ids: list[str]
+    ) -> list[VideoCandidate]:
+        """批量获取 candidates (含 snapshots + heat), 1+1+1 SQL 替代 N*3 次单条查询.
+
+        用于 /crawler/batches/{id} 详情页组装, 把 O(N) 降为 O(1) 级别.
+        """
+        if not video_ids:
+            return []
+        all_rows: list[sqlite3.Row] = []
+        for chunk in self._chunked(video_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            all_rows.extend(
+                self.connection.execute(
+                    f"SELECT * FROM candidates WHERE video_id IN ({placeholders})",
+                    chunk,
+                ).fetchall()
+            )
+        if not all_rows:
+            return []
+        ids = [row["video_id"] for row in all_rows]
+        snapshots_by_id = self.list_snapshots_for_items(ids)
+        heats_by_id = self.list_latest_heat_for_items(ids)
+        result: list[VideoCandidate] = []
+        for row in all_rows:
+            video_id = row["video_id"]
+            snapshots = snapshots_by_id.get(video_id) or []
+            if not snapshots:
+                continue
+            heat = heats_by_id.get(video_id) or HeatResult(
+                score=0,
+                level=HeatLevel.INSUFFICIENT,
+                confidence=snapshots[-1].confidence,
+                reasons=["尚未计算热度"],
+            )
+            result.append(
+                VideoCandidate(
+                    video_id=video_id,
+                    platform_item_id=row["platform_item_id"],
+                    title=row["title"],
+                    author_id=row["author_id"],
+                    author_name=row["author_name"],
+                    platform=row["platform"],
+                    category=row["category"],
+                    published_at=row["published_at"],
+                    duration_seconds=row["duration_seconds"],
+                    source_url=row["source_url"] or None,
+                    source_type=row["source_type"],
+                    rights_status=row["rights_status"],
+                    matched_by=json.loads(row["matched_by_json"]),
+                    cohort_key=row["cohort_key"],
+                    eligibility_status=row["eligibility_status"],
+                    evidence=row["evidence"],
+                    feed_id=row["feed_id"],
+                    finder_user_name=row["finder_user_name"],
+                    official_hot=bool(row["official_hot"]),
+                    official_rank=row["official_rank"],
+                    official_hot_value=row["official_hot_value"],
+                    data_quality_warnings=json.loads(
+                        row["data_quality_warnings_json"] or "[]"
+                    ),
+                    share_count=snapshots[-1].shares,
+                    collect_count=snapshots[-1].favorites,
+                    metrics=snapshots[-1],
+                    heat=heat,
+                )
+            )
+        return result
+
     def save_review(self, review: RelevanceReview) -> None:
         with self.connection:
             self.connection.execute(
@@ -1255,6 +1408,29 @@ class SQLiteRepository:
         return (
             CandidateCopyProbe.model_validate_json(row["payload_json"]) if row else None
         )
+
+    def get_candidate_copy_probes_by_ids(
+        self, candidate_ids: list[str]
+    ) -> dict[str, CandidateCopyProbe]:
+        """批量获取 candidate_copy_probes, 一次 IN 查询代替 N 次单条查询.
+
+        用于 /crawler/batches/{id} 详情页 copy_pool 元数据组装, 把 O(N) 降为 O(1).
+        """
+        if not candidate_ids:
+            return {}
+        result: dict[str, CandidateCopyProbe] = {}
+        for chunk in self._chunked(candidate_ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"SELECT candidate_id, payload_json FROM candidate_copy_probes "
+                f"WHERE candidate_id IN ({placeholders})",
+                chunk,
+            ).fetchall()
+            for row in rows:
+                result[row["candidate_id"]] = CandidateCopyProbe.model_validate_json(
+                    row["payload_json"]
+                )
+        return result
 
     def list_reviews(self) -> list[RelevanceReview]:
         rows = self.connection.execute(
@@ -1512,6 +1688,44 @@ class SQLiteRepository:
         ).fetchall()
         return [SearchBatch.model_validate_json(row["payload_json"]) for row in rows]
 
+    def save_crawler_keyword_queue(self, queue: CrawlerKeywordQueue) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO crawler_keyword_queues(
+                    queue_id, status, created_at, updated_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(queue_id) DO UPDATE SET
+                    status = excluded.status,
+                    updated_at = excluded.updated_at,
+                    payload_json = excluded.payload_json
+                """,
+                (
+                    queue.queue_id,
+                    queue.status.value,
+                    queue.created_at.isoformat(),
+                    queue.updated_at.isoformat(),
+                    queue.model_dump_json(),
+                ),
+            )
+
+    def get_crawler_keyword_queue(self, queue_id: str) -> CrawlerKeywordQueue | None:
+        row = self.connection.execute(
+            "SELECT payload_json FROM crawler_keyword_queues WHERE queue_id = ?",
+            (queue_id,),
+        ).fetchone()
+        return CrawlerKeywordQueue.model_validate_json(row["payload_json"]) if row else None
+
+    def list_crawler_keyword_queues(self, limit: int = 20) -> list[CrawlerKeywordQueue]:
+        rows = self.connection.execute(
+            """
+            SELECT payload_json FROM crawler_keyword_queues
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [CrawlerKeywordQueue.model_validate_json(row["payload_json"]) for row in rows]
+
     def get_provider_safety_state(self, provider: str) -> ProviderSafetyState | None:
         row = self.connection.execute(
             """
@@ -1588,7 +1802,11 @@ class SQLiteRepository:
                 and now - window_start < timedelta(seconds=rolling_window_seconds)
             )
             current_runs = state.real_runs_in_window if state and active_window else 0
-            if max_runs_in_window is not None and current_runs >= max_runs_in_window:
+            if (
+                max_runs_in_window is not None
+                and max_runs_in_window > 0
+                and current_runs >= max_runs_in_window
+            ):
                 connection.rollback()
                 return False
             lease_expires_at = now + timedelta(seconds=max(1, lease_seconds))
@@ -1653,7 +1871,7 @@ class SQLiteRepository:
             if requested_block
             else (current.blocked_reason if current else None)
         )
-        next_allowed_at = now + timedelta(seconds=max(1, cooldown_seconds))
+        next_allowed_at = now + timedelta(seconds=max(0, cooldown_seconds))
         with self.connection:
             self.connection.execute(
                 """

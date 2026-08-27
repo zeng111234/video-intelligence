@@ -1,0 +1,70 @@
+{
+  "provenance_version": "local-release-provenance-v1",
+  "cloud_calls": 0,
+  "publish_action": "not_performed",
+  "source_video": "upload:upload-9855a31f82",
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-7fd2b32907",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904827/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill diners"
+      ],
+      "semantic_query": "barbecue restaurant grill diners",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-a3f531bfd7",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/tablet-data-analysis-in-modern-workspace-32420858/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "CRM dashboard customer database business analytics office data management"
+      ],
+      "semantic_query": "CRM dashboard customer database business analytics office data management",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 2,
+      "asset_id": "broll-a6ba6cdd89",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/preparing-keto-back-ribs-meal-18904814/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "barbecue restaurant grill diners"
+      ],
+      "semantic_query": "barbecue restaurant grill diners",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    }
+  ],
+  "generated_asset_policy": {
+    "generated_for_local_acceptance": true,
+    "publish_licensed": false,
+    "cannot_satisfy_publish_rights_gate": true
+  }
+}

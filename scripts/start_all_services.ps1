@@ -4,7 +4,15 @@
 
 param(
     [switch]$SkipBrowser,
-    [switch]$SkipHealthCheck
+    [switch]$SkipHealthCheck,
+    # Uses the real company authentication and credit service while keeping
+    # source-preview files in a separate, ignored runtime directory.  This is
+    # intentionally opt-in: the normal source launcher remains fully local.
+    [switch]$UseCompanyServer,
+    # 只启动并管理本地 FastAPI，避免修复/验收后端时触碰已有前端进程。
+    [switch]$BackendOnly,
+    [string]$CompanyServerUrl = "https://xmt.syszr.cn",
+    [string]$CompanyRuntimeRoot = ""
 )
 
 # === UTF-8 encoding ===
@@ -15,6 +23,39 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $serviceLogDirectory = Join-Path $projectRoot "data\logs\services"
 $pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$runtimeRoot = $projectRoot
+$companyServerOrigin = ""
+
+if ($UseCompanyServer) {
+    try {
+        $companyServerUri = [Uri]$CompanyServerUrl
+    } catch {
+        throw "公司服务地址无效。请提供纯 HTTPS 域名，例如 https://xmt.syszr.cn。"
+    }
+    if (
+        $companyServerUri.Scheme -ne "https" -or
+        -not $companyServerUri.Host -or
+        $companyServerUri.UserInfo -or
+        $companyServerUri.Query -or
+        $companyServerUri.Fragment -or
+        $companyServerUri.AbsolutePath -notin @("", "/")
+    ) {
+        throw "公司服务地址必须是无路径、无账号参数的 HTTPS 域名。"
+    }
+    $companyServerOrigin = $companyServerUri.GetLeftPart([System.UriPartial]::Authority)
+    $runtimeRoot = if ([string]::IsNullOrWhiteSpace($CompanyRuntimeRoot)) {
+        Join-Path $projectRoot "build\company-source-preview"
+    } else {
+        [IO.Path]::GetFullPath($CompanyRuntimeRoot)
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $runtimeRoot "data") | Out-Null
+}
+$ffmpegCommand = Get-Command "ffmpeg.exe" -ErrorAction SilentlyContinue
+$backendPath = if ($ffmpegCommand) {
+    "$(Split-Path -Parent $ffmpegCommand.Source);$env:Path"
+} else {
+    $env:Path
+}
 
 # Service configuration
 $services = @(
@@ -26,7 +67,23 @@ $services = @(
         StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001", "--no-proxy-headers")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
-        EnvVars = @{ PYTHONPATH = $projectRoot }
+        # The source checkout defaults to an isolated local demo workspace.
+        # -UseCompanyServer is an explicit preview path: it uses a separate
+        # ignored runtime directory so a real customer session can never
+        # inherit this checkout's existing demo data or desktop-owner binding.
+        EnvVars = @{
+            PYTHONPATH = $projectRoot
+            VIDEOINSIGHT_DESKTOP_CLIENT = "true"
+            VIDEOINSIGHT_DESKTOP_DEMO = if ($UseCompanyServer) { "false" } else { "true" }
+            VIDEOINSIGHT_DEMO_OWNER = if ($UseCompanyServer) { "" } else { "DEMO-0815" }
+            VIDEOINSIGHT_CONTROL_PLANE_ENABLED = if ($UseCompanyServer) { "true" } else { "false" }
+            VIDEOINSIGHT_CONTROL_PLANE_URL = $companyServerOrigin
+            VIDEOINSIGHT_RUNTIME_ROOT = $runtimeRoot
+            # The source preview must see the same local media tools as the
+            # packaged backend, otherwise the UI can be current while formal
+            # rendering silently falls back to the old compatibility path.
+            Path = $backendPath
+        }
     },
     @{
         Name = "React Frontend"
@@ -38,6 +95,10 @@ $services = @(
         WindowStyle = "Hidden"
     }
 )
+
+if ($BackendOnly) {
+    $services = @($services | Where-Object { $_.Name -eq "FastAPI Backend" })
+}
 
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
@@ -64,10 +125,33 @@ function Test-PortAvailable {
 }
 
 function Test-ServiceHealth {
-    param([string]$Url, [int]$TimeoutSec = 5)
+    param(
+        [string]$Url,
+        [int]$TimeoutSec = 5,
+        [switch]$RequireDesktopMode,
+        [bool]$ExpectedControlPlane = $false
+    )
     try {
-        $response = Invoke-WebRequest -Uri $Url -TimeoutSec $TimeoutSec -ErrorAction Stop
-        return $response.StatusCode -eq 200
+        # Backend /health returns JSON and must still pass the desktop-mode
+        # boundary checks below. The frontend health URL is an HTML document,
+        # so treating every service as a JSON status endpoint falsely reports
+        # a healthy Vite process as a startup timeout.
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $Url -TimeoutSec $TimeoutSec -ErrorAction Stop
+        if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+            return $false
+        }
+        if (-not $RequireDesktopMode) {
+            return $true
+        }
+        $payload = $response.Content | ConvertFrom-Json
+        if ($payload.status -ne "ok") {
+            return $false
+        }
+        return (
+            [bool]$payload.desktop_client -and
+            ([bool]$payload.desktop_demo -eq (-not $ExpectedControlPlane)) -and
+            ([bool]$payload.control_plane_enabled -eq $ExpectedControlPlane)
+        )
     } catch {
         return $false
     }
@@ -195,7 +279,19 @@ function Start-Services {
         
         # Start service and preserve its output for diagnosis if it exits early.
         $logPaths = New-ServiceLogPaths -Name $name
+        $previousEnvironment = @{}
         try {
+            # Start-Process inherits the current environment on Windows
+            # PowerShell 5.1.  Apply per-service values only for the spawn,
+            # then restore the parent process so the frontend and launcher do
+            # not accidentally retain backend-only settings.
+            if ($service.EnvVars) {
+                foreach ($entry in ($service.EnvVars.GetEnumerator())) {
+                    $key = [string]$entry.Key
+                    $previousEnvironment[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+                    [Environment]::SetEnvironmentVariable($key, [string]$entry.Value, "Process")
+                }
+            }
             $serviceProcess = Start-Process -FilePath $service.StartCommand `
                                              -ArgumentList $service.StartArgs `
                                              -WorkingDirectory $service.WorkingDirectory `
@@ -206,6 +302,10 @@ function Start-Services {
         } catch {
             Write-Log "$name 无法启动：$($_.Exception.Message)" "ERROR"
             return $false
+        } finally {
+            foreach ($entry in $previousEnvironment.GetEnumerator()) {
+                [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+            }
         }
         
         # Wait for service to start
@@ -227,7 +327,15 @@ function Start-Services {
                 $attempt++
                 Write-Log "Waiting for $name to start... ($attempt/$maxAttempts)" "INFO"
                 
-                if (Test-ServiceHealth -Url $service.HealthUrl) {
+                $healthReady = if ($name -eq "FastAPI Backend") {
+                    Test-ServiceHealth `
+                        -Url $service.HealthUrl `
+                        -RequireDesktopMode `
+                        -ExpectedControlPlane ([bool]$UseCompanyServer)
+                } else {
+                    Test-ServiceHealth -Url $service.HealthUrl
+                }
+                if ($healthReady) {
                     $serviceStarted = $true
                     Write-Log "$name started successfully" "SUCCESS"
                 } else {
@@ -255,10 +363,18 @@ function Show-ServiceInfo {
     Write-Host ""
     Write-Host "Service URLs:" -ForegroundColor White
     Write-Host "  FastAPI Backend: http://localhost:2001" -ForegroundColor Green
-    Write-Host "  React Frontend: http://localhost:1001" -ForegroundColor Green
+    if (-not $BackendOnly) {
+        Write-Host "  React Frontend: http://localhost:1001" -ForegroundColor Green
+    }
     Write-Host ""
-    Write-Host "Database:" -ForegroundColor White
-    Write-Host "  SQLite: data/video_intelligence.db" -ForegroundColor Green
+    Write-Host "Runtime workspace:" -ForegroundColor White
+    Write-Host "  $runtimeRoot" -ForegroundColor Green
+    if ($UseCompanyServer) {
+        Write-Host "  Company authentication: $companyServerOrigin" -ForegroundColor Green
+        Write-Host "  This preview does not reuse the normal source workspace's local media or login binding." -ForegroundColor Yellow
+    } else {
+        Write-Host "  Company authentication: disabled (local demo mode)" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Gray
     Write-Host ""
@@ -289,7 +405,7 @@ if (-not (Start-Services)) {
 Show-ServiceInfo
 
 # Open browser
-if (-not $SkipBrowser) {
+if (-not $SkipBrowser -and -not $BackendOnly) {
     Write-Log "Opening browser..." "INFO"
     Start-Process "http://localhost:1001"
 }

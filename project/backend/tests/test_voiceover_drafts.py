@@ -125,12 +125,13 @@ def test_voiceover_draft_uses_approved_revision_and_preserves_source() -> None:
     assert payload["status"] == "succeeded"
     assert payload["target_characters"] == 180
     assert payload["source_revision_id"] == approved.revision_id
-    assert len(payload["result_variants"]) == 2
+    assert len(payload["result_variants"]) == 1
 
     copy_task = repository.get_task(payload["copywriting_task_id"])
     assert isinstance(copy_task, CopywritingTask)
     assert copy_task.source_text.count("这句话重复了") == 1
     assert "删除口头禅" in copy_task.rewrite_goal
+    assert "行动引导" in copy_task.rewrite_goal
     assert copy_task.source_task_id == "transcript-voiceover-test"
     assert copy_task.source_revision_id == approved.revision_id
     assert (

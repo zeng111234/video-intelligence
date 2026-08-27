@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import URLError
-from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlparse, urlunparse
 from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
@@ -60,6 +60,7 @@ class _PlatformSpec:
     link_selector: str
     item_id_pattern: re.Pattern[str]
     login_markers: tuple[str, ...]
+    fallback_link_selectors: tuple[str, ...] = ()
 
 
 _SPECS = {
@@ -71,9 +72,16 @@ _SPECS = {
             "https://www.xiaohongshu.com/search_result?keyword={keyword}&source=web_search_result_notes&type=51"
         ),
         page_host="xiaohongshu.com",
-        link_selector="a[href*='/explore/']",
-        item_id_pattern=re.compile(r"/explore/([a-zA-Z0-9]+)"),
-        login_markers=("扫码登录", "登录后查看更多", "请通过验证", "安全验证"),
+        link_selector="a[href*='/explore/'], a[href*='/note/']",
+        item_id_pattern=re.compile(r"/(?:explore|note)/([a-zA-Z0-9_-]+)"),
+        login_markers=(
+            "扫码登录",
+            "登录后查看更多",
+            "登录后查看",
+            "请通过验证",
+            "安全验证",
+        ),
+        fallback_link_selectors=("a[href*='/note/']", "a[href*='/explore/']"),
     ),
     Platform.KUAISHOU: _PlatformSpec(
         platform=Platform.KUAISHOU,
@@ -84,6 +92,7 @@ _SPECS = {
         link_selector="a[href*='/short-video/']",
         item_id_pattern=re.compile(r"/short-video/([a-zA-Z0-9_-]+)"),
         login_markers=("扫码登录", "登录后查看更多", "请完成验证", "安全验证"),
+        fallback_link_selectors=("a[href*='/video/']", "a[href*='/short-video/']"),
     ),
     Platform.BILIBILI: _PlatformSpec(
         platform=Platform.BILIBILI,
@@ -109,14 +118,18 @@ _MAX_RESULT_LIMIT = 100
 _XIAOHONGSHU_PUBLIC_RESULT_LIMIT = 15
 _XIAOHONGSHU_PUBLIC_RAW_TARGET_LIMIT = 20
 _XIAOHONGSHU_PUBLIC_MAX_SCROLL_ROUNDS = 3
-_BILIBILI_MAX_SEARCH_PAGES = 10
+# B 站搜索页一次返回一页公开卡片。找素材默认目标是 30 条，最多看两页
+#（约 60 条原始卡片）作为有限的相关性筛选缓冲；直匹配达到目标立即早停。
+# 不能为了凑“严格命中”把用户的一次搜索扩成数百条页面扫描。
+_BILIBILI_MAX_SEARCH_PAGES = 2
+_BILIBILI_RAW_SCAN_LIMIT = 60
 _PUBLIC_SEARCH_END_MARKERS = (
     "没有更多",
     "没有更多了",
     "已加载全部",
     "已经到底了",
 )
-_ADAPTER_VERSION = "visible_browser_network_v2_broad_recall"
+_ADAPTER_VERSION = "visible_browser_network_v7_bounded_bilibili_scan"
 
 
 class LocalPlatformBrowserSearchProvider:
@@ -162,6 +175,15 @@ class LocalPlatformBrowserSearchProvider:
         self._collection_stop_reason: str | None = None
         self._collection_stop_message: str | None = None
         self._collection_filter_notes: list[str] = []
+        self._collection_metrics: dict[str, Any] = {}
+        self._collection_rule_failure: str | None = None
+        self._xiaohongshu_video_filter_confirmed = False
+        self._xiaohongshu_time_filter_confirmed = False
+        self._xiaohongshu_search_response_seen = False
+        self._xiaohongshu_video_response_seen = False
+        # Only expose login reset after the page soft-recovery path fails;
+        # an initial login prompt is not a reason to clear state.
+        self.login_reset_available = False
 
     def capabilities(self) -> ProviderCapability:
         missing = self._missing_prerequisites()
@@ -363,6 +385,60 @@ class LocalPlatformBrowserSearchProvider:
             )
         return self._start_browser(visible=False)
 
+    def reset_login_state(self, *, confirmed: bool = False) -> BrowserSessionStatus:
+        """Clear only this platform's visible login state after explicit confirmation.
+
+        The dedicated browser profile is preserved.  Cookies are cleared by the
+        platform domain and storage is cleared only on currently open pages of
+        that same domain; no other platform profile is touched and no login or
+        verification flow is automated.
+        """
+        if not confirmed:
+            raise LicensedProviderError(
+                f"重置{self.spec.label}登录状态前需要明确确认。",
+                kind=ProviderErrorKind.VALIDATION,
+                retryable=False,
+            )
+        if self.anonymous_only:
+            raise LicensedProviderError(
+                f"{self.spec.label}使用隔离的未登录公开会话，不需要重置登录状态。",
+                kind=ProviderErrorKind.AUTHORIZATION,
+                retryable=False,
+            )
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect_over_cdp(
+                    f"http://127.0.0.1:{self.debug_port}",
+                    timeout=2500,
+                )
+                for context in browser.contexts:
+                    context.clear_cookies(domain=self.spec.page_host)
+                    for page in context.pages:
+                        if self.spec.page_host not in str(page.url or "").casefold():
+                            continue
+                        try:
+                            page.evaluate(
+                                """() => {
+                                    window.localStorage.clear();
+                                    window.sessionStorage.clear();
+                                }"""
+                            )
+                        except Exception:
+                            # Cookie clearing remains the authoritative reset;
+                            # a closed page must not make the operation broader.
+                            continue
+        except (PlaywrightError, OSError) as exc:
+            raise LicensedProviderError(
+                f"{self.spec.label}登录状态重置失败；未删除浏览器资料，请稍后重试。",
+                kind=ProviderErrorKind.CONNECTION,
+                retryable=True,
+            ) from exc
+        self.login_reset_available = False
+        return self.session_status()
+
     def start_public_browser(self) -> BrowserSessionStatus:
         """Start a background public-only browser; it never opens a login flow."""
         if self.is_xiaohongshu_login_profile:
@@ -518,14 +594,25 @@ class LocalPlatformBrowserSearchProvider:
             )
 
         observed_at = self.clock()
+        search_started = time.perf_counter()
         raw_target = (
             min(_XIAOHONGSHU_PUBLIC_RAW_TARGET_LIMIT, limit + 5)
             if self.anonymous_only
-            else max(300, limit * 5)
+            else (
+                min(_BILIBILI_RAW_SCAN_LIMIT, max(30, limit * 2))
+                if self.platform == Platform.BILIBILI
+                else max(300, limit * 5)
+            )
         )
         self._collection_stop_reason = None
         self._collection_stop_message = None
         self._collection_filter_notes = []
+        self._collection_metrics = {}
+        self._collection_rule_failure = None
+        self._xiaohongshu_video_filter_confirmed = False
+        self._xiaohongshu_time_filter_confirmed = False
+        self._xiaohongshu_search_response_seen = False
+        self._xiaohongshu_video_response_seen = False
         collection_kwargs: dict[str, Any] = {}
         if self.platform in {Platform.XIAOHONGSHU, Platform.BILIBILI}:
             collection_kwargs["published_filter_days"] = self._platform_filter_days(
@@ -547,8 +634,28 @@ class LocalPlatformBrowserSearchProvider:
             )
         elif self.platform == Platform.BILIBILI and published_after is not None:
             collection_kwargs["prefer_recent"] = True
+        if self.platform == Platform.BILIBILI:
+            collection_kwargs.update(
+                qualified_target=limit,
+                qualifying_count=lambda rows: sum(
+                    bool(row.get("direct_match")) for row in rows
+                ),
+            )
         raw_rows = self._collect_rows(keyword, target=raw_target, **collection_kwargs)
+        parse_started = time.perf_counter()
         candidate_rows = raw_rows
+        if (
+            self.platform == Platform.XIAOHONGSHU
+            and published_after is not None
+            and not self._xiaohongshu_time_filter_confirmed
+        ):
+            candidate_rows = [
+                row
+                for row in raw_rows
+                if row.get("time_confident") is True
+                and isinstance(row.get("published_at"), datetime)
+                and row["published_at"] >= published_after
+            ]
         if self.platform == Platform.KUAISHOU:
             candidate_rows, _ = self._filter_kuaishou_published_rows(
                 raw_rows,
@@ -568,12 +675,46 @@ class LocalPlatformBrowserSearchProvider:
             parsed_items,
             duration_bucket=kuaishou_filters.get("kuaishou_duration_bucket", "all"),
         )
+        timings = dict(self._collection_metrics.get("stage_timings_ms") or {})
+        timings["parse_filter_ms"] = max(
+            0, round((time.perf_counter() - parse_started) * 1000)
+        )
+        timings["total_ms"] = max(
+            timings.get("total_ms", 0),
+            round((time.perf_counter() - search_started) * 1000),
+        )
+        raw_discovered_count = int(
+            self._collection_metrics.get("raw_discovered_count") or len(raw_rows)
+        )
+        deduped_item_count = int(
+            self._collection_metrics.get("deduped_item_count") or len(raw_rows)
+        )
+        direct_match_count = int(
+            self._collection_metrics.get("direct_match_count")
+            or sum(
+                bool(row.get("direct_match"))
+                for row in raw_rows[: int(
+                    self._collection_metrics.get("parsed_item_count")
+                    or _MAX_RESULT_LIMIT
+                )]
+            )
+        )
+        parsed_item_count = int(
+            self._collection_metrics.get("parsed_item_count") or len(parsed_items)
+        )
+        if raw_discovered_count > parsed_item_count:
+            self._collection_filter_notes.append(
+                f"公开页面发现 {raw_discovered_count} 条；按本次候选上限解析其中 {parsed_item_count} 条。"
+            )
         final_filter_label = (
             "发布时间范围和时长筛后"
             if self.platform == Platform.KUAISHOU and published_after is not None
             else "筛后"
         )
-        if len(parsed_items) >= limit:
+        qualifying_count = (
+            direct_match_count if self.platform == Platform.BILIBILI else len(parsed_items)
+        )
+        if qualifying_count >= limit:
             self._set_collection_stop(
                 "target_reached",
                 "已获得目标数量的符合条件视频。",
@@ -583,7 +724,12 @@ class LocalPlatformBrowserSearchProvider:
             # 默认排序可能先加载大量较早作品。即使扫描达到安全边界，也
             # 必须如实告诉用户最终保留了多少条。
             self._collection_stop_reason = "safety_limit"
-            self._collection_stop_message = f"为避免过度加载，已扫描 {len(raw_rows)} 条页面结果，{final_filter_label}保留 {len(parsed_items)} 条。"
+            self._collection_stop_message = (
+                f"为避免过度加载，已扫描 {raw_discovered_count} 条页面结果；"
+                f"原始解析池保留 {parsed_item_count} 条，最终关键词和字段校验结果见漏斗。"
+                if self.platform == Platform.BILIBILI
+                else f"为避免过度加载，已扫描 {len(raw_rows)} 条页面结果，{final_filter_label}保留 {len(parsed_items)} 条。"
+            )
         elif self._collection_stop_reason == "platform_end":
             self._collection_stop_message = (
                 f"平台已经没有更多公开搜索结果；已扫描 {len(raw_rows)} 条页面结果，"
@@ -604,12 +750,19 @@ class LocalPlatformBrowserSearchProvider:
                     or self._collection_stop_reason == "safety_limit"
                 )
             ),
-            raw_item_count=len(raw_rows),
-            parsed_item_count=len(parsed_items),
+            raw_item_count=raw_discovered_count,
+            parsed_item_count=parsed_item_count,
+            raw_discovered_count=raw_discovered_count,
+            deduped_item_count=deduped_item_count,
+            direct_match_count=direct_match_count,
             duration_filtered_count=duration_filtered_count,
             crawl_stop_reason=self._collection_stop_reason,
             crawl_stop_message=self._collection_stop_message,
             payload_diagnostic=self._collection_diagnostic(requested_kuaishou_filters),
+            stage_timings_ms=timings,
+            adapter_rule_version=_ADAPTER_VERSION,
+            browser_reused=self._collection_metrics.get("browser_reused"),
+            session_recovered=bool(self._collection_metrics.get("session_recovered")),
         )
 
     def refresh_metrics(
@@ -644,6 +797,11 @@ class LocalPlatformBrowserSearchProvider:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
 
+        collection_started = time.perf_counter()
+        stage_timings: dict[str, int] = {}
+        raw_discovered_count = 0
+        first_response_marked = False
+        session_recovered = False
         endpoint = f"http://127.0.0.1:{self.debug_port}"
         network_rows: dict[str, dict[str, Any]] = {}
         rendered_rows: dict[str, dict[str, Any]] = {}
@@ -651,7 +809,11 @@ class LocalPlatformBrowserSearchProvider:
         bilibili_search_response_seen = False
         with sync_playwright() as playwright:
             try:
+                attach_started = time.perf_counter()
                 browser = playwright.chromium.connect_over_cdp(endpoint)
+                stage_timings["browser_attach_or_reuse_ms"] = max(
+                    0, round((time.perf_counter() - attach_started) * 1000)
+                )
                 for context in browser.contexts:
                     context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)
                 page, owns_page = self._acquire_collection_page(browser)
@@ -659,11 +821,12 @@ class LocalPlatformBrowserSearchProvider:
                 raise LicensedProviderError(
                     f"{self.spec.label}浏览器连接失败；请重新打开专用浏览器。",
                     kind=ProviderErrorKind.CONNECTION,
-                    retryable=False,
+                    retryable=True,
                 ) from exc
 
             def capture_response(response) -> None:
                 nonlocal bilibili_page_count, bilibili_search_response_seen
+                nonlocal first_response_marked, raw_discovered_count
                 if not self._is_search_response_url(response.url):
                     return
                 try:
@@ -672,13 +835,74 @@ class LocalPlatformBrowserSearchProvider:
                     return
                 if self.platform == Platform.BILIBILI:
                     bilibili_search_response_seen = True
-                    page_count = self._bilibili_page_count(payload)
-                    if page_count is not None:
-                        bilibili_page_count = max(bilibili_page_count or 0, page_count)
-                for row in self._rows_from_payload(payload, keyword=keyword):
+                if not first_response_marked:
+                    stage_timings["first_response_ms"] = max(
+                        0, round((time.perf_counter() - collection_started) * 1000)
+                    )
+                    first_response_marked = True
+                raw_discovered_count += self._payload_row_count(payload)
+                rows = self._rows_from_payload(payload, keyword=keyword)
+                raw_discovered_count = max(raw_discovered_count, len(rows))
+                if self.platform == Platform.XIAOHONGSHU:
+                    self._xiaohongshu_search_response_seen = True
+                    if rows and all(row.get("is_video") is True for row in rows):
+                        self._xiaohongshu_video_response_seen = True
+                for row in rows:
                     item_id = str(row.get("item_id") or "")
                     if item_id:
                         network_rows[item_id] = row
+                if rows and "first_result_ms" not in stage_timings:
+                    stage_timings["first_result_ms"] = max(
+                        0, round((time.perf_counter() - collection_started) * 1000)
+                    )
+                if self.platform == Platform.BILIBILI:
+                    page_count = self._bilibili_page_count(payload)
+                    if page_count is not None:
+                        bilibili_page_count = max(bilibili_page_count or 0, page_count)
+
+            def goto_with_soft_recovery(url: str):
+                """Navigate once, rebuilding only the page on a CDP/page fault.
+
+                The same browser context/profile is retained, so this never clears
+                cookies or creates a fresh login state. At most one page recovery
+                is attempted for this keyword/platform run.
+                """
+                nonlocal page, owns_page, session_recovered
+                navigation_started = time.perf_counter()
+                try:
+                    response = page.goto(url, wait_until="domcontentloaded")
+                except PlaywrightError as exc:
+                    if session_recovered:
+                        raise LicensedProviderError(
+                            f"{self.spec.label}页面连接失败；已停止本次搜索，请重新连接专用浏览器。",
+                            kind=ProviderErrorKind.CONNECTION,
+                            retryable=True,
+                        ) from exc
+                    try:
+                        page.remove_listener("response", capture_response)
+                    except Exception:
+                        pass
+                    if owns_page:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                    page, owns_page = self._recover_collection_page(browser)
+                    page.on("response", capture_response)
+                    session_recovered = True
+                    try:
+                        response = page.goto(url, wait_until="domcontentloaded")
+                    except PlaywrightError as retry_exc:
+                        self.login_reset_available = True
+                        raise LicensedProviderError(
+                            f"{self.spec.label}页面连接失败；已保留登录态但本次停止，请重新连接专用浏览器。",
+                            kind=ProviderErrorKind.CONNECTION,
+                            retryable=False,
+                        ) from retry_exc
+                stage_timings["navigation_ms"] = stage_timings.get(
+                    "navigation_ms", 0
+                ) + max(0, round((time.perf_counter() - navigation_started) * 1000))
+                return response
 
             page.on("response", capture_response)
             try:
@@ -690,14 +914,14 @@ class LocalPlatformBrowserSearchProvider:
                 if self.platform == Platform.BILIBILI:
                     date_filter_applied = False
                     active_filter_url: str | None = None
-                    for page_number in range(1, _BILIBILI_MAX_SEARCH_PAGES + 1):
-                        response = page.goto(
+                    max_bilibili_pages = _BILIBILI_MAX_SEARCH_PAGES
+                    for page_number in range(1, max_bilibili_pages + 1):
+                        response = goto_with_soft_recovery(
                             (
                                 self._bilibili_page_url(active_filter_url, page_number)
                                 if active_filter_url
                                 else self._search_url(keyword, page=page_number)
                             ),
-                            wait_until="domcontentloaded",
                         )
                         minimize_browser_window(self.debug_port)
                         self._raise_for_search_response(response)
@@ -719,13 +943,13 @@ class LocalPlatformBrowserSearchProvider:
                             )
                             if date_filter_applied:
                                 active_filter_url = str(page.url or "")
-                                response = page.goto(
+                                response = goto_with_soft_recovery(
                                     active_filter_url,
-                                    wait_until="domcontentloaded",
                                 )
                                 minimize_browser_window(self.debug_port)
                                 self._raise_for_search_response(response)
-                        self._wait_for_bilibili_cards_ready(page)
+                        if not bilibili_search_response_seen:
+                            self._wait_for_bilibili_cards_ready(page)
                         self._raise_for_visible_block(page)
                         if not bilibili_search_response_seen:
                             for row in self._rendered_rows(page, keyword=keyword):
@@ -735,6 +959,24 @@ class LocalPlatformBrowserSearchProvider:
                             if bilibili_search_response_seen
                             else len(rendered_rows)
                         )
+                        if current_count > 0 and "first_result_ms" not in stage_timings:
+                            stage_timings["first_result_ms"] = max(
+                                0,
+                                round((time.perf_counter() - collection_started) * 1000),
+                            )
+                        current_rows = self._merge_collected_rows(
+                            network_rows, rendered_rows
+                        )
+                        if (
+                            qualified_target is not None
+                            and qualifying_count is not None
+                            and qualifying_count(current_rows) >= qualified_target
+                        ):
+                            self._set_collection_stop(
+                                "target_reached",
+                                "已获得目标数量的关键词直匹配视频。",
+                            )
+                            break
                         if (
                             bilibili_page_count is not None
                             and page_number >= bilibili_page_count
@@ -756,12 +998,15 @@ class LocalPlatformBrowserSearchProvider:
                             "为避免过度翻页，达到安全上限后已停止。",
                         )
                 else:
-                    response = page.goto(
-                        self._search_url(keyword), wait_until="domcontentloaded"
-                    )
+                    response = goto_with_soft_recovery(self._search_url(keyword))
                     minimize_browser_window(self.debug_port)
                     self._raise_for_search_response(response)
                     page.wait_for_timeout(2500)
+                    if self.platform == Platform.XIAOHONGSHU:
+                        search_confirmed = self._confirm_xiaohongshu_search(page, keyword)
+                        self._raise_for_login_gate(page)
+                        if not search_confirmed and not self._xiaohongshu_search_response_seen:
+                            self._collection_rule_failure = "页面结构发生变化，请重新连接"
                     effective_filters = dict(search_filters or {})
                     if (
                         self.platform == Platform.XIAOHONGSHU
@@ -782,23 +1027,32 @@ class LocalPlatformBrowserSearchProvider:
                             else None
                         ),
                     )
-                    page.wait_for_timeout(1500)
-                    self._raise_for_visible_block(page)
+                    if self._collection_rule_failure:
+                        max_scroll_rounds = 0
+                    else:
+                        page.wait_for_timeout(1500)
+                        self._raise_for_visible_block(page)
                     stagnant_rounds = 0
                     previous_count = -1
-                    max_scroll_rounds = (
-                        _XIAOHONGSHU_PUBLIC_MAX_SCROLL_ROUNDS
-                        if self.anonymous_only
-                        else (
-                            _KUAISHOU_MAX_SCROLL_ROUNDS
-                            if self.platform == Platform.KUAISHOU
-                            else _MAX_SCROLL_ROUNDS
+                    if not self._collection_rule_failure:
+                        max_scroll_rounds = (
+                            _XIAOHONGSHU_PUBLIC_MAX_SCROLL_ROUNDS
+                            if self.anonymous_only
+                            else (
+                                _KUAISHOU_MAX_SCROLL_ROUNDS
+                                if self.platform == Platform.KUAISHOU
+                                else _MAX_SCROLL_ROUNDS
+                            )
                         )
-                    )
                     for _ in range(max_scroll_rounds):
                         for row in self._rendered_rows(page):
                             self._merge_rendered_row(rendered_rows, row)
                         current_count = len(set(network_rows) | set(rendered_rows))
+                        if current_count > 0 and "first_result_ms" not in stage_timings:
+                            stage_timings["first_result_ms"] = max(
+                                0,
+                                round((time.perf_counter() - collection_started) * 1000),
+                            )
                         current_rows = self._merge_collected_rows(
                             network_rows, rendered_rows
                         )
@@ -839,6 +1093,7 @@ class LocalPlatformBrowserSearchProvider:
                             )
                             break
                         previous_count = current_count
+                        scroll_started = time.perf_counter()
                         self._scroll_one_viewport(page)
                         # 平台结果懒加载:滚动后需要等待刷新才有新内容。
                         # 轮询读取并合并新卡片,出现新行即提前进入下一轮。
@@ -848,6 +1103,9 @@ class LocalPlatformBrowserSearchProvider:
                             rendered_rows=rendered_rows,
                             network_rows=network_rows,
                         )
+                        stage_timings["scroll_loading_ms"] = stage_timings.get(
+                            "scroll_loading_ms", 0
+                        ) + max(0, round((time.perf_counter() - scroll_started) * 1000))
                         self._raise_for_visible_block(page)
                     else:
                         # The last ordinary scroll may have populated the
@@ -860,7 +1118,8 @@ class LocalPlatformBrowserSearchProvider:
                             "为避免过度滚动，达到安全上限后已停止。",
                         )
                 if (
-                    not network_rows
+                    not self._collection_rule_failure
+                    and not network_rows
                     and not rendered_rows
                     and not (
                         self.platform == Platform.BILIBILI
@@ -875,8 +1134,36 @@ class LocalPlatformBrowserSearchProvider:
                 minimize_browser_window(self.debug_port)
 
         if self.platform == Platform.BILIBILI and bilibili_search_response_seen:
-            return list(network_rows.values())
-        return self._merge_collected_rows(network_rows, rendered_rows)
+            rows = list(network_rows.values())
+        else:
+            rows = self._merge_collected_rows(network_rows, rendered_rows)
+        self._collection_metrics = {
+            "raw_discovered_count": max(raw_discovered_count, len(rows)),
+            "deduped_item_count": len(rows),
+            "parsed_item_count": min(
+                len(rows),
+                _XIAOHONGSHU_PUBLIC_RESULT_LIMIT
+                if self.anonymous_only
+                else _MAX_RESULT_LIMIT,
+            ),
+            "direct_match_count": min(
+                sum(bool(row.get("direct_match")) for row in rows),
+                (
+                    _XIAOHONGSHU_PUBLIC_RESULT_LIMIT
+                    if self.anonymous_only
+                    else _MAX_RESULT_LIMIT
+                ),
+            ),
+            "browser_reused": not owns_page,
+            "session_recovered": session_recovered,
+            "stage_timings_ms": {
+                **stage_timings,
+                "total_ms": max(
+                    0, round((time.perf_counter() - collection_started) * 1000)
+                ),
+            },
+        }
+        return rows
 
     @staticmethod
     def _merge_rendered_row(
@@ -969,6 +1256,26 @@ class LocalPlatformBrowserSearchProvider:
             return None
         return page_count if page_count > 0 else None
 
+    def _payload_row_count(self, payload: Any) -> int:
+        """Count raw public records before ID de-duplication or relevance filtering."""
+        if not isinstance(payload, dict):
+            return 0
+        if self.platform == Platform.BILIBILI:
+            data = payload.get("data")
+            items = data.get("result") if isinstance(data, dict) else None
+        elif self.platform == Platform.XIAOHONGSHU:
+            data = payload.get("data")
+            items = (
+                data.get("items") or data.get("notes") or data.get("results")
+                if isinstance(data, dict)
+                else data
+                if isinstance(data, list)
+                else payload.get("items") or payload.get("notes")
+            )
+        else:
+            items = payload.get("data")
+        return len(items) if isinstance(items, list) else 0
+
     def _set_collection_stop(self, reason: str, message: str) -> None:
         self._collection_stop_reason = reason
         self._collection_stop_message = message
@@ -1000,7 +1307,7 @@ class LocalPlatformBrowserSearchProvider:
         """Scroll down by one viewport height."""
         self._scroll_for_more_results(page)
 
-    def _wait_for_bilibili_cards_ready(self, page, max_wait_ms: int = 8_000) -> None:
+    def _wait_for_bilibili_cards_ready(self, page, max_wait_ms: int = 2_500) -> None:
         """等待 B 站搜索结果卡片 stats 渲染完成。
 
         B 站搜索页是服务端渲染,互动数字(stats 行)在页面加载后延迟
@@ -1029,8 +1336,21 @@ class LocalPlatformBrowserSearchProvider:
                 ready = False
             if ready:
                 return
-            page.wait_for_timeout(500)
-            waited += 500
+            try:
+                card_count = int(
+                    page.evaluate(
+                        "() => document.querySelectorAll(\"a[href*='/video/BV']\").length"
+                    )
+                    or 0
+                )
+            except Exception:
+                card_count = 0
+            # 标题和链接出现后即可解析，互动数字缺失时由候选质量说明标注；
+            # 不为每张卡片等待二次渲染，避免页面改版/弱网把每页拖到 8 秒。
+            if card_count > 0:
+                return
+            page.wait_for_timeout(250)
+            waited += 250
 
     def _wait_for_new_rows_after_scroll(
         self,
@@ -1039,7 +1359,7 @@ class LocalPlatformBrowserSearchProvider:
         current_count: int,
         rendered_rows: dict[str, dict[str, Any]],
         network_rows: dict[str, dict[str, Any]],
-        max_wait_ms: int = 8_000,
+        max_wait_ms: int = 3_000,
     ) -> None:
         """滚动后轮询读取新卡片,直到出现新行或超时。
 
@@ -1050,8 +1370,8 @@ class LocalPlatformBrowserSearchProvider:
         """
         waited = 0
         while waited < max_wait_ms:
-            page.wait_for_timeout(500)
-            waited += 500
+            page.wait_for_timeout(250)
+            waited += 250
             for row in self._rendered_rows(page):
                 self._merge_rendered_row(rendered_rows, row)
             if len(set(network_rows) | set(rendered_rows)) > current_count:
@@ -1078,6 +1398,16 @@ class LocalPlatformBrowserSearchProvider:
                 retryable=False,
             )
         return browser.contexts[0].new_page(), True
+
+    def _recover_collection_page(self, browser) -> tuple[Any, bool]:
+        """Rebuild one broken page inside the existing authorized context."""
+        for context in browser.contexts:
+            return context.new_page(), True
+        raise LicensedProviderError(
+            f"{self.spec.label}浏览器会话已失效；请重新连接专用浏览器。",
+            kind=ProviderErrorKind.CONNECTION,
+            retryable=True,
+        )
 
     def _normalize_kuaishou_filters(
         self, search_filters: dict[str, str] | None
@@ -1126,11 +1456,13 @@ class LocalPlatformBrowserSearchProvider:
         if self.platform == Platform.BILIBILI:
             diagnostic = (
                 "使用B站专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
-                "只保留标题、话题或描述直接命中关键词的公开视频。"
+                "先记录全部公开搜索卡片，再只保留标题、话题或描述直接命中关键词的公开视频。"
             )
         elif self.platform == Platform.KUAISHOU:
             diagnostic = "使用快手专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，保留平台当前筛选后的公开视频。"
         elif self.platform == Platform.XIAOHONGSHU:
+            if self._collection_rule_failure:
+                return self._collection_rule_failure
             diagnostic = (
                 "使用小红书专用浏览器正常搜索；先选择页面“视频”筛选，"
                 "并只保留带视频标记的公开作品。"
@@ -1168,11 +1500,11 @@ class LocalPlatformBrowserSearchProvider:
         """Use visible platform controls before reading search metadata."""
         if self.platform == Platform.XIAOHONGSHU:
             video_selected = self._select_xiaohongshu_video_filter(page)
-            notes = [
-                "已选择小红书“视频”筛选"
-                if video_selected
-                else "小红书页面未确认“视频”筛选；本次只接收带视频标记的卡片"
-            ]
+            self._xiaohongshu_video_filter_confirmed = video_selected
+            if not video_selected:
+                self._collection_rule_failure = "页面结构发生变化，请重新连接"
+                return [self._collection_rule_failure]
+            notes = ["已选择小红书“视频”筛选"]
             if search_filters and "published_days" in search_filters:
                 if before_time_filter is not None:
                     before_time_filter()
@@ -1181,10 +1513,11 @@ class LocalPlatformBrowserSearchProvider:
                 except (TypeError, ValueError):
                     published_days = -1
                 time_label = self._select_xiaohongshu_time_filter(page, published_days)
+                self._xiaohongshu_time_filter_confirmed = bool(time_label)
                 notes.append(
                     f"已选择小红书发布时间“{time_label}”"
                     if time_label
-                    else "小红书页面未确认发布时间筛选；仍会按可核验时间在本地过滤"
+                    else "平台时间筛选未生效，正在本地过滤"
                 )
             return notes
         if self.platform == Platform.BILIBILI:
@@ -1259,89 +1592,142 @@ class LocalPlatformBrowserSearchProvider:
         return notes
 
     @staticmethod
-    def _select_xiaohongshu_video_filter(page) -> bool:
+    def _xiaohongshu_control_selected(locator, expected_text: str) -> bool:
         try:
-            locator = page.locator("#video.channel")
-            if locator.count() != 1:
+            text = LocalPlatformBrowserSearchProvider._clean_text(locator.inner_text())
+            if expected_text not in text:
                 return False
-            if "active" in str(locator.get_attribute("class") or "").split():
-                return True
+            nodes = [locator]
             try:
-                locator.click(timeout=3000)
+                nodes.append(locator.locator(".."))
             except Exception:
-                # Xiaohongshu can keep the click handler busy after the visible
-                # selection has already changed.  Verify the resulting state
-                # instead of treating that as an automatic failure.
                 pass
-            page.wait_for_timeout(600)
-            return "active" in str(locator.get_attribute("class") or "").split()
+            for node in nodes:
+                class_names = str(node.get_attribute("class") or "").casefold()
+                if any(token in class_names.split() for token in ("active", "selected")):
+                    return True
+                for attribute in (
+                    "aria-selected",
+                    "aria-checked",
+                    "data-selected",
+                    "data-active",
+                ):
+                    if str(node.get_attribute(attribute) or "").casefold() == "true":
+                        return True
+                if str(node.get_attribute("aria-current") or "").casefold() in {
+                    "true",
+                    "page",
+                    "step",
+                }:
+                    return True
+            return False
         except Exception:
             return False
 
-    @staticmethod
-    def _select_xiaohongshu_time_filter(page, days: int) -> str | None:
+    def _confirm_xiaohongshu_search(self, page, keyword: str) -> bool:
+        """Confirm the visible search input before applying platform filters."""
+        try:
+            inputs = page.locator("#search-input, input.search-input")
+            if inputs.count() < 1:
+                return False
+            input_box = inputs.nth(0)
+            value = str(input_box.input_value() or "").strip()
+            if value != keyword.strip():
+                input_box.fill(keyword)
+                input_box.press("Enter")
+                page.wait_for_timeout(800)
+                value = str(input_box.input_value() or "").strip()
+            query_keyword = parse_qs(urlparse(str(page.url or "")).query).get(
+                "keyword", [""]
+            )[0]
+            return value == keyword.strip() and (
+                query_keyword == keyword.strip()
+                or self._xiaohongshu_search_response_seen
+            )
+        except Exception:
+            return False
+
+    def _select_xiaohongshu_video_filter(self, page) -> bool:
+        try:
+            candidates = page.locator(
+                "#video.channel, [data-type='video'], [data-note-type='video']"
+            )
+            before_url = str(page.url or "")
+            for index in range(min(candidates.count(), 8)):
+                locator = candidates.nth(index)
+                if not locator.is_visible():
+                    continue
+                if self._xiaohongshu_control_selected(locator, "视频"):
+                    return True
+                try:
+                    locator.click(timeout=3000)
+                except Exception:
+                    try:
+                        locator.evaluate("node => node.click()")
+                    except Exception:
+                        continue
+                for _ in range(8):
+                    current_url = str(page.url or "")
+                    query = parse_qs(urlparse(current_url).query)
+                    if self._xiaohongshu_control_selected(locator, "视频"):
+                        return True
+                    if self._xiaohongshu_video_response_seen:
+                        return True
+                    if current_url != before_url and any(
+                        value.casefold() in {"video", "51"}
+                        for key in ("type", "note_type", "noteType")
+                        for value in query.get(key, [])
+                    ):
+                        return True
+                    page.wait_for_timeout(250)
+                return False
+            return False
+        except Exception:
+            return False
+
+    def _select_xiaohongshu_time_filter(self, page, days: int) -> str | None:
         label = {0: "不限", 1: "一天内", 7: "一周内", 180: "半年内"}.get(days)
         if label is None:
             return None
         try:
-            drawer = page.locator("div.filter")
-            if drawer.count() < 1:
-                return None
-
-            def select_visible_option() -> bool:
-                return bool(
-                    page.evaluate(
-                        """label => {
-                          const visible = node => Boolean(
-                            node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length)
-                          );
-                          for (const group of document.querySelectorAll('.filters')) {
-                            if (!visible(group) || !String(group.innerText || '').includes('发布时间')) continue;
-                            const target = [...group.querySelectorAll('.tags')].find(
-                              node => String(node.innerText || '').trim() === label
-                            );
-                            if (!target) continue;
-                            if (!target.classList.contains('active')) target.click();
-                            return true;
-                          }
-                          return false;
-                        }""",
-                        label,
-                    )
+            trigger = page.locator("div.filter")
+            for index in range(min(trigger.count(), 5)):
+                candidate = trigger.nth(index)
+                if candidate.is_visible():
+                    try:
+                        candidate.evaluate("node => node.click()")
+                    except Exception:
+                        candidate.click(timeout=3000)
+                    break
+            page.wait_for_timeout(400)
+            groups = page.locator(".filters")
+            for _ in range(8):
+                if groups.count() > 0:
+                    break
+                page.wait_for_timeout(250)
+            for group_index in range(min(groups.count(), 12)):
+                group = groups.nth(group_index)
+                if not group.is_visible() or "发布时间" not in group.inner_text():
+                    continue
+                options = group.locator(
+                    "[data-hp-bound='1'], .tags:not([aria-hidden='true']), "
+                    "[role='option'], [data-value]"
                 )
-
-            if not select_visible_option():
-                drawer.first.evaluate("node => node.click()")
-                page.wait_for_timeout(400)
-                if not select_visible_option():
+                for option_index in range(min(options.count(), 12)):
+                    option = options.nth(option_index)
+                    if not option.is_visible() or self._clean_text(option.inner_text()) != label:
+                        continue
+                    if not self._xiaohongshu_control_selected(option, label):
+                        try:
+                            option.click(timeout=3000)
+                        except Exception:
+                            option.evaluate("node => node.click()")
+                    for _ in range(8):
+                        if self._xiaohongshu_control_selected(option, label):
+                            return label
+                        page.wait_for_timeout(250)
                     return None
-            page.wait_for_timeout(800)
-            confirmed = bool(
-                page.evaluate(
-                    """label => [...document.querySelectorAll('.filters')].some(group =>
-                      String(group.innerText || '').includes('发布时间') &&
-                      [...group.querySelectorAll('.tags')].some(node =>
-                        String(node.innerText || '').trim() === label && node.classList.contains('active')
-                      )
-                    )""",
-                    label,
-                )
-            )
-            if not confirmed:
-                return None
-            page.evaluate(
-                """() => {
-                  const visible = node => Boolean(
-                    node && (node.offsetWidth || node.offsetHeight || node.getClientRects().length)
-                  );
-                  const close = [...document.querySelectorAll('*')].find(
-                    node => visible(node) && node.children.length === 0 &&
-                      String(node.textContent || '').trim() === '收起'
-                  );
-                  if (close) close.click();
-                }"""
-            )
-            return label
+            return None
         except Exception:
             return None
 
@@ -1529,7 +1915,19 @@ class LocalPlatformBrowserSearchProvider:
                 })"""
             )
         else:
-            raw = page.locator(self.spec.link_selector).evaluate_all(
+            selector = self.spec.link_selector
+            try:
+                primary_count = page.locator(selector).count()
+            except Exception:
+                primary_count = 0
+            if primary_count < 1 and self.spec.fallback_link_selectors:
+                selector = ", ".join(
+                    dict.fromkeys((selector, *self.spec.fallback_link_selectors))
+                )
+                self._collection_filter_notes.append(
+                    f"{self.spec.label}已启用备用页面规则；规则版本 {_ADAPTER_VERSION}。"
+                )
+            raw = page.locator(selector).evaluate_all(
                 """elements => elements.map(element => {
                     let container = element;
                     for (let i = 0; i < 5 && container?.parentElement; i += 1) {
@@ -1547,12 +1945,23 @@ class LocalPlatformBrowserSearchProvider:
                         title: element.getAttribute("title") || image?.alt || "",
                         text: (container?.innerText || element.innerText || "").trim(),
                         counts: countNodes,
-                        isVideo: Boolean(container?.querySelector(
-                          '.play-icon, [class*="play-icon"], [class*="video-icon"]'
-                        )),
+                        isVideo: Boolean(
+                          container?.querySelector(
+                            'video, .play-icon, [class*="play-icon"], [class*="video-icon"], [data-type*="video"]'
+                          )
+                          || [...(container?.querySelectorAll('[data-type], [data-note-type], [aria-label], [title]') || [])]
+                            .some(node => /video|视频/i.test(
+                              [node.getAttribute('data-type'), node.getAttribute('data-note-type'),
+                               node.getAttribute('aria-label'), node.getAttribute('title')].join(' ')
+                            ))
+                        ),
                     };
                 })"""
             )
+            if not raw:
+                self._collection_filter_notes.append(
+                    f"{self.spec.label}没有匹配到已知页面规则，规则可能失效；本次未将空结果当作成功。"
+                )
         rows: list[dict[str, Any]] = []
         for item in raw if isinstance(raw, list) else []:
             if not isinstance(item, dict):
@@ -1569,12 +1978,11 @@ class LocalPlatformBrowserSearchProvider:
                 continue
             published_at = self._parse_published_at(text, self.clock())
             title = self._clean_title(item.get("title"), text)
-            if (
-                self.platform == Platform.BILIBILI
-                and keyword
-                and not self._bilibili_text_matches(keyword, title, text)
-            ):
-                continue
+            direct_match = bool(
+                self.platform != Platform.BILIBILI
+                or not keyword
+                or self._bilibili_text_matches(keyword, title, text)
+            )
             # B 站搜索结果是服务端渲染(自动化下不发搜索接口请求)。第一个 stats
             # 数字可作为播放数；第二个数字在不同卡片布局下语义不稳定，不能猜成点赞。
             # 小红书卡片通过 span.count 暴露点赞数(无播放数)。
@@ -1617,14 +2025,16 @@ class LocalPlatformBrowserSearchProvider:
                     "comments": self._labeled_count(text, ("评论",)),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
+                    "direct_match": direct_match,
                     "is_video": (
                         True if self.platform == Platform.XIAOHONGSHU else None
                     ),
                     "strict_topic": bool(
                         self.platform == Platform.BILIBILI
-                        and keyword
+                        and direct_match
                         and not self._bilibili_text_matches(keyword, title)
                     ),
+                    "match_text": f"{title} {text}".strip(),
                     "evidence": "rendered_search_card",
                 }
             )
@@ -1663,29 +2073,70 @@ class LocalPlatformBrowserSearchProvider:
         return self.spec.page_host in normalized and "/search/type" in normalized
 
     @staticmethod
+    def _xiaohongshu_is_video_card(
+        entry: dict[str, Any], card: dict[str, Any]
+    ) -> bool:
+        explicit_types = [
+            card.get("type"),
+            card.get("note_type"),
+            card.get("noteType"),
+            entry.get("type"),
+            entry.get("note_type"),
+            entry.get("noteType"),
+            card.get("media_type"),
+            card.get("mediaType"),
+        ]
+        if any("video" in str(value or "").casefold() for value in explicit_types):
+            return True
+        for key in ("video", "video_info", "videoInfo", "video_url", "videoUrl"):
+            value = card.get(key, entry.get(key))
+            if isinstance(value, dict) and value:
+                return True
+            if isinstance(value, str) and value.strip():
+                return True
+        return False
+
+    @staticmethod
     def _xiaohongshu_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         data = payload.get("data")
-        items = data.get("items") if isinstance(data, dict) else None
+        if isinstance(data, dict):
+            items = data.get("items") or data.get("notes") or data.get("results")
+        elif isinstance(data, list):
+            items = data
+        else:
+            items = payload.get("items") or payload.get("notes")
         if not isinstance(items, list):
             return []
         rows: list[dict[str, Any]] = []
         for entry in items:
             if not isinstance(entry, dict):
                 continue
-            card = entry.get("note_card") or entry.get("noteCard") or {}
-            if not isinstance(card, dict):
-                continue
-            note_type = LocalPlatformBrowserSearchProvider._clean_text(
-                card.get("type") or card.get("note_type") or card.get("noteType")
-            ).casefold()
-            if "video" not in note_type:
+            card = (
+                entry.get("note_card")
+                or entry.get("noteCard")
+                or entry.get("card")
+                or entry
+            )
+            if not isinstance(card, dict) or not LocalPlatformBrowserSearchProvider._xiaohongshu_is_video_card(entry, card):
                 continue
             item_id = str(
-                entry.get("id") or card.get("note_id") or card.get("id") or ""
+                entry.get("id")
+                or entry.get("note_id")
+                or entry.get("noteId")
+                or card.get("note_id")
+                or card.get("noteId")
+                or card.get("id")
+                or ""
             )
             if not item_id:
                 continue
-            user = card.get("user") if isinstance(card.get("user"), dict) else {}
+            user = (
+                card.get("user")
+                if isinstance(card.get("user"), dict)
+                else card.get("userInfo")
+                if isinstance(card.get("userInfo"), dict)
+                else {}
+            )
             metrics = (
                 card.get("interact_info")
                 if isinstance(card.get("interact_info"), dict)
@@ -1702,12 +2153,13 @@ class LocalPlatformBrowserSearchProvider:
                     "source_url": f"https://www.xiaohongshu.com/explore/{item_id}",
                     "title": LocalPlatformBrowserSearchProvider._clean_text(
                         card.get("display_title")
+                        or card.get("displayTitle")
                         or card.get("title")
                         or card.get("desc")
                     ),
-                    "author_id": str(user.get("user_id") or user.get("id") or ""),
+                    "author_id": str(user.get("user_id") or user.get("userId") or user.get("id") or ""),
                     "author_name": LocalPlatformBrowserSearchProvider._clean_text(
-                        user.get("nickname") or user.get("nick_name")
+                        user.get("nickname") or user.get("nick_name") or user.get("nickName")
                     ),
                     "likes": LocalPlatformBrowserSearchProvider._first_count(
                         metrics,
@@ -1736,6 +2188,7 @@ class LocalPlatformBrowserSearchProvider:
                     "published_at": published_at,
                     "time_confident": published_at is not None,
                     "is_video": True,
+                    "video_confirmed": True,
                     "evidence": "browser_search_response",
                 }
             )
@@ -1844,13 +2297,12 @@ class LocalPlatformBrowserSearchProvider:
         for entry in items:
             if not isinstance(entry, dict):
                 continue
-            if (
-                keyword
-                and not LocalPlatformBrowserSearchProvider._bilibili_entry_matches_keyword(
+            direct_match = bool(
+                not keyword
+                or LocalPlatformBrowserSearchProvider._bilibili_entry_matches_keyword(
                     entry, keyword
                 )
-            ):
-                continue
+            )
             item_id = str(entry.get("bvid") or "").strip()
             if not item_id:
                 continue
@@ -1860,10 +2312,14 @@ class LocalPlatformBrowserSearchProvider:
                 entry.get("description") or entry.get("desc") or entry.get("tag")
             )
             strict_topic = bool(
-                keyword
+                direct_match
+                and keyword
                 and not LocalPlatformBrowserSearchProvider._bilibili_text_matches(
                     keyword, title
                 )
+            )
+            match_text = LocalPlatformBrowserSearchProvider._bilibili_entry_match_text(
+                entry
             )
             published_at = LocalPlatformBrowserSearchProvider._timestamp_from_mapping(
                 entry
@@ -1927,7 +2383,9 @@ class LocalPlatformBrowserSearchProvider:
                     ),
                     "published_at": published_at,
                     "time_confident": published_at is not None,
+                    "direct_match": direct_match,
                     "strict_topic": strict_topic,
+                    "match_text": match_text,
                     "evidence": "browser_search_response",
                 }
             )
@@ -1990,6 +2448,15 @@ class LocalPlatformBrowserSearchProvider:
         return values
 
     @staticmethod
+    def _bilibili_entry_match_text(entry: dict[str, Any]) -> str:
+        values = LocalPlatformBrowserSearchProvider._bilibili_match_values(entry)
+        return " ".join(
+            LocalPlatformBrowserSearchProvider._clean_text(value)
+            for value in values
+            if value is not None
+        ).strip()
+
+    @staticmethod
     def _normalized_match_text(value: Any) -> str:
         text = html.unescape(re.sub(r"<[^>]+>", "", str(value or "")))
         normalized = unicodedata.normalize("NFKC", text).casefold()
@@ -2016,7 +2483,22 @@ class LocalPlatformBrowserSearchProvider:
             effective_time = published_at if time_confident else observed_at
             normalized.append((row, effective_time, time_confident))
 
-        if self.platform == Platform.KUAISHOU and platform_sort == "likes":
+        if self.platform == Platform.BILIBILI:
+            # B 站优先收集平台标记的匹配候选。先按时间截断再做相关性
+            # 过滤会把后页的标题/话题/描述命中项丢掉，因此在仍有界的
+            # 解析池内优先放入直匹配；中心层随后做三档相关性判定。
+            normalized.sort(
+                key=lambda entry: (
+                    bool(entry[0].get("direct_match")),
+                    entry[1],
+                    int(entry[0].get("likes") or 0)
+                    + int(entry[0].get("comments") or 0) * 3
+                    + int(entry[0].get("shares") or 0) * 4
+                    + int(entry[0].get("favorites") or 0) * 4,
+                ),
+                reverse=True,
+            )
+        elif self.platform == Platform.KUAISHOU and platform_sort == "likes":
             normalized.sort(
                 key=lambda entry: (int(entry[0].get("likes") or 0), entry[1]),
                 reverse=True,
@@ -2057,6 +2539,13 @@ class LocalPlatformBrowserSearchProvider:
             duration_seconds = self._duration_seconds(row.get("duration_seconds"))
             if duration_seconds is None:
                 warnings.append("搜索结果未返回视频时长。")
+            match_text_evidence = ""
+            if self.platform == Platform.BILIBILI:
+                match_text = self._clean_text(row.get("match_text"))
+                if match_text:
+                    match_text_evidence = (
+                        f"bilibili_match_text={quote(match_text[:1200], safe='')};"
+                    )
             items.append(
                 ProviderSearchItem(
                     platform=self.platform,
@@ -2082,6 +2571,8 @@ class LocalPlatformBrowserSearchProvider:
                     ),
                     evidence=(
                         f"{self.platform.value}:{row.get('evidence')};"
+                        f"{match_text_evidence}"
+                        f"{'direct_match=1;' if row.get('direct_match') else ''}"
                         f"{'严格话题=1;' if row.get('strict_topic') else ''}"
                         f"time={'platform' if time_confident else 'search_order_fallback'};"
                         f"时长秒={duration_seconds if duration_seconds is not None else '未返回'}"
@@ -2288,19 +2779,24 @@ class LocalPlatformBrowserSearchProvider:
         compact = text.replace(" ", "")
         if "刚刚" in compact:
             return observed_at
-        match = re.search(r"(\d+)分钟前", compact)
-        if match:
-            return observed_at - timedelta(minutes=int(match.group(1)))
-        match = re.search(r"(\d+)小时前", compact)
-        if match:
-            return observed_at - timedelta(hours=int(match.group(1)))
-        match = re.search(r"(\d+)天前", compact)
-        if match:
-            return observed_at - timedelta(days=int(match.group(1)))
-        if "昨天" in compact:
-            return observed_at - timedelta(days=1)
-        if "前天" in compact:
-            return observed_at - timedelta(days=2)
+        # 平台卡片文本不可控，标题/描述可能混入超大数字；相对时间
+        # 超出可表示范围时按不可靠处理，而不是让整次采集崩溃。
+        try:
+            match = re.search(r"(\d+)分钟前", compact)
+            if match:
+                return observed_at - timedelta(minutes=int(match.group(1)))
+            match = re.search(r"(\d+)小时前", compact)
+            if match:
+                return observed_at - timedelta(hours=int(match.group(1)))
+            match = re.search(r"(\d+)天前", compact)
+            if match:
+                return observed_at - timedelta(days=int(match.group(1)))
+            if "昨天" in compact:
+                return observed_at - timedelta(days=1)
+            if "前天" in compact:
+                return observed_at - timedelta(days=2)
+        except (OverflowError, ValueError):
+            return None
         match = re.search(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})(?!\d)", text)
         if match:
             try:

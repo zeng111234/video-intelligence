@@ -1,0 +1,4372 @@
+{
+  "format": "local_word_timestamps_v1",
+  "generated_at": "2026-08-26T09:25:06.816076+00:00",
+  "source_path": "C:\\Users\\zeng\\Videos\\douyin\\抖音2026718-401279.mp4",
+  "source_sha256": "ce023326033a9f7db2b71027cbce3e032e5a1a04f7d00d3715990ad55e86437b",
+  "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "model": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+  "local_files_only": true,
+  "word_timestamps": true,
+  "language": "zh",
+  "language_probability": 1.0,
+  "duration_seconds": 100.333,
+  "segment_count": 77,
+  "word_count": 636,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.8,
+      "text": "老百姓消费者买二手车要想不被坑怎么办",
+      "words": [
+        {
+          "start": 0.0,
+          "end": 0.2,
+          "word": "老",
+          "probability": 0.6846
+        },
+        {
+          "start": 0.2,
+          "end": 0.36,
+          "word": "百",
+          "probability": 0.981
+        },
+        {
+          "start": 0.36,
+          "end": 0.48,
+          "word": "姓",
+          "probability": 0.9994
+        },
+        {
+          "start": 0.48,
+          "end": 0.64,
+          "word": "消",
+          "probability": 0.8664
+        },
+        {
+          "start": 0.64,
+          "end": 0.72,
+          "word": "费",
+          "probability": 0.997
+        },
+        {
+          "start": 0.72,
+          "end": 0.8,
+          "word": "者",
+          "probability": 0.9848
+        },
+        {
+          "start": 0.8,
+          "end": 1.06,
+          "word": "买",
+          "probability": 0.978
+        },
+        {
+          "start": 1.06,
+          "end": 1.3,
+          "word": "二",
+          "probability": 0.9645
+        },
+        {
+          "start": 1.3,
+          "end": 1.42,
+          "word": "手",
+          "probability": 0.9856
+        },
+        {
+          "start": 1.42,
+          "end": 1.62,
+          "word": "车",
+          "probability": 0.9944
+        },
+        {
+          "start": 1.62,
+          "end": 1.8,
+          "word": "要",
+          "probability": 0.8424
+        },
+        {
+          "start": 1.8,
+          "end": 1.96,
+          "word": "想",
+          "probability": 0.7253
+        },
+        {
+          "start": 1.96,
+          "end": 2.1,
+          "word": "不",
+          "probability": 0.9907
+        },
+        {
+          "start": 2.1,
+          "end": 2.24,
+          "word": "被",
+          "probability": 0.7746
+        },
+        {
+          "start": 2.24,
+          "end": 2.4,
+          "word": "坑",
+          "probability": 0.9927
+        },
+        {
+          "start": 2.4,
+          "end": 2.62,
+          "word": "怎么",
+          "probability": 0.869
+        },
+        {
+          "start": 2.62,
+          "end": 2.8,
+          "word": "办",
+          "probability": 0.9964
+        }
+      ]
+    },
+    {
+      "start": 2.8,
+      "end": 3.9,
+      "text": "今天跟你说四句话",
+      "words": [
+        {
+          "start": 2.8,
+          "end": 3.16,
+          "word": "今天",
+          "probability": 0.92
+        },
+        {
+          "start": 3.16,
+          "end": 3.3,
+          "word": "跟你",
+          "probability": 0.9805
+        },
+        {
+          "start": 3.3,
+          "end": 3.54,
+          "word": "说",
+          "probability": 0.9969
+        },
+        {
+          "start": 3.54,
+          "end": 3.68,
+          "word": "四",
+          "probability": 0.9309
+        },
+        {
+          "start": 3.68,
+          "end": 3.76,
+          "word": "句",
+          "probability": 0.9913
+        },
+        {
+          "start": 3.76,
+          "end": 3.9,
+          "word": "话",
+          "probability": 0.9996
+        }
+      ]
+    },
+    {
+      "start": 3.9,
+      "end": 4.7,
+      "text": "记住这四句话",
+      "words": [
+        {
+          "start": 3.9,
+          "end": 4.08,
+          "word": "记",
+          "probability": 0.9296
+        },
+        {
+          "start": 4.08,
+          "end": 4.22,
+          "word": "住",
+          "probability": 0.9994
+        },
+        {
+          "start": 4.22,
+          "end": 4.32,
+          "word": "这",
+          "probability": 0.9846
+        },
+        {
+          "start": 4.32,
+          "end": 4.42,
+          "word": "四",
+          "probability": 0.9962
+        },
+        {
+          "start": 4.42,
+          "end": 4.52,
+          "word": "句",
+          "probability": 0.9997
+        },
+        {
+          "start": 4.52,
+          "end": 4.7,
+          "word": "话",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 4.7,
+      "end": 6.02,
+      "text": "一定让你买二手车不被骗",
+      "words": [
+        {
+          "start": 4.7,
+          "end": 5.02,
+          "word": "一定",
+          "probability": 0.5493
+        },
+        {
+          "start": 5.02,
+          "end": 5.16,
+          "word": "让",
+          "probability": 0.936
+        },
+        {
+          "start": 5.16,
+          "end": 5.26,
+          "word": "你",
+          "probability": 0.9932
+        },
+        {
+          "start": 5.26,
+          "end": 5.4,
+          "word": "买",
+          "probability": 0.999
+        },
+        {
+          "start": 5.4,
+          "end": 5.52,
+          "word": "二",
+          "probability": 0.9636
+        },
+        {
+          "start": 5.52,
+          "end": 5.58,
+          "word": "手",
+          "probability": 0.9963
+        },
+        {
+          "start": 5.58,
+          "end": 5.7,
+          "word": "车",
+          "probability": 0.9981
+        },
+        {
+          "start": 5.7,
+          "end": 5.86,
+          "word": "不",
+          "probability": 0.6973
+        },
+        {
+          "start": 5.86,
+          "end": 5.96,
+          "word": "被",
+          "probability": 0.8189
+        },
+        {
+          "start": 5.96,
+          "end": 6.02,
+          "word": "骗",
+          "probability": 0.7562
+        }
+      ]
+    },
+    {
+      "start": 6.02,
+      "end": 7.82,
+      "text": "第一件事你得搞清楚新车卖多少钱",
+      "words": [
+        {
+          "start": 6.02,
+          "end": 6.24,
+          "word": "第一",
+          "probability": 0.9005
+        },
+        {
+          "start": 6.24,
+          "end": 6.4,
+          "word": "件",
+          "probability": 0.9877
+        },
+        {
+          "start": 6.4,
+          "end": 6.5,
+          "word": "事",
+          "probability": 0.9986
+        },
+        {
+          "start": 6.5,
+          "end": 6.62,
+          "word": "你",
+          "probability": 0.8959
+        },
+        {
+          "start": 6.62,
+          "end": 6.7,
+          "word": "得",
+          "probability": 0.9986
+        },
+        {
+          "start": 6.7,
+          "end": 6.8,
+          "word": "搞",
+          "probability": 0.9865
+        },
+        {
+          "start": 6.8,
+          "end": 7.0,
+          "word": "清楚",
+          "probability": 0.9984
+        },
+        {
+          "start": 7.0,
+          "end": 7.24,
+          "word": "新",
+          "probability": 0.9754
+        },
+        {
+          "start": 7.24,
+          "end": 7.4,
+          "word": "车",
+          "probability": 0.9969
+        },
+        {
+          "start": 7.4,
+          "end": 7.52,
+          "word": "卖",
+          "probability": 0.8556
+        },
+        {
+          "start": 7.52,
+          "end": 7.64,
+          "word": "多少",
+          "probability": 0.9962
+        },
+        {
+          "start": 7.64,
+          "end": 7.82,
+          "word": "钱",
+          "probability": 0.9995
+        }
+      ]
+    },
+    {
+      "start": 7.82,
+      "end": 9.38,
+      "text": "买二手要研究新车行情吗",
+      "words": [
+        {
+          "start": 7.82,
+          "end": 8.12,
+          "word": "买",
+          "probability": 0.994
+        },
+        {
+          "start": 8.12,
+          "end": 8.32,
+          "word": "二",
+          "probability": 0.998
+        },
+        {
+          "start": 8.32,
+          "end": 8.42,
+          "word": "手",
+          "probability": 0.9995
+        },
+        {
+          "start": 8.42,
+          "end": 8.54,
+          "word": "要",
+          "probability": 0.9774
+        },
+        {
+          "start": 8.54,
+          "end": 8.66,
+          "word": "研",
+          "probability": 0.9989
+        },
+        {
+          "start": 8.66,
+          "end": 8.78,
+          "word": "究",
+          "probability": 0.9999
+        },
+        {
+          "start": 8.78,
+          "end": 8.9,
+          "word": "新",
+          "probability": 0.9975
+        },
+        {
+          "start": 8.9,
+          "end": 9.02,
+          "word": "车",
+          "probability": 0.9973
+        },
+        {
+          "start": 9.02,
+          "end": 9.12,
+          "word": "行",
+          "probability": 0.9987
+        },
+        {
+          "start": 9.12,
+          "end": 9.24,
+          "word": "情",
+          "probability": 0.9483
+        },
+        {
+          "start": 9.24,
+          "end": 9.38,
+          "word": "吗",
+          "probability": 0.975
+        }
+      ]
+    },
+    {
+      "start": 9.38,
+      "end": 10.06,
+      "text": "当然得要",
+      "words": [
+        {
+          "start": 9.38,
+          "end": 9.78,
+          "word": "当然",
+          "probability": 0.9857
+        },
+        {
+          "start": 9.78,
+          "end": 9.92,
+          "word": "得",
+          "probability": 0.9978
+        },
+        {
+          "start": 9.92,
+          "end": 10.06,
+          "word": "要",
+          "probability": 0.9979
+        }
+      ]
+    },
+    {
+      "start": 10.06,
+      "end": 12.48,
+      "text": "我看到有个前年那个速腾车员报价报十万多",
+      "words": [
+        {
+          "start": 10.06,
+          "end": 10.44,
+          "word": "我",
+          "probability": 0.9935
+        },
+        {
+          "start": 10.44,
+          "end": 10.64,
+          "word": "看到",
+          "probability": 0.9763
+        },
+        {
+          "start": 10.64,
+          "end": 10.78,
+          "word": "有",
+          "probability": 0.9945
+        },
+        {
+          "start": 10.78,
+          "end": 10.86,
+          "word": "个",
+          "probability": 0.977
+        },
+        {
+          "start": 10.86,
+          "end": 10.96,
+          "word": "前",
+          "probability": 0.956
+        },
+        {
+          "start": 10.96,
+          "end": 11.06,
+          "word": "年",
+          "probability": 0.192
+        },
+        {
+          "start": 11.06,
+          "end": 11.24,
+          "word": "那个",
+          "probability": 0.4417
+        },
+        {
+          "start": 11.24,
+          "end": 11.36,
+          "word": "速",
+          "probability": 0.9788
+        },
+        {
+          "start": 11.36,
+          "end": 11.44,
+          "word": "腾",
+          "probability": 0.7108
+        },
+        {
+          "start": 11.44,
+          "end": 11.6,
+          "word": "车",
+          "probability": 0.9973
+        },
+        {
+          "start": 11.6,
+          "end": 11.74,
+          "word": "员",
+          "probability": 0.9523
+        },
+        {
+          "start": 11.74,
+          "end": 11.88,
+          "word": "报",
+          "probability": 0.9716
+        },
+        {
+          "start": 11.88,
+          "end": 12.0,
+          "word": "价",
+          "probability": 0.9953
+        },
+        {
+          "start": 12.0,
+          "end": 12.12,
+          "word": "报",
+          "probability": 0.9884
+        },
+        {
+          "start": 12.12,
+          "end": 12.26,
+          "word": "十",
+          "probability": 0.4666
+        },
+        {
+          "start": 12.26,
+          "end": 12.36,
+          "word": "万",
+          "probability": 0.9951
+        },
+        {
+          "start": 12.36,
+          "end": 12.48,
+          "word": "多",
+          "probability": 0.998
+        }
+      ]
+    },
+    {
+      "start": 12.48,
+      "end": 13.84,
+      "text": "你叫速腾新车卖多少钱吗",
+      "words": [
+        {
+          "start": 12.48,
+          "end": 12.9,
+          "word": "你",
+          "probability": 0.3597
+        },
+        {
+          "start": 12.9,
+          "end": 13.02,
+          "word": "叫",
+          "probability": 0.8044
+        },
+        {
+          "start": 13.02,
+          "end": 13.14,
+          "word": "速",
+          "probability": 0.9976
+        },
+        {
+          "start": 13.14,
+          "end": 13.24,
+          "word": "腾",
+          "probability": 0.9991
+        },
+        {
+          "start": 13.24,
+          "end": 13.36,
+          "word": "新",
+          "probability": 0.9349
+        },
+        {
+          "start": 13.36,
+          "end": 13.42,
+          "word": "车",
+          "probability": 0.9903
+        },
+        {
+          "start": 13.42,
+          "end": 13.52,
+          "word": "卖",
+          "probability": 0.9918
+        },
+        {
+          "start": 13.52,
+          "end": 13.6,
+          "word": "多少",
+          "probability": 0.9966
+        },
+        {
+          "start": 13.6,
+          "end": 13.72,
+          "word": "钱",
+          "probability": 0.9996
+        },
+        {
+          "start": 13.72,
+          "end": 13.84,
+          "word": "吗",
+          "probability": 0.945
+        }
+      ]
+    },
+    {
+      "start": 13.84,
+      "end": 15.36,
+      "text": "十五万八千九三百超越",
+      "words": [
+        {
+          "start": 13.84,
+          "end": 14.28,
+          "word": "十",
+          "probability": 0.6537
+        },
+        {
+          "start": 14.28,
+          "end": 14.38,
+          "word": "五",
+          "probability": 0.9907
+        },
+        {
+          "start": 14.38,
+          "end": 14.52,
+          "word": "万",
+          "probability": 0.9814
+        },
+        {
+          "start": 14.52,
+          "end": 14.6,
+          "word": "八",
+          "probability": 0.9884
+        },
+        {
+          "start": 14.6,
+          "end": 14.7,
+          "word": "千",
+          "probability": 0.9877
+        },
+        {
+          "start": 14.7,
+          "end": 14.82,
+          "word": "九",
+          "probability": 0.9933
+        },
+        {
+          "start": 14.82,
+          "end": 14.96,
+          "word": "三",
+          "probability": 0.8118
+        },
+        {
+          "start": 14.96,
+          "end": 15.08,
+          "word": "百",
+          "probability": 0.7386
+        },
+        {
+          "start": 15.08,
+          "end": 15.22,
+          "word": "超",
+          "probability": 0.9968
+        },
+        {
+          "start": 15.22,
+          "end": 15.36,
+          "word": "越",
+          "probability": 0.9753
+        }
+      ]
+    },
+    {
+      "start": 15.36,
+      "end": 16.3,
+      "text": "陈环裸车也会五万",
+      "words": [
+        {
+          "start": 15.36,
+          "end": 15.64,
+          "word": "陈",
+          "probability": 0.6087
+        },
+        {
+          "start": 15.64,
+          "end": 15.74,
+          "word": "环",
+          "probability": 0.548
+        },
+        {
+          "start": 15.74,
+          "end": 15.88,
+          "word": "裸",
+          "probability": 0.5712
+        },
+        {
+          "start": 15.88,
+          "end": 15.96,
+          "word": "车",
+          "probability": 0.8067
+        },
+        {
+          "start": 15.96,
+          "end": 16.0,
+          "word": "也",
+          "probability": 0.3424
+        },
+        {
+          "start": 16.0,
+          "end": 16.08,
+          "word": "会",
+          "probability": 0.8032
+        },
+        {
+          "start": 16.08,
+          "end": 16.2,
+          "word": "五",
+          "probability": 0.9156
+        },
+        {
+          "start": 16.2,
+          "end": 16.3,
+          "word": "万",
+          "probability": 0.9622
+        }
+      ]
+    },
+    {
+      "start": 16.3,
+      "end": 17.5,
+      "text": "裸车卖十八八千九",
+      "words": [
+        {
+          "start": 16.3,
+          "end": 16.62,
+          "word": "裸",
+          "probability": 0.9971
+        },
+        {
+          "start": 16.62,
+          "end": 16.76,
+          "word": "车",
+          "probability": 0.9807
+        },
+        {
+          "start": 16.76,
+          "end": 16.88,
+          "word": "卖",
+          "probability": 0.9888
+        },
+        {
+          "start": 16.88,
+          "end": 17.06,
+          "word": "十",
+          "probability": 0.9891
+        },
+        {
+          "start": 17.06,
+          "end": 17.18,
+          "word": "八",
+          "probability": 0.3041
+        },
+        {
+          "start": 17.18,
+          "end": 17.28,
+          "word": "八",
+          "probability": 0.568
+        },
+        {
+          "start": 17.28,
+          "end": 17.4,
+          "word": "千",
+          "probability": 0.9878
+        },
+        {
+          "start": 17.4,
+          "end": 17.5,
+          "word": "九",
+          "probability": 0.998
+        }
+      ]
+    },
+    {
+      "start": 17.5,
+      "end": 19.86,
+      "text": "你前年的车员好意思报十万多呀",
+      "words": [
+        {
+          "start": 17.5,
+          "end": 17.9,
+          "word": "你",
+          "probability": 0.9871
+        },
+        {
+          "start": 17.9,
+          "end": 18.1,
+          "word": "前",
+          "probability": 0.8204
+        },
+        {
+          "start": 18.1,
+          "end": 18.24,
+          "word": "年的",
+          "probability": 0.3363
+        },
+        {
+          "start": 18.24,
+          "end": 18.44,
+          "word": "车",
+          "probability": 0.9979
+        },
+        {
+          "start": 18.44,
+          "end": 18.6,
+          "word": "员",
+          "probability": 0.9981
+        },
+        {
+          "start": 18.6,
+          "end": 18.96,
+          "word": "好",
+          "probability": 0.9634
+        },
+        {
+          "start": 18.96,
+          "end": 19.16,
+          "word": "意思",
+          "probability": 0.9819
+        },
+        {
+          "start": 19.16,
+          "end": 19.36,
+          "word": "报",
+          "probability": 0.9863
+        },
+        {
+          "start": 19.36,
+          "end": 19.5,
+          "word": "十",
+          "probability": 0.9915
+        },
+        {
+          "start": 19.5,
+          "end": 19.62,
+          "word": "万",
+          "probability": 0.998
+        },
+        {
+          "start": 19.62,
+          "end": 19.74,
+          "word": "多",
+          "probability": 0.9964
+        },
+        {
+          "start": 19.74,
+          "end": 19.86,
+          "word": "呀",
+          "probability": 0.5349
+        }
+      ]
+    },
+    {
+      "start": 19.86,
+      "end": 20.36,
+      "text": "虽然说各位",
+      "words": [
+        {
+          "start": 19.86,
+          "end": 20.16,
+          "word": "虽",
+          "probability": 0.7107
+        },
+        {
+          "start": 20.16,
+          "end": 20.2,
+          "word": "然",
+          "probability": 0.9955
+        },
+        {
+          "start": 20.2,
+          "end": 20.26,
+          "word": "说",
+          "probability": 0.9428
+        },
+        {
+          "start": 20.26,
+          "end": 20.36,
+          "word": "各位",
+          "probability": 0.9961
+        }
+      ]
+    },
+    {
+      "start": 20.36,
+      "end": 21.68,
+      "text": "研究新车价格行情",
+      "words": [
+        {
+          "start": 20.36,
+          "end": 20.72,
+          "word": "研",
+          "probability": 0.9642
+        },
+        {
+          "start": 20.72,
+          "end": 20.84,
+          "word": "究",
+          "probability": 1.0
+        },
+        {
+          "start": 20.84,
+          "end": 21.0,
+          "word": "新",
+          "probability": 0.7292
+        },
+        {
+          "start": 21.0,
+          "end": 21.04,
+          "word": "车",
+          "probability": 0.9905
+        },
+        {
+          "start": 21.04,
+          "end": 21.32,
+          "word": "价",
+          "probability": 0.9582
+        },
+        {
+          "start": 21.32,
+          "end": 21.42,
+          "word": "格",
+          "probability": 0.9987
+        },
+        {
+          "start": 21.42,
+          "end": 21.52,
+          "word": "行",
+          "probability": 0.9972
+        },
+        {
+          "start": 21.52,
+          "end": 21.68,
+          "word": "情",
+          "probability": 0.9271
+        }
+      ]
+    },
+    {
+      "start": 21.68,
+      "end": 23.28,
+      "text": "买二手车才不会买费",
+      "words": [
+        {
+          "start": 21.68,
+          "end": 22.06,
+          "word": "买",
+          "probability": 0.9976
+        },
+        {
+          "start": 22.06,
+          "end": 22.24,
+          "word": "二",
+          "probability": 0.9994
+        },
+        {
+          "start": 22.24,
+          "end": 22.34,
+          "word": "手",
+          "probability": 1.0
+        },
+        {
+          "start": 22.34,
+          "end": 22.5,
+          "word": "车",
+          "probability": 0.9998
+        },
+        {
+          "start": 22.5,
+          "end": 22.72,
+          "word": "才",
+          "probability": 0.9962
+        },
+        {
+          "start": 22.72,
+          "end": 23.04,
+          "word": "不会",
+          "probability": 0.9891
+        },
+        {
+          "start": 23.04,
+          "end": 23.16,
+          "word": "买",
+          "probability": 0.7771
+        },
+        {
+          "start": 23.16,
+          "end": 23.28,
+          "word": "费",
+          "probability": 0.875
+        }
+      ]
+    },
+    {
+      "start": 23.28,
+      "end": 25.72,
+      "text": "第二件事我们买二手车会图便宜",
+      "words": [
+        {
+          "start": 23.28,
+          "end": 23.6,
+          "word": "第二",
+          "probability": 0.856
+        },
+        {
+          "start": 23.6,
+          "end": 23.76,
+          "word": "件",
+          "probability": 0.9785
+        },
+        {
+          "start": 23.76,
+          "end": 23.88,
+          "word": "事",
+          "probability": 0.9828
+        },
+        {
+          "start": 23.88,
+          "end": 24.1,
+          "word": "我们",
+          "probability": 0.8758
+        },
+        {
+          "start": 24.1,
+          "end": 24.26,
+          "word": "买",
+          "probability": 0.9958
+        },
+        {
+          "start": 24.26,
+          "end": 24.4,
+          "word": "二",
+          "probability": 0.9496
+        },
+        {
+          "start": 24.4,
+          "end": 24.46,
+          "word": "手",
+          "probability": 0.9934
+        },
+        {
+          "start": 24.46,
+          "end": 24.62,
+          "word": "车",
+          "probability": 0.9934
+        },
+        {
+          "start": 24.62,
+          "end": 25.02,
+          "word": "会",
+          "probability": 0.6901
+        },
+        {
+          "start": 25.02,
+          "end": 25.28,
+          "word": "图",
+          "probability": 0.9736
+        },
+        {
+          "start": 25.28,
+          "end": 25.46,
+          "word": "便",
+          "probability": 0.9985
+        },
+        {
+          "start": 25.46,
+          "end": 25.72,
+          "word": "宜",
+          "probability": 0.9989
+        }
+      ]
+    },
+    {
+      "start": 25.72,
+      "end": 26.86,
+      "text": "但不能贪便宜呀",
+      "words": [
+        {
+          "start": 25.72,
+          "end": 25.86,
+          "word": "但",
+          "probability": 0.9086
+        },
+        {
+          "start": 25.86,
+          "end": 26.14,
+          "word": "不能",
+          "probability": 0.9972
+        },
+        {
+          "start": 26.14,
+          "end": 26.34,
+          "word": "贪",
+          "probability": 0.898
+        },
+        {
+          "start": 26.34,
+          "end": 26.58,
+          "word": "便",
+          "probability": 0.9969
+        },
+        {
+          "start": 26.58,
+          "end": 26.74,
+          "word": "宜",
+          "probability": 0.9999
+        },
+        {
+          "start": 26.74,
+          "end": 26.86,
+          "word": "呀",
+          "probability": 0.0857
+        }
+      ]
+    },
+    {
+      "start": 26.86,
+      "end": 27.76,
+      "text": "一分钱一分货",
+      "words": [
+        {
+          "start": 26.86,
+          "end": 27.14,
+          "word": "一",
+          "probability": 0.9579
+        },
+        {
+          "start": 27.14,
+          "end": 27.28,
+          "word": "分",
+          "probability": 0.9567
+        },
+        {
+          "start": 27.28,
+          "end": 27.38,
+          "word": "钱",
+          "probability": 0.9771
+        },
+        {
+          "start": 27.38,
+          "end": 27.52,
+          "word": "一",
+          "probability": 0.994
+        },
+        {
+          "start": 27.52,
+          "end": 27.6,
+          "word": "分",
+          "probability": 0.8833
+        },
+        {
+          "start": 27.6,
+          "end": 27.76,
+          "word": "货",
+          "probability": 0.9981
+        }
+      ]
+    },
+    {
+      "start": 27.76,
+      "end": 28.82,
+      "text": "一说一晃一价",
+      "words": [
+        {
+          "start": 27.76,
+          "end": 28.16,
+          "word": "一",
+          "probability": 0.8013
+        },
+        {
+          "start": 28.16,
+          "end": 28.32,
+          "word": "说",
+          "probability": 0.3824
+        },
+        {
+          "start": 28.32,
+          "end": 28.46,
+          "word": "一",
+          "probability": 0.9984
+        },
+        {
+          "start": 28.46,
+          "end": 28.56,
+          "word": "晃",
+          "probability": 0.5536
+        },
+        {
+          "start": 28.56,
+          "end": 28.7,
+          "word": "一",
+          "probability": 0.7314
+        },
+        {
+          "start": 28.7,
+          "end": 28.82,
+          "word": "价",
+          "probability": 0.8828
+        }
+      ]
+    },
+    {
+      "start": 28.82,
+      "end": 30.56,
+      "text": "在二手车行业当中这是不变的道理",
+      "words": [
+        {
+          "start": 28.82,
+          "end": 29.1,
+          "word": "在",
+          "probability": 0.993
+        },
+        {
+          "start": 29.1,
+          "end": 29.28,
+          "word": "二",
+          "probability": 0.9967
+        },
+        {
+          "start": 29.28,
+          "end": 29.38,
+          "word": "手",
+          "probability": 0.9996
+        },
+        {
+          "start": 29.38,
+          "end": 29.44,
+          "word": "车",
+          "probability": 0.9639
+        },
+        {
+          "start": 29.44,
+          "end": 29.56,
+          "word": "行",
+          "probability": 0.9524
+        },
+        {
+          "start": 29.56,
+          "end": 29.68,
+          "word": "业",
+          "probability": 0.9975
+        },
+        {
+          "start": 29.68,
+          "end": 29.78,
+          "word": "当",
+          "probability": 0.9922
+        },
+        {
+          "start": 29.78,
+          "end": 29.86,
+          "word": "中",
+          "probability": 0.9988
+        },
+        {
+          "start": 29.86,
+          "end": 30.0,
+          "word": "这是",
+          "probability": 0.9591
+        },
+        {
+          "start": 30.0,
+          "end": 30.16,
+          "word": "不",
+          "probability": 0.9982
+        },
+        {
+          "start": 30.16,
+          "end": 30.26,
+          "word": "变",
+          "probability": 0.9669
+        },
+        {
+          "start": 30.26,
+          "end": 30.36,
+          "word": "的",
+          "probability": 0.9555
+        },
+        {
+          "start": 30.36,
+          "end": 30.48,
+          "word": "道",
+          "probability": 0.9992
+        },
+        {
+          "start": 30.48,
+          "end": 30.56,
+          "word": "理",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 30.56,
+      "end": 31.54,
+      "text": "你买贵了",
+      "words": [
+        {
+          "start": 30.56,
+          "end": 30.98,
+          "word": "你",
+          "probability": 0.8179
+        },
+        {
+          "start": 30.98,
+          "end": 31.2,
+          "word": "买",
+          "probability": 0.9992
+        },
+        {
+          "start": 31.2,
+          "end": 31.42,
+          "word": "贵",
+          "probability": 0.9985
+        },
+        {
+          "start": 31.42,
+          "end": 31.54,
+          "word": "了",
+          "probability": 0.9986
+        }
+      ]
+    },
+    {
+      "start": 31.54,
+      "end": 33.62,
+      "text": "你有可能是被杀猪就是被割韭菜",
+      "words": [
+        {
+          "start": 31.54,
+          "end": 31.82,
+          "word": "你有",
+          "probability": 0.9474
+        },
+        {
+          "start": 31.82,
+          "end": 32.08,
+          "word": "可能",
+          "probability": 0.9984
+        },
+        {
+          "start": 32.08,
+          "end": 32.22,
+          "word": "是",
+          "probability": 0.9762
+        },
+        {
+          "start": 32.22,
+          "end": 32.34,
+          "word": "被",
+          "probability": 0.9954
+        },
+        {
+          "start": 32.34,
+          "end": 32.58,
+          "word": "杀",
+          "probability": 0.9811
+        },
+        {
+          "start": 32.58,
+          "end": 32.76,
+          "word": "猪",
+          "probability": 0.9945
+        },
+        {
+          "start": 32.76,
+          "end": 32.96,
+          "word": "就是",
+          "probability": 0.9029
+        },
+        {
+          "start": 32.96,
+          "end": 33.18,
+          "word": "被",
+          "probability": 0.9914
+        },
+        {
+          "start": 33.18,
+          "end": 33.28,
+          "word": "割",
+          "probability": 0.9907
+        },
+        {
+          "start": 33.28,
+          "end": 33.46,
+          "word": "韭",
+          "probability": 0.9939
+        },
+        {
+          "start": 33.46,
+          "end": 33.62,
+          "word": "菜",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 33.62,
+      "end": 34.58,
+      "text": "但车子不一定会出事",
+      "words": [
+        {
+          "start": 33.62,
+          "end": 33.76,
+          "word": "但",
+          "probability": 0.5399
+        },
+        {
+          "start": 33.76,
+          "end": 33.96,
+          "word": "车",
+          "probability": 0.9988
+        },
+        {
+          "start": 33.96,
+          "end": 34.06,
+          "word": "子",
+          "probability": 0.9999
+        },
+        {
+          "start": 34.06,
+          "end": 34.14,
+          "word": "不",
+          "probability": 0.997
+        },
+        {
+          "start": 34.14,
+          "end": 34.26,
+          "word": "一定",
+          "probability": 0.9976
+        },
+        {
+          "start": 34.26,
+          "end": 34.36,
+          "word": "会",
+          "probability": 0.9969
+        },
+        {
+          "start": 34.36,
+          "end": 34.48,
+          "word": "出",
+          "probability": 0.9995
+        },
+        {
+          "start": 34.48,
+          "end": 34.58,
+          "word": "事",
+          "probability": 0.9988
+        }
+      ]
+    },
+    {
+      "start": 34.58,
+      "end": 36.4,
+      "text": "但如果你买的特别便宜",
+      "words": [
+        {
+          "start": 34.58,
+          "end": 34.98,
+          "word": "但",
+          "probability": 0.7692
+        },
+        {
+          "start": 34.98,
+          "end": 35.36,
+          "word": "如果你",
+          "probability": 0.987
+        },
+        {
+          "start": 35.36,
+          "end": 35.62,
+          "word": "买",
+          "probability": 0.9996
+        },
+        {
+          "start": 35.62,
+          "end": 35.72,
+          "word": "的",
+          "probability": 0.8889
+        },
+        {
+          "start": 35.72,
+          "end": 35.94,
+          "word": "特",
+          "probability": 0.9984
+        },
+        {
+          "start": 35.94,
+          "end": 36.14,
+          "word": "别",
+          "probability": 0.9996
+        },
+        {
+          "start": 36.14,
+          "end": 36.26,
+          "word": "便",
+          "probability": 0.996
+        },
+        {
+          "start": 36.26,
+          "end": 36.4,
+          "word": "宜",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 36.4,
+      "end": 36.96,
+      "text": "百分之百",
+      "words": [
+        {
+          "start": 36.4,
+          "end": 36.6,
+          "word": "百",
+          "probability": 0.9301
+        },
+        {
+          "start": 36.6,
+          "end": 36.76,
+          "word": "分",
+          "probability": 0.9992
+        },
+        {
+          "start": 36.76,
+          "end": 36.82,
+          "word": "之",
+          "probability": 0.9927
+        },
+        {
+          "start": 36.82,
+          "end": 36.96,
+          "word": "百",
+          "probability": 0.9978
+        }
+      ]
+    },
+    {
+      "start": 36.96,
+      "end": 39.34,
+      "text": "火烧水炮大石骨板金这种事都会有",
+      "words": [
+        {
+          "start": 36.96,
+          "end": 37.12,
+          "word": "火",
+          "probability": 0.804
+        },
+        {
+          "start": 37.12,
+          "end": 37.28,
+          "word": "烧",
+          "probability": 0.8664
+        },
+        {
+          "start": 37.28,
+          "end": 37.46,
+          "word": "水",
+          "probability": 0.7896
+        },
+        {
+          "start": 37.46,
+          "end": 37.64,
+          "word": "炮",
+          "probability": 0.8394
+        },
+        {
+          "start": 37.64,
+          "end": 37.82,
+          "word": "大",
+          "probability": 0.6201
+        },
+        {
+          "start": 37.82,
+          "end": 37.98,
+          "word": "石",
+          "probability": 0.6494
+        },
+        {
+          "start": 37.98,
+          "end": 38.14,
+          "word": "骨",
+          "probability": 0.662
+        },
+        {
+          "start": 38.14,
+          "end": 38.28,
+          "word": "板",
+          "probability": 0.6363
+        },
+        {
+          "start": 38.28,
+          "end": 38.44,
+          "word": "金",
+          "probability": 0.6976
+        },
+        {
+          "start": 38.44,
+          "end": 38.64,
+          "word": "这",
+          "probability": 0.9612
+        },
+        {
+          "start": 38.64,
+          "end": 38.74,
+          "word": "种",
+          "probability": 0.9707
+        },
+        {
+          "start": 38.74,
+          "end": 38.86,
+          "word": "事",
+          "probability": 0.9598
+        },
+        {
+          "start": 38.86,
+          "end": 39.0,
+          "word": "都",
+          "probability": 0.7782
+        },
+        {
+          "start": 39.0,
+          "end": 39.14,
+          "word": "会",
+          "probability": 0.9994
+        },
+        {
+          "start": 39.14,
+          "end": 39.34,
+          "word": "有",
+          "probability": 0.999
+        }
+      ]
+    },
+    {
+      "start": 39.34,
+      "end": 40.6,
+      "text": "所以千万不要贪便宜",
+      "words": [
+        {
+          "start": 39.34,
+          "end": 39.56,
+          "word": "所以",
+          "probability": 0.9897
+        },
+        {
+          "start": 39.56,
+          "end": 39.76,
+          "word": "千",
+          "probability": 0.9977
+        },
+        {
+          "start": 39.76,
+          "end": 39.92,
+          "word": "万",
+          "probability": 0.9995
+        },
+        {
+          "start": 39.92,
+          "end": 40.1,
+          "word": "不要",
+          "probability": 0.9996
+        },
+        {
+          "start": 40.1,
+          "end": 40.32,
+          "word": "贪",
+          "probability": 0.9767
+        },
+        {
+          "start": 40.32,
+          "end": 40.46,
+          "word": "便",
+          "probability": 0.9962
+        },
+        {
+          "start": 40.46,
+          "end": 40.6,
+          "word": "宜",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 40.6,
+      "end": 43.08,
+      "text": "第三句话就是一定要找正规靠谱的大商家",
+      "words": [
+        {
+          "start": 40.6,
+          "end": 40.86,
+          "word": "第三",
+          "probability": 0.959
+        },
+        {
+          "start": 40.86,
+          "end": 41.0,
+          "word": "句",
+          "probability": 0.9977
+        },
+        {
+          "start": 41.0,
+          "end": 41.08,
+          "word": "话",
+          "probability": 0.9991
+        },
+        {
+          "start": 41.08,
+          "end": 41.22,
+          "word": "就是",
+          "probability": 0.9923
+        },
+        {
+          "start": 41.22,
+          "end": 41.48,
+          "word": "一定要",
+          "probability": 0.998
+        },
+        {
+          "start": 41.48,
+          "end": 41.66,
+          "word": "找",
+          "probability": 0.9984
+        },
+        {
+          "start": 41.66,
+          "end": 41.92,
+          "word": "正",
+          "probability": 0.998
+        },
+        {
+          "start": 41.92,
+          "end": 42.1,
+          "word": "规",
+          "probability": 0.9936
+        },
+        {
+          "start": 42.1,
+          "end": 42.28,
+          "word": "靠",
+          "probability": 0.9903
+        },
+        {
+          "start": 42.28,
+          "end": 42.38,
+          "word": "谱",
+          "probability": 0.9927
+        },
+        {
+          "start": 42.38,
+          "end": 42.5,
+          "word": "的",
+          "probability": 0.9989
+        },
+        {
+          "start": 42.5,
+          "end": 42.68,
+          "word": "大",
+          "probability": 0.9982
+        },
+        {
+          "start": 42.68,
+          "end": 42.86,
+          "word": "商",
+          "probability": 0.9992
+        },
+        {
+          "start": 42.86,
+          "end": 43.08,
+          "word": "家",
+          "probability": 0.9996
+        }
+      ]
+    },
+    {
+      "start": 43.08,
+      "end": 43.84,
+      "text": "比如说什么呢",
+      "words": [
+        {
+          "start": 43.08,
+          "end": 43.4,
+          "word": "比如",
+          "probability": 0.9923
+        },
+        {
+          "start": 43.4,
+          "end": 43.54,
+          "word": "说",
+          "probability": 0.9936
+        },
+        {
+          "start": 43.54,
+          "end": 43.68,
+          "word": "什么",
+          "probability": 0.994
+        },
+        {
+          "start": 43.68,
+          "end": 43.84,
+          "word": "呢",
+          "probability": 0.9463
+        }
+      ]
+    },
+    {
+      "start": 43.84,
+      "end": 45.66,
+      "text": "在抖音上面有流量的那些网红车商",
+      "words": [
+        {
+          "start": 43.84,
+          "end": 44.02,
+          "word": "在",
+          "probability": 0.9931
+        },
+        {
+          "start": 44.02,
+          "end": 44.12,
+          "word": "抖",
+          "probability": 0.9374
+        },
+        {
+          "start": 44.12,
+          "end": 44.24,
+          "word": "音",
+          "probability": 0.974
+        },
+        {
+          "start": 44.24,
+          "end": 44.4,
+          "word": "上面",
+          "probability": 0.9613
+        },
+        {
+          "start": 44.4,
+          "end": 44.62,
+          "word": "有",
+          "probability": 0.9991
+        },
+        {
+          "start": 44.62,
+          "end": 44.78,
+          "word": "流",
+          "probability": 0.9951
+        },
+        {
+          "start": 44.78,
+          "end": 44.9,
+          "word": "量",
+          "probability": 0.9752
+        },
+        {
+          "start": 44.9,
+          "end": 44.98,
+          "word": "的",
+          "probability": 0.988
+        },
+        {
+          "start": 44.98,
+          "end": 45.08,
+          "word": "那",
+          "probability": 0.9953
+        },
+        {
+          "start": 45.08,
+          "end": 45.18,
+          "word": "些",
+          "probability": 0.9996
+        },
+        {
+          "start": 45.18,
+          "end": 45.32,
+          "word": "网",
+          "probability": 0.9977
+        },
+        {
+          "start": 45.32,
+          "end": 45.42,
+          "word": "红",
+          "probability": 0.9954
+        },
+        {
+          "start": 45.42,
+          "end": 45.52,
+          "word": "车",
+          "probability": 0.9989
+        },
+        {
+          "start": 45.52,
+          "end": 45.66,
+          "word": "商",
+          "probability": 0.9897
+        }
+      ]
+    },
+    {
+      "start": 45.66,
+      "end": 46.56,
+      "text": "或者董车弟他们自己",
+      "words": [
+        {
+          "start": 45.66,
+          "end": 45.88,
+          "word": "或者",
+          "probability": 0.9977
+        },
+        {
+          "start": 45.88,
+          "end": 46.04,
+          "word": "董",
+          "probability": 0.7305
+        },
+        {
+          "start": 46.04,
+          "end": 46.14,
+          "word": "车",
+          "probability": 0.5808
+        },
+        {
+          "start": 46.14,
+          "end": 46.2,
+          "word": "弟",
+          "probability": 0.0328
+        },
+        {
+          "start": 46.2,
+          "end": 46.36,
+          "word": "他们",
+          "probability": 0.9843
+        },
+        {
+          "start": 46.36,
+          "end": 46.56,
+          "word": "自己",
+          "probability": 0.9986
+        }
+      ]
+    },
+    {
+      "start": 46.56,
+      "end": 47.44,
+      "text": "因为对于他们而言",
+      "words": [
+        {
+          "start": 46.56,
+          "end": 46.8,
+          "word": "因为",
+          "probability": 0.9976
+        },
+        {
+          "start": 46.8,
+          "end": 46.94,
+          "word": "对",
+          "probability": 0.9987
+        },
+        {
+          "start": 46.94,
+          "end": 47.02,
+          "word": "于",
+          "probability": 0.9803
+        },
+        {
+          "start": 47.02,
+          "end": 47.2,
+          "word": "他们",
+          "probability": 0.9916
+        },
+        {
+          "start": 47.2,
+          "end": 47.36,
+          "word": "而",
+          "probability": 0.4631
+        },
+        {
+          "start": 47.36,
+          "end": 47.44,
+          "word": "言",
+          "probability": 0.999
+        }
+      ]
+    },
+    {
+      "start": 47.44,
+      "end": 48.88,
+      "text": "以前二手车商割韭菜",
+      "words": [
+        {
+          "start": 47.44,
+          "end": 47.96,
+          "word": "以前",
+          "probability": 0.9155
+        },
+        {
+          "start": 47.96,
+          "end": 48.14,
+          "word": "二",
+          "probability": 0.4492
+        },
+        {
+          "start": 48.14,
+          "end": 48.2,
+          "word": "手",
+          "probability": 0.0335
+        },
+        {
+          "start": 48.2,
+          "end": 48.28,
+          "word": "车",
+          "probability": 0.5748
+        },
+        {
+          "start": 48.28,
+          "end": 48.4,
+          "word": "商",
+          "probability": 0.0837
+        },
+        {
+          "start": 48.4,
+          "end": 48.54,
+          "word": "割",
+          "probability": 0.8189
+        },
+        {
+          "start": 48.54,
+          "end": 48.68,
+          "word": "韭",
+          "probability": 0.9861
+        },
+        {
+          "start": 48.68,
+          "end": 48.88,
+          "word": "菜",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 48.88,
+      "end": 50.08,
+      "text": "那是局限在区域之内",
+      "words": [
+        {
+          "start": 48.88,
+          "end": 49.14,
+          "word": "那",
+          "probability": 0.9228
+        },
+        {
+          "start": 49.14,
+          "end": 49.28,
+          "word": "是",
+          "probability": 0.9742
+        },
+        {
+          "start": 49.28,
+          "end": 49.4,
+          "word": "局",
+          "probability": 0.958
+        },
+        {
+          "start": 49.4,
+          "end": 49.52,
+          "word": "限",
+          "probability": 0.9989
+        },
+        {
+          "start": 49.52,
+          "end": 49.64,
+          "word": "在",
+          "probability": 0.9924
+        },
+        {
+          "start": 49.64,
+          "end": 49.8,
+          "word": "区",
+          "probability": 0.9954
+        },
+        {
+          "start": 49.8,
+          "end": 49.88,
+          "word": "域",
+          "probability": 0.9991
+        },
+        {
+          "start": 49.88,
+          "end": 49.94,
+          "word": "之",
+          "probability": 0.9986
+        },
+        {
+          "start": 49.94,
+          "end": 50.08,
+          "word": "内",
+          "probability": 0.9976
+        }
+      ]
+    },
+    {
+      "start": 50.08,
+      "end": 51.38,
+      "text": "就那个地方当地老百姓知道",
+      "words": [
+        {
+          "start": 50.08,
+          "end": 50.24,
+          "word": "就",
+          "probability": 0.9479
+        },
+        {
+          "start": 50.24,
+          "end": 50.44,
+          "word": "那个",
+          "probability": 0.9725
+        },
+        {
+          "start": 50.44,
+          "end": 50.68,
+          "word": "地方",
+          "probability": 0.9986
+        },
+        {
+          "start": 50.68,
+          "end": 50.8,
+          "word": "当",
+          "probability": 0.9729
+        },
+        {
+          "start": 50.8,
+          "end": 50.9,
+          "word": "地",
+          "probability": 0.999
+        },
+        {
+          "start": 50.9,
+          "end": 51.02,
+          "word": "老",
+          "probability": 0.9813
+        },
+        {
+          "start": 51.02,
+          "end": 51.1,
+          "word": "百",
+          "probability": 0.9968
+        },
+        {
+          "start": 51.1,
+          "end": 51.18,
+          "word": "姓",
+          "probability": 0.9996
+        },
+        {
+          "start": 51.18,
+          "end": 51.38,
+          "word": "知道",
+          "probability": 0.9935
+        }
+      ]
+    },
+    {
+      "start": 51.38,
+      "end": 51.96,
+      "text": "现在呢",
+      "words": [
+        {
+          "start": 51.38,
+          "end": 51.82,
+          "word": "现在",
+          "probability": 0.9894
+        },
+        {
+          "start": 51.82,
+          "end": 51.96,
+          "word": "呢",
+          "probability": 0.8818
+        }
+      ]
+    },
+    {
+      "start": 51.96,
+      "end": 52.96,
+      "text": "你大凡有信任危机",
+      "words": [
+        {
+          "start": 51.96,
+          "end": 52.22,
+          "word": "你",
+          "probability": 0.77
+        },
+        {
+          "start": 52.22,
+          "end": 52.32,
+          "word": "大",
+          "probability": 0.8273
+        },
+        {
+          "start": 52.32,
+          "end": 52.44,
+          "word": "凡",
+          "probability": 0.5467
+        },
+        {
+          "start": 52.44,
+          "end": 52.56,
+          "word": "有",
+          "probability": 0.9962
+        },
+        {
+          "start": 52.56,
+          "end": 52.68,
+          "word": "信",
+          "probability": 0.2726
+        },
+        {
+          "start": 52.68,
+          "end": 52.76,
+          "word": "任",
+          "probability": 0.8483
+        },
+        {
+          "start": 52.76,
+          "end": 52.86,
+          "word": "危",
+          "probability": 0.6134
+        },
+        {
+          "start": 52.86,
+          "end": 52.96,
+          "word": "机",
+          "probability": 0.985
+        }
+      ]
+    },
+    {
+      "start": 52.96,
+      "end": 53.86,
+      "text": "全国人民都了解",
+      "words": [
+        {
+          "start": 52.96,
+          "end": 53.16,
+          "word": "全",
+          "probability": 0.8969
+        },
+        {
+          "start": 53.16,
+          "end": 53.32,
+          "word": "国",
+          "probability": 0.9974
+        },
+        {
+          "start": 53.32,
+          "end": 53.46,
+          "word": "人民",
+          "probability": 0.9956
+        },
+        {
+          "start": 53.46,
+          "end": 53.62,
+          "word": "都",
+          "probability": 0.9669
+        },
+        {
+          "start": 53.62,
+          "end": 53.72,
+          "word": "了",
+          "probability": 0.9875
+        },
+        {
+          "start": 53.72,
+          "end": 53.86,
+          "word": "解",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 53.86,
+      "end": 54.8,
+      "text": "所以他流量更大",
+      "words": [
+        {
+          "start": 53.86,
+          "end": 54.04,
+          "word": "所以",
+          "probability": 0.7041
+        },
+        {
+          "start": 54.04,
+          "end": 54.2,
+          "word": "他",
+          "probability": 0.4049
+        },
+        {
+          "start": 54.2,
+          "end": 54.36,
+          "word": "流",
+          "probability": 0.9968
+        },
+        {
+          "start": 54.36,
+          "end": 54.48,
+          "word": "量",
+          "probability": 0.9998
+        },
+        {
+          "start": 54.48,
+          "end": 54.62,
+          "word": "更",
+          "probability": 0.9955
+        },
+        {
+          "start": 54.62,
+          "end": 54.8,
+          "word": "大",
+          "probability": 0.9977
+        }
+      ]
+    },
+    {
+      "start": 54.8,
+      "end": 55.54,
+      "text": "他更正规",
+      "words": [
+        {
+          "start": 54.8,
+          "end": 55.02,
+          "word": "他",
+          "probability": 0.7544
+        },
+        {
+          "start": 55.02,
+          "end": 55.22,
+          "word": "更",
+          "probability": 0.9631
+        },
+        {
+          "start": 55.22,
+          "end": 55.36,
+          "word": "正",
+          "probability": 0.9966
+        },
+        {
+          "start": 55.36,
+          "end": 55.54,
+          "word": "规",
+          "probability": 0.9968
+        }
+      ]
+    },
+    {
+      "start": 55.54,
+      "end": 56.26,
+      "text": "他的规模更大",
+      "words": [
+        {
+          "start": 55.54,
+          "end": 55.72,
+          "word": "他的",
+          "probability": 0.8554
+        },
+        {
+          "start": 55.72,
+          "end": 55.86,
+          "word": "规",
+          "probability": 0.9997
+        },
+        {
+          "start": 55.86,
+          "end": 55.98,
+          "word": "模",
+          "probability": 0.9962
+        },
+        {
+          "start": 55.98,
+          "end": 56.12,
+          "word": "更",
+          "probability": 0.9964
+        },
+        {
+          "start": 56.12,
+          "end": 56.26,
+          "word": "大",
+          "probability": 0.9995
+        }
+      ]
+    },
+    {
+      "start": 56.26,
+      "end": 57.7,
+      "text": "他的违约成本更高",
+      "words": [
+        {
+          "start": 56.26,
+          "end": 56.62,
+          "word": "他的",
+          "probability": 0.9536
+        },
+        {
+          "start": 56.62,
+          "end": 56.9,
+          "word": "违",
+          "probability": 0.9953
+        },
+        {
+          "start": 56.9,
+          "end": 57.1,
+          "word": "约",
+          "probability": 0.9978
+        },
+        {
+          "start": 57.1,
+          "end": 57.26,
+          "word": "成",
+          "probability": 0.9991
+        },
+        {
+          "start": 57.26,
+          "end": 57.38,
+          "word": "本",
+          "probability": 0.9994
+        },
+        {
+          "start": 57.38,
+          "end": 57.52,
+          "word": "更",
+          "probability": 0.9956
+        },
+        {
+          "start": 57.52,
+          "end": 57.7,
+          "word": "高",
+          "probability": 0.9989
+        }
+      ]
+    },
+    {
+      "start": 57.7,
+      "end": 58.88,
+      "text": "相对而言的话",
+      "words": [
+        {
+          "start": 57.7,
+          "end": 57.98,
+          "word": "相",
+          "probability": 0.9842
+        },
+        {
+          "start": 57.98,
+          "end": 58.22,
+          "word": "对",
+          "probability": 0.9994
+        },
+        {
+          "start": 58.22,
+          "end": 58.38,
+          "word": "而",
+          "probability": 0.999
+        },
+        {
+          "start": 58.38,
+          "end": 58.66,
+          "word": "言",
+          "probability": 0.9993
+        },
+        {
+          "start": 58.66,
+          "end": 58.88,
+          "word": "的话",
+          "probability": 0.9984
+        }
+      ]
+    },
+    {
+      "start": 58.88,
+      "end": 60.24,
+      "text": "对老百姓来讲更靠谱一些",
+      "words": [
+        {
+          "start": 58.88,
+          "end": 59.2,
+          "word": "对",
+          "probability": 0.9781
+        },
+        {
+          "start": 59.2,
+          "end": 59.32,
+          "word": "老",
+          "probability": 0.9983
+        },
+        {
+          "start": 59.32,
+          "end": 59.42,
+          "word": "百",
+          "probability": 0.9983
+        },
+        {
+          "start": 59.42,
+          "end": 59.48,
+          "word": "姓",
+          "probability": 0.9996
+        },
+        {
+          "start": 59.48,
+          "end": 59.58,
+          "word": "来",
+          "probability": 0.9966
+        },
+        {
+          "start": 59.58,
+          "end": 59.68,
+          "word": "讲",
+          "probability": 0.9989
+        },
+        {
+          "start": 59.68,
+          "end": 59.84,
+          "word": "更",
+          "probability": 0.9852
+        },
+        {
+          "start": 59.84,
+          "end": 59.96,
+          "word": "靠",
+          "probability": 0.9787
+        },
+        {
+          "start": 59.96,
+          "end": 60.06,
+          "word": "谱",
+          "probability": 0.9619
+        },
+        {
+          "start": 60.06,
+          "end": 60.24,
+          "word": "一些",
+          "probability": 0.8377
+        }
+      ]
+    },
+    {
+      "start": 60.24,
+      "end": 62.3,
+      "text": "第四句话就是对车况有真实的了解",
+      "words": [
+        {
+          "start": 60.24,
+          "end": 60.46,
+          "word": "第",
+          "probability": 0.8609
+        },
+        {
+          "start": 60.46,
+          "end": 60.64,
+          "word": "四",
+          "probability": 0.9411
+        },
+        {
+          "start": 60.64,
+          "end": 60.76,
+          "word": "句",
+          "probability": 0.9986
+        },
+        {
+          "start": 60.76,
+          "end": 60.84,
+          "word": "话",
+          "probability": 0.9993
+        },
+        {
+          "start": 60.84,
+          "end": 61.0,
+          "word": "就是",
+          "probability": 0.9852
+        },
+        {
+          "start": 61.0,
+          "end": 61.14,
+          "word": "对",
+          "probability": 0.986
+        },
+        {
+          "start": 61.14,
+          "end": 61.34,
+          "word": "车",
+          "probability": 0.9954
+        },
+        {
+          "start": 61.34,
+          "end": 61.44,
+          "word": "况",
+          "probability": 0.5861
+        },
+        {
+          "start": 61.44,
+          "end": 61.6,
+          "word": "有",
+          "probability": 0.9028
+        },
+        {
+          "start": 61.6,
+          "end": 61.84,
+          "word": "真",
+          "probability": 0.989
+        },
+        {
+          "start": 61.84,
+          "end": 61.98,
+          "word": "实",
+          "probability": 0.9988
+        },
+        {
+          "start": 61.98,
+          "end": 62.06,
+          "word": "的",
+          "probability": 0.9932
+        },
+        {
+          "start": 62.06,
+          "end": 62.18,
+          "word": "了",
+          "probability": 0.9979
+        },
+        {
+          "start": 62.18,
+          "end": 62.3,
+          "word": "解",
+          "probability": 0.9995
+        }
+      ]
+    },
+    {
+      "start": 62.3,
+      "end": 63.9,
+      "text": "当然这不是让你去看多次看板",
+      "words": [
+        {
+          "start": 62.3,
+          "end": 62.54,
+          "word": "当然",
+          "probability": 0.9463
+        },
+        {
+          "start": 62.54,
+          "end": 62.72,
+          "word": "这",
+          "probability": 0.9868
+        },
+        {
+          "start": 62.72,
+          "end": 62.86,
+          "word": "不是",
+          "probability": 0.9967
+        },
+        {
+          "start": 62.86,
+          "end": 63.02,
+          "word": "让",
+          "probability": 0.9982
+        },
+        {
+          "start": 63.02,
+          "end": 63.12,
+          "word": "你",
+          "probability": 0.9961
+        },
+        {
+          "start": 63.12,
+          "end": 63.24,
+          "word": "去",
+          "probability": 0.9988
+        },
+        {
+          "start": 63.24,
+          "end": 63.4,
+          "word": "看",
+          "probability": 0.9928
+        },
+        {
+          "start": 63.4,
+          "end": 63.54,
+          "word": "多",
+          "probability": 0.4734
+        },
+        {
+          "start": 63.54,
+          "end": 63.64,
+          "word": "次",
+          "probability": 0.5506
+        },
+        {
+          "start": 63.64,
+          "end": 63.78,
+          "word": "看",
+          "probability": 0.9831
+        },
+        {
+          "start": 63.78,
+          "end": 63.9,
+          "word": "板",
+          "probability": 0.2052
+        }
+      ]
+    },
+    {
+      "start": 63.9,
+      "end": 64.74,
+      "text": "你这个一般人看不懂",
+      "words": [
+        {
+          "start": 63.9,
+          "end": 64.04,
+          "word": "你",
+          "probability": 0.9768
+        },
+        {
+          "start": 64.04,
+          "end": 64.16,
+          "word": "这个",
+          "probability": 0.9082
+        },
+        {
+          "start": 64.16,
+          "end": 64.28,
+          "word": "一",
+          "probability": 0.9965
+        },
+        {
+          "start": 64.28,
+          "end": 64.36,
+          "word": "般",
+          "probability": 0.9941
+        },
+        {
+          "start": 64.36,
+          "end": 64.44,
+          "word": "人",
+          "probability": 0.9981
+        },
+        {
+          "start": 64.44,
+          "end": 64.58,
+          "word": "看",
+          "probability": 0.7752
+        },
+        {
+          "start": 64.58,
+          "end": 64.68,
+          "word": "不",
+          "probability": 0.9426
+        },
+        {
+          "start": 64.68,
+          "end": 64.74,
+          "word": "懂",
+          "probability": 0.9975
+        }
+      ]
+    },
+    {
+      "start": 64.74,
+      "end": 64.94,
+      "text": "对不对",
+      "words": [
+        {
+          "start": 64.74,
+          "end": 64.82,
+          "word": "对",
+          "probability": 0.4807
+        },
+        {
+          "start": 64.82,
+          "end": 64.94,
+          "word": "不对",
+          "probability": 0.9976
+        }
+      ]
+    },
+    {
+      "start": 64.94,
+      "end": 66.96,
+      "text": "我们除了相信车商提供的这个报告之外",
+      "words": [
+        {
+          "start": 64.94,
+          "end": 65.22,
+          "word": "我们",
+          "probability": 0.9905
+        },
+        {
+          "start": 65.22,
+          "end": 65.36,
+          "word": "除",
+          "probability": 0.9974
+        },
+        {
+          "start": 65.36,
+          "end": 65.46,
+          "word": "了",
+          "probability": 0.9988
+        },
+        {
+          "start": 65.46,
+          "end": 65.76,
+          "word": "相信",
+          "probability": 0.9819
+        },
+        {
+          "start": 65.76,
+          "end": 65.96,
+          "word": "车",
+          "probability": 0.9994
+        },
+        {
+          "start": 65.96,
+          "end": 66.08,
+          "word": "商",
+          "probability": 0.9579
+        },
+        {
+          "start": 66.08,
+          "end": 66.22,
+          "word": "提",
+          "probability": 0.9994
+        },
+        {
+          "start": 66.22,
+          "end": 66.3,
+          "word": "供",
+          "probability": 0.999
+        },
+        {
+          "start": 66.3,
+          "end": 66.38,
+          "word": "的",
+          "probability": 0.9399
+        },
+        {
+          "start": 66.38,
+          "end": 66.5,
+          "word": "这个",
+          "probability": 0.9594
+        },
+        {
+          "start": 66.5,
+          "end": 66.62,
+          "word": "报",
+          "probability": 0.9983
+        },
+        {
+          "start": 66.62,
+          "end": 66.72,
+          "word": "告",
+          "probability": 0.9963
+        },
+        {
+          "start": 66.72,
+          "end": 66.84,
+          "word": "之",
+          "probability": 0.9972
+        },
+        {
+          "start": 66.84,
+          "end": 66.96,
+          "word": "外",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 66.96,
+      "end": 68.38,
+      "text": "其实我们可以稍微花点钱",
+      "words": [
+        {
+          "start": 66.96,
+          "end": 67.42,
+          "word": "其实",
+          "probability": 0.998
+        },
+        {
+          "start": 67.42,
+          "end": 67.66,
+          "word": "我们",
+          "probability": 0.9994
+        },
+        {
+          "start": 67.66,
+          "end": 67.82,
+          "word": "可以",
+          "probability": 0.9986
+        },
+        {
+          "start": 67.82,
+          "end": 67.98,
+          "word": "稍",
+          "probability": 0.9985
+        },
+        {
+          "start": 67.98,
+          "end": 68.06,
+          "word": "微",
+          "probability": 0.9988
+        },
+        {
+          "start": 68.06,
+          "end": 68.16,
+          "word": "花",
+          "probability": 0.9896
+        },
+        {
+          "start": 68.16,
+          "end": 68.26,
+          "word": "点",
+          "probability": 0.9993
+        },
+        {
+          "start": 68.26,
+          "end": 68.38,
+          "word": "钱",
+          "probability": 0.9913
+        }
+      ]
+    },
+    {
+      "start": 68.38,
+      "end": 69.66,
+      "text": "599 699 899",
+      "words": [
+        {
+          "start": 68.38,
+          "end": 68.54,
+          "word": "5",
+          "probability": 0.8595
+        },
+        {
+          "start": 68.54,
+          "end": 68.7,
+          "word": "99",
+          "probability": 0.9928
+        },
+        {
+          "start": 68.7,
+          "end": 69.0,
+          "word": " 6",
+          "probability": 0.7739
+        },
+        {
+          "start": 69.0,
+          "end": 69.2,
+          "word": "99",
+          "probability": 0.9994
+        },
+        {
+          "start": 69.2,
+          "end": 69.46,
+          "word": " 8",
+          "probability": 0.9882
+        },
+        {
+          "start": 69.46,
+          "end": 69.66,
+          "word": "99",
+          "probability": 0.9997
+        }
+      ]
+    },
+    {
+      "start": 69.66,
+      "end": 71.24,
+      "text": "去做一个深度的检测",
+      "words": [
+        {
+          "start": 69.66,
+          "end": 70.0,
+          "word": "去",
+          "probability": 0.9882
+        },
+        {
+          "start": 70.0,
+          "end": 70.24,
+          "word": "做",
+          "probability": 0.9995
+        },
+        {
+          "start": 70.24,
+          "end": 70.38,
+          "word": "一个",
+          "probability": 0.9996
+        },
+        {
+          "start": 70.38,
+          "end": 70.64,
+          "word": "深",
+          "probability": 0.9998
+        },
+        {
+          "start": 70.64,
+          "end": 70.8,
+          "word": "度",
+          "probability": 0.9993
+        },
+        {
+          "start": 70.8,
+          "end": 70.88,
+          "word": "的",
+          "probability": 0.9975
+        },
+        {
+          "start": 70.88,
+          "end": 71.04,
+          "word": "检",
+          "probability": 0.9995
+        },
+        {
+          "start": 71.04,
+          "end": 71.24,
+          "word": "测",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 71.24,
+      "end": 72.3,
+      "text": "了解真实的车况",
+      "words": [
+        {
+          "start": 71.24,
+          "end": 71.44,
+          "word": "了",
+          "probability": 0.9736
+        },
+        {
+          "start": 71.44,
+          "end": 71.64,
+          "word": "解",
+          "probability": 0.9999
+        },
+        {
+          "start": 71.64,
+          "end": 71.82,
+          "word": "真",
+          "probability": 0.9991
+        },
+        {
+          "start": 71.82,
+          "end": 71.94,
+          "word": "实",
+          "probability": 0.9993
+        },
+        {
+          "start": 71.94,
+          "end": 72.02,
+          "word": "的",
+          "probability": 0.9989
+        },
+        {
+          "start": 72.02,
+          "end": 72.18,
+          "word": "车",
+          "probability": 0.9992
+        },
+        {
+          "start": 72.18,
+          "end": 72.3,
+          "word": "况",
+          "probability": 0.9101
+        }
+      ]
+    },
+    {
+      "start": 72.3,
+      "end": 73.04,
+      "text": "我说实话",
+      "words": [
+        {
+          "start": 72.3,
+          "end": 72.7,
+          "word": "我",
+          "probability": 0.872
+        },
+        {
+          "start": 72.7,
+          "end": 72.82,
+          "word": "说",
+          "probability": 0.9965
+        },
+        {
+          "start": 72.82,
+          "end": 72.94,
+          "word": "实",
+          "probability": 0.9847
+        },
+        {
+          "start": 72.94,
+          "end": 73.04,
+          "word": "话",
+          "probability": 0.9996
+        }
+      ]
+    },
+    {
+      "start": 73.04,
+      "end": 74.1,
+      "text": "尤其是玩老德系的",
+      "words": [
+        {
+          "start": 73.04,
+          "end": 73.2,
+          "word": "尤",
+          "probability": 0.7894
+        },
+        {
+          "start": 73.2,
+          "end": 73.28,
+          "word": "其",
+          "probability": 0.9989
+        },
+        {
+          "start": 73.28,
+          "end": 73.4,
+          "word": "是",
+          "probability": 0.9985
+        },
+        {
+          "start": 73.4,
+          "end": 73.52,
+          "word": "玩",
+          "probability": 0.9895
+        },
+        {
+          "start": 73.52,
+          "end": 73.7,
+          "word": "老",
+          "probability": 0.9699
+        },
+        {
+          "start": 73.7,
+          "end": 73.86,
+          "word": "德",
+          "probability": 0.9721
+        },
+        {
+          "start": 73.86,
+          "end": 74.0,
+          "word": "系",
+          "probability": 0.9894
+        },
+        {
+          "start": 74.0,
+          "end": 74.1,
+          "word": "的",
+          "probability": 0.9951
+        }
+      ]
+    },
+    {
+      "start": 74.1,
+      "end": 75.4,
+      "text": "除了说检测报告要了解之外",
+      "words": [
+        {
+          "start": 74.1,
+          "end": 74.26,
+          "word": "除",
+          "probability": 0.3005
+        },
+        {
+          "start": 74.26,
+          "end": 74.34,
+          "word": "了",
+          "probability": 0.9848
+        },
+        {
+          "start": 74.34,
+          "end": 74.46,
+          "word": "说",
+          "probability": 0.9715
+        },
+        {
+          "start": 74.46,
+          "end": 74.62,
+          "word": "检",
+          "probability": 0.9982
+        },
+        {
+          "start": 74.62,
+          "end": 74.74,
+          "word": "测",
+          "probability": 0.9994
+        },
+        {
+          "start": 74.74,
+          "end": 74.84,
+          "word": "报",
+          "probability": 0.9141
+        },
+        {
+          "start": 74.84,
+          "end": 74.92,
+          "word": "告",
+          "probability": 0.9706
+        },
+        {
+          "start": 74.92,
+          "end": 75.04,
+          "word": "要",
+          "probability": 0.9128
+        },
+        {
+          "start": 75.04,
+          "end": 75.14,
+          "word": "了",
+          "probability": 0.8732
+        },
+        {
+          "start": 75.14,
+          "end": 75.24,
+          "word": "解",
+          "probability": 0.9995
+        },
+        {
+          "start": 75.24,
+          "end": 75.32,
+          "word": "之",
+          "probability": 0.8546
+        },
+        {
+          "start": 75.32,
+          "end": 75.4,
+          "word": "外",
+          "probability": 0.9967
+        }
+      ]
+    },
+    {
+      "start": 75.4,
+      "end": 76.46,
+      "text": "你还真得留点钱",
+      "words": [
+        {
+          "start": 75.4,
+          "end": 75.54,
+          "word": "你",
+          "probability": 0.9872
+        },
+        {
+          "start": 75.54,
+          "end": 75.66,
+          "word": "还",
+          "probability": 0.9994
+        },
+        {
+          "start": 75.66,
+          "end": 75.82,
+          "word": "真",
+          "probability": 0.9844
+        },
+        {
+          "start": 75.82,
+          "end": 75.94,
+          "word": "得",
+          "probability": 0.9991
+        },
+        {
+          "start": 75.94,
+          "end": 76.1,
+          "word": "留",
+          "probability": 0.9786
+        },
+        {
+          "start": 76.1,
+          "end": 76.22,
+          "word": "点",
+          "probability": 0.999
+        },
+        {
+          "start": 76.22,
+          "end": 76.46,
+          "word": "钱",
+          "probability": 0.9676
+        }
+      ]
+    },
+    {
+      "start": 76.46,
+      "end": 78.26,
+      "text": "去给车子以后去做维护保养",
+      "words": [
+        {
+          "start": 76.46,
+          "end": 76.7,
+          "word": "去",
+          "probability": 0.9844
+        },
+        {
+          "start": 76.7,
+          "end": 76.84,
+          "word": "给",
+          "probability": 0.9991
+        },
+        {
+          "start": 76.84,
+          "end": 77.02,
+          "word": "车",
+          "probability": 0.999
+        },
+        {
+          "start": 77.02,
+          "end": 77.12,
+          "word": "子",
+          "probability": 0.9998
+        },
+        {
+          "start": 77.12,
+          "end": 77.24,
+          "word": "以",
+          "probability": 0.9975
+        },
+        {
+          "start": 77.24,
+          "end": 77.36,
+          "word": "后",
+          "probability": 0.9994
+        },
+        {
+          "start": 77.36,
+          "end": 77.48,
+          "word": "去",
+          "probability": 0.9939
+        },
+        {
+          "start": 77.48,
+          "end": 77.66,
+          "word": "做",
+          "probability": 0.9891
+        },
+        {
+          "start": 77.66,
+          "end": 77.9,
+          "word": "维",
+          "probability": 0.9986
+        },
+        {
+          "start": 77.9,
+          "end": 78.02,
+          "word": "护",
+          "probability": 0.9985
+        },
+        {
+          "start": 78.02,
+          "end": 78.12,
+          "word": "保",
+          "probability": 0.9276
+        },
+        {
+          "start": 78.12,
+          "end": 78.26,
+          "word": "养",
+          "probability": 0.9941
+        }
+      ]
+    },
+    {
+      "start": 78.26,
+      "end": 79.38,
+      "text": "二手车买的确实香",
+      "words": [
+        {
+          "start": 78.26,
+          "end": 78.48,
+          "word": "二",
+          "probability": 0.9367
+        },
+        {
+          "start": 78.48,
+          "end": 78.64,
+          "word": "手",
+          "probability": 0.9585
+        },
+        {
+          "start": 78.64,
+          "end": 78.76,
+          "word": "车",
+          "probability": 0.9689
+        },
+        {
+          "start": 78.76,
+          "end": 78.96,
+          "word": "买",
+          "probability": 0.9893
+        },
+        {
+          "start": 78.96,
+          "end": 79.06,
+          "word": "的",
+          "probability": 0.7556
+        },
+        {
+          "start": 79.06,
+          "end": 79.16,
+          "word": "确",
+          "probability": 0.9938
+        },
+        {
+          "start": 79.16,
+          "end": 79.24,
+          "word": "实",
+          "probability": 0.9864
+        },
+        {
+          "start": 79.24,
+          "end": 79.38,
+          "word": "香",
+          "probability": 0.9264
+        }
+      ]
+    },
+    {
+      "start": 79.38,
+      "end": 80.54,
+      "text": "但是呢不能调以轻心啊",
+      "words": [
+        {
+          "start": 79.38,
+          "end": 79.58,
+          "word": "但是",
+          "probability": 0.9142
+        },
+        {
+          "start": 79.58,
+          "end": 79.72,
+          "word": "呢",
+          "probability": 0.7412
+        },
+        {
+          "start": 79.72,
+          "end": 79.92,
+          "word": "不能",
+          "probability": 0.9755
+        },
+        {
+          "start": 79.92,
+          "end": 80.1,
+          "word": "调",
+          "probability": 0.6881
+        },
+        {
+          "start": 80.1,
+          "end": 80.2,
+          "word": "以",
+          "probability": 0.7417
+        },
+        {
+          "start": 80.2,
+          "end": 80.32,
+          "word": "轻",
+          "probability": 0.8944
+        },
+        {
+          "start": 80.32,
+          "end": 80.46,
+          "word": "心",
+          "probability": 0.8394
+        },
+        {
+          "start": 80.46,
+          "end": 80.54,
+          "word": "啊",
+          "probability": 0.8091
+        }
+      ]
+    },
+    {
+      "start": 80.54,
+      "end": 81.54,
+      "text": "我们今天所在这个地方",
+      "words": [
+        {
+          "start": 80.54,
+          "end": 80.7,
+          "word": "我们",
+          "probability": 0.9965
+        },
+        {
+          "start": 80.7,
+          "end": 80.86,
+          "word": "今天",
+          "probability": 0.997
+        },
+        {
+          "start": 80.86,
+          "end": 81.0,
+          "word": "所",
+          "probability": 0.747
+        },
+        {
+          "start": 81.0,
+          "end": 81.12,
+          "word": "在",
+          "probability": 0.9987
+        },
+        {
+          "start": 81.12,
+          "end": 81.3,
+          "word": "这个",
+          "probability": 0.9273
+        },
+        {
+          "start": 81.3,
+          "end": 81.54,
+          "word": "地方",
+          "probability": 0.9998
+        }
+      ]
+    },
+    {
+      "start": 81.54,
+      "end": 83.32,
+      "text": "是董车地全国第三家直营店",
+      "words": [
+        {
+          "start": 81.54,
+          "end": 81.86,
+          "word": "是",
+          "probability": 0.9939
+        },
+        {
+          "start": 81.86,
+          "end": 82.04,
+          "word": "董",
+          "probability": 0.9265
+        },
+        {
+          "start": 82.04,
+          "end": 82.16,
+          "word": "车",
+          "probability": 0.9964
+        },
+        {
+          "start": 82.16,
+          "end": 82.24,
+          "word": "地",
+          "probability": 0.6925
+        },
+        {
+          "start": 82.24,
+          "end": 82.46,
+          "word": "全",
+          "probability": 0.9515
+        },
+        {
+          "start": 82.46,
+          "end": 82.6,
+          "word": "国",
+          "probability": 0.9993
+        },
+        {
+          "start": 82.6,
+          "end": 82.8,
+          "word": "第三",
+          "probability": 0.958
+        },
+        {
+          "start": 82.8,
+          "end": 82.96,
+          "word": "家",
+          "probability": 0.8655
+        },
+        {
+          "start": 82.96,
+          "end": 83.06,
+          "word": "直",
+          "probability": 0.8704
+        },
+        {
+          "start": 83.06,
+          "end": 83.18,
+          "word": "营",
+          "probability": 0.8146
+        },
+        {
+          "start": 83.18,
+          "end": 83.32,
+          "word": "店",
+          "probability": 0.9809
+        }
+      ]
+    },
+    {
+      "start": 83.32,
+      "end": 85.34,
+      "text": "武汉的董车地汽车商城",
+      "words": [
+        {
+          "start": 83.32,
+          "end": 83.76,
+          "word": "武",
+          "probability": 0.9871
+        },
+        {
+          "start": 83.76,
+          "end": 83.98,
+          "word": "汉",
+          "probability": 0.9982
+        },
+        {
+          "start": 83.98,
+          "end": 84.16,
+          "word": "的",
+          "probability": 0.9972
+        },
+        {
+          "start": 84.16,
+          "end": 84.5,
+          "word": "董",
+          "probability": 0.9982
+        },
+        {
+          "start": 84.5,
+          "end": 84.7,
+          "word": "车",
+          "probability": 0.9996
+        },
+        {
+          "start": 84.7,
+          "end": 84.82,
+          "word": "地",
+          "probability": 0.9909
+        },
+        {
+          "start": 84.82,
+          "end": 84.94,
+          "word": "汽",
+          "probability": 0.9934
+        },
+        {
+          "start": 84.94,
+          "end": 85.06,
+          "word": "车",
+          "probability": 0.9997
+        },
+        {
+          "start": 85.06,
+          "end": 85.14,
+          "word": "商",
+          "probability": 0.9844
+        },
+        {
+          "start": 85.14,
+          "end": 85.34,
+          "word": "城",
+          "probability": 0.9955
+        }
+      ]
+    },
+    {
+      "start": 85.34,
+      "end": 86.44,
+      "text": "这新车二手全部都有",
+      "words": [
+        {
+          "start": 85.34,
+          "end": 85.64,
+          "word": "这",
+          "probability": 0.9233
+        },
+        {
+          "start": 85.64,
+          "end": 85.8,
+          "word": "新",
+          "probability": 0.683
+        },
+        {
+          "start": 85.8,
+          "end": 85.94,
+          "word": "车",
+          "probability": 0.9979
+        },
+        {
+          "start": 85.94,
+          "end": 86.02,
+          "word": "二",
+          "probability": 0.9735
+        },
+        {
+          "start": 86.02,
+          "end": 86.08,
+          "word": "手",
+          "probability": 0.8604
+        },
+        {
+          "start": 86.08,
+          "end": 86.24,
+          "word": "全部",
+          "probability": 0.8154
+        },
+        {
+          "start": 86.24,
+          "end": 86.44,
+          "word": "都有",
+          "probability": 0.9962
+        }
+      ]
+    },
+    {
+      "start": 86.44,
+      "end": 87.08,
+      "text": "两万多个平方",
+      "words": [
+        {
+          "start": 86.44,
+          "end": 86.6,
+          "word": "两",
+          "probability": 0.6487
+        },
+        {
+          "start": 86.6,
+          "end": 86.74,
+          "word": "万",
+          "probability": 0.9884
+        },
+        {
+          "start": 86.74,
+          "end": 86.8,
+          "word": "多",
+          "probability": 0.9973
+        },
+        {
+          "start": 86.8,
+          "end": 86.88,
+          "word": "个",
+          "probability": 0.9948
+        },
+        {
+          "start": 86.88,
+          "end": 86.96,
+          "word": "平",
+          "probability": 0.7911
+        },
+        {
+          "start": 86.96,
+          "end": 87.08,
+          "word": "方",
+          "probability": 0.9525
+        }
+      ]
+    },
+    {
+      "start": 87.08,
+      "end": 88.22,
+      "text": "百分之百真实车别",
+      "words": [
+        {
+          "start": 87.08,
+          "end": 87.44,
+          "word": "百",
+          "probability": 0.9651
+        },
+        {
+          "start": 87.44,
+          "end": 87.58,
+          "word": "分",
+          "probability": 0.9973
+        },
+        {
+          "start": 87.58,
+          "end": 87.66,
+          "word": "之",
+          "probability": 0.9784
+        },
+        {
+          "start": 87.66,
+          "end": 87.74,
+          "word": "百",
+          "probability": 0.9982
+        },
+        {
+          "start": 87.74,
+          "end": 87.9,
+          "word": "真",
+          "probability": 0.9533
+        },
+        {
+          "start": 87.9,
+          "end": 88.02,
+          "word": "实",
+          "probability": 0.9981
+        },
+        {
+          "start": 88.02,
+          "end": 88.14,
+          "word": "车",
+          "probability": 0.9958
+        },
+        {
+          "start": 88.14,
+          "end": 88.22,
+          "word": "别",
+          "probability": 0.4563
+        }
+      ]
+    },
+    {
+      "start": 88.22,
+      "end": 88.98,
+      "text": "所有的二手车",
+      "words": [
+        {
+          "start": 88.22,
+          "end": 88.58,
+          "word": "所有",
+          "probability": 0.9808
+        },
+        {
+          "start": 88.58,
+          "end": 88.72,
+          "word": "的",
+          "probability": 0.9991
+        },
+        {
+          "start": 88.72,
+          "end": 88.8,
+          "word": "二",
+          "probability": 0.9989
+        },
+        {
+          "start": 88.8,
+          "end": 88.92,
+          "word": "手",
+          "probability": 0.738
+        },
+        {
+          "start": 88.92,
+          "end": 88.98,
+          "word": "车",
+          "probability": 0.998
+        }
+      ]
+    },
+    {
+      "start": 88.98,
+      "end": 90.76,
+      "text": "经过了董地利官方的300多项的检测",
+      "words": [
+        {
+          "start": 88.98,
+          "end": 89.1,
+          "word": "经",
+          "probability": 0.9592
+        },
+        {
+          "start": 89.1,
+          "end": 89.2,
+          "word": "过",
+          "probability": 0.9915
+        },
+        {
+          "start": 89.2,
+          "end": 89.26,
+          "word": "了",
+          "probability": 0.7959
+        },
+        {
+          "start": 89.26,
+          "end": 89.36,
+          "word": "董",
+          "probability": 0.9953
+        },
+        {
+          "start": 89.36,
+          "end": 89.44,
+          "word": "地",
+          "probability": 0.0897
+        },
+        {
+          "start": 89.44,
+          "end": 89.52,
+          "word": "利",
+          "probability": 0.7747
+        },
+        {
+          "start": 89.52,
+          "end": 89.64,
+          "word": "官",
+          "probability": 0.9889
+        },
+        {
+          "start": 89.64,
+          "end": 89.8,
+          "word": "方",
+          "probability": 0.9992
+        },
+        {
+          "start": 89.8,
+          "end": 89.9,
+          "word": "的",
+          "probability": 0.9847
+        },
+        {
+          "start": 89.9,
+          "end": 90.12,
+          "word": "300",
+          "probability": 0.5788
+        },
+        {
+          "start": 90.12,
+          "end": 90.28,
+          "word": "多",
+          "probability": 0.9995
+        },
+        {
+          "start": 90.28,
+          "end": 90.4,
+          "word": "项",
+          "probability": 0.787
+        },
+        {
+          "start": 90.4,
+          "end": 90.46,
+          "word": "的",
+          "probability": 0.9876
+        },
+        {
+          "start": 90.46,
+          "end": 90.58,
+          "word": "检",
+          "probability": 0.9997
+        },
+        {
+          "start": 90.58,
+          "end": 90.76,
+          "word": "测",
+          "probability": 0.9999
+        }
+      ]
+    },
+    {
+      "start": 90.76,
+      "end": 91.42,
+      "text": "七天可退",
+      "words": [
+        {
+          "start": 90.76,
+          "end": 90.96,
+          "word": "七",
+          "probability": 0.405
+        },
+        {
+          "start": 90.96,
+          "end": 91.1,
+          "word": "天",
+          "probability": 0.9995
+        },
+        {
+          "start": 91.1,
+          "end": 91.28,
+          "word": "可",
+          "probability": 0.9986
+        },
+        {
+          "start": 91.28,
+          "end": 91.42,
+          "word": "退",
+          "probability": 0.9969
+        }
+      ]
+    },
+    {
+      "start": 91.42,
+      "end": 91.9,
+      "text": "无忧购买",
+      "words": [
+        {
+          "start": 91.42,
+          "end": 91.56,
+          "word": "无",
+          "probability": 0.9654
+        },
+        {
+          "start": 91.56,
+          "end": 91.66,
+          "word": "忧",
+          "probability": 0.7021
+        },
+        {
+          "start": 91.66,
+          "end": 91.8,
+          "word": "购",
+          "probability": 0.9953
+        },
+        {
+          "start": 91.8,
+          "end": 91.9,
+          "word": "买",
+          "probability": 0.9991
+        }
+      ]
+    },
+    {
+      "start": 91.9,
+      "end": 92.96,
+      "text": "60天全车保修",
+      "words": [
+        {
+          "start": 91.9,
+          "end": 92.16,
+          "word": "60",
+          "probability": 0.7166
+        },
+        {
+          "start": 92.16,
+          "end": 92.3,
+          "word": "天",
+          "probability": 0.9992
+        },
+        {
+          "start": 92.3,
+          "end": 92.5,
+          "word": "全",
+          "probability": 0.999
+        },
+        {
+          "start": 92.5,
+          "end": 92.68,
+          "word": "车",
+          "probability": 0.9989
+        },
+        {
+          "start": 92.68,
+          "end": 92.76,
+          "word": "保",
+          "probability": 0.9916
+        },
+        {
+          "start": 92.76,
+          "end": 92.96,
+          "word": "修",
+          "probability": 0.9933
+        }
+      ]
+    },
+    {
+      "start": 92.96,
+      "end": 94.7,
+      "text": "一年三万公里的核心零部检验宝",
+      "words": [
+        {
+          "start": 92.96,
+          "end": 93.14,
+          "word": "一",
+          "probability": 0.8871
+        },
+        {
+          "start": 93.14,
+          "end": 93.3,
+          "word": "年",
+          "probability": 0.9973
+        },
+        {
+          "start": 93.3,
+          "end": 93.48,
+          "word": "三",
+          "probability": 0.6146
+        },
+        {
+          "start": 93.48,
+          "end": 93.6,
+          "word": "万",
+          "probability": 0.6968
+        },
+        {
+          "start": 93.6,
+          "end": 93.7,
+          "word": "公",
+          "probability": 0.9948
+        },
+        {
+          "start": 93.7,
+          "end": 93.8,
+          "word": "里",
+          "probability": 0.9974
+        },
+        {
+          "start": 93.8,
+          "end": 93.88,
+          "word": "的",
+          "probability": 0.9825
+        },
+        {
+          "start": 93.88,
+          "end": 94.06,
+          "word": "核",
+          "probability": 0.9749
+        },
+        {
+          "start": 94.06,
+          "end": 94.16,
+          "word": "心",
+          "probability": 0.9945
+        },
+        {
+          "start": 94.16,
+          "end": 94.26,
+          "word": "零",
+          "probability": 0.6165
+        },
+        {
+          "start": 94.26,
+          "end": 94.36,
+          "word": "部",
+          "probability": 0.8196
+        },
+        {
+          "start": 94.36,
+          "end": 94.46,
+          "word": "检",
+          "probability": 0.554
+        },
+        {
+          "start": 94.46,
+          "end": 94.56,
+          "word": "验",
+          "probability": 0.9213
+        },
+        {
+          "start": 94.56,
+          "end": 94.7,
+          "word": "宝",
+          "probability": 0.8669
+        }
+      ]
+    },
+    {
+      "start": 94.7,
+      "end": 95.88,
+      "text": "和问题车的终身为购",
+      "words": [
+        {
+          "start": 94.7,
+          "end": 94.88,
+          "word": "和",
+          "probability": 0.979
+        },
+        {
+          "start": 94.88,
+          "end": 95.12,
+          "word": "问题",
+          "probability": 0.9425
+        },
+        {
+          "start": 95.12,
+          "end": 95.28,
+          "word": "车",
+          "probability": 0.907
+        },
+        {
+          "start": 95.28,
+          "end": 95.36,
+          "word": "的",
+          "probability": 0.986
+        },
+        {
+          "start": 95.36,
+          "end": 95.52,
+          "word": "终",
+          "probability": 0.9811
+        },
+        {
+          "start": 95.52,
+          "end": 95.64,
+          "word": "身",
+          "probability": 0.9894
+        },
+        {
+          "start": 95.64,
+          "end": 95.76,
+          "word": "为",
+          "probability": 0.7114
+        },
+        {
+          "start": 95.76,
+          "end": 95.88,
+          "word": "购",
+          "probability": 0.8531
+        }
+      ]
+    },
+    {
+      "start": 95.88,
+      "end": 96.8,
+      "text": "华中地区的兄弟们",
+      "words": [
+        {
+          "start": 95.88,
+          "end": 96.1,
+          "word": "华",
+          "probability": 0.9951
+        },
+        {
+          "start": 96.1,
+          "end": 96.24,
+          "word": "中",
+          "probability": 0.9921
+        },
+        {
+          "start": 96.24,
+          "end": 96.36,
+          "word": "地",
+          "probability": 0.9965
+        },
+        {
+          "start": 96.36,
+          "end": 96.48,
+          "word": "区",
+          "probability": 0.9996
+        },
+        {
+          "start": 96.48,
+          "end": 96.56,
+          "word": "的",
+          "probability": 0.9989
+        },
+        {
+          "start": 96.56,
+          "end": 96.64,
+          "word": "兄",
+          "probability": 0.9997
+        },
+        {
+          "start": 96.64,
+          "end": 96.74,
+          "word": "弟",
+          "probability": 0.998
+        },
+        {
+          "start": 96.74,
+          "end": 96.8,
+          "word": "们",
+          "probability": 0.9993
+        }
+      ]
+    },
+    {
+      "start": 96.8,
+      "end": 97.58,
+      "text": "确实想买二手",
+      "words": [
+        {
+          "start": 96.8,
+          "end": 97.02,
+          "word": "确",
+          "probability": 0.9993
+        },
+        {
+          "start": 97.02,
+          "end": 97.12,
+          "word": "实",
+          "probability": 0.9995
+        },
+        {
+          "start": 97.12,
+          "end": 97.24,
+          "word": "想",
+          "probability": 0.8776
+        },
+        {
+          "start": 97.24,
+          "end": 97.38,
+          "word": "买",
+          "probability": 0.9176
+        },
+        {
+          "start": 97.38,
+          "end": 97.46,
+          "word": "二",
+          "probability": 0.5164
+        },
+        {
+          "start": 97.46,
+          "end": 97.58,
+          "word": "手",
+          "probability": 0.0393
+        }
+      ]
+    },
+    {
+      "start": 97.58,
+      "end": 98.42,
+      "text": "我觉得可以过来看一看",
+      "words": [
+        {
+          "start": 97.58,
+          "end": 97.78,
+          "word": "我觉得",
+          "probability": 0.9814
+        },
+        {
+          "start": 97.78,
+          "end": 97.94,
+          "word": "可以",
+          "probability": 0.9964
+        },
+        {
+          "start": 97.94,
+          "end": 98.02,
+          "word": "过",
+          "probability": 0.9987
+        },
+        {
+          "start": 98.02,
+          "end": 98.1,
+          "word": "来",
+          "probability": 0.9998
+        },
+        {
+          "start": 98.1,
+          "end": 98.26,
+          "word": "看",
+          "probability": 0.9652
+        },
+        {
+          "start": 98.26,
+          "end": 98.32,
+          "word": "一",
+          "probability": 0.9996
+        },
+        {
+          "start": 98.32,
+          "end": 98.42,
+          "word": "看",
+          "probability": 0.9998
+        }
+      ]
+    }
+  ]
+}

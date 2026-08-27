@@ -20,3 +20,16 @@ def test_health_endpoint():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_health_reports_non_sensitive_desktop_mode(monkeypatch):
+    monkeypatch.setenv("VIDEOINSIGHT_DESKTOP_CLIENT", "true")
+    monkeypatch.setenv("VIDEOINSIGHT_DESKTOP_DEMO", "true")
+    monkeypatch.setenv("VIDEOINSIGHT_CONTROL_PLANE_ENABLED", "false")
+    response = TestClient(app).get("/health")
+    payload = response.json()
+    assert payload["desktop_client"] is True
+    assert payload["desktop_demo"] is True
+    assert payload["control_plane_enabled"] is False
+    assert "token" not in payload
+    assert "owner" not in payload

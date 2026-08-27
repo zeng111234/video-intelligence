@@ -33,6 +33,9 @@ import type {
   CrawlerDoubaoMobileCapabilitiesResponse,
   CrawlerDoubaoWorkerStartResponse,
   CrawlerHotWordsResponse,
+  CrawlerKeywordQueueRequest,
+  CrawlerKeywordQueueResponse,
+  CrawlerProgressiveTask,
   CrawlerLinkTranscriptionCapabilities,
   CrawlerLinkTranscriptionPreview,
   CrawlerLinkTranscriptionResult,
@@ -105,6 +108,23 @@ const BASE = "/api/v1";
 // 客户/管理员登录 token（localStorage），请求时按身份携带
 const CUSTOMER_TOKEN_KEY = "vi_customer_token";
 const ADMIN_TOKEN_KEY = "vi_admin_token";
+
+export class ApiRequestError extends Error {
+  readonly status: number;
+  readonly code: string | number | null;
+  readonly path: string;
+
+  constructor(
+    message: string,
+    options: { status: number; code?: string | number | null; path: string },
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = options.status;
+    this.code = options.code ?? null;
+    this.path = options.path;
+  }
+}
 
 function createIdempotencyKey(prefix: string): string {
   const randomPart = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
@@ -238,12 +258,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   } catch {
     if (!canRetry) {
-      throw new Error("网络连接失败，请检查后端服务是否已启动。");
+      throw new ApiRequestError("网络连接失败，请检查后端服务是否已启动。", {
+        status: 0,
+        code: "network",
+        path,
+      });
     }
     try {
       resp = await run();
     } catch {
-      throw new Error("网络连接失败，请检查后端服务是否已启动。");
+      throw new ApiRequestError("网络连接失败，请检查后端服务是否已启动。", {
+        status: 0,
+        code: "network",
+        path,
+      });
     }
   }
   if (!resp.ok) {
@@ -274,14 +302,44 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       502: "后端服务未响应",
       503: "服务暂时不可用",
     };
-    throw new Error(
+    throw new ApiRequestError(
       detail || body.message || statusMessages[resp.status] || `请求失败: ${resp.status}`,
+      {
+        status: resp.status,
+        code: typeof body.code === "string" || typeof body.code === "number" ? body.code : null,
+        path,
+      },
     );
   }
   // 删除接口以 204 表示已完成且不返回 JSON。继续解析响应体会把成功误判为失败，
   // 从而阻断调用方即时更新页面列表。
   if (resp.status === 204) return undefined as T;
   return resp.json();
+}
+
+export async function downloadCrawlerBatchCsv(batchId: string): Promise<void> {
+  const path = `/crawler/batches/${encodeURIComponent(batchId)}/export.csv`;
+  let response: Response;
+  try {
+    response = await authenticatedFetch(path);
+  } catch {
+    try {
+      response = await authenticatedFetch(path);
+    } catch {
+      throw new Error("导出失败，请检查后端服务是否已启动。");
+    }
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : `导出失败：${response.status}`);
+  }
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = `crawler-${batchId}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(href);
 }
 
 /* ---- 候选搜索 ---- */
@@ -789,7 +847,7 @@ export function createVoiceoverDraft(params: {
       platform: params.platform ?? "douyin",
       target_audience: params.targetAudience ?? "",
       tone: params.tone ?? "casual",
-      variant_count: params.variantCount ?? 2,
+      variant_count: 1,
     }),
   });
 }
@@ -1116,6 +1174,15 @@ export function startCrawlerBrowserDiscovery(
   return request(`/crawler/browser-discovery/${platform}/start`, { method: "POST" });
 }
 
+export function resetCrawlerBrowserLoginState(
+  platform: "douyin" | "xiaohongshu" | "kuaishou" | "bilibili",
+): Promise<import("./types").CrawlerBrowserDiscoveryResetResponse> {
+  return request(`/crawler/browser-discovery/${platform}/reset-login`, {
+    method: "POST",
+    body: JSON.stringify({ confirmed: true }),
+  });
+}
+
 /** 保存操作者已经看见的素材；服务端不会打开或抓取小红书链接。 */
 export function importXiaohongshuManualMaterials(
   items: XiaohongshuManualMaterialInput[],
@@ -1165,12 +1232,30 @@ export function createCrawlerBatch(
   });
 }
 
+export function createCrawlerProgressiveBatch(
+  params: CrawlerSearchRequest,
+): Promise<CrawlerProgressiveTask> {
+  return request<CrawlerKeywordQueueResponse>("/crawler/keyword-queues", {
+    method: "POST",
+    body: JSON.stringify({
+      keywords: params.keyword,
+      platforms: params.platforms,
+      published_window_days: params.published_window_days,
+      count_per_platform: params.count_per_platform,
+    }),
+  }).then((queue) => ({
+    progressive_task: true,
+    queue,
+    queue_id: queue.queue_id,
+  }));
+}
+
 export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
   return request("/crawler/batches");
 }
 
-export function getCrawlerBatch(batchId: string): Promise<CrawlerBatchResponse> {
-  return request(`/crawler/batches/${batchId}`);
+export function getCrawlerBatch(batchId: string, init?: RequestInit): Promise<CrawlerBatchResponse> {
+  return request(`/crawler/batches/${batchId}`, init);
 }
 
 export function probeCrawlerBatchCopy(batchId: string): Promise<CrawlerBatchResponse> {
@@ -1187,6 +1272,35 @@ export function recheckCrawlerBatchLegacyNoText(
 
 export function deleteCrawlerBatch(batchId: string): Promise<{ batch_id: string; deleted: boolean }> {
   return request(`/crawler/batches/${batchId}`, { method: "DELETE" });
+}
+
+export function createCrawlerKeywordQueue(
+  params: CrawlerKeywordQueueRequest,
+): Promise<CrawlerKeywordQueueResponse> {
+  return request("/crawler/keyword-queues", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+export function listCrawlerKeywordQueues(): Promise<CrawlerKeywordQueueResponse[]> {
+  return request("/crawler/keyword-queues");
+}
+
+export function getCrawlerKeywordQueue(queueId: string): Promise<CrawlerKeywordQueueResponse> {
+  return request(`/crawler/keyword-queues/${queueId}`);
+}
+
+export function pauseCrawlerKeywordQueue(queueId: string): Promise<CrawlerKeywordQueueResponse> {
+  return request(`/crawler/keyword-queues/${queueId}/pause`, { method: "POST" });
+}
+
+export function resumeCrawlerKeywordQueue(queueId: string): Promise<CrawlerKeywordQueueResponse> {
+  return request(`/crawler/keyword-queues/${queueId}/resume`, { method: "POST" });
+}
+
+export function cancelCrawlerKeywordQueue(queueId: string): Promise<CrawlerKeywordQueueResponse> {
+  return request(`/crawler/keyword-queues/${queueId}/cancel`, { method: "POST" });
 }
 
 export function previewCrawlerCandidateMedia(
@@ -1901,15 +2015,21 @@ export async function uploadVideoEditorSources(
 }
 
 export async function uploadVideoEditorVisualAsset(params: {
-  kind: "product" | "background";
+  kind: "product" | "background" | "broll";
   file: File;
   rightsHolder: string;
+  sourceUrl?: string;
+  licenseName?: string;
+  licenseUrl?: string;
 }): Promise<VideoEditorVisualAsset> {
   const formData = new FormData();
   formData.append("kind", params.kind);
   formData.append("file", params.file);
   formData.append("rights_confirmed", "true");
   formData.append("rights_holder", params.rightsHolder);
+  formData.append("source_url", params.sourceUrl || "");
+  formData.append("license_name", params.licenseName || "");
+  formData.append("license_url", params.licenseUrl || "");
   const resp = await authenticatedFetch("/video-editor/visual-assets", {
     method: "POST",
     body: formData,
@@ -1919,6 +2039,13 @@ export async function uploadVideoEditorVisualAsset(params: {
     throw new Error(body.detail || body.message || "图片上传失败");
   }
   return resp.json();
+}
+
+export function listVideoEditorVisualAssets(kind?: "product" | "background" | "broll") {
+  const query = kind ? `?kind=${encodeURIComponent(kind)}` : "";
+  return request<{ items: import("./types").VideoEditorVisualAsset[]; total: number }>(
+    `/video-editor/visual-assets${query}`,
+  );
 }
 
 export function createProductShowcaseJob(params: {
@@ -2059,6 +2186,45 @@ export function createVideoEditorLocalExport(
   );
 }
 
+export function createVideoEditorReleaseTemplateLocalExport(
+  batchId: string,
+  itemId: string,
+  localBgmId?: string | null,
+): Promise<VideoEditorBatch> {
+  return request(
+    `/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/release-template-local-export`,
+    {
+      method: "POST",
+      body: JSON.stringify({ local_bgm_id: localBgmId || null }),
+    },
+  );
+}
+
+export function quoteVideoEditorDirectorAssets(
+  batchId: string,
+  itemId: string,
+): Promise<{
+  batch_id: string;
+  item_id: string;
+  plan_version: string | null;
+  asset_request_count: number;
+  quote: {
+    requested_count: number;
+    unit_price_cny: string | null;
+    total_price_cny: string | null;
+    budget_cny: string | null;
+    can_generate: boolean;
+    missing_configuration: string[];
+    blocking_reason: string | null;
+  };
+  cloud_calls: number;
+  publish_allowed: boolean;
+}> {
+  return request(
+    `/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/director-assets/quote`,
+  );
+}
+
 export function continueVideoEditorBatchItem(batchId: string, itemId: string): Promise<VideoEditorBatch> {
   return request(`/video-editor/batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/continue`, { method: "POST" });
 }
@@ -2071,6 +2237,8 @@ export function reviewVideoEditorBatchItem(
     enabledPlanStepIds: string[];
     selectedTitle: string;
     selectedBgmId?: string | null;
+    brollPlacement?: import("./types").VideoEditorBrollPlacement | null;
+    localOnly?: boolean;
     smartOpeningEnabled?: boolean;
     confirmed: boolean;
   },
@@ -2082,6 +2250,8 @@ export function reviewVideoEditorBatchItem(
       enabled_plan_step_ids: params.enabledPlanStepIds,
       selected_title: params.selectedTitle,
       selected_bgm_id: params.selectedBgmId || null,
+      broll_placement: params.brollPlacement || null,
+      local_only: params.localOnly ?? false,
       smart_opening_enabled: params.smartOpeningEnabled ?? false,
       confirmed: params.confirmed,
     }),

@@ -1,0 +1,59 @@
+{
+  "batch_id": "batch-1b0b101388ed",
+  "keyword": "工厂短视频",
+  "platforms": ["bilibili"],
+  "count_per_platform": 30,
+  "force_refresh": true,
+  "api_http_status": 200,
+  "api_wall_elapsed_ms": 33732,
+  "platform_run": {
+    "run_id": "platform-ec8e5807d1c9",
+    "status": "partial",
+    "raw_discovered": 267,
+    "parsed": 100,
+    "deduped": 267,
+    "direct_match": 12,
+    "relevance_filtered": 88,
+    "duration_filtered": 0,
+    "invalid_fields": 0,
+    "retained": 12,
+    "returned_count": 12,
+    "crawl_stop_reason": "safety_limit",
+    "cache_hit": false,
+    "rule_version": "visible_browser_network_v5_funnel_bounded_deep_scan",
+    "browser_reused": true,
+    "session_recovered": false,
+    "stage_timings_ms": {
+      "browser_attach_or_reuse_ms": 38,
+      "navigation_ms": 12948,
+      "first_result_ms": 3471,
+      "total_ms": 17097,
+      "parse_filter_ms": 4
+    },
+    "funnel_check": "100 = 12 direct_match + 88 relevance_filtered + 0 duration_filtered + 0 invalid_fields",
+    "crawl_stop_message": "为避免过度加载，已扫描 267 条页面结果；原始解析池保留 100 条，最终关键词和字段校验结果见漏斗。"
+  },
+  "candidate_samples": [
+    {
+      "title": "短视频上客户说考虑考虑，2个方法解决信任问题 #工厂短视频运营 #工业品短视频运营 #工厂短视频培训",
+      "source_url": "https://www.bilibili.com/video/BV1XXhcz9E2D"
+    },
+    {
+      "title": "我想争口气！拜托各位义父义母们#珠宝源头工厂 #短视频运营 #老板人设",
+      "source_url": "https://www.bilibili.com/video/BV1P2Te6xEq1"
+    },
+    {
+      "title": "不想露脸没时间录车间不会拍视频，怎么做工厂短视频？",
+      "source_url": "https://www.bilibili.com/video/BV1JQMb6zEeT"
+    },
+    {
+      "title": "零基础工厂短视频，3步攻略真实客户找上门",
+      "source_url": "https://www.bilibili.com/video/BV1zsTHzcEbu"
+    },
+    {
+      "title": "长视频VS短视频？90%的工厂都搞错了重点",
+      "source_url": "https://www.bilibili.com/video/BV1AfMTzvEZE"
+    }
+  ],
+  "safety_note": "扫描上限为最多 10 页/300 条原始卡片；未使用代理、自动打码、Cookie 清理或绕过验证。"
+}

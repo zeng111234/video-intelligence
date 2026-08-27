@@ -1,0 +1,10 @@
+{
+  "ass": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\tutorial-original-r2\\rendered.ass",
+    "sha256": "5d19bfae9a6dd4a23368450039c00d391f590f92726f577e375d6d5c35c8024f"
+  },
+  "manifest": {
+    "path": "work\\auto-fine-cut-generalization-20250826-v5-rerun\\tutorial-original-r2\\subtitle-manifest.json",
+    "sha256": "bf056fb10c882f8cc0bb6a4e0119708324870df8db57739cbe97de4d0cc01a54"
+  }
+}

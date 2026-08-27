@@ -172,6 +172,7 @@ class SubtitleSegmentReviewRequest(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(gt=0)
     text: str = Field(default="", max_length=2000)
+    words: list[dict[str, Any]] = Field(default_factory=list, max_length=500)
     emphasis_terms: list[str] = Field(default_factory=list, max_length=1)
 
 
@@ -183,8 +184,20 @@ class CloudBatchReviewRequest(BaseModel):
     enabled_plan_step_ids: list[str] = Field(default_factory=list, max_length=10)
     selected_title: str = Field(min_length=1, max_length=100)
     selected_bgm_id: str | None = None
+    broll_placement: dict[str, Any] | None = None
+    local_only: bool = False
     smart_opening_enabled: bool = True
     confirmed: bool = False
+    # Advanced local acceptance only.  This declares a real source interval
+    # while keeping the source media identity tied to the original upload.
+    source_range_start: float | None = Field(None, ge=0)
+    source_range_end: float | None = Field(None, gt=0)
+
+
+class ReleaseTemplateLocalExportRequest(BaseModel):
+    """本机发布级母版验收；不触发云分析或云渲染。"""
+
+    local_bgm_id: str | None = None
 
 
 class BatchItemIdsRequest(BaseModel):
@@ -325,9 +338,14 @@ async def upload_sources(
 @router.post("/visual-assets")
 async def upload_visual_asset(
     kind: str = Form(...),
-    file: UploadFile = File(..., description="已授权的商品主图或背景图"),
+    file: UploadFile = File(..., description="已授权的商品主图、背景图或 B-roll 图片/视频"),
     rights_confirmed: bool = Form(False),
     rights_holder: str = Form(""),
+    source_url: str = Form(""),
+    license_name: str = Form(""),
+    license_url: str = Form(""),
+    domestic_context: str = Form("unknown"),
+    domestic_scene: str = Form(""),
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     try:
@@ -340,6 +358,11 @@ async def upload_visual_asset(
             media_bytes=await file.read(),
             rights_confirmed=rights_confirmed,
             rights_holder=rights_holder,
+            source_url=source_url,
+            license_name=license_name,
+            license_url=license_url,
+            domestic_context=domestic_context,
+            domestic_scene=domestic_scene,
         )
         asset.pop("_path", None)
         return asset
@@ -392,6 +415,7 @@ async def upload_bgm(
     source_url: str = Form(""),
     license_url: str = Form(""),
     content_id_risk: str = Form("unknown"),
+    candidate_only: bool = Form(False),
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     if not file.filename:
@@ -410,6 +434,7 @@ async def upload_bgm(
             source_url=source_url,
             license_url=license_url,
             content_id_risk=content_id_risk,
+            candidate_only=candidate_only,
         )
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
@@ -472,6 +497,45 @@ def create_batch(
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     try:
+        # The normal client sends output_profile for both renderers.  When
+        # the audited Windows renderer is live, route that request to the
+        # zero-cost local batch instead of accidentally applying the cloud
+        # quote requirement.  Cloud/IMS/MPS behavior remains unchanged when
+        # the local capability is unavailable.
+        local_capability = workflow.local_ffmpeg_capabilities()
+        if local_capability.get("live_ready") is True:
+            local_profile = body.output_profile or (
+                "1080p"
+                if body.output_resolution.startswith("1080")
+                else "720p"
+            )
+            return workflow.create_batch(
+                source_ids=body.source_ids,
+                target_platform=body.target_platform,
+                subtitle_enabled=body.subtitle_enabled,
+                subtitle_model=body.subtitle_model,
+                steps=[item.model_dump() for item in body.steps],
+                output_format=body.output_format,
+                output_resolution=body.output_resolution,
+                output_fps=body.output_fps,
+                output_bitrate=body.output_bitrate,
+                bgm_enabled=body.bgm_enabled,
+                bgm_id=body.bgm_id,
+                bgm_volume=body.bgm_volume,
+                provider_mode="local_ffmpeg",
+                output_profile=local_profile,
+                quote_id=body.quote_id or "local-ffmpeg-0",
+                cost_quote={
+                    "provider_mode": "local_ffmpeg",
+                    "estimated_total": "0.00",
+                    "currency": "CNY",
+                },
+                billing_confirmation={
+                    "confirmed": True,
+                    "max_cost_cny": "0.00",
+                },
+                idempotency_key=idempotency_key or "",
+            )
         if body.output_profile is not None or body.quote_id is not None:
             if body.output_profile is None or not body.quote_id:
                 raise VideoEditorWorkflowError(
@@ -614,6 +678,37 @@ def create_local_preview_export(
         raise _workflow_error(exc) from exc
 
 
+@router.post("/batches/{batch_id}/items/{item_id}/release-template-local-export")
+def create_release_template_local_export(
+    batch_id: str,
+    item_id: str,
+    body: ReleaseTemplateLocalExportRequest | None = None,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """在既有字幕复核结果上生成 3 母版本机验收片，不调用云能力。"""
+    try:
+        return workflow.create_release_template_local_export(
+            batch_id,
+            item_id,
+            local_bgm_id=body.local_bgm_id if body else None,
+        )
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
+@router.get("/batches/{batch_id}/items/{item_id}/director-assets/quote")
+def quote_director_assets(
+    batch_id: str,
+    item_id: str,
+    workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
+):
+    """只读取图片数量、预算和生图配置状态，不调用生图供应商。"""
+    try:
+        return workflow.quote_director_assets(batch_id, item_id)
+    except VideoEditorWorkflowError as exc:
+        raise _workflow_error(exc) from exc
+
+
 @router.post("/batches/{batch_id}/items/{item_id}/continue")
 def continue_batch_item(batch_id: str, item_id: str, workflow: VideoEditorWorkflowService = Depends(get_workflow_service)):
     try:
@@ -640,8 +735,19 @@ def review_cloud_batch_item(
             enabled_plan_step_ids=body.enabled_plan_step_ids,
             selected_title=body.selected_title,
             selected_bgm_id=body.selected_bgm_id,
+            broll_placement=body.broll_placement,
+            local_only=body.local_only,
             smart_opening_enabled=body.smart_opening_enabled,
             confirmed=body.confirmed,
+            source_range=(
+                {
+                    "start": body.source_range_start,
+                    "end": body.source_range_end,
+                }
+                if body.source_range_start is not None
+                and body.source_range_end is not None
+                else None
+            ),
         )
     except (VideoEditorWorkflowError, ValueError) as exc:
         raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc
@@ -814,15 +920,13 @@ def capabilities(
 ):
     """获取新云工作台能力，并保留旧本地编辑器诊断信息。"""
     local = service.capabilities()
+    local_renderer = workflow.local_ffmpeg_capabilities()
     cloud = workflow.cloud_capabilities()
     return {
         **local,
-        **cloud,
-        "display_name": (
-            "阿里云轻量智能剪辑"
-            if cloud["provider_mode"] == "aliyun"
-            else "云端轻量智能剪辑（沙箱）"
-        ),
+        **local_renderer,
+        "cloud_backup": cloud,
+        "display_name": "本机安全精剪",
         "legacy_local_capabilities": local,
     }
 

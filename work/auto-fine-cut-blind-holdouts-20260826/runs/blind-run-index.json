@@ -1,0 +1,50 @@
+[
+  {
+    "case_id": "used-car-tutorial",
+    "route": "create_release_template_local_export",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\used-car-tutorial\\source.mp4",
+    "source_sha256": "ce023326033a9f7db2b71027cbce3e032e5a1a04f7d00d3715990ad55e86437b",
+    "asr_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\used-car-tutorial\\asr.json",
+    "batch_id": "edit-batch-77eea94e1cdd",
+    "item_id": "edit-item-900e9bcabed6",
+    "source_id": "upload:upload-520d2d5e42",
+    "status": "awaiting_output_confirmation",
+    "task_id": "edit-local-f24ba34c41",
+    "result_media_url": null,
+    "result_path": null,
+    "production_result": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\used-car-tutorial\\production-result.json",
+    "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+  },
+  {
+    "case_id": "vehicle-product",
+    "route": "create_release_template_local_export",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\vehicle-product\\source.mp4",
+    "source_sha256": "a95e511410c353a2514924ef1b26bce6f7e3bb0a47cb0d393a21d6fdda9fe277",
+    "asr_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\vehicle-product\\asr.json",
+    "batch_id": "edit-batch-1c1e9017783e",
+    "item_id": "edit-item-2611e263906e",
+    "source_id": "upload:upload-5ad003f14e",
+    "status": "awaiting_output_confirmation",
+    "task_id": "edit-local-770974c955",
+    "result_media_url": null,
+    "result_path": null,
+    "production_result": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\vehicle-product\\production-result.json",
+    "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+  },
+  {
+    "case_id": "goldfish-story",
+    "route": "create_release_template_local_export",
+    "source_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\goldfish-story\\source.mp4",
+    "source_sha256": "97c90dc561bfa15866bf0e1b6fa202703fbc86f5b1770a040e89a570fd2d616f",
+    "asr_path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\goldfish-story\\asr.json",
+    "batch_id": "edit-batch-d89d7cb5e7b1",
+    "item_id": "edit-item-0b7ae336381f",
+    "source_id": "upload:upload-7fb4c4ccf8",
+    "status": "awaiting_output_confirmation",
+    "task_id": "edit-local-36c782b1f3",
+    "result_media_url": null,
+    "result_path": null,
+    "production_result": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-blind-holdouts-20260826\\runs\\goldfish-story\\production-result.json",
+    "model_path": "C:\\Users\\zeng\\.cache\\huggingface\\hub\\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\\snapshots\\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+  }
+]

@@ -1,0 +1,34 @@
+{
+  "version": "supervisor-80pct-aroll-candidate-v3",
+  "purpose": "single_static_candidate_before_full_render",
+  "timeline_anchor": {
+    "label": "80%的顾客主动加入私域",
+    "source_range_seconds": [10.48, 13.56],
+    "policy": "safe_a_roll_fallback_when_no_direct_authorized_broll"
+  },
+  "candidate": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-adaptive-20260825-full-r7\\static-candidates-supervisor-v3\\candidate-fallback-aroll-80pct-revised.png",
+    "sha256": "269bdfd872e3a887d0706f3a2ed40f940c9c73795323d33cca21a8fd2c86f334",
+    "source_media": "C:\\Users\\zeng\\Desktop\\video\\data\\avatar_results\\avatar-2704b95149a3.mp4",
+    "source_media_sha256": "f77ef7f18c0aca41165027bac1d2acf53354f9f6c82de40672ce8635582b00f5",
+    "visual_type": "speaker_reframe_fallback",
+    "text_once": {
+      "fact": "80%",
+      "caption": "顾客主动加入私域"
+    },
+    "style": {
+      "zoom": "104%",
+      "number_color": "warm_yellow",
+      "number_stroke": "none",
+      "shadow": "2px_dark",
+      "container": "none",
+      "entry": "0.2s scale 1.06 to 1.0 plus fade",
+      "hold_seconds": [1.4, 1.8],
+      "exit": "fade"
+    },
+    "geometry_check": "geometry-check.json",
+    "auto_release_allowed": true,
+    "fallback_reason": "No cached authorized video directly shows customer scan, membership join, or store mini-program behavior; unrelated B-roll is rejected."
+  },
+  "full_render_started": false
+}

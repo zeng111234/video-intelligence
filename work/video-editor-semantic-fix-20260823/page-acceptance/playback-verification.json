@@ -1,0 +1,14 @@
+{
+  "before": {
+    "src": "http://127.0.0.1:1001/api/v1/video-editor/jobs/edit-local-d307ece445/media",
+    "duration": 31.5,
+    "currentTime": 0
+  },
+  "after": {
+    "src": "http://127.0.0.1:1001/api/v1/video-editor/jobs/edit-local-d307ece445/media",
+    "duration": 31.5,
+    "currentTime": 1.176458,
+    "paused": false
+  },
+  "played": true
+}

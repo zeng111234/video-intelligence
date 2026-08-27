@@ -1,0 +1,12 @@
+{
+  "batch_id": "edit-batch-0bc1abee1f9b",
+  "item_id": "edit-item-6de6c2b0f7fa",
+  "status": "failed",
+  "provider_mode": "local_ffmpeg",
+  "provider_stage": "local_export_failed",
+  "edit_task_id": "edit-local-3fdc8fb409",
+  "result_media_url": null,
+  "error": "本机成片质量校验失败：subtitle_sync、visual_release、creative",
+  "elapsed_s": 51.27,
+  "source_id": "upload:upload-f3478758ec"
+}

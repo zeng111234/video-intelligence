@@ -34,6 +34,7 @@ export interface TranscriptSegment {
   start: number | null;
   end: number | null;
   text: string;
+  words?: Array<{ start: number; end: number; text: string }>;
   confidence: number | null;
   needs_review: boolean;
   reviewed?: boolean;
@@ -572,6 +573,7 @@ export interface CrawlerCapabilitiesResponse {
   monthly_hard_limit_queries: number;
   monthly_hard_limit_cost_cny: number;
   cache_ttl_minutes: number;
+  crawler_safety_policy?: string;
   supports_usage: boolean;
   usage: CrawlerProviderUsage | null;
   /** 官方热榜能力状态（后端未上线时为 undefined/null，前端容错） */
@@ -588,6 +590,7 @@ export interface CrawlerBrowserDiscoveryCapabilities {
   enabled: boolean;
   running: boolean;
   login_required: boolean;
+  login_reset_available?: boolean;
   missing_configuration: string[];
   browser_channel: "chrome" | "msedge" | string;
   ready_to_crawl?: boolean;
@@ -599,6 +602,14 @@ export interface CrawlerBrowserDiscoveryCapabilities {
 
 export interface CrawlerBrowserDiscoveryStartResponse extends CrawlerBrowserDiscoveryCapabilities {
   started: boolean;
+}
+
+export interface CrawlerBrowserDiscoveryResetResponse {
+  platform: string;
+  platform_label: string;
+  reset: boolean;
+  manual_login_required: boolean;
+  message: string;
 }
 
 /** 官方热榜 / 官方热点词能力状态 */
@@ -762,7 +773,8 @@ export interface CrawlerSafetyStatus {
   cooldown_remaining_seconds: number;
   next_available_at: string | null;
   real_runs_in_window?: number;
-  real_run_limit?: number;
+  /** 管理员显式设置的滚动次数上限；未设置时为 null。 */
+  real_run_limit?: number | null;
   rolling_window_ends_at?: string | null;
   message: string;
 }
@@ -965,6 +977,14 @@ export interface CrawlerPlatformRun {
   returned_count: number;
   raw_item_count: number;
   parsed_item_count: number;
+  raw_discovered?: number;
+  parsed?: number;
+  deduped?: number;
+  direct_match?: number;
+  relevance_filtered?: number;
+  duration_filtered?: number;
+  invalid_fields?: number;
+  retained?: number;
   out_of_window_count: number;
   invalid_count: number;
   duplicate_count: number;
@@ -983,6 +1003,10 @@ export interface CrawlerPlatformRun {
   relevance_rule_version?: string | null;
   result_state: string;
   payload_diagnostic: string | null;
+  stage_timings_ms?: Record<string, number>;
+  rule_version?: string | null;
+  browser_reused?: boolean | null;
+  session_recovered?: boolean;
   cache_hit: boolean;
   cached_from_run_id: string | null;
   api_call_count: number;
@@ -997,6 +1021,9 @@ export interface CrawlerPlatformRun {
   started_at: string | null;
   finished_at: string | null;
   candidates: CrawlerCandidateResult[];
+  /** 严格关键词未命中时的少量公开搜索参考候选，需人工确认。 */
+  reference_count?: number;
+  reference_candidates?: CrawlerCandidateResult[];
   /** 热点宝主榜为空时，返回严格相关但新增播放量不超过 1,000 的参考视频。 */
   low_incremental_candidates?: CrawlerCandidateResult[];
 }
@@ -1050,6 +1077,56 @@ export interface CrawlerBatchResponse {
 export interface CrawlerBatchListResponse {
   items: CrawlerBatchResponse[];
   total: number;
+}
+
+export interface CrawlerKeywordQueueItem {
+  item_id: string;
+  keyword: string;
+  status: string;
+  batch_id: string | null;
+  partial_batch_ids?: string[];
+  error: string | null;
+  progress_stage?: string;
+  progress_message?: string | null;
+  scanned_count?: number;
+  parsed_count?: number;
+  retained_count?: number;
+  progress_platform?: string | null;
+  progress_candidates?: CrawlerCandidateResult[];
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface CrawlerKeywordQueueResponse {
+  queue_id: string;
+  status: string;
+  platforms: string[];
+  published_window_days: number;
+  count_per_platform: number;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+  total: number;
+  completed: number;
+  queued: number;
+  running: number;
+  failed: number;
+  worker_active?: boolean;
+  items: CrawlerKeywordQueueItem[];
+  message: string | null;
+}
+
+export interface CrawlerKeywordQueueRequest {
+  keywords: string;
+  platforms: string[];
+  published_window_days: number;
+  count_per_platform: number;
+}
+
+export interface CrawlerProgressiveTask {
+  progressive_task: true;
+  queue: CrawlerKeywordQueueResponse;
+  queue_id: string;
 }
 
 /* ---- 文案生成 ---- */
@@ -1515,15 +1592,38 @@ export interface VideoEditorSourceListResponse {
 
 export interface VideoEditorVisualAsset {
   asset_id: string;
-  kind: "product" | "background";
+  kind: "product" | "background" | "broll" | "vector";
   name: string;
   original_name: string;
   media_type: string;
+  media_kind?: "image" | "video" | string;
   rights_holder: string;
   rights_confirmed_at: string;
   created_at: string;
   size_bytes: number;
   media_url: string;
+  source_url?: string | null;
+  license_name?: string | null;
+  license_url?: string | null;
+  authorization_status?: string;
+  source_provider?: string;
+  asset_origin?: "local_uploaded_asset" | "generated_image_asset" | "stock_video_asset" | string;
+  source_type?: string;
+  rights_status?: string;
+  publish_licensed?: boolean;
+  sha256?: string;
+  duration_seconds?: number;
+  width?: number;
+  height?: number;
+  aspect_ratio?: number;
+  cache_path?: string;
+}
+
+export interface VideoEditorBrollPlacement {
+  asset_id: string;
+  start: number;
+  end: number;
+  mode: "pip" | "full";
 }
 
 export type VideoEditorOutputProfile = "720p" | "1080p";
@@ -1550,6 +1650,7 @@ export interface VideoEditorCostQuote {
   estimated_max: number | string;
   exclusions: string[];
   provider_mode?: "sandbox" | "aliyun" | string;
+  renderer_mode?: "local_ffmpeg" | string;
   live_ready?: boolean;
   missing_configuration?: string[];
   is_mock?: boolean;
@@ -1597,7 +1698,131 @@ export interface VideoEditorEditPlan {
   provider_name: string;
   is_mock: boolean;
   usage: Record<string, number | string>;
+  template_id?: string;
+  template_version?: string;
+  shot_plan?: VideoEditorShotPlan | null;
+  director_plan?: VideoEditorDirectorPlan | null;
+  vector_track?: VideoEditorVectorTrack | null;
+  creative_theme?: string | null;
+  typography?: {
+    theme?: string;
+    font_family?: string;
+    source?: string;
+    license?: string;
+  } | null;
   steps?: VideoEditorEditPlanStep[];
+}
+
+export interface VideoEditorVectorTrack {
+  track_id: string;
+  kind: string;
+  theme?: string;
+  asset_count?: number;
+  library_degradation?: string | null;
+  source_policy?: string;
+  typography?: Record<string, string>;
+  items?: Array<{
+    asset_id: string;
+    start: number;
+    end: number;
+    mode?: "pip" | "full" | string;
+    animation?: string;
+    position?: string;
+  }>;
+}
+
+export interface VideoEditorShotPlan {
+  template_id: "pain_point_solution" | "knowledge_howto" | "story_resonance" | string;
+  template_version: string;
+  selection?: {
+    scores?: Record<string, number>;
+    reason?: string;
+    override_available?: boolean;
+  };
+  content_blocks?: string[];
+  hook_source?: { source_start: number; source_end: number; text: string } | null;
+  retained_ranges?: Array<{ start: number; end: number; reason?: string }>;
+  reordered_ranges?: Array<{ start: number; end: number; reason?: string; role?: string }>;
+  deleted_ranges?: Array<{ start: number; end: number; reason?: string }>;
+  shots?: Array<Record<string, unknown>>;
+  subtitle?: Record<string, unknown>;
+  bgm?: Record<string, unknown>;
+  degradation?: {
+    mode: "broll" | "generated_image_broll" | "精剪口播降级" | string;
+    is_broll: boolean;
+    is_stock_broll?: boolean;
+    message: string;
+    local_visual_event_count?: number;
+    generated_image_event_count?: number;
+    publishable_visual_event_count?: number;
+  };
+  timeline_duration_seconds?: number;
+}
+
+export interface VideoEditorDirectorPlan {
+  plan_version: string;
+  target_platform: string;
+  template_id: string;
+  template_version: string;
+  hook?: {
+    source?: { source_start: number; source_end: number; text: string } | null;
+    audio_strategy?: string;
+    visual_treatment?: string;
+    must_appear_once?: boolean;
+  };
+  scenes?: Array<{
+    scene_id: string;
+    purpose: string;
+    source_start: number;
+    source_end: number;
+    timeline_start: number;
+    timeline_end: number;
+    duration_seconds: number;
+    visual_type: string;
+    motion: string;
+    asset_id?: string | null;
+    overlay_mode?: "pip" | "full" | string | null;
+  }>;
+  visual_events?: Array<{
+    event_id: string;
+    scene_id: string;
+    start: number;
+    end: number;
+    type: string;
+    asset_id?: string | null;
+    mode?: "pip" | "full" | string | null;
+    asset_origin?: "local_uploaded_asset" | "generated_image_asset" | "stock_video_asset" | string | null;
+    authorization_status?: string;
+    publish_claim_allowed?: boolean;
+    grounded_in_text?: boolean;
+  }>;
+  asset_requests?: Array<{
+    request_id: string;
+    scene_id: string;
+    prompt: string;
+    size: string;
+    source: string;
+    status: string;
+    fallback: string;
+  }>;
+  subtitle_policy?: Record<string, unknown>;
+  quality_targets?: {
+    minimum_creative_score?: number;
+    minimum_real_visual_events?: number;
+    minimum_local_visual_events?: number;
+    generated_images_count_as_local_visual_events?: boolean;
+    generated_images_do_not_satisfy_publish_rights_gate?: boolean;
+    max_audio_video_drift_ms?: number;
+    required_hard_gates?: string[];
+  };
+  degradation?: {
+    mode: string;
+    publish_claim_allowed: boolean;
+    message: string;
+  };
+  timeline_duration_seconds?: number;
+  source_duration_seconds?: number;
+  vector_track?: VideoEditorVectorTrack | null;
 }
 
 export interface VideoEditorPreflightResponse extends VideoEditorCostQuote {
@@ -1661,6 +1886,37 @@ export interface VideoEditorJob {
   analysis_id: string | null;
   publish_title: string | null;
   workflow?: "edit" | "product_showcase" | string;
+  quality_report?: VideoEditorQualityReport | null;
+}
+
+export interface VideoEditorQualityReport {
+  passed?: boolean;
+  publish_claim_allowed?: boolean;
+  shot_plan?: {
+    degradation?: {
+      mode?: string;
+      message?: string;
+      publish_claim_allowed?: boolean;
+    };
+  };
+  visual_gate_policy?: {
+    template_id?: string;
+    min_real_events?: number;
+    max_real_events?: number;
+    min_coverage_ratio?: number;
+    max_coverage_ratio?: number;
+    language?: string;
+    passed?: boolean;
+  };
+  real_broll_event_count?: number;
+  domestic_real_broll_event_count?: number;
+  international_broll_event_count?: number;
+  generated_image_event_count?: number;
+  real_broll_coverage_ratio?: number;
+  broll_modes?: {
+    pip?: number;
+    full?: number;
+  };
 }
 
 export interface VideoEditorJobListResponse {
@@ -1717,7 +1973,7 @@ export interface VideoEditorBatch {
   bgm_enabled: boolean;
   bgm_id: string | null;
   bgm_volume: number;
-  provider_mode?: "legacy" | "sandbox" | "aliyun" | string;
+  provider_mode?: "legacy" | "sandbox" | "aliyun" | "local_ffmpeg" | string;
   output_profile?: VideoEditorOutputProfile | null;
   output_resolution?: string;
   output_fps?: number;
@@ -1760,6 +2016,9 @@ export interface VideoEditorBgmAsset {
   source_url: string;
   license_url: string;
   content_id_risk: "none" | "registered" | "unknown" | string;
+  authorization_status?: "confirmed" | "unverified" | string;
+  auto_eligible?: boolean;
+  generated?: boolean;
 }
 
 export interface VideoEditorBgmListResponse {
@@ -1862,6 +2121,7 @@ export interface VideoEditorOverlayPreview {
     start: number;
     end: number;
     lines: string[];
+    source_segment_index?: number;
     emphasis_range?: {
       line_index: number;
       start: number;
@@ -1875,6 +2135,7 @@ export interface VideoEditorOverlayPreview {
     } | null;
   }>;
   caption_group_source?: "qwen_semantic" | "deterministic_fallback" | string;
+  phrase_timing_source?: "word_timestamps" | "estimated_phrase_timestamps" | string;
 }
 
 export interface StepKindParam {

@@ -1,0 +1,26 @@
+{
+  "stateBeforePlay": {
+    "src": "http://localhost:1001/api/v1/video-editor/jobs/edit-local-1e78ba0fca/media",
+    "duration": 18.366016,
+    "readyState": 4,
+    "paused": true
+  },
+  "playback": {
+    "src": "http://localhost:1001/api/v1/video-editor/jobs/edit-local-1e78ba0fca/media",
+    "duration": 18.366016,
+    "currentTime": 1.193215,
+    "paused": false,
+    "readyState": 4
+  },
+  "download": {
+    "download_event": true,
+    "suggestedFilename": "edit-local-1e78ba0fca.mp4",
+    "savedPath": "C:/Users/zeng/Desktop/video/work/auto-fine-cut-adaptive-20260824-short-rich-pip/final-evidence-edit-local-1e78ba0fca/page-acceptance/downloaded-final.mp4"
+  },
+  "http": {
+    "status": 200,
+    "ok": true,
+    "contentType": "video/mp4",
+    "contentLength": "9825406"
+  }
+}

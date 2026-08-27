@@ -1,0 +1,286 @@
+{
+  "schema_version": "subtitle-cue-manifest-v1",
+  "clock": "final_output",
+  "playback_rate": 1.0,
+  "subtitle_style_id": "adaptive_talking_head_v1",
+  "style_fingerprint": {
+    "font_family": "Source Han Serif CN Heavy",
+    "palette_id": "neutral_tech_business_v1",
+    "entry_motion": "fade_in_120ms",
+    "emphasis_scale_range": [
+      1.05,
+      1.12
+    ]
+  },
+  "phrase_timing_source": "word_timestamps",
+  "cues": [
+    {
+      "start": 0.0,
+      "end": 1.54,
+      "lines": [
+        "你公司的客户资源是"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.54,
+      "short_source_exception": false
+    },
+    {
+      "start": 1.54,
+      "end": 2.64,
+      "lines": [
+        "掌握在业务员的手里"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 0,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.1,
+      "short_source_exception": false
+    },
+    {
+      "start": 2.64,
+      "end": 3.9,
+      "lines": [
+        "还是沉淀"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.26,
+      "short_source_exception": false
+    },
+    {
+      "start": 3.9,
+      "end": 5.18,
+      "lines": [
+        "在咱们公司的数据库"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 1,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.28,
+      "short_source_exception": false
+    },
+    {
+      "start": 5.18,
+      "end": 6.82,
+      "lines": [
+        "业务员他一旦离职"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 2,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.64,
+      "short_source_exception": false
+    },
+    {
+      "start": 6.82,
+      "end": 8.36,
+      "lines": [
+        "你会发现聊天记录没了"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 3,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.54,
+      "short_source_exception": false
+    },
+    {
+      "start": 8.36,
+      "end": 9.4,
+      "lines": [
+        "客户的关系也"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.04,
+      "short_source_exception": false
+    },
+    {
+      "start": 9.4,
+      "end": 10.52,
+      "lines": [
+        "就跟着断掉了"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 4,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.12,
+      "short_source_exception": false
+    },
+    {
+      "start": 10.52,
+      "end": 11.9,
+      "lines": [
+        "企业真正需要的"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 5,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.38,
+      "short_source_exception": false
+    },
+    {
+      "start": 11.9,
+      "end": 13.78,
+      "lines": [
+        "不只是业务员个人维护"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 6,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.88,
+      "short_source_exception": false
+    },
+    {
+      "start": 13.78,
+      "end": 15.3,
+      "lines": [
+        "而是一套可以沉淀用户"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 7,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.52,
+      "short_source_exception": false
+    },
+    {
+      "start": 15.3,
+      "end": 17.32,
+      "lines": [
+        "持续触达的营销机制"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 8,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 2.02,
+      "short_source_exception": false
+    },
+    {
+      "start": 17.32,
+      "end": 18.3,
+      "lines": [
+        "顺应八平我们"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 9,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 0.98,
+      "short_source_exception": false
+    },
+    {
+      "start": 18.3,
+      "end": 19.46,
+      "lines": [
+        "可以配合我们企业的"
+      ],
+      "emphasis_range": null,
+      "emphasis_style": null,
+      "source_segment_index": 9,
+      "lexical_boundary_exception": null,
+      "entry_motion": {
+        "type": "fade_in",
+        "duration_ms": 120
+      },
+      "subtitle_style_id": "adaptive_talking_head_v1",
+      "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
+      "source_word_span_seconds": 1.16,
+      "short_source_exception": false
+    }
+  ],
+  "manifest_sha256": "a5c73ab92804d72d60d8aacaf7b37bbb25665aee8c2707f2b5ccd89a030b3d6d",
+  "opening_offset_seconds": 0.0
+}

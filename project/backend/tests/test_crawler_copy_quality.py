@@ -13,12 +13,14 @@ from src.models import (  # noqa: E402
     CandidateCopyProbe,
     CandidateMatch,
     DataSource,
+    EligibilityStatus,
     HeatLevel,
     HeatResult,
     Platform,
     PlatformRunStatus,
     PlatformSearchRun,
     ProviderMode,
+    NormalizedCandidate,
     SearchBatch,
     VideoCandidate,
     VideoMetricSnapshot,
@@ -95,6 +97,69 @@ def test_public_douyin_evidence_keeps_its_source_label_and_duration() -> None:
     assert window_hours is None
 
 
+def test_reference_candidates_are_separate_and_manual_only_in_batch_response() -> None:
+    candidate = _candidate(1)
+    repo = MockRepository(candidates=[candidate], tasks=[])
+    batch = SearchBatch(
+        keyword="完全不命中词",
+        requested_count_per_platform=30,
+        provider="free_multi_platform",
+        mode=ProviderMode.PUBLIC_WEB,
+        platforms=[Platform.BILIBILI],
+    )
+    reference = NormalizedCandidate(
+        platform_item_id=candidate.platform_item_id or candidate.video_id,
+        title=candidate.title,
+        author_id=candidate.author_id,
+        author_name=candidate.author_name,
+        platform=Platform.BILIBILI,
+        published_at=candidate.published_at,
+        source_url=candidate.source_url,
+        source_type=DataSource.PUBLIC_RESEARCH,
+        metrics=candidate.metrics,
+        eligibility_status=EligibilityStatus.PENDING_REVIEW,
+        evidence=candidate.evidence,
+    )
+    run = PlatformSearchRun(
+        batch_id=batch.batch_id,
+        platform=Platform.BILIBILI,
+        provider="bilibili_local_browser",
+        mode=ProviderMode.LOCAL_BROWSER,
+        status=PlatformRunStatus.PARTIAL,
+        requested_count=30,
+        returned_count=0,
+        reference_items=[reference],
+        idempotency_key="reference-response",
+        request_fingerprint="reference-response",
+        started_at=NOW,
+        finished_at=NOW,
+    )
+    repo.save_search_batch(batch)
+    repo.save_platform_search_run(run)
+    repo.save_candidate_match(
+        CandidateMatch(
+            request_id=run.run_id,
+            video_id=candidate.video_id,
+            keyword=batch.keyword,
+            cohort_key="bilibili:reference",
+            platform=Platform.BILIBILI,
+            platform_rank=1,
+            observed_at=NOW,
+        )
+    )
+
+    response = crawler._batch_to_response(batch, repo)
+    platform_run = response.platform_runs[0]
+
+    assert platform_run.candidates == []
+    assert platform_run.returned_count == 0
+    assert platform_run.retained == 0
+    assert platform_run.reference_count == 1
+    assert platform_run.reference_candidates[0].selection_tier == "reserve"
+    assert platform_run.reference_candidates[0].needs_manual_review is True
+    assert response.total_candidates == 1
+
+
 def test_batch_response_only_promotes_detected_copy_to_primary_or_reserve() -> None:
     candidates = [_candidate(index) for index in range(1, 15)]
     repo = MockRepository(candidates=candidates, tasks=[])
@@ -146,6 +211,8 @@ def test_batch_response_only_promotes_detected_copy_to_primary_or_reserve() -> N
     visible = response.platform_runs[0].candidates
     by_id = {item.video_id: item for item in visible}
 
+    assert response.total_candidates == 14
+    assert response.free_candidate_count == 14
     assert response.copy_detected_count == 13
     assert response.copy_primary_count == 8
     assert response.copy_reserve_count == 4

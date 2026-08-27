@@ -226,6 +226,11 @@ def _health_ready(timeout_seconds: float = 1.0) -> bool:
                 payload.get("status") == "ok"
                 and payload.get("service") == "videoinsight-desktop-api"
                 and payload.get("desktop_protocol") == "2"
+                and payload.get("desktop_client") is True
+                and payload.get("desktop_demo")
+                == (os.getenv("VIDEOINSIGHT_CONTROL_PLANE_ENABLED", "false").casefold() != "true")
+                and payload.get("control_plane_enabled")
+                == (os.getenv("VIDEOINSIGHT_CONTROL_PLANE_ENABLED", "false").casefold() == "true")
             )
     except (OSError, urllib.error.URLError, UnicodeDecodeError, json.JSONDecodeError):
         return False

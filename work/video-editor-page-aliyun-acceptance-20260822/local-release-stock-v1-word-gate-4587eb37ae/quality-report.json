@@ -1,0 +1,71 @@
+{
+  "evidence_version": "local-release-stock-acceptance-v4-word-gate",
+  "task_id": "edit-local-4587eb37ae",
+  "status": "succeeded",
+  "media_passed": true,
+  "quality_report_source": "local_api_job_quality_report",
+  "output": {
+    "path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-4587eb37ae.mp4",
+    "sha256": "79b6f45b873e2f052ec63ed90972dc6918becca67fbd3fc10654ed1bf8fddc0d",
+    "size_bytes": 10476047,
+    "duration_seconds": 31.5,
+    "resolution": "720x1280",
+    "fps": 30
+  },
+  "subtitle_timeline": {
+    "passed": true,
+    "phrase_cue_count": 18,
+    "phrase_timing_source": "word_timestamps",
+    "estimated_phrase_timestamps": false,
+    "min_duration_seconds": 0.9,
+    "max_duration_seconds": 2.4,
+    "one_line_ratio": 0.889,
+    "cue_count_by_source_segment": {
+      "0": 3,
+      "1": 3,
+      "2": 4,
+      "3": 4,
+      "4": 4
+    },
+    "experience_gate_passed": true,
+    "word_timing_quality": {
+      "status": "verified",
+      "word_p95_ms": 406.0,
+      "mapping_error_frames": 12.18,
+      "fps": 30.0,
+      "matched_cue_count": 18,
+      "unmatched_cue_count": 0,
+      "checks": {
+        "word_p95_le_150ms": false,
+        "mapping_le_1_frame": false
+      }
+    }
+  },
+  "creative": {
+    "real_stock_video_event_count": 3,
+    "real_broll_coverage_ratio": 0.3098,
+    "broll_modes": {
+      "pip": 1,
+      "full": 2
+    },
+    "pip_safe_area_passed": true,
+    "audio_video_max_drift_ms": 0.0,
+    "bgm": {
+      "asset_id": "bgm-0eed3a5909e5",
+      "title": "百搭口播底色",
+      "authorization_status": "confirmed",
+      "ducking": "sidechaincompress attack=20ms release=450ms mix=0.16"
+    }
+  },
+  "v1_hard_gate_audit": {
+    "passed": false,
+    "blockers": [
+      "word-level P95 is 406ms, above 150ms",
+      "subtitle mapping error is 12.18 frames, above 1 frame",
+      "PEXELS_API_KEY and PIXABAY_API_KEY are not configured"
+    ],
+    "new_cloud_calls": 0,
+    "new_cost_cny": 0,
+    "publish_clicked": false
+  }
+}

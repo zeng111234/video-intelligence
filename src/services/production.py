@@ -1191,11 +1191,11 @@ class ProductionService:
                         "rights_confirmed": execution_config["rights_confirmed"],
                         "rights_holder": execution_config["rights_holder"],
                         "model_name": execution_config["model_name"],
-                        "target_length": 300,
+                        "target_length": 240,
                         "tone": "casual",
                         "target_audience": profile.target_audience,
                         "style_prompt": profile.script_style,
-                        "variant_count": 2,
+                        "variant_count": 1,
                     },
                     "use_paid_fallback": bool(result.get("use_paid_fallback")),
                     "candidate_link_fallback": bool(

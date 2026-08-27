@@ -1,0 +1,32 @@
+{
+  "checked_seconds": [
+    14,
+    29,
+    59,
+    89,
+    102
+  ],
+  "observed": [
+    {
+      "target": 14,
+      "shown": "generic: 0:14 / 1:44"
+    },
+    {
+      "target": 29,
+      "shown": "generic: 0:29 / 1:44"
+    },
+    {
+      "target": 59,
+      "shown": "generic: 0:59 / 1:44"
+    },
+    {
+      "target": 89,
+      "shown": "generic: 1:29 / 1:44"
+    },
+    {
+      "target": 102,
+      "shown": "generic: 1:42 / 1:44"
+    }
+  ],
+  "note": "通过真实页面播放器拖拽检查 r6；页面 src 指向 edit-local-cc3f8c5401"
+}

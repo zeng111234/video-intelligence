@@ -1,0 +1,40 @@
+[2m17:54:18[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:20[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:21[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:21[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:21[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:22[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)
+[2m17:54:25[22m [31m[1m[vite][22m[39m [31mhttp proxy error: /api/v1/auth/customer-login[39m
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1193:18)
+    at afterConnectMultiple (node:net:1783:7)

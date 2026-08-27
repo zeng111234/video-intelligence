@@ -10,6 +10,7 @@ from src.models import (
     AvatarSubmitRequest,
     CandidateMatch,
     CandidateCopyProbe,
+    CrawlerKeywordQueue,
     DiscoveryResult,
     HotWordRecord,
     KeywordTrendResult,
@@ -182,6 +183,14 @@ class CandidateRepository(Protocol):
     def list_search_batches(self, limit: int = 20) -> list[SearchBatch]: ...
 
     def delete_search_batch(self, batch_id: str) -> bool: ...
+
+    def save_crawler_keyword_queue(self, queue: CrawlerKeywordQueue) -> None: ...
+
+    def get_crawler_keyword_queue(self, queue_id: str) -> CrawlerKeywordQueue | None: ...
+
+    def list_crawler_keyword_queues(
+        self, limit: int = 20
+    ) -> list[CrawlerKeywordQueue]: ...
 
     def save_platform_search_run(self, run: PlatformSearchRun) -> None: ...
 

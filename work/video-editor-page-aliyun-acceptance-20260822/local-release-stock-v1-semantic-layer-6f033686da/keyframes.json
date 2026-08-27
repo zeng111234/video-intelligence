@@ -1,0 +1,15 @@
+{
+  "output": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-6f033686da.mp4",
+  "keyframes": [
+    {"path": "01-hook.png", "time_seconds": 1.5},
+    {"path": "02-pip.png", "time_seconds": 10.8},
+    {"path": "03-full.png", "time_seconds": 18.5},
+    {"path": "04-semantic.png", "time_seconds": 24.5},
+    {"path": "05-end.png", "time_seconds": 30.2}
+  ],
+  "visual_review": {
+    "semantic_band_visible": true,
+    "face_or_subtitle_occlusion_observed": false,
+    "pip_geometry_reported_safe": true
+  }
+}

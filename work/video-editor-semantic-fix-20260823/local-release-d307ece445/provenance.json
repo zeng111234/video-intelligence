@@ -1,0 +1,89 @@
+{
+  "provenance_version": "local-release-provenance-v1",
+  "cloud_calls": 0,
+  "publish_action": "not_performed",
+  "source_video": "upload:upload-4c188f4d4d",
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-3344413315",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/men-using-computer-in-office-6803585/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": "办公数据与客户管理",
+      "keywords": [
+        "办公室",
+        "电脑",
+        "客户管理",
+        "数据",
+        "office",
+        "customer",
+        "data",
+        "management"
+      ],
+      "semantic_query": null,
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-14f7720cd1",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/automated-industrial-production-line-in-action-32386533/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": "工厂生产线与产品制造",
+      "keywords": [
+        "工厂",
+        "生产线",
+        "制造",
+        "产品",
+        "factory",
+        "manufacturing",
+        "product"
+      ],
+      "semantic_query": null,
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 2,
+      "asset_id": "broll-f847ed1e82",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/client-meeting-18435111/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": "客户会面与关系维护",
+      "keywords": [
+        "客户",
+        "商务会议",
+        "关系",
+        "会面",
+        "client",
+        "meeting",
+        "business"
+      ],
+      "semantic_query": null,
+      "domestic_context": "international",
+      "domestic_scene": ""
+    }
+  ],
+  "generated_asset_policy": {
+    "generated_for_local_acceptance": true,
+    "publish_licensed": false,
+    "cannot_satisfy_publish_rights_gate": true
+  }
+}

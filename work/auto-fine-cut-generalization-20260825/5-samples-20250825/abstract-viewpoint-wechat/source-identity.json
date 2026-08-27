@@ -1,0 +1,7 @@
+{
+  "source_media_sha256": "97c90dc561bfa15866bf0e1b6fa202703fbc86f5b1770a040e89a570fd2d616f",
+  "source_duration_seconds": 20.0,
+  "transcript_sha256": "2ab72d22307b5b2d6dd09feaa69f217d0d043f490c6187a2fac9340edf91e999",
+  "transcript_timing_source": "word_timestamps",
+  "transcript_identity_scope": "task_subtitle_segments_v1"
+}

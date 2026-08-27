@@ -1,0 +1,26 @@
+{
+  "task_id": "edit-local-d5d2d9d155",
+  "status": "succeeded",
+  "result_path": "C:\\Users\\zeng\\Desktop\\video\\data\\video_edits\\edit-local-d5d2d9d155.mp4",
+  "visual_request_count": 3,
+  "provider_log_count": 3,
+  "provider_attempted_count": 2,
+  "output_added_visual": {
+    "event_count": 1,
+    "broll_event_count": 1,
+    "vector_event_count": 0,
+    "events": [
+      {
+        "event_id": "broll-eda83700b0",
+        "start": 3.24,
+        "end": 4.6,
+        "mode": "pip",
+        "asset_id": "broll-eda83700b0",
+        "source": "pexels"
+      }
+    ]
+  },
+  "visual_release_passed": false,
+  "subtitle_sync_passed": true,
+  "evidence_dir": "C:\\Users\\zeng\\Desktop\\video\\work\\auto-fine-cut-generalization-20260825\\dynamic-search-smoke-20250825"
+}

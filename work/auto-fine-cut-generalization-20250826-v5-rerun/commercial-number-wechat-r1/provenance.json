@@ -1,0 +1,32 @@
+{
+  "provenance_version": "local-release-provenance-v1",
+  "cloud_calls": 0,
+  "publish_action": "not_performed",
+  "source_video": "upload:upload-b3b16c7445",
+  "broll_provenance": [
+    {
+      "event_index": 0,
+      "asset_id": "broll-eda83700b0",
+      "mode": "pip",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/person-driving-a-vehicle-using-google-maps-on-a-smartphone-mounted-on-the-dashboard-3006846/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "car air vent phone mount"
+      ],
+      "semantic_query": "car air vent phone mount",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    }
+  ],
+  "generated_asset_policy": {
+    "generated_for_local_acceptance": true,
+    "publish_licensed": false,
+    "cannot_satisfy_publish_rights_gate": true
+  }
+}

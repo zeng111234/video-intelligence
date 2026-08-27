@@ -1,0 +1,24 @@
+{
+  "passed": true,
+  "publish_claim_allowed": false,
+  "template_id": "adaptive_talking_head_v1",
+  "content_structure": "question_contrast_explanation",
+  "subtitle_timeline": {
+    "passed": true,
+    "phrase_timing_source": "estimated_phrase_timestamps",
+    "cue_count": 15,
+    "subtitle_effect_gate": {
+      "passed": true,
+      "emphasis_count": 3,
+      "one_line_ratio": 1.0
+    },
+    "preview_render_manifest_equal": true
+  },
+  "visual_policy": {
+    "mode": "a_roll_safe_degradation",
+    "real_broll_event_count": 0,
+    "semantic_cards_count": 0,
+    "publish_claim_allowed": false
+  },
+  "note": "内容结构不同的短样本；无可靠 B-roll，保留人物和字幕自适应动作，未冒充发布级真实素材。"
+}

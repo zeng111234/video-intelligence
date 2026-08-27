@@ -1,0 +1,692 @@
+{
+  "template_id": "adaptive_talking_head_v1",
+  "template_version": "talking-head-release-v1.0",
+  "selection": {
+    "scores": {
+      "pain_point_solution": 0,
+      "knowledge_howto": 0,
+      "story_resonance": 0
+    },
+    "reason": "问题/风险词与疑问句占比最高，适合先抛痛点再给方案。",
+    "legacy_template_id": "pain_point_solution",
+    "compatibility_alias": "pain_point_solution",
+    "override_available": true
+  },
+  "content_blocks": [
+    "hook",
+    "consequence",
+    "solution",
+    "conclusion"
+  ],
+  "hook_source": {
+    "source_start": 1.46,
+    "source_end": 3.76,
+    "text": "很多朋友觉得车载之下装起来麻烦"
+  },
+  "retained_ranges": [
+    {
+      "start": 1.46,
+      "end": 3.76,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 3.76,
+      "end": 4.7,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 4.7,
+      "end": 6.06,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 6.06,
+      "end": 6.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 6.84,
+      "end": 8.3,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 8.3,
+      "end": 9.14,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 9.14,
+      "end": 10.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 10.84,
+      "end": 11.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 12.26,
+      "end": 13.12,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 13.12,
+      "end": 14.5,
+      "reason": "按原时间轴保留"
+    }
+  ],
+  "reordered_ranges": [
+    {
+      "start": 1.46,
+      "end": 3.76,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 3.76,
+      "end": 4.7,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 4.7,
+      "end": 6.06,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 6.06,
+      "end": 6.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 6.84,
+      "end": 8.3,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 8.3,
+      "end": 9.14,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 9.14,
+      "end": 10.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 10.84,
+      "end": 11.84,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 12.26,
+      "end": 13.12,
+      "reason": "按原时间轴保留"
+    },
+    {
+      "start": 13.12,
+      "end": 14.5,
+      "reason": "按原时间轴保留"
+    }
+  ],
+  "deleted_ranges": [
+    {
+      "start": 0,
+      "end": 1.46,
+      "reason": "片头无口播静段"
+    }
+  ],
+  "shots": [
+    {
+      "shot_id": "shot-01",
+      "source_start": 1.46,
+      "source_end": 3.76,
+      "timeline_start": 0.0,
+      "timeline_end": 2.3,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "full_subject_safe",
+      "transition": "hard_cut",
+      "visual_emphasis": "hook_underliner",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 2.3,
+      "rhythm_seconds": 3.0,
+      "rhythm_variant": 0
+    },
+    {
+      "shot_id": "shot-02",
+      "source_start": 3.76,
+      "source_end": 4.7,
+      "timeline_start": 2.3,
+      "timeline_end": 3.24,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "safe_push_no_face_crop",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_safe_push",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 0.94,
+      "rhythm_seconds": 4.2,
+      "rhythm_variant": 1
+    },
+    {
+      "shot_id": "shot-03",
+      "source_start": 4.7,
+      "source_end": 6.06,
+      "timeline_start": 3.24,
+      "timeline_end": 4.6,
+      "role": "B-roll",
+      "asset_id": "broll-eda83700b0",
+      "asset_source": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "framing": "full_subject_safe",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "asset_pip",
+      "fallback": "none",
+      "overlay_mode": "pip",
+      "duration_seconds": 1.36,
+      "rhythm_seconds": 3.2,
+      "rhythm_variant": 2
+    },
+    {
+      "shot_id": "shot-04",
+      "source_start": 6.06,
+      "source_end": 6.84,
+      "timeline_start": 4.6,
+      "timeline_end": 5.38,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "safe_push_no_face_crop",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_safe_push",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 0.78,
+      "rhythm_seconds": 4.6,
+      "rhythm_variant": 3
+    },
+    {
+      "shot_id": "shot-05",
+      "source_start": 6.84,
+      "source_end": 8.3,
+      "timeline_start": 5.38,
+      "timeline_end": 6.84,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "full_subject_safe",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_full_safe",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 1.46,
+      "rhythm_seconds": 3.0,
+      "rhythm_variant": 0
+    },
+    {
+      "shot_id": "shot-06",
+      "source_start": 8.3,
+      "source_end": 9.14,
+      "timeline_start": 6.84,
+      "timeline_end": 7.68,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "safe_push_no_face_crop",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_safe_push",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 0.84,
+      "rhythm_seconds": 4.2,
+      "rhythm_variant": 1
+    },
+    {
+      "shot_id": "shot-07",
+      "source_start": 9.14,
+      "source_end": 10.84,
+      "timeline_start": 7.68,
+      "timeline_end": 9.38,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "full_subject_safe",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_full_safe",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 1.7,
+      "rhythm_seconds": 3.2,
+      "rhythm_variant": 2
+    },
+    {
+      "shot_id": "shot-08",
+      "source_start": 10.84,
+      "source_end": 11.84,
+      "timeline_start": 9.38,
+      "timeline_end": 10.38,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "safe_push_no_face_crop",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_safe_push",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 1.0,
+      "rhythm_seconds": 4.6,
+      "rhythm_variant": 3
+    },
+    {
+      "shot_id": "shot-09",
+      "source_start": 12.26,
+      "source_end": 13.12,
+      "timeline_start": 10.38,
+      "timeline_end": 11.24,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "full_subject_safe",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_full_safe",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 0.86,
+      "rhythm_seconds": 3.0,
+      "rhythm_variant": 0
+    },
+    {
+      "shot_id": "shot-10",
+      "source_start": 13.12,
+      "source_end": 14.5,
+      "timeline_start": 11.24,
+      "timeline_end": 12.62,
+      "role": "A-roll",
+      "asset_id": null,
+      "asset_source": "none",
+      "asset_origin": null,
+      "authorization_status": "not_applicable",
+      "framing": "safe_push_no_face_crop",
+      "transition": "blur_slide_5_frames",
+      "visual_emphasis": "speaker_safe_push",
+      "fallback": "精剪口播降级",
+      "overlay_mode": null,
+      "duration_seconds": 1.38,
+      "rhythm_seconds": 4.2,
+      "rhythm_variant": 1
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "broll-eda83700b0",
+      "source": "pexels",
+      "source_provider": "pexels",
+      "asset_origin": "stock_video_asset",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "source_url": "https://www.pexels.com/video/person-driving-a-vehicle-using-google-maps-on-a-smartphone-mounted-on-the-dashboard-3006846/",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "semantic_binding": null,
+      "keywords": [
+        "phone mount in car"
+      ],
+      "domestic_context": "international",
+      "domestic_scene": "",
+      "visual_asset_priority": 2,
+      "semantic_query": "拧一下就能锁紧 phone mount in car hands installing phone mount product demonstration close up",
+      "search_query": null,
+      "match_type": "precise",
+      "match_score": 82,
+      "match_reason": [
+        "concrete_visual_intersection:product_demo",
+        "keywords:phonemountincar"
+      ],
+      "visual_intent": null,
+      "visual_type": null,
+      "manifest_role": null,
+      "provider_attempts": 0,
+      "mode": "pip"
+    }
+  ],
+  "subtitle": {
+    "style_id": "adaptive_white_base",
+    "hook_style_id": "adaptive_original_quote",
+    "style_tokens": {
+      "subtitle_style_id": "adaptive_white_base",
+      "hook_style_id": "adaptive_original_quote",
+      "transition_policy": "semantic_action_adaptive",
+      "insert_policy": "semantic_peak_broll_1_to_3",
+      "bgm_profile": "commercial_low_intrusion",
+      "entry_motion": "fade_in_120ms",
+      "emphasis_style": "semantic_local_color",
+      "palette_id": "neutral_tech_business_v1",
+      "visual_intents": [
+        "speaker",
+        "evidence_broll",
+        "data_chart",
+        "concept_card",
+        "speaker_pip"
+      ]
+    },
+    "max_lines": 1,
+    "safe_area": "lower_third_without_face",
+    "visual_emphasis": "sparse_keyword_only"
+  },
+  "transition_policy": "semantic_action_adaptive",
+  "insert_policy": "semantic_peak_broll_1_to_3",
+  "bgm_profile": "commercial_low_intrusion",
+  "bgm": {
+    "track_id": "bgm-a40b291dc5b1",
+    "title": "tech-city-local-acceptance-confirmed",
+    "source": "manual",
+    "authorization_status": "confirmed",
+    "auto_eligible": true,
+    "start_seconds": 0.0,
+    "energy_segments": [
+      {
+        "start": 0.0,
+        "end": 12.62,
+        "energy": "克制"
+      }
+    ],
+    "ducking": {
+      "enabled": true,
+      "voice_priority": true,
+      "target_db": -24,
+      "attack_ms": 20,
+      "release_ms": 450
+    },
+    "fade": {
+      "in_seconds": 0.5,
+      "out_seconds": 0.8
+    }
+  },
+  "degradation": {
+    "mode": "broll",
+    "is_broll": true,
+    "is_stock_broll": true,
+    "message": "已使用用户确认授权的本地 B-roll。"
+  },
+  "source_duration_seconds": 14.57,
+  "timeline_duration_seconds": 12.62,
+  "title": "很多朋友觉得车载之下装起来麻烦",
+  "visual_requests": [
+    {
+      "source_segment_index": 2,
+      "source_segment_indices": [
+        2
+      ],
+      "retrieval_context_segment_indices": [
+        0,
+        1,
+        2
+      ],
+      "start": 4.7,
+      "end": 6.06,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "phone mount in car",
+        "hands installing phone mount",
+        "product demonstration close up"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "拧一下就能锁紧",
+      "expected_context": "product demonstration",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "transcript_text": "拧一下就能锁紧"
+    },
+    {
+      "source_segment_index": 4,
+      "source_segment_indices": [
+        4
+      ],
+      "retrieval_context_segment_indices": [
+        2,
+        3,
+        4
+      ],
+      "start": 6.84,
+      "end": 8.3,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "car air vent phone mount",
+        "hands installing phone mount",
+        "product demonstration close up"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "也不会卡住出风口",
+      "expected_context": "product demonstration",
+      "preferred_mode": "full",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "transcript_text": "也不会卡住出风口"
+    },
+    {
+      "source_segment_index": 9,
+      "source_segment_indices": [
+        9
+      ],
+      "retrieval_context_segment_indices": [
+        7,
+        8,
+        9
+      ],
+      "start": 13.12,
+      "end": 14.5,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "product demonstration close up",
+        "hands installing product",
+        "phone mount in car"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "反正拧一下就取下来",
+      "expected_context": "product demonstration",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "transcript_text": "反正拧一下就取下来"
+    }
+  ],
+  "provider_search_log": [
+    {
+      "source_segment_index": 2,
+      "source_segment_indices": [
+        2
+      ],
+      "start": 4.7,
+      "end": 6.06,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "phone mount in car",
+        "hands installing phone mount",
+        "product demonstration close up"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "拧一下就能锁紧",
+      "expected_context": "product demonstration",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "semantic_query": "拧一下就能锁紧 phone mount in car hands installing phone mount product demonstration close up",
+      "provider_query": "phone mount in car",
+      "local_candidate_count": 19,
+      "provider_attempted": false,
+      "provider": null,
+      "provider_status": "skipped_local_semantic_match",
+      "provider_attempts": 0,
+      "provider_attempt_details": [],
+      "candidate_count": 0,
+      "candidate_scores": [
+        {
+          "asset_id": "broll-eda83700b0",
+          "score": 82,
+          "accepted": true,
+          "reason": [
+            "concrete_visual_intersection:product_demo",
+            "keywords:phonemountincar"
+          ]
+        }
+      ],
+      "rejections": [],
+      "final_asset_id": "broll-eda83700b0",
+      "final_action": "bind_visual_asset",
+      "final_mode": "pip"
+    },
+    {
+      "source_segment_index": 4,
+      "source_segment_indices": [
+        4
+      ],
+      "start": 6.84,
+      "end": 8.3,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "car air vent phone mount",
+        "hands installing phone mount",
+        "product demonstration close up"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "也不会卡住出风口",
+      "expected_context": "product demonstration",
+      "preferred_mode": "full",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "semantic_query": "也不会卡住出风口 car air vent phone mount hands installing phone mount product demonstration close up",
+      "provider_query": "car air vent phone mount",
+      "local_candidate_count": 19,
+      "provider_attempted": true,
+      "provider": "pexels",
+      "provider_status": "ready",
+      "provider_attempts": 3,
+      "provider_attempt_details": [
+        {
+          "provider": "pexels",
+          "status": "ready",
+          "attempts": 1,
+          "candidate_count": 1
+        },
+        {
+          "provider": null,
+          "status": "unavailable",
+          "attempts": 2,
+          "candidate_count": 0
+        }
+      ],
+      "candidate_count": 1,
+      "candidate_scores": [
+        {
+          "asset_id": "broll-eda83700b0",
+          "score": 82,
+          "accepted": true,
+          "reason": [
+            "concrete_visual_intersection:product_demo",
+            "keywords:carairventphonemount"
+          ]
+        }
+      ],
+      "rejections": [
+        "no_authorized_semantic_match",
+        "no_generated_fallback_match"
+      ],
+      "final_asset_id": null,
+      "final_action": "safe_degradation",
+      "provider_reason": null
+    },
+    {
+      "source_segment_index": 9,
+      "source_segment_indices": [
+        9
+      ],
+      "start": 13.12,
+      "end": 14.5,
+      "visual_type": "product",
+      "chinese_concepts": [
+        "product"
+      ],
+      "search_queries": [
+        "product demonstration close up",
+        "hands installing product",
+        "phone mount in car"
+      ],
+      "expected_subject": "the named product or hands using/installing it",
+      "expected_action": "反正拧一下就取下来",
+      "expected_context": "product demonstration",
+      "preferred_mode": "pip",
+      "fallback": "a_roll_safe_push_and_sparse_emphasis",
+      "semantic_query": "反正拧一下就取下来 product demonstration close up hands installing product phone mount in car",
+      "provider_query": "product demonstration close up",
+      "local_candidate_count": 19,
+      "provider_attempted": true,
+      "provider": "pexels",
+      "provider_status": "ready",
+      "provider_attempts": 2,
+      "provider_attempt_details": [
+        {
+          "provider": "pexels",
+          "status": "ready",
+          "attempts": 0,
+          "candidate_count": 1
+        },
+        {
+          "provider": null,
+          "status": "unavailable",
+          "attempts": 2,
+          "candidate_count": 0
+        }
+      ],
+      "candidate_count": 1,
+      "candidate_scores": [
+        {
+          "asset_id": "broll-59b1ea22d3",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        }
+      ],
+      "rejections": [
+        "no_authorized_semantic_match",
+        "no_generated_fallback_match"
+      ],
+      "final_asset_id": null,
+      "final_action": "safe_degradation",
+      "provider_reason": "cache_reused"
+    }
+  ],
+  "visual_density": "rich"
+}

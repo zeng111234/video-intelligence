@@ -1,0 +1,171 @@
+{
+  "manifest_version": "generated-broll-assets-v1",
+  "created_at": "2026-08-22",
+  "source_type": "built_in_image_generation",
+  "rights_status": "generated_for_local_acceptance",
+  "cloud_upload": false,
+  "paid_stock_call": false,
+  "assets": [
+    {
+      "asset_id": "generated-crm-database-01",
+      "path": "crm-database-generated.png",
+      "sha256": "00366AF2E11F33C44C52BC2194589FE445E7C69771BC4CC54C8FD487195380DC",
+      "role": "fullscreen_broll",
+      "semantic_binding": "客户数据库"
+    },
+    {
+      "asset_id": "generated-customer-relationship-02",
+      "path": "customer-relationship-generated.png",
+      "sha256": "9400811E11C201BE4133382B336B02EBF439A69697EA952E3CCAD2B8E4B4F624",
+      "role": "pip_broll",
+      "semantic_binding": "客户关系沉淀"
+    },
+    {
+      "asset_id": "generated-factory-products-03",
+      "path": "factory-products-generated.png",
+      "sha256": "AA1B944E2D58A25EE5A63448B3F167AF77C2DDA40DC160722ACC8D5677517D40",
+      "role": "fullscreen_broll",
+      "semantic_binding": "工厂品牌产品"
+    },
+    {
+      "asset_id": "generated-customer-database-workflow-04",
+      "path": "customer-database-workflow-v2.png",
+      "sha256": "126B8D7844C09F5778714F9FCEDB437FB88DC92F46399B106EF0A697121F02B6",
+      "role": "fullscreen_broll",
+      "semantic_binding": "客户数据库工作台"
+    },
+    {
+      "asset_id": "generated-customer-relationship-collaboration-05",
+      "path": "customer-relationship-collaboration-v2.png",
+      "sha256": "AFD379BFB7FC2D5B1BADE6EC2011A104C4189323ABF873221EE14DA7D6043AEF",
+      "role": "pip_broll",
+      "semantic_binding": "客户关系协作"
+    },
+    {
+      "asset_id": "generated-factory-quality-products-06",
+      "path": "factory-quality-products-v2.png",
+      "sha256": "605F149A76E44F850AD550FF11F79A44D95E3FF4BE2CC5983BA83584C26C6E1E",
+      "role": "fullscreen_broll",
+      "semantic_binding": "工厂产品质检"
+    },
+    {
+      "asset_id": "generated-enterprise-data-flow-07",
+      "path": "enterprise-data-flow-v2.png",
+      "sha256": "813C047CB8E8824E9E13091FAE38C6A780B93E65B629765AF66629A73182F1A5",
+      "role": "pip_broll",
+      "semantic_binding": "企业数据流转"
+    },
+    {
+      "asset_id": "generated-sales-consultation-08",
+      "path": "sales-consultation-v3.png",
+      "sha256": "9A7D2C77BAB22A5FEA87977F5D1D15DF3B5CE313310567DC57830D04333ED849",
+      "role": "pip_broll",
+      "semantic_binding": "销售咨询与客户沟通",
+      "keywords": ["销售", "咨询", "客户沟通", "业务员", "成交", "方案"]
+    },
+    {
+      "asset_id": "generated-customer-service-09",
+      "path": "customer-service-operations-v3.png",
+      "sha256": "90AA7677FE7F00FC4714E140CAC5DAE0EC52CDABC3CBBBA2A38F6370E17707DB",
+      "role": "pip_broll",
+      "semantic_binding": "客户服务与持续触达",
+      "keywords": ["客服", "客户服务", "售后", "触达", "响应", "服务"]
+    },
+    {
+      "asset_id": "generated-logistics-scanning-10",
+      "path": "logistics-scanning-v3.png",
+      "sha256": "9782BE3F606EC81ADCC9125E76256B6CB9C6D77FF527CAD77898300E2878E3B2",
+      "role": "fullscreen_broll",
+      "semantic_binding": "物流与仓储扫描",
+      "keywords": ["物流", "仓储", "发货", "供应链", "扫描", "配送"]
+    },
+    {
+      "asset_id": "generated-product-r-and-d-11",
+      "path": "product-r-and-d-v3.png",
+      "sha256": "30C216C471471853DCAD101E382E48D0CC3589CC643EA343DC47510D726B7C77",
+      "role": "fullscreen_broll",
+      "semantic_binding": "产品研发与设计",
+      "keywords": ["研发", "设计", "产品", "创新", "打样", "原型"]
+    },
+    {
+      "asset_id": "generated-team-training-12",
+      "path": "team-training-v3.png",
+      "sha256": "1133A71A1BFF3768A1B9A1E87EA0B15EA83EE8C1A0D6C4E307287A52EF9C5EA5",
+      "role": "fullscreen_broll",
+      "semantic_binding": "团队培训与会议",
+      "keywords": ["培训", "会议", "团队", "管理", "学习", "组织"]
+    },
+    {
+      "asset_id": "generated-content-marketing-13",
+      "path": "content-marketing-v3.png",
+      "sha256": "6ED42B3D63FD96E8416C92807E3F38FE52E7960A9EB90996427614FB03D8C021",
+      "role": "pip_broll",
+      "semantic_binding": "内容营销与短视频",
+      "keywords": ["营销", "短视频", "内容", "推广", "品牌曝光", "拍摄"]
+    },
+    {
+      "asset_id": "generated-business-analytics-14",
+      "path": "business-analytics-v3.png",
+      "sha256": "0C880BF42B8736AB5A44360179FB100A1755554F5B3E6FB6DE93B51909340492",
+      "role": "pip_broll",
+      "semantic_binding": "经营数据与分析",
+      "keywords": ["数据", "分析", "经营", "报表", "增长", "指标"]
+    },
+    {
+      "asset_id": "generated-inventory-management-15",
+      "path": "inventory-management-v3.png",
+      "sha256": "26FACE445C1A46E0932DF44943F15C917353ED55228420588BB688231C6C30CC",
+      "role": "fullscreen_broll",
+      "semantic_binding": "库存与供应链管理",
+      "keywords": ["库存", "仓库", "盘点", "供应链", "货品", "管理"]
+    },
+    {
+      "asset_id": "generated-universal-laptop-work-16",
+      "path": "universal-laptop-work-v4.png",
+      "sha256": "E7DC4D160D3059B4EFD722F1EAB4EEF8716BE17A05C22A746B8F3AC2F5EA794D",
+      "role": "fallback_broll",
+      "semantic_binding": "通用办公与执行",
+      "keywords": ["通用", "办公", "工作", "执行", "效率", "处理", "电脑"]
+    },
+    {
+      "asset_id": "generated-universal-smartphone-17",
+      "path": "universal-smartphone-v4.png",
+      "sha256": "8A926DAF51A87F854F94BFFAF0D81B541EE0FEC1B9D5075AFE39800C9CEAB90F",
+      "role": "fallback_pip_broll",
+      "semantic_binding": "通用手机与数字沟通",
+      "keywords": ["通用", "手机", "沟通", "消息", "数字", "连接", "触达"]
+    },
+    {
+      "asset_id": "generated-universal-planning-18",
+      "path": "universal-planning-notebook-v4.png",
+      "sha256": "0E8841BB2112DBFB61BB86B47CF6BB8D08C13B1ADAD57BF38C6251E53D7E9A0D",
+      "role": "fallback_broll",
+      "semantic_binding": "通用计划与思考",
+      "keywords": ["通用", "计划", "思考", "想法", "目标", "问题", "方案"]
+    },
+    {
+      "asset_id": "generated-universal-office-transition-19",
+      "path": "universal-office-transition-v4.png",
+      "sha256": "21007AEC0825AB581EBC19A002390AA0B9956CE1DB9D38DF9F76FD48BFD0D902",
+      "role": "fallback_fullscreen_broll",
+      "semantic_binding": "通用变化与进展",
+      "keywords": ["通用", "变化", "进展", "成长", "过程", "未来", "转型"]
+    },
+    {
+      "asset_id": "generated-universal-team-collaboration-20",
+      "path": "universal-team-collaboration-v4.png",
+      "sha256": "70A74A22CC567AE726BE4D817D3561E3C8F653463DBDAA2DA3501E21BC7D87DA",
+      "role": "fallback_pip_broll",
+      "semantic_binding": "通用团队协作",
+      "keywords": ["通用", "团队", "协作", "沟通", "决策", "讨论", "合作"]
+    },
+    {
+      "asset_id": "generated-universal-city-momentum-21",
+      "path": "universal-city-momentum-v4.png",
+      "sha256": "D78B54921CEE4B7DED1099342387A9C52F1E9075A3EE270BE835B1472078846C",
+      "role": "fallback_fullscreen_broll",
+      "semantic_binding": "通用城市与趋势",
+      "keywords": ["通用", "趋势", "市场", "机会", "增长", "规模", "时代"]
+    }
+  ]
+}

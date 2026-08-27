@@ -180,3 +180,40 @@ def test_provider_safety_real_run_limit_uses_rolling_window(
         max_runs_in_window=2,
         rolling_window_seconds=3600,
     )
+
+
+@pytest.mark.parametrize("repository_factory", [MockRepository, SQLiteRepository])
+def test_provider_safety_zero_limit_is_disabled_even_with_historical_count(
+    repository_factory, tmp_path
+) -> None:
+    repository = (
+        repository_factory()
+        if repository_factory is MockRepository
+        else repository_factory(tmp_path / "provider-disabled-limit.db")
+    )
+    now = datetime(2026, 7, 24, 9, tzinfo=timezone.utc)
+    for index in range(8):
+        run_at = now + timedelta(minutes=index * 2)
+        assert repository.claim_provider_safety_lease(
+            provider="bilibili_browser_search",
+            run_id=f"historical-{index}",
+            now=run_at,
+            lease_seconds=30,
+            max_runs_in_window=0,
+            rolling_window_seconds=24 * 60 * 60,
+        )
+        repository.release_provider_safety_lease(
+            provider="bilibili_browser_search",
+            run_id=f"historical-{index}",
+            now=run_at + timedelta(seconds=1),
+            cooldown_seconds=1,
+        )
+
+    assert repository.claim_provider_safety_lease(
+        provider="bilibili_browser_search",
+        run_id="after-default-change",
+        now=now + timedelta(minutes=20),
+        lease_seconds=30,
+        max_runs_in_window=0,
+        rolling_window_seconds=24 * 60 * 60,
+    )
