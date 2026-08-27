@@ -61,6 +61,30 @@
 - 当网络、API 或工具调用因连接或重连问题失败时，最多自动重试一次；仍失败则清楚报告，不要循环重连。
 - 除非用户明确要求弹性重试，不得连续执行五次重连或重试。
 
+## 已知陷阱 / 硬约束
+
+### 抓取抖音 / 小红书 / B站必须保留反检测脚本
+
+`src/adapters/drission_browser.py` 中的 `ANTI_DETECTION_INIT_SCRIPT` 与
+`--disable-blink-features=AutomationControlled`、`--disable-infobars` 启动参数，
+以及 `src/adapters/platform_browser_search.py` 中的
+`context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)` 调用，**任何一项缺失
+都会立刻被抖音 / 小红书 / B站风控识别为自动化**，导致搜索页要求扫码登录或
+直接拦截。表现是 platform crawl 返回 0 候选 / `link-transcriptions` 报
+"该分享页没有返回可转写的视频流"，下游 production pipeline 因此跑不起来。
+
+历史教训：dirty 改动曾误删以上 4 处反检测，结果"抓取"环节静默 0 结果；
+ASR 本身（阿里云 fun-asr）其实工作正常，被错误归因。下次任何人重写
+这两个文件前必须先确认反检测完整保留。
+
+### ASR 失败不要把原始异常压成统一文案
+
+`src/services/transcription.py:705-721` 的"阿里云语音识别失败，素材已保留；
+不会使用本地 CPU"统一包装会把阿里云 fun-asr submit/query 的真实错误吞掉，
+导致 `task_id` 为 null、系统"素材不可恢复不会自动重试"。前端应展示
+`exc.__cause__` 的代表性字段（HTTP 状态、API 错误码），并把 retry 按钮
+文案改为"重新上传并识别"，避免用户陷入死循环。
+
 ## 提示词优化与专家团
 
 - 当用户说“优化提示词”“优化提示词并执行”“启动优化提示词”“专家团”“智能路由”，或显式调用 `$prompt-expert-team` 时，加载并遵循全局 `prompt-expert-team` Skill。
