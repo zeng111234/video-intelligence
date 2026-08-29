@@ -86,7 +86,10 @@ $forbiddenTrackedFiles = @(
             $trackedFileName.StartsWith(".env.", [System.StringComparison]::OrdinalIgnoreCase) -and
             -not $trackedFileName.Equals(".env.example", [System.StringComparison]::OrdinalIgnoreCase)
         ) -or
-        $_ -match "(^|/)(data|outputs|uploads|models)/" -or
+        (
+            $_ -ne "data/templates/builtin.json" -and
+            $_ -match "(^|/)(data|outputs|uploads|models)/"
+        ) -or
         $_ -match "\.(db|sqlite|sqlite3|mp4|mov|mp3|wav)$" -or
         $_ -match "^forge_rss_analysis/"
     }
