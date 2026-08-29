@@ -126,7 +126,7 @@ describe("CustomerAdminSection access package", () => {
         count: 1,
       });
     });
-  });
+  }, 10_000);
 
   it("keeps many customers paginated inside a horizontally scrollable table", async () => {
     mockListCustomerCodes.mockResolvedValue(

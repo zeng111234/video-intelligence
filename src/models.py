@@ -926,6 +926,7 @@ class CrawlerKeywordQueue(BaseModel):
     platforms: list[Platform] = Field(min_length=1)
     published_window_days: int = 0
     requested_count_per_platform: int = Field(default=30, ge=1, le=100)
+    force_refresh: bool = False
     status: KeywordQueueStatus = KeywordQueueStatus.QUEUED
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())

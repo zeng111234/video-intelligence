@@ -633,7 +633,7 @@ export default function TranscriptionPage() {
           {selected.status === "failed" && (
             <div className="transcription-recovery-row">
               <Text>转写失败，素材仍然保留。</Text>
-              <Button type="primary" loading={submitting} onClick={handleRetry}>保留素材并重试</Button>
+              <Button type="primary" loading={submitting} onClick={handleRetry}>重新上传并识别</Button>
             </div>
           )}
 

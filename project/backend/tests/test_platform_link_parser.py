@@ -324,6 +324,53 @@ def test_bilibili_public_api_resolves_the_target_audio_stream():
     assert media.media_request_headers["Referer"].endswith("/BV1bZ3t64EvY")
 
 
+def test_bilibili_public_api_prefers_standard_https_backup_port():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/view"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "bvid": "BV1gZ8e64EYM",
+                        "cid": 41215197494,
+                        "title": "标准端口回退",
+                    },
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "code": 0,
+                "data": {
+                    "dash": {
+                        "audio": [
+                            {
+                                "baseUrl": "https://mcdn.bilivideo.cn:8082/audio.m4s",
+                                "backupUrl": [
+                                    "https://upos-sz-mirrorcos.bilivideo.com/audio.m4s"
+                                ],
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    client = LocalPlatformLinkParserClient(
+        douyin_parser=LocalDouyinBrowserParserClient(enabled=True),
+        platform_providers={},
+        http_client_factory=lambda **kwargs: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            **kwargs,
+        ),
+    )
+
+    media = client.resolve("https://www.bilibili.com/video/BV1gZ8e64EYM/")
+
+    assert media.media_url == "https://upos-sz-mirrorcos.bilivideo.com/audio.m4s"
+
+
 def test_connected_browser_media_uses_the_real_browser_user_agent():
     media = ParsedPlatformMedia(
         platform=Platform.KUAISHOU,

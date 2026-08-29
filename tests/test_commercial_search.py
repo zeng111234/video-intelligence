@@ -869,7 +869,7 @@ def test_bilibili_nonmatching_search_card_is_never_imported() -> None:
     assert counts["irrelevant_count"] == 1
 
 
-def test_bilibili_strict_empty_keeps_bounded_manual_reference_cards() -> None:
+def test_bilibili_related_cards_enter_main_pool_with_manual_review_status() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureProvider(now)
@@ -906,14 +906,14 @@ def test_bilibili_strict_empty_keeps_bounded_manual_reference_cards() -> None:
     )
     run = repository.list_platform_search_runs(batch.batch_id)[0]
 
-    assert run.returned_count == 0
-    assert len(run.reference_items) == 30
+    assert run.returned_count == 3
+    assert len(run.reference_items) == 0
     assert all(
         item.eligibility_status == EligibilityStatus.PENDING_REVIEW
-        for item in run.reference_items
+        for item in repository.list_candidates()
     )
-    assert len(repository.list_candidates()) == 30
-    assert len(repository.list_candidate_matches(run.run_id)) == 30
+    assert len(repository.list_candidates()) == 3
+    assert len(repository.list_candidate_matches(run.run_id)) == 3
 
 
 def test_bilibili_relevance_has_high_review_and_irrelevant_tiers() -> None:
@@ -936,7 +936,7 @@ def test_bilibili_relevance_has_high_review_and_irrelevant_tiers() -> None:
     assert bilibili_relevance_tier(title="美业工厂真实案例", keyword="美业工厂") == "high"
 
 
-def test_bilibili_normalization_keeps_high_and_review_cards_separately() -> None:
+def test_bilibili_normalization_keeps_high_and_review_statuses() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
     page = ProviderSearchPage(
         platform=Platform.BILIBILI,
@@ -992,11 +992,11 @@ def test_bilibili_normalization_keeps_high_and_review_cards_separately() -> None
     )
 
     assert errors == []
-    assert [item.platform_item_id for item in normalized] == ["BV-high-related"]
-    assert [item.platform_item_id for item in counts["reference_items"]] == ["BV-review"]
+    assert [item.platform_item_id for item in normalized] == ["BV-high-related", "BV-review"]
+    assert counts["reference_items"] == []
     assert counts["irrelevant_count"] == 1
     assert (
-        counts["reference_items"][0].eligibility_status
+        normalized[1].eligibility_status
         == EligibilityStatus.PENDING_REVIEW
     )
 

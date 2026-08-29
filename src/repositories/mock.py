@@ -236,6 +236,20 @@ class MockRepository:
     def list_candidates(self) -> list[VideoCandidate]:
         return list(self._candidates.values())
 
+    def get_candidates_by_ids(self, video_ids: list[str]) -> list[VideoCandidate]:
+        """Return the requested candidates in one repository operation.
+
+        The SQLite implementation uses this bulk method while assembling a
+        crawler batch.  Keep the in-memory test repository on the same
+        contract so batch rendering is exercised in tests rather than failing
+        before the response is built.
+        """
+        return [
+            self._candidates[video_id]
+            for video_id in video_ids
+            if video_id in self._candidates
+        ]
+
     def list_official_hot_pool(
         self, platform: Platform = Platform.DOUYIN
     ) -> list[VideoCandidate]:
@@ -298,6 +312,16 @@ class MockRepository:
 
     def get_candidate_copy_probe(self, candidate_id: str) -> CandidateCopyProbe | None:
         return self._candidate_copy_probes.get(candidate_id)
+
+    def get_candidate_copy_probes_by_ids(
+        self, candidate_ids: list[str]
+    ) -> dict[str, CandidateCopyProbe]:
+        """Bulk counterpart of ``get_candidate_copy_probe`` for batch views."""
+        return {
+            candidate_id: self._candidate_copy_probes[candidate_id]
+            for candidate_id in candidate_ids
+            if candidate_id in self._candidate_copy_probes
+        }
 
     def save_candidate(self, candidate: VideoCandidate) -> str:
         self._candidates[candidate.video_id] = candidate
@@ -368,6 +392,19 @@ class MockRepository:
             if stored_request_id == request_id
         ]
 
+    def list_candidate_matches_by_run_ids(
+        self, run_ids: list[str]
+    ) -> dict[str, list[CandidateMatch]]:
+        """Bulk counterpart of ``list_candidate_matches`` used by batch views."""
+        if not run_ids:
+            return {}
+        requested = set(run_ids)
+        grouped: dict[str, list[CandidateMatch]] = {}
+        for (request_id, _), match in self._candidate_matches.items():
+            if request_id in requested:
+                grouped.setdefault(request_id, []).append(match)
+        return grouped
+
     def list_keyword_matches(
         self,
         keyword: str,
@@ -406,10 +443,16 @@ class MockRepository:
             key=lambda item: (-item.score, item.platform_rank),
         )[:limit]
 
-    def list_tasks(self) -> list[TaskRecord]:
-        return sorted(
-            self._tasks.values(), key=lambda task: task.created_at, reverse=True
-        )
+    def list_tasks(self, candidate_ids: list[str] | None = None) -> list[TaskRecord]:
+        tasks = list(self._tasks.values())
+        if candidate_ids:
+            requested = set(candidate_ids)
+            tasks = [
+                task
+                for task in tasks
+                if getattr(task, "candidate_id", None) in requested
+            ]
+        return sorted(tasks, key=lambda task: task.created_at, reverse=True)
 
     def get_task(self, task_id: str) -> TaskRecord | None:
         return self._tasks.get(task_id)
@@ -453,10 +496,18 @@ class MockRepository:
         self._sampling_checkpoints[checkpoint.checkpoint_id] = checkpoint
 
     def list_sampling_checkpoints(
-        self, keyword: str | None = None
+        self,
+        keyword: str | None = None,
+        tracking_batch_id: str | None = None,
     ) -> list[SamplingCheckpoint]:
         items: list[SamplingCheckpoint] = list(self._sampling_checkpoints.values())
-        if keyword:
+        if tracking_batch_id:
+            items = [
+                item
+                for item in items
+                if item.tracking_batch_id == tracking_batch_id
+            ]
+        elif keyword:
             items = [
                 item for item in items if item.keyword.casefold() == keyword.casefold()
             ]

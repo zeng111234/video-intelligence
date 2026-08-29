@@ -10,17 +10,21 @@ import {
   confirmPublishTaskAuto,
   connectPublishAccount,
   createCrawlerBatch,
+  createCrawlerProgressiveBatch,
   createPublishAccount,
   createProductionBatch,
   createProductionProfile,
   getAvatarCapabilities,
   getCrawlerBrowserDiscoveryCapabilities,
   getCrawlerBatch,
+  getCrawlerBatchForSelection,
+  getCrawlerKeywordQueue,
   getCrawlerHotWords,
   getPublishAccountStatus,
   getProductionBatchWorkspace,
   getProductionWorkspaceConfiguration,
   listAvatarAssets,
+  listCrawlerBatches,
   listProductionBatches,
   listProductionProfiles,
   listPublishAccounts,
@@ -42,6 +46,7 @@ import type {
   AvatarAsset,
   CrawlerBatchResponse,
   CrawlerCandidateResult,
+  CrawlerKeywordQueueResponse,
   ProductionBatch,
   ProductionProfile,
   ProductionWorkspace,
@@ -55,17 +60,21 @@ vi.mock("../api/client", async () => {
     confirmProductionBatchPublish: vi.fn(),
     connectPublishAccount: vi.fn(),
     createCrawlerBatch: vi.fn(),
+    createCrawlerProgressiveBatch: vi.fn(),
     createPublishAccount: vi.fn(),
     createProductionBatch: vi.fn(),
     createProductionProfile: vi.fn(),
     getAvatarCapabilities: vi.fn(),
     getCrawlerBrowserDiscoveryCapabilities: vi.fn(),
     getCrawlerBatch: vi.fn(),
+    getCrawlerBatchForSelection: vi.fn(),
+    getCrawlerKeywordQueue: vi.fn(),
     getCrawlerHotWords: vi.fn(),
     getPublishAccountStatus: vi.fn(),
     getProductionBatchWorkspace: vi.fn(),
     getProductionWorkspaceConfiguration: vi.fn(),
     listAvatarAssets: vi.fn(),
+    listCrawlerBatches: vi.fn(),
     listProductionBatches: vi.fn(),
     listProductionProfiles: vi.fn(),
     listPublishAccounts: vi.fn(),
@@ -238,6 +247,54 @@ function crawlerBatch(candidates: CrawlerCandidateResult[] = []): CrawlerBatchRe
     total_api_calls: 0,
     total_candidates: candidates.length,
     total_estimated_cost_cny: 0,
+  };
+}
+
+function progressiveQueue(batch: CrawlerBatchResponse): CrawlerKeywordQueueResponse {
+  const candidates = batch.platform_runs.flatMap((run) => (
+    (run.candidates || []).map((candidate) => ({
+      ...candidate,
+      // Some legacy fixtures keep a cross-platform candidate in a single run;
+      // the durable queue snapshot is keyed by the run's platform.
+      platform: run.platform,
+      platform_label: run.platform_label,
+    }))
+  ));
+  const scanned = Math.max(...batch.platform_runs.map((run) => run.raw_item_count || 0), 0);
+  const parsed = Math.max(...batch.platform_runs.map((run) => run.parsed_item_count || 0), 0);
+  return {
+    queue_id: "crawler-queue-test",
+    status: "succeeded",
+    platforms: batch.platform_runs.map((run) => run.platform),
+    published_window_days: batch.published_window_days,
+    count_per_platform: batch.count_per_platform,
+    created_at: batch.created_at || "2026-07-28T09:00:00+08:00",
+    updated_at: batch.finished_at || batch.created_at || "2026-07-28T09:00:10+08:00",
+    finished_at: batch.finished_at,
+    total: 1,
+    completed: 1,
+    queued: 0,
+    running: 0,
+    failed: 0,
+    worker_active: false,
+    items: [{
+      item_id: "crawler-queue-item-test",
+      keyword: batch.keyword,
+      status: "succeeded",
+      batch_id: batch.batch_id,
+      partial_batch_ids: [batch.batch_id],
+      error: batch.error,
+      progress_stage: "completed",
+      progress_platform: null,
+      progress_message: "已整理最终结果。",
+      scanned_count: scanned,
+      parsed_count: parsed,
+      retained_count: candidates.length,
+      progress_candidates: candidates,
+      started_at: batch.created_at,
+      finished_at: batch.finished_at,
+    }],
+    message: null,
   };
 }
 
@@ -430,6 +487,7 @@ describe("PipelinePage customer workspace", () => {
       updated_at: "2026-07-31T11:02:00+08:00",
     });
     vi.mocked(listProductionBatches).mockResolvedValue({ items: [] });
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [], total: 0 });
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(getAvatarCapabilities).mockResolvedValue({
       provider_name: "shuying_legacy_cloud",
@@ -478,6 +536,13 @@ describe("PipelinePage customer workspace", () => {
       default_profile_id: profile.profile_id,
       default_publish_platforms: ["douyin"],
       bundled_compute: true,
+    });
+    vi.mocked(createCrawlerProgressiveBatch).mockImplementation(async (params) => {
+      const batch = await vi.mocked(createCrawlerBatch)(params);
+      const queue = progressiveQueue(batch);
+      vi.mocked(getCrawlerKeywordQueue).mockResolvedValue(queue);
+      vi.mocked(getCrawlerBatch).mockResolvedValue(batch);
+      return { progressive_task: true, queue, queue_id: queue.queue_id };
     });
     vi.mocked(saveProductionWorkspaceConfiguration).mockResolvedValue({
       configured: true,
@@ -1022,6 +1087,13 @@ describe("PipelinePage customer workspace", () => {
     const emptyFinanceBatch = crawlerBatch();
     emptyFinanceBatch.keyword = "财经";
     vi.mocked(createCrawlerBatch).mockResolvedValue(emptyFinanceBatch);
+    vi.mocked(createCrawlerProgressiveBatch).mockImplementation(async (params) => {
+      const batch = await vi.mocked(createCrawlerBatch)(params);
+      const queue = progressiveQueue(batch);
+      vi.mocked(getCrawlerKeywordQueue).mockResolvedValue(queue);
+      vi.mocked(getCrawlerBatch).mockResolvedValue(batch);
+      return { progressive_task: true, queue, queue_id: queue.queue_id };
+    });
     vi.mocked(getCrawlerBrowserDiscoveryCapabilities).mockImplementation(async (platform) => ({
       platform,
       platform_label: platform === "douyin" ? "抖音" : platform === "kuaishou" ? "快手" : platform,
@@ -1226,7 +1298,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findByText("抖音 0/100（视频筛选未生效）")).toBeTruthy();
-    expect(screen.getByText("B站 16/100（已排除 41 条时间范围外素材）")).toBeTruthy();
+    expect(screen.getByText("B站 16/100（已排除 41 条时间范围外素材；已到本次安全加载上限）")).toBeTruthy();
   });
 
   it("ranks hotter materials ahead of a zero-like supplier top result", async () => {
@@ -1289,11 +1361,19 @@ describe("PipelinePage customer workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    const hotterButton = await screen.findByRole("button", { name: /真实互动更高的素材/ });
-    const zeroLikeButton = screen.getByRole("button", { name: /供应商第一但零赞/ });
-    expect(hotterButton.textContent).toContain("#1");
-    expect(zeroLikeButton.textContent).toContain("#2");
-    expect(hotterButton.compareDocumentPosition(zeroLikeButton)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    const hotterButton = (await screen.findAllByText("真实互动更高的素材"))
+      .map((element) => element.closest<HTMLButtonElement>("button.candidate-select"))
+      .find((element): element is HTMLButtonElement => element !== null);
+    const zeroLikeButton = screen.getAllByText("供应商第一但零赞")
+      .map((element) => element.closest<HTMLButtonElement>("button.candidate-select"))
+      .find((element): element is HTMLButtonElement => element !== null);
+    expect(hotterButton).not.toBeNull();
+    expect(zeroLikeButton).not.toBeNull();
+    await waitFor(() => {
+      expect(hotterButton!.textContent).toContain("#1");
+      expect(zeroLikeButton!.textContent).toContain("#2");
+    });
+    expect(hotterButton!.compareDocumentPosition(zeroLikeButton!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
     expect(screen.getByRole("button", { name: /真实互动更高的素材/ }).textContent).toContain("#1");
@@ -1510,6 +1590,27 @@ describe("PipelinePage customer workspace", () => {
     expect(selected.className).toContain("selected");
     expect(createProductionBatch).not.toHaveBeenCalled();
     expect(screen.getByText("本次找到的全部素材（1）")).toBeTruthy();
+  });
+
+  it("shows a saved material search on the start workspace and restores it without crawling again", async () => {
+    const savedBatch = {
+      ...crawlerBatch([candidate]),
+      batch_id: "saved-crawler-batch",
+      keyword: "餐饮获客",
+    };
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [savedBatch], total: 1 });
+    vi.mocked(getCrawlerBatchForSelection).mockResolvedValueOnce(savedBatch);
+
+    renderPage();
+
+    expect(await screen.findByText("餐饮获客")).toBeTruthy();
+    expect(screen.queryByText("最近找过的素材")).toBeNull();
+    expect(screen.getByText("餐饮获客")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "继续挑选：餐饮获客" }));
+
+    await waitFor(() => expect(getCrawlerBatchForSelection).toHaveBeenCalledWith("saved-crawler-batch"));
+    expect(await screen.findByText("本次找到的全部素材（1）")).toBeTruthy();
+    expect(createCrawlerBatch).not.toHaveBeenCalled();
   });
 
   it("preserves an explicitly selected low-threshold crawler candidate during handoff", async () => {
@@ -2288,13 +2389,13 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
     expect(await screen.findByText("素材上传失败")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "确认重新识别" }));
+    fireEvent.click(screen.getByRole("button", { name: "重新上传并识别" }));
     expect(retryProductionBatchFailed).not.toHaveBeenCalled();
     expect((await screen.findAllByText("确认重新提交云端转写？")).length).toBeGreaterThan(0);
     expect(screen.getByText(/¥0.0062/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "暂不付费" })).toBeTruthy();
 
-    const confirmationButtons = screen.getAllByRole("button", { name: "确认重新识别" });
+    const confirmationButtons = screen.getAllByRole("button", { name: "重新上传并识别" });
     fireEvent.click(confirmationButtons[confirmationButtons.length - 1]);
 
     await waitFor(() => expect(retryProductionBatchFailed).toHaveBeenCalledWith("production-batch-1"));

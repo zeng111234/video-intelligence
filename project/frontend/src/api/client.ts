@@ -1242,6 +1242,7 @@ export function createCrawlerProgressiveBatch(
       platforms: params.platforms,
       published_window_days: params.published_window_days,
       count_per_platform: params.count_per_platform,
+      force_refresh: params.force_refresh,
     }),
   }).then((queue) => ({
     progressive_task: true,
@@ -1256,6 +1257,10 @@ export function listCrawlerBatches(): Promise<CrawlerBatchListResponse> {
 
 export function getCrawlerBatch(batchId: string, init?: RequestInit): Promise<CrawlerBatchResponse> {
   return request(`/crawler/batches/${batchId}`, init);
+}
+
+export function getCrawlerBatchForSelection(batchId: string): Promise<CrawlerBatchResponse> {
+  return request(`/crawler/batches/${batchId}/selection`);
 }
 
 export function probeCrawlerBatchCopy(batchId: string): Promise<CrawlerBatchResponse> {
@@ -2164,8 +2169,9 @@ export function createVideoEditorBatch(params: {
   });
 }
 
-export function listVideoEditorBatches(): Promise<VideoEditorBatchListResponse> {
-  return request("/video-editor/batches");
+export function listVideoEditorBatches(limit = 20): Promise<VideoEditorBatchListResponse> {
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  return request(`/video-editor/batches?limit=${safeLimit}`);
 }
 
 export function getVideoEditorBatch(batchId: string): Promise<VideoEditorBatch> {

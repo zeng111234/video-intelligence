@@ -1,4 +1,4 @@
-# Start the current source checkout against the company authentication service
+﻿# Start the current source checkout against the company authentication service
 # without reusing the normal source workspace's local customer data.  This is
 # for development preview only; it never builds or updates the Windows EXE.
 

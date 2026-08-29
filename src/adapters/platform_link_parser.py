@@ -341,9 +341,27 @@ class LocalPlatformLinkParserClient:
             for item in audio_items:
                 if not isinstance(item, dict):
                     continue
-                candidate = item.get("baseUrl") or item.get("base_url")
-                if isinstance(candidate, str) and candidate.startswith("https://"):
-                    media_url = candidate
+                candidates = [
+                    item.get("baseUrl") or item.get("base_url"),
+                    *(item.get("backupUrl") or item.get("backup_url") or []),
+                ]
+                for candidate in candidates:
+                    if not isinstance(candidate, str) or not candidate.startswith("https://"):
+                        continue
+                    parsed_candidate = urlparse(candidate)
+                    try:
+                        candidate_port = parsed_candidate.port
+                    except ValueError:
+                        continue
+                    if (
+                        parsed_candidate.hostname
+                        and not parsed_candidate.username
+                        and not parsed_candidate.password
+                        and candidate_port in {None, 443}
+                    ):
+                        media_url = candidate
+                        break
+                if media_url:
                     break
         if play_payload.get("code") != 0 or not media_url:
             raise PlatformLinkParserError(

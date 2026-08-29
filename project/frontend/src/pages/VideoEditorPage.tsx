@@ -1112,6 +1112,7 @@ export default function VideoEditorPage() {
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
   const [isPreviewMuted, setIsPreviewMuted] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [reviewItem, setReviewItem] = useState<CloudBatchItem | null>(null);
   const [reviewSegments, setReviewSegments] = useState<TranscriptSegment[]>([]);
   const [reviewPlanStepIds, setReviewPlanStepIds] = useState<string[]>([]);
@@ -1131,7 +1132,9 @@ export default function VideoEditorPage() {
   const refresh = useCallback(async (keepCurrent = true) => {
     setLoading(true);
     const secondaryData = Promise.allSettled([
-      videoEditorApi.listVideoEditorBatches(),
+      // Only hydrate the latest batch during first render.  The full history
+      // list is requested when the user opens the history drawer.
+      videoEditorApi.listVideoEditorBatches(1),
       videoEditorApi.listVideoEditorBgm(),
       videoEditorApi.listVideoEditorVisualAssets("broll"),
     ] as const);
@@ -1177,6 +1180,18 @@ export default function VideoEditorPage() {
       }
     }
   }, [batch]);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const response = await videoEditorApi.listVideoEditorBatches(20);
+      setBatches(response.items.filter(isCloudBatch));
+    } catch (error) {
+      message.error((error as Error).message || "任务历史加载失败");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     void refresh(false);
@@ -1967,7 +1982,13 @@ export default function VideoEditorPage() {
       <header className="video-editor-cloud-header">
         <div>{batch ? statusTag(displayStatus) : null}</div>
         <Space wrap size={8}>
-          <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>任务历史</Button>
+          <Button
+            icon={<HistoryOutlined />}
+            onClick={() => {
+              setHistoryOpen(true);
+              void loadHistory();
+            }}
+          >任务历史</Button>
           <Tooltip title="刷新当前任务状态">
             <Button aria-label="刷新工作台" icon={<ReloadOutlined />} onClick={() => void refresh()} />
           </Tooltip>
@@ -2790,6 +2811,7 @@ export default function VideoEditorPage() {
         onClose={() => setHistoryOpen(false)}
       >
         <List
+          loading={historyLoading}
           dataSource={batches}
           locale={{ emptyText: "还没有云端轻量剪辑任务" }}
           renderItem={(item) => {

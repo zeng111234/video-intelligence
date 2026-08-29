@@ -1550,6 +1550,34 @@ class SQLiteRepository:
         ).fetchall()
         return [CandidateMatch.model_validate(dict(row)) for row in rows]
 
+    def list_candidate_matches_by_run_ids(
+        self, run_ids: list[str]
+    ) -> dict[str, list[CandidateMatch]]:
+        """一次 SQL 查所有 run_id 的 matches, 按 run_id group.
+        替代 _batch_to_response 里的 N+1 (每个 run 调一次 list_candidate_matches)."""
+        if not run_ids:
+            return {}
+        chunk_size = 500
+        out: dict[str, list[CandidateMatch]] = {}
+        for offset in range(0, len(run_ids), chunk_size):
+            chunk = run_ids[offset:offset + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self.connection.execute(
+                f"""
+                SELECT request_id, video_id, keyword, cohort_key, platform_rank,
+                       observed_at, publish_time, sort_type, evidence, platform,
+                       provider_name
+                FROM candidate_matches WHERE request_id IN ({placeholders}) ORDER BY video_id
+                """,
+                chunk,
+            ).fetchall()
+            for row in rows:
+                d = dict(row)
+                rid = d.get("request_id") or ""
+                match = CandidateMatch.model_validate(d)
+                out.setdefault(rid, []).append(match)
+        return out
+
     def list_keyword_matches(
         self,
         keyword: str,
@@ -3346,11 +3374,33 @@ class SQLiteRepository:
         ).fetchone()
         return row is not None
 
-    def list_tasks(self) -> list[TaskRecord]:
+    def list_tasks(
+        self,
+        candidate_ids: list[str] | None = None,
+    ) -> list[TaskRecord]:
+        """按 candidate_id 列表过滤任务; None 表示全表扫描 (旧行为).
+        candidate_id 存在 payload_json 里, 用 json_extract 过滤."""
+        if candidate_ids:
+            chunk_size = 500
+            tasks: list[TaskRecord] = []
+            for offset in range(0, len(candidate_ids), chunk_size):
+                chunk = candidate_ids[offset:offset + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = self.connection.execute(
+                    f"SELECT payload_json FROM tasks "
+                    f"WHERE json_extract(payload_json, '$.candidate_id') IN ({placeholders}) "
+                    "ORDER BY created_at DESC",
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    payload = json.loads(row["payload_json"])
+                    model = self._task_model(payload)
+                    tasks.append(model.model_validate(payload))
+            return tasks
         rows = self.connection.execute(
             "SELECT payload_json FROM tasks ORDER BY created_at DESC"
         ).fetchall()
-        tasks: list[TaskRecord] = []
+        tasks = []
         for row in rows:
             payload = json.loads(row["payload_json"])
             model = self._task_model(payload)
@@ -3466,9 +3516,19 @@ class SQLiteRepository:
             )
 
     def list_sampling_checkpoints(
-        self, keyword: str | None = None
+        self,
+        keyword: str | None = None,
+        tracking_batch_id: str | None = None,
     ) -> list[SamplingCheckpoint]:
-        if keyword:
+        """按 keyword 或 tracking_batch_id 过滤; 都为 None 时全表扫描 (旧行为)."""
+        if tracking_batch_id:
+            rows = self.connection.execute(
+                "SELECT payload_json FROM sampling_checkpoints "
+                "WHERE json_extract(payload_json, '$.tracking_batch_id') = ? "
+                "ORDER BY due_at",
+                (tracking_batch_id,),
+            ).fetchall()
+        elif keyword:
             rows = self.connection.execute(
                 """
                 SELECT payload_json FROM sampling_checkpoints

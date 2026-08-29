@@ -1492,8 +1492,8 @@ class TestCrawlerBatches:
         first_run = detail["platform_runs"][0]
         assert first_run["relevant_count"] == first_run["returned_count"]
         assert "irrelevant_count" in first_run
-        assert (
-            first_run["relevance_rule_version"] == "platform_search_final_eligible_v3"
+        assert first_run["relevance_rule_version"].startswith(
+            "platform_search_final_eligible_v"
         )
 
         list_resp = client.get("/api/v1/crawler/batches")

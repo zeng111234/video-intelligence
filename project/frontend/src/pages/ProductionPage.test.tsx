@@ -8,16 +8,18 @@ import ProductionPage from "./ProductionPage";
 import { ToastProvider } from "../components/Toast";
 import {
   getProductionBatchWorkspace,
+  listCrawlerBatches,
   listProductionBatches,
   reviewProductionBatchItems,
 } from "../api/client";
-import type { ProductionBatch, ProductionProfile, ProductionWorkspace } from "../api/types";
+import type { CrawlerBatchResponse, ProductionBatch, ProductionProfile, ProductionWorkspace } from "../api/types";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
   return {
     ...actual,
     getProductionBatchWorkspace: vi.fn(),
+    listCrawlerBatches: vi.fn(),
     listProductionBatches: vi.fn(),
     reviewProductionBatchItems: vi.fn(),
   };
@@ -54,6 +56,7 @@ function renderPage() {
 describe("ProductionPage single-task queue", () => {
   beforeEach(() => {
     Object.defineProperty(window, "matchMedia", { writable: true, value: vi.fn().mockImplementation(() => ({ matches: false, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() })) });
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [] });
   });
 
   afterEach(() => { cleanup(); document.body.innerHTML = ""; vi.clearAllMocks(); });
@@ -85,5 +88,21 @@ describe("ProductionPage single-task queue", () => {
     expect(screen.queryByText("暂停")).toBeNull();
     expect(screen.queryByText("重试失败项")).toBeNull();
     expect(screen.getByText("全部任务")).toBeTruthy();
+  });
+
+  it("returns candidate tasks to the material selection page", async () => {
+    const crawlerBatch = {
+      batch_id: "crawler-batch-1",
+      keyword: "企业获客",
+      status: "succeeded",
+      platform_runs: [{ status: "succeeded" }],
+    } as unknown as CrawlerBatchResponse;
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [crawlerBatch] });
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [] });
+
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "查看素材" });
+    expect(link.getAttribute("href")).toBe("/pipeline?crawler_batch_id=crawler-batch-1");
   });
 });

@@ -139,6 +139,14 @@ export default function MaterialSearchExperience({
   useEffect(() => {
     const unrevealed = entries.filter(({ candidate }) => !revealedIds.includes(candidate.video_id));
     if (unrevealed.length === 0) return undefined;
+    // 最终批次已经完整返回，直接一次性展示，避免收尾阶段再逐条等待。
+    if (complete) {
+      setRevealedIds((previous) => [
+        ...previous,
+        ...unrevealed.map(({ candidate }) => candidate.video_id),
+      ]);
+      return undefined;
+    }
     // 首批 ≤8 条立刻整批入场, 避免按钮点完后 1.8 秒还看不到第一张卡;
     // 超过 8 条时, 先入前 8 条整批, 之后保持 180ms 节奏逐条追加.
     if (revealedIds.length === 0 && unrevealed.length <= 8) {
@@ -157,12 +165,15 @@ export default function MaterialSearchExperience({
       ));
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [entries, revealedIds]);
+  }, [complete, entries, revealedIds]);
 
   const visibleEntries = entries.filter(({ candidate }) => revealedIds.includes(candidate.video_id));
   const scannedCount = progress?.scanned_count || 0;
   const parsedCount = progress?.parsed_count || 0;
   const retainedCount = progress?.retained_count ?? primaryEntries.length;
+  const totalTarget = Math.max(targetCount, targetCount * platforms.length);
+  const boundedRetainedCount = Math.min(retainedCount, totalTarget);
+  const isComplete = Boolean(complete && batch);
   const activePlatformLabel = progress?.progress_platform
     ? PLATFORM_LABELS[progress.progress_platform as MaterialSearchPlatform] || progress.progress_platform
     : null;
@@ -176,22 +187,22 @@ export default function MaterialSearchExperience({
       <header className="material-search-heading">
         <div>
           <span className="material-search-kicker">实时找素材</span>
-          <h3>正在为“{keyword}”寻找视频</h3>
+          <h3>{isComplete ? `“${keyword}”的素材已整理完成` : `正在为“${keyword}”寻找视频`}</h3>
           <p>
             {batch
               ? complete
-                ? "平台已经返回，真实视频正在逐条进入候选区。"
+                ? "平台已经返回，真实视频已整理完成，候选素材已全部展示。"
                 : (progress?.progress_message || "已显示已完成的平台结果，其他平台仍在继续扫描。")
               : `正在从${platforms.map((platform) => PLATFORM_LABELS[platform]).join("、")}找素材，结果会在扫描到合格素材时逐条出现。`}
           </p>
         </div>
-        <span className="material-search-elapsed"><ClockCircleOutlined /> 已等待 {elapsed}</span>
+        <span className="material-search-elapsed"><ClockCircleOutlined /> {isComplete ? "用时" : "已等待"} {elapsed}</span>
       </header>
 
       {progress ? (
         <div className="material-search-progress-counts">
-          {activePlatformLabel ? `当前平台：${activePlatformLabel} · ` : ""}
-          {progress.progress_message || "正在扫描平台结果。"} · 已扫描 {scannedCount} 条 · 已解析 {parsedCount} 条 · 已找到 {retainedCount}/{targetCount} 条
+          {!isComplete && activePlatformLabel ? `当前平台：${activePlatformLabel} · ` : ""}
+          {progress.progress_message || "正在扫描平台结果。"} · 已扫描 {scannedCount} 条 · 已解析 {parsedCount} 条 · 已找到 {boundedRetainedCount}/{totalTarget} 条（每个平台最多 {targetCount} 条）
         </div>
       ) : null}
       {progressError && (

@@ -71,6 +71,30 @@ def _has_valid_signature(extension: str, content: bytes) -> bool:
     return False
 
 
+def _cloud_failure_summary(exc: BaseException) -> str:
+    """Return a short provider diagnostic without exposing a traceback or secret."""
+
+    message = str(exc).strip()
+    http_match = re.search(r"\bHTTP\s+(\d{3})\b", message, flags=re.IGNORECASE)
+    provider_code = str(getattr(exc, "code", "") or "").strip()
+    provider_kind = str(getattr(exc, "kind", "") or "").strip().casefold()
+    if http_match and provider_code:
+        return f"HTTP {http_match.group(1)} / {provider_code}"
+    if http_match:
+        return f"HTTP {http_match.group(1)}"
+    if provider_code:
+        return provider_code
+    if provider_kind == "authorization":
+        return "授权失败"
+    if provider_kind == "rate_limit":
+        return "请求过于频繁"
+    if provider_kind == "connection":
+        return "连接异常"
+    if provider_kind == "validation":
+        return "请求参数无效"
+    return "云服务异常"
+
+
 class TranscriptionService:
     def __init__(
         self,
@@ -655,6 +679,7 @@ class TranscriptionService:
                     ),
                     "progress": 100,
                     "provider_status": "succeeded",
+                    "error_message": None,
                     "segments": segments,
                     "duration_seconds": cloud_transcript.duration_seconds
                     or task.duration_seconds,
@@ -705,7 +730,15 @@ class TranscriptionService:
                     "error_message": (
                         "素材上传连接失败，尚未创建云端识别任务；素材已保留，确认费用后可重试一次。"
                         if upload_failed_before_submission
-                        else str(exc)
+                        else exc.user_message
+                        if isinstance(exc, TranscriptionError)
+                        else (
+                            "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
+                            "请重新连接查询，系统不会重复提交。"
+                            if outcome_unknown
+                            else f"阿里云语音识别失败（{_cloud_failure_summary(exc)}），"
+                            "素材已保留；请重新上传并识别。"
+                        )
                     ),
                     "elapsed_seconds": round(monotonic() - started, 2),
                     "updated_at": datetime.now().astimezone(),
@@ -715,8 +748,18 @@ class TranscriptionService:
             if isinstance(exc, TranscriptionError):
                 raise
             raise TranscriptionError(
-                "阿里云语音识别失败，素材已保留；不会使用本地 CPU。",
-                code="cloud_asr_failed",
+                (
+                    "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
+                    "请重新连接查询，系统不会重复提交。"
+                    if outcome_unknown
+                    else f"阿里云语音识别失败（{_cloud_failure_summary(exc)}），"
+                    "素材已保留；请重新上传并识别。"
+                ),
+                code=(
+                    "cloud_asr_outcome_unknown"
+                    if outcome_unknown
+                    else "cloud_asr_failed"
+                ),
                 task_id=task.task_id,
             ) from exc
 

@@ -46,7 +46,7 @@ describe("MaterialSearchExperience", () => {
     );
 
     expect(screen.getByRole("status").textContent).toContain("正在从抖音、B站找素材");
-    expect(screen.getAllByText("等待返回")).toHaveLength(2);
+    expect(screen.getAllByText(/等待启动/)).toHaveLength(2);
     expect(screen.queryByText("餐饮老板获客实战")).toBeNull();
   });
 

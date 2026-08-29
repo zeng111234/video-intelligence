@@ -50,7 +50,7 @@ import {
   confirmPublishTaskAuto,
   confirmProductionBatchPublish,
   connectPublishAccount,
-  createCrawlerBatch,
+  createCrawlerProgressiveBatch,
   createPublishAccount,
   createProductionBatch,
   createProductionProfile,
@@ -58,10 +58,13 @@ import {
   getCrawlerBrowserDiscoveryCapabilities,
   getProductionWorkspaceConfiguration,
   getCrawlerBatch,
+  getCrawlerBatchForSelection,
+  getCrawlerKeywordQueue,
   getCrawlerHotWords,
   getPublishAccountStatus,
   getProductionBatchWorkspace,
   listAvatarAssets,
+  listCrawlerBatches,
   listProductionBatches,
   listProductionProfiles,
   listPublishAccounts,
@@ -89,6 +92,7 @@ import type {
   CrawlerBrowserDiscoveryCapabilities,
   CrawlerCandidateResult,
   CrawlerHotWordItem,
+  CrawlerKeywordQueueResponse,
   CrawlerSearchRequest,
   ProductionBatch,
   ProductionCreativePlan,
@@ -304,6 +308,19 @@ function formatCandidateMetric(value: number | null | undefined) {
   return value.toLocaleString("zh-CN");
 }
 
+function formatWorkbenchTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const M = d.getMonth() + 1;
+  const D = d.getDate();
+  const h = d.getHours().toString().padStart(2, "0");
+  const m = d.getMinutes().toString().padStart(2, "0");
+  return sameYear ? `${M}/${D} ${h}:${m}` : `${d.getFullYear()}/${M}/${D} ${h}:${m}`;
+}
+
 function platformRunSummary(
   run: CrawlerBatchResponse["platform_runs"][number],
   defaultTarget: number,
@@ -311,26 +328,107 @@ function platformRunSummary(
   const label = run.platform_label || PLATFORM_LABELS[run.platform] || run.platform;
   const target = run.requested_count || defaultTarget;
   const returned = run.returned_count || 0;
+  const relatedCount = run.platform === "bilibili"
+    ? (run.candidates || []).filter((candidate) => candidate.selection_tier === "reserve").length
+      + (run.reference_count || 0)
+    : 0;
+  const directCount = run.strict_relevant_count ?? Math.max(0, returned - relatedCount);
+  const relatedNote = relatedCount > 0
+    ? `（直接匹配 ${directCount}，相关待确认 ${relatedCount}）`
+    : "";
   if (returned >= target || run.crawl_stop_reason === "target_reached") {
-    return `${label} ${returned}/${target}`;
+    return `${label} ${returned}/${target}${relatedNote}`;
   }
   const errorCode = (run.errors || [])
     .map((error) => (typeof error.code === "string" ? error.code : ""))
     .find(Boolean);
-  let reason = "本次只返回这些结果";
+  const reasons: string[] = [];
   if (errorCode === "public_search_video_filter_unavailable"
     || errorCode === "public_search_video_filter_unconfirmed") {
-    reason = "视频筛选未生效";
-  } else if ((run.out_of_window_count || 0) > 0) {
-    reason = `已排除 ${run.out_of_window_count} 条时间范围外素材`;
-  } else if (run.crawl_stop_reason === "no_more_loaded" || run.crawl_stop_reason === "platform_end") {
-    reason = "平台没有继续加载";
-  } else if (run.crawl_stop_reason === "safety_limit") {
-    reason = "已到本次安全加载上限";
-  } else if (run.status === "failed") {
-    reason = "本次未完成";
+    reasons.push("视频筛选未生效");
   }
-  return `${label} ${returned}/${target}（${reason}）`;
+  if ((run.out_of_window_count || 0) > 0) {
+    reasons.push(`已排除 ${run.out_of_window_count} 条时间范围外素材`);
+  }
+  if ((run.irrelevant_count || 0) > 0) {
+    reasons.push(`另有 ${run.irrelevant_count} 条未命中关键词`);
+  }
+  if (run.crawl_stop_reason === "no_more_loaded" || run.crawl_stop_reason === "platform_end") {
+    reasons.push("平台没有继续加载");
+  } else if (run.crawl_stop_reason === "safety_limit") {
+    reasons.push("已到本次安全加载上限");
+  } else if (run.status === "failed") {
+    reasons.push("本次未完成");
+  }
+  return `${label} ${returned}/${target}${relatedNote || (reasons.length ? `（${reasons.join("；")}）` : "（本次只返回这些结果）")}`;
+}
+
+const CRAWLER_QUEUE_TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "partial",
+  "failed",
+  "cancelled",
+  "paused",
+]);
+
+function buildPipelineProgressBatch(queue: CrawlerKeywordQueueResponse): CrawlerBatchResponse | null {
+  const item = queue.items[0];
+  if (!item) return null;
+  const candidates = item.progress_candidates || [];
+  const terminal = CRAWLER_QUEUE_TERMINAL_STATUSES.has(queue.status);
+  const platformRuns = queue.platforms.map((platform) => {
+    const platformCandidates = candidates.filter((candidate) => candidate.platform === platform);
+    return {
+      run_id: `progress-${queue.queue_id}-${platform}`,
+      platform,
+      platform_label: PLATFORM_LABELS[platform] || platform,
+      provider: "free_multi_platform",
+      mode: "local_browser",
+      status: terminal ? "partial" : "running",
+      requested_count: queue.count_per_platform,
+      returned_count: platformCandidates.length,
+      raw_item_count: item.scanned_count || 0,
+      parsed_item_count: item.parsed_count || 0,
+      raw_discovered: item.scanned_count || 0,
+      parsed: item.parsed_count || 0,
+      retained: platformCandidates.length,
+      out_of_window_count: 0,
+      invalid_count: 0,
+      duplicate_count: 0,
+      result_state: "progressive_snapshot",
+      payload_diagnostic: null,
+      cache_hit: false,
+      cached_from_run_id: null,
+      api_call_count: 0,
+      billable_units: null,
+      quota_remaining: null,
+      error: null,
+      errors: [],
+      started_at: item.started_at,
+      finished_at: item.finished_at,
+      candidates: platformCandidates,
+      reference_count: 0,
+      reference_candidates: [],
+    };
+  });
+  return {
+    batch_id: item.batch_id || `progress-${queue.queue_id}`,
+    keyword: item.keyword,
+    platforms: queue.platforms,
+    published_window_days: queue.published_window_days,
+    count_per_platform: queue.count_per_platform,
+    provider: "free_multi_platform",
+    mode: "local_browser",
+    status: terminal ? queue.status : "running",
+    force_refresh: false,
+    created_at: queue.created_at,
+    finished_at: item.finished_at,
+    error: item.error,
+    platform_runs: platformRuns,
+    total_api_calls: 0,
+    total_candidates: candidates.length,
+    total_estimated_cost_cny: 0,
+  };
 }
 
 function compareCandidateRanking(left: CrawlerCandidateResult, right: CrawlerCandidateResult) {
@@ -357,7 +455,10 @@ function strictCandidates(batch: CrawlerBatchResponse, preferredCandidateId = ""
   const byId = new Map<string, CrawlerCandidateResult>();
   batch.platform_runs.forEach((run) => {
     (run.candidates || []).forEach((candidate) => {
-      byId.set(candidate.video_id, { ...candidate, selection_tier: "priority" });
+      byId.set(candidate.video_id, {
+        ...candidate,
+        selection_tier: candidate.selection_tier === "reserve" ? "reserve" : "priority",
+      });
     });
     (run.low_incremental_candidates || []).forEach((candidate) => {
       if (!byId.has(candidate.video_id)) {
@@ -372,7 +473,10 @@ function strictCandidates(batch: CrawlerBatchResponse, preferredCandidateId = ""
 }
 
 function selectAutomaticCandidates(candidates: CrawlerCandidateResult[]) {
-  return [...candidates].sort(compareCandidateRanking);
+  // B 站放宽匹配的相关候补只用于扩大可选结果，不能未经确认进入自动创作。
+  return candidates
+    .filter((candidate) => candidate.selection_tier !== "reserve")
+    .sort(compareCandidateRanking);
 }
 
 function diagnoseCrawlerResult(batch: CrawlerBatchResponse) {
@@ -440,6 +544,7 @@ export default function PipelinePage() {
   const isAdminSession = Boolean(getAdminToken());
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const searchParamsKey = searchParams.toString();
   const operationKeys = useRef(new Map<string, string>());
   const reviewContextRef = useRef("");
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
@@ -466,6 +571,9 @@ export default function PipelinePage() {
     platforms: BrowserPlatform[];
   } | null>(null);
   const [materialSearchBatch, setMaterialSearchBatch] = useState<CrawlerBatchResponse | null>(null);
+  const [materialSearchQueueId, setMaterialSearchQueueId] = useState<string | null>(null);
+  const [materialSearchQueue, setMaterialSearchQueue] = useState<CrawlerKeywordQueueResponse | null>(null);
+  const [materialSearchComplete, setMaterialSearchComplete] = useState(false);
   const [failedSearchPlatforms, setFailedSearchPlatforms] = useState<BrowserPlatform[]>([]);
 
   const [profiles, setProfiles] = useState<ProductionProfile[]>([]);
@@ -500,6 +608,7 @@ export default function PipelinePage() {
   const [avatarCost, setAvatarCost] = useState<number | null>(null);
 
   const [batches, setBatches] = useState<ProductionBatch[]>([]);
+  const [recentMaterialBatches, setRecentMaterialBatches] = useState<CrawlerBatchResponse[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState("");
   const [selectedRunId, setSelectedRunId] = useState("");
   const [workspace, setWorkspace] = useState<ProductionWorkspace | null>(null);
@@ -673,13 +782,37 @@ export default function PipelinePage() {
     () => batches
       .filter((batch) => !isFinishedBatch(batch))
       .sort((left, right) => {
-        const priority = workbenchTaskPriority(left, selectedBatchId) - workbenchTaskPriority(right, selectedBatchId);
-        if (priority !== 0) return priority;
-        return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
+        // 主排序：按创建时间倒序，最新任务在前面
+        const createdDelta = new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+        if (createdDelta !== 0) return createdDelta;
+        // 兜底：未结任务按状态优先级（awaiting_review > failed > other）
+        return workbenchTaskPriority(left, selectedBatchId) - workbenchTaskPriority(right, selectedBatchId);
       }),
     [batches, selectedBatchId],
   );
-  const visibleWorkbenchBatches = pendingWorkbenchBatches.slice(0, WORKBENCH_TASK_LIMIT);
+  // 合并 pending + recent material, 按 created_at desc 排序, 取前 2 条;
+  // 不再按业务分组, 用户只关心"最近还在做的任务".
+  const unifiedWorkbenchBatches = useMemo(
+    () => {
+      type Item =
+        | { type: "pending"; batch: ProductionBatch }
+        | { type: "recent"; batch: CrawlerBatchResponse };
+      const items: Item[] = [
+        ...pendingWorkbenchBatches.map((batch) => ({ type: "pending" as const, batch })),
+        ...recentMaterialBatches
+          .filter((batch) => batch.total_candidates > 0)
+          .map((batch) => ({ type: "recent" as const, batch })),
+      ];
+      return items
+        .sort(
+          (left, right) =>
+            new Date(right.batch.created_at ?? 0).getTime() -
+            new Date(left.batch.created_at ?? 0).getTime(),
+        )
+        .slice(0, WORKBENCH_TASK_LIMIT);
+    },
+    [pendingWorkbenchBatches, recentMaterialBatches],
+  );
 
   const getOperationKey = useCallback((operation: string, payload: unknown) => {
     const fingerprint = `${operation}:${stableFingerprint(payload)}`;
@@ -737,6 +870,57 @@ export default function PipelinePage() {
     navigate("/pipeline", { replace: true });
   }, [navigate]);
 
+  const restoreMaterialSearchBatch = useCallback(async (
+    crawlerBatchId: string,
+    requestedCandidateId = "",
+    quickRestore = false,
+  ) => {
+    const batch = await (quickRestore || !requestedCandidateId
+      ? getCrawlerBatchForSelection(crawlerBatchId)
+      : getCrawlerBatch(crawlerBatchId));
+    const found = strictCandidates(batch, requestedCandidateId);
+    const requestedCandidateFound = Boolean(
+      requestedCandidateId
+      && found.some((candidate) => candidate.video_id === requestedCandidateId),
+    );
+    setSourceMode("keyword");
+    setCreationMode("manual");
+    setKeyword(batch.keyword);
+    setMaterialSearchBatch(batch);
+    setMaterialSearchProgress(null);
+    setMaterialSearchQueueId(null);
+    setMaterialSearchQueue(null);
+    setMaterialSearchComplete(true);
+    setCandidates(found);
+    setCandidatePage(1);
+    setSelectedCandidateId(
+      requestedCandidateId
+        ? (requestedCandidateFound ? requestedCandidateId : "")
+        : found[0]?.video_id || "",
+    );
+    if (requestedCandidateId && !requestedCandidateFound) {
+      setCrawlerReason({
+        kind: "所选候选不可用",
+        message: "素材发现中选择的内容已不在本次结果中；不会自动替换成另一条，请返回素材发现重新选择。",
+      });
+    } else if (!found.length) {
+      setCrawlerReason(diagnoseCrawlerResult(batch));
+    } else if (
+      requestedCandidateId
+      && found[0]?.video_id === requestedCandidateId
+      && !batch.platform_runs.some((run) =>
+        run.candidates.some((candidate) => candidate.video_id === requestedCandidateId))
+    ) {
+      setCrawlerReason({
+        kind: "未达热门阈值",
+        message: "已按素材发现中的明确选择带入该内容；它未进入当前热门主榜，请确认后再创建任务。",
+      });
+    } else {
+      setCrawlerReason(null);
+    }
+    return batch;
+  }, []);
+
   const loadInitialData = useCallback(async () => {
     setInitializing(true);
     setLoadError("");
@@ -747,6 +931,7 @@ export default function PipelinePage() {
         getAvatarCapabilities(),
       ] as const);
       const batchData = listProductionBatches();
+      const crawlerBatchData = listCrawlerBatches();
       const [profileData, assetData, configuration] =
         await Promise.all([
           listProductionProfiles(),
@@ -756,6 +941,7 @@ export default function PipelinePage() {
       setProfiles(profileData.items);
       setAssets(assetData);
       void batchData.then((result) => setBatches(result.items)).catch(() => undefined);
+      void crawlerBatchData.then((result) => setRecentMaterialBatches(result.items)).catch(() => undefined);
       setWorkspaceConfiguration(configuration);
       setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
       setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
@@ -784,8 +970,9 @@ export default function PipelinePage() {
         || "",
       );
 
-      const requestedBatch = searchParams.get("batch") || "";
-      const requestedRun = searchParams.get("run") || "";
+      const requestedSearchParams = new URLSearchParams(searchParamsKey);
+      const requestedBatch = requestedSearchParams.get("batch") || "";
+      const requestedRun = requestedSearchParams.get("run") || "";
       if (requestedBatch) {
         setSelectedRunId(requestedRun);
         setSelectedBatchId(requestedBatch);
@@ -802,49 +989,17 @@ export default function PipelinePage() {
         }
       }
 
-      const crawlerBatchId = searchParams.get("crawler_batch_id") || "";
-      const requestedCandidateId = searchParams.get("candidate_id") || "";
+      const crawlerBatchId = requestedSearchParams.get("crawler_batch_id") || "";
+      const requestedCandidateId = requestedSearchParams.get("candidate_id") || "";
       if (crawlerBatchId) {
-        const batch = await getCrawlerBatch(crawlerBatchId);
-        const found = strictCandidates(batch, requestedCandidateId);
-        const requestedCandidateFound = Boolean(
-          requestedCandidateId
-          && found.some((candidate) => candidate.video_id === requestedCandidateId),
-        );
-        setSourceMode("keyword");
-        setCreationMode(requestedCandidateId ? "manual" : "auto");
-        setKeyword(batch.keyword);
-        setCandidates(found);
-        setSelectedCandidateId(
-          requestedCandidateId
-            ? (requestedCandidateFound ? requestedCandidateId : "")
-            : found[0]?.video_id || "",
-        );
-        if (requestedCandidateId && !requestedCandidateFound) {
-          setCrawlerReason({
-            kind: "所选候选不可用",
-            message: "素材发现中选择的内容已不在本次结果中；不会自动替换成另一条，请返回素材发现重新选择。",
-          });
-        } else if (!found.length) {
-          setCrawlerReason(diagnoseCrawlerResult(batch));
-        } else if (
-          requestedCandidateId
-          && found[0]?.video_id === requestedCandidateId
-          && !batch.platform_runs.some((run) =>
-            run.candidates.some((candidate) => candidate.video_id === requestedCandidateId))
-        ) {
-          setCrawlerReason({
-            kind: "未达热门阈值",
-            message: "已按素材发现中的明确选择带入该内容；它未进入当前热门主榜，请确认后再创建任务。",
-          });
-        }
+        await restoreMaterialSearchBatch(crawlerBatchId, requestedCandidateId);
       }
     } catch (error) {
       setLoadError((error as Error).message || "工作台初始化失败");
     } finally {
       setInitializing(false);
     }
-  }, [loadWorkspace, searchParams]);
+  }, [loadWorkspace, restoreMaterialSearchBatch, searchParamsKey]);
 
   useEffect(() => {
     void loadInitialData();
@@ -1039,6 +1194,9 @@ export default function PipelinePage() {
       });
     }
     setMaterialSearchProgress(null);
+    setMaterialSearchQueueId(null);
+    setMaterialSearchQueue(null);
+    setMaterialSearchComplete(false);
     setBusy(false);
   }, [browserDiscoveries, creationMode]);
 
@@ -1057,6 +1215,9 @@ export default function PipelinePage() {
     setActionMessage("");
     setCrawlerReason(null);
     setMaterialSearchBatch(null);
+    setMaterialSearchQueueId(null);
+    setMaterialSearchQueue(null);
+    setMaterialSearchComplete(false);
     setMaterialSearchProgress({
       startedAt: Date.now(),
       platforms: [...targetPlatforms].filter(isBrowserPlatform),
@@ -1085,18 +1246,76 @@ export default function PipelinePage() {
       };
       // 与“素材发现”页共用同一条免费搜索链路。这里不再额外预判，
       // 避免浏览器状态的瞬时差异把本可执行的搜索提前拦成“换关键词”。
-      const batch = await createCrawlerBatch(request);
-      setMaterialSearchBatch(batch);
+      const task = await createCrawlerProgressiveBatch(request);
+      setMaterialSearchQueueId(task.queue_id);
+      setMaterialSearchQueue(task.queue);
     } catch (error) {
       setCrawlerReason({
         kind: "检索没有开始",
         message: (error as Error).message || "搜索请求没有成功提交；你的关键词不会丢失。",
       });
       setMaterialSearchBatch(null);
+      setMaterialSearchQueueId(null);
+      setMaterialSearchQueue(null);
+      setMaterialSearchComplete(false);
       setMaterialSearchProgress(null);
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!materialSearchQueueId) return undefined;
+    let active = true;
+    const sync = async () => {
+      try {
+        const queue = await getCrawlerKeywordQueue(materialSearchQueueId);
+        if (!active) return;
+        const item = queue.items[0];
+        const progressBatch = buildPipelineProgressBatch(queue);
+        setMaterialSearchQueue(queue);
+        if (progressBatch) setMaterialSearchBatch(progressBatch);
+        if (!CRAWLER_QUEUE_TERMINAL_STATUSES.has(queue.status)) return;
+
+        let finalBatch = progressBatch;
+        if (item?.batch_id) {
+          try {
+            finalBatch = await getCrawlerBatch(item.batch_id);
+          } catch (error) {
+            setCrawlerReason({
+              kind: "结果正在整理",
+              message: `最终结果读取失败，已保留当前已找到的素材：${(error as Error).message || "请稍后重试"}`,
+            });
+          }
+        }
+        if (!active) return;
+        if (finalBatch) {
+          setMaterialSearchBatch(finalBatch);
+          setMaterialSearchComplete(true);
+        } else {
+          setMaterialSearchProgress(null);
+          setCrawlerReason({
+            kind: "检索没有完成",
+            message: item?.error || item?.progress_message || "找素材没有返回可查看结果，请稍后重试。",
+          });
+        }
+        setMaterialSearchQueueId(null);
+        setBusy(false);
+      } catch (error) {
+        if (active) {
+          setCrawlerReason({
+            kind: "进度读取失败",
+            message: `找素材仍在后台运行，进度暂时读取失败：${(error as Error).message || "请稍后刷新"}`,
+          });
+        }
+      }
+    };
+    void sync();
+    const timer = window.setInterval(() => void sync(), 1_500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [materialSearchQueueId]);
 
   const saveProfile = async () => {
     setActionError("");
@@ -2078,7 +2297,7 @@ export default function PipelinePage() {
       review_publish_draft: "确认发布信息",
       publish: "确认并自动发布",
       resume: "继续任务",
-      retry: transcriptionUploadRetry ? "确认重新识别" : "安全重试",
+      retry: transcriptionUploadRetry ? "重新上传并识别" : "安全重试",
       wait: "刷新实时状态",
       view_result: "查看成片",
       completed: "查看完成结果",
@@ -2249,36 +2468,74 @@ export default function PipelinePage() {
 
   const renderWorkbenchTaskList = () => (
     <>
-      {visibleWorkbenchBatches.length ? (
+      {unifiedWorkbenchBatches.length ? (
         <List
           className="workbench-task-list"
           size="small"
-          dataSource={visibleWorkbenchBatches}
-          renderItem={(batch) => (
-            <List.Item
-              className={`workbench-task-item${batch.batch_id === selectedBatchId ? " active-batch" : ""}`}
-              actions={[
-                <Button key="open" type="link" onClick={() => {
-                  const run = batch.items[0]?.run_id || "";
-                  setSelectedRunId(run);
-                  navigate(`/pipeline?batch=${encodeURIComponent(batch.batch_id)}&run=${encodeURIComponent(run)}`);
-                  void loadWorkspace(batch.batch_id);
-                }} aria-label={`${workbenchTaskAction(batch.status)}：${productionTaskTitle(batch.name)}`}>
-                  {workbenchTaskAction(batch.status)}
-                </Button>,
-              ]}
-            >
-              <List.Item.Meta
-                title={(
-                  <span className="workbench-task-title" title={productionTaskTitle(batch.name)}>
-                    {productionTaskTitle(batch.name)}
-                  </span>
-                )}
-                description={`${batch.profile_name} · ${new Date(batch.created_at).toLocaleString()}`}
-              />
-              <Tag color={statusColor(batch.status)}>{STATUS_LABEL[batch.status] || batch.status}</Tag>
-            </List.Item>
-          )}
+          dataSource={unifiedWorkbenchBatches}
+          renderItem={({ type, batch }) => {
+            if (type === "pending") {
+              const pending = batch as ProductionBatch;
+              return (
+                <List.Item
+                  className={`workbench-task-item${pending.batch_id === selectedBatchId ? " active-batch" : ""}`}
+                  style={{ minHeight: 76 }}
+                  actions={[
+                    <Button
+                      key="open"
+                      type="link"
+                      onClick={() => {
+                        const run = pending.items[0]?.run_id || "";
+                        setSelectedRunId(run);
+                        navigate(`/pipeline?batch=${encodeURIComponent(pending.batch_id)}&run=${encodeURIComponent(run)}`);
+                        void loadWorkspace(pending.batch_id);
+                      }}
+                      aria-label={`${workbenchTaskAction(pending.status)}：${productionTaskTitle(pending.name)}`}
+                    >
+                      {workbenchTaskAction(pending.status)}
+                    </Button>,
+                  ]}
+                >
+                  <List.Item.Meta
+                    title={(
+                      <span className="workbench-task-title" title={productionTaskTitle(pending.name)}>
+                        {productionTaskTitle(pending.name)}
+                      </span>
+                    )}
+                    description={`${pending.profile_name} · ${formatWorkbenchTime(pending.created_at)}`}
+                  />
+                  <Tag color={statusColor(pending.status)}>{STATUS_LABEL[pending.status] || pending.status}</Tag>
+                </List.Item>
+              );
+            }
+            const recent = batch as CrawlerBatchResponse;
+            return (
+              <List.Item
+                className="recent-material-search-item"
+                style={{ minHeight: 76 }}
+                actions={[
+                  <Button
+                    key="resume-material-search"
+                    type="link"
+                    onClick={() => {
+                      void restoreMaterialSearchBatch(recent.batch_id, "", true).catch((error) => {
+                        setActionError((error as Error).message || "读取已保存的素材失败");
+                      });
+                    }}
+                    aria-label={`继续挑选：${recent.keyword}`}
+                  >
+                    继续挑选
+                  </Button>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={<span className="workbench-task-title">{recent.keyword}</span>}
+                  description={`${recent.total_candidates} 条可选素材 · ${formatWorkbenchTime(recent.created_at)}`}
+                />
+                <Tag color="green">已保留</Tag>
+              </List.Item>
+            );
+          }}
         />
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无需要处理的任务" />
@@ -2382,7 +2639,7 @@ export default function PipelinePage() {
       <Modal
         title="确认重新提交云端转写？"
         open={transcriptionRetryConfirmOpen}
-        okText="确认重新识别"
+        okText="重新上传并识别"
         cancelText="暂不付费"
         confirmLoading={busy}
         onCancel={() => setTranscriptionRetryConfirmOpen(false)}
@@ -2590,7 +2847,7 @@ export default function PipelinePage() {
                       </div>
                     ) : (
                       <Paragraph type="secondary" className="creation-mode-note">
-                        推荐先自己挑选素材，确认方向和费用后，再进入改写、数字人和剪辑流程。
+                        快手不支持发布时间筛选，会按不限时间搜索；其他平台按所选时间范围筛选。
                       </Paragraph>
                     )}
                   </div>
@@ -2603,6 +2860,9 @@ export default function PipelinePage() {
                     platforms={materialSearchProgress.platforms}
                     startedAt={materialSearchProgress.startedAt}
                     batch={materialSearchBatch}
+                    complete={materialSearchComplete}
+                    progress={materialSearchQueue?.items[0]}
+                    targetCount={countPerPlatform}
                     onRevealComplete={finishMaterialSearchReveal}
                   />
                 )}
@@ -2668,7 +2928,11 @@ export default function PipelinePage() {
                             <span className="candidate-copy">
                               <strong>{candidate.title || "未命名候选"}</strong>
                               <small>{candidate.platform_label} · {candidate.author_name || "作者未返回"}</small>
-                              {candidate.selection_tier === "reserve" ? <small>低热度候补</small> : null}
+                              {candidate.selection_tier === "reserve" ? (
+                                <small>
+                                  {candidate.relevance_basis === "related_concept" ? "相关候补 · 请先确认" : "低热度候补"}
+                                </small>
+                              ) : null}
                               <small className="candidate-metrics">
                                 点赞 {formatCandidateMetric(candidate.likes)} · 评论 {formatCandidateMetric(candidate.comments)} · 分享 {formatCandidateMetric(candidate.shares)} · 收藏 {formatCandidateMetric(candidate.favorites)}
                               </small>

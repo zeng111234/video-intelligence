@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { Alert, Button, Card, Empty, Input, Modal, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import { AppstoreAddOutlined, ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
-import { getProductionBatchWorkspace, listProductionBatches, reviewProductionBatchItems } from "../api/client";
-import type { ProductionBatch, ProductionBatchItem } from "../api/types";
+import { getProductionBatchWorkspace, listCrawlerBatches, listProductionBatches, reviewProductionBatchItems } from "../api/client";
+import type { CrawlerBatchResponse, ProductionBatch, ProductionBatchItem } from "../api/types";
 import { useToast } from "../components/Toast";
 
 const { Title, Text, Paragraph } = Typography;
@@ -16,6 +16,7 @@ const STATUS: Record<string, { color: string; label: string }> = {
   awaiting_publish: { color: "gold", label: "待成片复核" }, ready_to_publish: { color: "success", label: "待发布" },
   succeeded: { color: "success", label: "已完成" }, failed: { color: "error", label: "失败" },
   blocked: { color: "error", label: "预检受阻" }, partial: { color: "warning", label: "部分完成" },
+  "可选素材": { color: "cyan", label: "可选素材" },
 };
 
 const STAGE_LABEL: Record<string, string> = {
@@ -33,6 +34,7 @@ function statusTag(status: string) {
 export default function ProductionPage() {
   const toast = useToast();
   const [batches, setBatches] = useState<ProductionBatch[]>([]);
+  const [candidateBatches, setCandidateBatches] = useState<CrawlerBatchResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [queueFilter, setQueueFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>();
@@ -45,8 +47,12 @@ export default function ProductionPage() {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await listProductionBatches();
-      setBatches(response.items);
+      const [prodResp, crawResp] = await Promise.all([
+        listProductionBatches(),
+        listCrawlerBatches(),
+      ]);
+      setBatches(prodResp.items);
+      setCandidateBatches(crawResp.items);
     } catch (error) {
       toast.error((error as Error).message || "任务队列加载失败");
     } finally {
@@ -61,11 +67,44 @@ export default function ProductionPage() {
     return () => window.clearInterval(timer);
   }, [batches, refresh]);
 
-  const queuedTasks = useMemo(() => batches.flatMap((batch) => batch.items.map((item) => ({ batch, item }))), [batches]);
+  const queuedTasks = useMemo(() => {
+    const prodTasks = batches.flatMap((batch) =>
+      batch.items.map((item) => ({ batch, item, source: "production" as const })),
+    );
+    const candTasks = candidateBatches
+      .filter((cb) => cb.status === "succeeded" && cb.platform_runs?.some((r) => r.status === "succeeded"))
+      .map((cb) => {
+        const succeededPlatforms = cb.platform_runs?.filter((r) => r.status === "succeeded") || [];
+        return {
+          batch: null,
+          item: {
+            run_id: cb.batch_id,
+            candidate_id: cb.batch_id,
+            source_type: "search",
+            source_value: cb.keyword,
+            display_title: `${cb.keyword} · ${succeededPlatforms.length} 平台可选`,
+            status: "可选素材",
+            current_stage: "可选素材",
+            blocked_reasons: [],
+            error_message: "",
+            video_path: null,
+            publish_mode: null,
+            profile_overrides: {},
+            candidate_role: "primary",
+            spoken_material_status: "pending",
+            spoken_material_message: "",
+            updated_at: cb.finished_at || cb.created_at,
+          } as unknown as ProductionBatchItem,
+          source: "candidate" as const,
+          crawlerBatch: cb,
+        };
+      });
+    return [...candTasks, ...prodTasks];
+  }, [batches, candidateBatches]);
   const filteredTasks = useMemo(() => queuedTasks.filter(({ batch, item }) => {
     if (statusFilter && item.status !== statusFilter) return false;
     const needle = queueFilter.trim().toLowerCase();
-    return !needle || `${batch.profile_name} ${item.display_title || item.source_value || item.candidate_id}`.toLowerCase().includes(needle);
+    return !needle || `${batch?.profile_name || ""} ${item.display_title || item.source_value || item.candidate_id}`.toLowerCase().includes(needle);
   }), [queuedTasks, queueFilter, statusFilter]);
   const summary = useMemo(() => queuedTasks.reduce((result, { item }) => {
     result.total += 1;
@@ -76,7 +115,7 @@ export default function ProductionPage() {
     return result;
   }, { total: 0, running: 0, review: 0, failed: 0, ready: 0 }), [queuedTasks]);
 
-  const openTextReview = async (batch: ProductionBatch, item: ProductionBatchItem) => {
+  const openTextReview = async (batch: ProductionBatch, item: ProductionBatchItem & { review_stage?: string }) => {
     setReviewLoading(true);
     setReviewItem(item);
     setReviewBatchId(batch.batch_id);
@@ -114,18 +153,21 @@ export default function ProductionPage() {
     }
   };
 
-  const itemColumns: ColumnsType<{ batch: ProductionBatch; item: ProductionBatchItem }> = [
+  const itemColumns: ColumnsType<{ batch: ProductionBatch | null; item: ProductionBatchItem; source?: "production" | "candidate"; crawlerBatch?: CrawlerBatchResponse }> = [
     { title: "内容", key: "content", width: 260, render: (_, { item }) => <Space direction="vertical" size={2}><Text strong ellipsis style={{ maxWidth: 230 }}>{item.display_title || item.source_value || item.candidate_id}</Text><Tag>{SOURCE_LABEL[item.source_type] || item.source_type}</Tag></Space> },
     { title: "当前阶段", key: "stage", width: 130, render: (_, { item }) => STAGE_LABEL[item.current_stage || ""] || item.current_stage || "等待开始" },
     { title: "状态", key: "status", width: 130, render: (_, { item }) => statusTag(item.status) },
     { title: "问题/结果", key: "detail", width: 360, render: (_, { item }) => <Text type={item.error_message || item.blocked_reasons?.length ? "danger" : "secondary"}>{item.error_message || item.blocked_reasons?.join("；") || (item.video_path ? "成片已生成" : "-")}</Text> },
-    { title: "操作", key: "action", width: 190, render: (_, { batch, item }) => <Space wrap>
-      {item.status === "awaiting_review" && <Button size="small" type="primary" onClick={() => void openTextReview(batch, item)}>{item.review_stage === "transcript" ? "确认转写" : "审核文案"}</Button>}
-      {item.status === "awaiting_publish" && <Button size="small" type="primary" onClick={() => { void reviewProductionBatchItems(batch.batch_id, { stage: "output", reviewer: "当前用户", items: [{ run_id: item.run_id }] }).then(refresh).catch((error: Error) => toast.error(error.message)); }}>确认成片</Button>}
-      <Link to={`/pipeline?batch=${encodeURIComponent(batch.batch_id)}&run=${encodeURIComponent(item.run_id)}`}><Button size="small">详情</Button></Link>
-    </Space> },
-    { title: "IP 配方", key: "profile", width: 150, render: (_, row) => <Tag color="purple">{row.batch.profile_name}</Tag> },
-    { title: "创建时间", key: "created", width: 180, render: (_, row) => <Text type="secondary">{new Date(row.batch.created_at).toLocaleString("zh-CN")}</Text> },
+    { title: "操作", key: "action", width: 190, render: (_, row) => {
+      const { batch, item, source, crawlerBatch } = row;
+      return <Space wrap>
+        {item.status === "awaiting_review" && <Button size="small" type="primary" onClick={() => void openTextReview(batch!, item)}>{item.review_stage === "transcript" ? "确认转写" : "审核文案"}</Button>}
+        {item.status === "awaiting_publish" && <Button size="small" type="primary" onClick={() => { void reviewProductionBatchItems(batch!.batch_id, { stage: "output", reviewer: "当前用户", items: [{ run_id: item.run_id }] }).then(refresh).catch((error: Error) => toast.error(error.message)); }}>确认成片</Button>}
+        {source === "candidate" ? <Link to={`/pipeline?crawler_batch_id=${encodeURIComponent(crawlerBatch!.batch_id)}`}><Button size="small">查看素材</Button></Link> : <Link to={`/pipeline?batch=${encodeURIComponent(batch!.batch_id)}&run=${encodeURIComponent(item.run_id)}`}><Button size="small">详情</Button></Link>}
+      </Space>;
+    } },
+    { title: "IP 配方", key: "profile", width: 150, render: (_, row) => <Tag color="purple">{row.batch?.profile_name || "选材"}</Tag> },
+    { title: "创建时间", key: "created", width: 180, render: (_, row) => <Text type="secondary">{row.batch ? new Date(row.batch.created_at).toLocaleString("zh-CN") : ((row.item as unknown as { updated_at?: string }).updated_at ? new Date((row.item as unknown as { updated_at: string }).updated_at).toLocaleString("zh-CN") : "-")}</Text> },
   ];
 
   return <Space direction="vertical" size="large" style={{ width: "100%", minWidth: 0 }}>
@@ -133,7 +175,7 @@ export default function ProductionPage() {
     <Alert type="info" showIcon message="单条任务处理" description="任务在智能创作中创建；这里用于查看进度，以及逐条完成文案审核和成片复核。" />
     <div className="production-stats"><Card><Statistic title="队列内容" value={summary.total} /></Card><Card><Statistic title="执行中" value={summary.running} valueStyle={{ color: "#1677ff" }} /></Card><Card><Statistic title="待文案审核" value={summary.review} valueStyle={{ color: "#d48806" }} /></Card><Card><Statistic title="失败/受阻" value={summary.failed} valueStyle={{ color: "#cf1322" }} /></Card><Card><Statistic title="待发布" value={summary.ready} valueStyle={{ color: "#389e0d" }} /></Card></div>
     <Card title="全部任务" extra={<Space wrap><Input.Search allowClear placeholder="搜索配方或内容" value={queueFilter} onChange={(event) => setQueueFilter(event.target.value)} style={{ width: 250 }} /><Select allowClear placeholder="任务状态" value={statusFilter} onChange={setStatusFilter} style={{ width: 140 }} options={Object.entries(STATUS).map(([value, item]) => ({ value, label: item.label }))} /></Space>} styles={{ body: { padding: 12 } }}>
-      {filteredTasks.length ? <div className="production-table-wrap"><Table rowKey={({ item }) => item.run_id} size="middle" pagination={{ pageSize: 10, showSizeChanger: false }} columns={itemColumns} dataSource={filteredTasks} scroll={{ x: 1400 }} /></div> : <Empty description="暂无符合条件的任务" />}
+      {filteredTasks.length ? <div className="production-table-wrap"><Table rowKey="run_id" size="middle" pagination={{ pageSize: 10, showSizeChanger: false }} columns={itemColumns as ColumnsType<unknown>} dataSource={filteredTasks as unknown[]} scroll={{ x: 1400 }} /></div> : <Empty description="暂无符合条件的任务" />}
     </Card>
     <Modal open={Boolean(reviewItem)} title={reviewStage === "transcript" ? "确认原转写" : "审核口播文案"} confirmLoading={reviewLoading} okText={reviewStage === "transcript" ? "确认并生成改写稿" : "通过并继续生产"} onOk={() => void approveReview()} onCancel={() => setReviewItem(null)} width={720}><Paragraph type="secondary">{reviewStage === "transcript" ? "必须先核对原转写，确认后才会生成 AI 改写稿。" : "通过后才会进入数字人和剪辑；可直接修改最终口播稿。"}</Paragraph><Input.TextArea value={reviewText} onChange={(event) => setReviewText(event.target.value)} autoSize={{ minRows: 12, maxRows: 20 }} /></Modal>
     <style>{`.production-page-title{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.production-stats{display:grid;grid-template-columns:repeat(5,minmax(120px,1fr));gap:16px}.production-table-wrap{overflow-x:auto}@media(max-width:1100px){.production-stats{grid-template-columns:repeat(3,minmax(120px,1fr))}}@media(max-width:768px){.production-page-title{align-items:flex-start;flex-direction:column}.production-stats{grid-template-columns:repeat(2,minmax(120px,1fr))}}`}</style>

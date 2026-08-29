@@ -277,6 +277,7 @@ class CrawlerKeywordQueueRequest(BaseModel):
     )
     published_window_days: int = Field(0)
     count_per_platform: int = Field(30, ge=1, le=100)
+    force_refresh: bool = False
 
 
 class CrawlerPlatformPreview(BaseModel):
@@ -4035,6 +4036,7 @@ def _run_crawler_keyword_queue(queue_id: str) -> None:
                 published_window_days=queue.published_window_days,
                 count_per_platform=queue.requested_count_per_platform,
                 target_main_count=queue.requested_count_per_platform,
+                force_refresh=queue.force_refresh,
                 mode="smart",
                 track_trend=False,
                 allow_paid_fallback=False,
@@ -4268,6 +4270,7 @@ def create_crawler_keyword_queue(
         platforms=[Platform(value) for value in dict.fromkeys(body.platforms)],
         published_window_days=body.published_window_days,
         requested_count_per_platform=body.count_per_platform,
+        force_refresh=body.force_refresh,
     )
     repo.save_crawler_keyword_queue(queue)
     _start_crawler_keyword_queue(queue.queue_id)
@@ -4400,6 +4403,18 @@ def execute_due_recrawls():
         status_code=410,
         detail="复采功能已关闭；系统只执行用户当次发起的搜索。",
     )
+
+
+@router.get("/batches/{batch_id}/selection", response_model=CrawlerBatchResponse)
+def get_crawler_batch_for_selection(
+    batch_id: str,
+    repo=Depends(get_repository),
+):
+    """快速恢复素材选择，只返回挑选所需字段，不逐条加载转写与趋势明细。"""
+    batch = repo.get_search_batch(batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="搜索批次不存在。")
+    return _batch_to_response(batch, repo, include_runtime_details=False)
 
 
 @router.get("/batches/{batch_id}", response_model=CrawlerBatchResponse)
@@ -5233,13 +5248,13 @@ def _doubao_job_to_response(task) -> CrawlerDoubaoJobResponse:
 
 
 def _latest_candidate_transcription(
-    repo, candidate_id: str
+    repo, candidate_id: str, candidate_tasks: list[TranscriptionTask] | None = None
 ) -> TranscriptionTask | None:
     """Return the latest authorized media task associated with this candidate."""
     try:
         tasks = [
             task
-            for task in repo.list_tasks()
+            for task in (candidate_tasks if candidate_tasks is not None else repo.list_tasks())
             if isinstance(task, TranscriptionTask)
             and task.candidate_id == candidate_id
             and task.rights_confirmed
@@ -5250,7 +5265,10 @@ def _latest_candidate_transcription(
 
 
 def _candidate_copy_fields(
-    repo, candidate, media_task: TranscriptionTask | None
+    repo,
+    candidate,
+    media_task: TranscriptionTask | None,
+    candidate_tasks: list[TranscriptionTask] | None = None,
 ) -> dict:
     """推导候选的三档文案来源字段。
 
@@ -5258,7 +5276,7 @@ def _candidate_copy_fields(
     """
     doubao_mobile = None
     try:
-        for task in repo.list_tasks():
+        for task in (candidate_tasks if candidate_tasks is not None else repo.list_tasks()):
             if (
                 isinstance(task, TranscriptionTask)
                 and task.candidate_id == candidate.video_id
@@ -5501,6 +5519,8 @@ def _candidate_to_response(
     relevance_basis: str | None = None,
     relevance_reason: str | None = None,
     selection_tier: Literal["priority", "reserve"] | None = None,
+    candidate_tasks: list[TranscriptionTask] | None = None,
+    include_runtime_details: bool = True,
 ) -> CrawlerCandidateResult:
     resolved_evidence = evidence or candidate.evidence
     hotspot_lists, evidence_duration_seconds, hotspot_window_hours = (
@@ -5511,32 +5531,74 @@ def _candidate_to_response(
     )
     is_incremental_hotspot = "来源=video_board" in (resolved_evidence or "")
     likes_per_day, quality_source = _hotspot_quality_details(resolved_evidence)
-    media_resolution = repo.find_latest_media_resolution_for_candidate(
-        candidate.video_id
-    )
-    resolved_task = (
-        repo.get_task(media_resolution.task_id)
-        if media_resolution and media_resolution.task_id
-        else None
-    )
-    resolved_task = (
-        resolved_task if isinstance(resolved_task, TranscriptionTask) else None
-    )
-    local_link_task = _latest_candidate_transcription(repo, candidate.video_id)
-    media_task = max(
-        (task for task in (resolved_task, local_link_task) if task is not None),
-        key=lambda task: task.created_at,
-        default=None,
-    )
-    media_task_id = media_task.task_id if media_task else None
-    media_status = (
-        media_resolution.status.value
-        if media_task is not None and media_task is resolved_task and media_resolution
-        else media_task.status.value
-        if media_task
-        else None
-    )
-    copy_fields = _candidate_copy_fields(repo, candidate, media_task)
+    if include_runtime_details:
+        media_resolution = repo.find_latest_media_resolution_for_candidate(
+            candidate.video_id
+        )
+        resolved_task = (
+            repo.get_task(media_resolution.task_id)
+            if media_resolution and media_resolution.task_id
+            else None
+        )
+        resolved_task = (
+            resolved_task if isinstance(resolved_task, TranscriptionTask) else None
+        )
+        local_link_task = _latest_candidate_transcription(
+            repo,
+            candidate.video_id,
+            candidate_tasks,
+        )
+        media_task = max(
+            (task for task in (resolved_task, local_link_task) if task is not None),
+            key=lambda task: task.created_at,
+            default=None,
+        )
+        media_task_id = media_task.task_id if media_task else None
+        media_status = (
+            media_resolution.status.value
+            if media_task is not None and media_task is resolved_task and media_resolution
+            else media_task.status.value
+            if media_task
+            else None
+        )
+        copy_fields = _candidate_copy_fields(
+            repo,
+            candidate,
+            media_task,
+            candidate_tasks,
+        )
+        audio = _candidate_audio_fields(
+            media_task,
+            repo.get_candidate_copy_probe(candidate.video_id),
+        )
+        trend_points: list[CrawlerTrendPoint] = []
+        previous_interactions: float | None = None
+        previous_at: datetime | None = None
+        for snapshot in repo.list_snapshots(candidate.video_id)[-3:]:
+            interactions = float(
+                (snapshot.likes or 0)
+                + 3 * (snapshot.comments or 0)
+                + 4 * (snapshot.shares or 0)
+                + 4 * (snapshot.favorites or 0)
+            )
+            growth_per_hour = None
+            if previous_interactions is not None and previous_at is not None:
+                elapsed_hours = (snapshot.sampled_at - previous_at).total_seconds() / 3600
+                if elapsed_hours > 0:
+                    growth_per_hour = round((interactions - previous_interactions) / elapsed_hours, 4)
+            trend_points.append(CrawlerTrendPoint(
+                sampled_at=snapshot.sampled_at,
+                effective_interactions=interactions,
+                growth_per_hour=growth_per_hour,
+            ))
+            previous_interactions = interactions
+            previous_at = snapshot.sampled_at
+    else:
+        media_task_id = None
+        media_status = None
+        copy_fields = {"copy_source": None, "is_original_transcript": None, "needs_manual_review": None}
+        audio = {"status": "unknown", "message": "选中素材后再检查授权转写状态。"}
+        trend_points = []
     spoken_material = _spoken_material_fields(
         evidence=resolved_evidence,
         copy_fields=copy_fields,
@@ -5546,37 +5608,6 @@ def _candidate_to_response(
         keyword=keyword or candidate.title,
         evidence=resolved_evidence,
     )
-    audio = _candidate_audio_fields(
-        media_task,
-        repo.get_candidate_copy_probe(candidate.video_id),
-    )
-    trend_points: list[CrawlerTrendPoint] = []
-    previous_interactions: float | None = None
-    previous_at: datetime | None = None
-    for snapshot in repo.list_snapshots(candidate.video_id)[-3:]:
-        interactions = float(
-            (snapshot.likes or 0)
-            + 3 * (snapshot.comments or 0)
-            + 4 * (snapshot.shares or 0)
-            + 4 * (snapshot.favorites or 0)
-        )
-        growth_per_hour = None
-        if previous_interactions is not None and previous_at is not None:
-            elapsed_hours = (snapshot.sampled_at - previous_at).total_seconds() / 3600
-            if elapsed_hours > 0:
-                growth_per_hour = round(
-                    (interactions - previous_interactions) / elapsed_hours,
-                    4,
-                )
-        trend_points.append(
-            CrawlerTrendPoint(
-                sampled_at=snapshot.sampled_at,
-                effective_interactions=interactions,
-                growth_per_hour=growth_per_hour,
-            )
-        )
-        previous_interactions = interactions
-        previous_at = snapshot.sampled_at
     return CrawlerCandidateResult(
         video_id=candidate.video_id,
         title=candidate.title,
@@ -5758,17 +5789,48 @@ def _batch_to_response(
     repo,
     *,
     include_candidates: bool = True,
+    include_runtime_details: bool = True,
 ) -> CrawlerBatchResponse:
     runs = repo.list_platform_search_runs(batch.batch_id)
+    # 详情页可能一次返回上百条候选。逐条调用 repo.list_tasks() 会重复扫描
+    # 整张任务表，导致“继续挑选”长期停在加载状态；本批只读取一次后按候选复用。
+    candidate_tasks_by_id: dict[str, list[TranscriptionTask]] | None = None
+    if include_candidates and include_runtime_details:
+        candidate_tasks_by_id = {}
+        # 收集本 batch 所有 candidate_id, 只查相关 task (避免全表扫描 1227+ 行)
+        batch_candidate_ids: set[str] = set()
+        # 一次查所有 run 的 candidate_matches, 避免 N+1
+        match_run_ids = [run.cached_from_run_id or run.run_id for run in runs]
+        all_matches_by_run_id = repo.list_candidate_matches_by_run_ids(match_run_ids)
+        for run in runs:
+            for match in all_matches_by_run_id.get(run.cached_from_run_id or run.run_id, []):
+                batch_candidate_ids.add(match.video_id)
+        for task in repo.list_tasks(candidate_ids=list(batch_candidate_ids)):
+            if isinstance(task, TranscriptionTask) and task.candidate_id:
+                candidate_tasks_by_id.setdefault(task.candidate_id, []).append(task)
+    # 把 matches 按 run_id group 传给 _run_to_response, 避免 _run_to_response 内部 N+1
+    matches_by_run_id: dict[str, list] = {}
+    if include_candidates and include_runtime_details:
+        for run in runs:
+            rid = run.cached_from_run_id if run.cached_from_run_id else run.run_id
+            matches_by_run_id[rid] = all_matches_by_run_id.get(rid, [])
     run_items = [
-        _run_to_response(batch, run, repo, include_candidates=include_candidates)
+        _run_to_response(
+            batch,
+            run,
+            repo,
+            include_candidates=include_candidates,
+            candidate_tasks_by_id=candidate_tasks_by_id,
+            include_runtime_details=include_runtime_details,
+            preloaded_matches=matches_by_run_id.get(
+                run.cached_from_run_id if run.cached_from_run_id else run.run_id
+            ),
+        )
         for run in runs
     ]
-    tracking_checkpoints = [
-        item
-        for item in repo.list_sampling_checkpoints()
-        if item.tracking_batch_id == batch.batch_id
-    ]
+    tracking_checkpoints = repo.list_sampling_checkpoints(
+        tracking_batch_id=batch.batch_id
+    )
     pending_tracking = [
         item for item in tracking_checkpoints if item.status == SamplingStatus.PENDING
     ]
@@ -5831,7 +5893,11 @@ def _batch_to_response(
                 "copy_matrix_exhausted": batch.copy_matrix_exhausted,
             }
         )
-    return _with_copy_pool_metadata(response, batch=batch, repo=repo)
+    return (
+        _with_copy_pool_metadata(response, batch=batch, repo=repo)
+        if include_runtime_details
+        else response
+    )
 
 
 def _copy_pool_sort_key(candidate: CrawlerCandidateResult) -> tuple[Any, ...]:
@@ -6009,6 +6075,9 @@ def _run_to_response(
     repo,
     *,
     include_candidates: bool,
+    candidate_tasks_by_id: dict[str, list[TranscriptionTask]] | None = None,
+    include_runtime_details: bool = True,
+    preloaded_matches: list | None = None,
 ) -> CrawlerPlatformRunResponse:
     candidates: list[CrawlerCandidateResult] = []
     reference_candidates: list[CrawlerCandidateResult] = []
@@ -6017,13 +6086,20 @@ def _run_to_response(
     reference_item_ids = {
         item.platform_item_id for item in getattr(run, "reference_items", [])
     }
+
+    def is_bilibili_related_candidate(candidate) -> bool:
+        """Detect the B 站 one-dimension related tier persisted by normalization."""
+        return (
+            candidate.platform == Platform.BILIBILI
+            and str(getattr(candidate, "category", "") or "").startswith("关键词相关/")
+        )
     if run.status in {
         PlatformRunStatus.SUCCEEDED,
         PlatformRunStatus.PARTIAL,
         PlatformRunStatus.CACHED,
     }:
         match_run_id = run.cached_from_run_id if run.cached_from_run_id else run.run_id
-        matches = repo.list_candidate_matches(match_run_id)
+        matches = preloaded_matches if preloaded_matches is not None else repo.list_candidate_matches(match_run_id)
         # 批量预加载 candidates, 一次 SQL 替代每个 match 都触发
         # candidates+metric_snapshots+heat_results 三次单条查询 (原 N*3 降为 3 次).
         candidate_by_video_id = {
@@ -6092,7 +6168,7 @@ def _run_to_response(
         visible_matches.sort(key=default_table_sort_key)
         trends = (
             []
-            if is_hotspot_run
+            if is_hotspot_run or not include_runtime_details
             else repo.list_keyword_trend_results(
                 batch.keyword,
                 limit=batch.requested_count_per_platform,
@@ -6109,6 +6185,7 @@ def _run_to_response(
         }
         for match, candidate in visible_matches:
             is_reference = candidate.platform_item_id in reference_item_ids
+            is_related_candidate = is_reference or is_bilibili_related_candidate(candidate)
             direct_match_keyword = _direct_match_keyword(batch, match, candidate)
             matched_keyword = str(
                 getattr(match, "keyword", "") or batch.keyword
@@ -6126,18 +6203,26 @@ def _run_to_response(
                 relevance_basis=(
                     "title_or_hashtag"
                     if direct_match_keyword
+                    else "related_concept"
+                    if is_related_candidate
                     else "platform_search"
                 ),
                 relevance_reason=(
                     keyword_match_reason(direct_match_keyword)
                     if direct_match_keyword
                     else (
-                        "平台搜索参考，请人工确认与当前关键词的相关性。"
-                        if is_reference
-                        else f"平台搜索结果，标题/话题未直接命中“{batch.keyword.strip()}”。"
+                        "B站按行业/对象相关性放宽匹配，请人工确认是否适合当前关键词。"
+                        if is_related_candidate
+                        else (
+                            "平台搜索参考，请人工确认与当前关键词的相关性。"
+                            if is_reference
+                            else f"平台搜索结果，标题/话题未直接命中“{batch.keyword.strip()}”。"
+                        )
                     )
                 ),
-                selection_tier="reserve" if is_reference else None,
+                selection_tier="reserve" if is_related_candidate else None,
+                candidate_tasks=(candidate_tasks_by_id or {}).get(candidate.video_id),
+                include_runtime_details=include_runtime_details,
             )
             (reference_candidates if is_reference else candidates).append(
                 response_candidate

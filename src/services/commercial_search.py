@@ -50,11 +50,11 @@ def _monthly_cost_limit_cny() -> float:
 RANKING_MODE = "keyword_hot"
 # 不限发布时间时使用综合排序，后续爆发判断完全由本地真实快照决定。
 KEYWORD_HOT_SORT_TYPE = 0
-# 规则版本同时是公共搜索缓存键的一部分。升级为“标题/话题直接命中”后，
-# 旧的宽召回结果不能继续作为本次搜索结果复用。
-RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v4"
-# B 站结果分为高相关、待确认和明显无关。待确认项只进入参考素材区，
-# 不计入主榜，也不会自动送入智能创作。
+# 规则版本同时是公共搜索缓存键的一部分。B 站放宽为“直接命中或单一行业/对象
+# 维度相关”后，旧的严格结果不能继续作为本次搜索结果复用。
+RELEVANCE_RULE_VERSION = "platform_search_final_eligible_v5"
+# B 站结果分为高相关、相关待确认和明显无关。相关待确认项会进入候选列表，
+# 但由 API/UI 标记为 reserve，不能被自动创作路径静默使用。
 # 一页最多展示目标数量（上限 30），避免把数百条页面卡片全部灌入结果区。
 BILIBILI_REFERENCE_FALLBACK_LIMIT = 30
 _NON_CACHEABLE_PUBLIC_SEARCH_CODES = frozenset(
@@ -78,8 +78,9 @@ _BILIBILI_HIGH_RELEVANCE = "high"
 _BILIBILI_REVIEW_RELEVANCE = "review"
 _BILIBILI_IRRELEVANT_RELEVANCE = "irrelevant"
 
-# 只用于拆分中文复合关键词，不会放宽其它平台的筛选。行业词和对象/意图词
-# 必须形成组合，才能进入 B 站主结果。
+# 只用于拆分中文复合关键词，不会放宽其它平台的筛选。复合关键词完整命中
+# 仍是高相关；只命中一个明确行业维度时进入“相关待确认”，避免 B 站
+# 因平台标题措辞差异把可用素材全部挡掉。
 _BILIBILI_INDUSTRY_GROUPS = {
     "美业": ("美业", "美容", "美发", "美妆", "美甲", "化妆品", "医美"),
     "餐饮": ("餐饮", "餐馆", "饭店", "茶饮", "咖啡"),
@@ -191,6 +192,8 @@ def bilibili_relevance_tier(
     if query_industries:
         if matched_industries and matched_objects:
             return _BILIBILI_HIGH_RELEVANCE
+        # B 站允许行业单维度相关，但保持待确认标记；这不是把所有
+        # 搜索卡片放进来，完全没有行业维度命中时仍然排除。
         if matched_industries:
             return _BILIBILI_REVIEW_RELEVANCE
         return _BILIBILI_IRRELEVANT_RELEVANCE
@@ -902,9 +905,9 @@ class CommercialSearchService:
                     "kuaishou_sort": kuaishou_sort,
                     "kuaishou_duration_bucket": kuaishou_duration_bucket,
                 }
-            if (
-                progress_callback is not None
-                and capability.provider_name == "douyin_public_browser_v2"
+            if progress_callback is not None and (
+                capability.provider_name == "douyin_public_browser_v2"
+                or capability.provider_name.endswith("_local_browser")
             ):
                 search_kwargs["progress_callback"] = emit_progress
             page = self._search_with_retry(
@@ -1298,40 +1301,25 @@ class CommercialSearchService:
                     evidence=item.evidence,
                 )
             seen.add(item.platform_item_id)
-            # B 站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。高相关进入主榜，
-            # 行业概念命中但对象不完整的卡片进入待确认，其余直接丢弃。
-            if platform == Platform.BILIBILI and relevance_tier != _BILIBILI_HIGH_RELEVANCE:
-                if relevance_tier == _BILIBILI_IRRELEVANT_RELEVANCE:
-                    counts["irrelevant_count"] += 1
-                    continue
-                if len(reference_items) < BILIBILI_REFERENCE_FALLBACK_LIMIT:
-                    warnings = list(item.data_quality_warnings)
-                    warnings.append(
-                        f"B站仅命中部分相关概念“{keyword}”；请打开原视频确认是否相关。"
-                    )
-                    reference_items.append(
-                        NormalizedCandidate(
-                            platform_item_id=item.platform_item_id,
-                            title=item.title,
-                            author_id=item.author_id,
-                            author_name=item.author_name,
-                            platform=platform,
-                            category=f"关键词参考/{keyword}",
-                            published_at=item.published_at,
-                            duration_seconds=item.duration_seconds,
-                            source_url=item.source_url,
-                            source_type=source_type,
-                            metrics=item.metrics,
-                            matched_by=[keyword],
-                            cohort_key=f"{provider}:{platform.value}:keyword-reference:{keyword.casefold()}",
-                            eligibility_status=EligibilityStatus.PENDING_REVIEW,
-                            evidence=item.evidence,
-                            data_quality_warnings=warnings,
-                        )
-                    )
+            # B 站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。完全无查询
+            # 维度命中仍丢弃；单一行业/对象命中进入候选列表，但保留待确认
+            # 状态，供人工挑选而不是自动送入智能创作。
+            if (
+                platform == Platform.BILIBILI
+                and relevance_tier == _BILIBILI_IRRELEVANT_RELEVANCE
+            ):
+                counts["irrelevant_count"] += 1
                 continue
             warnings = list(item.data_quality_warnings)
-            if not direct_keyword_match:
+            is_bilibili_related = (
+                platform == Platform.BILIBILI
+                and relevance_tier == _BILIBILI_REVIEW_RELEVANCE
+            )
+            if is_bilibili_related:
+                warnings.append(
+                    f"B站按行业/对象相关性放宽匹配“{keyword}”；请人工确认后再使用。"
+                )
+            elif not direct_keyword_match:
                 warnings.append(
                     f"标题未直接命中“{keyword}”；这是平台搜索返回的候选，请人工判断相关性。"
                 )
@@ -1342,7 +1330,11 @@ class CommercialSearchService:
                     author_id=item.author_id,
                     author_name=item.author_name,
                     platform=platform,
-                    category=f"关键词/{keyword}",
+                    category=(
+                        f"关键词相关/{keyword}"
+                        if is_bilibili_related
+                        else f"关键词/{keyword}"
+                    ),
                     published_at=item.published_at,
                     duration_seconds=item.duration_seconds,
                     source_url=item.source_url,
@@ -1350,7 +1342,11 @@ class CommercialSearchService:
                     metrics=item.metrics,
                     matched_by=[keyword],
                     cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
-                    eligibility_status=EligibilityStatus.AUTO_MATCHED,
+                    eligibility_status=(
+                        EligibilityStatus.PENDING_REVIEW
+                        if is_bilibili_related
+                        else EligibilityStatus.AUTO_MATCHED
+                    ),
                     evidence=item.evidence,
                     official_hot=(
                         provider == "douyin_local_browser"

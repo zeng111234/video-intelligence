@@ -559,6 +559,7 @@ class LocalPlatformBrowserSearchProvider:
         hotspot_window_hours: int | None = None,
         *,
         search_filters: dict[str, str] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ProviderSearchPage:
         del hotspot_window_hours
         if platform != self.platform:
@@ -641,6 +642,8 @@ class LocalPlatformBrowserSearchProvider:
                     bool(row.get("direct_match")) for row in rows
                 ),
             )
+        if progress_callback is not None:
+            collection_kwargs["progress_callback"] = progress_callback
         raw_rows = self._collect_rows(keyword, target=raw_target, **collection_kwargs)
         parse_started = time.perf_counter()
         candidate_rows = raw_rows
@@ -793,6 +796,7 @@ class LocalPlatformBrowserSearchProvider:
         qualifying_count: Callable[[list[dict[str, Any]]], int] | None = None,
         prefer_recent: bool = False,
         published_filter_days: int | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> list[dict[str, Any]]:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -807,6 +811,48 @@ class LocalPlatformBrowserSearchProvider:
         rendered_rows: dict[str, dict[str, Any]] = {}
         bilibili_page_count: int | None = None
         bilibili_search_response_seen = False
+
+        def notify_progress(current_rows: list[dict[str, Any]]) -> None:
+            """Expose bounded funnel progress while the visible page is scanned.
+
+            The final relevance/time validation still happens in
+            ``CommercialSearchService``.  The live count is therefore an
+            intentionally conservative page-scan snapshot, not a final result
+            contract; the completed batch remains the source of truth.
+            """
+            if progress_callback is None:
+                return
+            scanned_count = max(raw_discovered_count, len(current_rows))
+            parsed_count = len(current_rows)
+            if self.platform == Platform.BILIBILI:
+                retained_count = sum(
+                    bool(row.get("direct_match")) for row in current_rows
+                )
+                irrelevant_count = max(0, parsed_count - retained_count)
+            else:
+                retained_count = parsed_count
+                irrelevant_count = 0
+            try:
+                progress_callback(
+                    {
+                        "platform": self.platform.value,
+                        "stage": "scanning",
+                        "message": (
+                            f"{self.spec.label}已扫描 {scanned_count} 条，"
+                            f"解析 {parsed_count} 条，暂保留 {retained_count} 条。"
+                        ),
+                        "scanned_count": scanned_count,
+                        "parsed_count": parsed_count,
+                        "deduped_count": len(current_rows),
+                        "direct_match_count": retained_count,
+                        "retained_count": retained_count,
+                        "irrelevant_count": irrelevant_count,
+                    }
+                )
+            except Exception:
+                # Progress is observational only and must never break a crawl.
+                return
+
         with sync_playwright() as playwright:
             try:
                 attach_started = time.perf_counter()
@@ -967,6 +1013,7 @@ class LocalPlatformBrowserSearchProvider:
                         current_rows = self._merge_collected_rows(
                             network_rows, rendered_rows
                         )
+                        notify_progress(current_rows)
                         if (
                             qualified_target is not None
                             and qualifying_count is not None
@@ -1056,6 +1103,7 @@ class LocalPlatformBrowserSearchProvider:
                         current_rows = self._merge_collected_rows(
                             network_rows, rendered_rows
                         )
+                        notify_progress(current_rows)
                         if (
                             qualified_target is not None
                             and qualifying_count is not None
@@ -1456,7 +1504,8 @@ class LocalPlatformBrowserSearchProvider:
         if self.platform == Platform.BILIBILI:
             diagnostic = (
                 "使用B站专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，"
-                "先记录全部公开搜索卡片，再只保留标题、话题或描述直接命中关键词的公开视频。"
+                "先记录全部公开搜索卡片，再保留标题、话题或描述直接命中，"
+                "以及明确命中行业/对象维度的相关公开视频。"
             )
         elif self.platform == Platform.KUAISHOU:
             diagnostic = "使用快手专用浏览器正常搜索；优先读取浏览器收到的搜索元数据，保留平台当前筛选后的公开视频。"

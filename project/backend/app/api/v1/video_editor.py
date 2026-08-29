@@ -497,44 +497,9 @@ def create_batch(
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
     try:
-        # The normal client sends output_profile for both renderers.  When
-        # the audited Windows renderer is live, route that request to the
-        # zero-cost local batch instead of accidentally applying the cloud
-        # quote requirement.  Cloud/IMS/MPS behavior remains unchanged when
-        # the local capability is unavailable.
-        local_capability = workflow.local_ffmpeg_capabilities()
-        if local_capability.get("live_ready") is True:
-            local_profile = body.output_profile or (
-                "1080p"
-                if body.output_resolution.startswith("1080")
-                else "720p"
-            )
-            return workflow.create_batch(
-                source_ids=body.source_ids,
-                target_platform=body.target_platform,
-                subtitle_enabled=body.subtitle_enabled,
-                subtitle_model=body.subtitle_model,
-                steps=[item.model_dump() for item in body.steps],
-                output_format=body.output_format,
-                output_resolution=body.output_resolution,
-                output_fps=body.output_fps,
-                output_bitrate=body.output_bitrate,
-                bgm_enabled=body.bgm_enabled,
-                bgm_id=body.bgm_id,
-                bgm_volume=body.bgm_volume,
-                provider_mode="local_ffmpeg",
-                output_profile=local_profile,
-                quote_id=body.quote_id or "local-ffmpeg-0",
-                cost_quote={
-                    "provider_mode": "local_ffmpeg",
-                    "estimated_total": "0.00",
-                    "currency": "CNY",
-                },
-                billing_confirmation={
-                    "confirmed": True,
-                    "max_cost_cny": "0.00",
-                },
-                idempotency_key=idempotency_key or "",
+        if not (idempotency_key or "").strip():
+            raise VideoEditorWorkflowError(
+                "请提供 Idempotency-Key 后再创建剪辑任务，避免重复扣费或重复渲染。"
             )
         if body.output_profile is not None or body.quote_id is not None:
             if body.output_profile is None or not body.quote_id:
@@ -924,8 +889,9 @@ def capabilities(
     cloud = workflow.cloud_capabilities()
     return {
         **local,
-        **local_renderer,
+        **cloud,
         "cloud_backup": cloud,
+        "local_renderer": local_renderer,
         "display_name": "本机安全精剪",
         "legacy_local_capabilities": local,
     }

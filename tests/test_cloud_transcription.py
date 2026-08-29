@@ -439,6 +439,64 @@ def test_cloud_task_upload_failure_is_retryable_before_provider_submission(
     assert runtime.submissions == 0
 
 
+def test_cloud_query_connection_failure_preserves_task_for_reconnect(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime()
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+    repository.save_task(
+        queued.model_copy(
+            update={
+                "status": TaskStatus.SUBMITTED,
+                "provider_job_id": "aliyun-job-1",
+                "provider_status": "running",
+            }
+        )
+    )
+
+    def fail_query(_provider_job_id: str):
+        raise CloudProviderError(
+            "任务状态查询连接失败，已自动重试一次；当前结果未知。",
+            kind="connection",
+            outcome_unknown=True,
+        )
+
+    runtime.query = fail_query
+
+    with pytest.raises(TranscriptionError) as caught:
+        service.process_cloud_task(queued.task_id)
+
+    assert caught.value.code == "cloud_asr_outcome_unknown"
+    assert caught.value.task_id == queued.task_id
+    assert "重新连接查询" in caught.value.user_message
+    preserved = repository.get_task(queued.task_id)
+    assert preserved is not None
+    assert preserved.status == TaskStatus.OUTCOME_UNKNOWN
+    assert preserved.provider_job_id == "aliyun-job-1"
+    assert "任务编号已保留" in (preserved.error_message or "")
+
+    runtime.query = FakeCloudRuntime().query
+    completed = service.process_cloud_task(queued.task_id)
+    assert completed.status == TaskStatus.SUCCEEDED
+    assert completed.error_message is None
+
+
 def test_authorization_is_versioned_and_caps_each_task(tmp_path: Path) -> None:
     store = ASRAuthorizationStore(tmp_path / "authorization.json")
     config = CloudEditorConfiguration(

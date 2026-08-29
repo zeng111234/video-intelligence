@@ -1121,6 +1121,7 @@ export interface CrawlerKeywordQueueRequest {
   platforms: string[];
   published_window_days: number;
   count_per_platform: number;
+  force_refresh?: boolean;
 }
 
 export interface CrawlerProgressiveTask {

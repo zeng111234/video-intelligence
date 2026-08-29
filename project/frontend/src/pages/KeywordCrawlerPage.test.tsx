@@ -12,6 +12,7 @@ import {
   createCrawlerProgressiveBatch,
   deleteCrawlerBatch,
   getCrawlerBatch,
+  getCrawlerBatchForSelection,
   getCrawlerCapabilities,
   getCrawlerHotWords,
   getCrawlerKeywordQueue,
@@ -35,6 +36,7 @@ vi.mock("../api/client", async () => {
     createCrawlerProgressiveBatch: vi.fn(),
     deleteCrawlerBatch: vi.fn(),
     getCrawlerBatch: vi.fn(),
+    getCrawlerBatchForSelection: vi.fn(),
     getCrawlerCapabilities: vi.fn(),
     getCrawlerHotWords: vi.fn(),
     getCrawlerKeywordQueue: vi.fn(),
@@ -412,6 +414,7 @@ describe("KeywordCrawlerPage performance behavior", () => {
     vi.mocked(probeCrawlerBatchCopy).mockResolvedValue(copyPoolBatch);
     vi.mocked(recheckCrawlerBatchLegacyNoText).mockResolvedValue(copyPoolBatch);
     vi.mocked(getCrawlerBatch).mockResolvedValue(batchWithCandidate);
+    vi.mocked(getCrawlerBatchForSelection).mockImplementation((batchId) => getCrawlerBatch(batchId));
     vi.mocked(getCrawlerCapabilities).mockResolvedValue(capabilities);
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(deleteCrawlerBatch).mockResolvedValue({ batch_id: batch.batch_id, deleted: true });

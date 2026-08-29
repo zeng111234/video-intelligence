@@ -35,6 +35,7 @@ import {
   deleteCrawlerBatch,
   generateOriginalScript,
   getCrawlerBatch,
+  getCrawlerBatchForSelection,
   probeCrawlerBatchCopy,
   getCrawlerCapabilities,
   getCrawlerHotWords,
@@ -756,23 +757,16 @@ export default function KeywordCrawlerPage() {
   const handleOpenBatch = async (batch: CrawlerBatchResponse) => {
     if (openingBatchId) return; // 防止连点同一批/不同批导致状态错乱
     setOpeningBatchId(batch.batch_id);
-    // 详情卡死兜底: 后端 /crawler/batches/{id} 在大 batch 上有 N+1,
-    // 偶尔会卡到分钟级. 30 秒不返回就 abort, 让用户能重试.
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
     try {
-      setSelectedBatch(await getCrawlerBatch(batch.batch_id, { signal: controller.signal }));
+      // 打开历史批次只需要候选和平台状态，先走轻量选择视图；
+      // 转写、趋势等运行时字段在后续点选素材时再处理，避免大批次逐条扫描。
+      setSelectedBatch(await getCrawlerBatchForSelection(batch.batch_id));
       setKeyword(batch.keyword);
       setHistoryDrawerOpen(false);
     } catch (err) {
       const message = (err as Error).message || String(err);
-      if (controller.signal.aborted) {
-        toast.error("详情加载超过 30 秒已中断，可稍后重试。");
-      } else {
-        toast.error(`打开详情失败：${message}`);
-      }
+      toast.error(`打开详情失败：${message}`);
     } finally {
-      window.clearTimeout(timeoutId);
       setOpeningBatchId(null);
     }
   };

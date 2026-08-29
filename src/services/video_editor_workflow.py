@@ -2000,6 +2000,10 @@ class VideoEditorWorkflowService:
     def list_sources(self) -> list[dict[str, Any]]:
         sources: list[dict[str, Any]] = []
         seen_paths: set[str] = set()
+        # Build the history context once for this response.  Previously every
+        # avatar title called _cached_source_context(), which reparsed up to
+        # 100 full batch payloads again.
+        source_context_index = self._build_source_context_index()
 
         for task in self.repository.list_tasks():
             if not isinstance(task, AvatarTask):
@@ -2025,6 +2029,7 @@ class VideoEditorWorkflowService:
                         source_id,
                         task.title,
                         task.script_text,
+                        context_index=source_context_index,
                     ),
                     path=path,
                     created_at=task.created_at,
@@ -2156,8 +2161,9 @@ class VideoEditorWorkflowService:
 
         raise VideoEditorWorkflowError("不支持的系统素材来源。")
 
-    def _cached_source_context(self, source_id: str) -> dict[str, Any]:
-        context: dict[str, Any] = {
+    @staticmethod
+    def _new_source_context() -> dict[str, Any]:
+        return {
             "selected_title": "",
             "title_candidates": [],
             "subtitle_segments": [],
@@ -2168,6 +2174,54 @@ class VideoEditorWorkflowService:
             "enabled_plan_step_ids": [],
             "review_snapshot": {},
         }
+
+    def _build_source_context_index(self, limit: int = 100) -> dict[str, dict[str, Any]]:
+        """Index reusable batch context once per response.
+
+        The editor history contains large JSON payloads.  Re-reading those
+        payloads for every source/item made page-load work quadratic in the
+        number of batches.  The newest batch still wins for each field, which
+        preserves the old lookup semantics.
+        """
+        list_batches = getattr(self.repository, "list_video_editor_batches", None)
+        if not callable(list_batches):
+            return {}
+        index: dict[str, dict[str, Any]] = {}
+        for batch in list_batches(limit=limit):
+            for item in batch.items:
+                context = index.setdefault(item.source_id, self._new_source_context())
+                if not context["selected_title"] and item.selected_title:
+                    context["selected_title"] = item.selected_title
+                if not context["title_candidates"] and item.title_candidates:
+                    context["title_candidates"] = list(item.title_candidates)
+                if not context["subtitle_segments"] and item.subtitle_segments:
+                    context["subtitle_segments"] = [
+                        dict(segment) for segment in item.subtitle_segments
+                    ]
+                if not context["selected_bgm_id"] and item.selected_bgm_id:
+                    context["selected_bgm_id"] = item.selected_bgm_id
+                    context["bgm_reason"] = item.bgm_reason
+                if not context["edit_plan"] and item.edit_plan:
+                    context["edit_plan"] = dict(item.edit_plan)
+                if not context["enabled_plan_step_ids"] and item.enabled_plan_step_ids:
+                    context["enabled_plan_step_ids"] = list(item.enabled_plan_step_ids)
+                if not context["review_snapshot"] and item.review_snapshot:
+                    context["review_snapshot"] = dict(item.review_snapshot)
+                media = item.provider_payload.get("media") or {}
+                if not context["duration_seconds"] and media.get("duration_seconds"):
+                    context["duration_seconds"] = float(media["duration_seconds"])
+        return index
+
+    def _cached_source_context(
+        self,
+        source_id: str,
+        *,
+        context_index: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        if context_index is not None:
+            return dict(context_index.get(source_id) or self._new_source_context())
+
+        context = self._new_source_context()
         list_batches = getattr(self.repository, "list_video_editor_batches", None)
         if not callable(list_batches):
             return context
@@ -2224,8 +2278,10 @@ class VideoEditorWorkflowService:
         source_id: str,
         stored_title: str,
         script_text: str = "",
+        *,
+        context_index: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> str:
-        cached = self._cached_source_context(source_id)
+        cached = self._cached_source_context(source_id, context_index=context_index)
         cached_title = str(cached.get("selected_title") or "").strip()
         if cached_title:
             return cached_title
@@ -5814,7 +5870,12 @@ class VideoEditorWorkflowService:
 
     def list_batches(self, limit: int = 20) -> list[dict[str, Any]]:
         batches = self.repository.list_video_editor_batches(limit=limit)
-        return [self._batch_payload(self._sync_batch(batch)) for batch in batches]
+        synced_batches = [self._sync_batch(batch) for batch in batches]
+        source_context_index = self._build_source_context_index()
+        return [
+            self._batch_payload(batch, context_index=source_context_index)
+            for batch in synced_batches
+        ]
 
     def get_batch(self, batch_id: str) -> dict[str, Any]:
         batch = self.repository.get_video_editor_batch(batch_id)
@@ -13098,7 +13159,12 @@ class VideoEditorWorkflowService:
             TaskStatus.RUNNING,
         } and datetime.now().astimezone() - task.updated_at > timedelta(minutes=5)
 
-    def _batch_payload(self, batch: VideoEditorBatch) -> dict[str, Any]:
+    def _batch_payload(
+        self,
+        batch: VideoEditorBatch,
+        *,
+        context_index: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         visual_spec = None
         if (
             batch.provider_mode in {"sandbox", "aliyun", "local"}
@@ -13112,7 +13178,10 @@ class VideoEditorWorkflowService:
             visual_spec = visual_style_spec(batch.output_profile)
         items: list[dict[str, Any]] = []
         for item in batch.items:
-            cached_context = self._cached_source_context(item.source_id)
+            cached_context = self._cached_source_context(
+                item.source_id,
+                context_index=context_index,
+            )
             script_text = self._avatar_script_text(item.source_id)
             effective_title = (
                 item.selected_title
@@ -13121,6 +13190,7 @@ class VideoEditorWorkflowService:
                     item.source_id,
                     item.title,
                     script_text,
+                    context_index=context_index,
                 )
             )
             effective_title_candidates = (
