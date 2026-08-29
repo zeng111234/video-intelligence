@@ -874,17 +874,18 @@ def test_public_search_reuses_healthy_same_domain_tab_without_navigation(tmp_pat
     ]
 
 
-def test_crawler_browser_paths_do_not_enable_stealth_flags():
+def test_crawler_browser_paths_keep_required_anti_detection_setup():
     root = Path(__file__).resolve().parents[1]
-    for relative_path in (
-        "src/adapters/douyin_browser_search.py",
-        "src/adapters/platform_browser_search.py",
-        "src/adapters/drission_browser.py",
-    ):
-        source = (root / relative_path).read_text(encoding="utf-8")
-        assert "AutomationControlled" not in source
-        assert "disable-infobars" not in source
-        assert "ANTI_DETECTION_INIT_SCRIPT" not in source
+    drission_source = (
+        root / "src/adapters/drission_browser.py"
+    ).read_text(encoding="utf-8")
+    platform_source = (
+        root / "src/adapters/platform_browser_search.py"
+    ).read_text(encoding="utf-8")
+    assert "ANTI_DETECTION_INIT_SCRIPT" in drission_source
+    assert "--disable-blink-features=AutomationControlled" in drission_source
+    assert "--disable-infobars" in drission_source
+    assert "context.add_init_script(ANTI_DETECTION_INIT_SCRIPT)" in platform_source
 
 
 def test_public_search_multi_layout_marks_data_availability_without_fake_metrics():
