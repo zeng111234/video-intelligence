@@ -56,7 +56,7 @@ function renderPage() {
 describe("ProductionPage single-task queue", () => {
   beforeEach(() => {
     Object.defineProperty(window, "matchMedia", { writable: true, value: vi.fn().mockImplementation(() => ({ matches: false, addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: vi.fn() })) });
-    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [] });
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [], total: 0 });
   });
 
   afterEach(() => { cleanup(); document.body.innerHTML = ""; vi.clearAllMocks(); });
@@ -97,7 +97,7 @@ describe("ProductionPage single-task queue", () => {
       status: "succeeded",
       platform_runs: [{ status: "succeeded" }],
     } as unknown as CrawlerBatchResponse;
-    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [crawlerBatch] });
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [crawlerBatch], total: 1 });
     vi.mocked(listProductionBatches).mockResolvedValue({ items: [] });
 
     renderPage();
