@@ -291,7 +291,7 @@ function Assert-FreshReleaseCandidate {
         if (
             $null -eq $superseded -or
             ((@($superseded.PSObject.Properties.Name) | Sort-Object) -join ',') -ne
-                'control_plane_sha256,installer_sha256,reason,server_state,source_commit,superseded_by,superseded_at,version,windows_state' -or
+                'control_plane_sha256,installer_sha256,reason,server_state,source_commit,superseded_at,superseded_by,version,windows_state' -or
             [string]$superseded.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
             [string]$superseded.superseded_by -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
             [string]$superseded.source_commit -notmatch '^[0-9a-f]{40}$' -or
