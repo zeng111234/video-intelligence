@@ -5,10 +5,17 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+from types import SimpleNamespace
+
 import pytest
 
+from project.backend.app.api.v1.transcriptions import (
+    VoiceoverDraftRequest,
+    create_voiceover_draft,
+)
 from src.adapters.llm import SandboxCopywritingEngine
-from src.models import CopywritingTask, TaskKind, TaskStatus
+from src.models import CopywritingTask, TaskKind, TaskStatus, TranscriptSegment
 from src.repositories.mock import MockRepository
 from src.services.copywriting import CopywritingService
 
@@ -162,6 +169,63 @@ class _RetryThenFailEngine:
         return self.rewrite(kwargs.get("content_brief", ""))
 
 
+class _OverlongVoiceoverEngine:
+    def __init__(self, *, remains_overlong: bool = False) -> None:
+        self.rewrite_calls: list[dict] = []
+        self.source_texts: list[str] = []
+        self.remains_overlong = remains_overlong
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "overlong-voiceover",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls.append(kwargs)
+        self.source_texts.append(source_text)
+        if len(self.rewrite_calls) == 1:
+            return ["开头钩子。" + "重复说明。" * 20 + "结尾行动句。"]
+        if self.remains_overlong:
+            return ["开头钩子。" + "仍然重复。" * 20 + "结尾行动句。"]
+        return ["开头钩子。核心事实。结尾行动句。"]
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
+
+
+class _CompactVoiceoverEngine:
+    def __init__(self) -> None:
+        self.rewrite_calls = 0
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "compact-voiceover",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls += 1
+        return ["新钩子。保留核心事实。结尾行动句。"]
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
+
+
+class _ApprovedRevisionService:
+    def get_approved_revision(self, task_id: str):
+        return SimpleNamespace(
+            revision_id="revision-approved",
+            corrected_segments=[TranscriptSegment(text="原始事实。" * 100)],
+        )
+
+
 class TestCopywritingServiceEdgeCases:
     """补充 CopywritingService 边界和异常路径。"""
 
@@ -309,6 +373,66 @@ class TestCopywritingServiceEdgeCases:
             rewrite_goal="压缩为 45 秒并删除重复观点",
         )
         assert task.rewrite_goal == "压缩为 45 秒并删除重复观点"
+
+    def test_rewrite_retries_when_the_model_ignores_the_target_length(self):
+        engine = _OverlongVoiceoverEngine()
+
+        task = CopywritingService(self.repo, engine).rewrite(
+            source_text="一段很长的授权转写。",
+            target_length=50,
+        )
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert len(engine.rewrite_calls) == 2
+        assert "硬性长度要求" in engine.rewrite_calls[0]["rewrite_goal"]
+        assert "长度验收未通过" in engine.rewrite_calls[1]["rewrite_goal"]
+        assert engine.source_texts[1].startswith("开头钩子。")
+        assert CopywritingService._spoken_character_count(task.result_text or "") <= 50
+        assert task.result_text == "开头钩子。核心事实。结尾行动句。"
+        assert any("二次语义压缩" in note for note in task.compliance_notes)
+
+    def test_rewrite_fails_instead_of_truncating_when_semantic_compression_stays_overlong(self):
+        task = CopywritingService(
+            self.repo,
+            _OverlongVoiceoverEngine(remains_overlong=True),
+        ).rewrite(
+            source_text="一段很长的授权转写。",
+            target_length=50,
+        )
+
+        assert task.status == TaskStatus.FAILED
+        assert task.result_text is None
+        assert "未生成可交给数字人的文案" in (task.error_message or "")
+
+    def test_voiceover_draft_regenerates_an_old_overlong_cached_result(self):
+        now = datetime.now().astimezone()
+        old_draft = CopywritingTask(
+            task_id="copy-overlong-cache",
+            title="旧口播稿",
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            source_task_id="transcription-1",
+            source_revision_id="revision-approved",
+            result_text="旧稿。" * 100,
+            result_variants=["旧稿。" * 100],
+            outputs={"draft_stage": "deduplicate"},
+        )
+        self.repo.save_task(old_draft)
+        engine = _CompactVoiceoverEngine()
+        service = CopywritingService(self.repo, engine)
+
+        response = create_voiceover_draft(
+            "transcription-1",
+            VoiceoverDraftRequest(target_seconds=15),
+            transcription_service=_ApprovedRevisionService(),
+            copywriting_service=service,
+        )
+
+        assert engine.rewrite_calls == 1
+        assert response.copywriting_task_id != old_draft.task_id
+        assert response.result_text == "新钩子。保留核心事实。结尾行动句。"
 
     def test_rewrite_with_all_params(self):
         """完整参数传递应正确反映在任务中。"""

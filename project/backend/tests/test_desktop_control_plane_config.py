@@ -118,6 +118,28 @@ def test_desktop_port_can_be_selected_dynamically(monkeypatch, tmp_path):
     state = json.loads((tmp_path / "data" / "desktop-runtime.json").read_text(encoding="utf-8"))
     assert state["port"] == port
     assert state["origin"] == f"http://127.0.0.1:{port}"
+    assert state["started_at"]
+
+
+def test_desktop_launcher_removes_only_a_stale_runtime_record(monkeypatch, tmp_path):
+    desktop_launcher._write_runtime_state(tmp_path, 16543)
+    runtime_file = tmp_path / "data" / "desktop-runtime.json"
+    payload = json.loads(runtime_file.read_text(encoding="utf-8"))
+    payload["pid"] = 123456
+    runtime_file.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(desktop_launcher, "_runtime_pid_is_alive", lambda _pid: False)
+
+    assert desktop_launcher._clear_stale_runtime_state(tmp_path) is True
+    assert not runtime_file.exists()
+
+
+def test_desktop_launcher_keeps_a_live_runtime_record(monkeypatch, tmp_path):
+    desktop_launcher._write_runtime_state(tmp_path, 16543)
+    runtime_file = tmp_path / "data" / "desktop-runtime.json"
+    monkeypatch.setattr(desktop_launcher, "_runtime_pid_is_alive", lambda _pid: True)
+
+    assert desktop_launcher._clear_stale_runtime_state(tmp_path) is False
+    assert runtime_file.exists()
 
 
 @pytest.mark.parametrize("value", ["nope", "80", "70000"])

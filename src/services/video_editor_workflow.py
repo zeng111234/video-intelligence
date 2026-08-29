@@ -60,7 +60,7 @@ _WORKFLOW_EXECUTOR = ThreadPoolExecutor(
 )
 _MAX_SOURCE_UPLOAD_BYTES = 100 * 1024 * 1024
 _MAX_GENERATED_SUBTITLE_BYTES = 100 * 1024 * 1024
-_MAX_SUBTITLE_SECONDS = 15 * 60
+_MAX_SUBTITLE_SECONDS = 60 * 60
 _MAX_BATCH_ITEMS = 10
 _MAX_BGM_BYTES = 30 * 1024 * 1024
 _BGM_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".flac"}
@@ -103,8 +103,17 @@ _LOCAL_ENCODER_LOCK = threading.Lock()
 
 def _audited_media_tool_hashes() -> dict[str, str]:
     """Read the checked-in Windows media-tool manifest without trusting PATH."""
-    manifest = Path(__file__).resolve().parents[2] / "config" / "windows-media-tools.sha256"
-    if not manifest.is_file():
+    runtime_root = Path(__file__).resolve().parents[2]
+    # PyInstaller places the manifest beside the bundled binaries under
+    # ``_internal/media``.  The source checkout keeps it under ``config``.
+    # Prefer the co-located packaged manifest so a frozen client does not
+    # report a valid media bundle as missing.
+    manifests = (
+        runtime_root / "media" / "windows-media-tools.sha256",
+        runtime_root / "config" / "windows-media-tools.sha256",
+    )
+    manifest = next((candidate for candidate in manifests if candidate.is_file()), None)
+    if manifest is None:
         return {}
     hashes: dict[str, str] = {}
     for line in manifest.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -3407,7 +3416,7 @@ class VideoEditorWorkflowService:
             )
         if float(media.get("duration_seconds") or 0) > _MAX_SUBTITLE_SECONDS:
             raise VideoEditorWorkflowError(
-                "成片超过 15 分钟，暂不能在智能剪辑中生成字幕。"
+                "成片超过 60 分钟，暂不能在智能剪辑中生成字幕。"
             )
         transcript = self.transcription_service.create_task(
             media_name=path.name,
@@ -4982,7 +4991,7 @@ class VideoEditorWorkflowService:
         output_profile: str,
         target_platform: str,
     ) -> dict[str, Any]:
-        """生成并持久化无云调用的 15 分钟费用报价。"""
+        """生成并持久化无云调用的长视频费用报价。"""
         from src.services.video_editor_cloud import (
             CloudEditorError,
             create_cost_quote,

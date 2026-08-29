@@ -29,7 +29,7 @@ from src.retry import ExternalServiceError, RetryPolicy, retry_with_policy
 
 MAX_MEDIA_BYTES = 50 * 1024 * 1024
 MAX_PROVIDER_MEDIA_BYTES = 300 * 1024 * 1024
-MAX_DURATION_SECONDS = 15 * 60
+MAX_DURATION_SECONDS = 60 * 60
 ALLOWED_EXTENSIONS = {".mp4", ".mov"}
 ALLOWED_ASR_MODELS = {"base", "medium", "large-v3-turbo", "fun-asr"}
 ALLOWED_ASR_LANGUAGES = {"auto", "zh", "en", "ja", "ko"}
@@ -824,7 +824,7 @@ class TranscriptionService:
         if not math.isfinite(duration) or duration <= 0:
             raise MediaValidationError("媒体时长无效，请检查文件后重新上传。")
         if duration > MAX_DURATION_SECONDS:
-            raise MediaValidationError("媒体时长不能超过15分钟。")
+            raise MediaValidationError("媒体时长不能超过60分钟。")
         return duration
 
     def _extract_audio(self, input_path: Path, wav_path: Path) -> None:

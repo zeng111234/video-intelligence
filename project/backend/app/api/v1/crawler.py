@@ -5506,6 +5506,16 @@ def _candidate_audio_fields(
     }
 
 
+def _spoken_material_message(platform: Platform, *, status: str, message: str) -> str:
+    """Explain the login-dependent XHS path without hiding the action."""
+    if platform == Platform.XIAOHONGSHU and status == "topic_only":
+        return (
+            "小红书候选会先尝试使用已登录浏览器打开并转写；若该笔记当前无法浏览，"
+            "可重新复制分享链接，或上传已获授权的视频。"
+        )
+    return message
+
+
 def _candidate_to_response(
     candidate,
     *,
@@ -5602,6 +5612,11 @@ def _candidate_to_response(
     spoken_material = _spoken_material_fields(
         evidence=resolved_evidence,
         copy_fields=copy_fields,
+    )
+    spoken_material["message"] = _spoken_material_message(
+        candidate.platform,
+        status=str(spoken_material["status"]),
+        message=str(spoken_material["message"]),
     )
     spoken_seed = _spoken_seed_quality(
         title=candidate.title,
@@ -5700,6 +5715,11 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         keyword=keyword,
         evidence=item.evidence,
     )
+    spoken_material_message = _spoken_material_message(
+        item.platform,
+        status="topic_only",
+        message="这条结果只验证了标题和互动数据；可据此生成原创口播，但不能提取原视频文案。",
+    )
     return CrawlerCandidateResult(
         video_id=item.platform_item_id,
         title=item.title,
@@ -5729,7 +5749,7 @@ def _provider_item_to_crawler_response(item, *, keyword: str) -> CrawlerCandidat
         data_quality_warnings=item.data_quality_warnings,
         evidence=item.evidence,
         spoken_material_status="topic_only",
-        spoken_material_message="这条结果只验证了标题和互动数据；可据此生成原创口播，但不能提取原视频文案。",
+        spoken_material_message=spoken_material_message,
         spoken_seed_score=spoken_seed["score"],
         spoken_seed_status=spoken_seed["status"],
         spoken_seed_message=spoken_seed["message"],

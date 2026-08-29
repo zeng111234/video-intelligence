@@ -137,6 +137,25 @@ def _desktop_background_work_authorized() -> bool:
     )
 
 
+def _desktop_background_work_block_reason() -> str | None:
+    """Return a user-actionable reason without mutating queued work."""
+    from project.backend.app.core.desktop_owner import desktop_owner_matches
+    from project.backend.app.services.control_plane_client import (
+        active_upstream_customer_session,
+        active_upstream_customer_subject,
+        control_plane_enabled,
+    )
+
+    if not control_plane_enabled():
+        return None
+    subject = active_upstream_customer_subject()
+    if not subject or not active_upstream_customer_session():
+        return "等待已绑定客户登录后继续制作。"
+    if not desktop_owner_matches(subject):
+        return "当前登录账号与本机已绑定客户不一致，暂不执行队列。"
+    return None
+
+
 __all__ = [
     "COPYWRITING_API_KEY",
     "COPYWRITING_BASE_URL",
@@ -661,6 +680,7 @@ def get_pipeline_worker() -> PipelineWorker:
         production_service=get_production_service(),
         douyin_link_transcription_service=get_douyin_link_transcription_service(),
         can_process=_desktop_background_work_authorized,
+        processing_block_reason=_desktop_background_work_block_reason,
     )
 
 

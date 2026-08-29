@@ -182,6 +182,14 @@ function buildTranscriptionHref(candidate: CrawlerCandidateResult) {
   return `/transcription?${query.toString()}`;
 }
 
+const XIAOHONGSHU_MANUAL_ONLY_MESSAGE =
+  "小红书公开搜索只保存标题和互动数据；原视频可能仅支持 App/登录查看，不能直接自动转写。请上传已获授权的视频，或按话题生成原创口播。";
+
+function isXiaohongshuTopicOnly(candidate: CrawlerCandidateResult) {
+  return candidate.platform === "xiaohongshu"
+    && (candidate.spoken_material_status || "topic_only") === "topic_only";
+}
+
 function copyStatus(item: CrawlerCandidateResult) {
   const status = item.audio_status || "unknown";
   if (status === "speech_detected") return { filter: "detected" as const, color: "success", label: "检测到文案" };
@@ -1977,6 +1985,8 @@ function MaterialCandidatePreview({
     return <aside className="crawler-candidate-preview empty"><Text type="secondary">点选一条素材查看详情</Text></aside>;
   }
 
+  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(candidate);
+
   return (
     <aside className="crawler-candidate-preview">
       <Text type="secondary">已选择 1 条</Text>
@@ -1987,6 +1997,7 @@ function MaterialCandidatePreview({
         {candidate.evidence?.startsWith("douyin_public_search:") && <Tag color="cyan">抖音登录搜索</Tag>}
         {keywordMatch && <Tag color="green">{keywordMatch}</Tag>}
         {isReferenceCandidate && <Tag color="orange">待人工确认</Tag>}
+        {xiaohongshuManualOnly && <Tag color="orange">需 App/登录确认</Tag>}
         {status && <Tag color={status.color}>{status.label}</Tag>}
       </Space>
       <div className="crawler-preview-metrics">
@@ -2028,7 +2039,11 @@ function MaterialCandidatePreview({
             {materialStatus === "text_reference" ? "根据可见文案改写" : "生成原创口播"}
           </Button>
         )}
-        {status?.filter !== "detected" && (
+        {xiaohongshuManualOnly ? (
+          <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
+            <Button block disabled>上传授权视频后转写</Button>
+          </Tooltip>
+        ) : status?.filter !== "detected" && (
           <Button block href={buildTranscriptionHref(candidate)}>
             {candidate.source_url ? "转写文案" : "上传视频转写"}
           </Button>
@@ -2286,6 +2301,7 @@ function HotspotCandidateTable({
       width: 280,
       render: (_, item) => {
         const topicOnly = (item.spoken_material_status || "topic_only") === "topic_only";
+        const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item);
         return (
         <Space size={6}>
           {!topicOnly && (
@@ -2304,12 +2320,15 @@ function HotspotCandidateTable({
           >
             按这个话题写原创
           </Button>
-          <Button
-            size="small"
-            href={buildTranscriptionHref(item)}
-          >
-            {item.source_url ? "转写文案" : "上传视频转写"}
-          </Button>
+          {xiaohongshuManualOnly ? (
+            <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
+              <Button size="small" disabled>上传授权视频后转写</Button>
+            </Tooltip>
+          ) : (
+            <Button size="small" href={buildTranscriptionHref(item)}>
+              {item.source_url ? "转写文案" : "上传视频转写"}
+            </Button>
+          )}
           <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : undefined}>
             <span>
               <Button
@@ -2394,9 +2413,15 @@ function HotspotCandidateTable({
               >
                 按这个话题写原创
               </Button>
-              <Button href={buildTranscriptionHref(detail)}>
-                {detail.source_url ? "转写文案" : "上传视频转写"}
-              </Button>
+              {isXiaohongshuTopicOnly(detail) ? (
+                <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
+                  <Button disabled>上传授权视频后转写</Button>
+                </Tooltip>
+              ) : (
+                <Button href={buildTranscriptionHref(detail)}>
+                  {detail.source_url ? "转写文案" : "上传视频转写"}
+                </Button>
+              )}
               <Button href={detail.source_url || undefined} target="_blank" disabled={!detail.source_url}>
                 原视频
               </Button>
@@ -2439,8 +2464,11 @@ function CandidateListItem({
   const materialStatus = item.spoken_material_status || "topic_only";
   const isTopicOnly = materialStatus === "topic_only";
   const isReferenceCandidate = item.selection_tier === "reserve";
+  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item);
   const materialMessage = item.spoken_material_message || (isTopicOnly
-    ? "仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。"
+    ? (xiaohongshuManualOnly
+      ? XIAOHONGSHU_MANUAL_ONLY_MESSAGE
+      : "仅有标题和互动数据，只能用于选题参考，不能提取原视频文案。")
     : "已有可核验的文字素材，请先核对原意再继续创作。");
   const seedStatus = item.spoken_seed_status || "low_information";
   const seedTag = seedStatus === "writeable"
@@ -2502,12 +2530,12 @@ function CandidateListItem({
             </Button>
           </Tooltip>
         ) : null,
-        audioStatus !== "speech_detected" ? (
-          <Button
-            type="link"
-            size="small"
-            href={buildTranscriptionHref(item)}
-          >
+        xiaohongshuManualOnly ? (
+          <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
+            <Button type="link" size="small" disabled>上传授权视频后转写</Button>
+          </Tooltip>
+        ) : audioStatus !== "speech_detected" ? (
+          <Button type="link" size="small" href={buildTranscriptionHref(item)}>
             {item.source_url ? "转写文案" : "上传视频转写"}
           </Button>
         ) : null,
@@ -2524,6 +2552,7 @@ function CandidateListItem({
               {isHotspotLeaderboard && item.hotspot_list_labels && item.hotspot_list_labels.length > 0 && <Tag color="purple">{item.hotspot_list_labels.join(" / ")}</Tag>}
               {isDouyinPublicSearch && <Tag color="cyan">抖音登录搜索</Tag>}
               {isReferenceCandidate && <Tag color="orange">待人工确认</Tag>}
+              {xiaohongshuManualOnly && <Tag color="orange">需 App/登录确认</Tag>}
               {item.relevance_basis && (
                 <Tag color="green">{keywordMatchLabel(item.relevance_reason) || "命中关键词"}</Tag>
               )}

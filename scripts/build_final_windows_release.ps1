@@ -269,7 +269,7 @@ function Assert-WindowsReleaseRegistryState {
         [Parameter(Mandatory = $true)][object]$Registry,
         [Parameter(Mandatory = $true)][string]$ExpectedVersion
     )
-    $expectedTopLevelProperties = "completed_releases,current_candidate,release_in_progress,schema_version,used_versions"
+    $expectedTopLevelProperties = "completed_releases,current_candidate,release_in_progress,schema_version,superseded_releases,used_versions"
     $topLevelProperties = (@($Registry.PSObject.Properties.Name) | Sort-Object) -join ','
     if ($topLevelProperties -ne $expectedTopLevelProperties -or [int]$Registry.schema_version -ne 2) {
         throw "正式版本登记表 schema_version 必须为 2。"
@@ -296,6 +296,9 @@ function Assert-WindowsReleaseRegistryState {
     }
     if (-not ($Registry.completed_releases -is [System.Array])) {
         throw "正式版本登记表 completed_releases 必须是数组。"
+    }
+    if (-not ($Registry.superseded_releases -is [System.Array])) {
+        throw "正式版本登记表 superseded_releases 必须是数组。"
     }
     $completedVersions = @()
     foreach ($completedRelease in @($Registry.completed_releases)) {

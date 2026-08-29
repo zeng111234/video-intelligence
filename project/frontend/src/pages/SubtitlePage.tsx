@@ -87,7 +87,7 @@ export default function SubtitlePage() {
         <Col xs={24} lg={14}>
           <Card size="small" title={<Space><UploadOutlined /> 上传并识别</Space>}>
             <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-              <Alert type="info" showIcon message="仅支持已授权的 MP4/MOV，单个文件不超过 50MB、时长不超过 15 分钟。" />
+              <Alert type="info" showIcon message="仅支持已授权的 MP4/MOV，单个文件不超过 50MB、时长不超过 60 分钟。" />
               <Row gutter={[12, 12]}>
                 <Col xs={24} md={12}>
                   <Text type="secondary">识别方式</Text>

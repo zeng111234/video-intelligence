@@ -183,6 +183,82 @@ def test_capabilities_expose_missing_production_configuration(tmp_path: Path):
         )
 
 
+def test_capabilities_keep_local_renderer_when_cloud_probe_is_unavailable():
+    class _Service:
+        @staticmethod
+        def capabilities():
+            return {
+                "provider_name": "ffmpeg_local",
+                "enabled": False,
+            }
+
+    class _Workflow:
+        @staticmethod
+        def local_ffmpeg_capabilities():
+            return {
+                "provider_mode": "local_ffmpeg",
+                "renderer_mode": "local_ffmpeg",
+                "provider_name": "ffmpeg_local_audited",
+                "enabled": True,
+                "live_ready": True,
+                "is_mock": False,
+                "missing_configuration": [],
+            }
+
+        _cloud_configuration_override = None
+
+        def cloud_capabilities(self):
+            raise AssertionError("healthy local path must not probe the cloud")
+
+    payload = video_editor_api.capabilities(
+        service=_Service(),
+        workflow=_Workflow(),
+    )
+
+    assert payload["provider_mode"] == "local_ffmpeg"
+    assert payload["renderer_mode"] == "local_ffmpeg"
+    assert payload["enabled"] is True
+    assert payload["live_ready"] is True
+    assert payload["cloud_backup"]["availability"] == "not_checked_local_default"
+    assert payload["local_renderer"]["provider_name"] == "ffmpeg_local_audited"
+
+
+def test_capabilities_classify_remote_probe_failure_without_failing_endpoint():
+    class _Service:
+        @staticmethod
+        def capabilities():
+            return {"provider_name": "sandbox_video_editor", "enabled": True}
+
+    class _Workflow:
+        _cloud_configuration_override = object()
+
+        @staticmethod
+        def local_ffmpeg_capabilities():
+            return {
+                "provider_mode": "local_ffmpeg",
+                "renderer_mode": "local_ffmpeg",
+                "enabled": False,
+                "live_ready": False,
+                "missing_configuration": ["本机受审媒体工具不可用"],
+            }
+
+        @staticmethod
+        def cloud_capabilities():
+            raise ConnectionError("WinError 10054")
+
+    payload = video_editor_api.capabilities(
+        service=_Service(),
+        workflow=_Workflow(),
+    )
+
+    assert payload["provider_mode"] == "aliyun"
+    assert payload["enabled"] is False
+    assert payload["cloud_backup"]["availability"] == "control_plane_unavailable"
+    assert payload["cloud_backup"]["missing_configuration"] == [
+        "控制面能力暂不可用，请重新连接"
+    ]
+
+
 def test_brand_title_font_is_served_from_the_same_editor_api():
     with TestClient(app) as client:
         response = client.get("/api/v1/video-editor/brand-title-font")

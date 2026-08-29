@@ -1948,13 +1948,13 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
     fireEvent.click(await screen.findByRole("button", { name: "完成预检并启动" }));
 
-    expect(await screen.findByText("本次费用暂无法确认，请联系管理员完成费用配置后重试。不会扣费，也不会开始制作。")).toBeTruthy();
+    expect(await screen.findByText("暂时无法取得服务报价，系统不会扣费或开始制作。请稍后重新预检。")).toBeTruthy();
     expect(screen.queryByRole("dialog", { name: "补充费用配置" })).toBeNull();
     expect(screen.queryByLabelText("文案生成单次费用")).toBeNull();
     expect(startProductionBatch).not.toHaveBeenCalled();
   });
 
-  it("opens the internal cost configuration only for an administrator after an unknown-cost preflight", async () => {
+  it("does not trap an administrator in a manual quote form after an unknown-cost preflight", async () => {
     localStorage.setItem("vi_admin_token", "test-admin-token");
     const preflightWorkspace: ProductionWorkspace = {
       ...transcriptWorkspace,
@@ -1992,9 +1992,10 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
     fireEvent.click(await screen.findByRole("button", { name: "完成预检并启动" }));
 
-    expect(await screen.findByRole("dialog", { name: "补充费用配置" })).toBeTruthy();
-    expect(screen.getByLabelText("文案生成单次费用")).toBeTruthy();
-    expect(screen.getByLabelText("数字人口播单次费用")).toBeTruthy();
+    expect(await screen.findByText("暂时无法取得服务报价，系统不会扣费或开始制作。请稍后重新预检。")).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "补充费用配置" })).toBeNull();
+    expect(screen.queryByLabelText("文案生成单次费用")).toBeNull();
+    expect(startProductionBatch).not.toHaveBeenCalled();
   });
 
   it("shows final publish metadata and the server-confirmed manual destination", async () => {

@@ -211,7 +211,8 @@ function Assert-FreshReleaseCandidate {
         'used_versions',
         'current_candidate',
         'release_in_progress',
-        'completed_releases'
+        'completed_releases',
+        'superseded_releases'
     )
     $actualTopLevelProperties = @($Registry.PSObject.Properties.Name)
     if (Compare-Object -CaseSensitive $expectedTopLevelProperties $actualTopLevelProperties) {
@@ -222,12 +223,14 @@ function Assert-FreshReleaseCandidate {
     $candidateProperty = $Registry.PSObject.Properties['current_candidate']
     $inProgressProperty = $Registry.PSObject.Properties['release_in_progress']
     $completedProperty = $Registry.PSObject.Properties['completed_releases']
+    $supersededProperty = $Registry.PSObject.Properties['superseded_releases']
     if (
         $null -eq $schemaProperty -or [int]$schemaProperty.Value -ne 2 -or
         $null -eq $usedProperty -or $usedProperty.Value -isnot [System.Array] -or
         $null -eq $candidateProperty -or $candidateProperty.Value -isnot [string] -or
         $null -eq $inProgressProperty -or $null -ne $inProgressProperty.Value -or
-        $null -eq $completedProperty -or $completedProperty.Value -isnot [System.Array]
+        $null -eq $completedProperty -or $completedProperty.Value -isnot [System.Array] -or
+        $null -eq $supersededProperty -or $supersededProperty.Value -isnot [System.Array]
     ) {
         throw '正式版本登记表 schema 无效或缺少 fail-closed 生命周期字段。'
     }
@@ -278,6 +281,22 @@ function Assert-FreshReleaseCandidate {
         ) {
             throw '正式版本登记表包含无效、重复或未烧录的完成记录。'
         }
+    }
+    foreach ($superseded in @($supersededProperty.Value)) {
+        if (
+            $null -eq $superseded -or
+            ((@($superseded.PSObject.Properties.Name) | Sort-Object) -join ',') -ne
+                'control_plane_sha256,installer_sha256,reason,server_state,source_commit,superseded_by,superseded_at,version,windows_state' -or
+            [string]$superseded.version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+            [string]$superseded.superseded_by -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$' -or
+            [string]$superseded.source_commit -notmatch '^[0-9a-f]{40}$' -or
+            [string]$superseded.server_state -ne 'ready' -or
+            [string]$superseded.control_plane_sha256 -notmatch '^[0-9a-f]{64}$' -or
+            [string]$superseded.windows_state -notin @('pending','failed','attempted','built') -or
+            ([string]$superseded.installer_sha256 -ne '' -and [string]$superseded.installer_sha256 -notmatch '^[0-9a-f]{64}$') -or
+            [string]::IsNullOrWhiteSpace([string]$superseded.reason) -or
+            [string]::IsNullOrWhiteSpace([string]$superseded.superseded_at)
+        ) { throw '正式版本登记表包含无效的 superseded_releases 记录。' }
     }
     $candidateBaseVersion = [version]($ExpectedVersion.Split('-', 2)[0])
     $usedBaseVersions = @(
@@ -607,6 +626,7 @@ try {
             installer_sha256 = $null
         }
         completed_releases = [object[]]$completedReleases
+        superseded_releases = [object[]]@($lockedRegistry.superseded_releases)
     }
     Write-ReleaseRegistryAtomically -LiteralPath $releaseRegistryPath -Registry $releaseState
     $releaseReserved = $true

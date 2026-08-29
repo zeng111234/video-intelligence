@@ -577,6 +577,11 @@ def create_voiceover_draft(
             detail="真实 LLM 文案服务未配置，暂不能生成口播稿。",
         )
 
+    source_text = _deduplicate_adjacent_segments(revision.corrected_segments)
+    target_characters = max(
+        50,
+        min(800, round(body.target_seconds * 4 * body.speech_rate)),
+    )
     existing_draft = next(
         (
             task
@@ -588,14 +593,15 @@ def create_voiceover_draft(
         ),
         None,
     )
-    if existing_draft is not None:
+    if (
+        existing_draft is not None
+        and copywriting_service._spoken_character_count(
+            existing_draft.result_text or ""
+        )
+        <= target_characters
+    ):
         return _voiceover_to_response(existing_draft)
 
-    source_text = _deduplicate_adjacent_segments(revision.corrected_segments)
-    target_characters = max(
-        50,
-        min(800, round(body.target_seconds * 4 * body.speech_rate)),
-    )
     rewrite_goal = (
         f"生成不超过约 {body.target_seconds} 秒、约 {target_characters} 字的数字人口播稿；内容不足时自然缩短，不要灌水。"
         "删除口头禅、寒暄、重复句和与主旨无关的绕话；合并重复观点。"

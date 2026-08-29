@@ -369,7 +369,7 @@ def test_model_loading_retries_once_then_reports_failure() -> None:
     assert attempts == 2
 
 
-@pytest.mark.parametrize("duration", ["0", "-1", "NaN", "Infinity", "901"])
+@pytest.mark.parametrize("duration", ["0", "-1", "NaN", "Infinity", "3601"])
 def test_invalid_or_excessive_duration_is_rejected(duration: str) -> None:
     def invalid_duration(args, **kwargs):
         return SimpleNamespace(
@@ -393,6 +393,39 @@ def test_invalid_or_excessive_duration_is_rejected(duration: str) -> None:
             rights_confirmed=True,
             rights_holder="测试公司",
         )
+
+
+def test_twenty_minute_media_is_accepted_by_transcription_validation() -> None:
+    def twenty_minute_media(args, **kwargs):
+        if args[0] == "ffprobe":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "streams": [{"codec_type": "audio"}],
+                        "format": {"duration": "1200"},
+                    }
+                ),
+            )
+        output = Path(args[-1])
+        output.write_bytes(b"fake-wav")
+        return SimpleNamespace(returncode=0)
+
+    service = TranscriptionService(
+        MockRepository(candidates=[], tasks=[]),
+        model_loader=lambda _name: FakeModel(),
+        command_runner=twenty_minute_media,
+    )
+
+    task = service.create_task(
+        media_name="twenty-minute.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+    )
+
+    assert task.duration_seconds == 1200
 
 
 def test_failure_callback_and_error_are_user_safe() -> None:

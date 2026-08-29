@@ -129,7 +129,7 @@ _PUBLIC_SEARCH_END_MARKERS = (
     "已加载全部",
     "已经到底了",
 )
-_ADAPTER_VERSION = "visible_browser_network_v7_bounded_bilibili_scan"
+_ADAPTER_VERSION = "visible_browser_network_v8"
 
 
 class LocalPlatformBrowserSearchProvider:
@@ -155,6 +155,7 @@ class LocalPlatformBrowserSearchProvider:
             raise ValueError(f"不支持的本机浏览器平台：{platform.value}")
         self.platform = platform
         self.spec = _SPECS[platform]
+        self.adapter_version = f"{_ADAPTER_VERSION}_{platform.value}"
         # 小红书默认只能使用全新、隔离的未登录公开资料目录。只有专门的
         # 人工登录依赖显式声明 allow_xiaohongshu_login，才能打开可见登录窗口。
         self.anonymous_only = anonymous_only or (
@@ -763,7 +764,7 @@ class LocalPlatformBrowserSearchProvider:
             crawl_stop_message=self._collection_stop_message,
             payload_diagnostic=self._collection_diagnostic(requested_kuaishou_filters),
             stage_timings_ms=timings,
-            adapter_rule_version=_ADAPTER_VERSION,
+            adapter_rule_version=self.adapter_version,
             browser_reused=self._collection_metrics.get("browser_reused"),
             session_recovered=bool(self._collection_metrics.get("session_recovered")),
         )
@@ -994,17 +995,19 @@ class LocalPlatformBrowserSearchProvider:
                                 )
                                 minimize_browser_window(self.debug_port)
                                 self._raise_for_search_response(response)
-                        if not bilibili_search_response_seen:
-                            self._wait_for_bilibili_cards_ready(page)
+                        # 接口响应可能缺少发布时间；始终读取同页可见卡片，
+                        # 按 BV 号合并后用页面日期补齐接口字段。
+                        self._wait_for_bilibili_cards_ready(page)
                         self._raise_for_visible_block(page)
-                        if not bilibili_search_response_seen:
-                            for row in self._rendered_rows(page, keyword=keyword):
-                                self._merge_rendered_row(rendered_rows, row)
-                        current_count = (
-                            len(network_rows)
-                            if bilibili_search_response_seen
-                            else len(rendered_rows)
-                        )
+                        try:
+                            visible_rows = self._rendered_rows(page, keyword=keyword)
+                        except Exception:
+                            # 页面卡片只是补充发布时间；补充失败不能让已拿到的
+                            # 公开搜索接口结果整批丢失。
+                            visible_rows = []
+                        for row in visible_rows:
+                            self._merge_rendered_row(rendered_rows, row)
+                        current_count = len(set(network_rows) | set(rendered_rows))
                         if current_count > 0 and "first_result_ms" not in stage_timings:
                             stage_timings["first_result_ms"] = max(
                                 0,
@@ -1053,7 +1056,9 @@ class LocalPlatformBrowserSearchProvider:
                         search_confirmed = self._confirm_xiaohongshu_search(page, keyword)
                         self._raise_for_login_gate(page)
                         if not search_confirmed and not self._xiaohongshu_search_response_seen:
-                            self._collection_rule_failure = "页面结构发生变化，请重新连接"
+                            self._collection_filter_notes.append(
+                                "未能确认搜索框状态，已继续读取页面中可核验的视频候选。"
+                            )
                     effective_filters = dict(search_filters or {})
                     if (
                         self.platform == Platform.XIAOHONGSHU
@@ -1065,14 +1070,16 @@ class LocalPlatformBrowserSearchProvider:
                         # navigation. The video-tab response is likewise cleared
                         # immediately before selecting the requested time window.
                         network_rows.clear()
-                    self._collection_filter_notes = self._apply_platform_filters(
-                        page,
-                        search_filters=effective_filters or None,
-                        before_time_filter=(
-                            network_rows.clear
-                            if self.platform == Platform.XIAOHONGSHU
-                            else None
-                        ),
+                    self._collection_filter_notes.extend(
+                        self._apply_platform_filters(
+                            page,
+                            search_filters=effective_filters or None,
+                            before_time_filter=(
+                                network_rows.clear
+                                if self.platform == Platform.XIAOHONGSHU
+                                else None
+                            ),
+                        )
                     )
                     if self._collection_rule_failure:
                         max_scroll_rounds = 0
@@ -1181,10 +1188,7 @@ class LocalPlatformBrowserSearchProvider:
                     page.close()
                 minimize_browser_window(self.debug_port)
 
-        if self.platform == Platform.BILIBILI and bilibili_search_response_seen:
-            rows = list(network_rows.values())
-        else:
-            rows = self._merge_collected_rows(network_rows, rendered_rows)
+        rows = self._merge_collected_rows(network_rows, rendered_rows)
         self._collection_metrics = {
             "raw_discovered_count": max(raw_discovered_count, len(rows)),
             "deduped_item_count": len(rows),
@@ -1245,6 +1249,12 @@ class LocalPlatformBrowserSearchProvider:
             base = merged.get(item_id, {})
             combined = dict(base)
             for key, value in row.items():
+                if (
+                    key == "time_confident"
+                    and value is False
+                    and base.get("time_confident") is True
+                ):
+                    continue
                 if value is not None:
                     combined[key] = value
             merged[item_id] = combined
@@ -1551,8 +1561,9 @@ class LocalPlatformBrowserSearchProvider:
             video_selected = self._select_xiaohongshu_video_filter(page)
             self._xiaohongshu_video_filter_confirmed = video_selected
             if not video_selected:
-                self._collection_rule_failure = "页面结构发生变化，请重新连接"
-                return [self._collection_rule_failure]
+                return [
+                    "小红书未能确认“视频”筛选，已仅保留页面或搜索响应明确标记为视频的候选。"
+                ]
             notes = ["已选择小红书“视频”筛选"]
             if search_filters and "published_days" in search_filters:
                 if before_time_filter is not None:
@@ -1974,7 +1985,7 @@ class LocalPlatformBrowserSearchProvider:
                     dict.fromkeys((selector, *self.spec.fallback_link_selectors))
                 )
                 self._collection_filter_notes.append(
-                    f"{self.spec.label}已启用备用页面规则；规则版本 {_ADAPTER_VERSION}。"
+                    f"{self.spec.label}已启用备用页面规则；规则版本 {self.adapter_version}。"
                 )
             raw = page.locator(selector).evaluate_all(
                 """elements => elements.map(element => {
@@ -2146,6 +2157,66 @@ class LocalPlatformBrowserSearchProvider:
         return False
 
     @staticmethod
+    def _xiaohongshu_source_url(
+        entry: dict[str, Any], card: dict[str, Any], item_id: str
+    ) -> str:
+        """Keep a platform-provided share URL, including temporary query params."""
+        url_keys = (
+            "share_url",
+            "shareUrl",
+            "source_url",
+            "sourceUrl",
+            "note_url",
+            "noteUrl",
+            "href",
+            "url",
+            "link",
+        )
+        for mapping in (entry, card):
+            for key in url_keys:
+                value = mapping.get(key)
+                if isinstance(value, dict):
+                    value = value.get("url") or value.get("href")
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                candidate = value.strip()
+                parsed = urlparse(candidate)
+                host = (parsed.hostname or "").casefold()
+                valid_host = (
+                    host == "xiaohongshu.com"
+                    or host.endswith(".xiaohongshu.com")
+                    or host == "xhslink.com"
+                    or host.endswith(".xhslink.com")
+                )
+                valid_path = (
+                    host == "xhslink.com"
+                    or host.endswith(".xhslink.com")
+                    or "/explore/" in parsed.path
+                    or "/discovery/item/" in parsed.path
+                )
+                if (
+                    candidate.startswith(("https://", "http://"))
+                    and valid_host
+                    and valid_path
+                ):
+                    return candidate
+
+        token = None
+        token_source = None
+        for mapping in (entry, card):
+            token = token or mapping.get("xsec_token") or mapping.get("xsecToken")
+            token_source = token_source or mapping.get("xsec_source") or mapping.get(
+                "xsecSource"
+            )
+        canonical = f"https://www.xiaohongshu.com/explore/{item_id}"
+        if token:
+            query = [("xsec_token", str(token))]
+            if token_source:
+                query.append(("xsec_source", str(token_source)))
+            return f"{canonical}?{urlencode(query)}"
+        return canonical
+
+    @staticmethod
     def _xiaohongshu_rows(payload: dict[str, Any]) -> list[dict[str, Any]]:
         data = payload.get("data")
         if isinstance(data, dict):
@@ -2199,7 +2270,9 @@ class LocalPlatformBrowserSearchProvider:
             rows.append(
                 {
                     "item_id": item_id,
-                    "source_url": f"https://www.xiaohongshu.com/explore/{item_id}",
+                    "source_url": LocalPlatformBrowserSearchProvider._xiaohongshu_source_url(
+                        entry, card, item_id
+                    ),
                     "title": LocalPlatformBrowserSearchProvider._clean_text(
                         card.get("display_title")
                         or card.get("displayTitle")

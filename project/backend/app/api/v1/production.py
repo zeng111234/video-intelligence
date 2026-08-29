@@ -192,7 +192,13 @@ def create_profile(body: ProfileCreateRequest, service=Depends(get_production_se
 
 @router.get("/workspace/configuration")
 def get_workspace_configuration(service=Depends(get_production_service)):
-    configuration = service.get_workspace_configuration()
+    try:
+        configuration = service.get_workspace_configuration()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="工作区配置读取失败，请刷新后重新保存一次创作设置。",
+        ) from exc
     if configuration is None:
         return {"configured": False}
     return {"configured": True, **configuration.model_dump(mode="json")}

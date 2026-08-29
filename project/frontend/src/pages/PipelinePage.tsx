@@ -5,7 +5,6 @@ import {
   Descriptions,
   Empty,
   Input,
-  InputNumber,
   List,
   Modal,
   Pagination,
@@ -603,10 +602,6 @@ export default function PipelinePage() {
   const [playingVoiceId, setPlayingVoiceId] = useState("");
   const [voicePreviewError, setVoicePreviewError] = useState("");
   const [avatarCapability, setAvatarCapability] = useState<AvatarCapability | null>(null);
-  const [costSetupOpen, setCostSetupOpen] = useState(false);
-  const [copywritingCost, setCopywritingCost] = useState<number | null>(null);
-  const [avatarCost, setAvatarCost] = useState<number | null>(null);
-
   const [batches, setBatches] = useState<ProductionBatch[]>([]);
   const [recentMaterialBatches, setRecentMaterialBatches] = useState<CrawlerBatchResponse[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState("");
@@ -943,8 +938,6 @@ export default function PipelinePage() {
       void batchData.then((result) => setBatches(result.items)).catch(() => undefined);
       void crawlerBatchData.then((result) => setRecentMaterialBatches(result.items)).catch(() => undefined);
       setWorkspaceConfiguration(configuration);
-      setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? null);
-      setAvatarCost(configuration.avatar_estimated_cost_cny ?? null);
       void optionalData.then(([platformResult, accountResult, avatarResult]) => {
         if (platformResult.status === "fulfilled") setPlatforms(platformResult.value.platforms);
         if (accountResult.status === "fulfilled") setAccounts(accountResult.value);
@@ -1623,35 +1616,6 @@ export default function PipelinePage() {
     }
   };
 
-  const saveCostSetup = async () => {
-    if (copywritingCost === null || avatarCost === null) {
-      setActionError("请先补全合同中的文案和数字人单次费用。");
-      return;
-    }
-    setBusy(true);
-    setActionError("");
-    try {
-      const configuration = await saveProductionWorkspaceConfiguration({
-        rightsHolder: workspaceConfiguration.rights_holder || "管理员",
-        agreementAccepted: true,
-        defaultProfileId: workspaceConfiguration.default_profile_id || profileId || null,
-        defaultPublishPlatforms: publishPlatforms.length ? publishPlatforms : ["douyin"],
-        copywritingEstimatedCostCny: copywritingCost,
-        avatarEstimatedCostCny: avatarCost,
-        bundledCompute: workspaceConfiguration.bundled_compute ?? true,
-      });
-      setWorkspaceConfiguration(configuration);
-      setCopywritingCost(configuration.copywriting_estimated_cost_cny ?? copywritingCost);
-      setAvatarCost(configuration.avatar_estimated_cost_cny ?? avatarCost);
-      setCostSetupOpen(false);
-      setActionMessage("费用配置已保存，请重新预检后再开始制作。");
-    } catch (error) {
-      setActionError((error as Error).message || "费用配置保存失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const validateExecution = () => {
     if (!workspaceConfiguration.configured) return "请先完成一次基础设置。";
     if (!sourceConnectionReady) return "请先完成开工前的素材浏览器连接。";
@@ -1726,10 +1690,9 @@ export default function PipelinePage() {
     }
     if (checked.blocked_count || checked.cost_blocked || checked.ready_count === 0) {
       const costUnknown = checked.cost_blocked && !checked.cost_known;
-      if (costUnknown && isAdminSession) setCostSetupOpen(true);
       setActionError(
-        costUnknown && !isAdminSession
-          ? "本次费用暂无法确认，请联系管理员完成费用配置后重试。不会扣费，也不会开始制作。"
+        costUnknown
+          ? "暂时无法取得服务报价，系统不会扣费或开始制作。请稍后重新预检。"
           : checked.cost_issues?.join("；")
             || checked.items.flatMap((item) => item.reasons || []).join("；")
             || "预检未通过，请根据提示补齐后重试。",
@@ -3674,47 +3637,6 @@ export default function PipelinePage() {
           </div>
         </div>
       </Modal>
-
-      {isAdminSession && (
-        <Modal
-          title="补充费用配置"
-          open={costSetupOpen}
-          onCancel={() => setCostSetupOpen(false)}
-          footer={null}
-          destroyOnHidden
-        >
-          <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-            <Text type="secondary">
-              仅管理员在预检无法取得报价时补充公司合同价；客户不会看到或填写这些信息。
-            </Text>
-            <div>
-              <Text strong>文案生成单次费用（元）</Text>
-              <InputNumber
-                aria-label="文案生成单次费用"
-                min={0}
-                precision={2}
-                value={copywritingCost}
-                onChange={setCopywritingCost}
-                style={{ width: "100%", marginTop: 8 }}
-              />
-            </div>
-            <div>
-              <Text strong>数字人口播单次费用（元）</Text>
-              <InputNumber
-                aria-label="数字人口播单次费用"
-                min={0}
-                precision={2}
-                value={avatarCost}
-                onChange={setAvatarCost}
-                style={{ width: "100%", marginTop: 8 }}
-              />
-            </div>
-            <Button type="primary" onClick={() => void saveCostSetup()} loading={busy}>
-              保存费用配置
-            </Button>
-          </Space>
-        </Modal>
-      )}
 
       <Modal
         title="管理素材网站"

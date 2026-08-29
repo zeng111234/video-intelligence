@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -82,4 +84,11 @@ test("runtime storage rejects drive roots and network shares", () => {
       readFileSync: () => JSON.stringify({ runtimeRoot }),
     }), /安装位置记录无效/);
   }
+});
+
+test("desktop main prevents duplicate instances and records backend exits", () => {
+  const mainSource = readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(mainSource, /requestSingleInstanceLock\(\)/);
+  assert.match(mainSource, /backend_spawned/);
+  assert.match(mainSource, /backend_exited/);
 });

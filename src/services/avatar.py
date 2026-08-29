@@ -30,6 +30,18 @@ AVATAR_NAME_LOCK = threading.Lock()
 AVATAR_REFRESH_LOCK = threading.Lock()
 
 
+class AvatarServiceUnavailableError(ValueError):
+    """A pre-submit availability failure that did not create a supplier job."""
+
+    def __init__(self, capability: AvatarCapability) -> None:
+        detail = "、".join(capability.missing_configuration).strip()
+        message = "数字人服务暂不可提交"
+        if detail:
+            message = f"{message}：{detail}"
+        super().__init__(message)
+        self.permission_status = capability.permission_status
+
+
 class AvatarService:
     def __init__(
         self,
@@ -193,7 +205,7 @@ class AvatarService:
     ) -> AvatarTask:
         capability = self.capabilities()
         if not capability.enabled:
-            raise ValueError("数字人供应商尚不可用，不能提交生成任务。")
+            raise AvatarServiceUnavailableError(capability)
         quote = self.billing_quote(
             script_text=request.script_text,
             speech_rate=request.speech_rate,

@@ -202,14 +202,23 @@ class RemoteAvatarProvider:
             response = self._get("/api/v1/provider/avatar/capabilities")
             assert response is not None
             return AvatarCapability.model_validate(self._json(response))
-        except (AvatarProviderError, ValueError):
+        except AvatarProviderError as exc:
             return AvatarCapability(
                 provider_name="company_cloud_avatar",
                 display_name="公司云数字人",
                 mode=ProviderMode.PRODUCTION,
                 enabled=False,
-                permission_status="unavailable",
-                missing_configuration=["公司数字人服务暂不可用"],
+                permission_status=f"unavailable_{exc.kind.value}",
+                missing_configuration=[str(exc) or "公司数字人服务暂不可用"],
+            )
+        except ValueError:
+            return AvatarCapability(
+                provider_name="company_cloud_avatar",
+                display_name="公司云数字人",
+                mode=ProviderMode.PRODUCTION,
+                enabled=False,
+                permission_status="invalid_capability_response",
+                missing_configuration=["公司数字人服务返回的能力信息无效。"],
             )
 
     def list_assets(self) -> list[AvatarAsset]:

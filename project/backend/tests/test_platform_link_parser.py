@@ -64,6 +64,32 @@ def test_wechat_channels_link_keeps_the_manual_upload_boundary():
         parse_platform_share_text("https://channels.weixin.qq.com/platform")
 
 
+def test_xiaohongshu_link_parser_uses_the_connected_browser():
+    assert _client().capabilities_for(Platform.XIAOHONGSHU) == (True, None)
+
+
+def test_xiaohongshu_300031_is_actionable():
+    class _Body:
+        @staticmethod
+        def inner_text(*, timeout):
+            del timeout
+            return ""
+
+    class _Page:
+        url = "https://www.xiaohongshu.com/404?error_code=300031"
+
+        @staticmethod
+        def locator(selector):
+            assert selector == "body"
+            return _Body()
+
+    message = _client()._xiaohongshu_access_error(_Page())
+
+    assert message is not None
+    assert "当前无法浏览" in message
+    assert "上传已获授权的视频" in message
+
+
 def test_xiaohongshu_payload_extracts_visible_video_stream():
     captured: dict[str, str] = {}
 

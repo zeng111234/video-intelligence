@@ -19,6 +19,7 @@ from src.models import (
     VideoCandidate,
     VideoMetricSnapshot,
 )
+from src.adapters.avatar import AvatarProviderError
 from src.repositories.mock import MockRepository
 from src.services.pipeline import PipelineService
 from src.services.pipeline_worker import PipelineWorker
@@ -108,6 +109,37 @@ def test_pipeline_worker_keeps_pending_run_untouched_until_owner_session_is_read
     assert searched == []
 
 
+def test_pipeline_worker_explains_pending_queue_when_login_is_required():
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    run = pipeline_service.start_keyword_auto_run(
+        keyword="AI",
+        candidate_count=1,
+        profile={"avatar_id": "a", "voice_id": "v", "edit_template_id": "t"},
+        rights_holder="测试公司",
+        publish_platforms=["douyin"],
+    )
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        can_process=lambda: False,
+        processing_block_reason=lambda: "等待已绑定客户登录后继续制作。",
+    )
+
+    worker.tick_once()
+
+    waiting = repository.get_pipeline_run(run.run_id)
+    assert waiting is not None
+    assert waiting.status == PipelineRunStatus.PENDING
+    assert waiting.config["processing_wait_reason"] == "等待已绑定客户登录后继续制作。"
+    assert waiting.events[-1].action == "processing_waiting_for_authorization"
+
+
 def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick():
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
@@ -185,6 +217,127 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
     assert continued[0].current_stage == PipelineStage.AVATAR_GENERATION
     assert submitted_requests[0].background == "solid"
     assert submitted_requests[0].idempotency_key.endswith("-retry-1")
+
+
+def test_avatar_session_loss_pauses_before_supplier_submission():
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    now = datetime.now().astimezone()
+    copy_task = CopywritingTask(
+        task_id="copy-avatar-session-loss",
+        title="审核稿",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        result_text="这是最终口播文案。",
+    )
+    repository.save_task(copy_task)
+    run = pipeline_service.start_keyword_auto_run(
+        keyword="AI",
+        candidate_count=1,
+        profile={"avatar_id": "avatar-a", "voice_id": "voice-a"},
+        rights_holder="测试公司",
+        publish_platforms=["douyin"],
+    ).model_copy(
+        update={
+            "config": {
+                "workflow": "keyword_auto_candidate",
+                "profile": {"avatar_id": "avatar-a", "voice_id": "voice-a"},
+                "rights_holder": "测试公司",
+            },
+            "status": PipelineRunStatus.PENDING,
+            "current_stage": PipelineStage.AVATAR_GENERATION,
+            "copywriting_task_id": copy_task.task_id,
+        }
+    )
+    repository.save_pipeline_run(run)
+    submitted = []
+    avatar_service = SimpleNamespace(
+        list_assets=lambda: [
+            SimpleNamespace(asset_id="avatar-a", name="形象"),
+            SimpleNamespace(asset_id="voice-a", name="音色"),
+        ],
+        submit=lambda *_args, **_kwargs: submitted.append(True),
+    )
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=avatar_service,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        can_process=lambda: False,
+    )
+
+    worker._submit_avatar(run)
+
+    paused = repository.get_pipeline_run(run.run_id)
+    assert paused is not None
+    assert paused.status == PipelineRunStatus.PAUSED
+    assert paused.current_stage == PipelineStage.AVATAR_GENERATION
+    assert paused.config["recovery_reason"] == "avatar_submission_not_started"
+    assert "未提交供应商任务" in paused.config["manual_action_required"]
+    assert submitted == []
+
+
+def test_avatar_asset_authorization_failure_pauses_before_supplier_submission():
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    now = datetime.now().astimezone()
+    copy_task = CopywritingTask(
+        task_id="copy-avatar-assets-unavailable",
+        title="审核稿",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        result_text="这是最终口播文案。",
+    )
+    repository.save_task(copy_task)
+    run = pipeline_service.start_keyword_auto_run(
+        keyword="AI",
+        candidate_count=1,
+        profile={"avatar_id": "avatar-a", "voice_id": "voice-a"},
+        rights_holder="测试公司",
+        publish_platforms=["douyin"],
+    ).model_copy(
+        update={
+            "config": {
+                "workflow": "keyword_auto_candidate",
+                "profile": {"avatar_id": "avatar-a", "voice_id": "voice-a"},
+                "rights_holder": "测试公司",
+            },
+            "status": PipelineRunStatus.PENDING,
+            "current_stage": PipelineStage.AVATAR_GENERATION,
+            "copywriting_task_id": copy_task.task_id,
+        }
+    )
+    repository.save_pipeline_run(run)
+    avatar_service = SimpleNamespace(
+        list_assets=lambda: (_ for _ in ()).throw(
+            AvatarProviderError(
+                "请先登录客户账号或管理员账号，再使用数字人。"
+            )
+        )
+    )
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=avatar_service,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+    )
+
+    worker._submit_avatar(run)
+
+    paused = repository.get_pipeline_run(run.run_id)
+    assert paused is not None
+    assert paused.status == PipelineRunStatus.PAUSED
+    assert paused.error_message == "请先登录客户账号或管理员账号，再使用数字人。"
 
 
 def test_production_edit_uses_current_smart_template_and_never_legacy_editor(tmp_path):

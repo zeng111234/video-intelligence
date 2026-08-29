@@ -55,7 +55,7 @@ class CandidateCopyProbeService:
                 candidate_id=candidate.video_id,
                 status="unsupported",
                 checked_at=now,
-                message="小红书安全模式已开启，未检测文案。",
+                message="搜索阶段暂不自动检测小红书文案；点击“文案转写”会使用已登录浏览器处理。",
                 version=COPY_PROBE_VERSION,
             )
         try:

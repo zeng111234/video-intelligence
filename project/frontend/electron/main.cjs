@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, shell } = require("electron");
 const { spawn } = require("node:child_process");
-const { existsSync, mkdirSync, readFileSync } = require("node:fs");
+const { appendFileSync, existsSync, mkdirSync, readFileSync } = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
 const os = require("node:os");
@@ -94,6 +94,10 @@ function launchInstaller(destination) {
 
 app.setName("VideoInsight");
 
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
 function backendRuntimeRoot() {
   return resolveBackendRuntimeRoot({
     executablePath: process.execPath,
@@ -106,6 +110,21 @@ function backendRuntimeRoot() {
 
 function backendExecutable() {
   return path.join(process.resourcesPath, "backend", "VideoInsightBackend.exe");
+}
+
+function appendBackendLifecycle(event, details = {}) {
+  try {
+    const runtimeRoot = backendRuntimeRoot();
+    const logDirectory = path.join(runtimeRoot, "data", "logs");
+    mkdirSync(logDirectory, { recursive: true });
+    appendFileSync(
+      path.join(logDirectory, "desktop.log"),
+      `${new Date().toISOString()} INFO electron.backend ${event} ${JSON.stringify(details)}\n`,
+      "utf8",
+    );
+  } catch {
+    // Lifecycle logging must never prevent the desktop client from starting.
+  }
 }
 
 function releaseConfiguration() {
@@ -211,7 +230,21 @@ function startBackend(port) {
       VIDEOINSIGHT_NODE_AS_ELECTRON: "true",
     }),
   });
-  backendProcess.once("exit", (code) => {
+  const backendPid = backendProcess.pid || null;
+  appendBackendLifecycle("backend_spawned", { pid: backendPid, port });
+  backendProcess.once("error", (error) => {
+    appendBackendLifecycle("backend_spawn_error", {
+      pid: backendPid,
+      code: error.code || "",
+    });
+  });
+  backendProcess.once("exit", (code, signal) => {
+    appendBackendLifecycle("backend_exited", {
+      pid: backendPid,
+      code: code === null ? "" : code,
+      signal: signal || "",
+      app_quitting: Boolean(app.isQuitting),
+    });
     backendProcess = null;
     if (!app.isQuitting && code !== 0) {
       dialog.showErrorBox(
@@ -287,6 +320,12 @@ app.whenReady().then(() => {
     );
     app.quit();
   });
+});
+
+app.on("second-instance", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
 });
 
 app.on("window-all-closed", () => app.quit());

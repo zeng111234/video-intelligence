@@ -219,11 +219,6 @@ class LocalPlatformLinkParserClient:
         return True, None
 
     def capabilities_for(self, platform: Platform) -> tuple[bool, str | None]:
-        if platform == Platform.XIAOHONGSHU:
-            return (
-                False,
-                "小红书安全模式已开启：请手工导入素材或上传有权处理的本地文件。",
-            )
         if platform == Platform.DOUYIN:
             return self.douyin_parser.capabilities()
         available, message = self.capabilities()
@@ -246,12 +241,6 @@ class LocalPlatformLinkParserClient:
 
     def resolve(self, share_text: str) -> ParsedPlatformMedia:
         link = self.parse(share_text)
-        if link.platform == Platform.XIAOHONGSHU:
-            raise PlatformLinkParserError(
-                "小红书安全模式已开启：系统不会打开分享链接、读取视频流或自动转写。",
-                platform=link.platform,
-                work_id=link.work_id,
-            )
         if link.platform == Platform.DOUYIN:
             media = self.douyin_parser.resolve(share_text)
             return ParsedPlatformMedia(
@@ -462,6 +451,14 @@ class LocalPlatformLinkParserClient:
                                 work_id=link.work_id,
                             ) from exc
                     final_url = page.url
+                    if link.platform == Platform.XIAOHONGSHU:
+                        access_error = self._xiaohongshu_access_error(page)
+                        if access_error:
+                            raise PlatformLinkParserError(
+                                access_error,
+                                platform=link.platform,
+                                work_id=link.work_id,
+                            )
                     final_link = parse_platform_share_text(final_url)
                     if final_link.platform != link.platform:
                         raise PlatformLinkParserError(
@@ -575,6 +572,27 @@ class LocalPlatformLinkParserClient:
         if platform == Platform.XIAOHONGSHU:
             return "xiaohongshu.com" in normalized and "/feed" in normalized
         return "kuaishou.com" in normalized and "/graphql" in normalized
+
+    @staticmethod
+    def _xiaohongshu_access_error(page) -> str | None:
+        """Turn an inaccessible-note page into an actionable error."""
+        final_url = str(getattr(page, "url", "") or "")
+        query = parse_qs(urlparse(final_url).query)
+        if "300031" in query.get("error_code", []):
+            return (
+                "这条小红书笔记当前无法浏览，请在小红书 App 重新复制分享链接后重试，"
+                "或上传已获授权的视频转写。"
+            )
+        try:
+            body_text = str(page.locator("body").inner_text(timeout=1000) or "")
+        except Exception:
+            body_text = ""
+        if "当前笔记暂时无法浏览" in body_text:
+            return (
+                "这条小红书笔记当前无法浏览，请在小红书 App 重新复制分享链接后重试，"
+                "或上传已获授权的视频转写。"
+            )
+        return None
 
     @staticmethod
     def _may_capture_generic_video_response(platform: Platform) -> bool:

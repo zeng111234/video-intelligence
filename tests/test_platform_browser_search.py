@@ -466,6 +466,10 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
             "items": [
                 {
                     "id": "xhs-note-1",
+                    "share_url": (
+                        "https://www.xiaohongshu.com/explore/xhs-note-1"
+                        "?xsec_token=test-token&xsec_source=pc_search"
+                    ),
                     "note_card": {
                         "type": "video",
                         "display_title": "餐饮获客的三个新方法",
@@ -506,7 +510,10 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
     assert item.metrics.comments == 88
     assert item.metrics.shares == 16
     assert item.metrics.favorites == 320
-    assert str(item.source_url) == "https://www.xiaohongshu.com/explore/xhs-note-1"
+    assert str(item.source_url) == (
+        "https://www.xiaohongshu.com/explore/xhs-note-1"
+        "?xsec_token=test-token&xsec_source=pc_search"
+    )
     assert "time=platform" in (item.evidence or "")
 
 
@@ -619,6 +626,16 @@ def test_xiaohongshu_filter_flow_reports_time_success_and_failure_fallback(
     )
     assert provider._xiaohongshu_time_filter_confirmed is False
     assert notes[-1] == "平台时间筛选未生效，正在本地过滤"
+
+
+def test_xiaohongshu_video_filter_confirmation_failure_keeps_video_only_fallback(monkeypatch):
+    provider = _provider(Platform.XIAOHONGSHU)
+    monkeypatch.setattr(provider, "_select_xiaohongshu_video_filter", lambda _page: False)
+
+    notes = provider._apply_platform_filters(object())
+
+    assert provider._collection_rule_failure is None
+    assert "仅保留" in notes[0]
 
 
 def test_xiaohongshu_time_filter_failure_uses_local_publish_time_filter(monkeypatch):
@@ -1456,7 +1473,7 @@ def test_bilibili_network_rows_require_direct_normalized_keyword_matches():
     assert "严格话题=1" in evidence_by_id["BV1DESC02026"]
 
 
-def test_bilibili_collection_prefers_network_rows_and_loads_later_pages(monkeypatch):
+def test_bilibili_collection_merges_visible_dates_into_network_rows(monkeypatch):
     provider = _provider(Platform.BILIBILI)
     page = _CollectionPage(
         "https://www.bilibili.com/",
@@ -1507,7 +1524,16 @@ def test_bilibili_collection_prefers_network_rows_and_loads_later_pages(monkeypa
     monkeypatch.setattr(
         provider,
         "_rendered_rows",
-        lambda *_args, **_kwargs: pytest.fail("B站已有网络搜索结果时不应读取整页锚点"),
+        lambda *_args, **_kwargs: [
+            {
+                "item_id": "BV1NETWORK01",
+                "source_url": "https://www.bilibili.com/video/BV1NETWORK01",
+                "title": "餐饮获客实操课",
+                "published_at": datetime(2026, 8, 28, tzinfo=timezone.utc),
+                "time_confident": True,
+                "evidence": "rendered_search_card",
+            }
+        ],
     )
 
     rows = provider._collect_rows("餐饮获客", target=3)
@@ -1518,6 +1544,8 @@ def test_bilibili_collection_prefers_network_rows_and_loads_later_pages(monkeypa
         "BV1NETWORK02",
     ]
     assert [row["direct_match"] for row in rows] == [True, False, True]
+    assert rows[0]["published_at"] == datetime(2026, 8, 28, tzinfo=timezone.utc)
+    assert rows[0]["time_confident"] is True
     assert [parse_qs(urlparse(url).query)["page"][0] for url in page.goto_urls] == [
         "1",
         "2",

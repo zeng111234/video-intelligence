@@ -297,11 +297,6 @@ class MediaResolutionService:
         latest: MediaResolutionAttempt | None,
     ) -> str | None:
         capability = self.provider.capabilities()
-        if candidate.platform == Platform.XIAOHONGSHU:
-            return (
-                "小红书未登录公开搜索只保存可见素材信息，不解析媒体直链或自动转写；"
-                "请使用已获授权的本地文件。"
-            )
         if source == "direct_url":
             return None
         if latest and latest.status == MediaResolutionStatus.OUTCOME_UNKNOWN:

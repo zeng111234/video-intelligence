@@ -101,6 +101,20 @@ def test_candidate_response_distinguishes_topic_only_from_manual_text_reference(
     assert "可作为改写参考" in text_reference.spoken_material_message
 
 
+def test_xiaohongshu_topic_only_response_explains_login_fallback():
+    seeded_repo = MockRepository()
+    candidate = _douyin_candidate(seeded_repo).model_copy(
+        update={"platform": Platform.XIAOHONGSHU}
+    )
+    repo = MockRepository(candidates=[candidate], tasks=[])
+
+    response = _candidate_to_response(candidate, repo=repo)
+
+    assert response.spoken_material_status == "topic_only"
+    assert "已登录浏览器" in response.spoken_material_message
+    assert "上传已获授权的视频" in response.spoken_material_message
+
+
 def test_spoken_seed_quality_matches_the_user_visible_rules():
     problem = _spoken_seed_quality(
         title="切标鼓角度不对，导致标签带胶并频繁掉标 #贴标机",

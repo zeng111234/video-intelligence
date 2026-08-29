@@ -29,6 +29,7 @@ from project.backend.app.core.deps import (
 from src.services.video_editor_workflow import (
     VideoEditorWorkflowError,
     VideoEditorWorkflowService,
+    _local_renderer_enabled,
 )
 
 router = APIRouter(prefix="/api/v1/video-editor", tags=["video-editor"])
@@ -883,13 +884,53 @@ def capabilities(
     service=Depends(get_video_editing_service),
     workflow: VideoEditorWorkflowService = Depends(get_workflow_service),
 ):
-    """获取新云工作台能力，并保留旧本地编辑器诊断信息。"""
+    """获取编辑能力。
+
+    本机 FFmpeg 是桌面端默认路径；本机已就绪时不探测远端备用能力，避免
+    控制面连接中断覆盖本地结果。只有本机不可用时才读取云端备用能力。
+    """
     local = service.capabilities()
     local_renderer = workflow.local_ffmpeg_capabilities()
-    cloud = workflow.cloud_capabilities()
+    if (
+        _local_renderer_enabled(workflow)
+        and local_renderer.get("enabled")
+        and local_renderer.get("live_ready")
+    ):
+        # Do not turn a healthy local editor into a remote-network dependency.
+        cloud = {
+            "provider_mode": "aliyun",
+            "renderer_mode": "aliyun",
+            "provider_name": "remote_video_editor",
+            "display_name": "云端备用能力",
+            "enabled": False,
+            "live_ready": False,
+            "is_mock": False,
+            "missing_configuration": ["本机路径已启用，未探测云端备用能力"],
+            "availability": "not_checked_local_default",
+            "cost_model": "not_checked",
+        }
+        primary = {**local, **local_renderer}
+    else:
+        try:
+            cloud = workflow.cloud_capabilities()
+        except Exception:
+            # A remote capability probe is diagnostic only. Keep the API useful
+            # and avoid leaking transport/credential details to the UI.
+            cloud = {
+                "provider_mode": "aliyun",
+                "renderer_mode": "aliyun",
+                "provider_name": "remote_video_editor",
+                "display_name": "云端备用能力",
+                "enabled": False,
+                "live_ready": False,
+                "is_mock": False,
+                "missing_configuration": ["控制面能力暂不可用，请重新连接"],
+                "availability": "control_plane_unavailable",
+                "cost_model": "not_checked",
+            }
+        primary = {**local, **cloud}
     return {
-        **local,
-        **cloud,
+        **primary,
         "cloud_backup": cloud,
         "local_renderer": local_renderer,
         "display_name": "本机安全精剪",

@@ -1192,7 +1192,7 @@ class TranscriptionTask(TaskRecord):
     billing_authorized: bool = False
     asr_hotwords: str | None = None
     language: str | None = None
-    duration_seconds: float | None = Field(default=None, gt=0, le=15 * 60)
+    duration_seconds: float | None = Field(default=None, gt=0, le=60 * 60)
     source_kind: str = "asr"
     source_url: str | None = None
     timing_available: bool = True

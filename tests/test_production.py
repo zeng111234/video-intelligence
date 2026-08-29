@@ -410,6 +410,18 @@ class _AssetsWithMaximumScript(_Assets):
         )
 
 
+class _UnavailableAssets(_Assets):
+    def capabilities(self):
+        return SimpleNamespace(
+            enabled=False,
+            mode=SimpleNamespace(value="production"),
+            estimated_cost_cny=None,
+            estimated_seconds=0,
+            max_script_chars=240,
+            missing_configuration=["登录会话已失效"],
+        )
+
+
 class _CentrallyBilledAssets(_Assets):
     def capabilities(self):
         return SimpleNamespace(
@@ -423,6 +435,11 @@ class _CentrallyBilledAssets(_Assets):
         assert len(script_text) == 300
         assert speech_rate == 1.0
         return SimpleNamespace(reservation_credits=1.67, reservation_seconds=75)
+
+
+class _QuoteFailsAssets(_CentrallyBilledAssets):
+    def billing_quote(self, *, script_text, speech_rate):
+        raise ValueError("供应商暂时未返回报价")
 
 
 class _AlignmentTranscription:
@@ -929,6 +946,39 @@ def test_batch_preflight_and_start_api_enqueue_only_ready_items(tmp_path):
     assert started.status_code == 200, started.text
     assert started.json()["status"] == "running"
     assert started.json()["items"][0]["status"] == "queued"
+
+
+def test_batch_preflight_blocks_unavailable_avatar_with_safe_reason(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        avatar_service=_UnavailableAssets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="未就绪数字人", avatar_id="avatar-owner", voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="数字人预检", profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "已审核口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+    )
+
+    assert preflight["ready_count"] == 0
+    assert "数字人服务暂不可用：登录会话已失效" in preflight["items"][0][
+        "reasons"
+    ]
 
 
 def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path):
@@ -1758,6 +1808,52 @@ def test_retry_repairs_a_legacy_avatar_attempt_that_never_reached_provider(tmp_p
     assert corrected_run.config["stage_retry_counts"]["avatar_generation"] == 2
 
 
+def test_retry_resumes_avatar_pause_before_supplier_submission(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(
+        name="会话恢复配方", avatar_id="avatar-a", voice_id="voice-a"
+    )
+    batch = service.create_batch(
+        name="会话恢复批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "确认后的口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "error_message": "登录会话已失效，请重新登录后继续制作。",
+                "config": {
+                    **run.config,
+                    "recovery_blocked": True,
+                    "recovery_reason": "avatar_submission_not_started",
+                    "manual_action_required": "请重新登录后重试；本次未提交供应商任务。",
+                },
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    workspace = service.workspace(batch.batch_id)
+    assert workspace["next_action"] == "retry"
+
+    retried = service.retry_failed(batch.batch_id, pipeline_service=pipeline_service)
+
+    assert retried.items[0].status == ProductionBatchItemStatus.QUEUED
+    queued = repository.get_pipeline_run(run.run_id)
+    assert queued is not None
+    assert queued.status == PipelineRunStatus.PENDING
+    assert queued.current_stage == PipelineStage.AVATAR_GENERATION
+    assert "recovery_blocked" not in queued.config
+    assert "manual_action_required" not in queued.config
+
+
 def test_manual_publish_fallback_creates_persistent_manual_ready_task(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
@@ -2014,11 +2110,98 @@ def test_workspace_cost_quote_unblocks_unknown_copywriting_cost(tmp_path):
 
     assert preflight["cost_known"] is True
     assert preflight["ready_count"] == 1
-    # 手动模式会先改写、再做一次 AI 文案审核，两次均使用已配置的单次报价。
-    assert preflight["estimated_cost_cny"] == 0.1
+    # 手动模式会改写、预留一次超长语义压缩、再做 AI 文案审核。
+    assert preflight["estimated_cost_cny"] == 0.15
     assert preflight["items"][0]["manual_script_audit"] is True
-    assert preflight["items"][0]["copy_call_count"] == 2
+    assert preflight["items"][0]["copy_call_count"] == 3
+    assert preflight["items"][0]["length_compression_reserved"] is True
     assert preflight["items"][0]["transcript_review_reserved"] is False
+
+
+def test_workspace_contract_costs_fallback_when_remote_quotes_are_unavailable(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        transcription_service=_AlignmentTranscription(),
+        copywriting_service=_UnknownCostCopywriting(),
+        avatar_service=_QuoteFailsAssets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="合同报价兜底配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    configuration = service.configure_workspace(
+        rights_holder="测试公司",
+        agreement_accepted=True,
+        default_profile_id=profile.profile_id,
+        copywriting_estimated_cost_cny=0.05,
+        avatar_estimated_cost_cny=0.70,
+        bundled_compute=False,
+    )
+    batch = service.create_batch(
+        name="合同报价兜底批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "brief", "source_value": "讲解企业获客"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        paid_actions_confirmed=True,
+    )
+
+    assert configuration.avatar_estimated_cost_cny == 0.70
+    assert preflight["cost_known"] is True
+    assert preflight["ready_count"] == 1
+    assert preflight["estimated_cost_cny"] > 0.70
+
+
+def test_preflight_reports_remote_avatar_quote_reason_when_no_fallback_exists(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        copywriting_service=_UnknownCostCopywriting(),
+        avatar_service=_QuoteFailsAssets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="报价失败诊断配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="报价失败诊断批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "brief", "source_value": "讲解企业获客"}],
+        pipeline_service=pipeline_service,
+    )
+
+    preflight = service.preflight_batch(
+        batch.batch_id,
+        rights_holder="测试公司",
+        rights_confirmed=True,
+        publish_platforms=["douyin"],
+        max_total_cost_cny=10,
+        paid_actions_confirmed=True,
+    )
+
+    assert preflight["cost_known"] is False
+    assert "数字人口播报价失败：供应商暂时未返回报价" in "；".join(
+        preflight["cost_issues"]
+    )
 
 
 def test_bundled_compute_does_not_hide_centrally_billed_provider_prices(tmp_path):
@@ -2060,7 +2243,7 @@ def test_bundled_compute_does_not_hide_centrally_billed_provider_prices(tmp_path
     )
 
     assert preflight["cost_known"] is True
-    assert preflight["estimated_cost_cny"] == 1.69
+    assert preflight["estimated_cost_cny"] == 1.70
     assert preflight["ready_count"] == 1
 
     unresolved = service.resolve_workspace_execution_options(
@@ -2084,7 +2267,7 @@ def test_bundled_compute_does_not_hide_centrally_billed_provider_prices(tmp_path
     )
     workspace = service.workspace(started.batch_id)
     assert workspace["cost"]["known"] is True
-    assert workspace["cost"]["estimated_cost_cny"] == 1.69
+    assert workspace["cost"]["estimated_cost_cny"] == 1.70
 
 
 def test_failed_transcript_rewrite_is_reported_as_review_failure(tmp_path):

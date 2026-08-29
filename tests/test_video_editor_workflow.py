@@ -51,6 +51,62 @@ def test_visual_gate_policy_is_template_adaptive() -> None:
     assert story["pip_required"] is False
 
 
+def test_frozen_media_manifest_is_read_next_to_bundled_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    internal = tmp_path / "_internal"
+    services = internal / "src" / "services"
+    media = internal / "media"
+    services.mkdir(parents=True)
+    media.mkdir(parents=True)
+    (media / "windows-media-tools.sha256").write_text(
+        "a" * 64 + "  ffmpeg.exe\n" + "b" * 64 + "  ffprobe.exe\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        workflow_module, "__file__", str(services / "video_editor_workflow.py")
+    )
+
+    assert workflow_module._audited_media_tool_hashes() == {
+        "ffmpeg.exe": "a" * 64,
+        "ffprobe.exe": "b" * 64,
+    }
+
+
+def test_frozen_media_tools_resolve_from_the_installed_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    internal = tmp_path / "_internal"
+    services = internal / "src" / "services"
+    media = internal / "media"
+    services.mkdir(parents=True)
+    media.mkdir(parents=True)
+    (media / "ffmpeg.exe").write_bytes(b"audited ffmpeg")
+    (media / "ffprobe.exe").write_bytes(b"audited ffprobe")
+    monkeypatch.setattr(
+        workflow_module, "__file__", str(services / "video_editor_workflow.py")
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_audited_media_tool_hashes",
+        lambda: {"ffmpeg.exe": "ffmpeg-hash", "ffprobe.exe": "ffprobe-hash"},
+    )
+    monkeypatch.setattr(
+        workflow_module,
+        "_sha256_file",
+        lambda path: "ffmpeg-hash" if path.name == "ffmpeg.exe" else "ffprobe-hash",
+    )
+    monkeypatch.delenv("VIDEO_EDITOR_MEDIA_BIN", raising=False)
+    monkeypatch.delenv("VIDEO_EDITOR_FFMPEG_PATH", raising=False)
+    monkeypatch.delenv("VIDEO_EDITOR_FFPROBE_PATH", raising=False)
+
+    resolved = workflow_module._trusted_local_media_tools()
+
+    assert Path(resolved["ffmpeg"]).parent == media
+    assert Path(resolved["ffprobe"]).parent == media
+    assert resolved["audited"] is True
+
+
 def test_rich_adaptive_policy_requires_real_pip_and_full_visuals() -> None:
     policy = workflow_module._visual_gate_policy_for_template(
         "adaptive_talking_head_v1",

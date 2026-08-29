@@ -23,7 +23,9 @@ from src.models import (
     TranscriptionTask,
 )
 from src.adapters.douyin_parser import DouyinParserError
+from src.adapters.avatar import AvatarProviderError
 from src.adapters.publishers.sandbox import SandboxPublisher
+from src.services.avatar import AvatarServiceUnavailableError
 from src.services.publish_metadata import suggested_publish_draft
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,7 @@ class PipelineWorker:
         douyin_link_transcription_service=None,
         interval_seconds: float = 2.0,
         can_process: Callable[[], bool] | None = None,
+        processing_block_reason: Callable[[], str | None] | None = None,
     ) -> None:
         self.repository = repository
         self.pipeline_service = pipeline_service
@@ -60,6 +63,7 @@ class PipelineWorker:
         self.douyin_link_transcription_service = douyin_link_transcription_service
         self.interval_seconds = interval_seconds
         self.can_process = can_process or (lambda: True)
+        self.processing_block_reason = processing_block_reason or (lambda: None)
         self._task: asyncio.Task | None = None
         # 该 worker 由依赖缓存复用，但 TestClient 和服务重启可能使用新的事件循环。
         # 因此事件对象必须在 start 时按当前循环创建，不能在构造函数中固定绑定。
@@ -98,10 +102,12 @@ class PipelineWorker:
         # 正式桌面端重启后，持久任务会早于客户重新登录被扫描。没有公司
         # 会话时必须保持原状态，避免把可恢复任务误判失败或越过发布授权。
         if not self.can_process():
+            self._record_processing_wait(self.processing_block_reason())
             return
         for run in self.repository.list_active_pipeline_runs():
             workflow = str(run.config.get("workflow") or "")
             try:
+                run = self._clear_processing_wait(run)
                 if workflow.startswith("production_batch_"):
                     run = self._recover_interrupted_run(run)
                 if (
@@ -138,6 +144,49 @@ class PipelineWorker:
                         batch_id,
                         pipeline_service=self.pipeline_service,
                     )
+
+    def _record_processing_wait(self, reason: str | None) -> None:
+        """Expose a blocked desktop queue once, without replaying it."""
+        if not reason:
+            return
+        for run in self.repository.list_active_pipeline_runs():
+            if run.status != PipelineRunStatus.PENDING:
+                continue
+            if run.config.get("processing_wait_reason") == reason:
+                continue
+            waiting = run.model_copy(
+                update={
+                    "updated_at": datetime.now().astimezone(),
+                    "config": {
+                        **run.config,
+                        "processing_wait_reason": reason,
+                    },
+                }
+            )
+            waiting = self.pipeline_service._event(
+                waiting,
+                action="processing_waiting_for_authorization",
+                stage=run.current_stage,
+                message=reason,
+            )
+            self.repository.save_pipeline_run(waiting)
+
+    def _clear_processing_wait(self, run: PipelineRun) -> PipelineRun:
+        if "processing_wait_reason" not in run.config:
+            return run
+        config = dict(run.config)
+        config.pop("processing_wait_reason", None)
+        resumed = run.model_copy(
+            update={"updated_at": datetime.now().astimezone(), "config": config}
+        )
+        resumed = self.pipeline_service._event(
+            resumed,
+            action="processing_authorization_restored",
+            stage=run.current_stage,
+            message="本机登录状态已恢复，队列可继续执行。",
+        )
+        self.repository.save_pipeline_run(resumed)
+        return resumed
 
     def _recover_interrupted_run(self, run: PipelineRun) -> PipelineRun:
         """Recover only stages whose replay is provably free of duplicate charges."""
@@ -639,7 +688,11 @@ class PipelineWorker:
                 run, PipelineStage.AVATAR_GENERATION, "审核后没有可用的最终口播文案。"
             )
             return
-        assets = {item.asset_id: item for item in self.avatar_service.list_assets()}
+        try:
+            assets = {item.asset_id: item for item in self.avatar_service.list_assets()}
+        except AvatarProviderError as exc:
+            self._pause_avatar_submission(run, str(exc))
+            return
         avatar = assets.get(str(profile.get("avatar_id") or ""))
         voice = assets.get(str(profile.get("voice_id") or ""))
         if avatar is None or voice is None:
@@ -677,9 +730,16 @@ class PipelineWorker:
             voice_rights_confirmed=True,
             idempotency_key=avatar_idempotency_key,
         )
-        task = self.avatar_service.submit(
-            request, avatar_name=avatar.name, voice_name=voice.name
-        )
+        if not self.can_process():
+            self._pause_avatar_submission(run, "登录会话已失效，请重新登录后继续制作。")
+            return
+        try:
+            task = self.avatar_service.submit(
+                request, avatar_name=avatar.name, voice_name=voice.name
+            )
+        except AvatarServiceUnavailableError as exc:
+            self._pause_avatar_submission(run, str(exc))
+            return
         updated_run = self.pipeline_service.update_stage(
             run,
             PipelineStage.AVATAR_GENERATION,
@@ -792,6 +852,7 @@ class PipelineWorker:
             )
             self.repository.save_pipeline_run(updated)
             return
+
         if caption_task.status in {
             TaskStatus.QUEUED,
             TaskStatus.SUBMITTED,
@@ -813,6 +874,33 @@ class PipelineWorker:
             )
         )
         self._edit_and_package(run, task, subtitle_segments=timed_segments)
+
+    def _pause_avatar_submission(self, run: PipelineRun, message: str) -> None:
+        """Keep an unsubmitted avatar stage recoverable after readiness changes."""
+
+        paused = run.model_copy(
+            update={
+                "status": PipelineRunStatus.PAUSED,
+                "current_stage": PipelineStage.AVATAR_GENERATION,
+                "updated_at": datetime.now().astimezone(),
+                "error_message": message,
+                "config": {
+                    **run.config,
+                    "recovery_blocked": True,
+                    "recovery_reason": "avatar_submission_not_started",
+                    "outcome_unknown": False,
+                    "manual_action_required": "请确认数字人服务状态或重新登录后重试；本次未提交供应商任务。",
+                },
+            }
+        )
+        paused = self.pipeline_service._event(
+            paused,
+            action="avatar_submission_paused",
+            stage=PipelineStage.AVATAR_GENERATION,
+            message=message,
+            details={"provider_job_submitted": "false"},
+        )
+        self.repository.save_pipeline_run(paused)
 
     def _edit_and_package(
         self,

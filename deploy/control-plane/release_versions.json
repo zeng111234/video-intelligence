@@ -39,21 +39,15 @@
                           "0.2.40",
                           "0.2.41",
                           "0.2.42",
+                          "0.2.43",
                           "0.2.5",
                           "0.2.6",
                           "0.2.7",
                           "0.2.8",
                           "0.2.9"
                       ],
-    "current_candidate":  null,
-    "release_in_progress":  {
-                                "version":  "0.2.42",
-                                "source_commit":  "b032b53f57c54745c8e18ae66330627ca5f4d792",
-                                "server_state":  "ready",
-                                "control_plane_sha256":  "c7913e534071c3771d62696bc526ebe6510ab8faeddce60a0fb27aafec7b2715",
-                                "windows_state":  "pending",
-                                "installer_sha256":  null
-                            },
+    "current_candidate":  "0.2.43",
+    "release_in_progress":  null,
     "completed_releases":  [
                                {
                                    "version":  "0.2.23",
@@ -151,5 +145,18 @@
                                    "windows_state":  "complete",
                                    "installer_sha256":  "83991ccb801edb8e035a1dc106cd52735cf4177f50e0a03281ee94f139465789"
                                }
-                           ]
+                           ],
+    "superseded_releases":  [
+                                {
+                                    "version":  "0.2.42",
+                                    "source_commit":  "b032b53f57c54745c8e18ae66330627ca5f4d792",
+                                    "server_state":  "ready",
+                                    "control_plane_sha256":  "c7913e534071c3771d62696bc526ebe6510ab8faeddce60a0fb27aafec7b2715",
+                                    "windows_state":  "pending",
+                                    "installer_sha256":  null,
+                                    "superseded_by":  "0.2.43",
+                                    "reason":  "0.2.42 仅完成控制层部署，Windows 客户端未完成；由包含完整源码改动的 0.2.43 替代。",
+                                    "superseded_at":  "2026-08-29T17:49:07+08:00"
+                                }
+                            ]
 }

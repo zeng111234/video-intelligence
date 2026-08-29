@@ -242,16 +242,67 @@ def _port_in_use(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _runtime_state_path(runtime_root: Path) -> Path:
+    return runtime_root / "data" / "desktop-runtime.json"
+
+
+def _runtime_pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # A process we cannot inspect is safer to treat as live than delete.
+        return True
+    return True
+
+
+def _clear_stale_runtime_state(runtime_root: Path) -> bool:
+    """Remove only a runtime record whose recorded backend PID is gone."""
+    destination = _runtime_state_path(runtime_root)
+    if not destination.exists():
+        return False
+    try:
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        pid = int(payload.get("pid") or 0)
+    except (OSError, ValueError, json.JSONDecodeError):
+        destination.unlink(missing_ok=True)
+        logging.warning("已移除无效的 desktop-runtime.json")
+        return True
+    if _runtime_pid_is_alive(pid):
+        return False
+    destination.unlink(missing_ok=True)
+    logging.warning("已移除已退出本地服务的运行时记录 pid=%s", pid)
+    return True
+
+
+def _clear_own_runtime_state(runtime_root: Path) -> bool:
+    """Do not remove a newer backend's record when this process exits."""
+    destination = _runtime_state_path(runtime_root)
+    try:
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if int(payload.get("pid") or 0) != os.getpid():
+        return False
+    destination.unlink(missing_ok=True)
+    logging.info("本地服务已清理运行时记录 pid=%s", os.getpid())
+    return True
+
+
 def _write_runtime_state(runtime_root: Path, port: int) -> None:
     data_directory = runtime_root / "data"
     data_directory.mkdir(parents=True, exist_ok=True)
-    destination = data_directory / "desktop-runtime.json"
+    destination = _runtime_state_path(runtime_root)
     temporary = data_directory / f".desktop-runtime-{os.getpid()}.tmp"
     payload = {
         "schema_version": 1,
         "pid": os.getpid(),
         "port": port,
         "origin": f"http://127.0.0.1:{port}",
+        "started_at": datetime.now().astimezone().isoformat(),
     }
     temporary.write_text(
         json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8"
@@ -318,6 +369,7 @@ def main() -> int:
     _configure_local_urls(port)
     control_plane_enabled = _configure_desktop_environment(root, runtime_root, port)
     _configure_logging(runtime_root)
+    _clear_stale_runtime_state(runtime_root)
 
     if _health_ready():
         if os.getenv("VIDEOINSIGHT_NO_BROWSER", "").casefold() != "true":
@@ -331,6 +383,7 @@ def main() -> int:
         _show_error("公司服务配置缺失或无效，请联系服务人员重新安装正式版本。")
         return 1
 
+    runtime_state_written = False
     try:
         if not control_plane_enabled:
             _ensure_demo_customer()
@@ -338,6 +391,8 @@ def main() -> int:
         import uvicorn
 
         _write_runtime_state(runtime_root, port)
+        runtime_state_written = True
+        logging.info("本地服务启动 pid=%s port=%s", os.getpid(), port)
         threading.Thread(target=_open_when_ready, daemon=True).start()
         uvicorn.run(
             app,
@@ -347,11 +402,15 @@ def main() -> int:
             access_log=False,
             log_config=None,
         )
+        logging.info("本地服务正常停止 pid=%s", os.getpid())
         return 0
     except Exception:
         logging.exception("Desktop application failed to start")
         _show_error("系统未能启动，请查看本机 VideoInsight 数据目录中的 desktop.log。")
         return 1
+    finally:
+        if runtime_state_written:
+            _clear_own_runtime_state(runtime_root)
 
 
 if __name__ == "__main__":

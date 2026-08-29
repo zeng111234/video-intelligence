@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 
 from project.backend.app.services import remote_avatar
+from src.models import ProviderErrorKind
 
 
 def test_remote_avatar_uses_admin_session_and_bypasses_environment_proxy(monkeypatch):
@@ -94,4 +95,24 @@ def test_remote_avatar_hides_only_the_legacy_builtin_avatar(monkeypatch):
     assert [asset.asset_id for asset in assets] == [
         "customer-avatar-11",
         "shuying-avatar-21920",
+    ]
+
+
+def test_remote_avatar_capability_preserves_safe_authorization_reason(monkeypatch):
+    provider = remote_avatar.RemoteAvatarProvider()
+
+    def unavailable(_path):
+        raise remote_avatar.AvatarProviderError(
+            "请先登录客户账号或管理员账号，再使用数字人。",
+            kind=ProviderErrorKind.AUTHORIZATION,
+        )
+
+    monkeypatch.setattr(provider, "_get", unavailable)
+
+    capability = provider.capabilities()
+
+    assert not capability.enabled
+    assert capability.permission_status == "unavailable_authorization"
+    assert capability.missing_configuration == [
+        "请先登录客户账号或管理员账号，再使用数字人。"
     ]

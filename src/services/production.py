@@ -627,6 +627,7 @@ class ProductionService:
         assets_by_id: dict[str, Any] = {}
         avatar_cost = 0.0
         avatar_cost_known = True
+        avatar_quote_error = ""
         avatar_estimated_seconds = 0
         if not rights_confirmed or not rights_holder.strip():
             shared.append(
@@ -655,6 +656,18 @@ class ProductionService:
                 capabilities = getattr(self.avatar_service, "capabilities", None)
                 if callable(capabilities):
                     capability = capabilities()
+                    if getattr(capability, "enabled", None) is False:
+                        detail = "、".join(
+                            str(value)
+                            for value in getattr(
+                                capability, "missing_configuration", []
+                            )
+                            if str(value).strip()
+                        )
+                        shared.append(
+                            "数字人服务暂不可用"
+                            + (f"：{detail}" if detail else "。")
+                        )
                     mode = str(getattr(capability, "mode", "") or "")
                     estimated = getattr(capability, "estimated_cost_cny", None)
                     avatar_estimated_seconds = int(
@@ -701,8 +714,17 @@ class ProductionService:
                                 avatar_estimated_seconds = int(
                                     quote.reservation_seconds
                                 )
-                            except (TypeError, ValueError):
-                                avatar_cost_known = False
+                            except (TypeError, ValueError) as exc:
+                                avatar_quote_error = " ".join(str(exc).split())[:180]
+                                configured_cost = (
+                                    workspace_configuration.avatar_estimated_cost_cny
+                                    if workspace_configuration is not None
+                                    else None
+                                )
+                                if configured_cost is None:
+                                    avatar_cost_known = False
+                                else:
+                                    avatar_cost = float(configured_cost)
                         else:
                             configured_cost = (
                                 workspace_configuration.avatar_estimated_cost_cny
@@ -798,10 +820,13 @@ class ProductionService:
             # 候选/分享链接最多预留一次整段转写 AI 校对，实际仅在云端
             # 返回低置信片段时调用；预检按上限报价，避免隐藏额外费用。
             transcript_review_reserved = item.source_type in {"candidate", "share_link"}
+            # 长文案首次改写未达时长时，最多再做一次 AI 语义压缩；预检按上限报价。
+            length_compression_reserved = rewrite_required
             copy_call_count = (
                 int(rewrite_required)
                 + int(audit_required)
                 + int(transcript_review_reserved)
+                + int(length_compression_reserved)
             )
             if copy_call_count:
                 if copy_capability_error:
@@ -992,6 +1017,7 @@ class ProductionService:
                     "use_paid_fallback": use_paid_fallback,
                     "use_candidate_link_fallback": use_candidate_link_fallback,
                     "copy_call_count": copy_call_count,
+                    "length_compression_reserved": length_compression_reserved,
                     "transcript_review_reserved": transcript_review_reserved,
                     "manual_script_audit": audit_required,
                 }
@@ -1000,7 +1026,12 @@ class ProductionService:
         if not all_costs_known:
             missing_costs: list[str] = []
             if not avatar_cost_known:
-                missing_costs.append("数字人口播")
+                missing_costs.append(
+                    "数字人口播"
+                    + (f"报价失败：{avatar_quote_error}" if avatar_quote_error else "")
+                )
+            if not alignment_cost_known:
+                missing_costs.append("字幕对齐")
             if copy_capability is not None:
                 copy_mode = str(copy_capability.get("mode") or "").casefold()
                 if (
@@ -1340,7 +1371,18 @@ class ProductionService:
         items: list[ProductionBatchItem] = []
         for item in batch.items:
             run = self.repository.get_pipeline_run(item.run_id)
-            if item.status != ProductionBatchItemStatus.FAILED or run is None:
+            retryable_avatar_pause = bool(
+                run
+                and item.status == ProductionBatchItemStatus.BLOCKED
+                and run.status == PipelineRunStatus.PAUSED
+                and run.current_stage == PipelineStage.AVATAR_GENERATION
+                and run.config.get("recovery_reason")
+                == "avatar_submission_not_started"
+            )
+            if (
+                item.status != ProductionBatchItemStatus.FAILED
+                and not retryable_avatar_pause
+            ) or run is None:
                 items.append(item)
                 continue
             retry_stage, reason = self._safe_retry_stage(run)
@@ -1412,6 +1454,11 @@ class ProductionService:
                 **run.config,
                 "stage_retry_counts": retry_counts,
             }
+            if retryable_avatar_pause:
+                retry_config.pop("recovery_blocked", None)
+                retry_config.pop("recovery_reason", None)
+                retry_config.pop("outcome_unknown", None)
+                retry_config.pop("manual_action_required", None)
             if retrying_transcription_upload:
                 transcription_task = self._transcription_task(run)
                 retry_config.pop("transcription_task_id", None)
@@ -2747,6 +2794,14 @@ class ProductionService:
         *,
         batch_paused: bool = False,
     ) -> tuple[str, list[str]]:
+        if (
+            run is not None
+            and run.status == PipelineRunStatus.PAUSED
+            and run.current_stage == PipelineStage.AVATAR_GENERATION
+            and run.config.get("recovery_reason")
+            == "avatar_submission_not_started"
+        ):
+            return "retry", ["retry"]
         if (
             run is not None
             and run.status == PipelineRunStatus.PAUSED
