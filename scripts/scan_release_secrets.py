@@ -106,10 +106,16 @@ def _release_candidates(repository_root: Path) -> list[Path]:
         capture_output=True,
     )
     candidates: list[Path] = []
+    excluded_prefixes = (
+        "work/",
+        "node_modules/",
+    )
     for raw_path in result.stdout.split(b"\0"):
         if not raw_path:
             continue
         relative = raw_path.decode("utf-8", errors="surrogateescape")
+        if relative.replace("\\", "/").startswith(excluded_prefixes):
+            continue
         path = repository_root / relative
         mode = path.lstat().st_mode
         if not stat.S_ISREG(mode):
