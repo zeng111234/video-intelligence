@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +29,8 @@ from src.services.video_editor_workflow import (  # noqa: E402
 
 BASE = ROOT / "work/auto-fine-cut-generalization-20260825/5-samples-20250825"
 MODEL = Path(
-    r"C:\Users\zeng\.cache\huggingface\hub\models--mobiuslabsgmbh--faster-whisper-large-v3-turbo\snapshots\0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
-)
+    os.getenv("WHISPER_MODEL_PATH", "large-v3-turbo")
+).expanduser()
 
 
 def sha256(path: Path) -> str:
