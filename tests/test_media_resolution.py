@@ -215,7 +215,9 @@ def test_unknown_media_resolution_blocks_later_attempt() -> None:
     assert "结果未知" in (preview.block_reason or "")
 
 
-def test_xiaohongshu_public_material_never_resolves_media_or_starts_transcription() -> None:
+def test_xiaohongshu_direct_media_can_enter_transcription_without_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repository = MockRepository(candidates=[], tasks=[])
     provider = FixtureMediaProvider()
     candidate = _candidate(platform=Platform.XIAOHONGSHU, platform_item_id="xhs-2")
@@ -224,18 +226,29 @@ def test_xiaohongshu_public_material_never_resolves_media_or_starts_transcriptio
     )
     repository.save_candidate(candidate)
     service = _service(repository, provider)
+    monkeypatch.setattr(
+        "src.services.media_resolution.fetch_authorized_video",
+        lambda *args, **kwargs: DirectVideo(
+            name="xhs-source.mp4",
+            media_type="video/mp4",
+            content=b"0000ftypmp42",
+        ),
+    )
 
     preview = service.preview(candidate)
 
-    assert preview.resolvable is False
-    assert "未登录公开搜索" in (preview.block_reason or "")
+    assert preview.resolvable is True
+    assert preview.source == "direct_url"
     assert provider.calls == []
 
-    with pytest.raises(MediaResolutionError, match="未登录公开搜索"):
-        service.resolve_video(candidate, idempotency_key="idem-media-not-video")
+    resolved = service.resolve_video(
+        candidate,
+        idempotency_key="idem-media-xhs-direct",
+    )
 
-    latest = repository.find_latest_media_resolution_for_candidate(candidate.video_id)
-    assert latest is None
+    assert resolved.attempt.status == MediaResolutionStatus.SUCCEEDED
+    assert resolved.attempt.api_call_count == 0
+    assert provider.calls == []
     assert repository.monthly_platform_query_cost(NOW.replace(day=1)) == pytest.approx(
         0.0
     )
