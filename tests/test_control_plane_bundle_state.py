@@ -55,6 +55,7 @@ def _repository(tmp_path: Path, *, forbidden_marker: str | None = None) -> Path:
     root = tmp_path / "repo"
     _write(root / ".dockerignore")
     _write(root / "PRODUCTION_RELEASE_CHECKLIST.md")
+    _write(root / "data" / "templates" / "builtin.json", "[]\n")
     _write(root / "project" / "__init__.py", "")
     _write(root / "project" / "backend" / "__init__.py", "")
     for index in range(10):
