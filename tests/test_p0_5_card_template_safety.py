@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from src.services.video_editor_workflow import _sanitize_adaptive_visual_item
 

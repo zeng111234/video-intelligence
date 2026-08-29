@@ -1696,7 +1696,9 @@ def test_release_stock_search_uses_overlapping_spoken_semantics(
         def __init__(self, _cache):
             pass
 
-        def search_and_cache(self, query, *, max_results, provider=None):
+        def search_and_cache(
+            self, query, *, max_results, provider=None, force_fresh=False
+        ):
             queries.append(query)
             limits.append(max_results)
             return SimpleNamespace(status="unavailable", items=[])
@@ -1751,7 +1753,7 @@ def test_release_semantic_search_runs_even_when_authorized_cache_has_three_items
         def __init__(self, _cache):
             pass
 
-        def search_and_cache(self, query, *, max_results):
+        def search_and_cache(self, query, *, max_results, force_fresh=False):
             queries.append(query)
             return SimpleNamespace(
                 status="ready",
@@ -1835,7 +1837,9 @@ def test_release_searches_each_structured_visual_request_when_cache_has_no_match
         def __init__(self, _cache):
             pass
 
-        def search_and_cache(self, query, *, max_results, provider=None):
+        def search_and_cache(
+            self, query, *, max_results, provider=None, force_fresh=False
+        ):
             calls.append((query, provider, max_results))
             if provider == "pixabay":
                 return SimpleNamespace(

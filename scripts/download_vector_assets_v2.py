@@ -18,16 +18,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
-import ssl
-import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 # 强制不使用代理
 os.environ.pop("HTTP_PROXY", None)

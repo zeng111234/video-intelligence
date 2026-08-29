@@ -1,7 +1,11 @@
 """补充下载 Lucide、Feather、Heroicons 图标库。"""
 
 from __future__ import annotations
-import hashlib, os, re, time, urllib.request
+import hashlib
+import os
+import re
+import time
+import urllib.request
 from pathlib import Path
 
 os.environ.pop("HTTP_PROXY", None)
@@ -59,7 +63,7 @@ def download_svg(url: str, target_dir: Path, name: str) -> bool:
             return False
         fpath.write_bytes(data)
         return True
-    except:
+    except Exception:
         return False
 
 

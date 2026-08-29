@@ -8,16 +8,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
-import ssl
-import sys
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 # 强制不使用代理
 os.environ.pop("HTTP_PROXY", None)
@@ -234,7 +230,7 @@ def get_storyset_images(category: str) -> list[dict[str, str]]:
 # ── unDraw 下载 ────────────────────────────────────────────
 def get_undraw_images(query: str) -> list[dict[str, str]]:
     """从 unDraw 搜索页面提取 SVG URL。"""
-    url = f"https://undraw.co/illustrations"
+    url = "https://undraw.co/illustrations"
     html = fetch_page(url)
     if not html:
         return []
@@ -400,7 +396,7 @@ def download_undraw_assets() -> dict[str, int]:
 
             time.sleep(DELAY_BETWEEN)
 
-    print(f"\n  unDraw 下载完成")
+    print("\n  unDraw 下载完成")
     return stats
 
 
@@ -454,9 +450,9 @@ def main() -> None:
     start = time.time()
 
     # 三个来源并行下载
-    stats1 = download_storyset_assets()
-    stats2 = download_undraw_assets()
-    stats3 = download_openmoji_assets()
+    download_storyset_assets()
+    download_undraw_assets()
+    download_openmoji_assets()
 
     elapsed = time.time() - start
 

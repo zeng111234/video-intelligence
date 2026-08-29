@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.services.video_editor_workflow import VideoEditorWorkflowService
+from src.services.video_editor_workflow import VideoEditorWorkflowService  # noqa: E402
 
 
 SOURCE = ROOT / "data/avatar_results/avatar-2704b95149a3.mp4"

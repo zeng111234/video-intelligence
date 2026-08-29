@@ -20,12 +20,12 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from src.services.video_editor_cloud import (
+from src.services.video_editor_cloud import (  # noqa: E402
     build_business_talking_head_ass,
     build_business_talking_head_overlay_preview,
     build_business_talking_head_srt,
 )
-from src.services.video_editor_workflow import _measure_audio_video_drift
+from src.services.video_editor_workflow import _measure_audio_video_drift  # noqa: E402
 
 
 WORK = ROOT / "work" / "auto-fine-cut-v1-20260822"

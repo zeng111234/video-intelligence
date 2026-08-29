@@ -19,12 +19,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.adapters.aliyun_ims_timeline import (
+from src.adapters.aliyun_ims_timeline import (  # noqa: E402
     AliyunIMSTimelineClient,
     compile_director_timeline_to_ims,
 )
-from src.adapters.video_editor_cloud import AliyunCloudObjectStore
-from src.services.video_editor_cloud import CloudEditorConfiguration
+from src.adapters.video_editor_cloud import AliyunCloudObjectStore  # noqa: E402
+from src.services.video_editor_cloud import CloudEditorConfiguration  # noqa: E402
 
 
 EVIDENCE = ROOT / "work" / "ims-cloud-short-acceptance-20260826" / "retry-01"

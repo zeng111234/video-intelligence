@@ -16,9 +16,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from project.backend.app.core.deps import get_repository, get_video_editing_service
-from src.models import VideoEditorBatch, VideoEditorBatchItem
-from src.services.video_editor_workflow import VideoEditorWorkflowService
+from project.backend.app.core.deps import (  # noqa: E402
+    get_repository,
+    get_video_editing_service,
+)
+from src.models import VideoEditorBatch, VideoEditorBatchItem  # noqa: E402
+from src.services.video_editor_workflow import (  # noqa: E402
+    VideoEditorWorkflowService,
+)
 
 
 BASE = ROOT / "work/auto-fine-cut-generalization-20260825/5-samples-20250825"

@@ -17,7 +17,7 @@ import json
 import math
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 from urllib.parse import quote, urlencode
 
 import httpx

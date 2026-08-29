@@ -14,7 +14,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
 import time
 import tempfile
@@ -4165,7 +4164,6 @@ class VideoEditorWorkflowService:
                 ]
                 if not selected_indices:
                     continue
-                first_index = selected_indices[0]
                 last_index = selected_indices[-1]
                 snapped_start = raw_position_to_clock(raw_start, is_end=False)
                 snapped_end = raw_position_to_clock(raw_end, is_end=True)
@@ -7362,7 +7360,7 @@ class VideoEditorWorkflowService:
                     "auto_eligible": recommendation.get("auto_eligible", False),
                 }
         from src.services.talking_head_templates import build_talking_head_shot_plan
-        from src.services.director_plan import build_director_plan
+        from src.services.director_plan import _plan_visual_windows, build_director_plan
 
         reviewed_segments, transcript_corrections = _review_transcript_segments(
             item.subtitle_segments
@@ -7389,9 +7387,7 @@ class VideoEditorWorkflowService:
             item.selected_title or item.title,
         )
 
-        generated_acceptance_assets = (
-            self._register_local_generated_acceptance_assets()
-        )
+        self._register_local_generated_acceptance_assets()
 
         shot_plan_seed = build_talking_head_shot_plan(
             reviewed_segments,
@@ -7614,10 +7610,9 @@ class VideoEditorWorkflowService:
         #   2) unresolved_semantic_windows 数 > 0（未解决窗口）
         #   3) 连续无视觉变化时长 ≥ 6s（长空档）
         #   4) 必须有"信息卡"语义的 planned_window（data_chart / concept_card / cta_card）
-        visual_window_plan_for_trigger = (
-            director_plan.get("visual_window_plan")
-            if isinstance(director_plan, Mapping)
-            else None
+        visual_window_plan_for_trigger = _plan_visual_windows(
+            reviewed_segments,
+            float(media["duration_seconds"]),
         )
         broll_total_seconds_for_trigger = sum(
             max(0.0, float(it.get("end", 0)) - float(it.get("start", 0)))

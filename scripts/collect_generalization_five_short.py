@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from project.backend.app.core.deps import get_repository
+from project.backend.app.core.deps import get_repository  # noqa: E402
 
 
 BASE = ROOT / "work/auto-fine-cut-generalization-20260825/5-samples-20250825"

@@ -15,7 +15,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from src.services.local_visual_asset_matcher import (
     match_local_visual_asset,

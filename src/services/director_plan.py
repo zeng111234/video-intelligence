@@ -133,7 +133,6 @@ def _plan_visual_windows(
     optional_seconds = sum(w["min_seconds"] for w in windows if not w["required"])
 
     # 长口播必须至少 2 PiP + 2 Full；这里规划阶段先在窗口里平衡
-    pip_windows = [w for w in windows if w.get("preferred_mode") == "pip"]
     full_windows = [w for w in windows if w.get("preferred_mode") == "full"]
     if is_long:
         # 如果 full 不足 2，强行提升最早两个 spoken_point 窗口为 full
