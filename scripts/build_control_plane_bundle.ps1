@@ -622,7 +622,6 @@ try {
 $explicitFiles = @(
     '.dockerignore',
     'PRODUCTION_RELEASE_CHECKLIST.md',
-    'data/templates/builtin.json',
     'project/__init__.py',
     'project/backend/__init__.py'
 )
@@ -699,7 +698,6 @@ foreach ($relativeTree in $sourceTrees) {
 }
 
 $entries = [System.Collections.Generic.List[object]]::new()
-$allowedDataEntry = 'data/templates/builtin.json'
 foreach ($relativePath in $candidatePaths) {
     if ($relativePath -in @(
         'deploy/control-plane/release_versions.json',
@@ -708,10 +706,7 @@ foreach ($relativePath in $candidatePaths) {
         continue
     }
     $segments = $relativePath.Split('/')
-    if (
-        ($segments | Where-Object { $forbiddenDirectoryNames -contains $_ }) -and
-        $relativePath -ne $allowedDataEntry
-    ) {
+    if ($segments | Where-Object { $forbiddenDirectoryNames -contains $_ }) {
         continue
     }
     $extension = [System.IO.Path]::GetExtension($relativePath).ToLowerInvariant()
@@ -757,10 +752,7 @@ foreach ($entry in $entries) {
 }
 
 $sensitivePath = $entries | Where-Object {
-    (
-        $_.Entry -ne $allowedDataEntry -and
-        $_.Entry -match '(^|/)(\.env|data|logs|backups|caddy-data|caddy-config|updates)(/|$)'
-    ) -or
+    $_.Entry -match '(^|/)(\.env|data|logs|backups|caddy-data|caddy-config|updates)(/|$)' -or
     $_.Entry -match '\.(db|sqlite3?|log|mp3|wav|mp4|mov|mkv|webm)$'
 }
 if ($sensitivePath) {
