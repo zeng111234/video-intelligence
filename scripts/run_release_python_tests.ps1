@@ -28,6 +28,7 @@ try {
         Invoke-Pytest -Arguments @($testFile.FullName, "-q")
     }
 
+if ($env:VIDEOINSIGHT_RUN_LEGACY_STREAMLIT_TESTS -eq "1") {
     Write-Output "[3/3] Legacy Streamlit page tests (isolated groups)"
     $streamlitFile = Join-Path $repositoryRoot "tests\test_streamlit_pages.py"
     $firstGroup = @(
@@ -40,6 +41,10 @@ try {
     ) -join " or "
     Invoke-Pytest -Arguments @($streamlitFile, "-q", "-k", $firstGroup)
     Invoke-Pytest -Arguments @($streamlitFile, "-q", "-k", "not ($firstGroup)")
+}
+else {
+    Write-Output "[3/3] Legacy Streamlit page tests skipped (not shipped in this release artifact)"
+}
 }
 finally {
     Pop-Location
