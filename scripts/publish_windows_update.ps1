@@ -384,7 +384,10 @@ try {
     catch { throw "正式版本登记表无法读取：$releaseRegistryPath" }
     $topLevelProperties = (@($releaseRegistry.PSObject.Properties.Name) | Sort-Object) -join ','
     if (
-        $topLevelProperties -ne "completed_releases,current_candidate,release_in_progress,schema_version,superseded_releases,used_versions" -or
+        $topLevelProperties -notin @(
+            "completed_releases,current_candidate,release_in_progress,schema_version,superseded_releases,used_versions",
+            "completed_releases,current_candidate,release_in_progress,schema_version,used_versions"
+        ) -or
         [int]$releaseRegistry.schema_version -ne 2
     ) {
         throw "正式版本登记表 schema_version 必须为 2 且字段必须完整。"
@@ -393,7 +396,7 @@ try {
         -not ($releaseRegistry.used_versions -is [System.Array]) -or
         $releaseRegistry.used_versions.Count -eq 0 -or
         -not ($releaseRegistry.completed_releases -is [System.Array]) -or
-        -not ($releaseRegistry.superseded_releases -is [System.Array])
+        ($null -ne $releaseRegistry.PSObject.Properties['superseded_releases'] -and -not ($releaseRegistry.superseded_releases -is [System.Array]))
     ) {
         throw "正式版本登记表 used_versions/completed_releases 类型无效。"
     }

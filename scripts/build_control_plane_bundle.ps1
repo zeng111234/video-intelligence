@@ -215,7 +215,11 @@ function Assert-FreshReleaseCandidate {
         'superseded_releases'
     )
     $actualTopLevelProperties = @($Registry.PSObject.Properties.Name)
-    if (Compare-Object -CaseSensitive $expectedTopLevelProperties $actualTopLevelProperties) {
+    $legacyTopLevelProperties = @($expectedTopLevelProperties | Where-Object { $_ -ne 'superseded_releases' })
+    if (
+        (Compare-Object -CaseSensitive $expectedTopLevelProperties $actualTopLevelProperties) -and
+        (Compare-Object -CaseSensitive $legacyTopLevelProperties $actualTopLevelProperties)
+    ) {
         throw '正式版本登记表包含缺失或未授权的顶层字段。'
     }
     $schemaProperty = $Registry.PSObject.Properties['schema_version']
@@ -230,7 +234,7 @@ function Assert-FreshReleaseCandidate {
         $null -eq $candidateProperty -or $candidateProperty.Value -isnot [string] -or
         $null -eq $inProgressProperty -or $null -ne $inProgressProperty.Value -or
         $null -eq $completedProperty -or $completedProperty.Value -isnot [System.Array] -or
-        $null -eq $supersededProperty -or $supersededProperty.Value -isnot [System.Array]
+        ($null -ne $supersededProperty -and $supersededProperty.Value -isnot [System.Array])
     ) {
         throw '正式版本登记表 schema 无效或缺少 fail-closed 生命周期字段。'
     }
@@ -282,7 +286,8 @@ function Assert-FreshReleaseCandidate {
             throw '正式版本登记表包含无效、重复或未烧录的完成记录。'
         }
     }
-    foreach ($superseded in @($supersededProperty.Value)) {
+    $supersededReleases = if ($null -eq $supersededProperty) { @() } else { @($supersededProperty.Value) }
+    foreach ($superseded in $supersededReleases) {
         if (
             $null -eq $superseded -or
             ((@($superseded.PSObject.Properties.Name) | Sort-Object) -join ',') -ne
@@ -626,7 +631,13 @@ try {
             installer_sha256 = $null
         }
         completed_releases = [object[]]$completedReleases
-        superseded_releases = [object[]]@($lockedRegistry.superseded_releases)
+        superseded_releases = [object[]]$(
+            if ($null -eq $lockedRegistry.PSObject.Properties['superseded_releases']) {
+                @()
+            } else {
+                @($lockedRegistry.superseded_releases)
+            }
+        )
     }
     Write-ReleaseRegistryAtomically -LiteralPath $releaseRegistryPath -Registry $releaseState
     $releaseReserved = $true

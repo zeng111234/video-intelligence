@@ -220,11 +220,14 @@ function Assert-OfflineBuildLifecycle {
         catch { throw "正式版本登记表无法读取。" }
         $topProperties = (@($registry.PSObject.Properties.Name) | Sort-Object) -join ','
         if (
-            $topProperties -ne "completed_releases,current_candidate,release_in_progress,schema_version,superseded_releases,used_versions" -or
+            $topProperties -notin @(
+                "completed_releases,current_candidate,release_in_progress,schema_version,superseded_releases,used_versions",
+                "completed_releases,current_candidate,release_in_progress,schema_version,used_versions"
+            ) -or
             [int]$registry.schema_version -ne 2 -or
             $null -ne $registry.current_candidate -or
             $null -eq $registry.release_in_progress -or
-            -not ($registry.superseded_releases -is [System.Array])
+            ($null -ne $registry.PSObject.Properties['superseded_releases'] -and -not ($registry.superseded_releases -is [System.Array]))
         ) { throw "离线正式构建要求 schema 2 的已烧录 release_in_progress。" }
         $usedVersions = @($registry.used_versions | ForEach-Object { [string]$_ })
         if (
