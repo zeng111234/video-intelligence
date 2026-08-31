@@ -142,6 +142,25 @@ def test_desktop_launcher_keeps_a_live_runtime_record(monkeypatch, tmp_path):
     assert runtime_file.exists()
 
 
+def test_desktop_launcher_removes_runtime_record_with_invalid_windows_handle(monkeypatch, tmp_path):
+    desktop_launcher._write_runtime_state(tmp_path, 16543)
+    runtime_file = tmp_path / "data" / "desktop-runtime.json"
+    payload = json.loads(runtime_file.read_text(encoding="utf-8"))
+    payload["pid"] = 123456
+    runtime_file.write_text(json.dumps(payload), encoding="utf-8")
+
+    class _InvalidWindowsHandle(OSError):
+        winerror = 6
+
+    def _raise_invalid_handle(_pid, _signal):
+        raise _InvalidWindowsHandle("invalid handle")
+
+    monkeypatch.setattr(desktop_launcher.os, "kill", _raise_invalid_handle)
+
+    assert desktop_launcher._clear_stale_runtime_state(tmp_path) is True
+    assert not runtime_file.exists()
+
+
 @pytest.mark.parametrize("value", ["nope", "80", "70000"])
 def test_desktop_port_rejects_invalid_environment(monkeypatch, value):
     monkeypatch.setenv("VIDEOINSIGHT_DESKTOP_PORT", value)

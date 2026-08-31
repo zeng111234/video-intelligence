@@ -256,6 +256,16 @@ def _runtime_pid_is_alive(pid: int) -> bool:
     except PermissionError:
         # A process we cannot inspect is safer to treat as live than delete.
         return True
+    except OSError as exc:
+        # Windows can report ERROR_INVALID_HANDLE (WinError 6) for a PID that
+        # no longer has a usable process handle.  Treat that record as stale so
+        # a failed earlier launch cannot prevent the desktop client from
+        # starting again.
+        if getattr(exc, "winerror", None) == 6:
+            return False
+        # Preserve the runtime record for other OS errors: we cannot establish
+        # that the process is gone, and deleting a live record is less safe.
+        return True
     return True
 
 

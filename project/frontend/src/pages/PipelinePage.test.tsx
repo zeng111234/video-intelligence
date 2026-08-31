@@ -1361,18 +1361,19 @@ describe("PipelinePage customer workspace", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
-    const hotterButton = (await screen.findAllByText("真实互动更高的素材"))
+    const candidateButtonFor = (title: string) => screen.getAllByText(title)
       .map((element) => element.closest<HTMLButtonElement>("button.candidate-select"))
       .find((element): element is HTMLButtonElement => element !== null);
-    const zeroLikeButton = screen.getAllByText("供应商第一但零赞")
-      .map((element) => element.closest<HTMLButtonElement>("button.candidate-select"))
-      .find((element): element is HTMLButtonElement => element !== null);
-    expect(hotterButton).not.toBeNull();
-    expect(zeroLikeButton).not.toBeNull();
     await waitFor(() => {
+      expect(candidateButtonFor("真实互动更高的素材")).toBeDefined();
+      expect(candidateButtonFor("供应商第一但零赞")).toBeDefined();
+      const hotterButton = candidateButtonFor("真实互动更高的素材")!;
+      const zeroLikeButton = candidateButtonFor("供应商第一但零赞")!;
       expect(hotterButton!.textContent).toContain("#1");
       expect(zeroLikeButton!.textContent).toContain("#2");
     });
+    const hotterButton = candidateButtonFor("真实互动更高的素材")!;
+    const zeroLikeButton = candidateButtonFor("供应商第一但零赞")!;
     expect(hotterButton!.compareDocumentPosition(zeroLikeButton!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     fireEvent.click(screen.getByRole("radio", { name: "自动生成" }));
