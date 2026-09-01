@@ -774,6 +774,21 @@ class CommercialSearchService:
             monthly_queries_limit=MONTHLY_HARD_LIMIT_QUERIES,
             monthly_cost_limit_cny=_monthly_cost_limit_cny(),
         )
+        if claim_result == "duplicate" and capability.mode != ProviderMode.PRODUCTION:
+            # 本机浏览器搜索不计费，且调用方已通过平台浏览器租约避免同一
+            # 平台并发。上次请求已经结束时，60 秒通用防重锁不应把用户挡在
+            # 真正打开搜索页之前；清锁后允许本机重新验证登录/页面状态。
+            self.repository.resolve_platform_search_request(fingerprint)
+            claim_result = self.repository.try_claim_platform_search_request(
+                fingerprint=fingerprint,
+                run_id=run.run_id,
+                claimed_at=started_at,
+                ttl_seconds=DUPLICATE_GUARD_SECONDS,
+                unit_price=float(unit_price or 0.0),
+                enforce_limits=False,
+                monthly_queries_limit=MONTHLY_HARD_LIMIT_QUERIES,
+                monthly_cost_limit_cny=_monthly_cost_limit_cny(),
+            )
         if claim_result == "duplicate":
             return self._finish_run(
                 run,

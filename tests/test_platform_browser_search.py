@@ -232,6 +232,14 @@ def test_optional_login_prompt_does_not_block_public_search_attempt():
         provider._raise_for_login_gate(page)
 
 
+def test_xiaohongshu_regular_login_prompt_blocks_before_a_search_starts():
+    provider = _provider(Platform.XIAOHONGSHU)
+
+    assert provider._page_requires_login("登录后查看更多推荐内容") is True
+    with pytest.raises(LicensedProviderError, match="要求登录或人工验证"):
+        provider._raise_for_login_gate(_TextPage("登录后查看更多推荐内容"))
+
+
 def test_xiaohongshu_public_profile_rejects_visible_and_login_profile_starts(tmp_path):
     provider = LocalPlatformBrowserSearchProvider(
         platform=Platform.XIAOHONGSHU,
@@ -515,6 +523,148 @@ def test_xiaohongshu_browser_response_normalizes_visible_search_metadata():
         "?xsec_token=test-token&xsec_source=pc_search"
     )
     assert "time=platform" in (item.evidence or "")
+
+
+def test_xiaohongshu_browser_response_keeps_nested_access_token():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-note-token-only",
+                    "note_card": {
+                        "type": "video",
+                        "xsec_token": "card-token",
+                        "xsec_source": "pc_search",
+                        "display_title": "带授权参数的视频",
+                    },
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-note-token-only"
+        "?xsec_token=card-token&xsec_source=pc_search"
+    )
+
+
+def test_xiaohongshu_browser_response_keeps_direct_explore_link():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-note-bare",
+                    "share_url": "https://www.xiaohongshu.com/explore/xhs-note-bare",
+                    "note_card": {"type": "video", "display_title": "无授权参数的视频"},
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+    items = provider._to_items(
+        rows,
+        observed_at=datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
+        limit=30,
+    )
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-note-bare"
+    )
+    assert str(items[0].source_url) == (
+        "https://www.xiaohongshu.com/explore/xhs-note-bare"
+    )
+
+
+def test_xiaohongshu_payload_builds_canonical_link_without_share_fields():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-note-id-only",
+                    "note_card": {
+                        "type": "video",
+                        "display_title": "只有笔记 ID 的视频",
+                    },
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-note-id-only"
+    )
+    assert rows[0]["source_url_verified"] is False
+
+
+def test_xiaohongshu_payload_finds_nested_share_url_and_token():
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-nested-share",
+                    "note_card": {
+                        "type": "video",
+                        "share_info": {
+                            "shareUrl": (
+                                "https://www.xiaohongshu.com/discovery/item/"
+                                "xhs-nested-share?xsec_token=nested-token"
+                            )
+                        },
+                        "display_title": "嵌套分享链接",
+                    },
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/discovery/item/"
+        "xhs-nested-share?xsec_token=nested-token"
+    )
+    assert rows[0]["source_url_verified"] is True
+
+
+def test_rendered_xiaohongshu_card_keeps_dom_xsec_token():
+    provider = _provider(Platform.XIAOHONGSHU)
+
+    class Locator:
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://www.xiaohongshu.com/explore/xhs-dom-token",
+                    "title": "带页面令牌的视频",
+                    "text": "作者 1天前 12",
+                    "counts": ["12"],
+                    "isVideo": True,
+                    "xsecToken": "dom-token",
+                    "xsecSource": "pc_search",
+                }
+            ]
+
+        def count(self):
+            return 1
+
+    class Page:
+        def locator(self, _selector):
+            return Locator()
+
+    rows = provider._rendered_rows(Page())
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-dom-token"
+        "?xsec_token=dom-token&xsec_source=pc_search"
+    )
 
 
 def test_xiaohongshu_payload_rejects_items_without_video_type():
@@ -2166,3 +2316,65 @@ def test_merge_collected_rows_network_none_does_not_clobber():
     assert row["plays"] == 110
     assert row["likes"] == 5
     assert row["extra"] == "x"
+
+
+def test_xiaohongshu_verified_network_row_keeps_direct_rendered_link():
+    """接口未给临时参数时，仍保留可交给登录浏览器解析的笔记链接。"""
+    from src.adapters.platform_browser_search import (
+        LocalPlatformBrowserSearchProvider,
+    )
+
+    rendered = {
+        "xhs-1": {
+            "item_id": "xhs-1",
+            "source_url": "https://www.xiaohongshu.com/explore/xhs-1",
+        }
+    }
+    network = {
+        "xhs-1": {
+            "item_id": "xhs-1",
+            "source_url": None,
+            "source_url_verified": True,
+        }
+    }
+
+    merged = LocalPlatformBrowserSearchProvider._merge_collected_rows(network, rendered)
+
+    assert merged == [
+        {
+            "item_id": "xhs-1",
+            "source_url": "https://www.xiaohongshu.com/explore/xhs-1",
+            "source_url_verified": True,
+        }
+    ]
+
+
+def test_rendered_xiaohongshu_direct_note_link_is_actionable(tmp_path):
+    """DOM 给出笔记链接时，候选可以进入登录浏览器转写。"""
+    provider = _provider(Platform.XIAOHONGSHU)
+
+    class Locator:
+        def count(self):
+            return 1
+
+        def evaluate_all(self, _script):
+            return [
+                {
+                    "href": "https://www.xiaohongshu.com/explore/xhs-rendered-bare",
+                    "title": "裸链接视频",
+                    "text": "作者 2天前 22",
+                    "counts": ["22"],
+                    "isVideo": True,
+                }
+            ]
+
+    class Page:
+        def locator(self, _selector):
+            return Locator()
+
+    del tmp_path
+    rows = provider._rendered_rows(Page())
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-rendered-bare"
+    )

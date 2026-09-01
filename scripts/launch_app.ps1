@@ -7,8 +7,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $appUrl = "http://127.0.0.1:1001/"
 $healthUrl = "http://127.0.0.1:1001/"
-$crawlerCapabilityUrl = "http://127.0.0.1:2001/api/v1/crawler/browser-discovery/capabilities"
-$requiredHotspotAdapterVersion = "hotspot_fiber_v2"
+$backendHealthUrl = "http://127.0.0.1:2001/health"
 
 function Test-AppHealth {
     try {
@@ -20,12 +19,16 @@ function Test-AppHealth {
     }
 }
 
-function Test-HotspotBackendReady {
+function Test-BackendDesktopHealth {
     try {
-        $response = Invoke-RestMethod -Uri $crawlerCapabilityUrl -TimeoutSec 3
+        $response = Invoke-RestMethod -Uri $backendHealthUrl -TimeoutSec 3
         return (
-            $response.provider_name -eq "douyin_local_browser" -and
-            $response.adapter_version -eq $requiredHotspotAdapterVersion
+            $response.status -eq "ok" -and
+            $response.service -eq "videoinsight-desktop-api" -and
+            $response.desktop_protocol -eq "2" -and
+            [bool]$response.desktop_client -and
+            [bool]$response.desktop_demo -and
+            -not [bool]$response.control_plane_enabled
         )
     }
     catch {
@@ -33,9 +36,9 @@ function Test-HotspotBackendReady {
     }
 }
 
-function Wait-HotspotBackendReady {
+function Wait-BackendDesktopHealth {
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
-        if (Test-HotspotBackendReady) {
+        if (Test-BackendDesktopHealth) {
             return $true
         }
         Start-Sleep -Milliseconds 500
@@ -43,12 +46,12 @@ function Wait-HotspotBackendReady {
     return $false
 }
 
-if (-not (Test-HotspotBackendReady)) {
-    Write-Host "[UPDATE] Restarting backend to load the Hotspot crawler adapter..." -ForegroundColor Yellow
+if (-not (Test-BackendDesktopHealth)) {
+    Write-Host "[UPDATE] Restarting backend to load the verified desktop runtime..." -ForegroundColor Yellow
     $backendRestart = Join-Path $projectRoot "scripts\restart_backend.ps1"
     & $backendRestart
-    if (-not (Wait-HotspotBackendReady)) {
-        Write-Host "[ERROR] Backend started but the Hotspot crawler adapter was not confirmed." -ForegroundColor Red
+    if (-not (Wait-BackendDesktopHealth)) {
+        Write-Host "[ERROR] Backend started but desktop runtime health was not confirmed." -ForegroundColor Red
         exit 1
     }
 }

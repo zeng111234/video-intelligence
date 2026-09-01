@@ -318,58 +318,62 @@ def is_business_visual_query(query: str) -> bool:
     return any(term in compact_query for term in _BUSINESS_QUERY_TERMS)
 
 
-def is_restaurant_visual_query(query: str) -> bool:
-    compact_query = _compact(query)
-    return any(term in compact_query for term in _RESTAURANT_QUERY_TERMS)
+# P0-收口 2026-08-31: ``is_restaurant_visual_query`` was the most obvious
+# "answer-driven" helper in this module: any query mentioning BBQ/餐厅
+# was silently routed to a hardcoded search string
+# ``"barbecue restaurant grill food preparation diners"``.  That string
+# is not a search term; it is a single canned answer that collapses
+# every restaurant concept into one Western-grill clip, regardless of
+# whether the caller's subject is a juice bar, a noodle shop or a
+# hospital cafeteria.  Delete the helper entirely; the generic
+# ``visual_search_query`` below now returns the literal query string
+# and lets the provider layer do its own classification on real
+# candidate footage.
 
 
 def visual_search_query(query: str) -> str:
-    """Turn abstract Chinese business copy into concrete visual search terms."""
+    """Turn abstract Chinese business copy into concrete visual search terms.
 
-    # A director request may already contain a concrete provider query such as
-    # "restaurant customer using smartphone QR code".  Do not collapse that
-    # subject/action/context triple back into a broad category, otherwise the
-    # provider can return generic food footage for a sign-up or scan request.
-    english_terms = re.findall(r"[A-Za-z][A-Za-z0-9-]*", str(query or ""))
+    P0-收口 2026-08-31: this function used to map every recognised
+    category (multi-industry, meeting, loyalty, data, restaurant,
+    business) to a hardcoded English search string.  Those hardcoded
+    strings are the very "answer-driven" code path the cross-review
+    called out: they collapse every director intent into one canned
+    phrase and the provider then returns the same handful of clips
+    regardless of the caller's actual subject.  Replace the entire
+    if-elif chain with a single rule: pass the caller's own text
+    through.  When the caller already wrote English with concrete
+    concepts (e.g. "restaurant customer using smartphone QR code")
+    we still keep those English tokens; otherwise we hand the literal
+    Chinese to the provider.  The provider is then responsible for
+    matching real B-roll on the actual semantics, not on a frozen
+    six-row lookup table.
+    """
+    query_text = str(query or "").strip()
+    if not query_text:
+        return ""
+
+    # A director request may already contain a concrete provider query
+    # such as "restaurant customer using smartphone QR code".  Keep
+    # those English tokens so the provider can return matching footage
+    # instead of a collapsed category.
+    english_terms = re.findall(r"[A-Za-z][A-Za-z0-9-]*", query_text)
     specific_english_terms = {
-        "app",
-        "cashback",
-        "customer",
-        "coupon",
-        "dashboard",
-        "dining",
-        "diners",
-        "factory",
-        "loyalty",
-        "menu",
-        "process",
-        "qr",
-        "referral",
-        "restaurant",
-        "scan",
-        "smartphone",
-        "marketing",
-        "workflow",
+        "app", "cashback", "customer", "coupon", "dashboard", "dining",
+        "diners", "factory", "loyalty", "menu", "process", "qr",
+        "referral", "restaurant", "scan", "smartphone", "marketing",
+        "workflow", "shop", "store", "kitchen", "warehouse", "delivery",
+        "driver", "clinic", "patient", "student", "teacher", "gym",
     }
     if len(english_terms) >= 3 and any(
         term.casefold() in specific_english_terms for term in english_terms
     ):
         return " ".join(english_terms)
 
-    compact_query = _compact(query)
-    if sum(_compact(term) in compact_query for term in _MULTI_INDUSTRY_TERMS) >= 2:
-        return "multi-industry retail business marketing"
-    if any(_compact(term) in compact_query for term in _MEETING_QUERY_TERMS):
-        return "customer meeting business relationship"
-    if any(_compact(term) in compact_query for term in _LOYALTY_QUERY_TERMS):
-        return "customer relationship marketing loyalty coupon referral social sharing"
-    if any(_compact(term) in compact_query for term in _DATA_QUERY_TERMS):
-        return "CRM dashboard customer database business analytics office data management"
-    if is_restaurant_visual_query(query):
-        return "barbecue restaurant grill food preparation diners"
-    if is_business_visual_query(query):
-        return "CRM dashboard customer database business analytics office data management"
-    return str(query or "").strip()
+    # Generic path: return the literal query.  The provider / asset
+    # matcher is the right place to translate Chinese into English on
+    # demand, not here.
+    return query_text
 
 
 def _visual_evidence_text(asset: Mapping[str, Any]) -> str:
@@ -405,7 +409,11 @@ def _visual_evidence_text(asset: Mapping[str, Any]) -> str:
 
 
 def semantic_conflicts(query: str, asset: Mapping[str, Any]) -> list[str]:
-    if not (is_business_visual_query(query) or is_restaurant_visual_query(query)):
+    # P0-收口 2026-08-31: the restaurant branch was deleted together with
+    # ``is_restaurant_visual_query``.  Business-only conflict detection
+    # remains in place so a small-shop video does not get classified as
+    # a CRM / loyalty programme clip.
+    if not is_business_visual_query(query):
         return []
     evidence = _visual_evidence_text(asset)
     return [term for term in _BUSINESS_CONFLICTS if term in evidence]
@@ -462,7 +470,7 @@ def _score_asset(query: str, asset: Mapping[str, Any]) -> tuple[int, list[str]]:
     evidence = _visual_evidence_text(asset)
     asset_concepts = _concrete_visual_concepts(evidence)
     requires_concrete_visual_evidence = bool(query_concepts) or (
-        is_business_visual_query(query) or is_restaurant_visual_query(query)
+        is_business_visual_query(query)
     )
     if requires_concrete_visual_evidence:
         # A concrete operation/device query must be evidenced by that same

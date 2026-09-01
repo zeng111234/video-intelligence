@@ -43,6 +43,7 @@ import {
   listCrawlerKeywordQueues,
   pauseCrawlerKeywordQueue,
   previewCrawlerCandidateMedia,
+  resolveCrawlerCandidateOriginalMedia,
   recheckCrawlerBatchLegacyNoText,
   resumeCrawlerKeywordQueue,
   cancelCrawlerKeywordQueue,
@@ -71,6 +72,23 @@ import "./KeywordCrawlerPage.css";
 
 const { Text, Title, Paragraph } = Typography;
 const RECENT_RESULT_REUSE_MINUTES = 10;
+
+async function openResolvedCandidateOriginalMedia(candidateId: string) {
+  await resolveCrawlerCandidateOriginalMedia(candidateId);
+  window.location.assign(
+    `/api/v1/crawler/candidates/${encodeURIComponent(candidateId)}/original-media`,
+  );
+}
+
+function openCandidateOriginalMedia(candidate: Pick<CrawlerCandidateResult, "platform" | "video_id" | "source_url">) {
+  if (candidate.platform === "xiaohongshu") {
+    return openResolvedCandidateOriginalMedia(candidate.video_id);
+  }
+  const sourceUrl = candidate.source_url?.trim();
+  if (!sourceUrl) throw new Error("该候选没有可用的原视频链接。");
+  const popup = window.open(sourceUrl, "_blank", "noopener,noreferrer");
+  if (!popup) throw new Error("浏览器拦截了新窗口，请允许弹窗后重试。");
+}
 
 const STATUS_COLOR: Record<string, string> = {
   queued: "default",
@@ -169,13 +187,56 @@ function hasPartialInteractionMetrics(item: CrawlerCandidateResult) {
   return available > 0 && available < metrics.length;
 }
 
-function buildTranscriptionHref(candidate: CrawlerCandidateResult) {
+function candidateSourceUrl(candidate: CrawlerCandidateResult) {
+  if (candidate.source_url) return candidate.source_url;
+  if (candidate.platform !== "xiaohongshu") return null;
+  const rawId = candidate.video_id.trim();
+  const itemId = rawId.toLowerCase().startsWith("xiaohongshu-")
+    ? rawId.slice("xiaohongshu-".length)
+    : rawId;
+  if (!itemId || !/^[A-Za-z0-9_-]+$/.test(itemId)) return null;
+  return `https://www.xiaohongshu.com/explore/${encodeURIComponent(itemId)}`;
+}
+
+function candidateOriginalMediaHref(candidate: CrawlerCandidateResult) {
+  if (candidate.platform === "xiaohongshu") {
+    return `/api/v1/crawler/candidates/${encodeURIComponent(candidate.video_id)}/original-media`;
+  }
+  return candidateSourceUrl(candidate);
+}
+
+function hasUsableXiaohongshuShareLink(candidate: CrawlerCandidateResult) {
+  const sourceUrl = candidateSourceUrl(candidate);
+  if (candidate.platform !== "xiaohongshu") return Boolean(sourceUrl);
+  if (!sourceUrl) return false;
+  try {
+    const url = new URL(sourceUrl);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:"
+      && (
+        host === "xhslink.com"
+        || host.endsWith(".xhslink.com")
+        || (
+          (host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com"))
+          && (
+            url.pathname.includes("/explore/")
+            || url.pathname.includes("/discovery/item/")
+          )
+        )
+      );
+  } catch {
+    return false;
+  }
+}
+
+function buildTranscriptionHref(candidate: CrawlerCandidateResult, forceUpload = false) {
   const query = new URLSearchParams({
     candidate: candidate.video_id,
     title: candidate.title,
   });
-  if (candidate.source_url) {
-    query.set("share_text", candidate.source_url);
+  const sourceUrl = candidateSourceUrl(candidate);
+  if (sourceUrl && !forceUpload && hasUsableXiaohongshuShareLink(candidate)) {
+    query.set("share_text", sourceUrl);
   } else {
     query.set("entry", "upload");
   }
@@ -1832,6 +1893,7 @@ function MaterialCandidateTable({
   originalScriptLoadingId: string | null;
   onSortChange: (value: MaterialSort) => void;
 }) {
+  const toast = useToast();
   const [detail, setDetail] = useState<CrawlerCandidateResult | null>(null);
   const metricCoverage = useMemo(() => materialMetricCoverage(candidates), [candidates]);
   const rows = useMemo(() => {
@@ -1970,6 +2032,7 @@ function MaterialCandidatePreview({
   onSendToWorkspace: (batchId: string, candidate: CrawlerCandidateResult) => void;
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
 }) {
+  const toast = useToast();
   const materialStatus = candidate?.spoken_material_status || "topic_only";
   const isTopicOnly = materialStatus === "topic_only";
   const hasOriginalTranscript = candidate?.is_original_transcript === true
@@ -1985,7 +2048,9 @@ function MaterialCandidatePreview({
     return <aside className="crawler-candidate-preview empty"><Text type="secondary">点选一条素材查看详情</Text></aside>;
   }
 
-  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(candidate);
+  const originalMediaHref = candidateOriginalMediaHref(candidate);
+  const canTranscribeFromLink = hasUsableXiaohongshuShareLink(candidate);
+  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(candidate) && !canTranscribeFromLink;
 
   return (
     <aside className="crawler-candidate-preview">
@@ -2025,7 +2090,7 @@ function MaterialCandidatePreview({
         {!isTopicOnly && !isReferenceCandidate && (
           <Button block type="primary" onClick={() => onSendToWorkspace(batchId, candidate)}>送入智能创作</Button>
         )}
-        {candidate.source_url && <Button block href={candidate.source_url} target="_blank">打开原视频</Button>}
+        {originalMediaHref && <Button block onClick={() => void openCandidateOriginalMedia(candidate).catch((error) => toast.error((error as Error).message))}>打开原视频</Button>}
         {candidate.media_transcription_task_id && (
           <Button block onClick={() => onResolveMedia(candidate)}>查看原文案</Button>
         )}
@@ -2041,11 +2106,11 @@ function MaterialCandidatePreview({
         )}
         {xiaohongshuManualOnly ? (
           <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
-            <Button block disabled>上传授权视频后转写</Button>
+            <Button block href={buildTranscriptionHref(candidate, true)}>上传授权视频后转写</Button>
           </Tooltip>
         ) : status?.filter !== "detected" && (
           <Button block href={buildTranscriptionHref(candidate)}>
-            {candidate.source_url ? "转写文案" : "上传视频转写"}
+            {canTranscribeFromLink ? "转写文案" : "上传视频转写"}
           </Button>
         )}
       </div>
@@ -2301,7 +2366,9 @@ function HotspotCandidateTable({
       width: 280,
       render: (_, item) => {
         const topicOnly = (item.spoken_material_status || "topic_only") === "topic_only";
-        const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item);
+        const originalMediaHref = candidateOriginalMediaHref(item);
+        const canTranscribeFromLink = hasUsableXiaohongshuShareLink(item);
+        const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item) && !canTranscribeFromLink;
         return (
         <Space size={6}>
           {!topicOnly && (
@@ -2322,20 +2389,19 @@ function HotspotCandidateTable({
           </Button>
           {xiaohongshuManualOnly ? (
             <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
-              <Button size="small" disabled>上传授权视频后转写</Button>
+              <Button size="small" href={buildTranscriptionHref(item, true)}>上传授权视频后转写</Button>
             </Tooltip>
           ) : (
             <Button size="small" href={buildTranscriptionHref(item)}>
-              {item.source_url ? "转写文案" : "上传视频转写"}
+              {canTranscribeFromLink ? "转写文案" : "上传视频转写"}
             </Button>
           )}
-          <Tooltip title={!item.source_url ? "该候选没有可用的原视频链接。" : undefined}>
+          <Tooltip title={!originalMediaHref ? "该候选没有可用的原视频链接。" : undefined}>
             <span>
               <Button
                 size="small"
-                href={item.source_url || undefined}
-                target="_blank"
-                disabled={!item.source_url}
+                onClick={() => void openCandidateOriginalMedia(item).catch((error) => toast.error((error as Error).message))}
+                disabled={!originalMediaHref}
               >
                 原视频
               </Button>
@@ -2389,7 +2455,7 @@ function HotspotCandidateTable({
               <Descriptions.Item label="素材状态">{detail.spoken_material_message || "仅有标题和互动数据，只能用于选题参考。"}</Descriptions.Item>
               <Descriptions.Item label="标题信息">{detail.spoken_seed_message || "公开文字不足以支撑原创文案。"}</Descriptions.Item>
               <Descriptions.Item label="文案状态">{detail.audio_message || "尚未检测文案。"}</Descriptions.Item>
-              {detail.source_url && <Descriptions.Item label="原视频"><a href={detail.source_url} target="_blank" rel="noreferrer">打开原视频</a></Descriptions.Item>}
+              {candidateOriginalMediaHref(detail) && <Descriptions.Item label="原视频"><Button type="link" onClick={() => void openCandidateOriginalMedia(detail).catch((error) => toast.error((error as Error).message))}>打开原视频</Button></Descriptions.Item>}
               {detail.evidence?.includes(";") && <Descriptions.Item label="榜单指标">{hotspotEvidenceSummary(detail.evidence)}</Descriptions.Item>}
             </Descriptions>
             {detail.reasons.length > 0 && (
@@ -2413,16 +2479,16 @@ function HotspotCandidateTable({
               >
                 按这个话题写原创
               </Button>
-              {isXiaohongshuTopicOnly(detail) ? (
+              {isXiaohongshuTopicOnly(detail) && !hasUsableXiaohongshuShareLink(detail) ? (
                 <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
-                  <Button disabled>上传授权视频后转写</Button>
+                  <Button href={buildTranscriptionHref(detail, true)}>上传授权视频后转写</Button>
                 </Tooltip>
               ) : (
                 <Button href={buildTranscriptionHref(detail)}>
-                  {detail.source_url ? "转写文案" : "上传视频转写"}
+                  {hasUsableXiaohongshuShareLink(detail) ? "转写文案" : "上传视频转写"}
                 </Button>
               )}
-              <Button href={detail.source_url || undefined} target="_blank" disabled={!detail.source_url}>
+              <Button onClick={() => void openCandidateOriginalMedia(detail).catch((error) => toast.error((error as Error).message))} disabled={!candidateOriginalMediaHref(detail)}>
                 原视频
               </Button>
             </Space>
@@ -2448,6 +2514,7 @@ function CandidateListItem({
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoading: boolean;
 }) {
+  const toast = useToast();
   const isHotspotLeaderboard = item.evidence?.startsWith("hotspot:") ?? false;
   const isDouyinPublicSearch = item.evidence?.startsWith("douyin_public_search:") ?? false;
   const hotspotLabel = hotspotWindowLabel(item.hotspot_window_hours);
@@ -2464,7 +2531,9 @@ function CandidateListItem({
   const materialStatus = item.spoken_material_status || "topic_only";
   const isTopicOnly = materialStatus === "topic_only";
   const isReferenceCandidate = item.selection_tier === "reserve";
-  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item);
+  const originalMediaHref = candidateOriginalMediaHref(item);
+  const canTranscribeFromLink = hasUsableXiaohongshuShareLink(item);
+  const xiaohongshuManualOnly = isXiaohongshuTopicOnly(item) && !canTranscribeFromLink;
   const materialMessage = item.spoken_material_message || (isTopicOnly
     ? (xiaohongshuManualOnly
       ? XIAOHONGSHU_MANUAL_ONLY_MESSAGE
@@ -2513,7 +2582,11 @@ function CandidateListItem({
             送入智能创作
           </Button>
         ) : null,
-        item.source_url ? <a href={item.source_url} target="_blank" rel="noreferrer">原视频</a> : <Text type="secondary">无原视频链接</Text>,
+        originalMediaHref ? (
+          item.platform === "xiaohongshu"
+            ? <Button type="link" size="small" onClick={() => void openCandidateOriginalMedia(item).catch((error) => toast.error((error as Error).message))}>原视频</Button>
+            : <a href={originalMediaHref} target="_blank" rel="noreferrer">原视频</a>
+        ) : <Text type="secondary">无原视频链接</Text>,
         item.media_transcription_task_id ? (
           <Button type="link" size="small" onClick={() => onResolveMedia(item)}>查看原文案</Button>
         ) : null,
@@ -2532,11 +2605,11 @@ function CandidateListItem({
         ) : null,
         xiaohongshuManualOnly ? (
           <Tooltip title={XIAOHONGSHU_MANUAL_ONLY_MESSAGE}>
-            <Button type="link" size="small" disabled>上传授权视频后转写</Button>
+            <Button type="link" size="small" href={buildTranscriptionHref(item, true)}>上传授权视频后转写</Button>
           </Tooltip>
         ) : audioStatus !== "speech_detected" ? (
           <Button type="link" size="small" href={buildTranscriptionHref(item)}>
-            {item.source_url ? "转写文案" : "上传视频转写"}
+            {canTranscribeFromLink ? "转写文案" : "上传视频转写"}
           </Button>
         ) : null,
       ]}

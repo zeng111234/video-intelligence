@@ -19,7 +19,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ from project.backend.app.core.deps import (
     get_kuaishou_browser_search_service,
     get_doubao_browser_service,
     get_doubao_mobile_service,
+    get_douyin_link_transcription_service,
     get_media_resolution_service,
     get_official_hot_billboard_adapter,
     get_official_hot_pool_service,
@@ -50,6 +51,7 @@ from project.backend.app.core.deps import (
 )
 from project.backend.app.core import config as backend_config
 from project.backend.app.core.config import ASRMode
+from project.backend.app.api.v1.link_transcriptions import _candidate_xiaohongshu_url
 from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import (
     CopySource,
@@ -73,6 +75,7 @@ from src.models import (
 )
 from src.adapters.licensed import LicensedProviderError
 from src.adapters.official import OfficialAdapterDisabledError, OfficialApiError
+from src.adapters.platform_link_parser import PlatformLinkParserError
 from src.services.doubao_browser import DoubaoBrowserAutomationError
 from src.services.candidate_copy_probe import COPY_PROBE_VERSION
 from src.services.hot_pool import _candidate_hot_words
@@ -1949,6 +1952,18 @@ def _start_browser_for_search(provider, *, public_only: bool = False):
     capability = provider.capabilities()
     status = getattr(provider, "session_status", lambda: None)()
     if not capability.enabled or (status is not None and status.running):
+        if (
+            status is not None
+            and status.running
+            and status.login_required
+            and getattr(provider, "is_xiaohongshu_login_profile", False)
+        ):
+            # Reuse and reveal the dedicated profile for the one platform
+            # action that cannot be automated.  Do not submit a known-doomed
+            # search or touch any unrelated browser session.
+            reveal = getattr(provider, "open_login_browser", None)
+            if reveal is not None:
+                return reveal()
         return status
     start = getattr(
         provider,
@@ -4584,6 +4599,120 @@ def recheck_crawler_batch_legacy_no_text_copy(
         raise HTTPException(status_code=404, detail="搜索批次不存在。")
     _recheck_legacy_no_text_probes(batch, repo, service)
     return _batch_to_response(batch, repo)
+
+
+@router.get(
+    "/candidates/{candidate_id}/original-media",
+)
+def open_candidate_original_media(
+    candidate_id: str,
+    request: Request,
+    response: Response,
+    accept: str = Header(default=""),
+    repo=Depends(get_repository),
+    service=Depends(get_douyin_link_transcription_service),
+):
+    """Resolve a saved Xiaohongshu candidate through the logged browser.
+
+    Search cards often contain only a note id or a bare ``/explore`` URL.  The
+    browser session that performed the authorized search is the component that
+    can turn that entry into the current signed CDN media URL.  Returning a
+    redirect keeps the public candidate URL out of the stored model and lets
+    the same resolver power both preview and transcription.
+    """
+    candidate = repo.get_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在。")
+    if candidate.platform != Platform.XIAOHONGSHU:
+        raise HTTPException(status_code=400, detail="该入口仅用于打开小红书原视频。")
+    source_url = str(candidate.source_url) if candidate.source_url else None
+    source_url = source_url or _candidate_xiaohongshu_url(candidate)
+    if not source_url:
+        raise HTTPException(status_code=400, detail="小红书候选缺少可解析的作品编号。")
+    try:
+        media = service.parser.resolve(source_url)
+    except PlatformLinkParserError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if media.platform != Platform.XIAOHONGSHU or not media.media_url:
+        raise HTTPException(status_code=422, detail="未能解析到该小红书作品的视频流。")
+    if "application/json" in accept.casefold():
+        # API 客户端能携带自定义登录头，但后续 video GET 只能依赖
+        # HttpOnly Cookie；把已通过中间件校验的会话同步到媒体 Cookie。
+        session_header = request.headers.get("X-Customer-Token") or request.headers.get(
+            "X-Admin-Token"
+        )
+        if session_header:
+            cookie_name = (
+                "vi_customer_media_token"
+                if request.headers.get("X-Customer-Token")
+                else "vi_admin_media_token"
+            )
+            response.set_cookie(
+                key=cookie_name,
+                value=session_header,
+                max_age=12 * 60 * 60,
+                httponly=True,
+                samesite="lax",
+                secure=False,
+                path="/api/v1/",
+            )
+        return {
+            "candidate_id": candidate_id,
+            "platform": media.platform.value,
+            "media_url": str(media.media_url),
+        }
+
+    # 小红书 CDN 的短时签名地址通常要求来源页和浏览器 UA；直接 307 到
+    # CDN 会在浏览器里表现为空白页。复用解析浏览器的请求头，由本机媒体
+    # 端点代理 Range 流，既保留鉴权也支持播放器拖动进度。
+    upstream_headers = {
+        **media.media_request_headers,
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+    }
+    range_header = request.headers.get("range")
+    if range_header and range_header.startswith("bytes="):
+        upstream_headers["Range"] = range_header
+    client = httpx.Client(
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        follow_redirects=False,
+    )
+    try:
+        upstream = client.send(
+            client.build_request(
+                "GET",
+                str(media.media_url),
+                headers=upstream_headers,
+            ),
+            stream=True,
+        )
+    except httpx.HTTPError as exc:
+        client.close()
+        raise HTTPException(status_code=502, detail="原视频暂时无法读取，请稍后重试。") from exc
+
+    if upstream.status_code not in {200, 206}:
+        upstream.close()
+        client.close()
+        raise HTTPException(status_code=502, detail="原视频暂时无法读取，请刷新后重试。")
+
+    response_headers = {"Cache-Control": "private, no-store"}
+    for header in ("content-length", "content-range", "accept-ranges"):
+        value = upstream.headers.get(header)
+        if value:
+            response_headers[header.title()] = value
+
+    def iter_media():
+        try:
+            yield from upstream.iter_bytes(chunk_size=1024 * 1024)
+        finally:
+            upstream.close()
+            client.close()
+
+    return StreamingResponse(
+        iter_media(),
+        status_code=upstream.status_code,
+        media_type=upstream.headers.get("content-type", "video/mp4"),
+        headers=response_headers,
+    )
 
 
 @router.get(

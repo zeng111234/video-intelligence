@@ -35,6 +35,12 @@ Write-Host "[SUCCESS] Port 2001 is now free"
 # Start backend from this script's repository, regardless of user name or drive.
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $env:PYTHONPATH = $projectRoot
+$env:VIDEOINSIGHT_DESKTOP_CLIENT = "true"
+$env:VIDEOINSIGHT_DESKTOP_DEMO = "true"
+$env:VIDEOINSIGHT_DEMO_OWNER = "DEMO-0815"
+$env:VIDEOINSIGHT_CONTROL_PLANE_ENABLED = "false"
+$env:VIDEOINSIGHT_CONTROL_PLANE_URL = ""
+$env:VIDEOINSIGHT_RUNTIME_ROOT = $projectRoot
 $backendDir = Join-Path $projectRoot "project\backend"
 $pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
 
@@ -66,9 +72,20 @@ try {
 
 try {
     $health = Invoke-WebRequest -Uri "http://localhost:2001/health" -TimeoutSec 5 -ErrorAction Stop
-    Write-Host "[SUCCESS] Health check: $($health.StatusCode) - $($health.Content)"
+    $healthPayload = $health.Content | ConvertFrom-Json
+    if (
+        $healthPayload.status -ne "ok" -or
+        -not [bool]$healthPayload.desktop_client -or
+        -not [bool]$healthPayload.desktop_demo -or
+        [bool]$healthPayload.control_plane_enabled
+    ) {
+        Write-Host "[ERROR] 后端已启动，但桌面运行模式校验失败：$($health.Content)"
+        exit 1
+    }
+    Write-Host "[SUCCESS] Health check: $($health.StatusCode) - 桌面模式已确认"
 } catch {
     Write-Host "[ERROR] Health check failed: $($_.Exception.Message)"
+    exit 1
 }
 
 Write-Host "[DONE]"

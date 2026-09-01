@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from src.services.image_generation import (
@@ -194,13 +196,8 @@ def test_safe_prompt_literals_passed(payload: str) -> None:
 # ---------- 5) Token Plan 成本不伪装为 0 ----------
 
 
-def test_token_plan_quote_marks_total_as_package_envelope() -> None:
-    """Token Plan 模式 total_price_cny 应明确显示'套餐额度内'而不是 0.0。
-
-    实际：从 _quote_for_configuration 看 total_price_cny=Decimal('0') 且
-    can_generate=True。用户要的是文案展示清晰：不能在报告里写成"成本 0"，
-    而要说"套餐额度内，单次人民币成本无法单独核算"。
-    """
+def test_token_plan_quote_uses_customer_image_price() -> None:
+    """Token Plan 的供应商套餐与客户侧每张图收费分开记录。"""
     cfg = ImageGenerationConfiguration(
         mode="minimax_token_plan",
         base_url="https://api.minimax.io",
@@ -208,9 +205,10 @@ def test_token_plan_quote_marks_total_as_package_envelope() -> None:
         api_key="sk-test",
     )
     quote = _quote_for_configuration(cfg, 2)
-    # 文档行为：can_generate=True，total_price=0（不是 None）
+    # 客户侧价格为每张 0.05 元；供应商套餐仍不在这里伪造人民币成本。
     assert quote.can_generate is True
-    assert quote.total_price_cny == 0  # 表示"按套餐核算"
+    assert quote.unit_price_cny == Decimal("0.05")
+    assert quote.total_price_cny == Decimal("0.10")
 
 
 # ---------- 6) generate 失败抛 ImageGenerationError（不抛裸异常） ----------

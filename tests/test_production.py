@@ -2609,6 +2609,91 @@ def test_douyin_home_candidate_falls_back_to_its_saved_link(
     assert calls == [f"link:{run.run_id}"]
 
 
+def test_xiaohongshu_candidate_uses_connected_browser_link_fallback(
+    tmp_path,
+    monkeypatch,
+):
+    """已带签名的小红书候选应进入链接解析，不应被旧安全暂停短路。"""
+    repository = MockRepository()
+    candidate = _candidate("candidate-xhs-link").model_copy(
+        update={
+            "platform": Platform.XIAOHONGSHU,
+            "source_url": (
+                "https://www.xiaohongshu.com/explore/xhs-linked"
+                "?xsec_token=token&xsec_source=pc_search"
+            ),
+        }
+    )
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(
+        repository,
+        tmp_path / "production",
+        media_resolution_service=_MediaPreview(),
+        link_transcription_service=_LocalLinkPreview(),
+        copywriting_service=_Copywriting(),
+        avatar_service=_Assets(),
+        template_service=_Templates(),
+        publish_service=_Publish(),
+    )
+    profile = service.create_profile(
+        name="小红书自动解析配方",
+        avatar_id="avatar-owner",
+        voice_id="voice-owner",
+        edit_template_id="template-professional",
+    )
+    batch = service.create_batch(
+        name="小红书自动解析批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    options = {
+        "rights_holder": "测试公司",
+        "rights_confirmed": True,
+        "publish_platforms": ["douyin"],
+        "concurrency": 1,
+        "max_total_cost_cny": 10,
+        "paid_actions_confirmed": True,
+    }
+    service.preflight_batch(batch.batch_id, **options)
+    started = service.start_batch(
+        batch.batch_id,
+        options=options,
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(started.items[0].run_id)
+    assert run is not None
+    assert run.config["candidate_platform"] == Platform.XIAOHONGSHU.value
+    assert run.config["candidate_link_fallback"] is True
+
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        production_service=service,
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        worker,
+        "_run_guided_share_link",
+        lambda selected: calls.append(f"link:{selected.run_id}"),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_pause_for_xiaohongshu_safety",
+        lambda _selected: pytest.fail("小红书不应再被旧暂停逻辑短路"),
+    )
+
+    worker._run_production_batch(run)
+
+    assert calls == [f"link:{run.run_id}"]
+
+
 def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):
     repository = MockRepository()
     candidates = [_candidate(f"candidate-auto-{index}") for index in range(4)]

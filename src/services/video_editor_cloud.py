@@ -47,7 +47,33 @@ BGM_VOICEOVER_CATEGORIES = (
     "通用口播",
 )
 BGM_ENERGY_LEVELS = ("克制", "平稳", "有推动感")
-CAPTION_EMPHASIS_KINDS = ("number", "benefit", "warning", "keyword")
+CAPTION_EMPHASIS_KINDS = (
+    "number",
+    "benefit",
+    "method",
+    "warning",
+    "keyword",
+    "result",
+    "cta",
+)
+_CAPTION_KINETIC_SEMANTIC_COLORS = {
+    "number": "#FFD166",
+    "benefit": "#FFB86B",
+    "warning": "#FF7A70",
+    "method": "#FF9F68",
+    "result": "#FF8A7A",
+    "cta": "#FFC857",
+    "keyword": "#FFC857",
+    "default": "#FFE7C2",
+}
+_CAPTION_KINETIC_STYLE_IDS = (
+    "slam",
+    "bounce",
+    "stamp",
+    "marker",
+    "underline",
+    "shake",
+)
 OPENING_STYLE_IDS = ("suspense_reveal", "story_unfold", "number_focus")
 OPENING_SOUND_EFFECT_IDS = ("soft_whoosh", "soft_page_turn", "soft_chime")
 MIN_SILENCE_SECONDS = 1.5
@@ -67,6 +93,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
 _CAPTION_BREAK_CHARACTERS = frozenset("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—")
 _NUMERIC_PUNCTUATION = frozenset(".,:")
+_CAPTION_NUMERIC_ATOM_RE = re.compile(
+    r"\d+(?:[.,]\d+)*(?:[%％元块万亿千百十公里米厘米分钟秒个家人套条次岁年月天斤倍折号点]+)?"
+)
 _CAPTION_BREAK_BEFORE_TOKENS = (
     "不只是",
     "还是",
@@ -449,11 +478,38 @@ def _display_lines(
         # A title is a short visual label, not a scrolling sentence.  Never
         # append an ellipsis that visually advertises a truncated headline;
         # the spoken subtitle remains the complete source of truth below.
-        clean = clean[:max_chars]
-    return [
-        clean[index : index + chars_per_line]
-        for index in range(0, len(clean), chars_per_line)
-    ]
+        cutoff = max_chars
+        for start, end in _caption_numeric_ranges(clean):
+            if start < cutoff < end:
+                cutoff = start if start > 0 else end
+                break
+        clean = clean[:cutoff]
+    return _caption_wrap_lines(clean, chars_per_line=chars_per_line)
+
+
+def _caption_wrap_lines(text: str, *, chars_per_line: int) -> list[str]:
+    """Wrap captions without cutting a number away from its unit."""
+
+    clean = re.sub(r"\s+", "", text)
+    if not clean:
+        return []
+    numeric_ranges = _caption_numeric_ranges(clean)
+    lines: list[str] = []
+    cursor = 0
+    while cursor < len(clean):
+        limit = min(len(clean), cursor + max(1, chars_per_line))
+        containing_numeric = next(
+            ((start, end) for start, end in numeric_ranges if start < limit < end),
+            None,
+        )
+        if containing_numeric is not None:
+            numeric_start, numeric_end = containing_numeric
+            limit = numeric_start if numeric_start > cursor else numeric_end
+        if limit <= cursor:
+            limit = min(len(clean), cursor + max(1, chars_per_line))
+        lines.append(clean[cursor:limit])
+        cursor = limit
+    return lines
 
 
 def _caption_display_lines(text: str, *, chars_per_line: int) -> list[str]:
@@ -485,7 +541,7 @@ def _caption_display_lines(text: str, *, chars_per_line: int) -> list[str]:
         if len(clean) - split_at == 1 and split_at > 1:
             split_at -= 1
         return [clean[:split_at], clean[split_at:]]
-    return _display_lines(clean, chars_per_line=chars_per_line)
+        return _caption_wrap_lines(clean, chars_per_line=chars_per_line)
 
 
 def _wrap_ass_lines(lines: Sequence[str]) -> str:
@@ -566,6 +622,24 @@ def _caption_word_splits(
     return boundaries
 
 
+def _caption_numeric_ranges(text: str) -> list[tuple[int, int]]:
+    """Return numeric + unit spans that must never be split in a caption."""
+
+    clean = re.sub(r"\s+", "", text)
+    return [
+        (match.start(), match.end())
+        for match in _CAPTION_NUMERIC_ATOM_RE.finditer(clean)
+        if match.end() > match.start()
+    ]
+
+
+def _caption_split_is_inside_numeric(text: str, split_at: int) -> bool:
+    return any(
+        start < split_at < end
+        for start, end in _caption_numeric_ranges(text)
+    )
+
+
 @lru_cache(maxsize=512)
 def _caption_lexical_units_cached(
     piece: str,
@@ -585,6 +659,15 @@ def _caption_lexical_units_cached(
     cursor = 0
     token_index = 0
     while cursor < len(clean):
+        numeric = _CAPTION_NUMERIC_ATOM_RE.match(clean, cursor)
+        if numeric:
+            units.append(numeric.group(0))
+            cursor = numeric.end()
+            while token_index < len(jieba_tokens) and cursor >= sum(
+                len(value) for value in jieba_tokens[: token_index + 1]
+            ):
+                token_index += 1
+            continue
         compound = next(
             (
                 value
@@ -858,7 +941,8 @@ def _caption_phrase_parts(
         available_splits = [
             split_at
             for split_at in range(minimum_split, maximum_split + 1)
-            if split_at in word_splits or split_at in semantic_splits
+            if (split_at in word_splits or split_at in semantic_splits)
+            and not _caption_split_is_inside_numeric(remaining, split_at)
         ]
         safe_splits = [
             split_at
@@ -876,10 +960,14 @@ def _caption_phrase_parts(
             ]
         if not candidates:
             candidates = safe_splits
-        split_at = (
-            min(candidates, key=lambda value: (abs(value - ideal), -value))
-            if candidates
-            else max(minimum_split, min(maximum_split, ideal))
+        safe_fallbacks = [
+            split_at
+            for split_at in range(minimum_split, maximum_split + 1)
+            if not _caption_split_is_inside_numeric(remaining, split_at)
+        ]
+        split_at = min(
+            candidates or safe_fallbacks or [max(minimum_split, min(maximum_split, ideal))],
+            key=lambda value: (abs(value - ideal), -value),
         )
         parts.append(remaining[:split_at])
         remaining = remaining[split_at:]
@@ -1076,7 +1164,10 @@ def _caption_attach_numeric_suffixes(
         if character == "%" and index > 0 and clean[index - 1].isdigit():
             suffix_positions.append(plain_position)
             continue
-        if character != "%":
+        if character != "%" and (
+            character.isdigit()
+            or re.match(r"[\w\u4e00-\u9fff]", character)
+        ):
             plain_position += 1
     for position in suffix_positions:
         cursor = 0
@@ -2170,15 +2261,18 @@ def validated_caption_emphasis(
 def _caption_emphasis_style(kind: str) -> dict[str, Any]:
     colour = {
         "number": "#FFD166",
-        "method": "#55D6BE",
-        "emotion": "#FF8A7A",
+        "method": "#FF9F68",
+        "result": "#FF8A7A",
+        "cta": "#FFC857",
         "keyword": "#FFC857",
+        "benefit": "#FFB86B",
+        "warning": "#FF7A70",
     }.get(kind, "#FFC857")
     return {
         "color": colour,
         "scale": 1.08,
-        "animation": "soft_pop",
-        "duration_ms": 140,
+        "animation": "scale_overshoot",
+        "duration_ms": 200,
         "style_id": "adaptive_talking_head_v1",
     }
 
@@ -2234,39 +2328,65 @@ def _automatic_emphasis_term(text: str) -> tuple[str, str] | None:
 
 
 _ADAPTIVE_EMPHASIS_TERMS = (
-    ("为什么", "emotion"),
+    ("为什么", "keyword"),
     ("因为", "method"),
     ("所以", "method"),
-    ("但是", "emotion"),
-    ("不过", "emotion"),
+    ("因此", "result"),
+    ("结果", "result"),
+    ("结论", "result"),
+    ("但是", "keyword"),
+    ("不过", "keyword"),
     ("方法", "method"),
     ("步骤", "method"),
+    ("首先", "method"),
+    ("其次", "method"),
+    ("最后", "method"),
     ("关键", "keyword"),
     ("重点", "keyword"),
-    ("不只是", "emotion"),
-    ("风险", "emotion"),
-    ("结论", "keyword"),
+    ("不只是", "keyword"),
+    ("风险", "warning"),
+    ("注意", "warning"),
+    ("不要", "warning"),
+    ("评论", "cta"),
+    ("留言", "cta"),
+    ("关注", "cta"),
+    ("私信", "cta"),
+    ("领取", "cta"),
 )
+
+_CAPTION_WORD_MOTION_KINDS = {
+    "number",
+    "benefit",
+    "method",
+    "warning",
+    "keyword",
+    "result",
+    "cta",
+}
 
 
 def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
     """Apply one shared subtitle baseline with sparse semantic accents."""
 
     for index, cue in enumerate(cues):
-        cue["entry_motion"] = {"type": "fade_in", "duration_ms": 120}
+        cue["entry_motion"] = {
+            "type": "fade_in",
+            "duration_ms": 120,
+            "scale_from": 1.0,
+        }
         cue["subtitle_style_id"] = "adaptive_talking_head_v1"
         existing_range = cue.get("emphasis_range")
         existing_style = cue.get("emphasis_style")
         if isinstance(existing_range, Mapping):
             style = dict(existing_style) if isinstance(existing_style, Mapping) else {}
-            style["scale"] = max(1.05, min(1.12, float(style.get("scale") or 1.08)))
-            style["duration_ms"] = max(100, min(160, int(style.get("duration_ms") or 140)))
+            style["scale"] = 1.08
+            style["duration_ms"] = 200
             style["style_id"] = "adaptive_talking_head_v1"
             cue["emphasis_style"] = style
             continue
         cue["emphasis_range"] = None
         cue["emphasis_style"] = None
-        if index % 3 != 1:
+        if index != 0 and index % 3 != 1:
             continue
         text = _caption_display_cleanup("".join(str(line) for line in cue.get("lines") or []))
         candidate = next((item for item in _ADAPTIVE_EMPHASIS_TERMS if item[0] in text), None)
@@ -2284,21 +2404,23 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
 
     # Reviewed segment-level emphasis can be denser than the final cue
     # rhythm (especially after a sentence is split into two short phrases).
-    # Keep the visual accent at roughly one cue in three, while retaining
-    # numeric/restaurant/conclusion cues before generic emphasis candidates.
+    # Enforce the product rhythm in time, not by raw cue count: four planned
+    # strong beats per minute, never more than five in one minute bucket.
     emphasized = [
         (index, cue)
         for index, cue in enumerate(cues)
         if isinstance(cue.get("emphasis_range"), Mapping)
         and isinstance(cue.get("emphasis_style"), Mapping)
     ]
-    # A two-cue preview is already the smallest semantic unit.  If both cues
-    # carry an independently detected, readable term, retaining both keeps
-    # the preview contract truthful; the one-in-three budget applies once a
-    # longer cue sequence gives us room for sparse accents.
-    budget = len(cues) if len(cues) <= 2 else max(1, math.ceil(len(cues) / 3))
-    if len(emphasized) <= budget:
+    if not emphasized:
         return
+
+    max_end = max(
+        (float(cue.get("end") or 0) for cue in cues),
+        default=0.0,
+    )
+    total_budget = max(1, math.ceil(max_end / 60 * 4))
+    bucket_limit = 5
 
     def emphasis_priority(item: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
         index, cue = item
@@ -2315,22 +2437,296 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
         return (-score, index)
 
     selected: list[int] = []
+    selected_buckets: dict[int, int] = {}
     for index, cue in sorted(emphasized, key=emphasis_priority):
-        if len(selected) >= budget:
+        if len(selected) >= total_budget:
             break
+        try:
+            bucket = max(0, int(float(cue.get("start") or 0) // 60))
+        except (TypeError, ValueError):
+            bucket = 0
+        if selected_buckets.get(bucket, 0) >= bucket_limit:
+            continue
         if all(abs(index - previous) >= 2 for previous in selected):
             selected.append(index)
-    if len(selected) < budget:
-        for index, _cue in emphasized:
-            if len(selected) >= budget:
+            selected_buckets[bucket] = selected_buckets.get(bucket, 0) + 1
+    if len(selected) < total_budget:
+        for index, cue in emphasized:
+            if len(selected) >= total_budget:
                 break
-            if index not in selected:
-                selected.append(index)
+            if index in selected or any(abs(index - previous) < 2 for previous in selected):
+                continue
+            try:
+                bucket = max(0, int(float(cue.get("start") or 0) // 60))
+            except (TypeError, ValueError):
+                bucket = 0
+            if selected_buckets.get(bucket, 0) >= bucket_limit:
+                continue
+            selected.append(index)
+            selected_buckets[bucket] = selected_buckets.get(bucket, 0) + 1
     selected_set = set(selected)
     for index, cue in emphasized:
         if index not in selected_set:
             cue["emphasis_range"] = None
             cue["emphasis_style"] = None
+
+
+def _kinetic_clean_text(value: object) -> str:
+    return re.sub(
+        r"[\s，。！？、,.!?；;：:‘’“”\"（）()【】[]《》…—]",
+        "",
+        _caption_display_cleanup(str(value or "")),
+    )
+
+
+def _caption_kinetic_semantic_color(
+    segment: Mapping[str, Any],
+    text: str,
+) -> str:
+    kind = str(segment.get("emphasis_kind") or "").lower()
+    automatic = _automatic_emphasis_term(text)
+    if kind not in _CAPTION_KINETIC_SEMANTIC_COLORS:
+        kind = automatic[1] if automatic else "default"
+    return _CAPTION_KINETIC_SEMANTIC_COLORS.get(
+        kind,
+        _CAPTION_KINETIC_SEMANTIC_COLORS["default"],
+    )
+
+
+def _caption_kinetic_words_for_cue(
+    cue: Mapping[str, Any],
+    segment: Mapping[str, Any],
+    *,
+    caption_glossary: object = None,
+) -> list[dict[str, Any]]:
+    """Project only the selected emphasis term onto a display cue.
+
+    Ordinary cues intentionally return no spans.  The old implementation
+    projected every lexical word in a one-line cue, which made the whole video
+    read like a karaoke effect and also discarded two-line emphasis cues.
+    """
+
+    emphasis = cue.get("emphasis_range")
+    if not isinstance(emphasis, Mapping):
+        return []
+
+    raw_words = segment.get("words")
+    if not isinstance(raw_words, Sequence) or isinstance(raw_words, (str, bytes)):
+        return []
+    try:
+        segment_start = float(segment.get("start") or 0)
+        segment_end = float(segment.get("end") or 0)
+        cue_start = float(cue.get("start") or 0)
+        cue_end = float(cue.get("end") or 0)
+    except (TypeError, ValueError):
+        return []
+    if cue_end <= cue_start or segment_end <= segment_start:
+        return []
+    lexical_words = _caption_lexical_words(
+        raw_words,
+        text=str(segment.get("text") or ""),
+        segment_start=segment_start,
+        segment_end=segment_end,
+        caption_glossary=caption_glossary,
+    )
+    if len(lexical_words) < 1:
+        return []
+    lines = [str(line) for line in cue.get("lines") or []]
+    if not lines:
+        return []
+    punctuation = r"[\s，。！？、,.!?；;：:‘’“”\"（）()【】[]《》…—]"
+    character_locations: list[tuple[int, int]] = []
+    normalized_characters: list[str] = []
+    for line_index, display_line in enumerate(lines):
+        for original_index, character in enumerate(display_line):
+            if re.match(punctuation, character):
+                continue
+            normalized_characters.append(character)
+            character_locations.append((line_index, original_index))
+    normalized_line = "".join(normalized_characters)
+    if not normalized_line:
+        return []
+    target = _kinetic_clean_text(normalized_line)
+    candidates: list[tuple[float, list[dict[str, Any]]]] = []
+    for begin in range(len(lexical_words)):
+        collected: list[dict[str, Any]] = []
+        accumulated = ""
+        for item in lexical_words[begin:]:
+            text = _kinetic_clean_text(item.get("text"))
+            if not text:
+                continue
+            collected.append(item)
+            accumulated += text
+            if accumulated == target:
+                first_start = float(collected[0].get("start") or cue_start)
+                last_end = float(collected[-1].get("end") or cue_end)
+                score = abs(first_start - cue_start) + abs(last_end - cue_end)
+                candidates.append((score, collected))
+                break
+            if not target.startswith(accumulated):
+                break
+    if not candidates:
+        return []
+    _score, matched = min(candidates, key=lambda item: item[0])
+    emphasis_style = cue.get("emphasis_style")
+    semantic_color = _caption_kinetic_semantic_color(
+        segment,
+        display_line,
+    )
+    emphasis_color = (
+        str(emphasis_style.get("color") or "")
+        if isinstance(emphasis_style, Mapping)
+        else ""
+    )
+    spans: list[dict[str, Any]] = []
+    normalized_cursor = 0
+    cue_duration = max(cue_end - cue_start, 0.001)
+    for index, item in enumerate(matched):
+        word = _kinetic_clean_text(item.get("text"))
+        if not word:
+            continue
+        position = normalized_line.find(word, normalized_cursor)
+        if position < 0 or position + len(word) > len(character_locations):
+            return []
+        line_index, original_start = character_locations[position]
+        end_line_index, end_character = character_locations[position + len(word) - 1]
+        if end_line_index != line_index:
+            return []
+        original_end = end_character + 1
+        emphasis_line = emphasis.get("line_index")
+        emphasis_start = emphasis.get("start")
+        emphasis_end = emphasis.get("end")
+        if not all(
+            isinstance(value, int)
+            for value in (emphasis_line, emphasis_start, emphasis_end)
+        ):
+            return []
+        if (
+            line_index != emphasis_line
+            or original_end <= emphasis_start
+            or original_start >= emphasis_end
+        ):
+            normalized_cursor = position + len(word)
+            continue
+        try:
+            start = max(
+                0.0,
+                min(cue_duration, float(item.get("start") or cue_start) - cue_start),
+            )
+            end = max(
+                start + 0.04,
+                min(cue_duration, float(item.get("end") or cue_end) - cue_start),
+            )
+        except (TypeError, ValueError):
+            return []
+        if end <= start:
+            continue
+        color = semantic_color
+        if (
+            isinstance(emphasis, Mapping)
+            and isinstance(emphasis.get("start"), int)
+            and isinstance(emphasis.get("end"), int)
+            and original_start < int(emphasis["end"])
+            and original_end > int(emphasis["start"])
+            and emphasis_color
+        ):
+            color = emphasis_color
+        spans.append(
+            {
+                "line_index": line_index,
+                "start_offset": original_start,
+                "end_offset": original_end,
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "text": lines[line_index][original_start:original_end],
+                "color": color,
+                "kind": (
+                    "emphasis"
+                    if color == emphasis_color and emphasis_color
+                    else "word"
+                ),
+            }
+        )
+        normalized_cursor = position + len(word)
+    return spans
+
+
+def _caption_kinetic_style_for_cue(
+    cue: Mapping[str, Any],
+    segment: Mapping[str, Any],
+    cue_index: int,
+) -> str:
+    """Choose a small, semantic motion vocabulary instead of random effects."""
+
+    text = _caption_display_cleanup(
+        "".join(str(line) for line in cue.get("lines") or [])
+    )
+    emphasis_kind = str(segment.get("emphasis_kind") or "")
+    emphasis_kind = emphasis_kind.lower()
+    automatic = _automatic_emphasis_term(text)
+    automatic_kind = automatic[1] if automatic else ""
+    if cue_index == 0:
+        return "slam"
+    if emphasis_kind == "warning" or automatic_kind == "warning":
+        return "shake"
+    if emphasis_kind in {"number", "result"} or automatic_kind == "number":
+        return "stamp"
+    if emphasis_kind == "method":
+        return "underline"
+    if emphasis_kind == "cta":
+        return "bounce"
+    if emphasis_kind in {"benefit", "keyword"} or automatic_kind == "benefit":
+        return "marker"
+    if any(term in text for term in ("评论", "留言", "关注", "私信", "领取")):
+        return "bounce"
+    return "marker"
+
+
+def _apply_caption_kinetic_words(
+    cues: list[dict[str, Any]],
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    caption_glossary: object = None,
+) -> None:
+    for cue_index, cue in enumerate(cues):
+        try:
+            segment_index = int(cue.get("source_segment_index", -1))
+        except (TypeError, ValueError):
+            segment_index = -1
+        segment = (
+            segments[segment_index]
+            if 0 <= segment_index < len(segments)
+            and isinstance(segments[segment_index], Mapping)
+            else None
+        )
+        has_emphasis = isinstance(cue.get("emphasis_range"), Mapping)
+        is_opening_hook = cue_index == 0
+        spans = (
+            _caption_kinetic_words_for_cue(
+                cue,
+                segment,
+                caption_glossary=caption_glossary,
+            )
+            if segment is not None and has_emphasis
+            else []
+        )
+        cue["kinetic_words"] = spans
+        if spans and segment is not None:
+            cue["kinetic_mode"] = "word_pop"
+            cue["kinetic_style"] = _caption_kinetic_style_for_cue(
+                cue,
+                segment,
+                cue_index,
+            )
+            cue["motion_scope"] = "keyword"
+        elif is_opening_hook:
+            cue["kinetic_mode"] = "cue_pop"
+            cue["kinetic_style"] = "slam"
+            cue["motion_scope"] = "hook"
+        else:
+            cue["kinetic_mode"] = "static"
+            cue["kinetic_style"] = None
+            cue["motion_scope"] = "static"
 
 
 def build_visual_beats(
@@ -3215,6 +3611,11 @@ def build_business_talking_head_overlay_preview(
         for cue in cues:
             cue.pop("_segment_index", None)
     _apply_adaptive_caption_effects(cues)
+    _apply_caption_kinetic_words(
+        cues,
+        segments,
+        caption_glossary=normalized_caption_glossary,
+    )
     return {
         "title": {
             "lines": title_lines,
@@ -3233,9 +3634,15 @@ def build_business_talking_head_overlay_preview(
         "subtitle_style_id": subtitle_style_id,
         "style_fingerprint": {
             "font_family": "Source Han Serif CN Heavy",
-            "palette_id": "neutral_tech_business_v1",
+            "palette_id": "douyin_talking_head_pop_v1",
             "entry_motion": "fade_in_120ms",
-            "emphasis_scale_range": [1.05, 1.12],
+            "word_motion": "selective_word_emphasis_v3",
+            "keyword_motion": "semantic_effect_mix_v2",
+            "kinetic_styles": list(_CAPTION_KINETIC_STYLE_IDS),
+            "caption_motion_policy": "static_by_default_selective_semantic_emphasis",
+            "strong_effect_density": "3_to_5_per_60s",
+            "emphasis_scale_range": [1.08, 1.08],
+            "emphasis_duration_ms": [180, 240],
         },
     }
 
@@ -3248,19 +3655,225 @@ def _hex_to_ass_colour(value: str) -> str:
     return f"&H00{blue}{green}{red}&"
 
 
+def _ass_kinetic_caption_text(
+    line: str,
+    cue: Mapping[str, Any],
+    *,
+    line_index: int = 0,
+    cue_start: float,
+    cue_end: float,
+) -> str | None:
+    spans = [
+        item
+        for item in cue.get("kinetic_words") or []
+        if isinstance(item, Mapping)
+        and item.get("line_index") == line_index
+    ]
+    if not spans:
+        return None
+    spans = sorted(
+        spans,
+        key=lambda item: int(item.get("start_offset") or 0),
+    )
+    if any(
+        int(item.get("start_offset") or 0) < 0
+        or int(item.get("end_offset") or 0) <= int(item.get("start_offset") or 0)
+        or int(item.get("end_offset") or 0) > len(line)
+        for item in spans
+    ):
+        return None
+    if any(
+        int(current.get("start_offset") or 0)
+        < int(previous.get("end_offset") or 0)
+        for previous, current in zip(spans, spans[1:])
+    ):
+        return None
+    duration_ms = max(1, round((cue_end - cue_start) * 1000))
+    kinetic_style = str(cue.get("kinetic_style") or "bounce")
+    rendered: list[str] = []
+    cursor = 0
+    for index, span in enumerate(spans):
+        start_offset = int(span.get("start_offset") or 0)
+        end_offset = int(span.get("end_offset") or 0)
+        rendered.append(_ass_escape(line[cursor:start_offset]))
+        try:
+            word_start_ms = max(0, min(duration_ms, round(float(span.get("start") or 0) * 1000)))
+            word_end_ms = max(word_start_ms + 40, min(duration_ms, round(float(span.get("end") or 0) * 1000)))
+        except (TypeError, ValueError):
+            return None
+        # Keep a short emphasis window; the cue is static before and after it.
+        impact_end_ms = min(word_end_ms, word_start_ms + 200)
+        settle_end_ms = min(duration_ms, max(impact_end_ms + 40, word_end_ms))
+        color = _hex_to_ass_colour(str(span.get("color") or "#FFE16A"))
+        if kinetic_style == "slam":
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx108\\fscy92\\frz4\\blur1.2\\alpha&H30&))"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord5.0\\shad3\\blur0.2"
+                f"\\fscx108\\fscy108\\frz-1\\alpha&H00&))"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\fscx100\\fscy100\\frz0)"
+            )
+        elif kinetic_style == "stamp":
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx108\\fscy100\\frz-4\\blur1.2)"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord5.4\\shad3\\blur0.1"
+                f"\\fscx108\\fscy108\\frz2)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\fscx100\\fscy100\\frz0)"
+            )
+        elif kinetic_style == "marker":
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx90\\fscy90\\blur1.8)"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord5.8\\shad2\\blur0"
+                f"\\fscx108\\fscy108)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1"
+                f"\\fscx100\\fscy100)"
+            )
+        elif kinetic_style == "underline":
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx96\\fscy96\\blur1.2)"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord3.4\\shad2\\u1\\blur0"
+                f"\\fscx108\\fscy108)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\u0"
+                f"\\fscx100\\fscy100)"
+            )
+        elif kinetic_style == "shake":
+            shake_start = min(duration_ms, word_start_ms + 1)
+            shake_mid = min(duration_ms, word_start_ms + 56)
+            motion = (
+                f"\\t({word_start_ms},{shake_start},\\fscx108\\fscy108\\frz4)"
+                f"\\t({shake_start},{shake_mid},\\c&H00F8FAFC&\\3c{color}"
+                f"\\bord4.8\\shad2\\blur0\\fscx108\\fscy108\\frz-2)"
+                f"\\t({shake_mid},{impact_end_ms},\\frz3)"
+                f"\\t({impact_end_ms},{settle_end_ms},\\c&H00F8FAFC&"
+                f"\\3c&H003A263D&\\bord2.8\\shad1\\fscx100\\fscy100\\frz0)"
+            )
+        else:
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx98\\fscy98\\frz-1\\blur1.2)"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord4.2\\shad2\\blur0.2"
+                f"\\fscx108\\fscy108\\frz-1)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\fscx100\\fscy100\\frz0)"
+            )
+        rendered.append(
+            "{"
+            f"\\c&H0099A0B0&\\3c&H003A263D&\\bord2.4\\shad1\\fscx94\\fscy94"
+            f"{motion}"
+            "}"
+            f"{_ass_escape(line[start_offset:end_offset])}"
+            "{\\rCaption}"
+        )
+        cursor = end_offset
+    rendered.append(_ass_escape(line[cursor:]))
+    return "".join(rendered)
+
+
+def _ass_cue_motion_text(
+    lines: Sequence[str],
+    *,
+    kinetic_style: str,
+) -> str:
+    """Give multi-line and clock-less cues the same motion language."""
+
+    if kinetic_style == "slam":
+        tag = (
+            r"{\fad(120,0)\fscx108\fscy92\frz4\blur1.2"
+            r"\t(0,200,\fscx108\fscy108\frz0\blur0)"
+            r"\t(130,230,\fscx100\fscy100)}"
+        )
+    elif kinetic_style == "stamp":
+        tag = (
+            r"{\fad(80,0)\fscx108\fscy100\frz-4\blur1.2"
+            r"\t(0,200,\fscx108\fscy108\frz2\blur0)"
+            r"\t(200,240,\fscx100\fscy100\frz0)}"
+        )
+    elif kinetic_style == "marker":
+        tag = (
+            r"{\fad(100,0)\fscx96\fscy96\bord5.4\shad2\blur1"
+            r"\t(0,200,\fscx108\fscy108\blur0)"
+            r"\t(200,240,\fscx100\fscy100\bord2.8\shad1)}"
+        )
+    elif kinetic_style == "underline":
+        tag = (
+            r"{\fad(100,0)\fscx98\fscy98\u1\blur1"
+            r"\t(0,200,\fscx108\fscy108\blur0)"
+            r"\t(200,240,\fscx100\fscy100\u0)}"
+        )
+    elif kinetic_style == "shake":
+        tag = (
+            r"{\fad(80,0)\fscx108\fscy108\frz2\blur1"
+            r"\t(0,55,\frz-2\fscx108\fscy108\blur0)"
+            r"\t(55,110,\frz3)\t(110,210,\frz0\fscx100\fscy100)}"
+        )
+    else:
+        tag = (
+            r"{\fad(110,0)\fscx98\fscy98\frz-1\blur1.2"
+            r"\t(0,200,\fscx108\fscy108\frz0\blur0)"
+            r"\t(200,240,\fscx100\fscy100)}"
+        )
+    return tag + _wrap_ass_lines(lines)
+
+
 def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
     lines = [str(line) for line in cue.get("lines") or []]
     entry = cue.get("entry_motion")
     entry_ms = 120
     if isinstance(entry, Mapping):
         entry_ms = max(100, min(160, int(entry.get("duration_ms") or 120)))
+        entry_scale = max(90, min(98, round(float(entry.get("scale_from") or 0.94) * 100)))
+    else:
+        entry_scale = 94
     # Keep the shared baseline readable while restoring a visible, restrained
     # cue entrance.  This is applied to the complete cue (not per character)
     # so it cannot change the speech clock or create word-by-word jitter.
+    entry_type = str(entry.get("type") or "") if isinstance(entry, Mapping) else ""
     entry_tag = (
-        f"{{\\fad({entry_ms},0)\\fscx98\\fscy98"
-        f"\\t(0,{entry_ms},\\fscx100\\fscy100)}}"
+        f"{{\\fad({entry_ms},0)}}"
+        if entry_type == "fade_in"
+        else (
+            f"{{\\fad({entry_ms},0)\\fscx{entry_scale}\\fscy{entry_scale}\\blur1.2"
+            f"\\t(0,{entry_ms},\\fscx100\\fscy100\\blur0)}}"
+        )
     )
+    kinetic_mode = str(cue.get("kinetic_mode") or "")
+    kinetic_style = str(cue.get("kinetic_style") or "")
+    if kinetic_mode == "word_pop" and cue.get("kinetic_words"):
+        kinetic_lines = [
+            _ass_kinetic_caption_text(
+                line,
+                cue,
+                line_index=index,
+                cue_start=float(cue.get("start") or 0),
+                cue_end=float(cue.get("end") or 0),
+            ) or _ass_escape(line)
+            for index, line in enumerate(lines)
+        ]
+        if any(
+            any(
+                isinstance(item, Mapping) and item.get("line_index") == index
+                for item in cue.get("kinetic_words") or []
+            )
+            for index in range(len(lines))
+        ):
+            return entry_tag + r"\N".join(kinetic_lines)
+    if kinetic_mode == "cue_pop" and kinetic_style:
+        return _ass_cue_motion_text(lines, kinetic_style=kinetic_style)
     emphasis = cue.get("emphasis_range")
     if not isinstance(emphasis, Mapping):
         return entry_tag + _wrap_ass_lines(lines)
@@ -3272,8 +3885,8 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
     raw_style = cue.get("emphasis_style")
     style = raw_style if isinstance(raw_style, Mapping) else {}
     colour = _hex_to_ass_colour(str(style.get("color") or "")) or emphasis_colour
-    scale = max(105, min(112, round(float(style.get("scale") or 1.08) * 100)))
-    duration_ms = max(100, min(160, int(style.get("duration_ms") or 140)))
+    scale = 108
+    duration_ms = max(180, min(240, int(style.get("duration_ms") or 200)))
     rendered: list[str] = []
     for index, line in enumerate(lines):
         if index != line_index or start < 0 or end <= start or end > len(line):
@@ -3281,8 +3894,8 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
             continue
         rendered.append(
             f"{entry_tag}{_ass_escape(line[:start])}"
-            f"{{\\c{colour}\\fscx100\\fscy100"
-            f"\\t(0,{duration_ms},\\fscx{scale}\\fscy{scale})}}"
+            f"{{\\c{colour}\\fscx100\\fscy100\\blur0.8"
+            f"\\t(0,{duration_ms},\\fscx{scale}\\fscy{scale}\\blur0)}}"
             f"{_ass_escape(line[start:end])}"
             f"{{\\c&H00F8FAFC&\\fscx100\\fscy100}}"
             f"{_ass_escape(line[end:])}"
@@ -3325,6 +3938,82 @@ def build_business_talking_head_ass(
         caption_glossary=caption_glossary,
         subtitle_style_id=subtitle_style_id,
     )
+    # A cached review snapshot can predate the selective-motion contract.  Do
+    # not replay its old "every cue pops" fields: only a new preview carrying
+    # the v3 fingerprint is allowed to preserve explicit word/cue motion.
+    fingerprint = overlay_preview.get("style_fingerprint")
+    selective_preview = isinstance(fingerprint, Mapping) and (
+        fingerprint.get("word_motion") == "selective_word_emphasis_v3"
+    )
+    normalized_cues: list[dict[str, Any]] = []
+    for cue_index, raw_cue in enumerate(overlay_preview.get("cues") or []):
+        if not isinstance(raw_cue, Mapping):
+            continue
+        cue = dict(raw_cue)
+        try:
+            segment_index = int(
+                cue.get("source_segment_index", cue.get("_segment_index", cue_index))
+            )
+        except (TypeError, ValueError):
+            segment_index = cue_index
+        segment = (
+            segments[segment_index]
+            if 0 <= segment_index < len(segments)
+            and isinstance(segments[segment_index], Mapping)
+            else None
+        )
+        # Normalize legacy cached cues to the current baseline.  In
+        # particular, ``fade_in_scale`` used to contain a transform
+        # transition; it must not resurrect continuous subtitle movement.
+        cue["entry_motion"] = {
+            "type": "fade_in",
+            "duration_ms": 120,
+            "scale_from": 1.0,
+        }
+        if selective_preview:
+            # A persisted v3 preview can still contain kinetic_words written
+            # by an earlier renderer.  Recompute the spans from the current
+            # reviewed segment instead of replaying stale offsets, colours,
+            # or the old per-cue motion mode.  This keeps an already-open task
+            # on the same contract as a newly generated task.
+            spans = (
+                _caption_kinetic_words_for_cue(
+                    cue,
+                    segment,
+                    caption_glossary=caption_glossary,
+                )
+                if segment is not None
+                else []
+            )
+            cue["kinetic_words"] = spans
+            if spans and segment is not None:
+                cue["kinetic_mode"] = "word_pop"
+                cue["kinetic_style"] = _caption_kinetic_style_for_cue(
+                    cue,
+                    segment,
+                    cue_index,
+                )
+                cue["motion_scope"] = "keyword"
+            elif cue_index == 0:
+                cue["kinetic_mode"] = "cue_pop"
+                cue["kinetic_style"] = "slam"
+                cue["motion_scope"] = "hook"
+            else:
+                cue["kinetic_mode"] = "static"
+                cue["kinetic_style"] = None
+                cue["motion_scope"] = "static"
+        elif cue_index == 0:
+            cue["kinetic_words"] = []
+            cue["kinetic_mode"] = "cue_pop"
+            cue["kinetic_style"] = "slam"
+            cue["motion_scope"] = "hook"
+        else:
+            cue["kinetic_words"] = []
+            cue["kinetic_mode"] = "static"
+            cue["kinetic_style"] = None
+            cue["motion_scope"] = "static"
+        normalized_cues.append(cue)
+    overlay_preview = {**dict(overlay_preview), "cues": normalized_cues}
     header = f"""[Script Info]
 Title: VideoInsight business talking-head overlay
 ScriptType: v4.00+

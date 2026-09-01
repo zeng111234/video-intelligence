@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -55,7 +56,12 @@ class ImageGenerationConfiguration:
             source = os.environ
         else:
             source = env
-        mode = str(source.get("VIDEO_IMAGE_PROVIDER_MODE", "disabled")).strip().casefold() or "disabled"
+        # The customer path may use the configured Token Plan as a bounded
+        # fallback by default.  Missing credentials still fail closed in
+        # ``missing_configuration`` and never trigger a network request.
+        mode = str(
+            source.get("VIDEO_IMAGE_PROVIDER_MODE", "minimax_token_plan")
+        ).strip().casefold() or "minimax_token_plan"
         is_minimax = mode in {"minimax_token_plan", "minimax"}
         raw_unit = str(source.get("VIDEO_IMAGE_UNIT_PRICE_CNY", "")).strip()
         raw_budget = str(source.get("VIDEO_IMAGE_BUDGET_CNY", "")).strip()
@@ -74,11 +80,11 @@ class ImageGenerationConfiguration:
             timeout = max(5.0, min(300.0, float(raw_timeout)))
         except ValueError:
             timeout = 60.0
-        # P0-4 v2: MiniMax 默认只允许 https://api.minimax.io。
-        # 即便用户显式配了其他 base_url，MiniMax 模式仍强制回到 api.minimax.io。
+        # MiniMax 国内与海外账号使用不同官方域名；允许显式选择，但不允许
+        # 把 Token Plan Key 发往任意第三方主机。
         base_url = str(source.get("VIDEO_IMAGE_BASE_URL", "")).strip().rstrip("/")
         if is_minimax:
-            base_url = "https://api.minimax.io"  # 强制锁定
+            base_url = base_url or "https://api.minimax.io"
         model = str(source.get("VIDEO_IMAGE_MODEL", "")).strip()
         if is_minimax and not model:
             model = "image-01"
@@ -95,9 +101,13 @@ class ImageGenerationConfiguration:
             if item.strip()
         )
         if is_minimax:
-            # 始终把 api.minimax.io 放进白名单（如果未声明）
+            hostname = urlsplit(base_url).hostname or ""
+            if hostname not in {"api.minimax.io", "api.minimaxi.com"}:
+                raise ImageGenerationError(
+                    "MiniMax 生图地址只允许官方 api.minimax.io 或 api.minimaxi.com。"
+                )
             configured_hosts = tuple(
-                set(configured_hosts_raw) | {"api.minimax.io"}
+                set(configured_hosts_raw) | {hostname}
             )
         else:
             configured_hosts = configured_hosts_raw
@@ -111,7 +121,7 @@ class ImageGenerationConfiguration:
             timeout_seconds=timeout,
             allowed_hosts=configured_hosts,
             autogenerate_on_keyword_match=str(
-                source.get("VIDEO_IMAGE_AUTOGENERATE_ON_KEYWORD_MATCH", "false")
+                source.get("VIDEO_IMAGE_AUTOGENERATE_ON_KEYWORD_MATCH", "true")
             ).strip().casefold() in {"1", "true", "yes", "on"},
             manifest_path=str(source.get("VIDEO_IMAGE_MANIFEST_PATH", "")).strip(),
         )
@@ -221,7 +231,15 @@ class OpenAICompatibleImageProvider:
 
     @staticmethod
     def _default_transport(method: str, url: str, headers: dict[str, str], body: bytes, timeout: float) -> Mapping[str, Any]:
-        with httpx.Client(timeout=timeout) as client:
+        # Do not inherit a desktop-wide proxy by default.  A broken HTTPS
+        # proxy can terminate the TLS handshake before MiniMax sees the
+        # request.  Machines that require a proxy can opt in explicitly.
+        use_env_proxy = os.getenv("VIDEO_IMAGE_TRUST_ENV_PROXY", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        with httpx.Client(timeout=timeout, trust_env=use_env_proxy) as client:
             response = client.request(method, url, headers=headers, content=body)
             response.raise_for_status()
             return response.json()
@@ -351,8 +369,15 @@ class MiniMaxTokenPlanImageProvider:
         payload = self._call_once(endpoint, headers, bytes(body))
         data = payload.get("data") if isinstance(payload, Mapping) else None
         encoded_items = data.get("image_base64") if isinstance(data, Mapping) else None
+        if isinstance(encoded_items, str):
+            encoded_items = [encoded_items]
         encoded = encoded_items[0] if isinstance(encoded_items, list) and encoded_items else None
         if not isinstance(encoded, str) or not encoded:
+            provider_error = _safe_provider_error(payload)
+            if provider_error:
+                raise ImageGenerationError(
+                    f"MiniMax 未生成图片：{provider_error}。"
+                )
             raise ImageGenerationError("MiniMax 返回中缺少 data.image_base64[0] 图片结果。")
         try:
             image_bytes = base64.b64decode(encoded, validate=True)
@@ -381,6 +406,33 @@ class MiniMaxTokenPlanImageProvider:
         return payload
 
 
+def _safe_provider_error(payload: Mapping[str, Any]) -> str:
+    """Extract a bounded provider diagnostic without exposing credentials."""
+
+    base_resp = payload.get("base_resp")
+    if isinstance(base_resp, Mapping):
+        code = base_resp.get("status_code")
+        message = base_resp.get("status_msg") or base_resp.get("message")
+        if (code not in (None, "", 0, "0")) or message:
+            parts = []
+            if code not in (None, "", 0, "0"):
+                parts.append(f"供应商错误码 {str(code)[:32]}")
+            if message:
+                clean = re.sub(r"[\r\n\t]+", " ", str(message)).strip()
+                if clean:
+                    parts.append(clean[:180])
+            return "，".join(parts)
+    for key in ("error", "message", "msg"):
+        value = payload.get(key)
+        if isinstance(value, Mapping):
+            value = value.get("message") or value.get("msg") or value.get("detail")
+        if value:
+            clean = re.sub(r"[\r\n\t]+", " ", str(value)).strip()
+            if clean:
+                return clean[:180]
+    return ""
+
+
 def _quote_for_configuration(
     configuration: ImageGenerationConfiguration,
     requested_count: int,
@@ -406,10 +458,15 @@ def _quote_for_configuration(
             "生图接口或本条预算尚未配置，未发起调用。",
         )
     if configuration.is_minimax_token_plan:
+        # This is the customer-facing local credit price, not a claim about
+        # MiniMax's subscription accounting.  The provider remains marked as
+        # Token Plan in provenance and the successful local asset is charged
+        # separately by the workflow.
+        unit_price = Decimal("0.05")
         return ImageGenerationQuote(
             count,
-            Decimal("0"),
-            Decimal("0"),
+            unit_price,
+            unit_price * count,
             None,
             True,
         )

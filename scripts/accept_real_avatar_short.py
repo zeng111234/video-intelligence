@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import requests
 
@@ -96,6 +97,7 @@ def main() -> None:
             "bgm_enabled": False,
             "bgm_volume": 0.0,
         },
+        headers={"Idempotency-Key": f"accept-real-avatar-short-{uuid4().hex}"},
         timeout=60,
     )
     created.raise_for_status()

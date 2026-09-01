@@ -222,8 +222,14 @@ async def auth_middleware(request: Request, call_next):
     }
     # 媒体流端点的 <video>/<audio> 标签无法附加自定义 header，单独接受
     # 登录时写入的 HttpOnly Cookie；客户仅可读取当前电脑已绑定的本地工作区。
-    is_media_stream = request.url.path.endswith("/media") or request.url.path.endswith(
-        "/download"
+    accepts_json = "application/json" in request.headers.get("accept", "").casefold()
+    is_media_stream = (
+        not accepts_json
+        and (
+            request.url.path.endswith("/media")
+            or request.url.path.endswith("/original-media")
+            or request.url.path.endswith("/download")
+        )
     )
     if request.url.path in public_paths:
         return await call_next(request)

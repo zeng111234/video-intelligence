@@ -13,7 +13,7 @@ import {
 import { SearchOutlined } from "@ant-design/icons";
 import type { ColumnsType } from "antd/es/table";
 import { useNavigate } from "react-router-dom";
-import { searchCandidates } from "../api/client";
+import { resolveCrawlerCandidateOriginalMedia, searchCandidates } from "../api/client";
 import type { CandidateItem } from "../api/types";
 import { useToast } from "../components/Toast";
 import { SkeletonTable } from "../components/SkeletonLoader";
@@ -27,6 +27,55 @@ const PLATFORM_LABELS: Record<string, string> = {
 
 function keywordRecordLabel(value: string) {
   return value.startsWith("关键词/") ? value.slice("关键词/".length) : value;
+}
+
+function candidateSourceUrl(item: CandidateItem) {
+  if (item.source_url) return item.source_url;
+  if (item.platform !== "xiaohongshu") return null;
+  const itemId = item.platform_item_id
+    || (item.video_id.toLowerCase().startsWith("xiaohongshu-")
+      ? item.video_id.slice("xiaohongshu-".length)
+      : "");
+  if (!itemId) return null;
+  return `https://www.xiaohongshu.com/explore/${encodeURIComponent(itemId)}`;
+}
+
+function candidateOriginalMediaHref(item: CandidateItem) {
+  if (item.platform === "xiaohongshu") {
+    return `/api/v1/crawler/candidates/${encodeURIComponent(item.video_id)}/original-media`;
+  }
+  return candidateSourceUrl(item);
+}
+
+async function openResolvedCandidateOriginalMedia(candidateId: string) {
+  await resolveCrawlerCandidateOriginalMedia(candidateId);
+  window.location.assign(
+    `/api/v1/crawler/candidates/${encodeURIComponent(candidateId)}/original-media`,
+  );
+}
+
+function hasUsableXiaohongshuShareLink(item: CandidateItem) {
+  const sourceUrl = candidateSourceUrl(item);
+  if (item.platform !== "xiaohongshu") return Boolean(sourceUrl);
+  if (!sourceUrl) return false;
+  try {
+    const url = new URL(sourceUrl);
+    const host = url.hostname.toLowerCase();
+    return url.protocol === "https:"
+      && (
+        host === "xhslink.com"
+        || host.endsWith(".xhslink.com")
+        || (
+          (host === "xiaohongshu.com" || host.endsWith(".xiaohongshu.com"))
+          && (
+            url.pathname.includes("/explore/")
+            || url.pathname.includes("/discovery/item/")
+          )
+        )
+      );
+  } catch {
+    return false;
+  }
 }
 
 export default function CandidatesPage() {
@@ -75,8 +124,9 @@ export default function CandidatesPage() {
       candidate: item.video_id,
       title: item.title,
     });
-    if (item.source_url) {
-      params.set("share_text", item.source_url);
+    const sourceUrl = candidateSourceUrl(item);
+    if (sourceUrl && hasUsableXiaohongshuShareLink(item)) {
+      params.set("share_text", sourceUrl);
     } else {
       params.set("entry", "upload");
     }
@@ -132,25 +182,41 @@ export default function CandidatesPage() {
       title: "链接",
       dataIndex: "source_url",
       width: 80,
-      render: (v: string | null) =>
-        v ? (
-          <a href={v} target="_blank" rel="noreferrer">
-            查看
-          </a>
+      render: (v: string | null, item) => {
+        const originalMediaHref = candidateOriginalMediaHref(item);
+        return originalMediaHref && hasUsableXiaohongshuShareLink(item) ? (
+          item.platform === "xiaohongshu" ? (
+            <Button type="link" size="small" onClick={() => void openResolvedCandidateOriginalMedia(item.video_id).catch((error) => toast.error((error as Error).message))}>
+              查看
+            </Button>
+          ) : (
+            <a href={originalMediaHref} target="_blank" rel="noreferrer">查看</a>
+          )
+        ) : !v ? (
+          <Button type="link" size="small" onClick={() => goToTranscription(item)}>
+            上传授权视频
+          </Button>
         ) : (
           "-"
-        ),
+        );
+      },
     },
     {
       title: "操作",
       width: 100,
-      render: (_, item) => (
-        <Tooltip title="进入转写页后仍需确认内容处理权；不会自动下载或创建任务。">
+      render: (_, item) => {
+        const canTranscribeFromLink = hasUsableXiaohongshuShareLink(item);
+        const needsXiaohongshuUpload = item.platform === "xiaohongshu" && !canTranscribeFromLink;
+        return (
+        <Tooltip title={needsXiaohongshuUpload
+          ? "该历史链接无法在网页端打开。请上传已获授权的视频转写，或重新获取小红书分享链接。"
+          : "进入转写页后仍需确认内容处理权；不会自动下载或创建任务。"}>
           <Button size="small" type="primary" onClick={() => goToTranscription(item)}>
-            {item.source_url ? "文案转写" : "上传视频转写"}
+            {canTranscribeFromLink ? "文案转写" : "上传视频转写"}
           </Button>
         </Tooltip>
-      ),
+        );
+      },
     },
   ];
 

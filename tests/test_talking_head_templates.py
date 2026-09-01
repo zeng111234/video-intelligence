@@ -79,6 +79,33 @@ def test_content_classifier_keeps_legacy_alias_without_changing_default_style():
     assert story["selection"]["compatibility_alias"] == "story_resonance"
 
 
+def test_content_ordinals_are_not_treated_as_new_take_markers():
+    segments = [
+        {"start": 0.0, "end": 3.0, "text": "第一件事，你得搞清楚新车卖多少钱。"},
+        {"start": 3.0, "end": 7.0, "text": "第二句话是预算和实际收入要先算清楚。"},
+        {"start": 7.0, "end": 11.0, "text": "第三步再去比较不同方案。"},
+    ]
+
+    plan = build_talking_head_shot_plan(segments, duration_seconds=11.0)
+
+    assert plan["timeline_duration_seconds"] == 11.0
+    assert plan["deleted_ranges"] == []
+    assert sum(shot["duration_seconds"] for shot in plan["shots"]) == 11.0
+
+
+def test_explicit_ordinal_take_marker_still_truncates_following_take():
+    segments = [
+        {"start": 0.0, "end": 3.0, "text": "上一条内容先讲清楚。"},
+        {"start": 3.0, "end": 4.0, "text": "好，第七"},
+        {"start": 4.0, "end": 7.0, "text": "这是下一条内容。"},
+    ]
+
+    plan = build_talking_head_shot_plan(segments, duration_seconds=7.0)
+
+    assert plan["timeline_duration_seconds"] == 3.0
+    assert any(item["start"] == 3.0 for item in plan["deleted_ranges"])
+
+
 def test_retime_follows_reordered_shots_without_duplicate_segments():
     segments = [
         {"start": 0.0, "end": 2.0, "text": "正文"},

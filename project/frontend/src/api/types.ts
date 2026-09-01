@@ -2,6 +2,7 @@
 
 export interface CandidateItem {
   video_id: string;
+  platform_item_id?: string | null;
   title: string;
   platform: string;
   author_name: string;
@@ -929,6 +930,12 @@ export interface CrawlerCandidateMediaPreviewResponse {
   source: string;
 }
 
+export interface CrawlerCandidateOriginalMediaResponse {
+  candidate_id: string;
+  platform: string;
+  media_url: string;
+}
+
 export interface CrawlerDoubaoJobResponse extends TranscriptionResponse {
   candidate_id: string | null;
   source_url: string | null;
@@ -1797,6 +1804,33 @@ export interface VideoEditorDirectorPlan {
     publish_claim_allowed?: boolean;
     grounded_in_text?: boolean;
   }>;
+  motion_events?: Array<{
+    event_id: string;
+    start: number;
+    end: number;
+    type: string;
+    renderer: string;
+    style_id: string;
+    semantic_kind: string;
+    semantic_text: string;
+    fact?: string;
+    anchor?: string;
+    presentation?: string;
+    avoid_zones?: string[];
+    source_segment_index?: number;
+    grounded_in_text?: boolean;
+    fallback?: string;
+  }>;
+  motion_design?: {
+    plan_version?: string;
+    renderer?: string;
+    preview_renderer?: string;
+    event_count?: number;
+    semantic_source?: string;
+    anchor_policy?: string;
+    avoid_zones?: string[];
+    strong_effect_budget?: string;
+  };
   asset_requests?: Array<{
     request_id: string;
     scene_id: string;
@@ -2134,6 +2168,19 @@ export interface VideoEditorOverlayPreview {
       animation: "soft_pop" | string;
       duration_ms: number;
     } | null;
+    kinetic_mode?: "word_pop" | "cue_pop" | string;
+    motion_scope?: "keyword" | "hook" | "static" | string;
+    kinetic_style?: "slam" | "bounce" | "stamp" | "marker" | "underline" | "shake" | string | null;
+    kinetic_words?: Array<{
+      line_index: number;
+      start_offset: number;
+      end_offset: number;
+      start: number;
+      end: number;
+      text?: string;
+      color?: string;
+      kind?: "word" | "emphasis" | string;
+    }>;
   }>;
   caption_group_source?: "qwen_semantic" | "deterministic_fallback" | string;
   phrase_timing_source?: "word_timestamps" | "estimated_phrase_timestamps" | string;

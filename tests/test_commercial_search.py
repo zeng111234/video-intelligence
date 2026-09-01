@@ -1424,6 +1424,35 @@ def test_monthly_hard_limit_blocks_network_calls() -> None:
     assert provider.search_calls == []
 
 
+def test_local_browser_can_retry_a_finished_duplicate_without_waiting() -> None:
+    """免费本机浏览器的短期旧锁不能伪装成付费重复并阻止重新搜索。"""
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+
+    class LocalBrowserFixtureProvider(FixtureProvider):
+        def capabilities(self) -> ProviderCapability:
+            return super().capabilities().model_copy(
+                update={"mode": ProviderMode.LOCAL_BROWSER}
+            )
+
+    repository = MockRepository(candidates=[], tasks=[])
+    provider = LocalBrowserFixtureProvider(now)
+    provider.error = LicensedProviderError(
+        "页面暂时不可用", kind=ProviderErrorKind.SERVICE, retryable=False
+    )
+    service = _douyin_only_service(repository, provider, now)
+
+    first = service.execute(keyword="餐饮", force_refresh=True)
+    provider.error = None
+    second = service.execute(keyword="餐饮", force_refresh=True)
+
+    first_run = repository.list_platform_search_runs(first.batch_id)[0]
+    second_run = repository.list_platform_search_runs(second.batch_id)[0]
+    assert first_run.status == PlatformRunStatus.FAILED
+    assert second_run.status == PlatformRunStatus.PARTIAL
+    assert second_run.error is None
+    assert provider.search_calls == [Platform.DOUYIN, Platform.DOUYIN]
+
+
 def test_monthly_cost_limit_blocks_network_calls() -> None:
     now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
 

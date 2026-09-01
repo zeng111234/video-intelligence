@@ -14,6 +14,7 @@ class HealthResponse(BaseModel):
 
 class CandidateItem(BaseModel):
     video_id: str
+    platform_item_id: str | None = None
     title: str
     platform: str
     author_name: str = ""

@@ -154,6 +154,24 @@ def _to_response(task, service=None) -> TranscriptionResponse:
                     else s.quality_note
                 ),
                 "alternatives": s.alternatives,
+                # Keep provider-native word clocks in the review response.
+                # The video editor uses these timestamps for phrase grouping
+                # and subtitle sync; omitting them here silently downgraded
+                # an otherwise word-timed ASR result to sentence timing.
+                "words": [
+                    {
+                        "start": word.get("start"),
+                        "end": word.get("end"),
+                        "text": str(
+                            word.get("text") or word.get("word") or ""
+                        ),
+                    }
+                    for word in (s.words or [])
+                    if isinstance(word, dict)
+                    and word.get("start") is not None
+                    and word.get("end") is not None
+                    and str(word.get("text") or word.get("word") or "").strip()
+                ],
             }
         )
     response_uncertain_count = sum(

@@ -548,6 +548,7 @@ export default function PipelinePage() {
   const reviewContextRef = useRef("");
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
   const profileNameManuallyEditedRef = useRef(false);
+  const runKeywordSearchRef = useRef<((forceRefresh?: boolean, requestedPlatforms?: BrowserPlatform[]) => Promise<void>) | null>(null);
 
   const [initializing, setInitializing] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -572,6 +573,10 @@ export default function PipelinePage() {
   const [materialSearchBatch, setMaterialSearchBatch] = useState<CrawlerBatchResponse | null>(null);
   const [materialSearchQueueId, setMaterialSearchQueueId] = useState<string | null>(null);
   const [materialSearchQueue, setMaterialSearchQueue] = useState<CrawlerKeywordQueueResponse | null>(null);
+  const [pendingPlatformLoginSearch, setPendingPlatformLoginSearch] = useState<{
+    platforms: BrowserPlatform[];
+    forceRefresh: boolean;
+  } | null>(null);
   const [materialSearchComplete, setMaterialSearchComplete] = useState(false);
   const [failedSearchPlatforms, setFailedSearchPlatforms] = useState<BrowserPlatform[]>([]);
 
@@ -1179,11 +1184,12 @@ export default function PipelinePage() {
         && !attemptedPlatforms.includes("kuaishou")
         && !(item.missing_configuration || []).length
       ));
+      const readableReason = reason.replace(/[。.!！?？]+$/, "");
       setCrawlerReason({
         kind: "平台本次无结果",
         message: fallback
-          ? `${attemptedLabels}本次未取到素材：${reason}。已保留关键词“${batch.keyword}”，可以切换到${fallback.platform_label || PLATFORM_LABELS[fallback.platform || ""] || "其他平台"}重新搜索，无需等待当前平台冷却。`
-          : `${attemptedLabels}本次未取到素材：${reason}。已保留关键词“${batch.keyword}”，请检查平台登录后再试。`,
+          ? `${attemptedLabels}本次未取到素材：${readableReason}。已保留关键词“${batch.keyword}”，可以切换到${fallback.platform_label || PLATFORM_LABELS[fallback.platform || ""] || "其他平台"}重新搜索，无需等待当前平台冷却。`
+          : `${attemptedLabels}本次未取到素材：${readableReason}。已保留关键词“${batch.keyword}”，请检查平台登录后再试。`,
       });
     }
     setMaterialSearchProgress(null);
@@ -1207,6 +1213,7 @@ export default function PipelinePage() {
     setActionError("");
     setActionMessage("");
     setCrawlerReason(null);
+    setPendingPlatformLoginSearch(null);
     setMaterialSearchBatch(null);
     setMaterialSearchQueueId(null);
     setMaterialSearchQueue(null);
@@ -1218,17 +1225,24 @@ export default function PipelinePage() {
     try {
       const readyPlatforms: BrowserPlatform[] = [];
       for (const platform of targetPlatforms) {
-        const current = browserDiscoveries.find((item) => item.platform === platform);
-        if (current?.ready_to_crawl) {
-          readyPlatforms.push(platform);
-          continue;
+        // The page can stay open after a platform session expires. Refresh the
+        // live state before submitting instead of trusting the initial badge.
+        let status = await getCrawlerBrowserDiscoveryCapabilities(platform);
+        if (!status.ready_to_crawl) {
+          status = await startCrawlerBrowserDiscovery(platform);
         }
-        const status = await startCrawlerBrowserDiscovery(platform);
         const label = SOURCE_BROWSER_PLATFORMS.find((item) => item.platform === platform)?.label || platform;
         const normalized = { ...status, platform, platform_label: label };
         setBrowserDiscoveries((items) => items.map((item) => item.platform === platform ? normalized : item));
         if (!status.ready_to_crawl) {
-          throw new Error(`${label}已打开，请先完成登录，再点“重新搜索”。`);
+          setPendingPlatformLoginSearch({ platforms: targetPlatforms, forceRefresh });
+          setCrawlerReason({
+            kind: `等待${label}登录`,
+            message: `${label}登录窗口已打开。请完成平台要求的扫码或人工验证；完成后系统会自动继续搜索“${keyword.trim()}”，无需重新输入关键词。`,
+          });
+          setMaterialSearchProgress(null);
+          setBusy(false);
+          return;
         }
         readyPlatforms.push(platform);
       }
@@ -1255,6 +1269,57 @@ export default function PipelinePage() {
       setBusy(false);
     }
   };
+
+  runKeywordSearchRef.current = runKeywordSearch;
+
+  useEffect(() => {
+    if (!pendingPlatformLoginSearch) return undefined;
+    let active = true;
+    let timer: number | undefined;
+    let checks = 0;
+
+    const checkLoginAndResume = async () => {
+      try {
+        const statuses = await Promise.all(
+          pendingPlatformLoginSearch.platforms.map((platform) => getCrawlerBrowserDiscoveryCapabilities(platform)),
+        );
+        if (!active) return;
+        setBrowserDiscoveries((current) => current.map((item) => {
+          const status = statuses.find((candidate) => candidate.platform === item.platform);
+          return status ? { ...status, platform_label: status.platform_label || item.platform_label } : item;
+        }));
+        if (statuses.every((status) => status.ready_to_crawl)) {
+          setPendingPlatformLoginSearch(null);
+          setActionMessage("平台登录已确认，正在自动继续刚才的素材搜索。");
+          void runKeywordSearchRef.current?.(
+            pendingPlatformLoginSearch.forceRefresh,
+            pendingPlatformLoginSearch.platforms,
+          );
+          return;
+        }
+      } catch {
+        // A transient local status read is retried by the next bounded poll.
+      }
+      checks += 1;
+      if (checks >= 150) {
+        if (active) {
+          setPendingPlatformLoginSearch(null);
+          setCrawlerReason({
+            kind: "仍在等待平台登录",
+            message: "小红书登录窗口仍未完成验证，关键词已保留。完成后点击“找素材”即可继续。",
+          });
+        }
+        return;
+      }
+      timer = window.setTimeout(() => void checkLoginAndResume(), 2_000);
+    };
+
+    void checkLoginAndResume();
+    return () => {
+      active = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [pendingPlatformLoginSearch]);
 
   useEffect(() => {
     if (!materialSearchQueueId) return undefined;

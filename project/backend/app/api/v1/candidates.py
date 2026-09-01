@@ -60,6 +60,7 @@ def search_candidates(
         items = [
             CandidateItem(
                 video_id=c.video_id,
+                platform_item_id=c.platform_item_id,
                 title=c.title,
                 platform=c.platform.value,
                 author_name=c.author_name,

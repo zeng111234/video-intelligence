@@ -70,3 +70,31 @@ def test_director_plan_rejects_overlapping_output_scenes():
     )
     plan["scenes"][1]["timeline_start"] = 0.0
     assert "场景输出时间轴发生重叠。" in validate_director_plan(plan)
+
+
+def test_director_plan_contains_bounded_transcript_grounded_motion_events():
+    plan = build_director_plan(
+        [
+            {"start": 0.0, "end": 2.4, "text": "这里先说明背景"},
+            {"start": 3.2, "end": 5.6, "text": "成本可以降低30%"},
+            {"start": 6.4, "end": 8.8, "text": "注意不要重复投放"},
+            {"start": 9.6, "end": 12.0, "text": "最后评论区留言领取清单"},
+        ],
+        duration_seconds=25.0,
+    )
+
+    events = plan["motion_events"]
+    assert events
+    assert len(events) <= 10
+    assert all(
+        event["renderer"] == "procedural_overlay_v2_caption_integrated"
+        for event in events
+    )
+    assert all(event["anchor"] == "smart_caption" for event in events)
+    assert all(event["grounded_in_text"] is True for event in events)
+    assert {event["semantic_kind"] for event in events}
+    assert all(
+        event["end"] > event["start"]
+        and event["end"] - event["start"] <= 2.8
+        for event in events
+    )

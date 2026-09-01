@@ -18,6 +18,7 @@ if _project_root not in sys.path:
 from project.backend.app.main import app  # noqa: E402
 from project.backend.app.api.v1 import crawler as crawler_api  # noqa: E402
 from project.backend.app.api.v1 import publish as publish_api  # noqa: E402
+from project.backend.app.api.v1 import transcriptions as transcriptions_api  # noqa: E402
 from project.backend.app.core import deps as backend_deps  # noqa: E402
 from project.backend.app.core.security import issue_auth_token  # noqa: E402
 from project.backend.app.core.config import (  # noqa: E402
@@ -50,6 +51,8 @@ from src.models import (  # noqa: E402
     PublishTarget,
     SourceCapability,
     TaskStatus,
+    TranscriptSegment,
+    TranscriptionTask,
     VideoMetricSnapshot,
     VideoEditConfig,
     VideoEditTask,
@@ -317,6 +320,38 @@ class TestTranscriptions:
         assert "text" in seg
         assert "confidence" in seg
         assert "needs_review" in seg
+
+    def test_task_segments_keep_word_timestamps(self):
+        now = __import__("datetime").datetime.now().astimezone()
+        task = TranscriptionTask(
+            task_id="word-clock-task",
+            title="word-clock.mp4",
+            status=TaskStatus.SUCCEEDED,
+            progress=100,
+            created_at=now,
+            updated_at=now,
+            media_name="word-clock.mp4",
+            media_type="video/mp4",
+            rights_confirmed=True,
+            segments=[
+                TranscriptSegment(
+                    start=0,
+                    end=1,
+                    text="测试字幕",
+                    words=[
+                        {"start": 0, "end": 0.4, "text": "测试"},
+                        {"start": 0.4, "end": 1, "text": "字幕"},
+                    ],
+                )
+            ],
+        )
+
+        response = transcriptions_api._to_response(task)
+
+        assert response.segments[0]["words"] == [
+            {"start": 0, "end": 0.4, "text": "测试"},
+            {"start": 0.4, "end": 1, "text": "字幕"},
+        ]
 
     def test_create_task_default_media_type(self, client: TestClient):
         resp = client.post(

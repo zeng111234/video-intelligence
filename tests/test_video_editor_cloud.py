@@ -762,8 +762,8 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
     assert preview["cues"][0]["emphasis_style"] == {
         "color": "#FFD166",
         "scale": 1.08,
-        "animation": "soft_pop",
-        "duration_ms": 140,
+        "animation": "scale_overshoot",
+        "duration_ms": 200,
         "style_id": "adaptive_talking_head_v1",
     }
 
@@ -916,10 +916,8 @@ def test_ass_keyword_emphasis_uses_adaptive_light_pop_and_fade_in():
         caption_emphasis=[{"segment_index": 0, "term": "49元", "kind": "number"}],
     ).decode("utf-8-sig")
 
-    assert r"{\fad(120,0)\fscx98\fscy98\t(0,120,\fscx100\fscy100)}" in ass
-    assert r"{\c&H0066D1FF&\fscx100\fscy100\t(0,140,\fscx108\fscy108)}49元" in ass
-    assert r"\fscx108\fscy108" in ass
-    assert r"{\c&H00F8FAFC&\fscx100\fscy100}" in ass
+    assert r"\fscx108\fscy92\frz4" in ass
+    assert r"\t(0,200,\fscx108\fscy108\frz0\blur0)" in ass
 
 
 def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
@@ -935,12 +933,12 @@ def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
     assert preview["cues"][0]["emphasis_style"] == {
         "color": "#FFD166",
         "scale": 1.08,
-        "animation": "soft_pop",
-        "duration_ms": 140,
+        "animation": "scale_overshoot",
+        "duration_ms": 200,
         "style_id": "adaptive_talking_head_v1",
     }
     assert preview["cues"][0]["emphasis_range"] is not None
-    assert any(cue["emphasis_range"] is not None for cue in preview["cues"][1:])
+    assert all(cue["emphasis_range"] is None for cue in preview["cues"][1:])
 
 
 def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
@@ -979,11 +977,7 @@ def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
         "start": 5,
         "end": 8,
     }
-    assert preview["cues"][2]["emphasis_range"] == {
-        "line_index": 0,
-        "start": 5,
-        "end": 7,
-    }
+    assert preview["cues"][2]["emphasis_range"] is None
 
 
 def test_overlay_preview_uses_word_timestamps_instead_of_sentence_averaging():
@@ -1015,6 +1009,171 @@ def test_overlay_preview_uses_word_timestamps_instead_of_sentence_averaging():
         (0.0, 1.2),
         (2.0, 3.8),
     ]
+
+
+def test_word_clock_emits_kinetic_spans_and_ass_word_pop_effects():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 2.4,
+            "text": "今天跟你说四句话",
+            "emphasis_kind": "number",
+            "emphasis_terms": ["四句话"],
+            "words": [
+                {"start": 0.0, "end": 0.35, "text": "今天"},
+                {"start": 0.35, "end": 0.8, "text": "跟你"},
+                {"start": 0.8, "end": 1.15, "text": "说"},
+                {"start": 1.15, "end": 1.75, "text": "四句话"},
+            ],
+        }
+    ]
+
+    preview = build_business_talking_head_overlay_preview(
+        segments,
+        title="词级动效",
+        output_profile="720p",
+        caption_emphasis=[
+            {"segment_index": 0, "term": "四句话", "kind": "number"}
+        ],
+    )
+    kinetic_cues = [cue for cue in preview["cues"] if cue["kinetic_words"]]
+
+    assert kinetic_cues
+    assert kinetic_cues[0]["kinetic_mode"] == "word_pop"
+    assert len(kinetic_cues[0]["kinetic_words"]) >= 1
+    assert all(
+        word["end"] > word["start"]
+        for word in kinetic_cues[0]["kinetic_words"]
+    )
+    assert {word["color"] for word in kinetic_cues[0]["kinetic_words"]} == {"#FFD166"}
+
+    ass = build_business_talking_head_ass(
+        segments,
+        title="词级动效",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+    assert r"\3c&H003A263D&\bord2.4" in ass
+    assert r"\fscx108\fscy92\frz4" in ass
+    assert r"\fscx108\fscy108" in ass
+    assert r"\bord5.0\shad3" in ass
+
+
+def test_multiline_cue_uses_kinetic_motion_instead_of_legacy_emphasis_path():
+    preview = {
+        "title": {"lines": [], "start": 0, "end": 0},
+        "cues": [
+            {
+                "start": 0.0,
+                "end": 2.0,
+                "lines": ["第一行重点", "第二行内容"],
+                "kinetic_mode": "cue_pop",
+                "kinetic_style": "slam",
+                "kinetic_words": [],
+                "emphasis_range": None,
+                "emphasis_style": None,
+            }
+        ],
+    }
+    ass = build_business_talking_head_ass(
+        [{"start": 0.0, "end": 2.0, "text": "第一行重点第二行内容"}],
+        title="双行动效",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+
+    assert r"\fscx108\fscy92\frz4" in ass
+    assert r"\N" in ass
+
+
+def test_ass_backfills_kinetic_motion_for_legacy_cached_preview_cues():
+    segments = [
+        {"start": 0.0, "end": 1.2, "text": "第一段先抓住注意力"},
+        {"start": 1.2, "end": 2.6, "text": "第二段说明核心方法"},
+        {"start": 2.6, "end": 4.0, "text": "第三段给出结果"},
+    ]
+    # This is the shape of a pre-kinetic cached review snapshot: it has
+    # captions and the old entrance field, but no kinetic metadata.
+    preview = {
+        "title": {"lines": [], "start": 0, "end": 0},
+        "cues": [
+            {
+                "start": segment["start"],
+                "end": segment["end"],
+                "lines": [segment["text"]],
+                "source_segment_index": index,
+                "entry_motion": {"type": "fade_in_scale", "duration_ms": 140},
+            }
+            for index, segment in enumerate(segments)
+        ],
+    }
+
+    ass = build_business_talking_head_ass(
+        segments,
+        title="",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+    caption_dialogues = [
+        line for line in ass.splitlines() if ",Caption,," in line
+    ]
+
+    assert len(caption_dialogues) == len(segments)
+    assert r"\t(" in caption_dialogues[0]
+    assert all(r"\t(" not in line for line in caption_dialogues[1:])
+    assert all(r"\fad(" in line for line in caption_dialogues)
+
+
+def test_ass_rebuilds_stale_v3_kinetic_spans_before_export():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 1.8,
+            "text": "结果提升80%",
+            "emphasis_kind": "number",
+            "words": [
+                {"start": 0.0, "end": 0.7, "text": "结果提升"},
+                {"start": 0.7, "end": 1.2, "text": "80%"},
+            ],
+        }
+    ]
+    preview = {
+        "title": {"lines": [], "start": 0, "end": 0},
+        "style_fingerprint": {"word_motion": "selective_word_emphasis_v3"},
+        "cues": [
+            {
+                "start": 0.0,
+                "end": 1.8,
+                "lines": ["结果提升80%"],
+                "source_segment_index": 0,
+                "emphasis_range": {"line_index": 0, "start": 4, "end": 7},
+                "emphasis_style": {"color": "#FFD166", "duration_ms": 200},
+                "kinetic_mode": "word_pop",
+                "kinetic_style": "stamp",
+                "kinetic_words": [
+                    {
+                        "line_index": 0,
+                        "start_offset": 4,
+                        "end_offset": 7,
+                        "start": 0.7,
+                        "end": 1.2,
+                        "text": "80%",
+                        "color": "#55D6BE",
+                    }
+                ],
+            }
+        ],
+    }
+
+    ass = build_business_talking_head_ass(
+        segments,
+        title="",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+
+    assert r"\3c&H0066D1FF&" in ass
+    assert r"\3c&H00BED655&" not in ass
 
 
 def test_word_timestamps_keep_business_clause_together_when_character_split_would_fragment_it():
@@ -1200,7 +1359,7 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     assert "Style: Caption,Source Han Serif CN Heavy,52" in ass
     assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.12" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
-    assert r"\fad(120,0)" in ass
+    assert r"\fscx108\fscy92\frz4" in ass
     assert r"\N" not in ass
     assert r"\\N" not in ass
 
@@ -1277,9 +1436,7 @@ def test_overlay_preview_and_ass_use_short_single_line_captions_without_punctuat
         "start": 6,
         "end": 9,
     }
-    assert r"\fad(120,0)" in ass
-    assert r"\t(0,140,\fscx108\fscy108)" in ass
-    assert r"{\c&H00F8FAFC&\fscx100\fscy100}" in ass
+    assert r"\fscx108\fscy92\frz4" in ass
 
 
 def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
@@ -1306,6 +1463,31 @@ def test_caption_splits_are_contiguous_and_keep_numeric_punctuation():
     assert all(left["end"] == right["start"] for left, right in zip(cues, cues[1:]))
 
 
+def test_caption_splits_keep_number_and_unit_together():
+    preview = build_business_talking_head_overlay_preview(
+        [
+            {
+                "start": 0.0,
+                "end": 4.0,
+                "text": "只要49元就能到店，路上3.2公里，转化率80%。",
+            },
+        ],
+        title="数字断句",
+        output_profile="720p",
+    )
+
+    joined = "".join(line for cue in preview["cues"] for line in cue["lines"])
+    assert joined == "只要49元就能到店路上3.2公里转化率80%"
+    lines = [line for cue in preview["cues"] for line in cue["lines"]]
+    assert all(
+        not (
+            re.search(r"\d(?:\.\d+)?$", left)
+            and re.match(r"(?:元|公里|%)", right)
+        )
+        for left, right in zip(lines, lines[1:])
+    )
+
+
 def test_lexical_word_projection_keeps_numeric_suffix_when_provider_omits_it():
     projected = _caption_lexical_words(
         [
@@ -1319,6 +1501,25 @@ def test_lexical_word_projection_keeps_numeric_suffix_when_provider_omits_it():
     )
 
     assert [item["text"] for item in projected] == ["80%", "的", "客户"]
+
+
+def test_lexical_word_projection_keeps_numeric_suffix_after_clause_punctuation():
+    projected = _caption_lexical_words(
+        [
+            {"text": "但如果你买的特别便宜", "start": 0.0, "end": 1.0},
+            {"text": "1", "start": 1.0, "end": 1.1},
+            {"text": "0", "start": 1.1, "end": 1.2},
+            {"text": "0", "start": 1.2, "end": 1.3},
+            {"text": "火烧", "start": 1.3, "end": 1.6},
+        ],
+        text="但如果你买的特别便宜，100%火烧",
+        segment_start=0.0,
+        segment_end=1.6,
+    )
+
+    assert "".join(item["text"] for item in projected) == (
+        "但如果你买的特别便宜100%火烧"
+    )
 
 
 def test_caption_balances_long_phrases_without_one_or_two_character_orphans():

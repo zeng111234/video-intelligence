@@ -28,6 +28,7 @@ import type {
   CrawlerBrowserDiscoveryCapabilities,
   CrawlerBrowserDiscoveryStartResponse,
   CrawlerCandidateMediaPreviewResponse,
+  CrawlerCandidateOriginalMediaResponse,
   CrawlerCapabilitiesResponse,
   CrawlerDoubaoJobListResponse,
   CrawlerDoubaoMobileCapabilitiesResponse,
@@ -1312,6 +1313,14 @@ export function previewCrawlerCandidateMedia(
   candidateId: string,
 ): Promise<CrawlerCandidateMediaPreviewResponse> {
   return request(`/crawler/candidates/${candidateId}/media-preview`);
+}
+
+export function resolveCrawlerCandidateOriginalMedia(
+  candidateId: string,
+): Promise<CrawlerCandidateOriginalMediaResponse> {
+  return request(`/crawler/candidates/${encodeURIComponent(candidateId)}/original-media`, {
+    headers: { Accept: "application/json" },
+  });
 }
 
 export function createCrawlerCandidateTranscription(params: {

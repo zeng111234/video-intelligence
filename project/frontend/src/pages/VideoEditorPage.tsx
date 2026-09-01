@@ -1,5 +1,5 @@
 /** 云端轻量智能剪辑工作台。 */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   Alert,
   Button,
@@ -101,6 +101,7 @@ const CAPTION_BAD_LINE_STARTS = [
   "个", "位", "名", "家", "户", "只", "条", "件", "张", "种", "次", "套",
   "台", "份", "部", "本", "辆",
 ];
+const CAPTION_NUMERIC_ATOM_RE = /\d+(?:[.,]\d+)*(?:[%％元块万亿千百十公里米厘米分钟秒个家人套条次岁年月天斤倍折号点]+)?/g;
 type OutputProfile = "720p" | "1080p";
 type PreviewMode = "original" | "plan" | "output";
 
@@ -273,6 +274,35 @@ const STEP_KIND_ALIASES: Record<string, string> = {
   volume_norm: "volume_norm",
   audio_mix: "volume_norm",
 };
+
+// The review drawer uses friendly UI step ids, while the API accepts the
+// server's EditStepKind values.  Keep this conversion at the boundary so a
+// click on “确认复核并生成” cannot fail on an internal display id.
+const REVIEW_STEP_KIND_ALIASES: Record<string, string> = {
+  "silence-trim": "trim_silence",
+  silence_trim: "trim_silence",
+  trim_silence: "trim_silence",
+  "resize-vertical": "vertical_fit",
+  resize: "vertical_fit",
+  vertical_fit: "vertical_fit",
+  "subtitle-approved": "subtitles",
+  subtitle: "subtitles",
+  subtitles: "subtitles",
+  "title-overlay": "title",
+  title: "title",
+  "authorized-bgm": "bgm",
+  background_music: "bgm",
+  bgm: "bgm",
+  "volume-normalize": "audio_mix",
+  volume_norm: "audio_mix",
+  audio_mix: "audio_mix",
+  smart_opening: "smart_opening",
+};
+
+function reviewStepKind(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  return REVIEW_STEP_KIND_ALIASES[raw] || null;
+}
 
 const DEFAULT_PLAN: EditPlanStep[] = [
   {
@@ -604,12 +634,26 @@ function captionWordSplits(piece: string) {
   ).Segmenter;
   if (!SegmenterApi) return new Set<number>();
   const boundaries = new Set<number>();
+  const numericRanges = captionNumericRanges(piece);
   let cursor = 0;
   for (const token of new SegmenterApi("zh-CN", { granularity: "word" }).segment(piece)) {
     cursor += token.segment.length;
-    if (cursor < piece.length) boundaries.add(cursor);
+    if (cursor < piece.length && !numericRanges.some(([start, end]) => start < cursor && cursor < end)) {
+      boundaries.add(cursor);
+    }
   }
   return boundaries;
+}
+
+function captionNumericRanges(text: string): Array<[number, number]> {
+  return Array.from(text.matchAll(CAPTION_NUMERIC_ATOM_RE), (match) => [
+    match.index,
+    match.index + match[0].length,
+  ]);
+}
+
+function captionSplitInsideNumeric(text: string, splitAt: number) {
+  return captionNumericRanges(text).some(([start, end]) => start < splitAt && splitAt < end);
 }
 
 function captionSplitReadsNaturally(piece: string, splitAt: number) {
@@ -639,14 +683,32 @@ function captionPhraseParts(piece: string, maxChars: number) {
     const availableSplits = Array.from(
       { length: Math.max(0, maximumSplit - minimumSplit + 1) },
       (_, index) => minimumSplit + index,
-    ).filter((splitAt) => wordSplits.has(splitAt) || semanticSplits.has(splitAt));
+    ).filter((splitAt) => (
+      (wordSplits.has(splitAt) || semanticSplits.has(splitAt))
+      && !captionSplitInsideNumeric(remaining, splitAt)
+    ));
     const naturalSplits = availableSplits.filter(
       (splitAt) => captionSplitReadsNaturally(remaining, splitAt),
     );
     const safeSplits = naturalSplits.length ? naturalSplits : availableSplits;
     const semanticCandidates = safeSplits.filter((splitAt) => semanticSplits.has(splitAt));
     const candidates = semanticCandidates.length ? semanticCandidates : safeSplits;
-    const fallback = Math.max(minimumSplit, Math.min(maximumSplit, ideal));
+    const fallbackCandidates = Array.from(
+      { length: Math.max(0, maximumSplit - minimumSplit + 1) },
+      (_, index) => minimumSplit + index,
+    ).filter((splitAt) => !captionSplitInsideNumeric(remaining, splitAt));
+    const fallback = fallbackCandidates.reduce(
+      (best, candidate) => (
+        Math.abs(candidate - ideal) < Math.abs(best - ideal)
+        || (
+          Math.abs(candidate - ideal) === Math.abs(best - ideal)
+          && candidate > best
+        )
+          ? candidate
+          : best
+      ),
+      Math.max(minimumSplit, Math.min(maximumSplit, ideal)),
+    );
     const splitAt = candidates.reduce(
       (best, candidate) => (
         Math.abs(candidate - ideal) < Math.abs(best - ideal)
@@ -715,11 +777,31 @@ function displayLines(
   let clean = text.replace(/\s+/g, "");
   const maxChars = maxLines ? charsPerLine * maxLines : undefined;
   if (truncate && maxChars && clean.length > maxChars) {
-    clean = `${clean.slice(0, maxChars - 1)}…`;
+    let cutoff = maxChars - 1;
+    const numeric = captionNumericRanges(clean).find(([start, end]) => start < cutoff && cutoff < end);
+    if (numeric) cutoff = numeric[0] > 0 ? numeric[0] : numeric[1];
+    clean = `${clean.slice(0, cutoff)}…`;
   }
-  return Array.from({ length: Math.ceil(clean.length / charsPerLine) }, (_, index) => (
-    clean.slice(index * charsPerLine, (index + 1) * charsPerLine)
-  )).filter(Boolean);
+  return captionWrapLines(clean, charsPerLine);
+}
+
+function captionWrapLines(text: string, charsPerLine: number) {
+  const clean = text.replace(/\s+/g, "");
+  if (!clean) return [];
+  const numericRanges = captionNumericRanges(clean);
+  const lines: string[] = [];
+  let cursor = 0;
+  while (cursor < clean.length) {
+    let limit = Math.min(clean.length, cursor + Math.max(1, charsPerLine));
+    const containingNumeric = numericRanges.find(([start, end]) => start < limit && limit < end);
+    if (containingNumeric) {
+      limit = containingNumeric[0] > cursor ? containingNumeric[0] : containingNumeric[1];
+    }
+    if (limit <= cursor) limit = Math.min(clean.length, cursor + Math.max(1, charsPerLine));
+    lines.push(clean.slice(cursor, limit));
+    cursor = limit;
+  }
+  return lines;
 }
 
 function emphasisRange(lines: string[], terms?: string[]) {
@@ -732,13 +814,96 @@ function emphasisRange(lines: string[], terms?: string[]) {
   return null;
 }
 
-function captionEmphasisStyle(_kind?: string) {
-  return {
-    color: "#FFE16A",
-    scale: 1.5,
-    animation: "soft_pop",
-    duration_ms: 120,
+function captionEmphasisStyle(kind?: string) {
+  const colors: Record<string, string> = {
+    number: "#FFD166",
+    benefit: "#FFB86B",
+    method: "#FF9F68",
+    warning: "#FF7A70",
+    result: "#FF8A7A",
+    cta: "#FFC857",
+    keyword: "#FFC857",
   };
+  return {
+    color: colors[String(kind || "").toLowerCase()] || "#FFE7C2",
+    scale: 1.08,
+    animation: "scale_overshoot",
+    duration_ms: 200,
+  };
+}
+
+function kineticCleanText(value: string) {
+  return value.replace(/[\s，。！？、,.!?；;：:‘’“”"（）()【】[\]《》…—]/g, "");
+}
+
+function previewKineticWords(
+  segment: TranscriptSegment,
+  line: string,
+  cueStart: number,
+  cueEnd: number,
+  emphasis: { line_index: number; start: number; end: number } | null,
+  lineIndex: number,
+) {
+  const words = (segment.words || [])
+    .map((item) => ({
+      text: kineticCleanText(item.text || ""),
+      start: Number(item.start),
+      end: Number(item.end),
+    }))
+    .filter((item) => item.text.length > 0 && item.end > item.start);
+  if (!words.length || !line || !emphasis || emphasis.line_index !== lineIndex) return [];
+  const normalizedLine = kineticCleanText(line);
+  const indexMap = Array.from(line).flatMap((character, index) => (
+    /[\s，。！？、,.!?；;：:‘’“”"（）()【】[\]《》…—]/.test(character)
+      ? []
+      : [index]
+  ));
+  if (!normalizedLine || indexMap.length !== normalizedLine.length) return [];
+  const candidates: Array<{ score: number; words: typeof words }> = [];
+  for (let begin = 0; begin < words.length; begin += 1) {
+    const matched: typeof words = [];
+    let accumulated = "";
+    for (const word of words.slice(begin)) {
+      accumulated += word.text;
+      matched.push(word);
+      if (accumulated === normalizedLine) {
+        candidates.push({
+          score: Math.abs(matched[0].start - cueStart)
+            + Math.abs(matched[matched.length - 1].end - cueEnd),
+          words: matched,
+        });
+        break;
+      }
+      if (!normalizedLine.startsWith(accumulated)) break;
+    }
+  }
+  const selected = candidates.sort((left, right) => left.score - right.score)[0]?.words;
+  if (!selected) return [];
+  const semanticColor = kineticSemanticColor(segment, line);
+  let searchCursor = 0;
+  const duration = Math.max(cueEnd - cueStart, 0.001);
+  const spans = selected.flatMap((word) => {
+    const position = normalizedLine.indexOf(word.text, searchCursor);
+    if (position < 0) return [];
+    const startOffset = indexMap[position];
+    const endOffset = indexMap[position + word.text.length - 1] + 1;
+    searchCursor = position + word.text.length;
+    const start = Math.max(0, Math.min(duration, word.start - cueStart));
+    const end = Math.max(start + 0.04, Math.min(duration, word.end - cueStart));
+    return [{
+      line_index: lineIndex,
+      start_offset: startOffset,
+      end_offset: endOffset,
+      start,
+      end,
+      text: line.slice(startOffset, endOffset),
+      color: semanticColor,
+      kind: "word",
+    }];
+  }).filter((span) => (
+    span.start_offset < emphasis.end && span.end_offset > emphasis.start
+  ));
+  return spans;
 }
 
 const AUTO_EMPHASIS_NUMBER = /\d+(?:\.\d+)?(?:%|元|块|万|倍|折|公里|分钟|秒|张|个|家|人|套)/;
@@ -783,6 +948,45 @@ function automaticEmphasisTerm(text: string) {
       ? "warning"
       : "benefit",
   };
+}
+
+const KINETIC_SEMANTIC_COLORS: Record<string, string> = {
+  number: "#FFD166",
+  benefit: "#FFB86B",
+  warning: "#FF7A70",
+  emotion: "#FF8A7A",
+  method: "#FF9F68",
+  result: "#FF8A7A",
+  cta: "#FFC857",
+  keyword: "#F4B183",
+  default: "#FFE7C2",
+};
+
+function kineticSemanticColor(segment: TranscriptSegment, text: string) {
+  const kind = String(segment.emphasis_kind || "").toLowerCase();
+  if (KINETIC_SEMANTIC_COLORS[kind]) return KINETIC_SEMANTIC_COLORS[kind];
+  const automatic = automaticEmphasisTerm(text);
+  return KINETIC_SEMANTIC_COLORS[automatic?.kind || "default"];
+}
+
+function kineticStyleForCue(
+  segment: TranscriptSegment,
+  text: string,
+  automatic?: { term: string; kind: string } | null,
+  openingHook = false,
+) {
+  const kind = String(segment.emphasis_kind || "").toLowerCase();
+  if (openingHook) {
+    return "slam";
+  }
+  if (kind === "warning" || automatic?.kind === "warning") return "shake";
+  if (kind === "number" || automatic?.kind === "number" || /\d/.test(text)) return "stamp";
+  if (kind === "result") return "stamp";
+  if (kind === "benefit" || automatic?.kind === "benefit") return "marker";
+  if (kind === "method") return "underline";
+  if (kind === "cta") return "bounce";
+  if (kind === "keyword") return "marker";
+  return "marker";
 }
 
 function captionCueTimings(
@@ -909,7 +1113,7 @@ function previewCaptionCues(
 ) {
   const maxChars = spec.subtitle.max_chars_per_line * spec.subtitle.max_lines;
   const semanticParts = validatedSemanticCaptionParts(segments, captionGroups, maxChars);
-  return segments.flatMap((segment, segmentIndex) => {
+  const cues: VideoEditorOverlayPreview["cues"] = segments.flatMap((segment, segmentIndex) => {
     const start = asNumber(segment.start, -1);
     const end = asNumber(segment.end, -1);
     const chunks = semanticParts?.get(segmentIndex) || captionChunks(
@@ -931,6 +1135,17 @@ function previewCaptionCues(
         spec.subtitle.max_lines,
       );
       const emphasis = emphasisRange(lines, emphasisTerms);
+      const kineticWords = emphasis
+        ? lines.flatMap((line, lineIndex) => previewKineticWords(
+          segment,
+          line,
+          timings[index].start,
+          timings[index].end,
+          emphasis,
+          lineIndex,
+        ))
+        : [];
+      const isOpeningHook = segmentIndex === 0 && index === 0;
       const cue = {
         start: timings[index].start,
         end: timings[index].end,
@@ -939,10 +1154,54 @@ function previewCaptionCues(
         emphasis_style: emphasis
           ? captionEmphasisStyle(segment.emphasis_kind || automatic?.kind)
           : null,
+        kinetic_mode: kineticWords.length ? "word_pop" : isOpeningHook ? "cue_pop" : "static",
+        kinetic_style: kineticWords.length || isOpeningHook
+          ? kineticStyleForCue(segment, chunk, automatic, isOpeningHook)
+          : null,
+        kinetic_words: kineticWords,
       };
       return cue;
     });
   });
+  return sparsePreviewCaptionEmphasis(cues);
+}
+
+function sparsePreviewCaptionEmphasis(
+  cues: VideoEditorOverlayPreview["cues"],
+) {
+  const candidates = cues
+    .map((cue, index) => ({ cue, index }))
+    .filter(({ cue }) => Boolean(cue.emphasis_range));
+  if (!candidates.length) return cues;
+  const maxEnd = Math.max(...cues.map((cue) => cue.end), 0);
+  const totalBudget = Math.max(1, Math.ceil((maxEnd / 60) * 4));
+  const selected: number[] = [];
+  const bucketCounts = new Map<number, number>();
+  const ranked = [...candidates].sort((left, right) => {
+    const score = (cue: VideoEditorOverlayPreview["cues"][number]) => {
+      const text = cue.lines.join("");
+      return /\d/.test(text) || /注意|风险|关键|结论|不要/.test(text) ? 1 : 0;
+    };
+    return score(right.cue) - score(left.cue) || left.index - right.index;
+  });
+  for (const { cue, index } of ranked) {
+    if (selected.length >= totalBudget) break;
+    const bucket = Math.max(0, Math.floor(cue.start / 60));
+    if ((bucketCounts.get(bucket) || 0) >= 5) continue;
+    if (selected.some((previous) => Math.abs(previous - index) < 2)) continue;
+    selected.push(index);
+    bucketCounts.set(bucket, (bucketCounts.get(bucket) || 0) + 1);
+  }
+  const selectedSet = new Set(selected);
+  candidates.forEach(({ cue, index }) => {
+    if (selectedSet.has(index)) return;
+    cue.emphasis_range = null;
+    cue.emphasis_style = null;
+    cue.kinetic_words = [];
+    cue.kinetic_mode = index === 0 ? "cue_pop" : "static";
+    cue.kinetic_style = index === 0 ? "slam" : null;
+  });
+  return cues;
 }
 
 function localOverlayPreview(
@@ -1019,7 +1278,102 @@ function renderOverlayLine(
   lineIndex: number,
   emphasis: VideoEditorOverlayPreview["cues"][number]["emphasis_range"],
   emphasisStyle: VideoEditorOverlayPreview["cues"][number]["emphasis_style"],
+  kineticMode: VideoEditorOverlayPreview["cues"][number]["kinetic_mode"],
+  kineticStyle: VideoEditorOverlayPreview["cues"][number]["kinetic_style"],
+  kineticWords: VideoEditorOverlayPreview["cues"][number]["kinetic_words"],
+  cueStart: number,
+  previewTime: number,
 ) {
+  const lineKinetics = (kineticWords || []).filter((word) => word.line_index === lineIndex);
+  const effect = kineticStyle || "bounce";
+  if (lineKinetics.length > 0) {
+    const relativeTime = previewTime - cueStart;
+    let cursor = 0;
+    return (
+      <>
+        {lineKinetics.map((word, index) => {
+          const start = Math.max(0, word.start_offset);
+          const end = Math.min(line.length, word.end_offset);
+          if (end <= start || start < cursor) return null;
+          const isBefore = relativeTime < word.start;
+          const isActive = !isBefore && relativeTime <= word.end;
+          const prefix = line.slice(cursor, start);
+          cursor = end;
+          const activeTransform = effect === "slam"
+            ? "translateY(-5px) scale(1.10) rotate(-1deg)"
+            : effect === "stamp"
+              ? "translateY(-2px) scale(1.08) rotate(2deg)"
+              : effect === "marker"
+                ? "translateY(-1px) scale(1.08)"
+                : effect === "underline"
+                  ? "translateY(-2px) scale(1.08)"
+                  : effect === "shake"
+                    ? "translateY(-2px) scale(1.08) rotate(-2deg)"
+                    : "translateY(-2px) scale(1.08)";
+          return (
+            <Fragment key={`${word.text || "word"}-${index}`}>
+              {prefix}
+              <span
+                className="video-editor-subtitle-kinetic-word"
+                style={{
+                  opacity: isBefore ? 0.42 : 1,
+                  transform: isBefore
+                    ? "translateY(6px) scale(.96)"
+                    : (isActive ? activeTransform : "translateY(0) scale(1)"),
+                  backgroundColor: isActive && (effect === "marker" || effect === "stamp")
+                    ? word.color
+                    : undefined,
+                  borderRadius: isActive && (effect === "marker" || effect === "stamp")
+                    ? "0.18em"
+                    : undefined,
+                  padding: isActive && (effect === "marker" || effect === "stamp")
+                    ? "0 .08em"
+                    : undefined,
+                  color: isActive ? "#111827" : (isBefore ? "rgba(248,250,252,.55)" : "#F8FAFC"),
+                  textShadow: isActive
+                    ? `0 0 ${effect === "slam" ? 26 : 18}px ${word.color}, 0 2px 4px rgba(0,0,0,.72)`
+                    : undefined,
+                  textDecorationLine: isActive && effect === "underline" ? "underline" : undefined,
+                  textDecorationColor: isActive && effect === "underline" ? word.color : undefined,
+                  textDecorationThickness: isActive && effect === "underline" ? "0.14em" : undefined,
+                  textUnderlineOffset: isActive && effect === "underline" ? "0.18em" : undefined,
+                }}
+              >
+                {line.slice(start, end)}
+              </span>
+            </Fragment>
+          );
+        })}
+        {line.slice(cursor)}
+      </>
+    );
+  }
+  if (kineticMode === "cue_pop") {
+    const cueAge = Math.max(0, previewTime - cueStart);
+    const fresh = cueAge < 0.24;
+    const cueTransform = !fresh
+      ? "translateY(0) scale(1) rotate(0)"
+      : effect === "slam"
+        ? "translateY(-10px) scale(.72) rotate(5deg)"
+        : effect === "stamp"
+          ? "translateY(-3px) scale(.84) rotate(-7deg)"
+          : effect === "shake"
+            ? "translateY(0) scale(.9) rotate(-4deg)"
+            : "translateY(5px) scale(.88)";
+    return (
+      <span
+        className="video-editor-subtitle-kinetic-line"
+        style={{
+          display: "inline-block",
+          transform: cueTransform,
+          opacity: fresh ? 0.7 : 1,
+          textShadow: fresh && effect === "slam" ? "0 0 22px rgba(255,225,106,.9)" : undefined,
+        }}
+      >
+        {line}
+      </span>
+    );
+  }
   if (!emphasis || emphasis.line_index !== lineIndex) return line;
   return (
     <>
@@ -1028,8 +1382,8 @@ function renderOverlayLine(
         className="video-editor-subtitle-emphasis"
         style={{
           color: emphasisStyle?.color,
-          "--video-editor-emphasis-size": emphasisStyle?.scale || 1.5,
-          "--video-editor-emphasis-duration": `${emphasisStyle?.duration_ms || 120}ms`,
+          "--video-editor-emphasis-size": emphasisStyle?.scale || 1.08,
+          "--video-editor-emphasis-duration": `${emphasisStyle?.duration_ms || 200}ms`,
         } as CSSProperties}
       >
         {line.slice(emphasis.start, emphasis.end)}
@@ -1085,10 +1439,20 @@ function isCloudBatch(batch: VideoEditorBatch): batch is CloudBatch {
   );
 }
 
+function batchSourceId(batch: CloudBatch | null | undefined): string | undefined {
+  const sourceId = batch?.items[0]?.source_id;
+  return typeof sourceId === "string" && sourceId ? sourceId : undefined;
+}
+
 export default function VideoEditorPage() {
   const navigate = useNavigate();
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const pendingLocalDownloadRef = useRef<string | null>(null);
+  // A source picker change can happen while the initial batch request is still
+  // in flight.  Keep the identity outside React's async render timing so that a
+  // late "latest batch" response can never attach an old transcript to a newly
+  // selected video.
+  const selectedSourceIdRef = useRef<string>();
   const [sources, setSources] = useState<VideoEditorSource[]>([]);
   const [bgmAssets, setBgmAssets] = useState<VideoEditorBgmAsset[]>([]);
   const [brollAssets, setBrollAssets] = useState<VideoEditorVisualAsset[]>([]);
@@ -1145,10 +1509,9 @@ export default function VideoEditorPage() {
       ]);
       setSources(sourceResponse.items);
       setCapabilities(capabilityResponse as CloudCapabilities);
-      setSelectedSourceId((current) => (
-        current
-        || sourceResponse.items[0]?.source_id
-      ));
+      const sourceIdToKeep = selectedSourceIdRef.current || sourceResponse.items[0]?.source_id;
+      selectedSourceIdRef.current = sourceIdToKeep;
+      setSelectedSourceId((current) => current || sourceIdToKeep);
       setPollingStopped(false);
     } catch (error) {
       message.error((error as Error).message || "云端剪辑工作台加载失败");
@@ -1164,8 +1527,14 @@ export default function VideoEditorPage() {
     }
     if (batchResult.status === "fulfilled") {
       const cloudBatches = batchResult.value.items.filter(isCloudBatch);
-      const nextBatch = keepCurrent
-        ? cloudBatches.find((item) => item.batch_id === batch?.batch_id) || batch || cloudBatches[0] || null
+      const activeSourceId = selectedSourceIdRef.current;
+      const currentBatchMatchesSource = batchSourceId(batch) === activeSourceId;
+      const nextBatch = activeSourceId
+        ? (
+          keepCurrent && currentBatchMatchesSource
+            ? cloudBatches.find((item) => item.batch_id === batch?.batch_id) || batch
+            : cloudBatches.find((item) => batchSourceId(item) === activeSourceId)
+        ) || null
         : cloudBatches[0] || null;
       setBatches(cloudBatches);
       setBatch(nextBatch);
@@ -1176,7 +1545,9 @@ export default function VideoEditorPage() {
         setBgmEnabled(nextBatch.bgm_enabled);
         setBgmId(nextBatch.bgm_id || undefined);
         setBgmVolume(nextBatch.bgm_volume);
-        setSelectedSourceId((current) => current || nextBatch.items[0]?.source_id);
+        const sourceIdToKeep = selectedSourceIdRef.current || batchSourceId(nextBatch);
+        selectedSourceIdRef.current = sourceIdToKeep;
+        setSelectedSourceId((current) => current || sourceIdToKeep);
       }
     }
   }, [batch]);
@@ -1199,7 +1570,8 @@ export default function VideoEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const currentItem = (batch?.items[0] || null) as CloudBatchItem | null;
+  const activeBatch = selectedSourceId && batchSourceId(batch) === selectedSourceId ? batch : null;
+  const currentItem = (activeBatch?.items[0] || null) as CloudBatchItem | null;
   const usableBgmAssets = useMemo(
     () => bgmAssets.filter((asset) => asset.auto_eligible !== false && asset.authorization_status !== "unverified"),
     [bgmAssets],
@@ -1212,7 +1584,7 @@ export default function VideoEditorPage() {
     || (selectedReviewBgm
       ? `当前任务原先未选配乐，已根据文案预选《${selectedReviewBgm.title}》；请试听后再确认生成。`
       : null);
-  const currentStatus = currentItem?.status || batch?.status || "idle";
+  const currentStatus = currentItem?.status || activeBatch?.status || "idle";
   const isLocalExport = Boolean(
     currentItem?.job?.workflow === "local_preview_export"
     || currentItem?.provider_stage?.startsWith("local_export_"),
@@ -1241,9 +1613,9 @@ export default function VideoEditorPage() {
     ];
   }, [currentItem, usableBgmAssets.length]);
   const enabledPlanSteps = planSteps.filter((step) => step.enabled);
-  const providerMode = batch?.provider_mode || capabilities?.provider_mode || "configuration_required";
+  const providerMode = activeBatch?.provider_mode || capabilities?.provider_mode || "configuration_required";
   const isSandbox = Boolean(
-    batch?.is_mock
+    activeBatch?.is_mock
     || currentItem?.is_mock
     || capabilities?.is_mock
     || providerMode === "sandbox",
@@ -1254,7 +1626,7 @@ export default function VideoEditorPage() {
     : currentStatus;
   const localRenderer = providerMode === "local_ffmpeg" || capabilities?.renderer_mode === "local_ffmpeg";
   const configurationBlocked = !isSandbox && !localRenderer && (
-    batch?.provider_mode !== "legacy"
+    activeBatch?.provider_mode !== "legacy"
     && (
     providerMode === "configuration_required"
     || capabilities?.live_ready === false
@@ -1286,12 +1658,12 @@ export default function VideoEditorPage() {
 
   useEffect(() => {
     if (
-      !batch
+      !activeBatch
       || pollingStopped
       || !["queued", "analyzing", "ready_to_render", "rendering"].includes(currentStatus)
     ) return undefined;
     const timer = window.setTimeout(() => {
-      void videoEditorApi.getVideoEditorBatch(batch.batch_id).then((next) => {
+      void videoEditorApi.getVideoEditorBatch(activeBatch.batch_id).then((next) => {
         const cloudBatch = next as CloudBatch;
         setBatch(cloudBatch);
         setBatches((items) => [
@@ -1317,7 +1689,7 @@ export default function VideoEditorPage() {
       });
     }, 1800);
     return () => window.clearTimeout(timer);
-  }, [batch, currentStatus, pollingStopped]);
+  }, [activeBatch, currentStatus, pollingStopped]);
 
   useEffect(() => {
     setPreviewTime(0);
@@ -1355,6 +1727,7 @@ export default function VideoEditorPage() {
   };
 
   const selectSource = (sourceId: string) => {
+    selectedSourceIdRef.current = sourceId;
     setSelectedSourceId(sourceId);
     setBatch(null);
     setQuote(null);
@@ -1468,15 +1841,26 @@ export default function VideoEditorPage() {
     setReviewItem(item);
     setReviewSegments(normalizeSubtitleSegments(item));
     const itemPlan = normalizePlan(item);
-    const enabledIds = item.enabled_plan_step_ids?.length
-        ? item.enabled_plan_step_ids
-        : itemPlan.filter((step) => step.enabled).map((step) => step.id);
+    const fallbackEnabledKinds = item.edit_plan?.enabled_steps?.length
+      ? item.edit_plan.enabled_steps
+      : item.edit_plan?.steps?.length
+        ? itemPlan.filter((step) => step.enabled).map((step) => step.kind)
+        : ["vertical_fit", "subtitles", "title"];
+    const rawEnabledIds = item.enabled_plan_step_ids?.length
+      ? item.enabled_plan_step_ids
+      : fallbackEnabledKinds;
+    const enabledIds = Array.from(new Set(
+      rawEnabledIds.map(reviewStepKind).filter((value): value is string => Boolean(value)),
+    ));
     setReviewTitle(item.selected_title || titleCandidates(item)[0] || item.title);
-    const nextBgmId = reviewBgmId
-      || item.selected_bgm_id
-      || bgmId
-      || recommendReviewBgm(item, bgmAssets)?.asset_id
-      || null;
+    const bgmWasReviewed = Boolean(item.review_snapshot?.bgm_confirmed);
+    const nextBgmId = bgmWasReviewed
+      ? (item.selected_bgm_id || null)
+      : reviewBgmId
+        || item.selected_bgm_id
+        || bgmId
+        || recommendReviewBgm(item, bgmAssets)?.asset_id
+        || null;
     setReviewBgmId(nextBgmId);
     const rawBroll = item.review_snapshot?.broll;
     const savedBroll = rawBroll && typeof rawBroll === "object"
@@ -1508,7 +1892,7 @@ export default function VideoEditorPage() {
   };
 
   const saveReview = async () => {
-    if (!batch || !reviewItem) return;
+    if (!activeBatch || !reviewItem) return;
     setReviewSaving(true);
     try {
       const brollPlacement = reviewBrollAsset && reviewBrollStart !== null && reviewBrollEnd !== null
@@ -1525,12 +1909,12 @@ export default function VideoEditorPage() {
         return;
       }
       const localOnlyPreview = Boolean(brollPlacement)
-        || batch.provider_mode === "legacy"
-        || batch.provider_mode === "local"
-        || batch.provider_mode === "local_ffmpeg"
+        || activeBatch.provider_mode === "legacy"
+        || activeBatch.provider_mode === "local"
+        || activeBatch.provider_mode === "local_ffmpeg"
         || capabilities?.renderer_mode === "local_ffmpeg";
       const next = await videoEditorApi.reviewVideoEditorBatchItem(
-        batch.batch_id,
+        activeBatch.batch_id,
         reviewItem.item_id,
         {
           subtitleSegments: reviewSegments as unknown as Array<Record<string, unknown>>,
@@ -1587,11 +1971,11 @@ export default function VideoEditorPage() {
   };
 
   const retryCurrentItem = async () => {
-    if (!batch || !currentItem) return;
+    if (!activeBatch || !currentItem) return;
     setSubmitting(true);
     try {
       const next = await videoEditorApi.retryVideoEditorBatchItem(
-        batch.batch_id,
+        activeBatch.batch_id,
         currentItem.item_id,
       ) as CloudBatch;
       setBatch(next);
@@ -1605,7 +1989,7 @@ export default function VideoEditorPage() {
   };
 
   const confirmAndPublish = async () => {
-    if (!batch || !currentItem) return;
+    if (!activeBatch || !currentItem) return;
     if (!canConfirmOutput) {
       message.warning(
         isSandbox
@@ -1625,7 +2009,7 @@ export default function VideoEditorPage() {
     setSubmitting(true);
     try {
       const next = await videoEditorApi.confirmVideoEditorBatchResults(
-        batch.batch_id,
+        activeBatch.batch_id,
         [currentItem.item_id],
       ) as CloudBatch;
       setBatch(next);
@@ -1645,7 +2029,7 @@ export default function VideoEditorPage() {
 
   const downloadFinishedVideo = async () => {
     if (
-      batch
+      activeBatch
       && currentItem
       && !isSandbox
       && currentStatus === "outcome_unknown"
@@ -1654,7 +2038,7 @@ export default function VideoEditorPage() {
       setSubmitting(true);
       try {
         const next = await videoEditorApi.createVideoEditorLocalExport(
-          batch.batch_id,
+          activeBatch.batch_id,
           currentItem.item_id,
         ) as CloudBatch;
         pendingLocalDownloadRef.current = next.batch_id;
@@ -1681,7 +2065,7 @@ export default function VideoEditorPage() {
       }
       return;
     }
-    if (!batch || !currentItem || !playableResultMediaUrl || isSandbox) {
+    if (!activeBatch || !currentItem || !playableResultMediaUrl || isSandbox) {
       message.warning("真实成片生成后才可以下载");
       return;
     }
@@ -1690,7 +2074,7 @@ export default function VideoEditorPage() {
       ? currentItem.job.download_url
       : providerMode === "aliyun"
         ? videoEditorApi.getVideoEditorBatchItemDownloadUrl(
-          batch.batch_id,
+          activeBatch.batch_id,
           currentItem.item_id,
         )
         : playableResultMediaUrl;
@@ -1701,7 +2085,7 @@ export default function VideoEditorPage() {
   };
 
   const handlePrimaryAction = () => {
-    if (!batch || currentStatus === "idle") {
+    if (!activeBatch || currentStatus === "idle") {
       void loadQuote(outputProfile, true);
       return;
     }
@@ -1791,7 +2175,7 @@ export default function VideoEditorPage() {
   const previewSegments = reviewSegments.length
     ? reviewSegments
     : normalizeSubtitleSegments(currentItem);
-  const visualSpec = resolveVisualSpec(batch?.visual_spec);
+  const visualSpec = resolveVisualSpec(activeBatch?.visual_spec);
   const playbackRate = asNumber(visualSpec.playback_rate, 1.15);
   const previewTitle = reviewTitle || currentItem?.selected_title || titleCandidates(currentItem)[0] || "";
   const localPreview = localOverlayPreview(
@@ -1802,14 +2186,23 @@ export default function VideoEditorPage() {
     currentItem?.edit_plan?.spoken_ranges,
   );
   const serverPreviewUsesCurrentStyle = (
-    batch?.visual_spec?.style_id === DEFAULT_VISUAL_SPEC.style_id
+    activeBatch?.visual_spec?.style_id === DEFAULT_VISUAL_SPEC.style_id
   );
-  const overlayPreview = reviewItem || !serverPreviewUsesCurrentStyle
+  const serverPreviewHasKineticWords = Boolean(
+    currentItem?.overlay_preview?.cues?.some((cue) => (
+      (cue.kinetic_words || []).length > 0
+    ))
+  );
+  const overlayPreview = reviewItem || !serverPreviewUsesCurrentStyle || !serverPreviewHasKineticWords
     ? localPreview
     : currentItem?.overlay_preview || localPreview;
   const previewCaption = overlayPreview.cues.find((cue) => (
     cue.start <= previewTime && cue.end >= previewTime
   ));
+  const motionEvents = currentItem?.edit_plan?.director_plan?.motion_events || [];
+  const activeMotionEvent = previewMode === "plan"
+    ? motionEvents.find((event) => event.start <= previewTime && event.end >= previewTime)
+    : undefined;
   const titlePreviewTime = previewMode === "plan"
     ? planPreviewElapsed / playbackRate
     : previewTime;
@@ -1957,6 +2350,7 @@ export default function VideoEditorPage() {
   const chooseHistory = (selected: CloudBatch) => {
     const selectedItem = selected.items[0] as CloudBatchItem | undefined;
     setBatch(selected);
+    selectedSourceIdRef.current = selectedItem?.source_id;
     setSelectedSourceId(selectedItem?.source_id);
     setOutputProfile(selected.output_profile || "720p");
     setPlatform(selected.target_platform);
@@ -2095,6 +2489,17 @@ export default function VideoEditorPage() {
                     <div className="video-editor-title-accent" style={accentOverlayStyle} />
                   </>
                 )}
+                {activeMotionEvent && (
+                  <div
+                    className={`video-editor-motion-accent video-editor-motion-${activeMotionEvent.style_id}`}
+                    data-testid="semantic-motion-accent"
+                    aria-hidden="true"
+                  >
+                    <span className="motion-ray" />
+                    <span className="motion-ray" />
+                    <span className="motion-ray" />
+                  </div>
+                )}
                 {previewMode === "plan" && previewCaption?.lines.length && (
                   <div className="video-editor-subtitle-overlay" style={subtitleOverlayStyle}>
                     {previewCaption.lines.map((line, index) => (
@@ -2104,6 +2509,11 @@ export default function VideoEditorPage() {
                           index,
                           previewCaption.emphasis_range,
                           previewCaption.emphasis_style,
+                          previewCaption.kinetic_mode,
+                          previewCaption.kinetic_style,
+                          previewCaption.kinetic_words,
+                          previewCaption.start,
+                          previewTime,
                         )}
                       </span>
                     ))}
@@ -2260,6 +2670,11 @@ export default function VideoEditorPage() {
                     <Tag color="blue">
                       {currentItem.edit_plan.director_plan.scenes?.length || 0} 个场景
                     </Tag>
+                    {(currentItem.edit_plan.director_plan.motion_events?.length || 0) > 0 && (
+                      <Tag color="orange">
+                        语义动效 {currentItem.edit_plan.director_plan.motion_events?.length} 个
+                      </Tag>
+                    )}
                   </Space>
                   <Text type="secondary">
                     钩子使用原片完整原话，只出现一次；字幕、画面和配乐共用一条时间轴。
@@ -2738,7 +3153,13 @@ export default function VideoEditorPage() {
                           aria-label="复核背景音乐"
                           allowClear
                           value={reviewBgmId || undefined}
-                          onChange={(value) => setReviewBgmId(value || null)}
+                          onChange={(value) => {
+                            const nextValue = value || null;
+                            setReviewBgmId(nextValue);
+                            setReviewPlanStepIds((ids) => nextValue
+                              ? Array.from(new Set([...ids, "bgm"]))
+                              : ids.filter((id) => id !== "bgm"));
+                          }}
                           placeholder="本次保持原声"
                           options={bgmAssets.map((asset) => ({
                             value: asset.asset_id,
@@ -2864,9 +3285,29 @@ export default function VideoEditorPage() {
         .video-editor-title-accent{position:absolute;border-radius:999px;pointer-events:none;transition:opacity .12s linear}
         .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.64);paint-order:stroke fill;text-shadow:0 1px 1px rgba(0,0,0,.58),0 2px 3px rgba(0,0,0,.22);pointer-events:none}
         .video-editor-overlay-line{display:block}
-        .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.5) * 1em);line-height:0;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,120ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
-        @keyframes video-editor-emphasis-pop{0%{transform:scale(.94)}70%{transform:scale(1.05)}100%{transform:scale(1)}}
-        .video-editor-preview-footer{display:flex;flex:none;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
+        .video-editor-subtitle-kinetic-word{display:inline-block;transform-origin:center bottom;transition:transform 90ms cubic-bezier(.2,.9,.3,1.18),color 110ms ease,opacity 110ms ease,background-color 110ms ease,text-shadow 110ms ease;will-change:transform,color,opacity,background-color}
+        .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.08) * 1em);line-height:1;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,200ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
+        @keyframes video-editor-emphasis-pop{0%{transform:scale(.98)}68%{transform:scale(1.08)}100%{transform:scale(1)}}
+        .video-editor-motion-accent{position:absolute;z-index:3;left:50%;top:68%;width:74%;height:22%;pointer-events:none;transform:translate(-50%,-50%);opacity:.94;filter:drop-shadow(0 5px 8px rgba(0,0,0,.28));animation:video-editor-motion-accent-in 220ms cubic-bezier(.2,.9,.3,1.18) both}
+        .video-editor-motion-accent::before,.video-editor-motion-accent::after{position:absolute;content:"";border-radius:999px;background:var(--motion-accent-color,#FFD166)}
+        .video-editor-motion-accent::before{left:16%;right:16%;bottom:10%;height:3px;transform:rotate(-2deg);box-shadow:0 7px 0 rgba(255,255,255,.72)}
+        .video-editor-motion-accent::after{left:50%;top:14%;width:15%;height:15%;transform:translate(-50%,-50%) rotate(45deg);opacity:.88}
+        .video-editor-motion-accent .motion-ray{position:absolute;left:50%;top:46%;width:30%;height:3px;background:var(--motion-accent-color,#FFD166);transform-origin:left center;opacity:.72}
+        .video-editor-motion-accent .motion-ray:nth-child(1){transform:rotate(-32deg) translateX(66%)}
+        .video-editor-motion-accent .motion-ray:nth-child(2){transform:rotate(28deg) translateX(66%)}
+        .video-editor-motion-accent .motion-ray:nth-child(3){transform:rotate(0deg) translateX(66%);width:22%}
+        .video-editor-motion-number_slam{--motion-accent-color:#FFD166;animation-name:video-editor-motion-slam}
+        .video-editor-motion-process_marker{--motion-accent-color:#FF9F68;animation-name:video-editor-motion-marker}
+        .video-editor-motion-warning_shake{--motion-accent-color:#FF7A70;animation-name:video-editor-motion-shake}
+        .video-editor-motion-result_stamp{--motion-accent-color:#FF8A7A;animation-name:video-editor-motion-stamp}
+        .video-editor-motion-cta_burst{--motion-accent-color:#FFC857;animation-name:video-editor-motion-burst}
+        @keyframes video-editor-motion-accent-in{0%{opacity:0;transform:translate(-50%,-50%) scale(.9)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1)}}
+        @keyframes video-editor-motion-slam{0%{opacity:0;transform:translate(-50%,-50%) scale(.55) rotate(-5deg)}68%{opacity:1;transform:translate(-50%,-50%) scale(1.08) rotate(1deg)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1) rotate(0)}}
+        @keyframes video-editor-motion-marker{0%{opacity:0;transform:translate(-50%,-50%) scaleX(.55)}100%{opacity:.94;transform:translate(-50%,-50%) scaleX(1)}}
+        @keyframes video-editor-motion-stamp{0%{opacity:0;transform:translate(-50%,-50%) scale(.72) rotate(-8deg)}72%{opacity:1;transform:translate(-50%,-50%) scale(1.06) rotate(2deg)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1) rotate(0)}}
+        @keyframes video-editor-motion-burst{0%{opacity:0;transform:translate(-50%,-50%) scale(.65)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1)}}
+        @keyframes video-editor-motion-shake{0%,100%{transform:translate(-50%,-50%) translateX(0)}25%{transform:translate(-50%,-50%) translateX(-5px) rotate(-1deg)}50%{transform:translate(-50%,-50%) translateX(5px) rotate(1deg)}75%{transform:translate(-50%,-50%) translateX(-3px)}}
+         .video-editor-preview-footer{display:flex;flex:none;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
         .video-editor-preview-footer .ant-typography,.video-editor-preview-footer .ant-btn{color:#f8fafc}
         .video-editor-timeline-time{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
         .video-editor-transport{display:flex;width:100%;min-width:0;flex:1;align-items:center;gap:8px}

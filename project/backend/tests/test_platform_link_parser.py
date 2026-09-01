@@ -122,6 +122,28 @@ def test_xiaohongshu_payload_extracts_visible_video_stream():
     assert captured["media_url"] == "https://sns-video.example/video.mp4"
 
 
+def test_xiaohongshu_page_state_extracts_xhscdn_mp4_instead_of_blob():
+    captured: dict[str, str] = {}
+
+    class _Page:
+        @staticmethod
+        def evaluate(_script):
+            return {
+                "media_urls": [
+                    "blob:https://www.xiaohongshu.com/opaque-player",
+                    "https://sns-video-ak.xhscdn.com/stream/1/demo.mp4",
+                ],
+                "titles": ["页面标题"],
+            }
+
+    _client()._capture_xiaohongshu_page_state(_Page(), captured)
+
+    assert captured == {
+        "media_url": "https://sns-video-ak.xhscdn.com/stream/1/demo.mp4",
+        "title": "页面标题",
+    }
+
+
 def test_kuaishou_payload_extracts_photo_url():
     captured: dict[str, str] = {}
 

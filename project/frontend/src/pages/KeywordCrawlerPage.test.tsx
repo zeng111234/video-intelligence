@@ -20,6 +20,7 @@ import {
   listCrawlerKeywordQueues,
   probeCrawlerBatchCopy,
   recheckCrawlerBatchLegacyNoText,
+  resolveCrawlerCandidateOriginalMedia,
   resetCrawlerBrowserLoginState,
   startCrawlerBrowserDiscovery,
 } from "../api/client";
@@ -44,6 +45,7 @@ vi.mock("../api/client", async () => {
     listCrawlerKeywordQueues: vi.fn(),
     probeCrawlerBatchCopy: vi.fn(),
     recheckCrawlerBatchLegacyNoText: vi.fn(),
+    resolveCrawlerCandidateOriginalMedia: vi.fn(),
     resetCrawlerBrowserLoginState: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
   };
@@ -990,6 +992,68 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(transcriptionUrl.searchParams.get("title")).toBe(candidate.title);
     expect(transcriptionUrl.searchParams.get("entry")).toBeNull();
     expect(transcriptionUrl.searchParams.get("share_text")).toBe(candidate.source_url);
+  });
+
+  it("uses a direct Xiaohongshu note link for topic-only transcription", async () => {
+    const topicOnlyCandidate: CrawlerCandidateResult = {
+      ...candidate,
+      video_id: "xiaohongshu-topic-only",
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      source_url: "https://www.xiaohongshu.com/explore/topic-only",
+      spoken_material_status: "topic_only",
+      spoken_material_message: "公开搜索仅返回标题和互动数据。",
+    };
+    vi.mocked(getCrawlerBatch).mockResolvedValue({
+      ...batchWithCandidate,
+      platform_runs: [{
+        ...batchWithCandidate.platform_runs[0],
+        platform: "xiaohongshu",
+        platform_label: "小红书",
+        candidates: [topicOnlyCandidate],
+      }],
+    });
+
+    renderPage();
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    const transcriptionLink = await screen.findByRole("link", { name: "转写文案" });
+    const transcriptionUrl = new URL(transcriptionLink.getAttribute("href")!, "http://localhost");
+    expect(transcriptionUrl.searchParams.get("candidate")).toBe("xiaohongshu-topic-only");
+    expect(transcriptionUrl.searchParams.get("share_text")).toBe(topicOnlyCandidate.source_url);
+    expect(screen.getAllByRole("button", { name: "原视频" }).length).toBeGreaterThan(0);
+  });
+
+  it("derives a Xiaohongshu note link when a legacy candidate has only its video id", async () => {
+    const legacyCandidate: CrawlerCandidateResult = {
+      ...candidate,
+      video_id: "xiaohongshu-legacy-note-id",
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      source_url: null,
+      spoken_material_status: "topic_only",
+      spoken_material_message: "公开搜索仅返回标题和互动数据。",
+    };
+    vi.mocked(getCrawlerBatch).mockResolvedValue({
+      ...batchWithCandidate,
+      platform_runs: [{
+        ...batchWithCandidate.platform_runs[0],
+        platform: "xiaohongshu",
+        platform_label: "小红书",
+        candidates: [legacyCandidate],
+      }],
+    });
+
+    renderPage();
+    await screen.findByText("企业获客");
+    fireEvent.click(screen.getByRole("button", { name: /详情/ }));
+
+    const transcriptionLink = await screen.findByRole("link", { name: "转写文案" });
+    const transcriptionUrl = new URL(transcriptionLink.getAttribute("href")!, "http://localhost");
+    expect(transcriptionUrl.searchParams.get("share_text"))
+      .toBe("https://www.xiaohongshu.com/explore/legacy-note-id");
+    expect(screen.getAllByRole("button", { name: "原视频" }).length).toBeGreaterThan(0);
   });
 
   it("merges platform candidates and names a selected platform that did not complete", async () => {

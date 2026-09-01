@@ -85,6 +85,27 @@ ASR 本身（阿里云 fun-asr）其实工作正常，被错误归因。下次�
 `exc.__cause__` 的代表性字段（HTTP 状态、API 错误码），并把 retry 按钮
 文案改为"重新上传并识别"，避免用户陷入死循环。
 
+### work/ 目录下的脚本不作为产品验收
+
+`work/` 下的拼接脚本（ffmpeg concat、手工 timeline 拼装、PIL 数据卡生成）
+只允许做**失败证据**或**本地预览**，**不得作为产品验收的最终 MP4**。
+产品验收必须满足以下全部条件：
+
+1. 通过正式 `/video-editor` 页面（http://localhost:1001/video-editor）触发
+   并完成 quote → user_confirm → generation → export 完整链路；
+2. 最终 MP4 包含 **H.264 视频轨 + AAC 音频轨 + 烧录字幕**（ass 来自
+   `subtitle_manifest` 不可变 cue manifest，sha256 校验通过）；
+3. 同时输出 `director_timeline`、`provider_search_log`、
+   `image_generation_log`、`quality_report` 与 `contact_sheet`；
+4. 实际页面播放 + 下载 200 证据齐全；
+5. 真人观看确认：声音与字幕一致、字幕动效可见但不乱、至少 1 个全屏
+   B-roll、至少 1 个 PiP 或局部视觉强调、不出现深色万能卡、不出现
+   遮脸 / 裁头 / 黑边 / 遮字幕、不出现与场景无关的外国素材。
+
+`work/director-plan-20260831/trial-30s/trial-30s-v3.mp4` 这类手工拼接产物
+可以作为阶段性证据保留在 `work/` 树里，但**禁止继续修补或纳入正式流程**——
+任何"修改 trial-30s 脚本让它更接近正式"的尝试都是在向错误方向努力。
+
 ## 提示词优化与专家团
 
 - 当用户说“优化提示词”“优化提示词并执行”“启动优化提示词”“专家团”“智能路由”，或显式调用 `$prompt-expert-team` 时，加载并遵循全局 `prompt-expert-team` Skill。

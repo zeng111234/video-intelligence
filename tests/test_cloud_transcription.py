@@ -47,9 +47,14 @@ def fake_probe(args, **kwargs):
 
 
 class FakeCloudRuntime:
-    def __init__(self, confidence: float | None = None) -> None:
+    def __init__(
+        self,
+        confidence: float | None = None,
+        words: list[dict[str, object]] | None = None,
+    ) -> None:
         self.submissions = 0
         self.confidence = confidence
+        self.words = words or []
 
     def ensure_authorized(self, duration_seconds: float) -> Decimal:
         assert duration_seconds == 8.5
@@ -92,6 +97,7 @@ class FakeCloudRuntime:
                     start=0,
                     end=1.2,
                     text="公司云端识别结果。",
+                    words=self.words,
                     confidence=self.confidence,
                 )
             ],
@@ -139,6 +145,42 @@ def test_cloud_task_uses_one_provider_submission_and_never_loads_local_model(
     assert completed.segments[0].quality_status == "completed"
     assert completed.uncertain_segment_count == 0
     assert not Path(completed.outputs["source_media_path"]).exists()
+
+
+def test_cloud_task_preserves_provider_word_timing_for_video_editor(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime(
+        words=[
+            {"start": 0.0, "end": 0.42, "text": "公司"},
+            {"start": 0.48, "end": 1.1, "text": "云端识别结果"},
+        ]
+    )
+    service = TranscriptionService(
+        repository,
+        model_loader=lambda _name: pytest.fail("本地模型不得加载"),
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        include_word_timestamps=True,
+        async_processing=True,
+    )
+    completed = service.process_cloud_task(queued.task_id)
+
+    assert completed.word_timestamps_available is True
+    assert completed.segments[0].words == runtime.words
+    assert completed.segments[0].quality_note == "阿里云识别完成，已保留逐词时间。"
 
 
 def test_same_cloud_task_is_processed_once_when_worker_and_request_race(

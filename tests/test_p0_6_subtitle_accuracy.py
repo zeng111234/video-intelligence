@@ -36,6 +36,21 @@ def test_detect_known_errors_when_reviewed_differs() -> None:
     assert "raw_asr_equals_reviewed_no_human_review" not in errors
 
 
+def test_human_confirmed_review_allows_unchanged_asr_text() -> None:
+    text = "今天聊聊烧烤店"
+    errors = _detect_known_transcript_errors(
+        text,
+        raw_asr_text=text,
+        human_review_confirmed=True,
+    )
+    assert "raw_asr_equals_reviewed_no_human_review" not in errors
+
+
+def test_normal_fullwidth_punctuation_is_not_an_anomaly() -> None:
+    errors = _detect_known_transcript_errors("今天聊聊，烧烤店。")
+    assert "anomaly_symbol_in_transcript" not in errors
+
+
 def test_detect_known_errors_finds_r8_patterns() -> None:
     """r8 报告中的通用错词 token 模式被检测。"""
     # 这些是用户列出的"明显错词"，是 ASR 通用错位的表现

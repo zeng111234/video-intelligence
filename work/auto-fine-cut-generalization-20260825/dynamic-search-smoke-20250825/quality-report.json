@@ -7,19 +7,86 @@
     "resolution": true,
     "duration": true,
     "visual_timing": true,
+    "transcript_source_identity": false,
+    "timing_source_truthful": true,
+    "subtitle_style_baseline": true,
+    "visual_relevance": true,
+    "cost_confirmation": true,
     "audio_video_drift": true,
     "subtitle_effect_gate": true,
     "subtitle_timeline": true
   },
-  "duration_seconds": 12.67,
+  "transcript_source_identity": {
+    "passed": false,
+    "failures": [
+      "provider_missing",
+      "model_missing"
+    ],
+    "provider": "unknown",
+    "model": "unknown",
+    "source_media_sha256": "1bf9920fe4c1c6c4eb3f4cc0eec8a3192a33a2c34b243c9347291169ff64277b",
+    "transcript_timing_source": "word_timestamps",
+    "word_timestamps_available": true
+  },
+  "timing_source_truthful": {
+    "passed": true,
+    "reason": null,
+    "declared": "word_timestamps",
+    "available": true
+  },
+  "subtitle_style_baseline": {
+    "passed": true,
+    "failures": [],
+    "entry_motion_ms": 140,
+    "emphasis_scale_min": 1.05,
+    "emphasis_scale_max": 1.22,
+    "preview_unified_style": true,
+    "emphasis_count": 0
+  },
+  "visual_relevance": {
+    "passed": true,
+    "candidate_count": 0,
+    "failures": []
+  },
+  "cost_confirmation": {
+    "passed": true,
+    "failures": [],
+    "cost_confirmed": false,
+    "cost_quote": null,
+    "expected_min_generated_assets": 0
+  },
+  "duration_seconds": 12.63,
   "expected_duration_seconds": 12.67,
-  "duration_delta_seconds": 0.0,
+  "duration_delta_seconds": 0.04,
   "resolution": {
     "width": 720,
     "height": 1280
   },
-  "visual_beat_count": 1,
+  "visual_beat_count": 3,
   "style_version": "talking_head_release_v2.0-director-timeline",
+  "subtitle_rendering": {
+    "source_caption_mode": "preserve_baked_source",
+    "source_caption_detection": {
+      "detected": true,
+      "mode": "preserve_baked_source",
+      "method": "sampled_caption_band_heuristic",
+      "confidence": 0.75,
+      "sample_count": 4,
+      "evidence_count": 4,
+      "evidence_ratio": 1.0,
+      "position_stability": 0.0,
+      "strongest_score": 1.0
+    },
+    "source_caption_preserved": true,
+    "generated_caption_scope": "full_broll_only",
+    "generated_cue_count": 1,
+    "generated_caption_intervals": [
+      {
+        "start": 5.38,
+        "end": 6.84
+      }
+    ]
+  },
   "bgm": {
     "enabled": true,
     "asset_id": "bgm-a40b291dc5b1",
@@ -44,8 +111,8 @@
   "alignment": {
     "method": "ffprobe_stream_start_end_pts",
     "start_drift_ms": 0.0,
-    "end_drift_ms": 6.667,
-    "max_drift_ms": 6.667,
+    "end_drift_ms": 5.008,
+    "max_drift_ms": 5.008,
     "threshold_ms": 67.0,
     "passed": true
   },
@@ -71,8 +138,8 @@
     "phrase_timing_source": "word_timestamps",
     "estimated_phrase_timestamps": false,
     "max_phrase_duration_seconds": 1.7,
-    "cue_manifest_sha256": "812c913c8821f69e5336a52fab3dfe78b4add7b26a8a3d9ab09b29de1d66dceb",
-    "ass_sha256": "2171922cff06d3622ac5988f33fe3cec9bf24157426bb1001c65f85187ea5e32",
+    "cue_manifest_sha256": "d50a8a44a2df2c09cdafe192bb9629ed81419a1d96d8c7f4cfeb989a5192d908",
+    "ass_sha256": "2f2339e2442fc3455d75172389bd6ceac2b9f6d0ba6d5f265bbc7466fa299a4c",
     "preview_render_manifest_equal": true,
     "experience_gate": {
       "passed": true,
@@ -247,9 +314,10 @@
     "director_assets_ready": false,
     "minimum_real_visual_events": false,
     "has_pip_visual": true,
-    "has_full_visual": false,
+    "has_full_visual": true,
     "pip_safe_area_no_face_or_subtitle_overlap": true,
     "real_broll_coverage_template_policy": false,
+    "effective_visual_coverage_policy": true,
     "no_fixed_asset_loop": true,
     "visual_origin_traceable": true,
     "semantic_broll_match_explainable": true,
@@ -263,44 +331,61 @@
   "visual_gate_policy": {
     "template_id": "adaptive_talking_head_v1",
     "visual_density": "rich",
-    "min_real_events": 2,
-    "max_real_events": 3,
-    "min_coverage_ratio": 0.25,
-    "max_coverage_ratio": 0.4,
+    "min_real_events": 3,
+    "max_real_events": 6,
+    "min_coverage_ratio": 0.45,
+    "max_coverage_ratio": 0.65,
+    "min_effective_coverage_ratio": 0.45,
+    "max_effective_coverage_ratio": 0.65,
     "pip_required": true,
     "full_required": true,
-    "language": "丰富自适应模式至少需要一组相关全屏和一组真实 PiP；素材不足只能安全降级并失败视觉发布门。",
-    "real_event_count": 1,
-    "broll_count": 1,
-    "coverage_ratio": 0.1073,
+    "language": "丰富自适应模式需要真实素材覆盖 45%-65%，且至少包含 1 个全屏和 1 个真实 PiP；素材不足只能安全降级并失败视觉发布门。",
+    "min_pip_events": 1,
+    "min_full_events": 1,
+    "real_event_count": 2,
+    "broll_count": 2,
+    "coverage_ratio": 0.2233,
+    "effective_coverage_ratio": 0.5479,
+    "effective_coverage_seconds": 6.92,
     "actual_has_pip_visual": true,
-    "actual_has_full_visual": false,
+    "actual_has_full_visual": true,
     "passed": false
   },
   "hard_checks": {
     "has_pip_visual": true,
-    "has_full_visual": false,
+    "has_full_visual": true,
     "pip_required": true,
     "full_required": true,
-    "actual_real_broll_event_count": 1,
-    "actual_real_broll_coverage_ratio": 0.1073
+    "pip_event_count": 1,
+    "full_event_count": 1,
+    "min_pip_events": 1,
+    "min_full_events": 1,
+    "actual_real_broll_event_count": 2,
+    "actual_real_broll_coverage_ratio": 0.2233,
+    "effective_visual_coverage_ratio": 0.5479
   },
   "visual_cadence_gate": {
     "passed": true,
-    "meaningful_visual_beat_count": 3,
+    "meaningful_visual_beat_count": 6,
     "beat_starts_final_output": [
       0.0,
+      0.55,
       3.24,
+      5.38,
+      7.39,
       9.38
     ],
     "intervals_seconds": [
-      3.24,
-      6.14
+      0.55,
+      2.69,
+      2.14,
+      2.01,
+      1.99
     ],
-    "max_gap_seconds": 6.14,
+    "max_gap_seconds": 2.69,
     "recommended_max_gap_seconds": 6.0,
     "hard_max_gap_seconds": 7.5,
-    "rhythm_hold_exception": true,
+    "rhythm_hold_exception": false,
     "routine_subtitle_refresh_counted": false,
     "safe_degradation_allowed": true
   },
@@ -322,9 +407,9 @@
         "product"
       ],
       "search_queries": [
-        "phone mount in car",
         "hands installing phone mount",
-        "product demonstration close up"
+        "phone mount close up detail",
+        "phone mount in real setting"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "拧一下就能锁紧",
@@ -351,8 +436,8 @@
       ],
       "search_queries": [
         "car air vent phone mount",
-        "hands installing phone mount",
-        "product demonstration close up"
+        "phone mount in car",
+        "hands using phone mount"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "也不会卡住出风口",
@@ -378,9 +463,9 @@
         "product"
       ],
       "search_queries": [
-        "product demonstration close up",
-        "hands installing product",
-        "phone mount in car"
+        "hands removing product",
+        "product in real setting",
+        "product close up detail"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "反正拧一下就取下来",
@@ -403,38 +488,46 @@
         "product"
       ],
       "search_queries": [
-        "phone mount in car",
         "hands installing phone mount",
-        "product demonstration close up"
+        "phone mount close up detail",
+        "phone mount in real setting"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "拧一下就能锁紧",
       "expected_context": "product demonstration",
       "preferred_mode": "pip",
       "fallback": "a_roll_safe_push_and_sparse_emphasis",
-      "semantic_query": "拧一下就能锁紧 phone mount in car hands installing phone mount product demonstration close up",
-      "provider_query": "phone mount in car",
-      "local_candidate_count": 19,
+      "semantic_query": "拧一下就能锁紧 hands installing phone mount phone mount close up detail phone mount in real setting",
+      "provider_query": "hands installing phone mount",
+      "local_candidate_count": 98,
+      "local_pool_count": 98,
+      "semantic_candidate_count": 4,
+      "accepted_local_candidate_count": 1,
+      "projected_real_coverage_ratio": 0.3962,
       "provider_attempted": false,
-      "provider": null,
+      "provider": "pexels",
       "provider_status": "skipped_local_semantic_match",
       "provider_attempts": 0,
       "provider_attempt_details": [],
       "candidate_count": 0,
+      "candidate_metadata": [],
       "candidate_scores": [
         {
           "asset_id": "broll-eda83700b0",
-          "score": 82,
+          "score": 112,
           "accepted": true,
           "reason": [
-            "concrete_visual_intersection:product_demo",
-            "keywords:phonemountincar"
+            "concrete_visual_intersection:product_demo,vehicle_navigation"
           ]
         }
       ],
       "rejections": [],
       "final_asset_id": "broll-eda83700b0",
       "final_action": "bind_visual_asset",
+      "p0v3_matched_duration_seconds": 11.455,
+      "p0v3_accumulated_seconds": 11.455,
+      "provider_source_url": "https://www.pexels.com/video/person-driving-a-vehicle-using-google-maps-on-a-smartphone-mounted-on-the-dashboard-3006846/",
+      "provider_license": "Pexels License",
       "final_mode": "pip"
     },
     {
@@ -450,54 +543,48 @@
       ],
       "search_queries": [
         "car air vent phone mount",
-        "hands installing phone mount",
-        "product demonstration close up"
+        "phone mount in car",
+        "hands using phone mount"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "也不会卡住出风口",
       "expected_context": "product demonstration",
       "preferred_mode": "full",
       "fallback": "a_roll_safe_push_and_sparse_emphasis",
-      "semantic_query": "也不会卡住出风口 car air vent phone mount hands installing phone mount product demonstration close up",
+      "semantic_query": "也不会卡住出风口 car air vent phone mount phone mount in car hands using phone mount",
       "provider_query": "car air vent phone mount",
-      "local_candidate_count": 19,
-      "provider_attempted": true,
+      "local_candidate_count": 98,
+      "local_pool_count": 98,
+      "semantic_candidate_count": 3,
+      "accepted_local_candidate_count": 1,
+      "projected_real_coverage_ratio": 0.3962,
+      "provider_attempted": false,
       "provider": "pexels",
-      "provider_status": "ready",
-      "provider_attempts": 3,
-      "provider_attempt_details": [
-        {
-          "provider": "pexels",
-          "status": "ready",
-          "attempts": 1,
-          "candidate_count": 1
-        },
-        {
-          "provider": null,
-          "status": "unavailable",
-          "attempts": 2,
-          "candidate_count": 0
-        }
-      ],
-      "candidate_count": 1,
+      "provider_status": "skipped_local_semantic_match",
+      "provider_attempts": 0,
+      "provider_attempt_details": [],
+      "candidate_count": 0,
+      "candidate_metadata": [],
       "candidate_scores": [
         {
-          "asset_id": "broll-eda83700b0",
+          "asset_id": "broll-3e71221108",
           "score": 82,
           "accepted": true,
           "reason": [
-            "concrete_visual_intersection:product_demo",
-            "keywords:carairventphonemount"
+            "concrete_visual_compatibility:vehicle_navigation_product_use",
+            "concrete_visual_intersection:vehicle_navigation",
+            "keywords:phonemountincar"
           ]
         }
       ],
-      "rejections": [
-        "no_authorized_semantic_match",
-        "no_generated_fallback_match"
-      ],
-      "final_asset_id": null,
-      "final_action": "safe_degradation",
-      "provider_reason": null
+      "rejections": [],
+      "final_asset_id": "broll-3e71221108",
+      "final_action": "bind_visual_asset",
+      "p0v3_matched_duration_seconds": 10.56,
+      "p0v3_accumulated_seconds": 22.015,
+      "provider_source_url": "https://www.pexels.com/video/person-using-an-application-on-his-phone-for-guidance-while-driving-3010433/",
+      "provider_license": "Pexels License",
+      "final_mode": "full"
     },
     {
       "source_segment_index": 9,
@@ -511,40 +598,972 @@
         "product"
       ],
       "search_queries": [
-        "product demonstration close up",
-        "hands installing product",
-        "phone mount in car"
+        "hands removing product",
+        "product in real setting",
+        "product close up detail"
       ],
       "expected_subject": "the named product or hands using/installing it",
       "expected_action": "反正拧一下就取下来",
       "expected_context": "product demonstration",
       "preferred_mode": "pip",
       "fallback": "a_roll_safe_push_and_sparse_emphasis",
-      "semantic_query": "反正拧一下就取下来 product demonstration close up hands installing product phone mount in car",
-      "provider_query": "product demonstration close up",
-      "local_candidate_count": 19,
+      "semantic_query": "反正拧一下就取下来 hands removing product product in real setting product close up detail",
+      "provider_query": "hands removing product",
+      "local_candidate_count": 98,
+      "local_pool_count": 98,
+      "semantic_candidate_count": 0,
+      "accepted_local_candidate_count": 0,
+      "projected_real_coverage_ratio": 0.0,
       "provider_attempted": true,
-      "provider": "pexels",
+      "provider": "pixabay",
       "provider_status": "ready",
-      "provider_attempts": 2,
+      "provider_attempts": 3,
       "provider_attempt_details": [
         {
-          "provider": "pexels",
+          "provider": "pixabay",
+          "query": "hands removing product",
           "status": "ready",
-          "attempts": 0,
-          "candidate_count": 1
+          "attempts": 1,
+          "candidate_count": 5
         },
         {
-          "provider": null,
-          "status": "unavailable",
-          "attempts": 2,
-          "candidate_count": 0
+          "provider": "pixabay",
+          "query": "product in real setting",
+          "status": "ready",
+          "attempts": 1,
+          "candidate_count": 6
+        },
+        {
+          "provider": "pixabay",
+          "query": "product close up detail",
+          "status": "ready",
+          "attempts": 1,
+          "candidate_count": 4
         }
       ],
-      "candidate_count": 1,
+      "candidate_count": 15,
+      "candidate_metadata": [
+        {
+          "asset_id": "broll-063dfadaae",
+          "provider": "pexels",
+          "title": "woman getting wet wipes 4213954",
+          "description": "",
+          "tags": [
+            "hands removing product"
+          ],
+          "source_url": "https://www.pexels.com/video/woman-getting-wet-wipes-4213954/",
+          "duration_seconds": 8.6,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "hands removing product"
+        },
+        {
+          "asset_id": "broll-abb8c98b0b",
+          "provider": "pexels",
+          "title": "a person tearing a sachet 6724688",
+          "description": "",
+          "tags": [
+            "hands removing product"
+          ],
+          "source_url": "https://www.pexels.com/video/a-person-tearing-a-sachet-6724688/",
+          "duration_seconds": 8.767,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "hands removing product"
+        },
+        {
+          "asset_id": "broll-d762717245",
+          "provider": "pexels",
+          "title": "person wiping hands 4216668",
+          "description": "",
+          "tags": [
+            "hands removing product"
+          ],
+          "source_url": "https://www.pexels.com/video/person-wiping-hands-4216668/",
+          "duration_seconds": 19.6,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/woman-getting-wet-wipes-4213954/",
+          "duration_seconds": 9.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product",
+          "asset_id": "broll-063dfadaae",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/person-wiping-hands-4216668/",
+          "duration_seconds": 20.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product",
+          "asset_id": "broll-d762717245",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/a-person-tearing-a-sachet-6724688/",
+          "duration_seconds": 9.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/manual-honey-extraction-process-in-apiary-31914436/",
+          "duration_seconds": 17.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/a-person-holding-a-yellow-cup-in-front-of-a-3d-printer-26621091/",
+          "duration_seconds": 16.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/woman-cleansing-fingertips-with-cotton-pad-33546062/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 2.0,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/a-person-holding-a-glove-with-a-blue-paw-print-26790986/",
+          "duration_seconds": 40.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/person-removing-a-watch-on-the-wrist-6328385/",
+          "duration_seconds": 32.0,
+          "aspect_ratio": 1.8935,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bubbles, multicoloured",
+          "description": "",
+          "tags": "ai generated, bubbles, multicoloured, reflection, soap, fun, colorful, transparent, floating, flying, sky, clouds, mood, happy, sphere, round",
+          "source_url": "https://pixabay.com/videos/id-372728/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product",
+          "asset_id": "broll-f52f76d9fc",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, mountain biking, bike",
+          "description": "",
+          "tags": "ai generated, mountain biking, bike, biking, bicycle, cycling, sport, people, cyclist, adventure, leaping, jumping, leap, jump, exciting, style",
+          "source_url": "https://pixabay.com/videos/id-372813/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product",
+          "asset_id": "broll-03d1d7b64d",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, subway, train",
+          "description": "",
+          "tags": "ai generated, subway, train, metro, underground, architecture, urban, tunnel, station, transport, platform, terminal, transportation, city, metropolitan, vehicle, travel",
+          "source_url": "https://pixabay.com/videos/id-372730/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, forest, trees",
+          "description": "",
+          "tags": "ai generated, forest, trees, woods, woodlands, nature, landscape, path, trail, outdoors, autumn, fall, leaves, foliage, road, mood, season, colorful, peaceful, calm, relaxing",
+          "source_url": "https://pixabay.com/videos/id-372729/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "waterfall, mountain stream, flow",
+          "description": "",
+          "tags": "waterfall, mountain stream, flow, stone, moss, forest, nature, japan",
+          "source_url": "https://pixabay.com/videos/id-228847/",
+          "duration_seconds": 20.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "chicken, free range, poultry",
+          "description": "",
+          "tags": "chicken, free range, poultry, nature, agriculture, plumage",
+          "source_url": "https://pixabay.com/videos/id-373055/",
+          "duration_seconds": 29.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, sunrise, fog",
+          "description": "",
+          "tags": "ai generated, sunrise, fog, valley, forest, mist, sun, sunlight, sunbeams, clouds, mountains, landscape, nature, morning, woodland, trees, rays, light, atmosphere, scenic, dramatic, peaceful, beautiful",
+          "source_url": "https://pixabay.com/videos/id-373318/",
+          "duration_seconds": 41.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bride, woman",
+          "description": "",
+          "tags": "ai generated, bride, woman, portrait, outdoors, romance, rain, nature, raining, rose, flower, bloom, blossom, garden",
+          "source_url": "https://pixabay.com/videos/id-372808/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "hands removing product"
+        },
+        {
+          "asset_id": "broll-1ab1af7e1f",
+          "provider": "pexels",
+          "title": "efficiently folding textiles in a factory setting 31580827",
+          "description": "",
+          "tags": [
+            "product in real setting"
+          ],
+          "source_url": "https://www.pexels.com/video/efficiently-folding-textiles-in-a-factory-setting-31580827/",
+          "duration_seconds": 13.46,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product in real setting"
+        },
+        {
+          "asset_id": "broll-42ea8ab2fe",
+          "provider": "pexels",
+          "title": "hands table beauty indoors 4620916",
+          "description": "",
+          "tags": [
+            "product in real setting"
+          ],
+          "source_url": "https://www.pexels.com/video/hands-table-beauty-indoors-4620916/",
+          "duration_seconds": 14.96,
+          "aspect_ratio": 1.8935,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product in real setting"
+        },
+        {
+          "asset_id": "broll-4b6580649e",
+          "provider": "pixabay",
+          "title": "ai generated, fantasy, illusion",
+          "description": "ai generated, fantasy, illusion, dream, fairytale, surreal, mystical, mysterious, bread, loaf, people, family, home, house, interior, furniture, room, magic, architecture",
+          "tags": "ai generated, fantasy, illusion, dream, fairytale, surreal, mystical, mysterious, bread, loaf, people, family, home, house, interior, furniture, room, magic, architecture",
+          "source_url": "https://pixabay.com/videos/id-372445/",
+          "duration_seconds": 5.067,
+          "aspect_ratio": 0.5625,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product in real setting"
+        },
+        {
+          "asset_id": "broll-87dd50a208",
+          "provider": "pexels",
+          "title": "flat lay of hair essentials 7427955",
+          "description": "",
+          "tags": [
+            "product in real setting"
+          ],
+          "source_url": "https://www.pexels.com/video/flat-lay-of-hair-essentials-7427955/",
+          "duration_seconds": 14.698,
+          "aspect_ratio": 1.8935,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/flat-lay-of-hair-essentials-7427955/",
+          "duration_seconds": 15.0,
+          "aspect_ratio": 1.8935,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting",
+          "asset_id": "broll-87dd50a208",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/efficiently-folding-textiles-in-a-factory-setting-31580827/",
+          "duration_seconds": 13.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting",
+          "asset_id": "broll-1ab1af7e1f",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/fruits-on-the-table-7294096/",
+          "duration_seconds": 11.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/hands-table-beauty-indoors-4620916/",
+          "duration_seconds": 15.0,
+          "aspect_ratio": 1.8935,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/person-walking-inside-the-house-6632878/",
+          "duration_seconds": 8.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/nightstand-scene-with-phone-charging-and-hand-interaction-36017452/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/person-picking-up-box-from-drawer-6632882/",
+          "duration_seconds": 8.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/organizing-bathroom-essentials-in-wire-basket-37185288/",
+          "duration_seconds": 9.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bubbles, multicoloured",
+          "description": "",
+          "tags": "ai generated, bubbles, multicoloured, reflection, soap, fun, colorful, transparent, floating, flying, sky, clouds, mood, happy, sphere, round",
+          "source_url": "https://pixabay.com/videos/id-372728/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting",
+          "asset_id": "broll-f52f76d9fc",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, mountain biking, bike",
+          "description": "",
+          "tags": "ai generated, mountain biking, bike, biking, bicycle, cycling, sport, people, cyclist, adventure, leaping, jumping, leap, jump, exciting, style",
+          "source_url": "https://pixabay.com/videos/id-372813/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting",
+          "asset_id": "broll-03d1d7b64d",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, subway, train",
+          "description": "",
+          "tags": "ai generated, subway, train, metro, underground, architecture, urban, tunnel, station, transport, platform, terminal, transportation, city, metropolitan, vehicle, travel",
+          "source_url": "https://pixabay.com/videos/id-372730/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, forest, trees",
+          "description": "",
+          "tags": "ai generated, forest, trees, woods, woodlands, nature, landscape, path, trail, outdoors, autumn, fall, leaves, foliage, road, mood, season, colorful, peaceful, calm, relaxing",
+          "source_url": "https://pixabay.com/videos/id-372729/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "waterfall, mountain stream, flow",
+          "description": "",
+          "tags": "waterfall, mountain stream, flow, stone, moss, forest, nature, japan",
+          "source_url": "https://pixabay.com/videos/id-228847/",
+          "duration_seconds": 20.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "chicken, free range, poultry",
+          "description": "",
+          "tags": "chicken, free range, poultry, nature, agriculture, plumage",
+          "source_url": "https://pixabay.com/videos/id-373055/",
+          "duration_seconds": 29.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, sunrise, fog",
+          "description": "",
+          "tags": "ai generated, sunrise, fog, valley, forest, mist, sun, sunlight, sunbeams, clouds, mountains, landscape, nature, morning, woodland, trees, rays, light, atmosphere, scenic, dramatic, peaceful, beautiful",
+          "source_url": "https://pixabay.com/videos/id-373318/",
+          "duration_seconds": 41.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bride, woman",
+          "description": "",
+          "tags": "ai generated, bride, woman, portrait, outdoors, romance, rain, nature, raining, rose, flower, bloom, blossom, garden",
+          "source_url": "https://pixabay.com/videos/id-372808/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product in real setting"
+        },
+        {
+          "asset_id": "broll-67b673d4f8",
+          "provider": "pexels",
+          "title": "close up of industrial manufacturing process 32386535",
+          "description": "",
+          "tags": [
+            "product close up detail"
+          ],
+          "source_url": "https://www.pexels.com/video/close-up-of-industrial-manufacturing-process-32386535/",
+          "duration_seconds": 8.46,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product close up detail"
+        },
+        {
+          "asset_id": "broll-8b132a5df6",
+          "provider": "pexels",
+          "title": "close up shot of a leather couch 5853612",
+          "description": "",
+          "tags": [
+            "product close up detail"
+          ],
+          "source_url": "https://www.pexels.com/video/close-up-shot-of-a-leather-couch-5853612/",
+          "duration_seconds": 9.493,
+          "aspect_ratio": 1.7778,
+          "score": 0,
+          "accepted_for_download": true,
+          "cache_reused": true,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/close-up-of-industrial-manufacturing-process-32386535/",
+          "duration_seconds": 8.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail",
+          "asset_id": "broll-67b673d4f8",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/close-up-shot-of-a-leather-couch-5853612/",
+          "duration_seconds": 9.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail",
+          "asset_id": "broll-8b132a5df6",
+          "downloaded": true
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/close-up-shot-of-a-printing-printer-6145578/",
+          "duration_seconds": 44.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/a-machine-with-a-metal-pot-and-a-metal-pipe-26569052/",
+          "duration_seconds": 13.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/close-up-video-of-a-speaker-4230438/",
+          "duration_seconds": 4.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/camera-lens-3650048/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/air-pressure-guide-embossed-on-the-sides-of-a-rubber-tire-4131831/",
+          "duration_seconds": 47.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pexels",
+          "title": "",
+          "description": "",
+          "tags": [],
+          "source_url": "https://www.pexels.com/video/industrial-metal-bending-process-close-up-31751361/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bubbles, multicoloured",
+          "description": "",
+          "tags": "ai generated, bubbles, multicoloured, reflection, soap, fun, colorful, transparent, floating, flying, sky, clouds, mood, happy, sphere, round",
+          "source_url": "https://pixabay.com/videos/id-372728/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail",
+          "asset_id": "broll-f52f76d9fc",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, mountain biking, bike",
+          "description": "",
+          "tags": "ai generated, mountain biking, bike, biking, bicycle, cycling, sport, people, cyclist, adventure, leaping, jumping, leap, jump, exciting, style",
+          "source_url": "https://pixabay.com/videos/id-372813/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail",
+          "asset_id": "broll-03d1d7b64d",
+          "downloaded": true
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, subway, train",
+          "description": "",
+          "tags": "ai generated, subway, train, metro, underground, architecture, urban, tunnel, station, transport, platform, terminal, transportation, city, metropolitan, vehicle, travel",
+          "source_url": "https://pixabay.com/videos/id-372730/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, forest, trees",
+          "description": "",
+          "tags": "ai generated, forest, trees, woods, woodlands, nature, landscape, path, trail, outdoors, autumn, fall, leaves, foliage, road, mood, season, colorful, peaceful, calm, relaxing",
+          "source_url": "https://pixabay.com/videos/id-372729/",
+          "duration_seconds": 5.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "waterfall, mountain stream, flow",
+          "description": "",
+          "tags": "waterfall, mountain stream, flow, stone, moss, forest, nature, japan",
+          "source_url": "https://pixabay.com/videos/id-228847/",
+          "duration_seconds": 20.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "chicken, free range, poultry",
+          "description": "",
+          "tags": "chicken, free range, poultry, nature, agriculture, plumage",
+          "source_url": "https://pixabay.com/videos/id-373055/",
+          "duration_seconds": 29.0,
+          "aspect_ratio": 1.7778,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, sunrise, fog",
+          "description": "",
+          "tags": "ai generated, sunrise, fog, valley, forest, mist, sun, sunlight, sunbeams, clouds, mountains, landscape, nature, morning, woodland, trees, rays, light, atmosphere, scenic, dramatic, peaceful, beautiful",
+          "source_url": "https://pixabay.com/videos/id-373318/",
+          "duration_seconds": 41.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        },
+        {
+          "provider": "pixabay",
+          "title": "ai generated, bride, woman",
+          "description": "",
+          "tags": "ai generated, bride, woman, portrait, outdoors, romance, rain, nature, raining, rose, flower, bloom, blossom, garden",
+          "source_url": "https://pixabay.com/videos/id-372808/",
+          "duration_seconds": 10.0,
+          "aspect_ratio": 0.5625,
+          "score": 8,
+          "accepted_for_download": true,
+          "cache_reused": false,
+          "query": "product close up detail"
+        }
+      ],
       "candidate_scores": [
         {
-          "asset_id": "broll-59b1ea22d3",
+          "asset_id": "broll-063dfadaae",
+          "query": "hands removing product",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-abb8c98b0b",
+          "query": "hands removing product",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-d762717245",
+          "query": "hands removing product",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-f52f76d9fc",
+          "query": "hands removing product",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-03d1d7b64d",
+          "query": "hands removing product",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-1ab1af7e1f",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-42ea8ab2fe",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-4b6580649e",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-87dd50a208",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-f52f76d9fc",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-03d1d7b64d",
+          "query": "product in real setting",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-67b673d4f8",
+          "query": "product close up detail",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-8b132a5df6",
+          "query": "product close up detail",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-f52f76d9fc",
+          "query": "product close up detail",
+          "score": 0,
+          "accepted": false,
+          "reason": [
+            "rejected_by_semantic_gate"
+          ]
+        },
+        {
+          "asset_id": "broll-03d1d7b64d",
+          "query": "product close up detail",
           "score": 0,
           "accepted": false,
           "reason": [
@@ -558,7 +1577,12 @@
       ],
       "final_asset_id": null,
       "final_action": "safe_degradation",
-      "provider_reason": "cache_reused"
+      "provider_queries_tried": [
+        "hands removing product",
+        "product in real setting",
+        "product close up detail"
+      ],
+      "provider_reason": null
     }
   ],
   "provider_search_gate": {
@@ -573,8 +1597,8 @@
     "note": "源视频自带画面、贴图、汽车图和特效不计入本次程序新增视觉成果。"
   },
   "output_added_visual": {
-    "event_count": 1,
-    "broll_event_count": 1,
+    "event_count": 2,
+    "broll_event_count": 2,
     "vector_event_count": 0,
     "events": [
       {
@@ -583,6 +1607,14 @@
         "end": 4.6,
         "mode": "pip",
         "asset_id": "broll-eda83700b0",
+        "source": "pexels"
+      },
+      {
+        "event_id": "broll-3e71221108",
+        "start": 5.38,
+        "end": 6.84,
+        "mode": "full",
+        "asset_id": "broll-3e71221108",
         "source": "pexels"
       }
     ]
@@ -610,8 +1642,8 @@
     "generated_images_do_not_satisfy_free_stock_video_gate": true,
     "free_stock_video_gate": "blocked_missing_confirmed_pexels_or_pixabay_video"
   },
-  "visual_event_count": 2,
-  "visual_broll_event_count": 1,
+  "visual_event_count": 5,
+  "visual_broll_event_count": 2,
   "semantic_visual_layer_count": 0,
   "semantic_visual_layer_geometry": {
     "safe": false,
@@ -628,20 +1660,20 @@
     "intersects_subtitle_bbox": false,
     "intersects_pip_bbox": true
   },
-  "real_broll_event_count": 1,
-  "real_stock_video_event_count": 1,
+  "real_broll_event_count": 2,
+  "real_stock_video_event_count": 2,
   "generated_image_event_count": 0,
   "domestic_real_broll_event_count": 0,
-  "international_broll_event_count": 1,
+  "international_broll_event_count": 2,
   "broll_context_counts": {
     "domestic_real": 0,
-    "international_stock": 1,
+    "international_stock": 2,
     "generated_image": 0,
     "unknown": 0
   },
   "broll_origin_counts": {
     "generated_image_asset": 0,
-    "stock_video_asset": 1,
+    "stock_video_asset": 2,
     "other_real_local_asset": 0
   },
   "broll_provenance": [
@@ -658,19 +1690,76 @@
       "publish_licensed": true,
       "semantic_binding": null,
       "keywords": [
-        "car air vent phone mount"
+        "phone mount in car"
       ],
-      "semantic_query": "car air vent phone mount",
+      "semantic_query": "phone mount in car",
+      "domestic_context": "international",
+      "domestic_scene": ""
+    },
+    {
+      "event_index": 1,
+      "asset_id": "broll-3e71221108",
+      "mode": "full",
+      "asset_origin": "stock_video_asset",
+      "provider": "pexels",
+      "license_name": "Pexels License",
+      "license_url": "https://www.pexels.com/license/",
+      "source_url": "https://www.pexels.com/video/person-using-an-application-on-his-phone-for-guidance-while-driving-3010433/",
+      "authorization_status": "confirmed",
+      "publish_licensed": true,
+      "semantic_binding": null,
+      "keywords": [
+        "phone mount in car"
+      ],
+      "semantic_query": "phone mount in car",
       "domestic_context": "international",
       "domestic_scene": ""
     }
   ],
-  "real_broll_coverage_ratio": 0.1073,
-  "visual_coverage_seconds": 1.36,
+  "real_broll_coverage_ratio": 0.2233,
+  "visual_coverage_seconds": 2.82,
   "vector_coverage_seconds": 0,
+  "real_stock_broll_coverage_ratio": 0.2233,
+  "real_stock_broll_seconds": 2.82,
+  "generated_image_coverage_ratio": 0.0,
+  "generated_image_seconds": 0,
+  "deterministic_card_coverage_ratio": 0.0,
+  "deterministic_card_seconds": 0,
+  "deterministic_card_event_count": 0,
+  "generated_image_lock": {
+    "status": "generated_for_local_acceptance",
+    "cannot_be_promoted_to": [
+      "confirmed",
+      "publish_licensed"
+    ],
+    "real_broll_count": 0
+  },
+  "visual_window_plan": {
+    "is_long_form": false,
+    "is_short_form": true,
+    "target_real_coverage_ratio_min": 0.25,
+    "target_real_coverage_ratio_max": 0.45,
+    "target_real_coverage_seconds_min": 3.643,
+    "target_real_coverage_seconds_max": 6.557,
+    "required_window_count": 0,
+    "optional_window_count": 0,
+    "required_window_seconds": 0,
+    "optional_window_seconds": 0,
+    "planned_visual_windows": []
+  },
+  "target_real_coverage_seconds": {
+    "min": 3.643,
+    "max": 6.557
+  },
+  "current_real_coverage_seconds": 2.82,
+  "coverage_deficit_seconds": 0.823,
+  "unresolved_semantic_windows": [],
+  "unresolved_window_count": 0,
+  "effective_visual_coverage_seconds": 6.92,
+  "effective_visual_coverage_ratio": 0.5479,
   "broll_modes": {
     "pip": 1,
-    "full": 0,
+    "full": 1,
     "vector_pip": 0
   },
   "pip_geometry": [
@@ -711,7 +1800,14 @@
     }
   ],
   "pip_safe_area_passed": true,
-  "media_passed": true,
+  "media_passed": false,
+  "transcript_timing_gate": {
+    "passed": true,
+    "word_p95_ms": 0.0,
+    "mapping_error_frames": 0.0,
+    "matched_cue_count": 11,
+    "unmatched_cue_count": 0
+  },
   "transcript_source_identity_gate": {
     "enabled": true,
     "passed": true,
@@ -726,6 +1822,11 @@
       "source_duration_seconds": 14.57,
       "transcript_sha256": "bd9d73ffca68d726c59afb20df29f583a095d7c335f6a043b31c70600ec84bf3",
       "transcript_timing_source": "word_timestamps",
+      "provider": "unknown",
+      "model": "unknown",
+      "word_timestamps_available": true,
+      "segment_count": 10,
+      "estimated_phrase_timestamps": false,
       "transcript_identity_scope": "task_subtitle_segments_v1"
     }
   },
@@ -749,17 +1850,19 @@
     "executed_source_seconds": 12.62,
     "opening_duration_seconds": 0.0,
     "expected_output_seconds": 12.62,
-    "actual_output_seconds": 12.67,
-    "actual_body_seconds": 12.67
+    "actual_output_seconds": 12.63,
+    "actual_body_seconds": 12.63
   },
   "transcript_accuracy_gate": {
     "passed": true,
-    "method": "reviewed_transcript_correction_audit",
+    "method": "reviewed_transcript_correction_audit_with_known_error_detection",
     "source": "local_reviewed_homophone_correction",
     "correction_count": 0,
-    "remaining_known_error_terms": []
+    "remaining_known_error_terms": [],
+    "raw_asr_equals_reviewed": true,
+    "human_review_warnings": []
   },
-  "media_integrity_passed": true,
+  "media_integrity_passed": false,
   "subtitle_sync_passed": true,
   "visual_release_passed": false
 }

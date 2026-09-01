@@ -53,7 +53,11 @@ def resolve_talking_head_template_id(template_id: str | None) -> str:
     )
 
 _TAKE_MARKER = re.compile(
-    r"^(?:好[，,。.!！]?\s*)?(?:第[一二三四五六七八九十百\d]+|下一条|新的一条|重来|重新来|再来一条)"
+    # An ordinal at the start of a sentence is not necessarily a new take:
+    # phrases such as “第一件事” and “第二句话” are ordinary content.  Only
+    # accept an explicit take marker (a bare ordinal, or ordinal + 条/个),
+    # while retaining the spoken “好，第七…” marker used by recordings.
+    r"^(?:好[，,。.!！]?\s*)?(?:(?:第[一二三四五六七八九十百\d]+)(?:条|个)?(?=$|[，,。.!！；;：:]|\s)|下一条|新的一条|重来|重新来|再来一条)"
 )
 _INCOMPLETE_END = re.compile(
     r"(?:如果|但是|但|所以|因为|然后|以及|并且|而且|只是|除非|否则|其中|比如|当|让|把|在|对|跟|和)$"

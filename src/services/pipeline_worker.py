@@ -452,12 +452,6 @@ class PipelineWorker:
         """从客户明确提供的平台分享链接开始，不经过关键词发现。"""
         share_text = str(run.config.get("share_text") or "")
         candidate_platform = str(run.config.get("candidate_platform") or "").lower()
-        if (
-            candidate_platform == Platform.XIAOHONGSHU.value
-            or "xiaohongshu.com" in share_text.lower()
-        ):
-            self._pause_for_xiaohongshu_safety(run)
-            return
         if run.status == PipelineRunStatus.PENDING and run.current_stage is None:
             if self.douyin_link_transcription_service is None:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "分享链接转写服务未配置。")
@@ -471,6 +465,10 @@ class PipelineWorker:
             )
             try:
                 if bool(run.config.get("use_paid_fallback")):
+                    if candidate_platform == Platform.XIAOHONGSHU.value:
+                        raise DouyinParserError(
+                            "小红书仅使用已登录浏览器处理，不能使用付费链接回退。"
+                        )
                     preview = self.douyin_link_transcription_service.preview(share_text)
                     if not preview.work_id:
                         raise DouyinParserError("链接缺少可用于授权回退的作品 ID。")
@@ -537,10 +535,18 @@ class PipelineWorker:
                 )
                 return
             profile = dict(run.config.get("profile") or {})
+            try:
+                copywriting_platform = Platform(candidate_platform)
+            except ValueError:
+                copywriting_platform = (
+                    Platform.XIAOHONGSHU
+                    if "xiaohongshu.com" in share_text.lower()
+                    else Platform.DOUYIN
+                )
             self.pipeline_service.create_copywriting_review(
                 run=run,
                 transcription=transcription,
-                platform=Platform.DOUYIN,
+                platform=copywriting_platform,
                 target_audience=str(profile.get("target_audience") or ""),
                 style_prompt=str(profile.get("script_style") or ""),
             )
@@ -587,9 +593,7 @@ class PipelineWorker:
         source_type = str(run.config.get("source_type") or "candidate")
         if source_type == "candidate":
             candidate_platform = str(run.config.get("candidate_platform") or "douyin")
-            if candidate_platform == Platform.XIAOHONGSHU.value:
-                self._pause_for_xiaohongshu_safety(run)
-            elif bool(run.config.get("candidate_link_fallback")):
+            if bool(run.config.get("candidate_link_fallback")):
                 self._run_guided_share_link(run)
             elif candidate_platform == Platform.DOUYIN.value:
                 self._run_candidate(run)

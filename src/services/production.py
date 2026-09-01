@@ -962,6 +962,10 @@ class ProductionService:
                                 link_preview.parser_message
                                 or "本机浏览器暂时不能解析该平台链接。"
                             )
+                        else:
+                            # 非抖音候选不走媒体下载器，已通过预检的链接应交给
+                            # 已登录的本机浏览器解析器，而不是在生产队列中停住。
+                            use_candidate_link_fallback = True
                 if candidate is not None and cloud_runtime is not None:
                     duration_seconds = float(candidate.duration_seconds or 0)
                     if asr_unit_cost is None or duration_seconds <= 0:

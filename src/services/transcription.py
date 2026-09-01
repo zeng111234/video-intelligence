@@ -625,6 +625,16 @@ class TranscriptionService:
                     start=item.start,
                     end=item.end,
                     text=item.text,
+                    # Fun-ASR already returns provider-native word clocks.  The
+                    # old adapter copied only sentence fields here, which
+                    # forced the editor to estimate every caption cue across
+                    # the whole sentence.  Preserve the validated clocks so
+                    # the existing lexical/semantic caption renderer can use
+                    # them without re-running ASR.
+                    words=[
+                        word.model_dump(mode="json")
+                        for word in (getattr(item, "words", None) or [])
+                    ],
                     confidence=item.confidence,
                     needs_review=(
                         item.confidence is not None and item.confidence < 0.75
@@ -640,6 +650,8 @@ class TranscriptionService:
                     quality_note=(
                         "阿里云标记为低置信度，请确认该片段。"
                         if item.confidence is not None and item.confidence < 0.75
+                        else "阿里云识别完成，已保留逐词时间。"
+                        if getattr(item, "words", None)
                         else "阿里云识别完成，未返回片段置信度。"
                         if item.confidence is None
                         else "阿里云识别完成。"
@@ -681,6 +693,9 @@ class TranscriptionService:
                     "provider_status": "succeeded",
                     "error_message": None,
                     "segments": segments,
+                    "word_timestamps_available": any(
+                        bool(segment.words) for segment in segments
+                    ),
                     "duration_seconds": cloud_transcript.duration_seconds
                     or task.duration_seconds,
                     "language": cloud_transcript.language or task.language or "zh",

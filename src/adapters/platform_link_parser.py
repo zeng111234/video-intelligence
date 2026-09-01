@@ -494,6 +494,12 @@ class LocalPlatformLinkParserClient:
                                 if captured.get("media_url"):
                                     break
                     else:
+                        if link.platform == Platform.XIAOHONGSHU and not captured.get(
+                            "media_url"
+                        ):
+                            # 小红书网页播放器常把真实地址藏在结构化状态里，
+                            # DOM 只暴露 blob:，不能把 blob 当作可转写媒体。
+                            self._capture_xiaohongshu_page_state(page, captured)
                         video = page.locator("video")
                         if not captured.get("media_url") and video.count() > 0:
                             media_url = video.first.evaluate(
@@ -643,6 +649,104 @@ class LocalPlatformLinkParserClient:
                         walk(child)
 
         walk(payload)
+
+    @staticmethod
+    def _capture_xiaohongshu_page_state(page: Any, captured: dict[str, str]) -> None:
+        """Extract a real XHS CDN video from the already authorized page.
+
+        XHS frequently exposes only a ``blob:`` URL on the video element.  The
+        hydrated page state or an inline state script can still contain the
+        signed ``xhscdn.com`` MP4 URL.  This reads page-local state only; it does
+        not export cookies, solve challenges, or manufacture a media URL.
+        """
+
+        try:
+            state = page.evaluate(
+                r"""
+                () => {
+                  const media = [];
+                  const titles = [];
+                  const seen = new WeakSet();
+                  const addUrl = (value) => {
+                    if (typeof value !== 'string' || !value.trim()) return;
+                    const raw = value.trim()
+                      .replace(/\\u002F/g, '/')
+                      .replace(/\\\//g, '/');
+                    try {
+                      const url = new URL(raw, window.location.href);
+                      const host = (url.hostname || '').toLowerCase();
+                      const path = url.pathname || '';
+                      if ((host === 'xhscdn.com' || host.endsWith('.xhscdn.com')) &&
+                          (/\.mp4(?:$|[?#])/i.test(path) || /\/stream\//i.test(path))) {
+                        media.push(url.href);
+                      }
+                    } catch (_) {}
+                  };
+                  const walk = (value, depth) => {
+                    if (value == null || depth > 10) return;
+                    if (typeof value === 'string') {
+                      addUrl(value);
+                      return;
+                    }
+                    if (typeof value !== 'object') return;
+                    if (seen.has(value)) return;
+                    seen.add(value);
+                    if (!Array.isArray(value)) {
+                      for (const [key, child] of Object.entries(value)) {
+                        if (/^(title|displaytitle|desc|description|caption)$/i.test(key) &&
+                            typeof child === 'string' && child.trim()) {
+                          titles.push(child.trim());
+                        }
+                        walk(child, depth + 1);
+                      }
+                    } else {
+                      for (const child of value) walk(child, depth + 1);
+                    }
+                  };
+                  for (const root of [
+                    window.__INITIAL_STATE__,
+                    window.__UNIVERSAL_DATA_FOR_REHYDRATION__,
+                    window.__NEXT_DATA__,
+                  ]) walk(root, 0);
+                  for (const script of Array.from(document.scripts || [])) {
+                    const text = script.textContent || '';
+                    if (!/xhscdn\.com|INITIAL_STATE|UNIVERSAL_DATA/i.test(text)) continue;
+                    for (const match of text.match(/https?:\/\/[^"'\s<>]+/g) || []) {
+                      addUrl(match);
+                    }
+                  }
+                  return {
+                    media_urls: Array.from(new Set(media)).slice(0, 20),
+                    titles: Array.from(new Set(titles)).slice(0, 10),
+                  };
+                }
+                """
+            )
+        except Exception:
+            return
+        if not isinstance(state, dict):
+            return
+        titles = state.get("titles")
+        if not captured.get("title") and isinstance(titles, list):
+            for value in titles:
+                if isinstance(value, str) and value.strip():
+                    captured["title"] = value.strip()
+                    break
+        media_urls = state.get("media_urls")
+        if not isinstance(media_urls, list):
+            return
+        for value in media_urls:
+            if not isinstance(value, str):
+                continue
+            parsed = urlparse(value)
+            host = (parsed.hostname or '').casefold()
+            if (
+                parsed.scheme == 'https'
+                and (host == 'xhscdn.com' or host.endswith('.xhscdn.com'))
+                and ('.mp4' in parsed.path.casefold() or '/stream/' in parsed.path.casefold())
+            ):
+                captured["media_url"] = value
+                return
 
     @classmethod
     def _capture_kuaishou_payload(

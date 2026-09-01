@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -17,6 +18,44 @@ from src.adapters.douyin_parser import DouyinParserError
 from src.models import Platform
 
 router = APIRouter(prefix="/api/v1/crawler/link-transcriptions", tags=["crawler"])
+
+
+def _candidate_xiaohongshu_url(candidate) -> str | None:
+    """Build a canonical note URL for legacy candidates without source_url."""
+    if candidate.platform != Platform.XIAOHONGSHU:
+        return None
+    raw_id = str(candidate.platform_item_id or candidate.video_id or "").strip()
+    if raw_id.casefold().startswith("xiaohongshu-"):
+        raw_id = raw_id[len("xiaohongshu-"):]
+    if not raw_id or not all(char.isalnum() or char in "-_" for char in raw_id):
+        return None
+    item_id = quote(raw_id, safe="")
+    return f"https://www.xiaohongshu.com/explore/{item_id}" if item_id else None
+
+
+def _has_usable_xiaohongshu_share_url(source_url: object) -> bool:
+    """Return whether a saved Xiaohongshu note URL can enter the logged browser.
+
+    The connected, user-authorized browser confirms whether the note is reachable.
+    A direct note URL may still require an active session or manual verification;
+    the resolver reports that failure instead of silently switching providers.
+    """
+    if not isinstance(source_url, str):
+        return False
+    try:
+        parsed = urlparse(source_url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").casefold()
+    if host == "xhslink.com" or host.endswith(".xhslink.com"):
+        return True
+    is_xiaohongshu = (
+        host == "xiaohongshu.com" or host.endswith(".xiaohongshu.com")
+    )
+    is_note_path = "/explore/" in parsed.path or "/discovery/item/" in parsed.path
+    return is_xiaohongshu and is_note_path
 
 
 class LinkPreviewRequest(BaseModel):
@@ -130,11 +169,13 @@ def create_from_candidate(
             status_code=400,
             detail="当前平台候选暂不支持链接转写，请上传已获授权的视频文件。",
         )
-    if not candidate.source_url:
+    source_url = str(candidate.source_url) if candidate.source_url else None
+    source_url = source_url or _candidate_xiaohongshu_url(candidate)
+    if not source_url:
         raise HTTPException(status_code=400, detail="该候选没有可用的原视频链接。")
     try:
         task = service.transcribe_experimental(
-            share_text=str(candidate.source_url),
+            share_text=source_url,
             rights_holder=body.rights_holder,
             rights_confirmed=body.rights_confirmed,
             model_name=body.model_name,

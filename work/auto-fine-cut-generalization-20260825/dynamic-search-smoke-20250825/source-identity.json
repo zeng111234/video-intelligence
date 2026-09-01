@@ -3,5 +3,10 @@
   "source_duration_seconds": 14.57,
   "transcript_sha256": "bd9d73ffca68d726c59afb20df29f583a095d7c335f6a043b31c70600ec84bf3",
   "transcript_timing_source": "word_timestamps",
+  "provider": "unknown",
+  "model": "unknown",
+  "word_timestamps_available": true,
+  "segment_count": 10,
+  "estimated_phrase_timestamps": false,
   "transcript_identity_scope": "task_subtitle_segments_v1"
 }

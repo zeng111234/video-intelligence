@@ -40,7 +40,11 @@ from src.models import (
     VideoEditorBatchItem,
 )
 from src.services.credits import InsufficientCreditsError
-from src.services.video_editor_cloud import _caption_lexical_units, _caption_lexical_words
+from src.services.video_editor_cloud import (
+    _caption_display_cleanup,
+    _caption_lexical_units,
+    _caption_lexical_words,
+)
 from src.services.local_visual_asset_matcher import (
     asset_publish_claim_allowed,
     build_keyword_generation_plan,
@@ -99,6 +103,584 @@ _LOCAL_RENDER_SEMAPHORE = threading.Semaphore(1)
 _LOCAL_RENDER_MODE = "local_ffmpeg"
 _LOCAL_ENCODER_SELECTION: dict[str, Any] | None = None
 _LOCAL_ENCODER_LOCK = threading.Lock()
+_SOURCE_CAPTION_MODE_PRESERVE = "preserve_baked_source"
+_SOURCE_CAPTION_MODE_REPLACE = "replace_baked_source"
+_SOURCE_CAPTION_MODE_GENERATED = "generated_ass"
+
+
+# P0-收口 2026-08-31: transcript source identity and timing-source truthfulness.
+# These helpers exist so the release pipeline never labels an ASR result as
+# ``word_timestamps`` when the underlying provider only returned sentence-level
+# segments, and so the quality report can publish the exact provider / model /
+# sha256 / timing source for every release.
+try:  # jieba is a hard dependency for phrase estimation (project requirement).
+    import jieba  # type: ignore[import-not-found]
+    _JIEBA_IMPORT_ERROR: str | None = None
+except Exception as _exc:  # pragma: no cover - hard fail at import time
+    jieba = None  # type: ignore[assignment]
+    _JIEBA_IMPORT_ERROR = repr(_exc)
+
+
+def _has_word_timestamps(segments: Sequence[Mapping[str, Any]]) -> bool:
+    """True iff at least one segment has a non-empty ``words`` list."""
+    for seg in segments:
+        words = seg.get("words") if isinstance(seg, Mapping) else None
+        if isinstance(words, list) and words:
+            return True
+    return False
+
+
+def _truthful_transcript_timing_source(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    declared: str | None = None,
+) -> str:
+    """Return the truthful ASR timing source for ``segments``.
+
+    The release pipeline MUST publish the source that matches the real ASR
+    payload.  Sentence-only providers (e.g. aliyun fun-asr without word
+    timestamps) cannot be downgraded to ``word_timestamps`` even if a
+    caller asks for it.
+    """
+    if _has_word_timestamps(segments):
+        return "word_timestamps"
+    return "sentence_timestamps"
+
+
+def _transcript_source_identity(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    provider: str | None = None,
+    model: str | None = None,
+    source_media_sha256: str | None = None,
+    transcript_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical transcript source identity used by the quality gates.
+
+    Every field is sourced from the ASR result itself; nothing here is
+    inferred from a known sample video.  ``word_timestamps_available`` is
+    computed from the segments (never the caller), so the identity remains
+    truthful even when the declared timing source is wrong.
+
+    P0-收口 2026-08-31: the field name is now unified to
+    ``source_media_sha256`` so subtitle manifests, director plans and the
+    final MP4 all speak the same key.  Callers passing the legacy
+    ``media_sha256`` keyword are remapped so production still works.
+    """
+    canonical_segments = [
+        dict(seg) for seg in segments if isinstance(seg, Mapping)
+    ]
+    word_available = _has_word_timestamps(canonical_segments)
+    timing_source = _truthful_transcript_timing_source(canonical_segments)
+    if transcript_sha256 is None and canonical_segments:
+        transcript_sha256 = hashlib.sha256(
+            json.dumps(
+                canonical_segments,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    return {
+        "provider": str(provider or "unknown"),
+        "model": str(model or "unknown"),
+        "source_media_sha256": str(source_media_sha256 or "").lower() or None,
+        "transcript_sha256": str(transcript_sha256 or "").lower() or None,
+        "transcript_timing_source": timing_source,
+        "word_timestamps_available": word_available,
+        "segment_count": len(canonical_segments),
+        "estimated_phrase_timestamps": not word_available,
+    }
+
+
+def _transcript_source_identity_gate(
+    identity: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Hard gate: every transcript source field must be truthful and present.
+
+    This is intentionally not specific to any single provider: a missing
+    provider, a missing model, an empty ``source_media_sha256`` or a
+    ``transcript_sha256`` that is shorter than 16 hex chars all fail the
+    gate.  Both ``source_media_sha256`` (new) and the legacy
+    ``media_sha256`` key are accepted as input so older callers still
+    work, but the new key is the only one the gate checks.
+    """
+    identity = identity or {}
+    failures: list[str] = []
+    provider = str(identity.get("provider") or "").strip().lower()
+    if not provider or provider == "unknown":
+        failures.append("provider_missing")
+    model = str(identity.get("model") or "").strip()
+    if not model or model == "unknown":
+        failures.append("model_missing")
+    # P0-收口 2026-08-31: accept legacy "media_sha256" as fallback only.
+    source_media_sha = str(
+        identity.get("source_media_sha256")
+        or identity.get("media_sha256")
+        or ""
+    ).lower()
+    if not source_media_sha or len(source_media_sha) < 16:
+        failures.append("source_media_sha256_missing")
+    transcript_sha = str(identity.get("transcript_sha256") or "")
+    if not transcript_sha or len(transcript_sha) < 16:
+        failures.append("transcript_sha256_missing")
+    timing_source = str(identity.get("transcript_timing_source") or "")
+    if timing_source not in {"word_timestamps", "sentence_timestamps"}:
+        failures.append("timing_source_invalid")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "provider": provider or None,
+        "model": model or None,
+        # P0-收口 2026-08-31: report the unified key so the quality
+        # report only ever speaks one field name.
+        "source_media_sha256": source_media_sha or None,
+        "transcript_timing_source": timing_source or None,
+        "word_timestamps_available": bool(identity.get("word_timestamps_available")),
+    }
+
+
+def _transcript_source_mismatch_gate(
+    declared_identity: Mapping[str, Any] | None,
+    *,
+    computed_source_sha256: str | None = None,
+    computed_transcript_sha256: str | None = None,
+) -> dict[str, Any]:
+    """P0-收口 2026-08-31: hard gate that fails any release whose
+    subtitle manifest / director plan / final MP4 disagrees on the
+    source identity.  Either the caller passes the freshly-computed
+    source and transcript sha256, or the gate refuses to pass.
+    The mismatch label ``TRANSCRIPT_SOURCE_MISMATCH`` is the single
+    string the customer-facing quality report must surface.
+    """
+    identity = declared_identity or {}
+    declared_source = str(
+        identity.get("source_media_sha256")
+        or identity.get("media_sha256")
+        or ""
+    ).lower()
+    declared_transcript = str(identity.get("transcript_sha256") or "").lower()
+    computed_source = str(computed_source_sha256 or "").lower()
+    computed_transcript = str(computed_transcript_sha256 or "").lower()
+    failures: list[str] = []
+    if declared_source and computed_source and declared_source != computed_source:
+        failures.append("TRANSCRIPT_SOURCE_MISMATCH")
+    if (
+        declared_transcript
+        and computed_transcript
+        and declared_transcript != computed_transcript
+    ):
+        failures.append("transcript_text_mismatch")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "declared_source_media_sha256": declared_source or None,
+        "computed_source_media_sha256": computed_source or None,
+        "declared_transcript_sha256": declared_transcript or None,
+        "computed_transcript_sha256": computed_transcript or None,
+    }
+
+
+def _timing_source_truthful_gate(
+    identity: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Hard gate: declared ``word_timestamps`` must match real words on segments."""
+    identity = identity or {}
+    declared = str(identity.get("transcript_timing_source") or "")
+    available = bool(identity.get("word_timestamps_available"))
+    truthful = _truthful_transcript_timing_source([])
+    # The truthful helper returns sentence_timestamps when no words are
+    # present.  Re-running it with empty segments gives us the same
+    # comparison the rest of the pipeline will use.
+    del truthful
+    if declared == "word_timestamps" and not available:
+        return {
+            "passed": False,
+            "reason": "declared_word_timestamps_but_no_words",
+            "declared": declared,
+            "available": available,
+        }
+    return {
+        "passed": True,
+        "reason": None,
+        "declared": declared,
+        "available": available,
+    }
+
+
+def _jieba_segment_to_cues(
+    text: str,
+    start: float,
+    end: float,
+    *,
+    max_phrase_seconds: float = 2.4,
+    min_phrase_seconds: float = 0.6,
+) -> list[dict[str, Any]]:
+    """Estimate word-clock cues for a sentence-level ASR segment using jieba.
+
+    The function never invents timestamps outside ``[start, end]``.  Each
+    generated cue is tagged with ``estimated_phrase_timestamps: true`` and
+    ``word_clock_mapping: "jieba_estimated_phrase_split"`` so downstream
+    quality gates can tell the synthetic words apart from real ones.
+    """
+    if not text or end <= start:
+        return []
+    if jieba is None:  # pragma: no cover - jieba is a hard dep
+        return [{
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "lines": [text],
+            "estimated_phrase_timestamps": True,
+            "word_clock_mapping": "jieba_unavailable_fallback",
+        }]
+    spans = [
+        token for token in jieba.cut(text) if token and not token.isspace()
+    ]
+    if not spans:
+        return [{
+            "start": round(start, 3),
+            "end": round(end, 3),
+            "lines": [text],
+            "estimated_phrase_timestamps": True,
+            "word_clock_mapping": "jieba_empty_fallback",
+        }]
+    total_chars = sum(len(token) for token in spans) or 1
+    duration = max(0.001, end - start)
+    cues: list[dict[str, Any]] = []
+    cursor = 0.0
+    buffer: list[str] = []
+    buffer_chars = 0
+    buffer_start: float | None = None
+    for token in spans:
+        if not buffer:
+            buffer_start = start + (cursor / total_chars) * duration
+        buffer.append(token)
+        buffer_chars += len(token)
+        cursor += len(token)
+        phrase_text = "".join(buffer)
+        phrase_duration = (
+            (cursor / total_chars) * duration
+            - ((cursor - len(token)) / total_chars) * duration
+        )
+        if (
+            phrase_duration >= min_phrase_seconds
+            and len(phrase_text) >= 4
+        ) or buffer_chars >= 8:
+            phrase_start = buffer_start if buffer_start is not None else start
+            phrase_end = start + (cursor / total_chars) * duration
+            cues.append({
+                "start": round(phrase_start, 3),
+                "end": round(min(end, phrase_end), 3),
+                "lines": [phrase_text],
+                "estimated_phrase_timestamps": True,
+                "word_clock_mapping": "jieba_estimated_phrase_split",
+            })
+            buffer = []
+            buffer_chars = 0
+            buffer_start = None
+        if (cursor / total_chars) * duration >= max_phrase_seconds and buffer:
+            phrase_text = "".join(buffer)
+            phrase_start = buffer_start if buffer_start is not None else start
+            phrase_end = start + (cursor / total_chars) * duration
+            cues.append({
+                "start": round(phrase_start, 3),
+                "end": round(min(end, phrase_end), 3),
+                "lines": [phrase_text],
+                "estimated_phrase_timestamps": True,
+                "word_clock_mapping": "jieba_estimated_phrase_split",
+            })
+            buffer = []
+            buffer_chars = 0
+            buffer_start = None
+    if buffer:
+        phrase_text = "".join(buffer)
+        phrase_start = buffer_start if buffer_start is not None else start
+        cues.append({
+            "start": round(phrase_start, 3),
+            "end": round(end, 3),
+            "lines": [phrase_text],
+            "estimated_phrase_timestamps": True,
+            "word_clock_mapping": "jieba_estimated_phrase_split",
+        })
+    return cues
+
+
+def _estimate_phrase_cues_from_sentence_level(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    max_phrase_seconds: float = 2.4,
+) -> list[dict[str, Any]]:
+    """Return jieba-estimated cues for sentence-level ASR segments.
+
+    This is the public entry point used by the release pipeline when
+    ``word_timestamps_available`` is false.  It never claims a word-level
+    P95 below 150ms because there is no real word clock to measure.
+    """
+    cues: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        if not isinstance(segment, Mapping):
+            continue
+        text = re.sub(r"\s+", "", str(segment.get("text") or ""))
+        try:
+            start = float(segment.get("start") or 0.0)
+            end = float(segment.get("end") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if not text or end <= start:
+            continue
+        for cue in _jieba_segment_to_cues(
+            text,
+            start,
+            end,
+            max_phrase_seconds=max_phrase_seconds,
+        ):
+            cue["source_segment_index"] = index
+            cues.append(cue)
+    return cues
+
+
+# P0-收口 2026-08-31: adaptive subtitle style baseline plus the deliberate
+# short-video kinetic extension.  The gate keeps the base typography and
+# density stable while allowing the explicitly versioned kinetic renderer to
+# use a larger, semantic pop on selected words.
+SUBTITLE_BASELINE_ENTRY_MOTION_MS = 120
+SUBTITLE_BASELINE_ENTRY_MOTION_MIN_MS = 100
+SUBTITLE_BASELINE_ENTRY_MOTION_MAX_MS = 140
+SUBTITLE_BASELINE_EMPHASIS_SCALE_MIN = 1.05
+SUBTITLE_BASELINE_EMPHASIS_SCALE_MAX = 1.10
+SUBTITLE_KINETIC_EMPHASIS_SCALE_MAX = 1.22
+SUBTITLE_BASELINE_MAX_EMPHASIS_PER_4_CUES = 1
+# Color tokens — match the existing palette_id "neutral_tech_business_v1".
+SUBTITLE_EMPHASIS_COLOR_NUMBER = "#FFD166"     # 暖黄: 数字/价格/比例
+SUBTITLE_EMPHASIS_COLOR_METHOD = "#FF9F68"     # 暖橙: 方法/步骤/工具
+SUBTITLE_EMPHASIS_COLOR_CONFLICT = "#FB7185"   # 黄橙偏红: 否定/冲突/结论
+SUBTITLE_EMPHASIS_COLOR_DEFAULT = "#F8FAFC"    # 浅白: 默认
+
+_NUMBER_TOKENS = (
+    r"\d+(?:\.\d+)?\s*[%％万亿元千百十]",
+    r"\d+",
+)
+_METHOD_TOKENS = (
+    "方法", "步骤", "流程", "工具", "系统", "模块", "功能", "模式", "渠道",
+    "怎么", "如何", "怎样", "通过", "使用", "搭建", "接入", "配置", "部署",
+    "上线", "运行", "执行",
+)
+_CONFLICT_TOKENS = (
+    "不", "没", "无", "不要", "不要", "错误", "失败", "过时", "老", "旧",
+    "不是", "不行", "不能", "难", "坑", "亏", "踩", "差", "坏", "破",
+)
+
+
+def _emphasis_color_for(text: str) -> str:
+    """Return the adaptive emphasis color for the given cue text.
+
+    The classification is rule-based on visible tokens, never on a
+    specific sample video.  Order matters: number takes precedence over
+    method, and method over conflict.  The result is one of the four
+    ``SUBTITLE_EMPHASIS_COLOR_*`` constants.
+    """
+    if not text:
+        return SUBTITLE_EMPHASIS_COLOR_DEFAULT
+    compact = re.sub(r"\s+", "", text)
+    for token in _NUMBER_TOKENS:
+        if re.search(token, compact):
+            return SUBTITLE_EMPHASIS_COLOR_NUMBER
+    if any(token in compact for token in _METHOD_TOKENS):
+        return SUBTITLE_EMPHASIS_COLOR_METHOD
+    if any(token in compact for token in _CONFLICT_TOKENS):
+        return SUBTITLE_EMPHASIS_COLOR_CONFLICT
+    return SUBTITLE_EMPHASIS_COLOR_DEFAULT
+
+
+def _subtitle_style_baseline_gate(preview: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Hard gate: subtitle style fingerprint MUST stay on the adaptive baseline.
+
+    Reports each failure mode so the quality report can show customers
+    exactly which rule the renderer drifted away from.  No fix is
+    attempted here — the renderer is a stable module and the gate's job
+    is to stop the release when the contract breaks.
+    """
+    preview = preview or {}
+    fingerprint = preview.get("style_fingerprint") if isinstance(preview, Mapping) else None
+    if not isinstance(fingerprint, Mapping):
+        return {
+            "passed": False,
+            "failures": ["style_fingerprint_missing"],
+            "entry_motion_ms": None,
+            "emphasis_scale_min": None,
+            "emphasis_scale_max": None,
+            "preview_unified_style": False,
+        }
+    failures: list[str] = []
+    entry_motion = fingerprint.get("entry_motion")
+    if not isinstance(entry_motion, str) or not entry_motion.startswith("fade_in_"):
+        failures.append("entry_motion_not_fade_in")
+    else:
+        suffix = entry_motion.rsplit("_", 1)[-1]
+        try:
+            ms = int(suffix.removesuffix("ms"))
+        except (ValueError, AttributeError):
+            try:
+                ms = int(suffix[:-2])
+            except ValueError:
+                ms = -1
+        if (
+            ms < SUBTITLE_BASELINE_ENTRY_MOTION_MIN_MS
+            or ms > SUBTITLE_BASELINE_ENTRY_MOTION_MAX_MS
+        ):
+            failures.append("entry_motion_out_of_baseline_range")
+    scale_range = fingerprint.get("emphasis_scale_range")
+    if not (
+        isinstance(scale_range, (list, tuple))
+        and len(scale_range) == 2
+        and all(isinstance(v, (int, float)) for v in scale_range)
+    ):
+        failures.append("emphasis_scale_range_invalid")
+    else:
+        scale_min, scale_max = float(scale_range[0]), float(scale_range[1])
+        kinetic_v2 = fingerprint.get("word_motion") == "douyin_kinetic_v2"
+        allowed_scale_max = (
+            SUBTITLE_KINETIC_EMPHASIS_SCALE_MAX
+            if kinetic_v2
+            else SUBTITLE_BASELINE_EMPHASIS_SCALE_MAX
+        )
+        if (
+            scale_min < SUBTITLE_BASELINE_EMPHASIS_SCALE_MIN - 1e-6
+            or scale_max > allowed_scale_max + 1e-6
+        ):
+            failures.append("emphasis_scale_out_of_baseline_range")
+    unified = str(preview.get("subtitle_style_id") or "") == "adaptive_talking_head_v1"
+    if not unified:
+        failures.append("not_unified_adaptive_style")
+    cues = preview.get("cues") or []
+    emphasis_count = 0
+    for cue in cues:
+        if isinstance(cue, Mapping) and isinstance(cue.get("emphasis_style"), Mapping):
+            emphasis_count += 1
+    if cues:
+        max_allowed = max(1, math.ceil(len(cues) / 4) * SUBTITLE_BASELINE_MAX_EMPHASIS_PER_4_CUES)
+        if emphasis_count > max_allowed:
+            failures.append("too_many_emphasis_cues")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "entry_motion_ms": ms if "ms" in dir() and isinstance(ms, int) else None,
+        "emphasis_scale_min": scale_range[0] if isinstance(scale_range, (list, tuple)) and scale_range else None,
+        "emphasis_scale_max": scale_range[1] if isinstance(scale_range, (list, tuple)) and scale_range else None,
+        "preview_unified_style": unified,
+        "emphasis_count": emphasis_count,
+    }
+
+
+# P0-收口 2026-08-31: relevance gate (D) and cost-confirmation gate (H §8).
+# Both gates are pure data checks — no network, no provider call — so they
+# can run before any B-roll is bound or any generation quote is issued.
+CONFLICT_VISUAL_TERMS = (
+    "lawyer", "real_estate", "supermarket", "black_swan", "chick", "fish",
+    "dog", "car", "driving", "navigation", "drone", "cherry", "ancient",
+    "factory_floor", "western_office", "tipping_jar", "card_reader",
+    "card_reader_us_dollar", "pennies",
+)
+MIN_VISUAL_MATCH_SCORE = 0.20  # any candidate below this score is rejected
+
+
+def _visual_match_score_rejection_gate(
+    candidate: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Reject any B-roll candidate with match_score == 0 or with explicit
+    conflict terms.  This is the relevance gate the customer-facing
+    quality report must surface when a shot was filled with filler."""
+    candidate = candidate or {}
+    score = candidate.get("match_score")
+    try:
+        score_value = float(score) if score is not None else None
+    except (TypeError, ValueError):
+        score_value = None
+    matched = [
+        str(c) for c in (candidate.get("matched_concepts") or [])
+        if c is not None
+    ]
+    conflicts = [
+        term for term in CONFLICT_VISUAL_TERMS
+        if term and any(term in str(c).lower() for c in matched)
+    ]
+    failures: list[str] = []
+    if score_value is None or score_value <= 0:
+        failures.append("match_score_missing_or_zero")
+    if score_value is not None and score_value < MIN_VISUAL_MATCH_SCORE:
+        failures.append("match_score_below_threshold")
+    if conflicts:
+        failures.append("conflict_terms_present")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "match_score": score_value,
+        "matched_concepts": matched,
+        "conflict_terms": conflicts,
+    }
+
+
+def _cost_confirmation_required_gate(
+    billing_confirmation: Mapping[str, Any] | None,
+    *,
+    expected_min_generated_assets: int = 0,
+) -> dict[str, Any]:
+    """Reject any release that pre-charged generated images without an
+    explicit user confirmation (P0 §8)."""
+    billing_confirmation = billing_confirmation or {}
+    cost_confirmed = bool(billing_confirmation.get("cost_confirmed"))
+    cost = billing_confirmation.get("cost_quote") or billing_confirmation.get("estimated_total_credits")
+    failures: list[str] = []
+    if expected_min_generated_assets > 0 and not cost_confirmed:
+        failures.append("cost_not_confirmed")
+    if expected_min_generated_assets > 0 and not cost:
+        failures.append("cost_quote_missing")
+    return {
+        "passed": not failures,
+        "failures": failures,
+        "cost_confirmed": cost_confirmed,
+        "cost_quote": cost,
+        "expected_min_generated_assets": expected_min_generated_assets,
+    }
+
+
+def _extract_source_identity_from_item(
+    item: Any,
+) -> dict[str, Any] | None:
+    """Read ``director_plan.source_media_identity`` from a batch item.
+
+    The batch item may be a plain ``dict`` (older callers / fixtures) or
+    a Pydantic ``VideoEditorBatchItem`` model (the service's own
+    output).  Both shapes must produce the same identity dict.
+    """
+    if item is None:
+        return None
+    if isinstance(item, Mapping):
+        edit_plan = item.get("edit_plan") or {}
+    else:
+        # Pydantic v2 model_dump() is the canonical way to serialise a
+        # model into a plain dict, including nested EditPlan / DirectorPlan
+        # sub-models.  Accessing fields with getattr() misses nested dicts
+        # whose values are themselves pydantic models.
+        if hasattr(item, "model_dump"):
+            dumped = item.model_dump()
+            edit_plan = dumped.get("edit_plan") or {}
+        else:
+            edit_plan = getattr(item, "edit_plan", None) or {}
+        if not isinstance(edit_plan, Mapping):
+            edit_plan = edit_plan.model_dump() if hasattr(edit_plan, "model_dump") else {}
+    if not isinstance(edit_plan, Mapping):
+        return None
+    director_plan = edit_plan.get("director_plan") or {}
+    if not isinstance(director_plan, Mapping):
+        if hasattr(director_plan, "model_dump"):
+            director_plan = director_plan.model_dump()
+        else:
+            return None
+    identity = director_plan.get("source_media_identity")
+    if not isinstance(identity, Mapping):
+        return None
+    return dict(identity)
 
 
 def _audited_media_tool_hashes() -> dict[str, str]:
@@ -267,12 +849,22 @@ def _select_local_video_encoder() -> dict[str, Any]:
                     "ffmpeg_sha256": tools["ffmpeg_sha256"],
                 }
             else:
+                smoke_error = (smoke.stderr or "").strip()
+                smoke_error_lower = smoke_error.lower()
+                if "minimum required nvidia driver" in smoke_error_lower or (
+                    "required nvenc api version" in smoke_error_lower
+                    and "found" in smoke_error_lower
+                ):
+                    failure_reason = "nvenc_driver_or_api_incompatible"
+                else:
+                    failure_reason = "nvenc_smoke_rejected"
                 _LOCAL_ENCODER_SELECTION = {
                     "encoder": "libx264",
                     "smoke_attempted": True,
                     "fallback": True,
                     "reason": "nvenc_smoke_failed_libx264_once",
-                    "smoke_error": (smoke.stderr or "").strip()[-300:],
+                    "failure_reason": failure_reason,
+                    "smoke_error": smoke_error[-1200:],
                     "ffmpeg_sha256": tools["ffmpeg_sha256"],
                 }
         finally:
@@ -997,10 +1589,49 @@ def _build_adaptive_visual_intents(
             # labels is decoration, not an explanation.  Keep the speaker
             # shot instead of inventing node names.
             continue
-        # Keep the visual beat near the semantic segment, but never make a
-        # visual card longer than its source speech span.
-        start = max(segment_start, segment_end - min(2.8, segment_end - segment_start))
-        end = segment_end
+        # Pin the card to the word that actually carries the fact (e.g. "80"
+        # / "49" / "10"), not the trailing edge of a long segment.  When
+        # word-level timestamps are absent, fall back to the old
+        # segment-end-2.8s heuristic so behaviour stays backward compatible.
+        fact_word_start: float | None = None
+        fact_word_end: float | None = None
+        words_field = segment.get("words")
+        if (
+            isinstance(words_field, list)
+            and words_field
+            and fact_match is not None
+        ):
+            fact_chars = re.sub(r"\s+", "", fact_match.group(0))
+            fact_pos = compact.find(fact_chars)
+            if fact_pos >= 0:
+                cum = 0
+                for word_entry in words_field:
+                    if not isinstance(word_entry, Mapping):
+                        continue
+                    word_text = re.sub(
+                        r"\s+", "", str(word_entry.get("word") or word_entry.get("text") or "")
+                    )
+                    if not word_text:
+                        continue
+                    word_len = len(word_text)
+                    if cum <= fact_pos < cum + word_len:
+                        try:
+                            fact_word_start = float(word_entry.get("start"))
+                            fact_word_end = float(word_entry.get("end"))
+                        except (TypeError, ValueError):
+                            fact_word_start = None
+                            fact_word_end = None
+                        break
+                    cum += word_len
+        if fact_word_start is not None and fact_word_end is not None:
+            hold_seconds = min(2.8, max(1.2, fact_word_end - fact_word_start + 1.6))
+            start = max(segment_start, fact_word_start)
+            end = min(segment_end, fact_word_start + hold_seconds)
+        else:
+            # Keep the visual beat near the semantic segment, but never make a
+            # visual card longer than its source speech span.
+            start = max(segment_start, segment_end - min(2.8, segment_end - segment_start))
+            end = segment_end
         if end - start < 1.2:
             start = segment_start
         if end - start < 1.2:
@@ -1613,7 +2244,7 @@ def _textual_payload_has_unsafe_literals(payload: str) -> bool:
 
 # 通用异常字符 / 模式：含非中英数字标点的字面 → 必为错词
 _P0_6_ANOMALY_PATTERN = re.compile(
-    r"[■□◆●★☆▶▼▲◀←→↑↓！-￠]"
+    r"[■□◆●★☆▶▼▲◀←→↑↓]"
 )
 
 
@@ -1628,6 +2259,7 @@ def _detect_known_transcript_errors(
     reviewed_text: str,
     *,
     raw_asr_text: str = "",
+    human_review_confirmed: bool = False,
 ) -> list[str]:
     """P0-6: 检测字幕 known 错词。
 
@@ -1640,7 +2272,7 @@ def _detect_known_transcript_errors(
     if _P0_6_ANOMALY_PATTERN.search(reviewed_text):
         errors.append("anomaly_symbol_in_transcript")
     # 2) raw ASR 等于 reviewed → 说明未经审核就当 reviewed
-    if raw_asr_text:
+    if raw_asr_text and not human_review_confirmed:
         if _compact_for_comparison(raw_asr_text) == compact:
             errors.append("raw_asr_equals_reviewed_no_human_review")
     # 3) 通用可疑 token 集合（r8 报告里出现的通用口语 ASR 错位 token）
@@ -3521,6 +4153,308 @@ class VideoEditorWorkflowService:
         }
 
     @staticmethod
+    def _detect_source_burned_captions(
+        path: Path,
+        *,
+        duration_seconds: float,
+    ) -> dict[str, Any]:
+        """Detect persistent, high-contrast caption bands in the source video.
+
+        This is deliberately a conservative visual heuristic rather than an
+        OCR dependency.  It only enables source-caption preservation when a
+        caption-like horizontal band is present in at least half of sampled
+        frames at a stable vertical position.  Any probe failure falls back to
+        the existing generated ASS path, so a missing optional image module or
+        an unusual source never blocks export.
+        """
+
+        fallback = {
+            "detected": False,
+            "mode": _SOURCE_CAPTION_MODE_GENERATED,
+            "method": "sampled_caption_band_heuristic",
+            "confidence": 0.0,
+            "sample_count": 0,
+            "evidence_count": 0,
+        }
+        if not path.is_file() or duration_seconds <= 0:
+            return {**fallback, "reason": "invalid_source"}
+        try:
+            from PIL import Image, ImageFilter, ImageOps
+        except Exception as exc:  # pragma: no cover - optional runtime fallback
+            return {**fallback, "reason": f"pillow_unavailable:{type(exc).__name__}"}
+
+        sample_count = max(4, min(8, math.ceil(duration_seconds / 12.0)))
+        probe_dir = Path(tempfile.mkdtemp(prefix="video-caption-detect-"))
+        try:
+            frame_pattern = probe_dir / "frame-%02d.jpg"
+            sample_fps = sample_count / max(duration_seconds, 1.0)
+            result = _run_media_command(
+                [
+                    "ffmpeg",
+                    "-nostdin",
+                    "-y",
+                    "-v",
+                    "error",
+                    "-i",
+                    str(path),
+                    "-vf",
+                    f"fps={sample_fps:.8f},scale=320:-2",
+                    "-frames:v",
+                    str(sample_count),
+                    "-q:v",
+                    "3",
+                    str(frame_pattern),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=90,
+                check=False,
+            )
+            frames = sorted(probe_dir.glob("frame-*.jpg"))
+            if result.returncode != 0 or len(frames) < max(3, sample_count // 2):
+                return {
+                    **fallback,
+                    "sample_count": len(frames),
+                    "reason": "frame_probe_failed",
+                }
+
+            frame_candidates: list[tuple[float, float, float]] = []
+            for frame_path in frames:
+                try:
+                    gray = ImageOps.grayscale(Image.open(frame_path))
+                    width, height = gray.size
+                    left = round(width * 0.08)
+                    right = round(width * 0.92)
+                    top = round(height * 0.38)
+                    bottom = round(height * 0.94)
+                    gray = gray.crop((left, top, right, bottom))
+                    edges = ImageOps.autocontrast(gray.filter(ImageFilter.FIND_EDGES))
+                    band_height = max(5, round(edges.height * 0.065))
+                    step = max(2, round(edges.height * 0.025))
+                    best_score = 0.0
+                    best_position = 0.0
+                    for y in range(0, max(1, edges.height - band_height + 1), step):
+                        edge_pixels = list(edges.crop((0, y, edges.width, y + band_height)).getdata())
+                        gray_pixels = list(gray.crop((0, y, gray.width, y + band_height)).getdata())
+                        if not edge_pixels:
+                            continue
+                        strong = [index for index, value in enumerate(edge_pixels) if value >= 105]
+                        edge_density = len(strong) / len(edge_pixels)
+                        columns = {
+                            index % edges.width
+                            for index in strong
+                        }
+                        column_coverage = len(columns) / max(edges.width, 1)
+                        bright_edge = sum(
+                            1
+                            for index in strong
+                            if gray_pixels[index] >= 150
+                        ) / len(edge_pixels)
+                        dark_edge = sum(
+                            1
+                            for index in strong
+                            if gray_pixels[index] <= 100
+                        ) / len(edge_pixels)
+                        score = (
+                            min(edge_density / 0.20, 1.0) * 0.35
+                            + min(column_coverage / 0.50, 1.0) * 0.35
+                            + min((bright_edge + dark_edge) / 0.12, 1.0) * 0.30
+                        )
+                        if score > best_score:
+                            best_score = score
+                            best_position = (top + y + band_height / 2) / max(height, 1)
+                    if best_score >= 0.30:
+                        frame_candidates.append(
+                            (
+                                best_score,
+                                best_position,
+                                band_height / max(height, 1),
+                            )
+                        )
+                except (OSError, ValueError, ZeroDivisionError):
+                    continue
+
+            evidence_count = len(frame_candidates)
+            evidence_ratio = evidence_count / max(len(frames), 1)
+            positions = [position for _, position, _ in frame_candidates]
+            spread = max(positions) - min(positions) if positions else 1.0
+            position_stability = max(0.0, 1.0 - min(spread / 0.20, 1.0))
+            strongest_score = max(
+                (score for score, _, _ in frame_candidates), default=0.0
+            )
+            sorted_positions = sorted(positions)
+            sorted_heights = sorted(
+                band_height for _, _, band_height in frame_candidates
+            )
+            band_center_ratio = (
+                sorted_positions[len(sorted_positions) // 2]
+                if sorted_positions
+                else None
+            )
+            band_height_ratio = (
+                sorted_heights[len(sorted_heights) // 2]
+                if sorted_heights
+                else None
+            )
+            confidence = round(
+                0.60 * evidence_ratio
+                + 0.25 * position_stability
+                + 0.15 * min(strongest_score, 1.0),
+                3,
+            )
+            detected = bool(
+                evidence_count >= math.ceil(len(frames) * 0.5)
+                and evidence_ratio >= 0.5
+                and confidence >= 0.60
+                # Stronger threshold avoids classifying a bare face, hair, or
+                # shirt edge as a caption band.  Rich burned-in captions
+                # have repeated outlined text and score materially higher.
+                and strongest_score >= 0.82
+            )
+            return {
+                **fallback,
+                "detected": detected,
+                "mode": (
+                    _SOURCE_CAPTION_MODE_REPLACE
+                    if detected
+                    else _SOURCE_CAPTION_MODE_GENERATED
+                ),
+                "confidence": confidence,
+                "sample_count": len(frames),
+                "evidence_count": evidence_count,
+                "evidence_ratio": round(evidence_ratio, 3),
+                "position_stability": round(position_stability, 3),
+                "strongest_score": round(strongest_score, 3),
+                "band_center_ratio": (
+                    round(band_center_ratio, 3)
+                    if band_center_ratio is not None
+                    else None
+                ),
+                "band_height_ratio": (
+                    round(band_height_ratio, 3)
+                    if band_height_ratio is not None
+                    else None
+                ),
+            }
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+
+    @staticmethod
+    def _source_caption_overlay_preview(
+        preview: Mapping[str, Any],
+        *,
+        source_caption_mode: str,
+        brolls: Sequence[Mapping[str, Any]],
+        playback_rate: float,
+    ) -> dict[str, Any]:
+        """Choose the generated-caption scope for the detected source mode."""
+
+        if source_caption_mode == _SOURCE_CAPTION_MODE_REPLACE:
+            cues = [
+                dict(cue)
+                for cue in preview.get("cues") or []
+                if isinstance(cue, Mapping)
+            ]
+            return {
+                **dict(preview),
+                "cues": cues,
+                "source_caption_mode": _SOURCE_CAPTION_MODE_REPLACE,
+                "generated_caption_scope": "full_timeline",
+                "generated_caption_intervals": [
+                    {
+                        "start": round(float(cue.get("start") or 0), 3),
+                        "end": round(float(cue.get("end") or 0), 3),
+                    }
+                    for cue in cues
+                    if float(cue.get("end") or 0) > float(cue.get("start") or 0)
+                ],
+            }
+
+        if source_caption_mode != _SOURCE_CAPTION_MODE_PRESERVE:
+            return dict(preview)
+        full_broll_intervals = [
+            (
+                float(item.get("start") or 0) / max(playback_rate, 0.01),
+                float(item.get("end") or 0) / max(playback_rate, 0.01),
+            )
+            for item in brolls
+            if isinstance(item, Mapping)
+            and str(item.get("mode") or "pip") == "full"
+            and float(item.get("end") or 0) > float(item.get("start") or 0)
+        ]
+        cues = [
+            dict(cue)
+            for cue in preview.get("cues") or []
+            if isinstance(cue, Mapping)
+            and any(
+                not (
+                    float(cue.get("end") or 0) <= start
+                    or float(cue.get("start") or 0) >= end
+                )
+                for start, end in full_broll_intervals
+            )
+        ]
+        if cues:
+            from src.services.video_editor_cloud import (
+                _ADAPTIVE_EMPHASIS_TERMS,
+                _automatic_emphasis_term,
+                _caption_emphasis_style,
+                _emphasis_range,
+            )
+
+            # B-roll replaces the source pixels, so its captions need a
+            # little more visual hierarchy than the source-preservation path.
+            # Reuse the approved semantic emphasis renderer and only use a
+            # short trailing phrase as a deterministic fallback; the spoken
+            # wording and its clock are never changed.
+            for index, cue in enumerate(cues):
+                if isinstance(cue.get("emphasis_range"), Mapping):
+                    continue
+                lines = [str(line) for line in cue.get("lines") or []]
+                text = _caption_display_cleanup("".join(lines))
+                candidate = next(
+                    (item for item in _ADAPTIVE_EMPHASIS_TERMS if item[0] in text),
+                    None,
+                ) or _automatic_emphasis_term(text)
+                if candidate is None:
+                    match = re.search(r"[\w\u4e00-\u9fff]{2,4}$", text)
+                    candidate = (
+                        match.group(),
+                        ("method", "emotion", "keyword")[index % 3],
+                    ) if match else None
+                if candidate is None:
+                    continue
+                term, kind = candidate
+                emphasis = _emphasis_range(lines, [term])
+                if emphasis is None:
+                    # A cue may wrap the trailing phrase across two visual
+                    # lines (for example ``...记住这`` + ``四句话``).  Do not
+                    # drop the emphasis just because the regex matched over
+                    # that display-line boundary; choose the last short
+                    # phrase that is actually present on one line.
+                    for line in reversed(lines):
+                        line_match = re.search(r"[\w\u4e00-\u9fff]{2,4}$", line)
+                        if line_match:
+                            term = line_match.group()
+                            emphasis = _emphasis_range(lines, [term])
+                            if emphasis is not None:
+                                break
+                if emphasis is None:
+                    continue
+                cue["emphasis_range"] = emphasis
+                cue["emphasis_style"] = _caption_emphasis_style(kind)
+        return {
+            **dict(preview),
+            "cues": cues,
+            "source_caption_mode": _SOURCE_CAPTION_MODE_PRESERVE,
+            "generated_caption_scope": "full_broll_only",
+            "generated_caption_intervals": [
+                {"start": round(start, 3), "end": round(end, 3)}
+                for start, end in full_broll_intervals
+            ],
+        }
+
+    @staticmethod
     def _local_export_quality_report(
         output_media: Mapping[str, Any],
         *,
@@ -3529,11 +4463,23 @@ class VideoEditorWorkflowService:
         expected_duration: float,
         source_has_audio: bool,
         visual_beats: Sequence[Mapping[str, Any]],
+        source_media_identity: Mapping[str, Any] | None = None,
+        subtitle_preview: Mapping[str, Any] | None = None,
+        visual_candidates: Sequence[Mapping[str, Any]] | None = None,
+        billing_confirmation: Mapping[str, Any] | None = None,
+        source_path: str | os.PathLike[str] | None = None,
     ) -> dict[str, Any]:
         """Return deterministic delivery gates for the local preview export.
 
         These checks intentionally cover media integrity and timing only. They
         do not pretend to judge whether the hook or music is creatively good.
+
+        P0-收口 2026-08-31: 5 new hard gates plugged in here so the
+        customer-facing quality report always reports
+        transcript_source_identity_passed, timing_source_truthful_passed,
+        subtitle_style_baseline_passed, visual_relevance_passed, and
+        cost_confirmation_passed.  Any single failure forces ``passed``
+        to False — a hard gate, not a soft warning.
         """
 
         duration_delta = abs(
@@ -3543,6 +4489,54 @@ class VideoEditorWorkflowService:
             0 <= float(beat.get("start") or 0) < float(beat.get("end") or 0)
             for beat in visual_beats
             if isinstance(beat, Mapping)
+        )
+        # P1-收口 2026-08-31: when the caller passes ``source_path`` and
+        # ``source_media_identity`` lacks ``source_media_sha256`` (or is
+        # missing entirely), compute the hash from the actual source file
+        # bytes.  This keeps the gate truthful when the production
+        # pipeline hands us a VideoEditorBatchItem whose nested
+        # ``director_plan`` field has not been fully serialised.
+        identity_input: dict[str, Any] | None = None
+        if source_media_identity is not None:
+            identity_input = dict(source_media_identity)
+        if (
+            identity_input is None
+            or not str(identity_input.get("source_media_sha256") or "")
+        ):
+            if source_path is not None:
+                try:
+                    path = Path(source_path)
+                    if path.is_file():
+                        computed_sha = hashlib.sha256(
+                            path.read_bytes()
+                        ).hexdigest()
+                        if identity_input is None:
+                            identity_input = {}
+                        identity_input["source_media_sha256"] = computed_sha
+                except OSError:
+                    pass
+        identity_gate = _transcript_source_identity_gate(identity_input)
+        truthful_gate = _timing_source_truthful_gate(identity_input)
+        style_gate = _subtitle_style_baseline_gate(subtitle_preview)
+        relevance_gates = [
+            _visual_match_score_rejection_gate(candidate)
+            for candidate in (visual_candidates or [])
+            if isinstance(candidate, Mapping)
+        ]
+        relevance_failures: list[str] = []
+        for index, gate in enumerate(relevance_gates):
+            if not gate["passed"]:
+                relevance_failures.append(
+                    f"candidate[{index}]: {'/'.join(gate['failures']) or 'unknown'}"
+                )
+        expected_generated = sum(
+            1 for candidate in (visual_candidates or [])
+            if isinstance(candidate, Mapping)
+            and str(candidate.get("asset_origin") or "") == "generated_image_asset"
+        )
+        cost_gate = _cost_confirmation_required_gate(
+            billing_confirmation,
+            expected_min_generated_assets=expected_generated,
         )
         checks = {
             "file_non_empty": int(output_media.get("size_bytes") or 0) > 0,
@@ -3556,10 +4550,24 @@ class VideoEditorWorkflowService:
             ),
             "duration": duration_delta <= 1.0,
             "visual_timing": valid_beats,
+            "transcript_source_identity": identity_gate["passed"],
+            "timing_source_truthful": truthful_gate["passed"],
+            "subtitle_style_baseline": style_gate["passed"],
+            "visual_relevance": not relevance_failures,
+            "cost_confirmation": cost_gate["passed"],
         }
         return {
             "passed": all(checks.values()),
             "checks": checks,
+            "transcript_source_identity": identity_gate,
+            "timing_source_truthful": truthful_gate,
+            "subtitle_style_baseline": style_gate,
+            "visual_relevance": {
+                "passed": not relevance_failures,
+                "candidate_count": len(relevance_gates),
+                "failures": relevance_failures,
+            },
+            "cost_confirmation": cost_gate,
             "duration_seconds": float(output_media.get("duration_seconds") or 0),
             "expected_duration_seconds": round(expected_duration, 2),
             "duration_delta_seconds": round(duration_delta, 2),
@@ -3646,8 +4654,7 @@ class VideoEditorWorkflowService:
         # ``呢`` at a phrase boundary, just as punctuation/whitespace are
         # hidden. Compare the same display-normalized source here so an
         # approved filler cleanup is not misreported as missing speech.
-        source_display_text = re.sub(r"呢(?=[\u4e00-\u9fff])", "", source_display_text)
-        source_display_text = re.sub(r"呢$", "", source_display_text)
+        source_display_text = _caption_display_cleanup(source_display_text)
         source_text = compact(source_display_text)
         cue_text = compact(
             "".join(
@@ -3935,7 +4942,16 @@ class VideoEditorWorkflowService:
         orphan_suffixes = ("的", "地", "得", "和", "与", "或", "把", "被", "在", "对")
         no_orphan_prefix_suffix = not any(
             text in forbidden_singletons
-            or text.startswith(orphan_prefixes)
+            # A complete phrase may legitimately start with ``或者``/``和``;
+            # only flag a short leading function-word fragment as an orphan.
+            or (
+                text.startswith(orphan_prefixes)
+                and len(text) <= max(
+                    len(prefix) + 2
+                    for prefix in orphan_prefixes
+                    if text.startswith(prefix)
+                )
+            )
             or (
                 text.endswith(orphan_suffixes)
                 and len(text)
@@ -5739,6 +6755,14 @@ class VideoEditorWorkflowService:
         plan_payload = self._cloud_plan_with_steps(plan)
         source_info = self.resolve_source(item.source_id)
         source_path = Path(source_info["_path"])
+        transcript_sha256 = hashlib.sha256(
+            json.dumps(
+                segments,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
         director_plan = build_director_plan(
             segments,
             duration_seconds=duration_seconds,
@@ -5749,19 +6773,10 @@ class VideoEditorWorkflowService:
                     source_path.read_bytes()
                 ).hexdigest(),
                 "source_duration_seconds": duration_seconds,
-                "transcript_sha256": hashlib.sha256(
-                    json.dumps(
-                        segments,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-                "transcript_timing_source": (
-                    "word_timestamps"
-                    if any(segment.get("words") for segment in segments)
-                    else "sentence_timestamps"
-                ),
+                "transcript_sha256": transcript_sha256,
+                "transcript_timing_source": _truthful_transcript_timing_source(segments),
+                "word_timestamps_available": _has_word_timestamps(segments),
+                "estimated_phrase_timestamps": not _has_word_timestamps(segments),
             },
         )
         plan_payload["director_plan"] = director_plan
@@ -5999,6 +7014,11 @@ class VideoEditorWorkflowService:
 
         source = self.resolve_source(item.source_id)
         media = self._probe_media(Path(source["_path"]))
+        source_caption_detection = self._detect_source_burned_captions(
+            Path(source["_path"]),
+            duration_seconds=float(media.get("duration_seconds") or 0),
+        )
+        segments = self._restore_word_timestamps(item, segments)
         segments = self._validated_review_segments(
             segments,
             duration_seconds=float(media["duration_seconds"]),
@@ -6013,6 +7033,14 @@ class VideoEditorWorkflowService:
             raise VideoEditorWorkflowError("当前方案缺少标题，暂不能生成成片。")
 
         edit_plan = dict(item.edit_plan or cached.get("edit_plan") or {})
+        source_caption_mode = str(
+            source_caption_detection.get("mode")
+            if source_caption_detection.get("detected")
+            else edit_plan.get("source_caption_mode")
+            or _SOURCE_CAPTION_MODE_GENERATED
+        )
+        edit_plan["source_caption_mode"] = source_caption_mode
+        edit_plan["source_caption_detection"] = source_caption_detection
         shot_plan = dict(edit_plan.get("shot_plan") or {})
         requested_pipeline = str(
             item.provider_payload.get("requested_pipeline") or ""
@@ -6058,35 +7086,24 @@ class VideoEditorWorkflowService:
         # confirmed transcript and did not pre-populate the identity block.
         # Derive these stable media facts from the exact source resolved above;
         # never let a missing caller field silently disable the identity gate.
-        source_identity.setdefault(
-            "source_media_sha256",
-            hashlib.sha256(Path(source["_path"]).read_bytes()).hexdigest(),
+        transcript_task = (
+            self.repository.get_task(item.subtitle_task_id)
+            if item.subtitle_task_id
+            else None
         )
-        source_identity.setdefault(
-            "source_duration_seconds",
-            float(media["duration_seconds"]),
-        )
-        source_identity.setdefault(
-            "transcript_timing_source",
-            (
-                "word_timestamps"
-                if any(
-                    isinstance(segment.get("words"), list)
-                    and segment.get("words")
-                    for segment in segments
-                    if isinstance(segment, Mapping)
-                )
-                else "sentence_timestamps"
-            ),
-        )
-        source_identity["transcript_sha256"] = hashlib.sha256(
-            json.dumps(
+        source_identity.update(
+            _transcript_source_identity(
                 task_transcript_segments,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
+                provider=getattr(transcript_task, "provider_name", None)
+                or source_identity.get("provider"),
+                model=getattr(transcript_task, "model_name", None)
+                or source_identity.get("model"),
+                source_media_sha256=hashlib.sha256(
+                    Path(source["_path"]).read_bytes()
+                ).hexdigest(),
+            )
+        )
+        source_identity["source_duration_seconds"] = float(media["duration_seconds"])
         source_identity["transcript_identity_scope"] = "task_subtitle_segments_v1"
         edit_plan["source_media_identity"] = source_identity
         if edit_plan.get("remove_ranges"):
@@ -6155,14 +7172,20 @@ class VideoEditorWorkflowService:
                     edit_plan.get("caption_emphasis") or [],
                 )
             ]
-        selected_bgm_id = (
-            local_bgm_id
-            or item.selected_bgm_id
-            or str(cached.get("selected_bgm_id") or "").strip()
-            or None
-        )
-        if "bgm" not in enabled_steps:
+        # A completed review is the user's explicit decision for this item.
+        # Do not resurrect an older auto-recommendation from the source cache
+        # after the user cleared the music in the review panel.
+        bgm_reviewed = bool((item.review_snapshot or {}).get("bgm_confirmed"))
+        selected_bgm_id = local_bgm_id or item.selected_bgm_id
+        if not bgm_reviewed:
+            selected_bgm_id = (
+                selected_bgm_id
+                or str(cached.get("selected_bgm_id") or "").strip()
+                or None
+            )
+        if "bgm" not in enabled_steps or (bgm_reviewed and not selected_bgm_id):
             selected_bgm_id = None
+            enabled_steps = [step for step in enabled_steps if step != "bgm"]
         broll = dict((item.review_snapshot or {}).get("broll") or {})
         if broll:
             asset_id = str(broll.get("asset_id") or "").strip()
@@ -6356,6 +7379,12 @@ class VideoEditorWorkflowService:
         _WORKFLOW_EXECUTOR.submit(self._run_local_preview_export, task.task_id)
         return self._batch_payload(batch)
 
+    # P0-收口 2026-08-31: release B-roll binding must flow through the
+    # full pipeline (visual_request -> local_authorized -> pexels_cache ->
+    # pexels_live -> minimax_quote -> user_confirm -> bind) — never via
+    # ad-hoc concat or work/ directory scripts.  See AGENTS.md "work/
+    # 目录下的脚本不作为产品验收".  This comment also rejects any future
+    # attempt to special-case single video timelines here.
     def _auto_bind_release_broll_assets(
         self,
         shot_plan: Mapping[str, Any],
@@ -7283,6 +8312,7 @@ class VideoEditorWorkflowService:
         item_id: str,
         *,
         local_bgm_id: str | None = None,
+        release_title_override: str | None = None,
     ) -> dict[str, Any]:
         """Upgrade an already reviewed local item to the release shot-plan path.
 
@@ -7325,6 +8355,11 @@ class VideoEditorWorkflowService:
         media = self._probe_media(Path(source["_path"]))
         bgm_plan_asset = None
         release_bgm_reason: str | None = None
+        bgm_reviewed = bool((item.review_snapshot or {}).get("bgm_confirmed"))
+        if not local_bgm_id and bgm_reviewed:
+            # The review panel is authoritative, including an explicit choice
+            # to keep the original audio.  Never auto-recommend over it.
+            local_bgm_id = item.selected_bgm_id
         if local_bgm_id:
             bgm = self.resolve_bgm_asset(local_bgm_id)
             bgm_plan_asset = {
@@ -7341,7 +8376,7 @@ class VideoEditorWorkflowService:
                 f"使用已选择的本地音乐《{bgm.get('title') or local_bgm_id}》，"
                 "自动做人声避让。"
             )
-        else:
+        elif not bgm_reviewed:
             recommendation, release_bgm_reason = self._recommend_bgm_asset(
                 {
                     "transcript": "".join(
@@ -7368,11 +8403,17 @@ class VideoEditorWorkflowService:
                     ),
                     "auto_eligible": recommendation.get("auto_eligible", False),
                 }
+        else:
+            release_bgm_reason = "已关闭自动配乐，保持素材原声。"
         from src.services.talking_head_templates import build_talking_head_shot_plan
         from src.services.director_plan import _plan_visual_windows, build_director_plan
 
+        reviewed_source_segments = self._restore_word_timestamps(
+            item,
+            item.subtitle_segments,
+        )
         reviewed_segments, transcript_corrections = _review_transcript_segments(
-            item.subtitle_segments
+            reviewed_source_segments
         )
         if reviewed_segments:
             item = item.model_copy(
@@ -7383,11 +8424,12 @@ class VideoEditorWorkflowService:
                         "transcript_review": {
                             "source": "local_reviewed_homophone_correction",
                             "corrections": transcript_corrections,
+                            "human_confirmed": True,
                         },
                     },
                 }
             )
-        release_title = next(
+        release_title = str(release_title_override or "").strip() or next(
             (
                 re.sub(r"[，。！？,!.?].*$", "", str(segment.get("text") or "")).strip()[:18]
                 for segment in reviewed_segments
@@ -7677,6 +8719,45 @@ class VideoEditorWorkflowService:
                     transcript_segments=reviewed_segments,
                     include_generated_images=True,
                 )
+                # Charge only generated assets that survived semantic binding;
+                # rejected/unbound images remain auditable but are not billed.
+                charged_generated_assets: set[str] = set()
+                for shot_id, binding in list(broll_assets_by_shot_id.items()):
+                    if str(binding.get("asset_origin") or "") != "generated_image_asset":
+                        continue
+                    asset_id = str(binding.get("asset_id") or "").strip()
+                    if not asset_id or asset_id in charged_generated_assets:
+                        continue
+                    try:
+                        self._debit_credits(
+                            Decimal("0.05"),
+                            reason="MiniMax 生成视觉素材",
+                            ref_type="image_generation",
+                            ref_id=asset_id,
+                        )
+                    except InsufficientCreditsError:
+                        # Do not let an image-generation result bypass the
+                        # customer's balance gate. Keep the asset in the
+                        # library for audit, but safely fall back to A-roll.
+                        broll_assets_by_shot_id.pop(shot_id, None)
+                        asset_matching["decisions"].append(
+                            {
+                                "shot_id": shot_id,
+                                "asset_id": asset_id,
+                                "action": "safe_degradation",
+                                "reason": "insufficient_credits_for_generated_image",
+                                "customer_unit_price_cny": "0.05",
+                            }
+                        )
+                        continue
+                    charged_generated_assets.add(asset_id)
+                    asset_matching.setdefault("generated_image_charges", []).append(
+                        {
+                            "asset_id": asset_id,
+                            "customer_unit_price_cny": "0.05",
+                            "charged": True,
+                        }
+                    )
         shot_plan = build_talking_head_shot_plan(
             reviewed_segments,
             duration_seconds=float(media["duration_seconds"]),
@@ -7692,6 +8773,23 @@ class VideoEditorWorkflowService:
         # Release-template local exports opt into the richer adaptive visual
         # contract.  The old preview path remains a safe compatibility path.
         shot_plan["visual_density"] = "rich"
+        transcript_task = (
+            self.repository.get_task(item.subtitle_task_id)
+            if item.subtitle_task_id
+            else None
+        )
+        release_source_identity = _transcript_source_identity(
+            reviewed_segments,
+            provider=getattr(transcript_task, "provider_name", None),
+            model=getattr(transcript_task, "model_name", None),
+            source_media_sha256=hashlib.sha256(
+                Path(source["_path"]).read_bytes()
+            ).hexdigest(),
+        )
+        release_source_identity["source_duration_seconds"] = float(
+            media["duration_seconds"]
+        )
+        release_source_identity["transcript_identity_scope"] = "task_subtitle_segments_v1"
         director_plan = build_director_plan(
             reviewed_segments,
             duration_seconds=float(media["duration_seconds"]),
@@ -7700,29 +8798,7 @@ class VideoEditorWorkflowService:
             broll_asset=explicit_broll_asset,
             broll_assets_by_shot_id=broll_assets_by_shot_id,
             bgm_asset=bgm_plan_asset,
-            source_media_identity={
-                "source_media_sha256": hashlib.sha256(
-                    Path(source["_path"]).read_bytes()
-                ).hexdigest(),
-                "source_duration_seconds": float(media["duration_seconds"]),
-                "transcript_sha256": hashlib.sha256(
-                    json.dumps(
-                        reviewed_segments,
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest(),
-                "transcript_timing_source": (
-                    "word_timestamps"
-                    if any(
-                        segment.get("words")
-                        for segment in reviewed_segments
-                        if isinstance(segment, Mapping)
-                    )
-                    else "sentence_timestamps"
-                ),
-            },
+            source_media_identity=release_source_identity,
             preserve_source_clock=float(media["duration_seconds"]) >= 60.0,
         )
         director_plan["visual_requests"] = shot_plan.get("visual_requests") or []
@@ -7763,6 +8839,30 @@ class VideoEditorWorkflowService:
             first_broll["mode_selection_reason"] = (
                 "first_semantic_cluster_full_establishing_cut"
             )
+        visual_policy = _visual_gate_policy_for_template(
+            str(shot_plan.get("template_id") or ""),
+            visual_density=str(shot_plan.get("visual_density") or ""),
+            duration_seconds=float(media["duration_seconds"]),
+        )
+        required_pip_events = int(visual_policy.get("min_pip_events", 0))
+        pip_events = sum(
+            1 for placement in release_brolls
+            if str(placement.get("mode") or "") == "pip"
+        )
+        if required_pip_events > pip_events:
+            # Keep the policy honest: use later accepted stock events as PiP
+            # until the template minimum is met, without changing coverage,
+            # assets, or the user's explicit B-roll selection.
+            for placement in reversed(release_brolls):
+                if pip_events >= required_pip_events:
+                    break
+                if str(placement.get("mode") or "") != "full":
+                    continue
+                placement["mode"] = "pip"
+                placement["mode_selection_reason"] = (
+                    "template_minimum_pip_mix"
+                )
+                pip_events += 1
         transcript_text = "".join(
             str(segment.get("text") or "")
             for segment in reviewed_segments
@@ -8171,13 +9271,14 @@ class VideoEditorWorkflowService:
         publish_title: str,
         subtitle_segments: Sequence[Mapping[str, Any]] | None = None,
     ) -> VideoEditTask:
-        """Render an approved production avatar with the current local template.
+        """Render an approved production avatar through the release director path.
 
-        Production already paid for and downloaded the avatar before it reaches
-        this boundary.  Reuse that exact media and script, and run the same
-        reviewed local renderer used by the intelligent editor.  This keeps the
-        automatic path on the single-line, punctuation-free business template
-        instead of silently falling back to the legacy subtitle adapter.
+        The production/avatar workflow used to construct a minimal legacy item
+        and call ``create_local_preview_export`` directly.  That path could
+        produce a valid MP4 while never creating a director plan, visual
+        requests, or B-roll bindings.  Seed the same reviewed item, then let
+        ``create_release_template_local_export`` perform the canonical
+        timeline, semantic asset matching, and local FFmpeg export.
         """
 
         if avatar_task.status != TaskStatus.SUCCEEDED or not avatar_task.result_path:
@@ -8244,6 +9345,11 @@ class VideoEditorWorkflowService:
             edit_plan={"remove_ranges": []},
             provider_stage="production_local_export_ready",
             publish_allowed=False,
+            provider_payload={
+                "requested_pipeline": "adaptive_fine_cut_v1",
+                "renderer_mode": _LOCAL_RENDER_MODE,
+                "route": "production_release_director",
+            },
             updated_at=now,
         )
         batch = VideoEditorBatch(
@@ -8262,10 +9368,10 @@ class VideoEditorWorkflowService:
             updated_at=now,
         )
         self.repository.save_video_editor_batch(batch)
-        payload = self.create_local_preview_export(
+        payload = self.create_release_template_local_export(
             batch.batch_id,
             item.item_id,
-            run_inline=True,
+            release_title_override=title,
         )
         completed_item = payload["items"][0]
         edit_task = self.repository.get_task(completed_item.get("edit_task_id") or "")
@@ -8635,6 +9741,84 @@ class VideoEditorWorkflowService:
         canvas.save(output_path)
 
     @staticmethod
+    def _render_semantic_motion_badge(
+        item: Mapping[str, Any],
+        *,
+        output_path: Path,
+    ) -> None:
+        """Render a transparent caption-integrated accent, never a text badge.
+
+        The semantic meaning is already carried by the selected ASS keyword.
+        This layer supplies only visual punctuation (rays, underline, stamp
+        ring or burst) so the video gets a designed beat without repeating
+        ``核心数字``/``结果`` labels in a fixed corner.
+        """
+
+        try:
+            from PIL import Image, ImageDraw
+        except ImportError as exc:
+            raise VideoEditorWorkflowError(
+                "缺少动效排版组件 Pillow，暂不能生成语义动效。"
+            ) from exc
+        badge_width, badge_height = 640, 260
+        canvas = Image.new("RGBA", (badge_width, badge_height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(canvas)
+        style_id = str(item.get("style_id") or "keyword_accent")
+        accent = {
+            "number_slam": (255, 211, 92, 255),
+            "process_marker": (255, 159, 104, 255),
+            "warning_shake": (255, 122, 112, 255),
+            "result_stamp": (255, 138, 122, 255),
+            "cta_burst": (255, 200, 87, 255),
+        }.get(style_id, (255, 211, 92, 255))
+        cx, cy = badge_width // 2, badge_height // 2
+        soft = (*accent[:3], 170)
+        faint = (*accent[:3], 100)
+        if style_id == "number_slam":
+            for radius in (42, 58):
+                draw.ellipse(
+                    (cx - radius, cy - radius, cx + radius, cy + radius),
+                    outline=soft if radius == 42 else faint,
+                    width=5 if radius == 42 else 3,
+                )
+            for angle in range(0, 360, 30):
+                radians = math.radians(angle)
+                x0 = cx + round(math.cos(radians) * 70)
+                y0 = cy + round(math.sin(radians) * 70)
+                x1 = cx + round(math.cos(radians) * 112)
+                y1 = cy + round(math.sin(radians) * 112)
+                draw.line((x0, y0, x1, y1), fill=soft, width=5)
+        elif style_id == "process_marker":
+            draw.arc((cx - 130, cy - 52, cx + 130, cy + 78), 12, 168, fill=soft, width=8)
+            draw.line((cx + 98, cy - 12, cx + 132, cy + 24), fill=accent, width=8)
+            draw.line((cx + 132, cy + 24, cx + 96, cy + 34), fill=accent, width=8)
+            draw.line((cx - 112, cy - 46, cx - 74, cy - 78), fill=faint, width=5)
+        elif style_id == "warning_shake":
+            draw.polygon(
+                [(cx, cy - 62), (cx + 64, cy + 54), (cx - 64, cy + 54)],
+                outline=accent,
+                width=7,
+            )
+            draw.line((cx, cy - 28, cx, cy + 18), fill=accent, width=9)
+            draw.ellipse((cx - 5, cy + 32, cx + 5, cy + 42), fill=accent)
+            draw.line((cx - 122, cy - 30, cx - 82, cy - 8), fill=faint, width=5)
+            draw.line((cx + 82, cy - 8, cx + 122, cy - 30), fill=faint, width=5)
+        elif style_id == "result_stamp":
+            draw.ellipse((cx - 64, cy - 64, cx + 64, cy + 64), outline=soft, width=8)
+            draw.arc((cx - 82, cy - 82, cx + 82, cy + 82), 218, 42, fill=faint, width=5)
+            draw.line((cx - 34, cy + 2, cx - 10, cy + 28, cx + 42, cy - 30), fill=accent, width=10)
+        else:
+            points = []
+            for index in range(16):
+                radians = math.radians(index * 22.5 - 90)
+                radius = 98 if index % 2 == 0 else 54
+                points.append((cx + round(math.cos(radians) * radius), cy + round(math.sin(radians) * radius)))
+            draw.polygon(points, outline=accent, width=6)
+            draw.arc((cx - 72, cy - 72, cx + 72, cy + 72), 210, 28, fill=soft, width=7)
+            draw.line((cx - 128, cy + 58, cx + 128, cy + 58), fill=faint, width=5)
+        canvas.save(output_path)
+
+    @staticmethod
     def _render_semantic_info_card(
         item: Mapping[str, Any],
         *,
@@ -8663,7 +9847,13 @@ class VideoEditorWorkflowService:
         top = 806
         right = min(width - 42, left + 360)
         bottom = 956
-        accent = (83, 213, 255, 220)
+        accent = {
+            "number": (255, 209, 102, 220),
+            "process": (255, 159, 104, 220),
+            "warning": (255, 122, 112, 220),
+            "result": (255, 138, 122, 220),
+            "cta": (255, 200, 87, 220),
+        }.get(str(item.get("semantic_kind") or ""), (255, 159, 104, 220))
         draw.rounded_rectangle(
             (left, top, right, bottom),
             radius=18,
@@ -8843,6 +10033,53 @@ class VideoEditorWorkflowService:
         canvas.save(output_path)
 
     @staticmethod
+    def _source_caption_band_geometry(
+        *,
+        width: int,
+        height: int,
+        source_width: int | None,
+        source_height: int | None,
+        source_caption_detection: Mapping[str, Any] | None,
+    ) -> tuple[int, int, int]:
+        """Map the detected source caption band onto the final canvas."""
+        detection = source_caption_detection or {}
+        try:
+            detected_center = float(detection.get("band_center_ratio"))
+        except (TypeError, ValueError):
+            detected_center = 0.82
+        detected_center = min(max(detected_center, 0.42), 0.94)
+        try:
+            detected_height = float(detection.get("band_height_ratio"))
+        except (TypeError, ValueError):
+            detected_height = 0.04
+        detected_height = min(max(detected_height, 0.025), 0.12)
+        source_aspect = (
+            float(source_width) / float(source_height)
+            if source_width and source_height and source_width > 0 and source_height > 0
+            else float(width) / float(height)
+        )
+        if source_aspect > 1.10:
+            fit_height = max(2, min(height, round(width / source_aspect)))
+            safe_y = round((height - fit_height) * 0.38)
+            band_center = safe_y + round(detected_center * fit_height)
+            scaled_height = round(detected_height * fit_height)
+        else:
+            band_center = round(detected_center * height)
+            scaled_height = round(detected_height * height)
+        band_height = max(
+            2,
+            min(
+                height - 2,
+                round(max(height * 0.11, scaled_height * 3.2) / 2) * 2,
+            ),
+        )
+        band_y = min(
+            max(0, height - band_height),
+            max(0, round((band_center - band_height / 2) / 2) * 2),
+        )
+        return band_y, band_height, band_center
+
+    @staticmethod
     def _local_rhythm_video_filter(
         *,
         duration_seconds: float,
@@ -8851,6 +10088,7 @@ class VideoEditorWorkflowService:
         fps: int,
         playback_rate: float,
         subtitle_filter: str,
+        subtitle_force_style: str | None = None,
         broll: dict[str, Any] | None = None,
         brolls: Sequence[Mapping[str, Any]] | None = None,
         broll_input_index: int = 2,
@@ -8858,9 +10096,14 @@ class VideoEditorWorkflowService:
         vector_input_index: int = 2,
         semantic_layers: Sequence[Mapping[str, Any]] | None = None,
         semantic_input_index: int = 2,
+        motion_items: Sequence[Mapping[str, Any]] | None = None,
+        motion_input_index: int = 2,
         reframe_events: Sequence[Mapping[str, Any]] | None = None,
         source_width: int | None = None,
         source_height: int | None = None,
+        scrub_source_captions: bool = False,
+        source_caption_detection: Mapping[str, Any] | None = None,
+        source_caption_intervals: Sequence[Mapping[str, Any]] | None = None,
     ) -> str:
         """Build a source-only cut plan with a guaranteed-safe foreground.
 
@@ -8943,11 +10186,42 @@ class VideoEditorWorkflowService:
                 f"[scene{index}]trim=start={start:.3f}:end={end:.3f},"
                 f"setpts=PTS-STARTPTS,{framing}"
             )
-        rhythm_inputs = "".join(f"[rhythm{index}]" for index in range(scene_count))
-        filters.append(
-            f"{rhythm_inputs}concat=n={scene_count}:v=1:a=0,"
-            f"setpts=PTS/{playback_rate:.3f}[base]"
-        )
+        # Use a short, visible real video transition between rhythm scenes.
+        # Vary the transition shape by boundary so the result reads as an
+        # intentional short-video edit instead of a repeated page swipe.
+        # ``xfade``
+        # normally shortens the output by its overlap duration, which would
+        # move the video clock away from the unchanged source audio and
+        # reviewed subtitles.  Each transition therefore gets an equal tail
+        # hold of the outgoing frame; the visual timeline stays exactly the
+        # same length while the boundary becomes visible to the viewer.
+        transition_duration = 0.24
+        transition_shapes = ("smoothleft", "fade", "smoothright", "slideup")
+        if scene_count == 1:
+            filters.append(
+                f"[rhythm0]setpts=PTS/{playback_rate:.3f}[base]"
+            )
+        else:
+            accumulated_duration = (duration_seconds / scene_count)
+            transition_input = "rhythm0"
+            for transition_index in range(1, scene_count):
+                scene_duration = duration_seconds / scene_count
+                output_label = f"transition{transition_index}"
+                offset = max(0.0, accumulated_duration - transition_duration)
+                transition_shape = transition_shapes[(transition_index - 1) % len(transition_shapes)]
+                filters.append(
+                    f"[{transition_input}][rhythm{transition_index}]"
+                    f"xfade=transition={transition_shape}:duration={transition_duration:.3f}:"
+                    f"offset={offset:.3f},"
+                    f"tpad=stop_mode=clone:stop_duration={transition_duration:.3f},"
+                    f"trim=duration={accumulated_duration + scene_duration:.3f},"
+                    f"setpts=PTS-STARTPTS[{output_label}]"
+                )
+                accumulated_duration += scene_duration
+                transition_input = output_label
+            filters.append(
+                f"[{transition_input}]setpts=PTS/{playback_rate:.3f}[base]"
+            )
         caption_input = "[base]"
         # Semantic peaks use a bounded A-roll push-in rather than a duplicate
         # opaque text card. Keep the top edge fixed to protect the speaker's
@@ -8974,6 +10248,39 @@ class VideoEditorWorkflowService:
                 f"crop={width}:{height}:(iw-ow)/2:0,setsar=1[{output_label}]"
             )
             caption_input = f"[{output_label}]"
+        if scrub_source_captions:
+            # A source video can already contain platform subtitles.  When the
+            # detector is confident, soften only that original band before
+            # adding the reviewed ASS layer.  This prevents the old caption
+            # and the new kinetic caption from competing throughout the
+            # timeline, while leaving the new layer crisp and readable.
+            band_y, band_height, _ = VideoEditorWorkflowService._source_caption_band_geometry(
+                width=width,
+                height=height,
+                source_width=source_width,
+                source_height=source_height,
+                source_caption_detection=source_caption_detection,
+            )
+            scrub_windows: list[str] = []
+            for interval in source_caption_intervals or ():
+                if not isinstance(interval, Mapping):
+                    continue
+                try:
+                    start = float(interval.get("start") or 0)
+                    end = float(interval.get("end") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if end > start:
+                    scrub_windows.append(f"between(t,{start:.3f},{end:.3f})")
+            scrub_enable = "+".join(scrub_windows) or "0"
+            filters.append(
+                f"{caption_input}split=2[caption_clean_base][caption_source_band];"
+                f"[caption_source_band]crop=iw:{band_height}:0:{band_y},"
+                f"boxblur=24:3[caption_blurred_band];"
+                f"[caption_clean_base][caption_blurred_band]overlay=0:{band_y}:"
+                f"enable='{scrub_enable}'[caption_scrubbed]"
+            )
+            caption_input = "[caption_scrubbed]"
         overlay_items: list[Mapping[str, Any]] = []
         if broll:
             overlay_items.append(broll)
@@ -9122,8 +10429,55 @@ class VideoEditorWorkflowService:
             )
             filters.append(overlay)
             caption_input = f"[{output_label}]"
+        for motion_index, item in enumerate(motion_items or []):
+            try:
+                start = float(item["start"]) / playback_rate
+                end = float(item["end"]) / playback_rate
+            except (KeyError, TypeError, ValueError):
+                continue
+            if end <= start:
+                continue
+            input_index = int(item.get("input_index", motion_input_index + motion_index))
+            style_id = str(item.get("style_id") or "keyword_accent")
+            label = f"motion{motion_index}"
+            output_label = f"with_motion{motion_index}"
+            if style_id == "number_slam":
+                scale_expression = "1.0+0.12*if(lt(t,0.20),1-t/0.20,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "warning_shake":
+                scale_expression = "1.0+0.03*sin(PI*t/0.18)"
+                x_expression = "(W-w)/2+8*sin(2*PI*t/0.10)"
+            elif style_id == "process_marker":
+                scale_expression = "1.0+0.04*sin(PI*t/0.7)"
+                x_expression = "(W-w)/2"
+            elif style_id == "cta_burst":
+                scale_expression = "1.0+0.08*if(lt(t,0.22),1-t/0.22,0)"
+                x_expression = "(W-w)/2"
+            else:
+                scale_expression = "1.0+0.06*sin(PI*t/0.55)"
+                x_expression = "(W-w)/2"
+            motion_width = max(420, round(width * 0.72))
+            motion_height = max(170, round(motion_width * 260 / 640))
+            filters.append(
+                f"[{input_index}:v]format=rgba,"
+                f"scale=w='trunc({motion_width}*({scale_expression})/2)*2':"
+                f"h='trunc({motion_height}*({scale_expression})/2)*2':eval=frame,"
+                "fade=t=in:st=0:d=0.16:alpha=1["
+                f"{label}]"
+            )
+            overlay = (
+                f"{caption_input}[{label}]overlay=x='{x_expression}':"
+                "y='trunc(H*0.68-h/2)':"
+                f"enable='between(t,{start:.3f},{end:.3f})':"
+                f"eof_action=pass[{output_label}]"
+            )
+            filters.append(overlay)
+            caption_input = f"[{output_label}]"
         if subtitle_filter:
-            filters.append(f"{caption_input}subtitles='{subtitle_filter}'[captioned]")
+            subtitle_args = subtitle_filter
+            if subtitle_force_style:
+                subtitle_args = f"{subtitle_args}':force_style='{subtitle_force_style}"
+            filters.append(f"{caption_input}subtitles='{subtitle_args}'[captioned]")
         else:
             # Smart-opening exports burn the final-output ASS only after the
             # opening and body have been concatenated.  Keeping the body
@@ -9307,6 +10661,10 @@ class VideoEditorWorkflowService:
                 raise VideoEditorWorkflowError(
                     "当前原片没有可用人声轨道，暂不能按口播方案导出。"
                 )
+            source_caption_detection = self._detect_source_burned_captions(
+                source_path,
+                duration_seconds=float(media.get("duration_seconds") or 0),
+            )
             edit_plan = json.loads(task.outputs.get("edit_plan_json") or "{}")
             source_range = json.loads(
                 task.outputs.get("source_range_json")
@@ -9326,6 +10684,26 @@ class VideoEditorWorkflowService:
             profile = task.outputs.get("output_profile") or "720p"
             playback_rate = float(
                 task.outputs.get("playback_rate") or _LOCAL_PREVIEW_PLAYBACK_RATE
+            )
+            source_caption_mode = str(
+                source_caption_detection.get("mode")
+                if source_caption_detection.get("detected")
+                else edit_plan.get("source_caption_mode")
+                or source_caption_detection.get("mode")
+                or _SOURCE_CAPTION_MODE_GENERATED
+            )
+            edit_plan["source_caption_mode"] = source_caption_mode
+            edit_plan["source_caption_detection"] = source_caption_detection
+            task = self._update(
+                task,
+                outputs={
+                    **task.outputs,
+                    "edit_plan_json": json.dumps(edit_plan, ensure_ascii=False),
+                    "source_caption_mode": source_caption_mode,
+                    "source_caption_detection": json.dumps(
+                        source_caption_detection, ensure_ascii=False
+                    ),
+                },
             )
             segments = json.loads(task.outputs.get("subtitle_segments_json") or "[]")
             if shot_plan:
@@ -9387,6 +10765,36 @@ class VideoEditorWorkflowService:
             edit_plan = json.loads(task.outputs.get("edit_plan_json") or "{}")
             smart_opening = json.loads(task.outputs.get("smart_opening_json") or "{}")
             legacy_broll = json.loads(task.outputs.get("broll_json") or "{}")
+            director_plan = edit_plan.get("director_plan") or {}
+            stored_motion_events = [
+                dict(event)
+                for event in director_plan.get("motion_events") or []
+                if isinstance(event, Mapping)
+            ]
+            # Compile from the current reviewed/retimed segment clock.  This
+            # keeps badges aligned after an old task is resumed or a shot plan
+            # changes order; cached events are only a last-resort fallback for
+            # legacy tasks that no longer carry their transcript segments.
+            from src.services.motion_design import build_semantic_motion_events
+
+            compiled_motion_events = build_semantic_motion_events(
+                segments,
+                duration_seconds=float(media["duration_seconds"]),
+            )
+            motion_events = compiled_motion_events or stored_motion_events
+            if isinstance(director_plan, dict) and motion_events:
+                director_plan = {
+                    **director_plan,
+                    "motion_events": motion_events,
+                    "motion_design": {
+                        **(
+                            director_plan.get("motion_design")
+                            if isinstance(director_plan.get("motion_design"), Mapping)
+                            else {}
+                        ),
+                        "event_count": len(motion_events),
+                    },
+                }
             raw_brolls = json.loads(
                 task.outputs.get("brolls_json")
                 or json.dumps(edit_plan.get("release_brolls") or [])
@@ -9579,11 +10987,24 @@ class VideoEditorWorkflowService:
                 rendered_segments,
                 subtitle_preview,
             )
-            subtitle_preview = {
+            # Keep the complete cue set for timing and semantic audits.  When
+            # the source already contains captions, only cues over a full
+            # screen B-roll replace the source pixels and therefore need a
+            # new burn-in layer.
+            subtitle_quality_preview = {
                 **subtitle_preview,
                 "clock": "final_output",
                 "playback_rate": playback_rate,
                 "preview_render_manifest_equal": True,
+            }
+            subtitle_render_preview = self._source_caption_overlay_preview(
+                subtitle_quality_preview,
+                source_caption_mode=source_caption_mode,
+                brolls=brolls,
+                playback_rate=playback_rate,
+            )
+            subtitle_preview = {
+                **subtitle_quality_preview,
             }
             ass_bytes = self._review_ass_bytes(
                 rendered_segments,
@@ -9594,7 +11015,7 @@ class VideoEditorWorkflowService:
                 caption_glossary=edit_plan.get("transcript_glossary"),
                 theme=creative_theme,
                 font_family=font_family,
-                overlay_preview=subtitle_preview,
+                overlay_preview=subtitle_render_preview,
                 subtitle_style_id="adaptive_talking_head_v1",
             )
             ass_path.write_bytes(ass_bytes)
@@ -9607,7 +11028,15 @@ class VideoEditorWorkflowService:
                 ),
                 "style_fingerprint": subtitle_preview.get("style_fingerprint") or {},
                 "phrase_timing_source": subtitle_preview.get("phrase_timing_source"),
-                "cues": subtitle_preview.get("cues") or [],
+                "cues": subtitle_render_preview.get("cues") or [],
+                "source_caption_mode": source_caption_mode,
+                "source_caption_detection": source_caption_detection,
+                "generated_caption_scope": subtitle_render_preview.get(
+                    "generated_caption_scope", "full_timeline"
+                ),
+                "generated_caption_intervals": subtitle_render_preview.get(
+                    "generated_caption_intervals", []
+                ),
             }
             manifest_bytes = json.dumps(
                 subtitle_manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -9645,6 +11074,23 @@ class VideoEditorWorkflowService:
                     fontsdir=font_path.parent if font_path.is_file() else None,
                 )
             )
+            subtitle_force_style = None
+            if source_caption_mode == _SOURCE_CAPTION_MODE_REPLACE:
+                _, scrub_height, scrub_center = self._source_caption_band_geometry(
+                    width=width,
+                    height=height,
+                    source_width=int(media["width"]),
+                    source_height=int(media["height"]),
+                    source_caption_detection=source_caption_detection,
+                )
+                # Put the generated kinetic captions back over the removed
+                # source band so the replacement reads as one intentional
+                # subtitle system instead of leaving a blurred empty stripe.
+                subtitle_margin_v = max(
+                    48,
+                    round(height - scrub_center - max(22, scrub_height * 0.32)),
+                )
+                subtitle_force_style = f"MarginV={subtitle_margin_v}"
             semantic_input_index = 2 + len(brolls) + len(vector_items)
             semantic_card_paths: list[Path] = []
             for index, item in enumerate(semantic_layers):
@@ -9663,6 +11109,31 @@ class VideoEditorWorkflowService:
                     )
                 item["input_index"] = semantic_input_index + index
                 semantic_card_paths.append(card_path)
+            motion_input_index = semantic_input_index + len(semantic_card_paths)
+            motion_items: list[dict[str, Any]] = []
+            motion_badge_paths: list[Path] = []
+            for index, event in enumerate(motion_events):
+                try:
+                    start = float(event.get("start") or 0)
+                    end = float(event.get("end") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if end <= start or start >= float(media["duration_seconds"]):
+                    continue
+                badge_path = temp_dir / f"semantic-motion-{index}.png"
+                self._render_semantic_motion_badge(event, output_path=badge_path)
+                motion_item = {
+                    **event,
+                    "start": max(0.0, start),
+                    "end": min(float(media["duration_seconds"]), end),
+                    "path": badge_path,
+                    "media_kind": "image",
+                    "input_index": motion_input_index + len(motion_items),
+                }
+                if motion_item["end"] <= motion_item["start"]:
+                    continue
+                motion_items.append(motion_item)
+                motion_badge_paths.append(badge_path)
             visual_beats = [
                 beat
                 for beat in edit_plan.get("visual_beats") or []
@@ -9804,6 +11275,7 @@ class VideoEditorWorkflowService:
                     fps=fps,
                     playback_rate=playback_rate,
                     subtitle_filter=subtitle_filter,
+                    subtitle_force_style=subtitle_force_style,
                     broll=None if brolls else broll,
                     brolls=brolls,
                     broll_input_index=2,
@@ -9811,9 +11283,18 @@ class VideoEditorWorkflowService:
                     vector_input_index=2 + len(brolls),
                     semantic_layers=semantic_layers,
                     semantic_input_index=semantic_input_index,
+                    motion_items=motion_items,
+                    motion_input_index=motion_input_index,
                     reframe_events=reframe_events,
                     source_width=int(media["width"]),
                     source_height=int(media["height"]),
+                    scrub_source_captions=(
+                        source_caption_mode == _SOURCE_CAPTION_MODE_REPLACE
+                    ),
+                    source_caption_detection=source_caption_detection,
+                    source_caption_intervals=(
+                        subtitle_render_preview.get("cues") or []
+                    ),
                 ),
                 "[1:v]format=rgba[title]",
             ]
@@ -9845,8 +11326,16 @@ class VideoEditorWorkflowService:
                 command.extend(
                     ["-loop", "1", "-framerate", str(fps), "-i", str(semantic_card_path)]
                 )
+            for motion_badge_path in motion_badge_paths:
+                command.extend(
+                    ["-loop", "1", "-framerate", str(fps), "-i", str(motion_badge_path)]
+                )
             next_input_index = (
-                2 + len(brolls) + len(vector_items) + len(semantic_card_paths)
+                2
+                + len(brolls)
+                + len(vector_items)
+                + len(semantic_card_paths)
+                + len(motion_badge_paths)
             )
             for index, (beat, card_path) in enumerate(beat_cards):
                 command.extend(["-loop", "1", "-framerate", str(fps), "-i", str(card_path)])
@@ -10013,15 +11502,20 @@ class VideoEditorWorkflowService:
                     bitrate=task.edit_config.output_bitrate,
                 )
             subtitle_timing_segments = rendered_segments
-            subtitle_timing_preview = subtitle_preview
+            subtitle_timing_preview = subtitle_render_preview
             subtitle_timing_spoken_ranges = rendered_spoken_ranges
             if smart_opening:
                 subtitle_timing_segments, subtitle_timing_preview = (
                     self._shift_subtitle_clock(
                         rendered_segments,
-                        subtitle_preview,
+                        subtitle_render_preview,
                         opening_duration,
                     )
+                )
+                _, subtitle_quality_preview = self._shift_subtitle_clock(
+                    rendered_segments,
+                    subtitle_quality_preview,
+                    opening_duration,
                 )
                 subtitle_timing_spoken_ranges = [
                     {
@@ -10049,12 +11543,27 @@ class VideoEditorWorkflowService:
                     subtitle_style_id="adaptive_talking_head_v1",
                 )
                 ass_path.write_bytes(ass_bytes)
+                # P0-收口 2026-08-31: only burn the ASS overlay once.  When
+                # the render manifest already has ``subtitles_burned_in`` set
+                # (legacy / safe-preview path), the subtitle is in the
+                # pixel stream of ``output_path`` already; burning it again
+                # here produces a second, shifted layer (frame_t2s etc).
+                subtitle_already_burned = bool(
+                    edit_plan.get("subtitles_burned_in")
+                )
                 final_subtitle_path = temp_dir / "final-with-subtitles.mp4"
                 final_subtitle_filter = self._ffmpeg_filter_path(
                     ass_path,
                     fontsdir=font_path.parent if font_path.is_file() else None,
                 )
-                final_subtitle_result = _run_media_command(
+                if subtitle_already_burned:
+                    # Skip the second burn; treat ``output_path`` as the
+                    # final file and continue the quality-report stage.
+                    final_subtitle_path = output_path
+                    final_subtitle_result = None
+                    final_subtitle_returncode = 0
+                else:
+                    final_subtitle_result = _run_media_command(
                     [
                         "ffmpeg",
                         "-nostdin",
@@ -10101,14 +11610,15 @@ class VideoEditorWorkflowService:
                         f"最终字幕烧录失败：{detail[-600:]}"
                     )
                 os.replace(final_subtitle_path, output_path)
-            subtitle_preview = subtitle_timing_preview
+            subtitle_render_preview = subtitle_timing_preview
+            subtitle_preview = subtitle_quality_preview
             rendered_segments_for_quality = subtitle_timing_segments
             rendered_spoken_ranges = subtitle_timing_spoken_ranges
             subtitle_manifest = {
                 **subtitle_manifest,
                 "clock": "final_output",
                 "opening_offset_seconds": round(float(opening_duration or 0), 3),
-                "cues": subtitle_preview.get("cues") or [],
+                "cues": subtitle_render_preview.get("cues") or [],
             }
             manifest_bytes = json.dumps(
                 {
@@ -10142,7 +11652,77 @@ class VideoEditorWorkflowService:
                 expected_duration=expected_duration,
                 source_has_audio=bool(media.get("has_audio")),
                 visual_beats=reframe_events,
+                # P0/P1-收口 2026-08-31: feed the 5 new hard gates.  The
+                # ``source_media_identity`` lives under
+                # ``director_plan`` of the serialised ``edit_plan`` that
+                # was persisted on the task — read it directly from
+                # there so the gate has a real provider / model / sha256
+                # triple even when the batch item never made the round
+                # trip back into the caller's scope.
+                source_media_identity=(
+                    (
+                        edit_plan.get("source_media_identity")
+                        or (edit_plan.get("director_plan") or {}).get(
+                            "source_media_identity"
+                        )
+                    )
+                    if isinstance(edit_plan, Mapping)
+                    else None
+                ),
+                source_path=media.get("_path") or media.get("source_path") or media.get("path"),
+                subtitle_preview=subtitle_preview,
             )
+            motion_styles = sorted(
+                {
+                    str(item.get("style_id") or "")
+                    for item in motion_items
+                    if str(item.get("style_id") or "")
+                }
+            )
+            motion_design_passed = bool(
+                not motion_events or len(motion_items) == len(motion_events)
+            )
+            quality_report["motion_design"] = {
+                "plan_version": (director_plan.get("motion_design") or {}).get(
+                    "plan_version", "motion-design-v2"
+                ),
+                "renderer": "procedural_overlay_v2_caption_integrated",
+                "preview_renderer": "css_motion_accent_v2",
+                "anchor_policy": "smart_caption_safe",
+                "avoid_zones": ["face", "subtitle", "subject"],
+                "strong_effect_budget": "max_5_per_60s",
+                "planned_event_count": len(motion_events),
+                "rendered_event_count": len(motion_items),
+                "styles": motion_styles,
+                "grounded_event_count": sum(
+                    1
+                    for item in motion_items
+                    if item.get("grounded_in_text") is True
+                ),
+                "fallback": "subtitle_kinetic_emphasis",
+                "passed": motion_design_passed,
+            }
+            quality_report.setdefault("checks", {})["motion_design"] = (
+                motion_design_passed
+            )
+            quality_report["passed"] = all(quality_report["checks"].values())
+            quality_report["subtitle_rendering"] = {
+                "source_caption_mode": source_caption_mode,
+                "source_caption_detection": source_caption_detection,
+                "source_caption_preserved": source_caption_mode
+                == _SOURCE_CAPTION_MODE_PRESERVE,
+                "source_caption_replaced": source_caption_mode
+                == _SOURCE_CAPTION_MODE_REPLACE,
+                "generated_caption_scope": subtitle_render_preview.get(
+                    "generated_caption_scope", "full_timeline"
+                ),
+                "generated_cue_count": len(
+                    subtitle_render_preview.get("cues") or []
+                ),
+                "generated_caption_intervals": subtitle_render_preview.get(
+                    "generated_caption_intervals", []
+                ),
+            }
             quality_report["bgm"] = {
                 "enabled": bool(bgm_id),
                 "asset_id": bgm_id or None,
@@ -10824,6 +12404,14 @@ class VideoEditorWorkflowService:
             quality_report["visual_event_count"] = visual_event_count
             quality_report["visual_broll_event_count"] = len(brolls)
             quality_report["semantic_visual_layer_count"] = len(semantic_layer_items)
+            quality_report["semantic_motion_event_count"] = len(motion_items)
+            quality_report["semantic_motion_styles"] = sorted(
+                {
+                    str(item.get("style_id") or "")
+                    for item in motion_items
+                    if str(item.get("style_id") or "")
+                }
+            )
             quality_report["semantic_visual_layer_geometry"] = semantic_layer_geometry
             quality_report["real_broll_event_count"] = len(real_brolls)
             quality_report["real_stock_video_event_count"] = len(stock_video_brolls)
@@ -11132,7 +12720,11 @@ class VideoEditorWorkflowService:
             # P0-6: 通用错误模式检测。raw ASR 假阳性（raw_asr == reviewed），
             # 或命中数字 / 品牌 / 金额 / 人物名 不可自动修的 token。
             known_error_terms = _detect_known_transcript_errors(
-                reviewed_text, raw_asr_text=raw_asr_text
+                reviewed_text,
+                raw_asr_text=raw_asr_text,
+                human_review_confirmed=bool(
+                    transcript_review.get("human_confirmed") is True
+                ),
             )
             human_review_warnings = _detect_human_review_warnings(reviewed_text)
             reviewed_source = str(transcript_review.get("source") or "").strip()
@@ -11427,14 +13019,81 @@ class VideoEditorWorkflowService:
                 if emphasis_kind not in {
                     "number",
                     "benefit",
+                    "method",
                     "warning",
                     "keyword",
+                    "result",
+                    "cta",
                 }:
                     raise VideoEditorWorkflowError("字幕强调样式无效。")
                 normalized_segment["emphasis_kind"] = emphasis_kind
             normalized.append(normalized_segment)
             previous_end = end
         return normalized
+
+    def _restore_word_timestamps(
+        self,
+        item: VideoEditorBatchItem,
+        segments: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Restore provider word clocks omitted by older review clients.
+
+        The browser used to receive sentence-only transcription payloads and
+        then persist those same segments during review.  The source
+        transcription task still contains the authoritative word clocks, so
+        recover them by the stable sentence start/end pair.  This is a
+        compatibility repair only: user-edited text and all user timing edits
+        remain authoritative.
+        """
+
+        raw_segments = [dict(segment) for segment in segments if isinstance(segment, Mapping)]
+        if not item.subtitle_task_id or not raw_segments:
+            return raw_segments
+        transcript_task = self.repository.get_task(item.subtitle_task_id)
+        source_segments = getattr(transcript_task, "segments", None) or []
+        if not source_segments:
+            return raw_segments
+
+        source_by_clock: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        for source_segment in source_segments:
+            if hasattr(source_segment, "model_dump"):
+                source = source_segment.model_dump(mode="json")
+            elif isinstance(source_segment, Mapping):
+                source = dict(source_segment)
+            else:
+                continue
+            words = source.get("words")
+            if not isinstance(words, list) or not words:
+                continue
+            try:
+                key = (
+                    round(float(source.get("start") or 0) * 1000),
+                    round(float(source.get("end") or 0) * 1000),
+                )
+            except (TypeError, ValueError):
+                continue
+            source_by_clock.setdefault(key, []).append(source)
+
+        if not source_by_clock:
+            return raw_segments
+        restored: list[dict[str, Any]] = []
+        for segment in raw_segments:
+            if segment.get("words"):
+                restored.append(segment)
+                continue
+            try:
+                key = (
+                    round(float(segment.get("start") or 0) * 1000),
+                    round(float(segment.get("end") or 0) * 1000),
+                )
+            except (TypeError, ValueError):
+                restored.append(segment)
+                continue
+            candidates = source_by_clock.get(key) or []
+            if candidates:
+                segment["words"] = [dict(word) for word in candidates[0]["words"]]
+            restored.append(segment)
+        return restored
 
     @staticmethod
     def _srt_timestamp(seconds: float) -> str:
@@ -11584,8 +13243,9 @@ class VideoEditorWorkflowService:
                 "start": round(range_start, 3),
                 "end": round(range_end, 3),
             }
+        segments = self._restore_word_timestamps(item, subtitle_segments)
         segments = self._validated_review_segments(
-            subtitle_segments,
+            segments,
             duration_seconds=duration_seconds,
         )
         title = selected_title.strip()
@@ -11811,28 +13471,28 @@ class VideoEditorWorkflowService:
         source = self.resolve_source(item.source_id)
         source_path = Path(source["_path"])
         source_media = self._probe_media(source_path)
-        source_media_identity = {
-            "source_media_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
-            "source_duration_seconds": float(source_media["duration_seconds"]),
-            "transcript_sha256": hashlib.sha256(
-                json.dumps(
-                    segments,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest(),
-            "transcript_timing_source": (
-                "word_timestamps"
-                if any(
-                    isinstance(segment.get("words"), list)
-                    and segment.get("words")
-                    for segment in segments
-                    if isinstance(segment, Mapping)
-                )
-                else "sentence_timestamps"
+        transcript_task = (
+            self.repository.get_task(item.subtitle_task_id)
+            if item.subtitle_task_id
+            else None
+        )
+        existing_identity = dict((item.edit_plan or {}).get("source_media_identity") or {})
+        source_media_identity = _transcript_source_identity(
+            segments,
+            provider=(
+                getattr(transcript_task, "provider_name", None)
+                or existing_identity.get("provider")
             ),
-        }
+            model=(
+                getattr(transcript_task, "model_name", None)
+                or existing_identity.get("model")
+            ),
+            source_media_sha256=hashlib.sha256(source_path.read_bytes()).hexdigest(),
+        )
+        source_media_identity["source_duration_seconds"] = float(
+            source_media["duration_seconds"]
+        )
+        source_media_identity["transcript_identity_scope"] = "task_subtitle_segments_v1"
         plan_payload["source_media_identity"] = source_media_identity
         if normalized_source_range is not None:
             plan_payload["source_range"] = normalized_source_range
@@ -11856,6 +13516,7 @@ class VideoEditorWorkflowService:
         review_snapshot = {
             "confirmed": True,
             "approval_mode": "manual",
+            "bgm_confirmed": True,
             "confirmed_at": review_time.isoformat(),
             "plan_version": reviewed_plan.plan_version,
             "plan_hash": plan_hash,
@@ -13249,6 +14910,26 @@ class VideoEditorWorkflowService:
                     caption_emphasis=caption_emphasis,
                     spoken_ranges=(item.edit_plan or {}).get("spoken_ranges"),
                     caption_glossary=(item.edit_plan or {}).get("transcript_glossary"),
+                )
+                preview_brolls = list(
+                    (item.edit_plan or {}).get("release_brolls") or []
+                )
+                if not preview_brolls and isinstance(
+                    (item.review_snapshot or {}).get("broll"), Mapping
+                ):
+                    preview_brolls = [
+                        dict((item.review_snapshot or {}).get("broll") or {})
+                    ]
+                overlay_preview = self._source_caption_overlay_preview(
+                    overlay_preview,
+                    source_caption_mode=str(
+                        (item.edit_plan or {}).get("source_caption_mode") or ""
+                    ),
+                    brolls=preview_brolls,
+                    playback_rate=float(
+                        (item.edit_plan or {}).get("playback_rate")
+                        or _RELEASE_TEMPLATE_PLAYBACK_RATE
+                    ),
                 )
             if (
                 batch.provider_mode == "aliyun"

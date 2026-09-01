@@ -75,8 +75,18 @@ def test_no_match_returns_safe_degradation_instead_of_inventing_an_asset():
 
 
 def test_multi_industry_copy_does_not_accept_a_single_restaurant_clip():
-    query = visual_search_query("除了餐饮水果生鲜美容便利店都能使用")
-    assert query == "multi-industry retail business marketing"
+    """P0-收口 2026-08-31: a multi-industry query must NOT collapse into
+    a hardcoded English phrase, and a single restaurant clip must still
+    be rejected by the semantic gate (the gate's job, not the search
+    string's)."""
+    original_query = "除了餐饮水果生鲜美容便利店都能使用"
+    query = visual_search_query(original_query)
+
+    # Generic rule: literal text is preserved, no canned English string.
+    assert "餐饮" in query
+    assert "便利店" in query
+    assert query != "multi-industry retail business marketing"
+    assert "multi-industry" not in query
 
     result = match_local_visual_asset(
         query,
@@ -366,19 +376,38 @@ def test_zero_score_authorized_asset_cannot_pass_semantic_broll_gate():
 
 
 def test_business_query_is_normalized_to_concrete_visual_search_terms():
+    """P0-收口 2026-08-31: the old assertion was a hardcoded answer
+    (``"CRM" / "customer database" / "business analytics"``).  Replace
+    it with the general rule: the caller's own text is preserved AND
+    the helper does not silently inject the old canned search string.
+    """
     search_query = visual_search_query("客户数据库与客户资源沉淀")
 
-    assert "CRM" in search_query
-    assert "customer database" in search_query
-    assert "business analytics" in search_query
+    # Generic rule: the literal caller's text is returned.
+    assert "客户数据库" in search_query
+    # Generic rule: the historical hardcoded CRM/dashboard phrase must
+    # NOT be silently injected (otherwise we are back to "answer-driven"
+    # code that collapses every Chinese business query into one search).
+    assert "CRM dashboard" not in search_query
+    assert "customer database business analytics" not in search_query
 
 
 def test_restaurant_query_is_normalized_to_food_specific_visual_search_terms():
+    """P0-收口 2026-08-31: the old assertion was a hardcoded answer
+    (``"barbecue restaurant" / "food preparation" / "diners"``).
+    Replace it with the general rule: the caller's own text is
+    preserved AND the historical hardcoded ``barbecue restaurant
+    grill food preparation diners`` must NOT be silently injected
+    (that was the single most obvious "answer-driven" search string
+    the cross-review called out).
+    """
     search_query = visual_search_query("街上有家烧烤店，附近居民都成了回头客")
 
-    assert "barbecue restaurant" in search_query
-    assert "food preparation" in search_query
-    assert "diners" in search_query
+    # Generic rule: the literal caller's text is returned.
+    assert "烧烤店" in search_query
+    # Generic rule: no silent hardcoded answer injection.
+    assert "barbecue restaurant grill food preparation diners" not in search_query
+    assert "barbecue restaurant" not in search_query
 
 
 def test_specific_english_provider_query_keeps_subject_action_and_context():

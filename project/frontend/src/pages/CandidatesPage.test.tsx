@@ -8,7 +8,7 @@ import CandidatesPage from "./CandidatesPage";
 import { ToastProvider } from "../components/Toast";
 import { searchCandidates } from "../api/client";
 
-vi.mock("../api/client", () => ({ searchCandidates: vi.fn() }));
+vi.mock("../api/client", () => ({ searchCandidates: vi.fn(), resolveCrawlerCandidateOriginalMedia: vi.fn() }));
 
 function LocationDisplay() {
   const location = useLocation();
@@ -99,5 +99,43 @@ describe("CandidatesPage", () => {
 
     expect((await screen.findAllByText("B站")).length).toBeGreaterThanOrEqual(2);
     expect(screen.queryByText("视频号")).toBeNull();
+  });
+
+  it("supports link transcription for a direct Xiaohongshu note URL", async () => {
+    vi.mocked(searchCandidates).mockResolvedValueOnce({
+      total: 1,
+      category_options: [],
+      items: [{
+        video_id: "xiaohongshu-xhs-bare-link",
+        title: "缺少分享参数的小红书素材",
+        platform: "xiaohongshu",
+        author_name: "小红书作者",
+        category: "关键词/测试",
+        heat_score: 90,
+        heat_level: "普通",
+        source_url: null,
+        published_at: "2026-07-24T17:35:06+08:00",
+        observed_at: "2026-07-24T17:35:06+08:00",
+        publication_time_state: "platform",
+        official_hot: false,
+        official_rank: null,
+        snapshot_count: 1,
+        growth_window_hours: null,
+        heat_reasons: [],
+      }],
+    });
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: "查看" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "文案转写" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "文案转写" }));
+    const transcriptionUrl = new URL(screen.getByTestId("location").textContent || "", "http://localhost");
+    expect(transcriptionUrl.pathname).toBe("/transcription");
+    expect(transcriptionUrl.searchParams.get("candidate")).toBe("xiaohongshu-xhs-bare-link");
+    expect(transcriptionUrl.searchParams.get("share_text")).toBe(
+      "https://www.xiaohongshu.com/explore/xhs-bare-link",
+    );
+    expect(transcriptionUrl.searchParams.get("entry")).toBeNull();
   });
 });

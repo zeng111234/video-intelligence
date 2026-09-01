@@ -12,6 +12,10 @@ import re
 from typing import Any, Mapping, Sequence
 
 from src.services.talking_head_templates import build_talking_head_shot_plan
+from src.services.motion_design import (
+    MOTION_DESIGN_PLAN_VERSION,
+    build_semantic_motion_events,
+)
 
 
 DIRECTOR_PLAN_VERSION = "director-plan-v3.1"
@@ -211,10 +215,13 @@ def _normalise_segments(
 
 def _asset_prompt(text: str, *, template_id: str) -> str:
     return (
-        "抖音9:16竖屏商业口播配图，画面表达："
+        "抖音口播精剪·9:16竖屏视觉插入，表达这句口播的具体含义："
         f"{text[:80]}。母题：{template_id}。"
-        "写实、清晰、留出字幕安全区，不出现文字、字幕、水印、品牌Logo，"
-        "不生成与口播人物相似的真人脸。"
+        "短视频广告级视觉叙事，主体明确，前景有层次，构图有轻微运动感，"
+        "明暗对比清楚，使用暖黄、橙色、珊瑚粉等暖色点缀，适合0.8到2.8秒"
+        "的全屏切入或画中画，不要做成PPT或信息卡；主体与背景有明显景别关系，"
+        "画面下方和人物脸部保留字幕与安全区。禁止任何文字、字幕、数字、UI、徽章、"
+        "Logo、水印和品牌标识，不生成与口播人物相似的真人脸。"
     )
 
 
@@ -362,7 +369,11 @@ def build_director_plan(
                         str(scene.get("text") or ""),
                         template_id=str(shot_plan["template_id"]),
                     ),
-                    "negative_prompt": "文字，水印，Logo，畸形手，重复物体，低清晰度",
+                    "negative_prompt": (
+                        "文字，字幕，数字，UI，后台标签，固定角落徽章，信息卡，"
+                        "水印，Logo，科技青色，畸形手，重复物体，低清晰度，"
+                        "PPT截图，深色万能卡，遮挡脸部，裁切主体"
+                    ),
                     "size": "1024x1792",
                     "source": "openai_compatible_image_relay",
                     "status": "awaiting_budget_and_provider",
@@ -454,6 +465,11 @@ def build_director_plan(
             ),
         }
 
+    motion_events = build_semantic_motion_events(
+        normalised,
+        duration_seconds=duration_seconds,
+    )
+
     return {
         "plan_version": DIRECTOR_PLAN_VERSION,
         "target_platform": target_platform,
@@ -468,6 +484,18 @@ def build_director_plan(
         },
         "scenes": scenes,
         "visual_events": visual_events,
+        "motion_events": motion_events,
+        "motion_design": {
+            "plan_version": MOTION_DESIGN_PLAN_VERSION,
+            "renderer": "procedural_overlay_v2_caption_integrated",
+            "preview_renderer": "css_motion_accent_v2",
+            "anchor_policy": "smart_caption_safe",
+            "avoid_zones": ["face", "subtitle", "subject"],
+            "strong_effect_budget": "max_5_per_60s",
+            "fallback": "subtitle_kinetic_emphasis",
+            "event_count": len(motion_events),
+            "semantic_source": "reviewed_transcript_segments",
+        },
         "asset_requests": asset_requests,
         # === P0-2: 视觉时间窗规划 ===
         "visual_window_plan": _plan_visual_windows(

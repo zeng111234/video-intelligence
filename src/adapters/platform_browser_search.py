@@ -1249,6 +1249,23 @@ class LocalPlatformBrowserSearchProvider:
             base = merged.get(item_id, {})
             combined = dict(base)
             for key, value in row.items():
+                if key == "source_url" and row.get("source_url_verified") is True:
+                    # 网络响应可能没有临时 xsec_token，但 DOM 仍提供了可交给
+                    # 已登录浏览器解析的直接 /explore/ 链接。只有新值存在，或
+                    # 旧值本身不是受支持的小红书笔记链接时，才覆盖它。
+                    if value is not None or not LocalPlatformBrowserSearchProvider._is_actionable_xiaohongshu_source_url(base.get(key)):
+                        combined[key] = value
+                    continue
+                if (
+                    key == "source_url"
+                    and row.get("source_url_verified") is False
+                    and LocalPlatformBrowserSearchProvider._is_actionable_xiaohongshu_source_url(
+                        base.get(key)
+                    )
+                ):
+                    # 网络层只有 note id 时的 canonical URL 不能覆盖 DOM/分享
+                    # 层已经拿到的真实小红书入口。
+                    continue
                 if (
                     key == "time_confident"
                     and value is False
@@ -1946,7 +1963,7 @@ class LocalPlatformBrowserSearchProvider:
 
     def _raise_for_login_gate(self, page) -> None:
         body_text = page.locator("body").inner_text(timeout=3000)
-        if any(marker in body_text for marker in self.spec.login_markers):
+        if self._page_requires_login(body_text):
             raise LicensedProviderError(
                 f"{self.spec.label}没有返回公开搜索结果，平台要求登录或人工验证。",
                 kind=ProviderErrorKind.AUTHORIZATION,
@@ -2015,6 +2032,32 @@ class LocalPlatformBrowserSearchProvider:
                                node.getAttribute('aria-label'), node.getAttribute('title')].join(' ')
                             ))
                         ),
+                        xsecToken: (() => {
+                          const nodes = [element, container, ...(container?.querySelectorAll(
+                            '[data-xsec-token], [data-xsec_token], [data-xsec-source], [data-xsec_source]'
+                          ) || [])];
+                          for (const node of nodes) {
+                            const value = node?.getAttribute?.('data-xsec-token')
+                              || node?.getAttribute?.('data-xsec_token')
+                              || node?.getAttribute?.('xsec-token')
+                              || node?.getAttribute?.('xsec_token');
+                            if (value) return value;
+                          }
+                          return '';
+                        })(),
+                        xsecSource: (() => {
+                          const nodes = [element, container, ...(container?.querySelectorAll(
+                            '[data-xsec-source], [data-xsec_source]'
+                          ) || [])];
+                          for (const node of nodes) {
+                            const value = node?.getAttribute?.('data-xsec-source')
+                              || node?.getAttribute?.('data-xsec_source')
+                              || node?.getAttribute?.('xsec-source')
+                              || node?.getAttribute?.('xsec_source');
+                            if (value) return value;
+                          }
+                          return '';
+                        })(),
                     };
                 })"""
             )
@@ -2036,6 +2079,19 @@ class LocalPlatformBrowserSearchProvider:
                 and item.get("isVideo") is not True
             ):
                 continue
+            source_url = href
+            if self.platform == Platform.XIAOHONGSHU:
+                if href.startswith("/"):
+                    href = f"https://www.xiaohongshu.com{href}"
+                source_url = self._xiaohongshu_source_url(
+                    {
+                        "href": href,
+                        "xsec_token": item.get("xsecToken"),
+                        "xsec_source": item.get("xsecSource"),
+                    },
+                    {},
+                    match.group(1),
+                )
             published_at = self._parse_published_at(text, self.clock())
             title = self._clean_title(item.get("title"), text)
             direct_match = bool(
@@ -2071,7 +2127,7 @@ class LocalPlatformBrowserSearchProvider:
             rows.append(
                 {
                     "item_id": match.group(1),
-                    "source_url": href,
+                    "source_url": source_url,
                     "title": title,
                     "author_name": self._extract_author(text),
                     "plays": plays_from_stats,
@@ -2157,10 +2213,32 @@ class LocalPlatformBrowserSearchProvider:
         return False
 
     @staticmethod
+    def _is_actionable_xiaohongshu_source_url(value: object) -> bool:
+        """Return whether a Xiaohongshu URL can enter the logged-browser resolver."""
+        if not isinstance(value, str) or not value.strip():
+            return False
+        candidate = value.strip()
+        parsed = urlparse(candidate)
+        host = (parsed.hostname or "").casefold()
+        is_short_share = host == "xhslink.com" or host.endswith(".xhslink.com")
+        is_xiaohongshu = host == "xiaohongshu.com" or host.endswith(
+            ".xiaohongshu.com"
+        )
+        is_note_path = "/explore/" in parsed.path or "/discovery/item/" in parsed.path
+        return bool(
+            parsed.scheme == "https"
+            and (is_short_share or (is_xiaohongshu and is_note_path))
+        )
+
+    @staticmethod
     def _xiaohongshu_source_url(
         entry: dict[str, Any], card: dict[str, Any], item_id: str
-    ) -> str:
-        """Keep a platform-provided share URL, including temporary query params."""
+    ) -> str | None:
+        """Keep a valid Xiaohongshu note link for the logged-browser resolver.
+
+        Direct note links may need the user's active Xiaohongshu session to
+        resolve, but dropping them at ingestion prevents normal link transcription.
+        """
         url_keys = (
             "share_url",
             "shareUrl",
@@ -2172,48 +2250,67 @@ class LocalPlatformBrowserSearchProvider:
             "url",
             "link",
         )
-        for mapping in (entry, card):
-            for key in url_keys:
-                value = mapping.get(key)
-                if isinstance(value, dict):
-                    value = value.get("url") or value.get("href")
-                if not isinstance(value, str) or not value.strip():
-                    continue
-                candidate = value.strip()
-                parsed = urlparse(candidate)
-                host = (parsed.hostname or "").casefold()
-                valid_host = (
-                    host == "xiaohongshu.com"
-                    or host.endswith(".xiaohongshu.com")
-                    or host == "xhslink.com"
-                    or host.endswith(".xhslink.com")
-                )
-                valid_path = (
-                    host == "xhslink.com"
-                    or host.endswith(".xhslink.com")
-                    or "/explore/" in parsed.path
-                    or "/discovery/item/" in parsed.path
-                )
-                if (
-                    candidate.startswith(("https://", "http://"))
-                    and valid_host
-                    and valid_path
-                ):
-                    return candidate
-
         token = None
         token_source = None
-        for mapping in (entry, card):
-            token = token or mapping.get("xsec_token") or mapping.get("xsecToken")
-            token_source = token_source or mapping.get("xsec_source") or mapping.get(
-                "xsecSource"
-            )
+
+        def walk(value: Any, depth: int = 0) -> str | None:
+            nonlocal token, token_source
+            if depth > 6 or not isinstance(value, (dict, list)):
+                return None
+            found_url = None
+            values = value.items() if isinstance(value, dict) else enumerate(value)
+            for key, child in values:
+                normalized_key = str(key).casefold()
+                if isinstance(child, str) and normalized_key in {
+                    str(item).casefold() for item in url_keys
+                }:
+                    candidate = child.strip()
+                    if LocalPlatformBrowserSearchProvider._is_actionable_xiaohongshu_source_url(
+                        candidate
+                    ) and found_url is None:
+                        found_url = candidate
+                if isinstance(child, dict) and normalized_key in {
+                    "url",
+                    "href",
+                    "share_info",
+                    "shareinfo",
+                    "note_card",
+                    "notecard",
+                    "note",
+                }:
+                    direct = walk(child, depth + 1)
+                    if direct and found_url is None:
+                        found_url = direct
+                if normalized_key in {"xsec_token", "xsectoken"} and isinstance(child, str):
+                    token = token or child.strip()
+                if normalized_key in {"xsec_source", "xsecsource"} and isinstance(child, str):
+                    token_source = token_source or child.strip()
+                if isinstance(child, (dict, list)):
+                    direct = walk(child, depth + 1)
+                    if direct and found_url is None:
+                        found_url = direct
+            return found_url
+
+        direct_url = walk(entry) or walk(card)
+        if direct_url and token:
+            parsed = urlparse(direct_url)
+            query = parse_qsl(parsed.query, keep_blank_values=True)
+            query_keys = {key.casefold() for key, _ in query}
+            if "xsec_token" not in query_keys:
+                query.append(("xsec_token", str(token)))
+                if token_source and "xsec_source" not in query_keys:
+                    query.append(("xsec_source", str(token_source)))
+                direct_url = urlunparse(parsed._replace(query=urlencode(query)))
+        if direct_url:
+            return direct_url
         canonical = f"https://www.xiaohongshu.com/explore/{item_id}"
         if token:
             query = [("xsec_token", str(token))]
             if token_source:
                 query.append(("xsec_source", str(token_source)))
             return f"{canonical}?{urlencode(query)}"
+        # 没有分享参数时仍保存标准笔记链接，交给已登录浏览器尝试；
+        # 该链接只是候选入口，不代表已经确认可播放。
         return canonical
 
     @staticmethod
@@ -2267,11 +2364,16 @@ class LocalPlatformBrowserSearchProvider:
             published_at = LocalPlatformBrowserSearchProvider._timestamp_from_mapping(
                 card
             )
+            resolved_source_url = LocalPlatformBrowserSearchProvider._xiaohongshu_source_url(
+                entry, card, item_id
+            )
             rows.append(
                 {
                     "item_id": item_id,
-                    "source_url": LocalPlatformBrowserSearchProvider._xiaohongshu_source_url(
-                        entry, card, item_id
+                    "source_url": resolved_source_url,
+                    "source_url_verified": bool(
+                        resolved_source_url
+                        and "?xsec_token=" in resolved_source_url
                     ),
                     "title": LocalPlatformBrowserSearchProvider._clean_text(
                         card.get("display_title")
@@ -2668,6 +2770,7 @@ class LocalPlatformBrowserSearchProvider:
                     match_text_evidence = (
                         f"bilibili_match_text={quote(match_text[:1200], safe='')};"
                     )
+            raw_source_url = row.get("source_url")
             items.append(
                 ProviderSearchItem(
                     platform=self.platform,
@@ -2677,7 +2780,9 @@ class LocalPlatformBrowserSearchProvider:
                     author_name=author_name,
                     published_at=published_at,
                     duration_seconds=duration_seconds,
-                    source_url=HttpUrl(str(row.get("source_url"))),
+                    source_url=(
+                        HttpUrl(str(raw_source_url)) if raw_source_url else None
+                    ),
                     provider_rank=len(items) + 1,
                     metrics=VideoMetricSnapshot(
                         item_id=item_id,
@@ -2816,9 +2921,16 @@ class LocalPlatformBrowserSearchProvider:
                 if page is None:
                     return None
                 body_text = page.locator("body").inner_text(timeout=2000)
-                return any(marker in body_text for marker in _HARD_VERIFICATION_MARKERS)
+                return self._page_requires_login(body_text)
         except Exception:
             return None
+
+    def _page_requires_login(self, body_text: str) -> bool:
+        """Use the same login markers for readiness and search-time checks."""
+        return any(
+            marker in body_text
+            for marker in (*_HARD_VERIFICATION_MARKERS, *self.spec.login_markers)
+        )
 
     def _missing_prerequisites(self) -> list[str]:
         if not self.enabled:

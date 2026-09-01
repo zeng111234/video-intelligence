@@ -500,6 +500,36 @@ describe("VideoEditorPage cloud-light workflow", () => {
     });
   });
 
+  it("does not attach the latest batch subtitles when its source differs from the selected material", async () => {
+    const newSource: VideoEditorSource = {
+      ...source,
+      source_id: "source-new",
+      source_task_id: "upload-new",
+      title: "测试视频0831",
+      file_name: "test-0831.mp4",
+      media_url: "/api/v1/video-editor/sources/source-new/media",
+    };
+    vi.mocked(listVideoEditorSources).mockResolvedValue({
+      items: [newSource, source],
+      total: 2,
+    });
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({
+      items: [sandboxBatch()],
+      total: 1,
+    });
+
+    renderPage();
+
+    const primary = await screen.findByTestId("primary-action");
+    expect(primary.textContent).toContain("免费预览剪辑方案");
+    expect(primary.textContent).not.toContain("审核字幕、粗剪和配乐");
+
+    fireEvent.click(screen.getByText("方案预览"));
+    await waitFor(() => {
+      expect(document.querySelector(".video-editor-subtitle-overlay")).toBeNull();
+    });
+  });
+
   it("exports the approved preview locally without reopening cloud billing", async () => {
     const batch = sandboxBatch("outcome_unknown");
     batch.is_mock = false;

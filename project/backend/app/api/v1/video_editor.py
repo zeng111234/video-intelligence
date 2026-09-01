@@ -68,6 +68,16 @@ class VideoEditConfigRequest(BaseModel):
     steps: list[VideoEditStepRequest] = Field(
         default_factory=list, description="剪辑步骤列表"
     )
+    # P0-收口 2026-08-31: adaptive_fine_cut_v1 is the only pipeline mode the
+    # release pipeline accepts.  Empty / unknown modes are rejected so the
+    # backend can never silently fall through to the legacy subtitle-only
+    # path.  The frontend MUST set this to ``adaptive_fine_cut_v1``; the
+    # default below is for safety only and is itself rejected at the
+    # pipeline boundary.
+    pipeline_mode: str = Field(
+        "adaptive_fine_cut_v1",
+        description="必须等于 adaptive_fine_cut_v1",
+    )
     output_format: str = Field("mp4", description="输出格式")
     output_resolution: str = Field("1080x1920", description="输出分辨率")
     output_fps: int = Field(30, ge=15, le=60, description="输出帧率")
@@ -220,6 +230,23 @@ def _build_edit_config(req_config: VideoEditConfigRequest | None):
         return None
 
     from src.models import VideoEditConfig, VideoEditStep, VideoEditStepKind
+
+    # P0-收口 2026-08-31: refuse any pipeline mode other than
+    # ``adaptive_fine_cut_v1``.  An empty ``steps`` list is also rejected:
+    # the legacy subtitle-only path is no longer a valid fallback.  The
+    # two checks below are the single source of truth for the
+    # ``VISUAL_PIPELINE_NOT_EXECUTED`` failure surfaced in the quality
+    # report.
+    if str(getattr(req_config, "pipeline_mode", "") or "") != "adaptive_fine_cut_v1":
+        raise HTTPException(
+            status_code=422,
+            detail="pipeline_mode 必须是 adaptive_fine_cut_v1；不允许空 steps 或自定义模式。",
+        )
+    if not req_config.steps:
+        raise HTTPException(
+            status_code=422,
+            detail="steps 列表不能为空；必须至少启用自适应精剪（adaptive_fine_cut_v1）。",
+        )
 
     valid_kinds = {k.value for k in VideoEditStepKind}
     steps = []

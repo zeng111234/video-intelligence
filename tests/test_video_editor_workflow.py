@@ -643,7 +643,9 @@ def test_local_rhythm_filter_uses_complete_source_timeline_with_safe_reframe():
     assert "overlay=(W-w)/2:281" in rendered
     assert "pad=720:540" not in rendered
     assert "scale=820:1459:force_original_aspect_ratio=increase" not in rendered
-    assert "concat=n=5:v=1:a=0" in rendered
+    assert "xfade=transition=smoothleft:duration=0.240" in rendered
+    assert "xfade=transition=fade:duration=0.240" in rendered
+    assert "tpad=stop_mode=clone:stop_duration=0.240" in rendered
     assert "setpts=PTS/1.150" in rendered
     assert "subtitles='approved.ass'" in rendered
 
@@ -697,11 +699,31 @@ def test_local_export_quality_report_requires_audio_and_expected_canvas():
         expected_duration=10,
         source_has_audio=True,
         visual_beats=[{"start": 1, "end": 2}],
+        source_media_identity={
+            "provider": "aliyun",
+            "model": "fun-asr",
+            "media_sha256": "a" * 64,
+            "transcript_sha256": "b" * 64,
+            "transcript_timing_source": "sentence_timestamps",
+            "word_timestamps_available": False,
+        },
+        subtitle_preview={
+            "subtitle_style_id": "adaptive_talking_head_v1",
+            "style_fingerprint": {
+                "entry_motion": "fade_in_120ms",
+                "emphasis_scale_range": [1.05, 1.10],
+            },
+            "cues": [],
+        },
     )
 
     assert report["passed"] is True
     assert all(report["checks"].values())
     assert report["visual_beat_count"] == 1
+    # P0-收口 2026-08-31: the new hard gates must publish their own block.
+    assert report["transcript_source_identity"]["passed"] is True
+    assert report["timing_source_truthful"]["passed"] is True
+    assert report["subtitle_style_baseline"]["passed"] is True
 
 
 @pytest.mark.parametrize(
@@ -1065,8 +1087,10 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
         ],
     )
 
-    assert task.outputs["style_version"].startswith("business_talking_head_v11.8")
+    assert task.outputs["style_version"] == "talking_head_release_v2.0-director-timeline"
     assert task.outputs["workflow"] == "local_preview_export"
+    assert task.outputs["requested_pipeline"] == "adaptive_fine_cut_v1"
+    assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "rich"
     assert task.outputs["publish_title"] == "餐饮门店同城获客"
     assert json.loads(task.outputs["subtitle_segments_json"])[0]["start"] == 0.8
     batch = repo.list_video_editor_batches(limit=1)[0]
@@ -1082,8 +1106,7 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     assert [cue["lines"][0] for cue in preview["cues"]] == [
         "餐饮门店想做同城获客",
         "别急着先砸钱投流",
-        "可以从老顾客",
-        "和门店内容做起",
+        "可以从老顾客和门店内容做起",
     ]
 
 
@@ -2336,6 +2359,45 @@ def test_release_filter_keeps_transparent_vector_track_before_subtitles(
     assert rendered.index("[with_vector0]") < rendered.index("subtitles='approved.ass'")
 
 
+def test_release_filter_renders_semantic_motion_badges_before_subtitles(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        motion_items=[
+            {
+                "start": 1.0,
+                "end": 2.8,
+                "style_id": "number_slam",
+                "input_index": 2,
+            },
+            {
+                "start": 4.0,
+                "end": 5.5,
+                "style_id": "warning_shake",
+                "input_index": 3,
+            },
+        ],
+        motion_input_index=2,
+    )
+
+    assert "scale=w='trunc(518*(1.0+0.12*if(lt(t,0.20),1-t/0.20,0))/2)*2'" in rendered
+    assert "overlay=x='(W-w)/2':y='trunc(H*0.68-h/2)'" in rendered
+    assert "overlay=x='(W-w)/2+8*sin(2*PI*t/0.10)':y='trunc(H*0.68-h/2)'" in rendered
+    assert rendered.index("[with_motion1]") < rendered.index("subtitles='approved.ass'")
+
+
 def test_release_filter_renders_semantic_info_band_after_broll_before_subtitles(
     tmp_path: Path,
 ):
@@ -3232,3 +3294,567 @@ def test_long_character_token_segment_uses_lexical_word_clock_partition():
     )
     assert max(cue["end"] - cue["start"] for cue in preview["cues"]) <= 2.4
     assert report["unmatched_cue_count"] == 0
+
+
+def test_adaptive_visual_intents_pin_fact_to_word_timestamps():
+    """P1-1: data_chart cards must anchor on the word that carries the fact,
+    not the trailing edge of a multi-second source segment.
+
+    Regression: previously the card window was derived as
+    ``segment_end - 2.8`` which placed the 80% / 49元 / 10% cards 12-24s
+    after the speaker actually said the number, so viewers saw a "80%" card
+    hovering over a different sentence.
+    """
+    segments = [
+        {
+            "start": 10.56,
+            "end": 25.64,
+            "text": "80%的顾客",
+            "words": [
+                {"word": "80", "start": 10.56, "end": 10.92},
+                {"word": "%", "start": 10.92, "end": 11.16},
+                {"word": "的", "start": 11.16, "end": 11.36},
+                {"word": "顾客", "start": 11.36, "end": 11.68},
+            ],
+        },
+        {
+            "start": 26.12,
+            "end": 55.02,
+            "text": "49元就能办",
+            "words": [
+                {"word": "49", "start": 28.42, "end": 28.84},
+                {"word": "元", "start": 28.84, "end": 29.00},
+                {"word": "就能", "start": 29.00, "end": 29.30},
+                {"word": "办", "start": 29.30, "end": 29.50},
+            ],
+        },
+        {
+            "start": 55.64,
+            "end": 80.90,
+            "text": "10%现金奖励",
+            "words": [
+                {"word": "10", "start": 57.46, "end": 57.70},
+                {"word": "%", "start": 57.70, "end": 57.90},
+                {"word": "现金", "start": 57.90, "end": 58.20},
+                {"word": "奖励", "start": 58.20, "end": 58.50},
+            ],
+        },
+    ]
+    intents = workflow_module._build_adaptive_visual_intents(segments)
+    by_fact = {item["fact"]: item for item in intents if item.get("fact") in {"80%", "49元", "10%"}}
+    assert set(by_fact) == {"80%", "49元", "10%"}, by_fact
+    # Each card must START within +/- 0.4s of the word that carries the fact.
+    assert abs(by_fact["80%"]["start"] - 10.56) < 0.4, by_fact["80%"]
+    assert abs(by_fact["49元"]["start"] - 28.42) < 0.4, by_fact["49元"]
+    assert abs(by_fact["10%"]["start"] - 57.46) < 0.4, by_fact["10%"]
+    # Each card must END no later than 1.6s after the fact word ends
+    # (the renderer keeps the card visible long enough to read the number
+    # plus a beat of context, but never more than 2.8s after the fact).
+    assert by_fact["80%"]["end"] <= 10.92 + 1.6
+    assert by_fact["49元"]["end"] <= 28.84 + 1.6
+    assert by_fact["10%"]["end"] <= 57.70 + 1.6
+    # And the old buggy window (segment_end - 2.8) must NOT be picked.
+    for fact, item in by_fact.items():
+        seg = next(s for s in segments if any(
+            w.get("word") in fact.replace("%", "").replace("元", "").split()
+            for w in s.get("words", [])
+        ))
+        old_start = seg["end"] - 2.8
+        assert abs(item["start"] - old_start) > 0.5, (
+            f"{fact} still using legacy segment_end-2.8s heuristic: {item['start']} vs {old_start}"
+        )
+
+
+# P0-收口 2026-08-31: transcript source identity / truthful gate / jieba
+# estimation.  These tests are provider-agnostic — they fail if any
+# future code path tries to claim word_timestamps without real words, or
+# stops publishing the source provider / model / sha256.
+
+def test_truthful_transcript_timing_source_refuses_to_lie_without_words():
+    """The truthful helper MUST downgrade to ``sentence_timestamps`` when the
+    underlying ASR only returned sentence-level segments, even if the
+    caller asks for ``word_timestamps``."""
+    segments = [{"text": "广州烧烤店", "start": 0.0, "end": 3.0}]
+    assert workflow_module._truthful_transcript_timing_source(segments) == "sentence_timestamps"
+    with_words = [
+        {"text": "广州烧烤店", "start": 0.0, "end": 3.0,
+         "words": [{"word": "广州", "start": 0.0, "end": 1.5}]}
+    ]
+    assert workflow_module._truthful_transcript_timing_source(with_words) == "word_timestamps"
+
+
+def test_transcript_source_identity_publishes_provider_model_and_hash():
+    identity = workflow_module._transcript_source_identity(
+        [{"text": "abc", "start": 0.0, "end": 1.0}],
+        provider="aliyun",
+        model="fun-asr",
+        source_media_sha256="DEADBEEF" * 8,
+    )
+    assert identity["provider"] == "aliyun"
+    assert identity["model"] == "fun-asr"
+    # P0-收口 2026-08-31: unified key name.
+    assert identity["source_media_sha256"] == "deadbeef" * 8
+    # No words in the segments, so truthful source MUST be sentence-only.
+    assert identity["transcript_timing_source"] == "sentence_timestamps"
+    assert identity["word_timestamps_available"] is False
+    assert identity["estimated_phrase_timestamps"] is True
+    assert isinstance(identity["transcript_sha256"], str)
+    assert len(identity["transcript_sha256"]) == 64
+
+
+def test_transcript_source_identity_gate_rejects_lying_word_timestamps():
+    identity = {
+        "provider": "aliyun",
+        "model": "fun-asr",
+        "source_media_sha256": "a" * 64,
+        "transcript_sha256": "b" * 64,
+        "transcript_timing_source": "word_timestamps",  # lies
+        "word_timestamps_available": False,  # no real words
+    }
+    result = workflow_module._transcript_source_identity_gate(identity)
+    assert result["passed"] is True, result  # identity fields are present
+
+    truthful = workflow_module._timing_source_truthful_gate(identity)
+    assert truthful["passed"] is False
+    assert truthful["reason"] == "declared_word_timestamps_but_no_words"
+
+
+def test_transcript_source_identity_gate_fails_when_provider_or_hash_missing():
+    base = {
+        "transcript_timing_source": "sentence_timestamps",
+        "word_timestamps_available": False,
+    }
+    result = workflow_module._transcript_source_identity_gate(base)
+    assert result["passed"] is False
+    assert "provider_missing" in result["failures"]
+    assert "model_missing" in result["failures"]
+    # P0-收口 2026-08-31: unified key name in failures list.
+    assert "source_media_sha256_missing" in result["failures"]
+    assert "transcript_sha256_missing" in result["failures"]
+
+
+def test_jieba_estimate_phrase_cues_never_escapes_segment_window():
+    """jieba phrase estimation must keep every cue inside [start, end] and
+    must mark each cue with ``estimated_phrase_timestamps: true`` so
+    downstream gates can tell the synthetic words apart from real ones."""
+    segments = [
+        {"text": "最近广州出现了一种挺特别的参与模式", "start": 0.0, "end": 5.0},
+    ]
+    cues = workflow_module._estimate_phrase_cues_from_sentence_level(segments)
+    assert cues, "jieba must produce at least one cue"
+    for cue in cues:
+        assert cue["start"] >= 0.0
+        assert cue["end"] <= 5.0
+        assert cue["estimated_phrase_timestamps"] is True
+        assert cue["word_clock_mapping"] == "jieba_estimated_phrase_split"
+        assert cue["source_segment_index"] == 0
+    # No cue may be longer than the original sentence.
+    assert max(c["end"] - c["start"] for c in cues) <= 5.0
+
+
+def test_estimate_phrase_cues_handles_empty_or_malformed_segments():
+    """jieba phrase estimation must never crash on empty / malformed input."""
+    assert workflow_module._estimate_phrase_cues_from_sentence_level([]) == []
+    malformed = [
+        {"text": "", "start": 0.0, "end": 1.0},
+        {"text": "x", "start": 2.0, "end": 1.0},  # end < start
+        "not a mapping",
+    ]
+    cues = workflow_module._estimate_phrase_cues_from_sentence_level(malformed)
+    # Only well-formed segments produce cues; we only assert no crash and
+    # that any returned cue stays within its source window.
+    for cue in cues:
+        assert cue["end"] > cue["start"]
+
+
+# P0-收口 2026-08-31: adaptive subtitle style baseline (C) + emphasis
+# color classification.  The tests are renderer-agnostic — they pin the
+# gate and the color function so any future drift in the stable ASS
+# renderer will surface here.
+
+def test_emphasis_color_for_classifies_by_intent():
+    """Numbers get warm yellow, methods teal, conflicts warm red, default white."""
+    color_number = workflow_module._emphasis_color_for("80%的顾客加了私域")
+    assert color_number == workflow_module.SUBTITLE_EMPHASIS_COLOR_NUMBER
+    color_method = workflow_module._emphasis_color_for("通过门店小程序下单")
+    assert color_method == workflow_module.SUBTITLE_EMPHASIS_COLOR_METHOD
+    color_conflict = workflow_module._emphasis_color_for("充一百送十块早就过时了")
+    assert color_conflict == workflow_module.SUBTITLE_EMPHASIS_COLOR_CONFLICT
+    color_default = workflow_module._emphasis_color_for("街上有家烧烤店")
+    assert color_default == workflow_module.SUBTITLE_EMPHASIS_COLOR_DEFAULT
+    # Number precedence over method (e.g. "49元就能办" must be yellow).
+    color_num_method = workflow_module._emphasis_color_for("49元就能办尊贵会员")
+    assert color_num_method == workflow_module.SUBTITLE_EMPHASIS_COLOR_NUMBER
+
+
+def test_subtitle_style_baseline_gate_fails_when_scale_exceeds_110_percent():
+    """The adaptive contract is 105-110%; the historical 1.05-1.12 fingerprint
+    MUST fail the gate so the customer is told the renderer is out of contract."""
+    preview = {
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_120ms",
+            "emphasis_scale_range": [1.05, 1.12],  # historical drift
+        },
+        "cues": [],
+    }
+    result = workflow_module._subtitle_style_baseline_gate(preview)
+    assert result["passed"] is False
+    assert "emphasis_scale_out_of_baseline_range" in result["failures"]
+    assert result["entry_motion_ms"] == 120
+    assert result["preview_unified_style"] is True
+
+
+def test_subtitle_style_baseline_gate_passes_on_baseline_compliant_preview():
+    preview = {
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_120ms",
+            "emphasis_scale_range": [1.05, 1.10],
+        },
+        "cues": [],
+    }
+    result = workflow_module._subtitle_style_baseline_gate(preview)
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+def test_subtitle_style_gate_allows_versioned_kinetic_v2_scale_range():
+    preview = {
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_140ms",
+            "word_motion": "douyin_kinetic_v2",
+            "emphasis_scale_range": [1.05, 1.22],
+        },
+        "cues": [],
+    }
+    result = workflow_module._subtitle_style_baseline_gate(preview)
+    assert result["passed"] is True
+    assert result["failures"] == []
+
+
+def test_subtitle_style_baseline_gate_rejects_too_many_emphasis_cues():
+    preview = {
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_120ms",
+            "emphasis_scale_range": [1.05, 1.10],
+        },
+        "cues": [
+            {"emphasis_style": {"color": "#FFD166"}},
+            {"emphasis_style": {"color": "#FFD166"}},
+            {"emphasis_style": {"color": "#FFD166"}},
+            {"emphasis_style": {"color": "#FFD166"}},
+        ],
+    }
+    result = workflow_module._subtitle_style_baseline_gate(preview)
+    assert result["passed"] is False
+    assert "too_many_emphasis_cues" in result["failures"]
+
+
+# P0-收口 2026-08-31: relevance gate (D §7) and cost-confirmation gate (D §8).
+# The gates must be data-only — no network — so they can run before any
+# provider call.  They must refuse a match_score of 0 even when the
+# provider's library has 50 results; filler is not a feature.
+
+# P0-收口 2026-08-31: unified source identity + TRANSCRIPT_SOURCE_MISMATCH
+# gate.  These tests fail the build if anyone reintroduces a field-name
+# drift between the ASR result, subtitle manifest, director plan and
+# the final MP4.
+
+def test_transcript_source_identity_uses_unified_source_media_sha256_key():
+    identity = workflow_module._transcript_source_identity(
+        [{"text": "abc", "start": 0.0, "end": 1.0}],
+        provider="aliyun",
+        model="fun-asr",
+        source_media_sha256="A" * 64,
+    )
+    # Unified key MUST be present.
+    assert identity["source_media_sha256"] == "a" * 64
+    # Legacy key MUST NOT be present (no silent dual-write that drifts).
+    assert "media_sha256" not in identity
+
+
+def test_transcript_source_identity_gate_accepts_legacy_key_for_backcompat():
+    identity = {
+        "provider": "aliyun",
+        "model": "fun-asr",
+        # Legacy "media_sha256" only — gate must still recognise it so
+        # older callers / pre-P0 batches keep working.
+        "media_sha256": "C" * 64,
+        "transcript_sha256": "D" * 64,
+        "transcript_timing_source": "sentence_timestamps",
+        "word_timestamps_available": False,
+    }
+    result = workflow_module._transcript_source_identity_gate(identity)
+    assert result["passed"] is True
+    assert result["source_media_sha256"] == "c" * 64
+
+
+def test_transcript_source_mismatch_gate_fails_with_explicit_label():
+    identity = {
+        "source_media_sha256": "a" * 64,
+        "transcript_sha256": "b" * 64,
+    }
+    ok = workflow_module._transcript_source_mismatch_gate(
+        identity, computed_source_sha256="a" * 64
+    )
+    assert ok["passed"] is True
+    assert ok["failures"] == []
+
+    bad = workflow_module._transcript_source_mismatch_gate(
+        identity, computed_source_sha256="C" * 64
+    )
+    assert bad["passed"] is False
+    # The label MUST be the exact string the release quality report
+    # surfaces to the customer.
+    assert "TRANSCRIPT_SOURCE_MISMATCH" in bad["failures"]
+
+
+def test_visual_match_score_rejection_gate_blocks_zero_and_conflict_terms():
+    zero = workflow_module._visual_match_score_rejection_gate(
+        {"match_score": 0, "matched_concepts": ["customer", "restaurant"]}
+    )
+    assert zero["passed"] is False
+    assert "match_score_missing_or_zero" in zero["failures"]
+
+    conflict = workflow_module._visual_match_score_rejection_gate(
+        {
+            "match_score": 0.5,
+            "matched_concepts": ["lawyer", "office", "customer meeting"],
+        }
+    )
+    assert conflict["passed"] is False
+    assert "conflict_terms_present" in conflict["failures"]
+    assert "lawyer" in conflict["conflict_terms"]
+
+    low = workflow_module._visual_match_score_rejection_gate(
+        {"match_score": 0.05, "matched_concepts": ["restaurant"]}
+    )
+    assert low["passed"] is False
+    assert "match_score_below_threshold" in low["failures"]
+
+    good = workflow_module._visual_match_score_rejection_gate(
+        {"match_score": 0.6, "matched_concepts": ["restaurant customer", "grill"]}
+    )
+    assert good["passed"] is True
+    assert good["failures"] == []
+
+
+def test_cost_confirmation_required_gate_blocks_unconfirmed_generation():
+    # No generated assets required → confirmation is not required.
+    not_needed = workflow_module._cost_confirmation_required_gate(
+        {"cost_confirmed": False},
+        expected_min_generated_assets=0,
+    )
+    assert not_needed["passed"] is True
+
+    # 2 generated assets must be confirmed.
+    not_confirmed = workflow_module._cost_confirmation_required_gate(
+        {"cost_confirmed": False, "cost_quote": 0.10},
+        expected_min_generated_assets=2,
+    )
+    assert not_confirmed["passed"] is False
+    assert "cost_not_confirmed" in not_confirmed["failures"]
+
+    confirmed = workflow_module._cost_confirmation_required_gate(
+        {"cost_confirmed": True, "cost_quote": 0.10},
+        expected_min_generated_assets=2,
+    )
+    assert confirmed["passed"] is True
+
+
+def test_local_export_quality_report_aggregates_relevance_and_cost_gates():
+    """The two new gates must block the report when a low-score candidate
+    slips in or when generated assets were not confirmed by the user."""
+    base_kwargs = dict(
+        expected_width=720,
+        expected_height=1280,
+        expected_duration=10,
+        source_has_audio=True,
+        visual_beats=[{"start": 1, "end": 2}],
+        source_media_identity={
+            "provider": "aliyun",
+            "model": "fun-asr",
+            "media_sha256": "a" * 64,
+            "transcript_sha256": "b" * 64,
+            "transcript_timing_source": "sentence_timestamps",
+            "word_timestamps_available": False,
+        },
+        subtitle_preview={
+            "subtitle_style_id": "adaptive_talking_head_v1",
+            "style_fingerprint": {
+                "entry_motion": "fade_in_120ms",
+                "emphasis_scale_range": [1.05, 1.10],
+            },
+            "cues": [],
+        },
+    )
+    output_media = {
+        "size_bytes": 100, "width": 720, "height": 1280,
+        "duration_seconds": 10.1, "has_audio": True,
+    }
+    # Relevance: zero-score candidate.
+    fail_relevance = VideoEditorWorkflowService._local_export_quality_report(
+        output_media,
+        visual_candidates=[{"match_score": 0, "matched_concepts": ["junk"]}],
+        **base_kwargs,
+    )
+    assert fail_relevance["passed"] is False
+    assert fail_relevance["checks"]["visual_relevance"] is False
+    # Cost: 1 generated asset, no confirmation.
+    fail_cost = VideoEditorWorkflowService._local_export_quality_report(
+        output_media,
+        visual_candidates=[{
+            "match_score": 0.6,
+            "matched_concepts": ["fruit shop"],
+            "asset_origin": "generated_image_asset",
+        }],
+        billing_confirmation={"cost_confirmed": False, "cost_quote": 0.05},
+        **base_kwargs,
+    )
+    assert fail_cost["passed"] is False
+    assert fail_cost["checks"]["cost_confirmation"] is False
+    # Happy path: confirmed cost, high-score real B-roll.
+    ok = VideoEditorWorkflowService._local_export_quality_report(
+        output_media,
+        visual_candidates=[{
+            "match_score": 0.7,
+            "matched_concepts": ["restaurant customer", "grill"],
+            "asset_origin": "stock_video_asset",
+        }],
+        billing_confirmation={"cost_confirmed": True, "cost_quote": 0.05},
+        **base_kwargs,
+    )
+    assert ok["passed"] is True
+    assert ok["checks"]["visual_relevance"] is True
+    assert ok["checks"]["cost_confirmation"] is True
+
+
+# P0-收口 2026-08-31 / P1-素材链路 hard rules.  These are the three
+# release-blocking rules from the P1 specification:
+#   1. match_score < 0.20 is rejected (no filler padding for coverage).
+#   2. Conflict terms in matched_concepts reject the candidate.
+#   3. Generated images require explicit cost confirmation before
+#      they are charged to the customer.
+# A regression in any of the three surfaces here as a build failure.
+
+def test_visual_match_score_below_0_2_threshold_rejected():
+    """Anything below the 0.20 match-score floor is filler padding.
+    A quality report containing such a candidate MUST fail so the
+    release does not claim fake coverage.
+    """
+    result = workflow_module._visual_match_score_rejection_gate(
+        {"match_score": 0.19, "matched_concepts": ["restaurant", "customer"]}
+    )
+    assert result["passed"] is False
+    assert "match_score_below_threshold" in result["failures"]
+
+
+def test_visual_match_score_conflict_term_drops_candidate():
+    """Conflict terms override any positive match score.  A "lawyer"
+    match for a "restaurant" query is not evidence of a loyalty programme.
+    """
+    result = workflow_module._visual_match_score_rejection_gate(
+        {
+            "match_score": 0.8,
+            "matched_concepts": ["lawyer", "office", "client meeting"],
+        }
+    )
+    assert result["passed"] is False
+    assert "conflict_terms_present" in result["failures"]
+    assert "lawyer" in result["conflict_terms"]
+
+
+def test_cost_confirmation_required_gate_does_not_charge_unconfirmed_batch():
+    """A generated-image batch without explicit user confirmation must
+    NOT clear the gate, regardless of how cheap the quote is."""
+    batch_size = 4
+    result = workflow_module._cost_confirmation_required_gate(
+        {
+            "cost_confirmed": False,
+            "cost_quote": 0.20,  # 4 images at 0.05 each
+            "confirmed_at": None,
+        },
+        expected_min_generated_assets=batch_size,
+    )
+    assert result["passed"] is False
+    assert "cost_not_confirmed" in result["failures"]
+    # The gate must report the exact batch size the customer would have
+    # been charged for, so the page can show the figure before
+    # confirmation.
+    assert result["expected_min_generated_assets"] == batch_size
+
+
+def test_source_caption_overlay_keeps_generated_cues_only_for_full_broll():
+    preview = {
+        "cues": [
+            {"start": 0.0, "end": 2.0, "lines": ["人物原画面"]},
+            {"start": 4.0, "end": 6.0, "lines": ["全屏素材"]},
+            {"start": 8.0, "end": 10.0, "lines": ["画中画"]},
+        ],
+        "subtitle_style_id": "adaptive_talking_head_v1",
+    }
+    result = VideoEditorWorkflowService._source_caption_overlay_preview(
+        preview,
+        source_caption_mode=workflow_module._SOURCE_CAPTION_MODE_PRESERVE,
+        brolls=[
+            {"start": 4.0, "end": 6.0, "mode": "full"},
+            {"start": 8.0, "end": 10.0, "mode": "pip"},
+        ],
+        playback_rate=1.0,
+    )
+
+    assert [cue["lines"][0] for cue in result["cues"]] == ["全屏素材"]
+    assert result["generated_caption_scope"] == "full_broll_only"
+    assert result["generated_caption_intervals"] == [{"start": 4.0, "end": 6.0}]
+
+
+def test_source_caption_overlay_replaces_baked_captions_for_full_timeline():
+    preview = {
+        "cues": [
+            {"start": 0.0, "end": 2.0, "lines": ["开场强调"]},
+            {"start": 4.0, "end": 6.0, "lines": ["重点结论"]},
+        ],
+        "subtitle_style_id": "adaptive_talking_head_v1",
+    }
+
+    result = VideoEditorWorkflowService._source_caption_overlay_preview(
+        preview,
+        source_caption_mode=workflow_module._SOURCE_CAPTION_MODE_REPLACE,
+        brolls=[],
+        playback_rate=1.0,
+    )
+
+    assert [cue["lines"][0] for cue in result["cues"]] == ["开场强调", "重点结论"]
+    assert result["source_caption_mode"] == workflow_module._SOURCE_CAPTION_MODE_REPLACE
+    assert result["generated_caption_scope"] == "full_timeline"
+    assert result["generated_caption_intervals"] == [
+        {"start": 0.0, "end": 2.0},
+        {"start": 4.0, "end": 6.0},
+    ]
+
+
+def test_local_rhythm_filter_scrubs_detected_source_caption_band_before_ass():
+    rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=8.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        subtitle_force_style="MarginV=390",
+        source_width=720,
+        source_height=1280,
+        scrub_source_captions=True,
+        source_caption_detection={
+            "band_center_ratio": 0.82,
+            "band_height_ratio": 0.04,
+        },
+    )
+
+    assert "[caption_source_band]crop=iw:" in rendered
+    assert "boxblur=24:3[caption_blurred_band]" in rendered
+    assert "[caption_clean_base][caption_blurred_band]overlay=0:" in rendered
+    assert "[caption_scrubbed]subtitles='approved.ass':force_style='MarginV=390'" in rendered

@@ -96,6 +96,19 @@ def test_source_startup_script_validates_mode_and_can_restart_backend_only():
     assert "ExpectedControlPlane" in script
 
 
+def test_restart_script_preserves_desktop_mode_and_does_not_probe_auth_only_capability():
+    root = Path(__file__).resolve().parents[3]
+    restart_script = (root / "scripts" / "restart_backend.ps1").read_text(encoding="utf-8")
+    launch_script = (root / "scripts" / "launch_app.ps1").read_text(encoding="utf-8")
+
+    assert '$env:VIDEOINSIGHT_DESKTOP_CLIENT = "true"' in restart_script
+    assert '$env:VIDEOINSIGHT_DESKTOP_DEMO = "true"' in restart_script
+    assert '$env:VIDEOINSIGHT_CONTROL_PLANE_ENABLED = "false"' in restart_script
+    assert 'desktop_client' in restart_script
+    assert '"/api/v1/crawler/browser-discovery/capabilities"' not in launch_script
+    assert 'backendHealthUrl = "http://127.0.0.1:2001/health"' in launch_script
+
+
 def test_desktop_control_plane_config_defaults_to_demo(tmp_path):
     runtime = tmp_path / "runtime"
     original = os.getcwd()
