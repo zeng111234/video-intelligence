@@ -1398,19 +1398,19 @@ export default function PipelinePage() {
         if (!crawlerQueueItemFinished(queue)) return;
 
         let finalBatch = progressBatch;
+        const progressHasCandidates = Boolean(progressBatch?.platform_runs.some(
+          (run) => run.candidates.length > 0 || (run.reference_candidates || []).length > 0,
+        ));
         if (item?.batch_id) {
           try {
             finalBatch = await Promise.race([
               getCrawlerBatch(item.batch_id),
               new Promise<never>((_, reject) => window.setTimeout(
-                () => reject(new Error("最终结果读取超时，已保留当前已找到的素材。")),
-                8_000,
+                () => reject(new Error("最终详情读取较慢，已先展示当前找到的素材。")),
+                1_500,
               )),
             ]);
           } catch (error) {
-            const progressHasCandidates = Boolean(progressBatch?.platform_runs.some(
-              (run) => run.candidates.length > 0 || (run.reference_candidates || []).length > 0,
-            ));
             if (!progressHasCandidates) {
               setCrawlerReason({
                 kind: "结果正在整理",

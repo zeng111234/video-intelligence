@@ -88,6 +88,7 @@ export default function MaterialSearchExperience({
   const [elapsed, setElapsed] = useState(() => formatElapsed(startedAt));
   const [completedBatchId, setCompletedBatchId] = useState<string | null>(null);
   const [revealedIds, setRevealedIds] = useState<string[]>([]);
+  const [completedPlatforms, setCompletedPlatforms] = useState<Set<string>>(new Set());
 
   const entries = useMemo<CandidateEntry[]>(() => {
     if (!batch) return [];
@@ -119,7 +120,17 @@ export default function MaterialSearchExperience({
   useEffect(() => {
     setCompletedBatchId(null);
     setRevealedIds([]);
+    setCompletedPlatforms(new Set());
   }, [batch?.batch_id]);
+
+  useEffect(() => {
+    const platform = progress?.progress_platform;
+    if (progress?.progress_stage !== "platform_complete" || !platform) return;
+    setCompletedPlatforms((previous) => {
+      if (previous.has(platform)) return previous;
+      return new Set(previous).add(platform);
+    });
+  }, [progress?.progress_platform, progress?.progress_stage]);
 
   useEffect(() => {
     if (!batch || !complete || !allEntriesRevealed || completedBatchId === batch.batch_id) return undefined;
@@ -140,7 +151,7 @@ export default function MaterialSearchExperience({
     const unrevealed = entries.filter(({ candidate }) => !revealedIds.includes(candidate.video_id));
     if (unrevealed.length === 0) return undefined;
     // 最终批次已经完整返回，直接一次性展示，避免收尾阶段再逐条等待。
-    if (complete) {
+    if (complete || progress?.progress_stage === "platform_complete") {
       setRevealedIds((previous) => [
         ...previous,
         ...unrevealed.map(({ candidate }) => candidate.video_id),
@@ -223,7 +234,15 @@ export default function MaterialSearchExperience({
             batch && (!run || ((run.status === "failed" || run.error) && returned === 0)),
           );
           const entering = entries.some(({ candidate }) => !revealedIds.includes(candidate.video_id));
-          const platformComplete = Boolean(complete && batch && run && !failed && !entering);
+          const platformComplete = Boolean(
+            batch
+            && run
+            && !failed
+            && (
+              (complete && !entering)
+              || completedPlatforms.has(platform)
+            ),
+          );
           const recent = visibleEntries.filter((entry) => entry.platform === platform).slice(-2);
           return (
             <article className={`material-platform-lane platform-${platform}`} key={platform}>

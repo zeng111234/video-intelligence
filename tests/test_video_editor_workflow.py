@@ -1103,7 +1103,9 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
         ],
     )
 
-    assert task.outputs["style_version"] == "talking_head_release_v2.0-director-timeline"
+    assert task.outputs["style_version"] == (
+        "talking_head_release_v2.2-paced-pip-finish-safe-caption-director-timeline"
+    )
     assert task.outputs["workflow"] == "local_preview_export"
     assert task.outputs["requested_pipeline"] == "adaptive_fine_cut_v1"
     assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "rich"
@@ -1383,7 +1385,7 @@ def test_broll_asset_accepts_authorized_image_and_renders_before_subtitles(
         subtitle_filter="approved.ass",
         broll={"start": 1.0, "end": 3.0, "mode": "pip"},
     )
-    assert "overlay=252:794" in rendered
+    assert "overlay=202:768" in rendered
     assert "drawbox=x=1:y=1:w=iw-2:h=ih-2:color=white@0.55:t=2" in rendered
     assert "fade=t=in:st=0.870:d=0.20:alpha=1" in rendered
     assert "fade=t=out:st=2.409:d=0.20:alpha=1" in rendered
@@ -1492,8 +1494,8 @@ def test_image_broll_uses_motion_and_fade_before_subtitles(tmp_path: Path):
 
     assert "20*sin(2*PI*t/4.0)" in rendered
     assert "10*sin(2*PI*t/3.6)" in rendered
-    assert "crop=216:192" in rendered
-    assert "overlay=252:794" in rendered
+    assert "crop=317:230" in rendered
+    assert "overlay=202:768" in rendered
     assert "fade=t=in:st=2.000:d=0.28:alpha=1" in rendered
     assert "fade=t=in:st=7.000:d=0.20:alpha=1" in rendered
     assert "fade=t=out:st=9.300:d=0.20:alpha=1" in rendered
@@ -2348,7 +2350,7 @@ def test_release_filter_supports_multiple_pip_and_full_visual_events(
     )
 
     assert "[2:v]setpts=PTS-STARTPTS" in rendered
-    assert "overlay=252:794" in rendered
+    assert "overlay=202:768" in rendered
     assert "[3:v]setpts=PTS-STARTPTS" in rendered
     assert "overlay=0:0" in rendered
     assert rendered.index("[with_broll0]") < rendered.index("[with_broll1]")
@@ -2360,7 +2362,7 @@ def test_pip_geometry_avoids_face_and_subtitle_and_skips_unsafe_canvas(
 ):
     geometry = workflow_module._portrait_pip_geometry(720, 1280)
     assert geometry["safe"] is True
-    assert geometry["bbox"]["width"] / 720 == pytest.approx(0.30, abs=0.01)
+    assert geometry["bbox"]["width"] / 720 == pytest.approx(0.44, abs=0.01)
     assert geometry["intersects_face_safe_bbox"] is False
     assert geometry["intersects_subtitle_bbox"] is False
 
@@ -2379,7 +2381,7 @@ def test_pip_geometry_avoids_face_and_subtitle_and_skips_unsafe_canvas(
         subtitle_filter="approved.ass",
         brolls=[{"start": 1.0, "end": 3.0, "mode": "pip", "input_index": 2}],
     )
-    assert "overlay=252:794" not in rendered
+    assert "overlay=202:768" not in rendered
     assert "subtitles='approved.ass'" in rendered
 
 

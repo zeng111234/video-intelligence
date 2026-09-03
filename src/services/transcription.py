@@ -488,11 +488,27 @@ class TranscriptionService:
                     "只有已完成的阿里云转写可以补做 AI 校对。",
                     code="task_not_reviewable",
                 )
-            if task.auto_reviewed or not any(
+            if task.auto_reviewed:
+                return task
+            if not any(
                 segment.needs_review and not segment.reviewed
                 for segment in task.segments
             ):
-                return task
+                # 升级前的旧任务可能没有保存 auto_reviewed 标记，但其所有
+                # 片段已经是高置信结果。按钮仍需有一个可观察的完成结果，
+                # 同时不能为了补标记而重复调用 AI 或产生费用。
+                completed = task.model_copy(
+                    update={
+                        "stage": "AI 校对完成",
+                        "auto_reviewed": True,
+                        "uncertain_segment_count": 0,
+                        "llm_review_count": 0,
+                        "auto_review_error": None,
+                        "updated_at": datetime.now().astimezone(),
+                    }
+                )
+                self.repository.save_task(completed)
+                return completed
             segments, auto_review = self._auto_review_cloud_segments(
                 list(task.segments),
                 context_hint=task.title,

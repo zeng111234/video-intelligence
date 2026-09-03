@@ -89,11 +89,14 @@ _GENERIC_AVATAR_TITLE = re.compile(r"^数字人视频\d*$")
 _LOCAL_PREVIEW_EXPORT_STYLE_VERSION = (
     "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock"
 )
-_RELEASE_TALKING_HEAD_STYLE_VERSION = "talking_head_release_v2.0-director-timeline"
+_RELEASE_TALKING_HEAD_STYLE_VERSION = (
+    "talking_head_release_v2.2-paced-pip-finish-safe-caption-director-timeline"
+)
 _LOCAL_PREVIEW_PLAYBACK_RATE = 1.15
-# Release-template exports keep the reviewed speech clock at natural speed.
-# The legacy preview path retains the historical 1.15x compatibility value.
-_RELEASE_TEMPLATE_PLAYBACK_RATE = 1.0
+# Release-template exports use a restrained 1.08x pace: enough to remove
+# dead-air drag in a short-video feed without making the reviewed speech or
+# subtitle clock feel rushed.  The legacy preview path retains 1.15x.
+_RELEASE_TEMPLATE_PLAYBACK_RATE = 1.08
 _LOCAL_RHYTHM_SCENE_SECONDS = 5.5
 _LOCAL_RHYTHM_MAX_SCENES = 18
 _BROLL_EVENT_MAX_SECONDS = 3.6
@@ -879,8 +882,10 @@ def _select_local_video_encoder() -> dict[str, Any]:
 # between them is omitted and the quality gate remains failed.
 _PORTRAIT_FACE_HEAD_BBOX = (0.12, 0.10, 0.90, 0.60)
 _PORTRAIT_SUBTITLE_BBOX = (0.05, 0.79, 0.95, 0.95)
-_PIP_WIDTH_RATIO = 0.30
-_PIP_HEIGHT_RATIO = 0.15
+# The old 30% x 15% card read as a thumbnail.  This larger 44% x 18% frame is
+# still kept entirely between the conservative face and subtitle safe boxes.
+_PIP_WIDTH_RATIO = 0.44
+_PIP_HEIGHT_RATIO = 0.18
 
 
 _VISUAL_REQUEST_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...], str, str, str], ...] = (
@@ -2377,11 +2382,12 @@ def _portrait_pip_geometry(width: int, height: int) -> dict[str, Any]:
 
     pip_width = max(1, round(width * _PIP_WIDTH_RATIO))
     pip_height = max(1, round(height * _PIP_HEIGHT_RATIO))
-    # Center the card horizontally for a deliberate composition.  The lower
-    # safe band is high enough to clear subtitles and low enough to clear the
-    # presenter's conservative head/face box.
+    # Center the card horizontally for a deliberate composition.  The larger
+    # card starts exactly below the conservative face box and ends just above
+    # the subtitle band, so it reads as a real visual insert without covering
+    # the speaker or the new captions.
     pip_left = round((width - pip_width) / 2)
-    pip_top = round(height * 0.62)
+    pip_top = round(height * 0.60)
     pip_bbox = (pip_left, pip_top, pip_left + pip_width, pip_top + pip_height)
     face_bbox = tuple(
         round(value * size)
@@ -2493,8 +2499,12 @@ def _adaptive_visual_card_geometry(width: int, height: int) -> dict[str, Any]:
     pip = _portrait_pip_geometry(width, height)
     if not pip.get("bbox"):
         return {"safe": False, "reason": "not_portrait_9_16", "bbox": None}
+    # The PiP is intentionally larger now, so the card moves into the narrow
+    # right-hand lane instead of competing with it.  The lane starts just to
+    # the right of the PiP and below the face box; this keeps a semantic card
+    # available without shrinking the main visual insert again.
     bbox = (
-        round(width * 0.665),
+        round(width * 0.725),
         round(height * 0.605),
         round(width * 0.955),
         round(height * 0.748),
@@ -9016,6 +9026,27 @@ class VideoEditorWorkflowService:
                     "template_minimum_pip_mix"
                 )
                 pip_events += 1
+        required_full_events = int(visual_policy.get("min_full_events", 0))
+        full_events = sum(
+            1
+            for placement in release_brolls
+            if str(placement.get("mode") or "") == "full"
+        )
+        if required_full_events > full_events:
+            # A long-form rich edit must visibly change scenes, not merely
+            # stack several small cards over the same A-roll.  Promote the
+            # earliest later semantic clusters to fullscreen until the
+            # policy minimum is met; the separate PiP minimum remains intact.
+            for placement in release_brolls:
+                if full_events >= required_full_events:
+                    break
+                if str(placement.get("mode") or "") != "pip":
+                    continue
+                placement["mode"] = "full"
+                placement["mode_selection_reason"] = (
+                    "template_minimum_full_establishing_cut"
+                )
+                full_events += 1
         transcript_text = "".join(
             str(segment.get("text") or "")
             for segment in reviewed_segments
@@ -10492,7 +10523,7 @@ class VideoEditorWorkflowService:
                     f"eq=saturation=0.80:brightness=-0.03[blurred{index}];"
                     f"[foreground{index}]scale={width}:{fit_height}:"
                     "force_original_aspect_ratio=decrease,"
-                    f"setsar=1[fit{index}];"
+                    f"setsar=1,eq=contrast=1.05:brightness=0.008:saturation=1.04[fit{index}];"
                     f"[blurred{index}][fit{index}]overlay=(W-w)/2:{safe_y},"
                     f"setsar=1,fps={fps}[rhythm{index}]"
                 )
@@ -10517,7 +10548,7 @@ class VideoEditorWorkflowService:
                     f"[foreground{index}]scale=w='trunc({width}*({zoom_expression})/2)*2':"
                     f"h='trunc({height}*({zoom_expression})/2)*2':eval=frame,"
                     f"crop={width}:{height}:x='(iw-ow)/2+{pan_pixels}*sin(PI*t/{scene_duration:.3f})':y=0,"
-                    f"setsar=1[fit{index}];"
+                    f"setsar=1,eq=contrast=1.05:brightness=0.008:saturation=1.04[fit{index}];"
                     f"[blurred{index}][fit{index}]overlay=(W-w)/2:0,"
                     f"setsar=1,fps={fps}[rhythm{index}]"
                 )

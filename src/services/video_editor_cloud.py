@@ -363,7 +363,9 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
             "max_lines": 1,
             "max_chars_per_line": 11,
             "font_size": round(52 * scale),
-            "safe_bottom": round(170 * scale),
+            # Leave a larger lower safe area for platform action bars and
+            # title overlays; captions sit visibly above the bottom UI.
+            "safe_bottom": round(230 * scale),
             # Keep the keyline crisp while using only a light shadow.  A large
             # shadow makes the caption look like a sticker and muddies faces
             # and busy backgrounds.

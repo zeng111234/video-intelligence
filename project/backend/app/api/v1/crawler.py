@@ -2343,6 +2343,7 @@ def _execute_free_multi_platform_batch(
     kuaishou_provider,
     repo,
     progress_callback=None,
+    include_runtime_details: bool = True,
 ) -> CrawlerBatchResponse:
     """Collect a bounded, broad-recall set from selected public platforms.
 
@@ -2351,6 +2352,10 @@ def _execute_free_multi_platform_batch(
     unchanged for older callers.
     """
     selected_platforms = _selected_free_platforms(body)
+    # Persistent queue consumers only need the candidate list while the search
+    # is running. Keep the synchronous detail endpoint behavior unchanged.
+    if progress_callback is not None:
+        include_runtime_details = False
     requested_count = _free_requested_count(body)
     batches: list[SearchBatch] = []
     errors: list[str] = []
@@ -2369,11 +2374,19 @@ def _execute_free_multi_platform_batch(
         current_batch=None,
         candidate: CrawlerCandidateResult | None = None,
         platform: str | None = None,
+        candidates: list[CrawlerCandidateResult] | None = None,
     ) -> None:
         if progress_callback is None:
             return
         try:
-            progress_callback(stage, message, current_batch, candidate, platform)
+            progress_callback(
+                stage,
+                message,
+                current_batch,
+                candidate,
+                platform,
+                candidates,
+            )
         except Exception:
             # Diagnostics must never turn a successful platform search into a failure.
             return
@@ -2387,6 +2400,7 @@ def _execute_free_multi_platform_batch(
             current_batch,
             event.get("candidate"),
             str(event.get("platform") or "") or None,
+            event.get("candidates"),
         )
 
     for platform, service in browser_sources:
@@ -2532,7 +2546,15 @@ def _execute_free_multi_platform_batch(
         runs = repo.list_platform_search_runs(batch.batch_id)
         latest_run = runs[-1] if runs else None
         if latest_run is not None:
-            snapshot = _batch_to_response(batch, repo)
+            progress_candidates: list[CrawlerCandidateResult] = []
+            # The progress snapshot only needs the candidates to render the live
+            # result list. Full runtime details perform several per-candidate
+            # lookups and would make the queue spin after the browser is done.
+            snapshot = _batch_to_response(
+                batch,
+                repo,
+                include_runtime_details=False,
+            )
             response_run = next(
                 (run for run in snapshot.platform_runs if run.run_id == latest_run.run_id),
                 None,
@@ -2546,16 +2568,7 @@ def _execute_free_multi_platform_batch(
                     if candidate.video_id in seen_candidate_ids:
                         continue
                     seen_candidate_ids.add(candidate.video_id)
-                    report_progress(
-                        "candidate_found",
-                        (
-                            f"{_platform_label(platform.value)}已保留 "
-                            f"{len(seen_candidate_ids)} 条，正在继续整理。"
-                        ),
-                        batch,
-                        candidate,
-                        platform.value,
-                    )
+                    progress_candidates.append(candidate)
             report_progress(
                 "platform_complete",
                 (
@@ -2564,6 +2577,7 @@ def _execute_free_multi_platform_batch(
                 ),
                 batch,
                 platform=platform.value,
+                candidates=progress_candidates,
             )
         return batch
 
@@ -2616,7 +2630,11 @@ def _execute_free_multi_platform_batch(
             ),
         )
         repo.save_search_batch(failed)
-        return _batch_to_response(failed, repo).model_copy(
+        return _batch_to_response(
+            failed,
+            repo,
+            include_runtime_details=include_runtime_details,
+        ).model_copy(
             update={
                 "free_candidate_count": 0,
                 "paid_fallback_blocked_reason": "本次固定不调用热点宝或 OneAPI。",
@@ -2698,7 +2716,11 @@ def _execute_free_multi_platform_batch(
         }
     )
     repo.save_search_batch(combined)
-    return _batch_to_response(combined, repo).model_copy(
+    return _batch_to_response(
+        combined,
+        repo,
+        include_runtime_details=include_runtime_details,
+    ).model_copy(
         update={
             "free_candidate_count": total_candidates,
             "paid_fallback_used": False,
@@ -4098,6 +4120,7 @@ def _run_crawler_keyword_queue(queue_id: str) -> None:
                 current_batch=None,
                 candidate: CrawlerCandidateResult | None = None,
                 platform: str | None = None,
+                candidates: list[CrawlerCandidateResult] | None = None,
             ) -> None:
                 latest_queue = repo.get_crawler_keyword_queue(queue_id)
                 latest_item = next(
@@ -4115,17 +4138,19 @@ def _run_crawler_keyword_queue(queue_id: str) -> None:
                 progress_candidates = (
                     list(latest_item.progress_candidates) if latest_item else []
                 )
+                progress_items = list(candidates or [])
                 if candidate is not None:
-                    if not isinstance(candidate, CrawlerCandidateResult):
+                    progress_items.insert(0, candidate)
+                for progress_item in progress_items:
+                    if not isinstance(progress_item, CrawlerCandidateResult):
                         try:
-                            candidate = _provider_item_to_crawler_response(
-                                candidate,
+                            progress_item = _provider_item_to_crawler_response(
+                                progress_item,
                                 keyword=item.keyword,
                             )
                         except Exception:
-                            candidate = None
-                if candidate is not None:
-                    payload = candidate.model_dump(mode="json")
+                            continue
+                    payload = progress_item.model_dump(mode="json")
                     candidate_id = _progress_candidate_identity(payload)
                     replaced = False
                     for index, existing in enumerate(progress_candidates):

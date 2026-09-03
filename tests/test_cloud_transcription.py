@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.adapters.video_editor_cloud import CloudProviderError
-from src.models import TaskStatus
+from src.models import TaskStatus, TranscriptionTask
 from src.repositories import MockRepository
 from src.services.cloud_transcription import (
     ASRAuthorization,
@@ -309,6 +309,51 @@ def test_cloud_low_confidence_segments_are_ai_reviewed_before_user_confirmation(
     assert completed.segments[0].quality_status == "llm_rewritten"
     assert completed.segments[0].alternatives == ["公司云端识别结果。"]
     assert seen["segments"][0]["needs_review"] is True
+
+
+def test_legacy_cloud_task_with_no_uncertain_segments_can_finish_ai_review() -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    service = TranscriptionService(
+        repository,
+        transcript_batch_reviewer=lambda **_kwargs: pytest.fail(
+            "无待确认片段时不应调用 AI"
+        ),
+    )
+    now = datetime.now().astimezone()
+    legacy = TranscriptionTask(
+        task_id="transcript-legacy-no-review-needed",
+        title="legacy.mp4",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="legacy.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        provider_name="aliyun_fun_asr",
+        stage="识别完成",
+        segments=[
+            {
+                "start": 0,
+                "end": 1,
+                "text": "高置信旧转写。",
+                "needs_review": False,
+                "quality_status": "completed",
+            }
+        ],
+        auto_reviewed=False,
+        uncertain_segment_count=0,
+    )
+    repository.save_task(legacy)
+
+    reviewed = service.review_completed_cloud_task(legacy.task_id)
+
+    assert reviewed.auto_reviewed is True
+    assert reviewed.stage == "AI 校对完成"
+    assert reviewed.llm_review_count == 0
+    assert reviewed.uncertain_segment_count == 0
+    assert repository.get_task(legacy.task_id).auto_reviewed is True
 
 
 def test_cloud_ai_review_keeps_changed_amount_for_human_confirmation(

@@ -1,11 +1,11 @@
 {
-  "batch_id": "edit-batch-c6ce18e46339",
+  "batch_id": "edit-batch-ee3b75ae1b99",
   "status": "awaiting_output_confirmation",
   "target_platform": "douyin",
   "subtitle_enabled": true,
   "subtitle_model": "cached-reviewed-word-timestamps-plus-local-gap",
-  "bgm_enabled": true,
-  "bgm_id": "bgm-0eed3a5909e5",
+  "bgm_enabled": false,
+  "bgm_id": "",
   "bgm_volume": 0.24,
   "provider_mode": "local",
   "output_profile": "720p",
@@ -48,7 +48,7 @@
       "max_lines": 1,
       "max_chars_per_line": 11,
       "font_size": 52,
-      "safe_bottom": 170,
+      "safe_bottom": 230,
       "font_family": "Smiley Sans",
       "font_style": "oblique",
       "outline_width": 4,
@@ -64,53 +64,24 @@
   "billing_confirmed_at": null,
   "idempotency_key": null,
   "is_mock": false,
-  "bgm": {
-    "asset_id": "bgm-0eed3a5909e5",
-    "title": "百搭口播底色",
-    "original_name": "clean-voice-bed.mp3",
-    "media_type": "audio/mpeg",
-    "mood": "百搭·干净·人声优先",
-    "voiceover_category": "通用口播",
-    "energy": "克制",
-    "tags": [
-      "通用",
-      "口播",
-      "百搭",
-      "干净",
-      "轻量",
-      "人声优先"
-    ],
-    "rights_holder": "本项目原创程序合成 · 无第三方采样",
-    "rights_confirmed_at": "2026-08-01T18:16:53.422479+08:00",
-    "created_at": "2026-08-01T18:16:53.422479+08:00",
-    "duration_seconds": 120.0,
-    "size_bytes": 2881197,
-    "media_url": "/api/v1/video-editor/bgm/bgm-0eed3a5909e5/media",
-    "source_provider": "manual",
-    "source_url": "",
-    "license_url": "",
-    "content_id_risk": "none",
-    "authorization_status": "confirmed",
-    "auto_eligible": true,
-    "generated": true
-  },
+  "bgm": null,
   "items": [
     {
-      "item_id": "edit-item-e4806e9628ca",
+      "item_id": "edit-item-064f743619c5",
       "source_id": "upload:upload-a88ae01012",
       "title": "本地审核口播",
       "status": "awaiting_output_confirmation",
       "analysis_id": null,
       "subtitle_task_id": null,
-      "edit_task_id": "edit-local-6d5ba71938",
+      "edit_task_id": "edit-local-a1e245437c",
       "title_candidates": [
         "最近广州冒出了一个挺特别的餐饮模式",
         "看懂最近广州冒出了一个挺特别的餐饮模式",
         "别错过：最近广州冒出了一个挺特别的餐饮模式"
       ],
-      "selected_title": "最近广州冒出了一个挺特别的餐饮模式",
-      "selected_bgm_id": "bgm-0eed3a5909e5",
-      "bgm_reason": "使用已选择的本地音乐《百搭口播底色》，自动做人声避让。",
+      "selected_title": "会员顾客自动升级成小店长",
+      "selected_bgm_id": null,
+      "bgm_reason": "已关闭自动配乐，保持素材原声。",
       "provider_stage": "local_export_complete",
       "provider_job_ids": {},
       "provider_payload": {
@@ -128,8 +99,8 @@
           "real_visual_event_count": 9,
           "vector_asset_count": 0,
           "vector_track_id": "adaptive-visual-system-v1",
-          "bgm_id": "bgm-0eed3a5909e5",
-          "bgm_reason": "使用已选择的本地音乐《百搭口播底色》，自动做人声避让。",
+          "bgm_id": "",
+          "bgm_reason": "已关闭自动配乐，保持素材原声。",
           "cloud_calls": 0,
           "publish_allowed": false
         },
@@ -169,7 +140,7 @@
               "motion_design": true,
               "audio_video_drift": true,
               "subtitle_effect_gate": true,
-              "subtitle_timeline": false
+              "subtitle_timeline": true
             },
             "transcript_source_identity": {
               "passed": false,
@@ -196,7 +167,7 @@
               "emphasis_scale_min": 1.08,
               "emphasis_scale_max": 1.08,
               "preview_unified_style": true,
-              "emphasis_count": 7
+              "emphasis_count": 9
             },
             "visual_relevance": {
               "passed": true,
@@ -210,15 +181,15 @@
               "cost_quote": null,
               "expected_min_generated_assets": 0
             },
-            "duration_seconds": 104.6,
-            "expected_duration_seconds": 104.66,
-            "duration_delta_seconds": 0.06,
+            "duration_seconds": 96.87,
+            "expected_duration_seconds": 96.91,
+            "duration_delta_seconds": 0.04,
             "resolution": {
               "width": 720,
               "height": 1280
             },
             "visual_beat_count": 15,
-            "style_version": "talking_head_release_v2.0-director-timeline",
+            "style_version": "talking_head_release_v2.2-paced-pip-finish-safe-caption-director-timeline",
             "motion_design": {
               "plan_version": "motion-design-v2",
               "renderer": "procedural_overlay_v2_caption_integrated",
@@ -260,23 +231,23 @@
               "source_caption_preserved": false,
               "source_caption_replaced": false,
               "generated_caption_scope": "full_timeline",
-              "generated_cue_count": 54,
+              "generated_cue_count": 53,
               "generated_caption_intervals": []
             },
             "bgm": {
-              "enabled": true,
-              "asset_id": "bgm-0eed3a5909e5",
-              "title": "百搭口播底色",
-              "source_provider": "manual",
-              "source_url": "",
-              "license_url": "",
-              "rights_holder": "本项目原创程序合成 · 无第三方采样",
-              "content_id_risk": "none",
-              "auto_eligible": true,
-              "authorization_status": "confirmed",
-              "voice_priority": true,
+              "enabled": false,
+              "asset_id": null,
+              "title": null,
+              "source_provider": null,
+              "source_url": null,
+              "license_url": null,
+              "rights_holder": null,
+              "content_id_risk": null,
+              "auto_eligible": false,
+              "authorization_status": null,
+              "voice_priority": false,
               "ducking": {
-                "enabled": true,
+                "enabled": false,
                 "filter": "sidechaincompress",
                 "attack_ms": 20,
                 "release_ms": 450,
@@ -287,8 +258,8 @@
             "alignment": {
               "method": "ffprobe_stream_start_end_pts",
               "start_drift_ms": 0.0,
-              "end_drift_ms": 4.0,
-              "max_drift_ms": 4.0,
+              "end_drift_ms": 8.016,
+              "max_drift_ms": 8.016,
               "threshold_ms": 67.0,
               "passed": true
             },
@@ -303,19 +274,19 @@
               }
             },
             "subtitle_timeline": {
-              "passed": false,
-              "cue_count": 54,
+              "passed": true,
+              "cue_count": 53,
               "duplicate_count": 0,
               "checks": {
-                "monotonic_and_in_bounds": false,
+                "monotonic_and_in_bounds": true,
                 "no_duplicate_cues": true
               },
-              "phrase_cue_count": 54,
+              "phrase_cue_count": 53,
               "phrase_timing_source": "word_timestamps",
               "estimated_phrase_timestamps": false,
-              "max_phrase_duration_seconds": 2.36,
-              "cue_manifest_sha256": "f211ac187d01d0a24ea9dc72700ff6a39c7a016752defda4dcafc105a8aecda9",
-              "ass_sha256": "a86146ef371f324b5ee4d33908fd75c3d6c6ac0209b0fc3d4e5d9c8472dc6d30",
+              "max_phrase_duration_seconds": 2.366,
+              "cue_manifest_sha256": "9013e5671e1ff1f3daf230510f07425b7f776da6d1451d0432f6e3cc34fce6ce",
+              "ass_sha256": "3dfac40fc070fb2a0391cfdaf8c9d35f3226d8828106dd4c2aaae795a7b2faec",
               "preview_render_manifest_equal": true,
               "experience_gate": {
                 "passed": true,
@@ -329,9 +300,9 @@
                   "preview_render_manifest_equal": true,
                   "cue_count_per_sentence": true
                 },
-                "min_duration_seconds": 0.7,
-                "max_duration_seconds": 2.36,
-                "one_line_ratio": 0.963,
+                "min_duration_seconds": 0.648,
+                "max_duration_seconds": 2.366,
+                "one_line_ratio": 0.962,
                 "lexical_boundary_integrity": true,
                 "no_orphan_prefix_suffix": true,
                 "preview_render_manifest_equal": true,
@@ -347,7 +318,7 @@
                   "5": 3,
                   "6": 2,
                   "7": 3,
-                  "8": 2,
+                  "8": 1,
                   "9": 1,
                   "10": 4,
                   "11": 2,
@@ -399,371 +370,371 @@
                 "passed": true,
                 "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
                 "minimum_uncovered_seconds": 0.5,
-                "active_seconds": 79.1,
-                "covered_seconds": 79.1,
+                "active_seconds": 73.241,
+                "covered_seconds": 73.241,
                 "uncovered_ranges": [],
                 "raw_vad_active_ranges": [
                   {
-                    "start": 0.43,
-                    "end": 3.45
+                    "start": 0.398,
+                    "end": 3.194
                   },
                   {
-                    "start": 4.16,
-                    "end": 5.61
+                    "start": 3.852,
+                    "end": 5.194
                   },
                   {
-                    "start": 5.94,
-                    "end": 6.66
+                    "start": 5.5,
+                    "end": 6.167
                   },
                   {
-                    "start": 7.1,
-                    "end": 9.84
+                    "start": 6.574,
+                    "end": 9.111
                   },
                   {
-                    "start": 10.64,
-                    "end": 13.58
+                    "start": 9.852,
+                    "end": 12.574
                   },
                   {
-                    "start": 14.47,
-                    "end": 16.89
+                    "start": 13.398,
+                    "end": 15.639
                   },
                   {
-                    "start": 17.39,
-                    "end": 19.03
+                    "start": 16.102,
+                    "end": 17.62
                   },
                   {
-                    "start": 19.96,
-                    "end": 21.78
+                    "start": 18.481,
+                    "end": 20.167
                   },
                   {
-                    "start": 22.11,
-                    "end": 23.14
+                    "start": 20.472,
+                    "end": 21.426
                   },
                   {
-                    "start": 23.57,
-                    "end": 24.62
+                    "start": 21.824,
+                    "end": 22.796
                   },
                   {
-                    "start": 24.96,
-                    "end": 25.6
+                    "start": 23.111,
+                    "end": 23.704
                   },
                   {
-                    "start": 26.4,
-                    "end": 27.87
+                    "start": 24.444,
+                    "end": 25.806
                   },
                   {
-                    "start": 28.33,
-                    "end": 30.88
+                    "start": 26.231,
+                    "end": 28.593
                   },
                   {
-                    "start": 31.48,
-                    "end": 33.57
+                    "start": 29.148,
+                    "end": 31.083
                   },
                   {
-                    "start": 34.01,
-                    "end": 35.38
+                    "start": 31.491,
+                    "end": 32.759
                   },
                   {
-                    "start": 36.21,
-                    "end": 37.4
+                    "start": 33.528,
+                    "end": 34.63
                   },
                   {
-                    "start": 38.4,
-                    "end": 41.27
+                    "start": 35.556,
+                    "end": 38.213
                   },
                   {
-                    "start": 42.12,
-                    "end": 44.15
+                    "start": 39.0,
+                    "end": 40.88
                   },
                   {
-                    "start": 44.5,
-                    "end": 46.72
+                    "start": 41.204,
+                    "end": 43.259
                   },
                   {
-                    "start": 47.55,
-                    "end": 49.52
+                    "start": 44.028,
+                    "end": 45.852
                   },
                   {
-                    "start": 49.99,
-                    "end": 50.92
+                    "start": 46.287,
+                    "end": 47.148
                   },
                   {
-                    "start": 51.36,
-                    "end": 52.4
+                    "start": 47.556,
+                    "end": 48.519
                   },
                   {
-                    "start": 53.21,
-                    "end": 55.11
+                    "start": 49.269,
+                    "end": 51.028
                   },
                   {
-                    "start": 55.8,
-                    "end": 58.94
+                    "start": 51.667,
+                    "end": 54.574
                   },
                   {
-                    "start": 59.25,
-                    "end": 60.18
+                    "start": 54.861,
+                    "end": 55.722
                   },
                   {
-                    "start": 60.9,
-                    "end": 63.86
+                    "start": 56.389,
+                    "end": 59.13
                   },
                   {
-                    "start": 64.63,
-                    "end": 66.78
+                    "start": 59.843,
+                    "end": 61.833
                   },
                   {
-                    "start": 67.21,
-                    "end": 68.97
+                    "start": 62.231,
+                    "end": 63.861
                   },
                   {
-                    "start": 69.42,
-                    "end": 71.35
+                    "start": 64.278,
+                    "end": 66.065
                   },
                   {
-                    "start": 71.97,
-                    "end": 74.84
+                    "start": 66.639,
+                    "end": 69.296
                   },
                   {
-                    "start": 75.62,
-                    "end": 76.14
+                    "start": 70.019,
+                    "end": 70.5
                   },
                   {
-                    "start": 76.57,
-                    "end": 78.88
+                    "start": 70.898,
+                    "end": 73.037
                   },
                   {
-                    "start": 79.21,
-                    "end": 80.95
+                    "start": 73.343,
+                    "end": 74.954
                   },
                   {
-                    "start": 81.75,
-                    "end": 84.62
+                    "start": 75.694,
+                    "end": 78.352
                   },
                   {
-                    "start": 84.99,
-                    "end": 86.32
+                    "start": 78.694,
+                    "end": 79.926
                   },
                   {
-                    "start": 86.69,
-                    "end": 88.31
+                    "start": 80.269,
+                    "end": 81.769
                   },
                   {
-                    "start": 89.03,
-                    "end": 94.0
+                    "start": 82.435,
+                    "end": 87.037
                   },
                   {
-                    "start": 94.68,
-                    "end": 95.32
+                    "start": 87.667,
+                    "end": 88.259
                   },
                   {
-                    "start": 95.66,
-                    "end": 96.05
+                    "start": 88.574,
+                    "end": 88.935
                   },
                   {
-                    "start": 96.5,
-                    "end": 97.01
+                    "start": 89.352,
+                    "end": 89.824
                   },
                   {
-                    "start": 97.36,
-                    "end": 97.77
+                    "start": 90.148,
+                    "end": 90.528
                   },
                   {
-                    "start": 98.08,
-                    "end": 99.52
+                    "start": 90.815,
+                    "end": 92.148
                   },
                   {
-                    "start": 100.24,
-                    "end": 102.87
+                    "start": 92.815,
+                    "end": 95.25
                   },
                   {
-                    "start": 103.26,
-                    "end": 104.66
+                    "start": 95.611,
+                    "end": 96.907
                   }
                 ],
                 "speech_candidate_ranges": [
                   {
-                    "start": 0.44,
-                    "end": 3.45
+                    "start": 0.407,
+                    "end": 3.194
                   },
                   {
-                    "start": 4.16,
-                    "end": 5.61
+                    "start": 3.852,
+                    "end": 5.194
                   },
                   {
-                    "start": 5.94,
-                    "end": 6.66
+                    "start": 5.5,
+                    "end": 6.167
                   },
                   {
-                    "start": 7.1,
-                    "end": 9.84
+                    "start": 6.574,
+                    "end": 9.111
                   },
                   {
-                    "start": 11.04,
-                    "end": 13.58
+                    "start": 10.222,
+                    "end": 12.574
                   },
                   {
-                    "start": 14.47,
-                    "end": 16.89
+                    "start": 13.398,
+                    "end": 15.639
                   },
                   {
-                    "start": 17.39,
-                    "end": 19.03
+                    "start": 16.102,
+                    "end": 17.62
                   },
                   {
-                    "start": 19.96,
-                    "end": 21.78
+                    "start": 18.481,
+                    "end": 20.167
                   },
                   {
-                    "start": 22.11,
-                    "end": 23.14
+                    "start": 20.472,
+                    "end": 21.426
                   },
                   {
-                    "start": 23.57,
-                    "end": 24.62
+                    "start": 21.824,
+                    "end": 22.796
                   },
                   {
-                    "start": 24.96,
-                    "end": 25.6
+                    "start": 23.111,
+                    "end": 23.704
                   },
                   {
-                    "start": 26.4,
-                    "end": 27.87
+                    "start": 24.444,
+                    "end": 25.806
                   },
                   {
-                    "start": 28.33,
-                    "end": 30.88
+                    "start": 26.231,
+                    "end": 28.593
                   },
                   {
-                    "start": 31.48,
-                    "end": 33.57
+                    "start": 29.148,
+                    "end": 31.083
                   },
                   {
-                    "start": 34.01,
-                    "end": 35.38
+                    "start": 31.491,
+                    "end": 32.759
                   },
                   {
-                    "start": 36.21,
-                    "end": 37.4
+                    "start": 33.528,
+                    "end": 34.63
                   },
                   {
-                    "start": 38.4,
-                    "end": 41.27
+                    "start": 35.556,
+                    "end": 38.213
                   },
                   {
-                    "start": 42.12,
-                    "end": 44.15
+                    "start": 39.0,
+                    "end": 40.88
                   },
                   {
-                    "start": 44.5,
-                    "end": 46.72
+                    "start": 41.204,
+                    "end": 43.259
                   },
                   {
-                    "start": 47.55,
-                    "end": 49.52
+                    "start": 44.028,
+                    "end": 45.852
                   },
                   {
-                    "start": 49.99,
-                    "end": 50.92
+                    "start": 46.287,
+                    "end": 47.148
                   },
                   {
-                    "start": 51.36,
-                    "end": 52.4
+                    "start": 47.556,
+                    "end": 48.519
                   },
                   {
-                    "start": 53.21,
-                    "end": 55.11
+                    "start": 49.269,
+                    "end": 51.028
                   },
                   {
-                    "start": 55.8,
-                    "end": 58.94
+                    "start": 51.667,
+                    "end": 54.574
                   },
                   {
-                    "start": 59.25,
-                    "end": 60.18
+                    "start": 54.861,
+                    "end": 55.722
                   },
                   {
-                    "start": 60.9,
-                    "end": 63.86
+                    "start": 56.389,
+                    "end": 59.13
                   },
                   {
-                    "start": 64.67,
-                    "end": 66.78
+                    "start": 59.88,
+                    "end": 61.833
                   },
                   {
-                    "start": 67.21,
-                    "end": 68.97
+                    "start": 62.231,
+                    "end": 63.861
                   },
                   {
-                    "start": 69.42,
-                    "end": 71.35
+                    "start": 64.278,
+                    "end": 66.065
                   },
                   {
-                    "start": 71.97,
-                    "end": 74.84
+                    "start": 66.639,
+                    "end": 69.296
                   },
                   {
-                    "start": 75.62,
-                    "end": 76.14
+                    "start": 70.019,
+                    "end": 70.5
                   },
                   {
-                    "start": 76.57,
-                    "end": 78.88
+                    "start": 70.898,
+                    "end": 73.037
                   },
                   {
-                    "start": 79.21,
-                    "end": 80.95
+                    "start": 73.343,
+                    "end": 74.954
                   },
                   {
-                    "start": 81.75,
-                    "end": 84.62
+                    "start": 75.694,
+                    "end": 78.352
                   },
                   {
-                    "start": 84.99,
-                    "end": 86.32
+                    "start": 78.694,
+                    "end": 79.926
                   },
                   {
-                    "start": 86.71,
-                    "end": 88.31
+                    "start": 80.287,
+                    "end": 81.769
                   },
                   {
-                    "start": 89.08,
-                    "end": 94.0
+                    "start": 82.481,
+                    "end": 87.037
                   },
                   {
-                    "start": 94.68,
-                    "end": 95.32
+                    "start": 87.667,
+                    "end": 88.259
                   },
                   {
-                    "start": 95.66,
-                    "end": 96.05
+                    "start": 88.574,
+                    "end": 88.935
                   },
                   {
-                    "start": 96.5,
-                    "end": 97.01
+                    "start": 89.352,
+                    "end": 89.824
                   },
                   {
-                    "start": 97.36,
-                    "end": 97.77
+                    "start": 90.148,
+                    "end": 90.528
                   },
                   {
-                    "start": 98.08,
-                    "end": 99.52
+                    "start": 90.815,
+                    "end": 92.148
                   },
                   {
-                    "start": 100.24,
-                    "end": 102.87
+                    "start": 92.815,
+                    "end": 95.25
                   },
                   {
-                    "start": 103.26,
-                    "end": 104.66
+                    "start": 95.611,
+                    "end": 96.907
                   }
                 ]
               },
               "subtitle_effect_gate": {
                 "passed": true,
                 "style_id": "adaptive_talking_head_v1",
-                "cue_count": 54,
-                "emphasis_count": 7,
+                "cue_count": 53,
+                "emphasis_count": 9,
                 "checks": {
                   "unified_adaptive_style": true,
                   "entry_motion_100_220ms": true,
@@ -780,7 +751,7 @@
                 "reviewed_text_sequence_alignment_fallback_count": 0,
                 "word_p95_ms": 0.0,
                 "mapping_error_frames": 0.0,
-                "matched_cue_count": 54,
+                "matched_cue_count": 53,
                 "unmatched_cue_count": 0,
                 "fps": 30.0,
                 "checks": {
@@ -863,9 +834,9 @@
               "min_full_events": 2,
               "real_event_count": 9,
               "broll_count": 9,
-              "coverage_ratio": 0.3365,
-              "effective_coverage_ratio": 0.5564,
-              "effective_coverage_seconds": 58.2,
+              "coverage_ratio": 0.3634,
+              "effective_coverage_ratio": 0.5623,
+              "effective_coverage_seconds": 54.47,
               "actual_has_pip_visual": true,
               "actual_has_full_visual": true,
               "passed": false
@@ -875,83 +846,87 @@
               "has_full_visual": true,
               "pip_required": true,
               "full_required": true,
-              "pip_event_count": 8,
-              "full_event_count": 1,
+              "pip_event_count": 7,
+              "full_event_count": 2,
               "min_pip_events": 2,
               "min_full_events": 2,
               "actual_real_broll_event_count": 9,
-              "actual_real_broll_coverage_ratio": 0.3365,
-              "effective_visual_coverage_ratio": 0.5564
+              "actual_real_broll_coverage_ratio": 0.3634,
+              "effective_visual_coverage_ratio": 0.5623
             },
             "visual_cadence_gate": {
               "passed": true,
-              "meaningful_visual_beat_count": 31,
+              "meaningful_visual_beat_count": 33,
               "beat_starts_final_output": [
                 0.0,
-                3.0,
-                4.0,
-                7.08,
-                11.04,
-                11.28,
-                15.0,
-                19.96,
-                22.015,
-                25.4,
-                26.28,
-                28.12,
-                33.0,
-                38.39,
-                40.4,
-                44.48,
-                45.95,
-                48.0,
-                53.11,
-                57.11,
-                63.0,
-                67.0,
-                71.0,
-                75.0,
-                79.0,
-                81.63,
-                83.0,
-                87.0,
-                93.0,
-                97.0,
-                100.83
+                2.778,
+                3.704,
+                6.556,
+                10.222,
+                10.444,
+                13.889,
+                18.481,
+                20.384,
+                23.519,
+                24.333,
+                26.037,
+                30.556,
+                35.546,
+                37.407,
+                41.185,
+                42.546,
+                44.444,
+                49.176,
+                52.88,
+                58.333,
+                62.037,
+                65.741,
+                69.444,
+                73.148,
+                75.583,
+                76.852,
+                78.62,
+                80.556,
+                86.111,
+                89.815,
+                93.361,
+                94.815
               ],
               "intervals_seconds": [
-                3.0,
-                1.0,
-                3.08,
-                3.96,
-                0.24,
-                3.72,
-                4.96,
-                2.055,
-                3.385,
-                0.88,
-                1.84,
-                4.88,
-                5.39,
-                2.01,
-                4.08,
-                1.47,
-                2.05,
-                5.11,
-                4.0,
-                5.89,
-                4.0,
-                4.0,
-                4.0,
-                4.0,
-                2.63,
-                1.37,
-                4.0,
-                6.0,
-                4.0,
-                3.83
+                2.778,
+                0.926,
+                2.852,
+                3.666,
+                0.222,
+                3.445,
+                4.592,
+                1.903,
+                3.135,
+                0.814,
+                1.704,
+                4.519,
+                4.99,
+                1.861,
+                3.778,
+                1.361,
+                1.898,
+                4.732,
+                3.704,
+                5.453,
+                3.704,
+                3.704,
+                3.703,
+                3.704,
+                2.435,
+                1.269,
+                1.768,
+                1.936,
+                5.555,
+                3.704,
+                3.546,
+                1.454
               ],
-              "max_gap_seconds": 6.0,
+              "max_gap_seconds": 5.555,
               "recommended_max_gap_seconds": 6.0,
               "hard_max_gap_seconds": 7.5,
               "rhythm_hold_exception": false,
@@ -1957,7 +1932,7 @@
                   "event_id": "broll-5d5acfc82b",
                   "start": 3.0,
                   "end": 7.2,
-                  "mode": "pip",
+                  "mode": "full",
                   "asset_id": "broll-5d5acfc82b",
                   "source": "pexels"
                 },
@@ -2095,7 +2070,7 @@
               {
                 "event_index": 0,
                 "asset_id": "broll-5d5acfc82b",
-                "mode": "pip",
+                "mode": "full",
                 "asset_origin": "stock_video_asset",
                 "provider": "pexels",
                 "license_name": "Pexels License",
@@ -2270,10 +2245,10 @@
                 "domestic_scene": ""
               }
             ],
-            "real_broll_coverage_ratio": 0.3365,
+            "real_broll_coverage_ratio": 0.3634,
             "visual_coverage_seconds": 35.2,
             "vector_coverage_seconds": 0,
-            "real_stock_broll_coverage_ratio": 0.3365,
+            "real_stock_broll_coverage_ratio": 0.3634,
             "real_stock_broll_seconds": 35.2,
             "generated_image_coverage_ratio": 0.0,
             "generated_image_seconds": 0,
@@ -2447,49 +2422,14 @@
               }
             ],
             "unresolved_window_count": 2,
-            "effective_visual_coverage_seconds": 58.2,
-            "effective_visual_coverage_ratio": 0.5564,
+            "effective_visual_coverage_seconds": 54.47,
+            "effective_visual_coverage_ratio": 0.5623,
             "broll_modes": {
-              "pip": 8,
-              "full": 1,
+              "pip": 7,
+              "full": 2,
               "vector_pip": 0
             },
             "pip_geometry": [
-              {
-                "event_index": 0,
-                "asset_id": "broll-5d5acfc82b",
-                "safe": true,
-                "rendered": true,
-                "reason": "lower_side_safe_zone",
-                "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
-                  "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
-                  }
-                },
-                "face_safe_bbox": {
-                  "left": 86,
-                  "top": 128,
-                  "right": 648,
-                  "bottom": 768
-                },
-                "subtitle_bbox": {
-                  "left": 36,
-                  "top": 1011,
-                  "right": 684,
-                  "bottom": 1216
-                },
-                "intersects_face_safe_bbox": false,
-                "intersects_subtitle_bbox": false
-              },
               {
                 "event_index": 1,
                 "asset_id": "broll-742a2efad2",
@@ -2497,17 +2437,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2532,17 +2472,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2567,17 +2507,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2602,17 +2542,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2637,17 +2577,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2672,17 +2612,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2707,17 +2647,17 @@
                 "rendered": true,
                 "reason": "lower_side_safe_zone",
                 "bbox": {
-                  "left": 252,
-                  "top": 794,
-                  "right": 468,
-                  "bottom": 986,
-                  "width": 216,
-                  "height": 192,
+                  "left": 202,
+                  "top": 768,
+                  "right": 519,
+                  "bottom": 998,
+                  "width": 317,
+                  "height": 230,
                   "normalized": {
-                    "left": 0.35,
-                    "top": 0.6203,
-                    "right": 0.65,
-                    "bottom": 0.7703
+                    "left": 0.2806,
+                    "top": 0.6,
+                    "right": 0.7208,
+                    "bottom": 0.7797
                   }
                 },
                 "face_safe_bbox": {
@@ -2742,7 +2682,7 @@
               "passed": true,
               "word_p95_ms": 0.0,
               "mapping_error_frames": 0.0,
-              "matched_cue_count": 54,
+              "matched_cue_count": 53,
               "unmatched_cue_count": 0
             },
             "transcript_source_identity_gate": {
@@ -2783,12 +2723,12 @@
                 "start": 0.0,
                 "end": 104.72
               },
-              "expected_body_seconds": 104.72,
+              "expected_body_seconds": 96.963,
               "executed_source_seconds": 104.72,
               "opening_duration_seconds": 0.0,
-              "expected_output_seconds": 104.72,
-              "actual_output_seconds": 104.6,
-              "actual_body_seconds": 104.6
+              "expected_output_seconds": 96.963,
+              "actual_output_seconds": 96.87,
+              "actual_body_seconds": 96.87
             },
             "transcript_accuracy_gate": {
               "passed": true,
@@ -2821,10 +2761,10 @@
               ]
             },
             "media_integrity_passed": false,
-            "subtitle_sync_passed": false,
+            "subtitle_sync_passed": true,
             "visual_release_passed": false
           },
-          "style_version": "talking_head_release_v2.0-director-timeline",
+          "style_version": "talking_head_release_v2.2-paced-pip-finish-safe-caption-director-timeline",
           "visual_beat_count": 24,
           "template_id": "adaptive_talking_head_v1",
           "template_version": "talking-head-release-v1.0",
@@ -3777,11 +3717,11 @@
           "insert_policy": "semantic_peak_broll_1_to_3",
           "bgm_profile": "commercial_low_intrusion",
           "bgm": {
-            "track_id": "bgm-0eed3a5909e5",
-            "title": "百搭口播底色",
-            "source": "manual",
-            "authorization_status": "confirmed",
-            "auto_eligible": true,
+            "track_id": null,
+            "title": null,
+            "source": "none",
+            "authorization_status": "not_selected",
+            "auto_eligible": false,
             "start_seconds": 0.0,
             "energy_segments": [
               {
@@ -5818,11 +5758,11 @@
           "audio_policy": {
             "voice_priority": true,
             "bgm": {
-              "track_id": "bgm-0eed3a5909e5",
-              "title": "百搭口播底色",
-              "source": "manual",
-              "authorization_status": "confirmed",
-              "auto_eligible": true,
+              "track_id": null,
+              "title": null,
+              "source": "none",
+              "authorization_status": "not_selected",
+              "auto_eligible": false,
               "start_seconds": 0.0,
               "energy_segments": [
                 {
@@ -7286,7 +7226,7 @@
             "asset_id": "broll-5d5acfc82b",
             "start": 3.0,
             "end": 7.2,
-            "mode": "pip",
+            "mode": "full",
             "source": "pexels",
             "source_provider": "pexels",
             "asset_origin": "stock_video_asset",
@@ -7312,7 +7252,8 @@
             "visual_intent": null,
             "visual_type": null,
             "manifest_role": null,
-            "coverage_trimmed_for_short_adaptive_rich": false
+            "coverage_trimmed_for_short_adaptive_rich": false,
+            "mode_selection_reason": "template_minimum_full_establishing_cut"
           },
           {
             "shot_id": "shot-03",
@@ -7912,8 +7853,7 @@
       "enabled_plan_step_ids": [
         "vertical_fit",
         "subtitles",
-        "title",
-        "bgm"
+        "title"
       ],
       "subtitle_segments": [
         {
@@ -12695,7 +12635,7 @@
       "overlay_preview": {
         "title": {
           "lines": [
-            "最近广州冒出了一个挺特别"
+            "会员顾客自动升级成小店长"
           ],
           "start": 0,
           "end": 2.5
@@ -13901,8 +13841,18 @@
             "lines": [
               "自动执行不用人管"
             ],
-            "emphasis_range": null,
-            "emphasis_style": null,
+            "emphasis_range": {
+              "line_index": 0,
+              "start": 0,
+              "end": 4
+            },
+            "emphasis_style": {
+              "color": "#FFB86B",
+              "scale": 1.08,
+              "animation": "scale_overshoot",
+              "duration_ms": 200,
+              "style_id": "adaptive_talking_head_v1"
+            },
             "source_segment_index": 18,
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
@@ -13912,10 +13862,31 @@
               "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
-            "kinetic_words": [],
-            "kinetic_mode": "static",
-            "kinetic_style": null,
-            "motion_scope": "static"
+            "kinetic_words": [
+              {
+                "line_index": 0,
+                "start_offset": 0,
+                "end_offset": 2,
+                "start": 0.0,
+                "end": 0.48,
+                "text": "自动",
+                "color": "#FFB86B",
+                "kind": "emphasis"
+              },
+              {
+                "line_index": 0,
+                "start_offset": 2,
+                "end_offset": 4,
+                "start": 0.48,
+                "end": 0.82,
+                "text": "执行",
+                "color": "#FFB86B",
+                "kind": "emphasis"
+              }
+            ],
+            "kinetic_mode": "word_pop",
+            "kinetic_style": "burst",
+            "motion_scope": "keyword"
           },
           {
             "start": 94.56,
@@ -14064,6 +14035,7 @@
       },
       "review_snapshot": {
         "confirmed": true,
+        "bgm_confirmed": true,
         "approval_mode": "cached_transcript_plus_local_gap_review",
         "source_range": {
           "start": 0.0,
@@ -14085,7 +14057,7 @@
           "director_plan_version": "director-plan-v3.1"
         }
       },
-      "review_confirmed_at": "2026-09-02T17:35:38.385854+08:00",
+      "review_confirmed_at": "2026-09-03T11:52:22.483498+08:00",
       "result_media_url": null,
       "is_mock": false,
       "publish_allowed": false,
@@ -14093,17 +14065,17 @@
       "confirmed_at": null,
       "analysis": null,
       "job": {
-        "task_id": "edit-local-6d5ba71938",
+        "task_id": "edit-local-a1e245437c",
         "status": "succeeded",
         "progress": 100,
         "stage": "本机成片已生成，可直接下载",
         "error_message": null,
-        "result_size_bytes": 53924485,
-        "media_url": "/api/v1/video-editor/jobs/edit-local-6d5ba71938/media",
-        "download_url": "/api/v1/video-editor/jobs/edit-local-6d5ba71938/download",
+        "result_size_bytes": 50023624,
+        "media_url": "/api/v1/video-editor/jobs/edit-local-a1e245437c/media",
+        "download_url": "/api/v1/video-editor/jobs/edit-local-a1e245437c/download",
         "source_id": "upload:upload-a88ae01012",
         "analysis_id": null,
-        "publish_title": "最近广州冒出了一个挺特别的餐饮模式",
+        "publish_title": "会员顾客自动升级成小店长",
         "workflow": "local_preview_export",
         "quality_report": {
           "passed": false,
@@ -14122,7 +14094,7 @@
             "motion_design": true,
             "audio_video_drift": true,
             "subtitle_effect_gate": true,
-            "subtitle_timeline": false
+            "subtitle_timeline": true
           },
           "transcript_source_identity": {
             "passed": false,
@@ -14149,7 +14121,7 @@
             "emphasis_scale_min": 1.08,
             "emphasis_scale_max": 1.08,
             "preview_unified_style": true,
-            "emphasis_count": 7
+            "emphasis_count": 9
           },
           "visual_relevance": {
             "passed": true,
@@ -14163,15 +14135,15 @@
             "cost_quote": null,
             "expected_min_generated_assets": 0
           },
-          "duration_seconds": 104.6,
-          "expected_duration_seconds": 104.66,
-          "duration_delta_seconds": 0.06,
+          "duration_seconds": 96.87,
+          "expected_duration_seconds": 96.91,
+          "duration_delta_seconds": 0.04,
           "resolution": {
             "width": 720,
             "height": 1280
           },
           "visual_beat_count": 15,
-          "style_version": "talking_head_release_v2.0-director-timeline",
+          "style_version": "talking_head_release_v2.2-paced-pip-finish-safe-caption-director-timeline",
           "motion_design": {
             "plan_version": "motion-design-v2",
             "renderer": "procedural_overlay_v2_caption_integrated",
@@ -14213,23 +14185,23 @@
             "source_caption_preserved": false,
             "source_caption_replaced": false,
             "generated_caption_scope": "full_timeline",
-            "generated_cue_count": 54,
+            "generated_cue_count": 53,
             "generated_caption_intervals": []
           },
           "bgm": {
-            "enabled": true,
-            "asset_id": "bgm-0eed3a5909e5",
-            "title": "百搭口播底色",
-            "source_provider": "manual",
-            "source_url": "",
-            "license_url": "",
-            "rights_holder": "本项目原创程序合成 · 无第三方采样",
-            "content_id_risk": "none",
-            "auto_eligible": true,
-            "authorization_status": "confirmed",
-            "voice_priority": true,
+            "enabled": false,
+            "asset_id": null,
+            "title": null,
+            "source_provider": null,
+            "source_url": null,
+            "license_url": null,
+            "rights_holder": null,
+            "content_id_risk": null,
+            "auto_eligible": false,
+            "authorization_status": null,
+            "voice_priority": false,
             "ducking": {
-              "enabled": true,
+              "enabled": false,
               "filter": "sidechaincompress",
               "attack_ms": 20,
               "release_ms": 450,
@@ -14240,8 +14212,8 @@
           "alignment": {
             "method": "ffprobe_stream_start_end_pts",
             "start_drift_ms": 0.0,
-            "end_drift_ms": 4.0,
-            "max_drift_ms": 4.0,
+            "end_drift_ms": 8.016,
+            "max_drift_ms": 8.016,
             "threshold_ms": 67.0,
             "passed": true
           },
@@ -14256,19 +14228,19 @@
             }
           },
           "subtitle_timeline": {
-            "passed": false,
-            "cue_count": 54,
+            "passed": true,
+            "cue_count": 53,
             "duplicate_count": 0,
             "checks": {
-              "monotonic_and_in_bounds": false,
+              "monotonic_and_in_bounds": true,
               "no_duplicate_cues": true
             },
-            "phrase_cue_count": 54,
+            "phrase_cue_count": 53,
             "phrase_timing_source": "word_timestamps",
             "estimated_phrase_timestamps": false,
-            "max_phrase_duration_seconds": 2.36,
-            "cue_manifest_sha256": "f211ac187d01d0a24ea9dc72700ff6a39c7a016752defda4dcafc105a8aecda9",
-            "ass_sha256": "a86146ef371f324b5ee4d33908fd75c3d6c6ac0209b0fc3d4e5d9c8472dc6d30",
+            "max_phrase_duration_seconds": 2.366,
+            "cue_manifest_sha256": "9013e5671e1ff1f3daf230510f07425b7f776da6d1451d0432f6e3cc34fce6ce",
+            "ass_sha256": "3dfac40fc070fb2a0391cfdaf8c9d35f3226d8828106dd4c2aaae795a7b2faec",
             "preview_render_manifest_equal": true,
             "experience_gate": {
               "passed": true,
@@ -14282,9 +14254,9 @@
                 "preview_render_manifest_equal": true,
                 "cue_count_per_sentence": true
               },
-              "min_duration_seconds": 0.7,
-              "max_duration_seconds": 2.36,
-              "one_line_ratio": 0.963,
+              "min_duration_seconds": 0.648,
+              "max_duration_seconds": 2.366,
+              "one_line_ratio": 0.962,
               "lexical_boundary_integrity": true,
               "no_orphan_prefix_suffix": true,
               "preview_render_manifest_equal": true,
@@ -14300,7 +14272,7 @@
                 "5": 3,
                 "6": 2,
                 "7": 3,
-                "8": 2,
+                "8": 1,
                 "9": 1,
                 "10": 4,
                 "11": 2,
@@ -14352,371 +14324,371 @@
               "passed": true,
               "method": "ffmpeg_silencedetect_vad_intersected_with_reviewed_speech_candidates",
               "minimum_uncovered_seconds": 0.5,
-              "active_seconds": 79.1,
-              "covered_seconds": 79.1,
+              "active_seconds": 73.241,
+              "covered_seconds": 73.241,
               "uncovered_ranges": [],
               "raw_vad_active_ranges": [
                 {
-                  "start": 0.43,
-                  "end": 3.45
+                  "start": 0.398,
+                  "end": 3.194
                 },
                 {
-                  "start": 4.16,
-                  "end": 5.61
+                  "start": 3.852,
+                  "end": 5.194
                 },
                 {
-                  "start": 5.94,
-                  "end": 6.66
+                  "start": 5.5,
+                  "end": 6.167
                 },
                 {
-                  "start": 7.1,
-                  "end": 9.84
+                  "start": 6.574,
+                  "end": 9.111
                 },
                 {
-                  "start": 10.64,
-                  "end": 13.58
+                  "start": 9.852,
+                  "end": 12.574
                 },
                 {
-                  "start": 14.47,
-                  "end": 16.89
+                  "start": 13.398,
+                  "end": 15.639
                 },
                 {
-                  "start": 17.39,
-                  "end": 19.03
+                  "start": 16.102,
+                  "end": 17.62
                 },
                 {
-                  "start": 19.96,
-                  "end": 21.78
+                  "start": 18.481,
+                  "end": 20.167
                 },
                 {
-                  "start": 22.11,
-                  "end": 23.14
+                  "start": 20.472,
+                  "end": 21.426
                 },
                 {
-                  "start": 23.57,
-                  "end": 24.62
+                  "start": 21.824,
+                  "end": 22.796
                 },
                 {
-                  "start": 24.96,
-                  "end": 25.6
+                  "start": 23.111,
+                  "end": 23.704
                 },
                 {
-                  "start": 26.4,
-                  "end": 27.87
+                  "start": 24.444,
+                  "end": 25.806
                 },
                 {
-                  "start": 28.33,
-                  "end": 30.88
+                  "start": 26.231,
+                  "end": 28.593
                 },
                 {
-                  "start": 31.48,
-                  "end": 33.57
+                  "start": 29.148,
+                  "end": 31.083
                 },
                 {
-                  "start": 34.01,
-                  "end": 35.38
+                  "start": 31.491,
+                  "end": 32.759
                 },
                 {
-                  "start": 36.21,
-                  "end": 37.4
+                  "start": 33.528,
+                  "end": 34.63
                 },
                 {
-                  "start": 38.4,
-                  "end": 41.27
+                  "start": 35.556,
+                  "end": 38.213
                 },
                 {
-                  "start": 42.12,
-                  "end": 44.15
+                  "start": 39.0,
+                  "end": 40.88
                 },
                 {
-                  "start": 44.5,
-                  "end": 46.72
+                  "start": 41.204,
+                  "end": 43.259
                 },
                 {
-                  "start": 47.55,
-                  "end": 49.52
+                  "start": 44.028,
+                  "end": 45.852
                 },
                 {
-                  "start": 49.99,
-                  "end": 50.92
+                  "start": 46.287,
+                  "end": 47.148
                 },
                 {
-                  "start": 51.36,
-                  "end": 52.4
+                  "start": 47.556,
+                  "end": 48.519
                 },
                 {
-                  "start": 53.21,
-                  "end": 55.11
+                  "start": 49.269,
+                  "end": 51.028
                 },
                 {
-                  "start": 55.8,
-                  "end": 58.94
+                  "start": 51.667,
+                  "end": 54.574
                 },
                 {
-                  "start": 59.25,
-                  "end": 60.18
+                  "start": 54.861,
+                  "end": 55.722
                 },
                 {
-                  "start": 60.9,
-                  "end": 63.86
+                  "start": 56.389,
+                  "end": 59.13
                 },
                 {
-                  "start": 64.63,
-                  "end": 66.78
+                  "start": 59.843,
+                  "end": 61.833
                 },
                 {
-                  "start": 67.21,
-                  "end": 68.97
+                  "start": 62.231,
+                  "end": 63.861
                 },
                 {
-                  "start": 69.42,
-                  "end": 71.35
+                  "start": 64.278,
+                  "end": 66.065
                 },
                 {
-                  "start": 71.97,
-                  "end": 74.84
+                  "start": 66.639,
+                  "end": 69.296
                 },
                 {
-                  "start": 75.62,
-                  "end": 76.14
+                  "start": 70.019,
+                  "end": 70.5
                 },
                 {
-                  "start": 76.57,
-                  "end": 78.88
+                  "start": 70.898,
+                  "end": 73.037
                 },
                 {
-                  "start": 79.21,
-                  "end": 80.95
+                  "start": 73.343,
+                  "end": 74.954
                 },
                 {
-                  "start": 81.75,
-                  "end": 84.62
+                  "start": 75.694,
+                  "end": 78.352
                 },
                 {
-                  "start": 84.99,
-                  "end": 86.32
+                  "start": 78.694,
+                  "end": 79.926
                 },
                 {
-                  "start": 86.69,
-                  "end": 88.31
+                  "start": 80.269,
+                  "end": 81.769
                 },
                 {
-                  "start": 89.03,
-                  "end": 94.0
+                  "start": 82.435,
+                  "end": 87.037
                 },
                 {
-                  "start": 94.68,
-                  "end": 95.32
+                  "start": 87.667,
+                  "end": 88.259
                 },
                 {
-                  "start": 95.66,
-                  "end": 96.05
+                  "start": 88.574,
+                  "end": 88.935
                 },
                 {
-                  "start": 96.5,
-                  "end": 97.01
+                  "start": 89.352,
+                  "end": 89.824
                 },
                 {
-                  "start": 97.36,
-                  "end": 97.77
+                  "start": 90.148,
+                  "end": 90.528
                 },
                 {
-                  "start": 98.08,
-                  "end": 99.52
+                  "start": 90.815,
+                  "end": 92.148
                 },
                 {
-                  "start": 100.24,
-                  "end": 102.87
+                  "start": 92.815,
+                  "end": 95.25
                 },
                 {
-                  "start": 103.26,
-                  "end": 104.66
+                  "start": 95.611,
+                  "end": 96.907
                 }
               ],
               "speech_candidate_ranges": [
                 {
-                  "start": 0.44,
-                  "end": 3.45
+                  "start": 0.407,
+                  "end": 3.194
                 },
                 {
-                  "start": 4.16,
-                  "end": 5.61
+                  "start": 3.852,
+                  "end": 5.194
                 },
                 {
-                  "start": 5.94,
-                  "end": 6.66
+                  "start": 5.5,
+                  "end": 6.167
                 },
                 {
-                  "start": 7.1,
-                  "end": 9.84
+                  "start": 6.574,
+                  "end": 9.111
                 },
                 {
-                  "start": 11.04,
-                  "end": 13.58
+                  "start": 10.222,
+                  "end": 12.574
                 },
                 {
-                  "start": 14.47,
-                  "end": 16.89
+                  "start": 13.398,
+                  "end": 15.639
                 },
                 {
-                  "start": 17.39,
-                  "end": 19.03
+                  "start": 16.102,
+                  "end": 17.62
                 },
                 {
-                  "start": 19.96,
-                  "end": 21.78
+                  "start": 18.481,
+                  "end": 20.167
                 },
                 {
-                  "start": 22.11,
-                  "end": 23.14
+                  "start": 20.472,
+                  "end": 21.426
                 },
                 {
-                  "start": 23.57,
-                  "end": 24.62
+                  "start": 21.824,
+                  "end": 22.796
                 },
                 {
-                  "start": 24.96,
-                  "end": 25.6
+                  "start": 23.111,
+                  "end": 23.704
                 },
                 {
-                  "start": 26.4,
-                  "end": 27.87
+                  "start": 24.444,
+                  "end": 25.806
                 },
                 {
-                  "start": 28.33,
-                  "end": 30.88
+                  "start": 26.231,
+                  "end": 28.593
                 },
                 {
-                  "start": 31.48,
-                  "end": 33.57
+                  "start": 29.148,
+                  "end": 31.083
                 },
                 {
-                  "start": 34.01,
-                  "end": 35.38
+                  "start": 31.491,
+                  "end": 32.759
                 },
                 {
-                  "start": 36.21,
-                  "end": 37.4
+                  "start": 33.528,
+                  "end": 34.63
                 },
                 {
-                  "start": 38.4,
-                  "end": 41.27
+                  "start": 35.556,
+                  "end": 38.213
                 },
                 {
-                  "start": 42.12,
-                  "end": 44.15
+                  "start": 39.0,
+                  "end": 40.88
                 },
                 {
-                  "start": 44.5,
-                  "end": 46.72
+                  "start": 41.204,
+                  "end": 43.259
                 },
                 {
-                  "start": 47.55,
-                  "end": 49.52
+                  "start": 44.028,
+                  "end": 45.852
                 },
                 {
-                  "start": 49.99,
-                  "end": 50.92
+                  "start": 46.287,
+                  "end": 47.148
                 },
                 {
-                  "start": 51.36,
-                  "end": 52.4
+                  "start": 47.556,
+                  "end": 48.519
                 },
                 {
-                  "start": 53.21,
-                  "end": 55.11
+                  "start": 49.269,
+                  "end": 51.028
                 },
                 {
-                  "start": 55.8,
-                  "end": 58.94
+                  "start": 51.667,
+                  "end": 54.574
                 },
                 {
-                  "start": 59.25,
-                  "end": 60.18
+                  "start": 54.861,
+                  "end": 55.722
                 },
                 {
-                  "start": 60.9,
-                  "end": 63.86
+                  "start": 56.389,
+                  "end": 59.13
                 },
                 {
-                  "start": 64.67,
-                  "end": 66.78
+                  "start": 59.88,
+                  "end": 61.833
                 },
                 {
-                  "start": 67.21,
-                  "end": 68.97
+                  "start": 62.231,
+                  "end": 63.861
                 },
                 {
-                  "start": 69.42,
-                  "end": 71.35
+                  "start": 64.278,
+                  "end": 66.065
                 },
                 {
-                  "start": 71.97,
-                  "end": 74.84
+                  "start": 66.639,
+                  "end": 69.296
                 },
                 {
-                  "start": 75.62,
-                  "end": 76.14
+                  "start": 70.019,
+                  "end": 70.5
                 },
                 {
-                  "start": 76.57,
-                  "end": 78.88
+                  "start": 70.898,
+                  "end": 73.037
                 },
                 {
-                  "start": 79.21,
-                  "end": 80.95
+                  "start": 73.343,
+                  "end": 74.954
                 },
                 {
-                  "start": 81.75,
-                  "end": 84.62
+                  "start": 75.694,
+                  "end": 78.352
                 },
                 {
-                  "start": 84.99,
-                  "end": 86.32
+                  "start": 78.694,
+                  "end": 79.926
                 },
                 {
-                  "start": 86.71,
-                  "end": 88.31
+                  "start": 80.287,
+                  "end": 81.769
                 },
                 {
-                  "start": 89.08,
-                  "end": 94.0
+                  "start": 82.481,
+                  "end": 87.037
                 },
                 {
-                  "start": 94.68,
-                  "end": 95.32
+                  "start": 87.667,
+                  "end": 88.259
                 },
                 {
-                  "start": 95.66,
-                  "end": 96.05
+                  "start": 88.574,
+                  "end": 88.935
                 },
                 {
-                  "start": 96.5,
-                  "end": 97.01
+                  "start": 89.352,
+                  "end": 89.824
                 },
                 {
-                  "start": 97.36,
-                  "end": 97.77
+                  "start": 90.148,
+                  "end": 90.528
                 },
                 {
-                  "start": 98.08,
-                  "end": 99.52
+                  "start": 90.815,
+                  "end": 92.148
                 },
                 {
-                  "start": 100.24,
-                  "end": 102.87
+                  "start": 92.815,
+                  "end": 95.25
                 },
                 {
-                  "start": 103.26,
-                  "end": 104.66
+                  "start": 95.611,
+                  "end": 96.907
                 }
               ]
             },
             "subtitle_effect_gate": {
               "passed": true,
               "style_id": "adaptive_talking_head_v1",
-              "cue_count": 54,
-              "emphasis_count": 7,
+              "cue_count": 53,
+              "emphasis_count": 9,
               "checks": {
                 "unified_adaptive_style": true,
                 "entry_motion_100_220ms": true,
@@ -14733,7 +14705,7 @@
               "reviewed_text_sequence_alignment_fallback_count": 0,
               "word_p95_ms": 0.0,
               "mapping_error_frames": 0.0,
-              "matched_cue_count": 54,
+              "matched_cue_count": 53,
               "unmatched_cue_count": 0,
               "fps": 30.0,
               "checks": {
@@ -14816,9 +14788,9 @@
             "min_full_events": 2,
             "real_event_count": 9,
             "broll_count": 9,
-            "coverage_ratio": 0.3365,
-            "effective_coverage_ratio": 0.5564,
-            "effective_coverage_seconds": 58.2,
+            "coverage_ratio": 0.3634,
+            "effective_coverage_ratio": 0.5623,
+            "effective_coverage_seconds": 54.47,
             "actual_has_pip_visual": true,
             "actual_has_full_visual": true,
             "passed": false
@@ -14828,83 +14800,87 @@
             "has_full_visual": true,
             "pip_required": true,
             "full_required": true,
-            "pip_event_count": 8,
-            "full_event_count": 1,
+            "pip_event_count": 7,
+            "full_event_count": 2,
             "min_pip_events": 2,
             "min_full_events": 2,
             "actual_real_broll_event_count": 9,
-            "actual_real_broll_coverage_ratio": 0.3365,
-            "effective_visual_coverage_ratio": 0.5564
+            "actual_real_broll_coverage_ratio": 0.3634,
+            "effective_visual_coverage_ratio": 0.5623
           },
           "visual_cadence_gate": {
             "passed": true,
-            "meaningful_visual_beat_count": 31,
+            "meaningful_visual_beat_count": 33,
             "beat_starts_final_output": [
               0.0,
-              3.0,
-              4.0,
-              7.08,
-              11.04,
-              11.28,
-              15.0,
-              19.96,
-              22.015,
-              25.4,
-              26.28,
-              28.12,
-              33.0,
-              38.39,
-              40.4,
-              44.48,
-              45.95,
-              48.0,
-              53.11,
-              57.11,
-              63.0,
-              67.0,
-              71.0,
-              75.0,
-              79.0,
-              81.63,
-              83.0,
-              87.0,
-              93.0,
-              97.0,
-              100.83
+              2.778,
+              3.704,
+              6.556,
+              10.222,
+              10.444,
+              13.889,
+              18.481,
+              20.384,
+              23.519,
+              24.333,
+              26.037,
+              30.556,
+              35.546,
+              37.407,
+              41.185,
+              42.546,
+              44.444,
+              49.176,
+              52.88,
+              58.333,
+              62.037,
+              65.741,
+              69.444,
+              73.148,
+              75.583,
+              76.852,
+              78.62,
+              80.556,
+              86.111,
+              89.815,
+              93.361,
+              94.815
             ],
             "intervals_seconds": [
-              3.0,
-              1.0,
-              3.08,
-              3.96,
-              0.24,
-              3.72,
-              4.96,
-              2.055,
-              3.385,
-              0.88,
-              1.84,
-              4.88,
-              5.39,
-              2.01,
-              4.08,
-              1.47,
-              2.05,
-              5.11,
-              4.0,
-              5.89,
-              4.0,
-              4.0,
-              4.0,
-              4.0,
-              2.63,
-              1.37,
-              4.0,
-              6.0,
-              4.0,
-              3.83
+              2.778,
+              0.926,
+              2.852,
+              3.666,
+              0.222,
+              3.445,
+              4.592,
+              1.903,
+              3.135,
+              0.814,
+              1.704,
+              4.519,
+              4.99,
+              1.861,
+              3.778,
+              1.361,
+              1.898,
+              4.732,
+              3.704,
+              5.453,
+              3.704,
+              3.704,
+              3.703,
+              3.704,
+              2.435,
+              1.269,
+              1.768,
+              1.936,
+              5.555,
+              3.704,
+              3.546,
+              1.454
             ],
-            "max_gap_seconds": 6.0,
+            "max_gap_seconds": 5.555,
             "recommended_max_gap_seconds": 6.0,
             "hard_max_gap_seconds": 7.5,
             "rhythm_hold_exception": false,
@@ -15910,7 +15886,7 @@
                 "event_id": "broll-5d5acfc82b",
                 "start": 3.0,
                 "end": 7.2,
-                "mode": "pip",
+                "mode": "full",
                 "asset_id": "broll-5d5acfc82b",
                 "source": "pexels"
               },
@@ -16048,7 +16024,7 @@
             {
               "event_index": 0,
               "asset_id": "broll-5d5acfc82b",
-              "mode": "pip",
+              "mode": "full",
               "asset_origin": "stock_video_asset",
               "provider": "pexels",
               "license_name": "Pexels License",
@@ -16223,10 +16199,10 @@
               "domestic_scene": ""
             }
           ],
-          "real_broll_coverage_ratio": 0.3365,
+          "real_broll_coverage_ratio": 0.3634,
           "visual_coverage_seconds": 35.2,
           "vector_coverage_seconds": 0,
-          "real_stock_broll_coverage_ratio": 0.3365,
+          "real_stock_broll_coverage_ratio": 0.3634,
           "real_stock_broll_seconds": 35.2,
           "generated_image_coverage_ratio": 0.0,
           "generated_image_seconds": 0,
@@ -16400,49 +16376,14 @@
             }
           ],
           "unresolved_window_count": 2,
-          "effective_visual_coverage_seconds": 58.2,
-          "effective_visual_coverage_ratio": 0.5564,
+          "effective_visual_coverage_seconds": 54.47,
+          "effective_visual_coverage_ratio": 0.5623,
           "broll_modes": {
-            "pip": 8,
-            "full": 1,
+            "pip": 7,
+            "full": 2,
             "vector_pip": 0
           },
           "pip_geometry": [
-            {
-              "event_index": 0,
-              "asset_id": "broll-5d5acfc82b",
-              "safe": true,
-              "rendered": true,
-              "reason": "lower_side_safe_zone",
-              "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
-                "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
-                }
-              },
-              "face_safe_bbox": {
-                "left": 86,
-                "top": 128,
-                "right": 648,
-                "bottom": 768
-              },
-              "subtitle_bbox": {
-                "left": 36,
-                "top": 1011,
-                "right": 684,
-                "bottom": 1216
-              },
-              "intersects_face_safe_bbox": false,
-              "intersects_subtitle_bbox": false
-            },
             {
               "event_index": 1,
               "asset_id": "broll-742a2efad2",
@@ -16450,17 +16391,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16485,17 +16426,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16520,17 +16461,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16555,17 +16496,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16590,17 +16531,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16625,17 +16566,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16660,17 +16601,17 @@
               "rendered": true,
               "reason": "lower_side_safe_zone",
               "bbox": {
-                "left": 252,
-                "top": 794,
-                "right": 468,
-                "bottom": 986,
-                "width": 216,
-                "height": 192,
+                "left": 202,
+                "top": 768,
+                "right": 519,
+                "bottom": 998,
+                "width": 317,
+                "height": 230,
                 "normalized": {
-                  "left": 0.35,
-                  "top": 0.6203,
-                  "right": 0.65,
-                  "bottom": 0.7703
+                  "left": 0.2806,
+                  "top": 0.6,
+                  "right": 0.7208,
+                  "bottom": 0.7797
                 }
               },
               "face_safe_bbox": {
@@ -16695,7 +16636,7 @@
             "passed": true,
             "word_p95_ms": 0.0,
             "mapping_error_frames": 0.0,
-            "matched_cue_count": 54,
+            "matched_cue_count": 53,
             "unmatched_cue_count": 0
           },
           "transcript_source_identity_gate": {
@@ -16736,12 +16677,12 @@
               "start": 0.0,
               "end": 104.72
             },
-            "expected_body_seconds": 104.72,
+            "expected_body_seconds": 96.963,
             "executed_source_seconds": 104.72,
             "opening_duration_seconds": 0.0,
-            "expected_output_seconds": 104.72,
-            "actual_output_seconds": 104.6,
-            "actual_body_seconds": 104.6
+            "expected_output_seconds": 96.963,
+            "actual_output_seconds": 96.87,
+            "actual_body_seconds": 96.87
           },
           "transcript_accuracy_gate": {
             "passed": true,
@@ -16774,12 +16715,12 @@
             ]
           },
           "media_integrity_passed": false,
-          "subtitle_sync_passed": false,
+          "subtitle_sync_passed": true,
           "visual_release_passed": false
         }
       }
     }
   ],
-  "created_at": "2026-09-02T17:35:38.385854+08:00",
-  "updated_at": "2026-09-02T17:37:24.888594+08:00"
+  "created_at": "2026-09-03T11:52:22.483498+08:00",
+  "updated_at": "2026-09-03T11:54:03.881095+08:00"
 }
