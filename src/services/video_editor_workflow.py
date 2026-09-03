@@ -11146,6 +11146,41 @@ class VideoEditorWorkflowService:
             )
             edit_plan["source_caption_mode"] = source_caption_mode
             edit_plan["source_caption_detection"] = source_caption_detection
+            # P0-6 (plan §3.4): if the active style preset opts into
+            # audio-driven silence cutting, run ``_analyze_audio`` and
+            # record the active speech intervals so the renderer (or a
+            # later Phase 5 follow-up) can materialise a tighter source
+            # range.  The legacy single-range path is preserved when the
+            # flag is off, so existing tasks are zero-regression.
+            active_ranges_for_render: list[dict[str, float]] | None = None
+            rhythm_config = (
+                style_preset.get("rhythm")
+                if isinstance(style_preset, Mapping)
+                else None
+            )
+            if (
+                isinstance(rhythm_config, Mapping)
+                and bool(rhythm_config.get("active_ranges_from_audio_analysis"))
+            ):
+                audio_analysis = self._analyze_audio(
+                    source_path,
+                    float(media.get("duration_seconds") or 0),
+                )
+                edit_plan["audio_analysis"] = audio_analysis
+                candidate_active_ranges = self._active_ranges_from_audio_analysis(
+                    audio_analysis,
+                    duration_seconds=float(media.get("duration_seconds") or 0),
+                    playback_rate=playback_rate,
+                )
+                if candidate_active_ranges is not None:
+                    active_ranges_for_render = (
+                        self._intersect_audio_activity_with_spoken_ranges(
+                            candidate_active_ranges,
+                            edit_plan.get("spoken_ranges") or [],
+                        )
+                        or candidate_active_ranges
+                    )
+                    edit_plan["active_ranges"] = active_ranges_for_render
             task = self._update(
                 task,
                 outputs={
