@@ -7840,6 +7840,28 @@ class VideoEditorWorkflowService:
             plan_duration * (index + 1) / float(max_events + 1)
             for index in range(max_events)
         ]
+        # P0-4 (plan §3.1): also include motion_design event starts so B-roll
+        # placement follows the actual spoken semantic beats rather than a
+        # purely uniform temporal spread.  Motion events are advisory: the
+        # existing ``minimum_spread_seconds`` ceiling still prevents clumping
+        # and a missing motion planner leaves ``target_starts`` unchanged.
+        if transcript_segments:
+            from src.services.motion_design import build_semantic_motion_events
+
+            _motion_events_for_targets = build_semantic_motion_events(
+                list(transcript_segments),
+                duration_seconds=plan_duration,
+            ) or []
+            for _event in _motion_events_for_targets[:max_events]:
+                try:
+                    _event_start = float(_event.get("start") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if _event_start <= 0 or _event_start in target_starts:
+                    continue
+                if _event_start >= plan_duration:
+                    continue
+                target_starts.append(_event_start)
         spread_candidates = sorted(
             shots,
             key=lambda candidate: (
