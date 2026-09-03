@@ -11393,6 +11393,79 @@ class VideoEditorWorkflowService:
                 typography.get("subtitle_font_family") or CAPTION_FONT_FAMILY
             )
 
+            # Build the TopBrand header cue (one cue covering the whole video
+            # when the preset opts in) and the BigEmphasis cues (filtered
+            # from the compiled motion_events by trigger_semantic_kinds).
+            # The pure-adaptive preset has both set to None, so the lists
+            # stay empty and the ASS renderer skips the new style block
+            # entirely -- that is the zero-regression path.
+            top_brand_header_for_render = (
+                style_preset.get("top_brand_header")
+                if isinstance(style_preset, Mapping)
+                else None
+            )
+            big_emphasis_layer_for_render = (
+                style_preset.get("big_emphasis_layer")
+                if isinstance(style_preset, Mapping)
+                else None
+            )
+            top_brand_header_cues: list[dict[str, Any]] = []
+            if isinstance(top_brand_header_for_render, Mapping):
+                brand_text = str(
+                    top_brand_header_for_render.get("text") or ""
+                ).strip()
+                if brand_text:
+                    top_brand_header_cues.append(
+                        {
+                            "start": 0.0,
+                            "end": round(float(media["duration_seconds"]), 3),
+                            "text": brand_text,
+                        }
+                    )
+            big_emphasis_layer_cues: list[dict[str, Any]] = []
+            if isinstance(big_emphasis_layer_for_render, Mapping):
+                trigger_kinds = set(
+                    big_emphasis_layer_for_render.get("trigger_semantic_kinds") or []
+                )
+                min_seconds = float(
+                    big_emphasis_layer_for_render.get("min_duration_seconds") or 0.0
+                )
+                max_seconds = float(
+                    big_emphasis_layer_for_render.get("max_duration_seconds")
+                    or 9.6
+                )
+                for motion_event in motion_events or []:
+                    if not isinstance(motion_event, Mapping):
+                        continue
+                    kind = str(motion_event.get("semantic_kind") or "")
+                    if trigger_kinds and kind not in trigger_kinds:
+                        continue
+                    try:
+                        ev_start = float(motion_event.get("start", 0))
+                        ev_end = float(motion_event.get("end", ev_start))
+                    except (TypeError, ValueError):
+                        continue
+                    if ev_end <= ev_start:
+                        continue
+                    duration = ev_end - ev_start
+                    if duration < min_seconds or duration > max_seconds:
+                        continue
+                    payload = str(
+                        motion_event.get("semantic_text")
+                        or motion_event.get("fact")
+                        or ""
+                    ).strip()
+                    if not payload:
+                        continue
+                    big_emphasis_layer_cues.append(
+                        {
+                            "start": round(ev_start, 3),
+                            "end": round(ev_end, 3),
+                            "text": payload,
+                            "semantic_kind": kind,
+                        }
+                    )
+
             subtitle_preview = build_business_talking_head_overlay_preview(
                 rendered_segments,
                 title="",
@@ -11403,6 +11476,8 @@ class VideoEditorWorkflowService:
                 caption_glossary=edit_plan.get("transcript_glossary"),
                 subtitle_style_id=preset_id,
                 style_preset=style_preset,
+                top_brand_header_cues=top_brand_header_cues,
+                big_emphasis_layer_cues=big_emphasis_layer_cues,
             )
             # Keep the reviewed wording, but align cue edges to the same real
             # ASR word clock used by the source audio before writing both ASS

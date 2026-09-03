@@ -2897,6 +2897,8 @@ def build_business_talking_head_overlay_preview(
     caption_glossary: object = None,
     subtitle_style_id: str = "adaptive_talking_head_v1",
     style_preset: Mapping[str, Any] | None = None,
+    top_brand_header_cues: Sequence[Mapping[str, Any]] | None = None,
+    big_emphasis_layer_cues: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Normalize title/caption lines once for browser preview and ASS rendering.
 
@@ -2904,6 +2906,12 @@ def build_business_talking_head_overlay_preview(
     :mod:`src.services.style_presets`; the preset is recorded in the
     returned preview's ``style_fingerprint`` so downstream consumers can
     audit which preset produced a given cue set.
+
+    ``top_brand_header_cues`` and ``big_emphasis_layer_cues`` are forwarded
+    verbatim into the preview so the ASS renderer can emit the matching
+    ``TopBrand`` / ``BigEmphasis`` styles.  When the caller passes an empty
+    list (the default), the preview simply reports the empty list and the
+    ASS renderer skips the new style block.
     """
 
     spec = visual_style_spec(output_profile, style_preset=style_preset)
@@ -3725,6 +3733,14 @@ def build_business_talking_head_overlay_preview(
             "end": float(title_style["visible_seconds"]),
         },
         "cues": cues,
+        "top_brand_header_cues": [
+            dict(cue) for cue in (top_brand_header_cues or [])
+            if isinstance(cue, Mapping)
+        ],
+        "big_emphasis_layer_cues": [
+            dict(cue) for cue in (big_emphasis_layer_cues or [])
+            if isinstance(cue, Mapping)
+        ],
         "caption_group_source": (
             "qwen_semantic" if semantic_groups else "deterministic_fallback"
         ),
@@ -4167,6 +4183,81 @@ def build_business_talking_head_ass(
             cue["motion_scope"] = "static"
         normalized_cues.append(cue)
     overlay_preview = {**dict(overlay_preview), "cues": normalized_cues}
+    top_brand_header = spec.get("top_brand_header") if isinstance(spec, Mapping) else None
+    big_emphasis_layer = spec.get("big_emphasis_layer") if isinstance(spec, Mapping) else None
+    top_brand_header_cues = [
+        dict(cue) for cue in (overlay_preview.get("top_brand_header_cues") or [])
+        if isinstance(cue, Mapping)
+    ]
+    big_emphasis_layer_cues = [
+        dict(cue) for cue in (overlay_preview.get("big_emphasis_layer_cues") or [])
+        if isinstance(cue, Mapping)
+    ]
+    has_top_brand = isinstance(top_brand_header, Mapping) and (
+        str(top_brand_header.get("text") or "").strip()
+        or top_brand_header_cues
+    )
+    has_big_emphasis = isinstance(big_emphasis_layer, Mapping) and bool(
+        big_emphasis_layer_cues
+    )
+    extra_styles: list[str] = []
+    if has_top_brand:
+        palette = spec.get("emphasis_palette") if isinstance(spec, Mapping) else None
+        if not isinstance(palette, Mapping):
+            palette = {}
+        top_brand_fg = str(palette.get("white_on_dark") or "#FCFAF8").lstrip("#")
+        top_brand_outline = str(palette.get("dark_on_white") or "#0A0A0A").lstrip("#")
+        # ASS colours are BGR; convert by re-pairing the 6-hex RGB.
+        if len(top_brand_fg) == 6:
+            top_brand_fg = (
+                top_brand_fg[4:6] + top_brand_fg[2:4] + top_brand_fg[0:2]
+            )
+        if len(top_brand_outline) == 6:
+            top_brand_outline = (
+                top_brand_outline[4:6] + top_brand_outline[2:4] + top_brand_outline[0:2]
+            )
+        top_brand_size = int(top_brand_header.get("font_size_pt") or 36)
+        extra_styles.append(
+            f"Style: TopBrand,{selected_title_font},{top_brand_size},"
+            f"&H00{top_brand_fg.upper()},&H00{top_brand_fg.upper()},"
+            f"&H30{top_brand_outline.upper()},&H00000000,"
+            f"-1,0,0,0,100,100,0,0,1,2,1,7,"
+            f"{title_style['safe_left']},{title_style['safe_left']},"
+            f"{title_style['safe_top']},1"
+        )
+    if has_big_emphasis:
+        palette = spec.get("emphasis_palette") if isinstance(spec, Mapping) else None
+        if not isinstance(palette, Mapping):
+            palette = {}
+        big_emphasis_fg = str(palette.get("dark_on_white") or "#0A0A0A").lstrip("#")
+        big_emphasis_outline = str(palette.get("white_on_dark") or "#FCFAF8").lstrip("#")
+        if len(big_emphasis_fg) == 6:
+            big_emphasis_fg = (
+                big_emphasis_fg[4:6] + big_emphasis_fg[2:4] + big_emphasis_fg[0:2]
+            )
+        if len(big_emphasis_outline) == 6:
+            big_emphasis_outline = (
+                big_emphasis_outline[4:6]
+                + big_emphasis_outline[2:4]
+                + big_emphasis_outline[0:2]
+            )
+        big_emphasis_size = 96
+        styles_map = big_emphasis_layer.get("styles") if isinstance(big_emphasis_layer, Mapping) else None
+        if isinstance(styles_map, Mapping):
+            first = next(iter(styles_map.values()), None)
+            if isinstance(first, Mapping):
+                candidate = first.get("font_size_pt")
+                if isinstance(candidate, (int, float)) and candidate > 0:
+                    big_emphasis_size = int(candidate)
+        extra_styles.append(
+            f"Style: BigEmphasis,{selected_caption_font},{big_emphasis_size},"
+            f"&H00{big_emphasis_fg.upper()},&H00{big_emphasis_fg.upper()},"
+            f"&H00{big_emphasis_outline.upper()},&H00000000,"
+            f"-1,0,0,0,100,100,0,0,1,4,2,5,"
+            f"{round(canvas['width'] * 0.08)},{round(canvas['width'] * 0.08)},"
+            f"{round(canvas['height'] * 0.30)},1"
+        )
+    extra_styles_block = ("\n".join(extra_styles) + "\n") if extra_styles else ""
     header = f"""[Script Info]
 Title: VideoInsight business talking-head overlay
 ScriptType: v4.00+
@@ -4178,8 +4269,7 @@ Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackC
 Style: Title,{selected_title_font},{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
 Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
 Style: Caption,{selected_caption_font},{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H10101010,&H00000000,{typography["bold"]},0,0,0,100,100,0.02,0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
-
-[Events]
+{extra_styles_block}[Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
     lines: list[str] = []
@@ -4210,6 +4300,69 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
             f"{_ass_timestamp(float(cue['end']) + time_offset_seconds)},Caption,,0,0,0,,"
             f"{_ass_caption_text(cue, emphasis_colour='&H006AE1FF&')}"
         )
+    if has_top_brand and top_brand_header_cues:
+        # TopBrand cues carry their own start/end/anchor/text; the renderer
+        # treats the surrounding cues as the only source of truth so a per-
+        # task ``top_brand_header_overrides`` can retarget the brand text
+        # without touching this function.
+        for brand_cue in top_brand_header_cues:
+            try:
+                brand_start = float(brand_cue.get("start", 0))
+                brand_end = float(brand_cue.get("end", brand_start))
+            except (TypeError, ValueError):
+                continue
+            if brand_end <= brand_start:
+                continue
+            brand_text = str(
+                brand_cue.get("text")
+                or top_brand_header.get("text")
+                or ""
+            ).strip()
+            if not brand_text:
+                continue
+            orientation = str(top_brand_header.get("orientation") or "vertical")
+            if orientation == "vertical":
+                # Vertical layout wraps each char to its own line; the
+                # renderer relies on the canvas \pos placement and an \fn
+                # override already encoded in the style.
+                brand_text = "\\N".join(list(brand_text))
+            else:
+                brand_text = _wrap_ass_lines([brand_text])
+            lines.append(
+                f"Dialogue: 0,{_ass_timestamp(brand_start + time_offset_seconds)},"
+                f"{_ass_timestamp(brand_end + time_offset_seconds)},TopBrand,,0,0,0,,"
+                f"{_ass_escape(brand_text)}"
+            )
+    if has_big_emphasis and big_emphasis_layer_cues:
+        # BigEmphasis cues arrive pre-filtered from the director plan; the
+        # ASS renderer treats each cue as a stand-alone "this matters" beat
+        # on top of the bottom caption band.
+        for emphasis_cue in big_emphasis_layer_cues:
+            try:
+                emphasis_start = float(emphasis_cue.get("start", 0))
+                emphasis_end = float(emphasis_cue.get("end", emphasis_start))
+            except (TypeError, ValueError):
+                continue
+            if emphasis_end <= emphasis_start:
+                continue
+            lines_field = emphasis_cue.get("lines")
+            if isinstance(lines_field, list) and lines_field:
+                text = "\\N".join(str(line) for line in lines_field if str(line).strip())
+            else:
+                raw_text = str(
+                    emphasis_cue.get("text")
+                    or emphasis_cue.get("semantic_text")
+                    or emphasis_cue.get("fact")
+                    or ""
+                ).strip()
+                if not raw_text:
+                    continue
+                text = _wrap_ass_lines([raw_text])
+            lines.append(
+                f"Dialogue: 0,{_ass_timestamp(emphasis_start + time_offset_seconds)},"
+                f"{_ass_timestamp(emphasis_end + time_offset_seconds)},BigEmphasis,,0,0,0,,"
+                f"{_ass_escape(text)}"
+            )
     return (header + "\n".join(lines) + "\n").encode("utf-8-sig")
 
 
