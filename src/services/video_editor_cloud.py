@@ -2829,12 +2829,22 @@ def build_visual_beats(
     caption_emphasis: Sequence[CaptionEmphasis | Mapping[str, Any]] | None = None,
     *,
     max_beats: int = 8,
+    motion_events: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[VisualBeat]:
     """Turn reviewed speech into a small automatic visual treatment plan.
 
     This is deliberately deterministic: the model may suggest emphasis, but
     timing and density are bounded here so a bad suggestion cannot flood the
     video with cards or cuts.
+
+    The optional ``motion_events`` argument (typically the output of
+    :func:`src.services.motion_design.build_semantic_motion_events`) is
+    folded in as an extra emphasis signal: any segment that contains a
+    motion event start time gets a synthetic ``emphasis_term`` derived
+    from the event payload, so the existing 5.5s spacing rule still
+    governs beat density while also surfacing the spoken semantic
+    beats.  The motion bridge is purely additive and never overrides an
+    already-captioned emphasis term.
     """
 
     emphasis_by_segment: dict[int, str] = {}
@@ -2848,6 +2858,46 @@ def build_visual_beats(
         except (TypeError, ValueError):
             continue
         emphasis_by_segment[item.segment_index] = item.term
+    # P0-7 (plan §3.3): bridge motion_design 12-class events into the
+    # beat selector by mapping each motion event start to its containing
+    # segment.  The synthetic term still respects the 5.5s spacing rule
+    # below and the ``max_beats`` ceiling.
+    motion_emphasis_by_segment: dict[int, str] = {}
+    if motion_events:
+        segment_anchors: list[tuple[float, float, int]] = []
+        for index, raw in enumerate(segments):
+            if not isinstance(raw, Mapping):
+                continue
+            try:
+                seg_start = max(0.0, float(raw.get("start", 0)))
+                seg_end = max(seg_start, float(raw.get("end", 0)))
+            except (TypeError, ValueError):
+                continue
+            if seg_end - seg_start <= 0:
+                continue
+            segment_anchors.append((seg_start, seg_end, index))
+        segment_anchors.sort(key=lambda item: (item[0], item[1]))
+        for motion_event in motion_events:
+            if not isinstance(motion_event, Mapping):
+                continue
+            try:
+                motion_start = float(motion_event.get("start", 0))
+            except (TypeError, ValueError):
+                continue
+            if motion_start <= 0:
+                continue
+            payload = str(
+                motion_event.get("semantic_text")
+                or motion_event.get("fact")
+                or motion_event.get("text")
+                or ""
+            ).strip()
+            if not payload:
+                continue
+            for seg_start, seg_end, seg_index in segment_anchors:
+                if seg_start <= motion_start < seg_end:
+                    motion_emphasis_by_segment[seg_index] = payload[:6]
+                    break
 
     beats: list[VisualBeat] = []
     last_selected_end = -999.0
@@ -2861,6 +2911,10 @@ def build_visual_beats(
         if not text or end - start < 0.35:
             continue
         emphasis_term = emphasis_by_segment.get(index)
+        if not emphasis_term:
+            motion_term = motion_emphasis_by_segment.get(index)
+            if motion_term:
+                emphasis_term = motion_term
         if not emphasis_term:
             auto = _automatic_emphasis_term(text)
             emphasis_term = auto[0] if auto else ""

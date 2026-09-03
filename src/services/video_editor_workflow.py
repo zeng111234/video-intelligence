@@ -6830,6 +6830,7 @@ class VideoEditorWorkflowService:
         item: VideoEditorBatchItem,
         snapshot,
     ) -> VideoEditorBatch:
+        from src.services.motion_design import build_semantic_motion_events
         from src.services.video_editor_cloud import EditStepKind, build_visual_beats
         from src.services.director_plan import build_director_plan
 
@@ -6864,6 +6865,10 @@ class VideoEditorWorkflowService:
                 "visual_beats": build_visual_beats(
                     segments,
                     plan.caption_emphasis,
+                    motion_events=build_semantic_motion_events(
+                        segments,
+                        duration_seconds=duration_seconds,
+                    ) or None,
                 ),
             }
         )
@@ -7328,11 +7333,19 @@ class VideoEditorWorkflowService:
                 if "smart_opening" not in enabled_steps:
                     enabled_steps.insert(0, "smart_opening")
         if not edit_plan.get("visual_beats"):
+            from src.services.motion_design import build_semantic_motion_events
+
             edit_plan["visual_beats"] = [
                 beat.model_dump(mode="json")
                 for beat in build_visual_beats(
                     segments,
                     edit_plan.get("caption_emphasis") or [],
+                    motion_events=build_semantic_motion_events(
+                        segments,
+                        duration_seconds=float(
+                            edit_plan.get("duration_seconds") or 0
+                        ),
+                    ) or None,
                 )
             ]
         # A completed review is the user's explicit decision for this item.
