@@ -103,6 +103,42 @@ def test_duration_flows_to_sqlite_and_null_update_keeps_known_value(tmp_path) ->
     assert restored.duration_seconds == 48
 
 
+def test_sqlite_keeps_tokenized_xiaohongshu_url_on_later_bare_upsert(tmp_path) -> None:
+    sampled_at = datetime(2026, 8, 3, 9, tzinfo=timezone.utc)
+    provider_item = _provider_item(sampled_at=sampled_at)
+    normalized = _normalized_item(
+        provider_item,
+        duration_seconds=48,
+        sampled_at=sampled_at,
+    ).model_copy(
+        update={
+            "platform": Platform.XIAOHONGSHU,
+            "platform_item_id": "xhs-upsert",
+            "source_url": (
+                "https://www.xiaohongshu.com/explore/xhs-upsert"
+                "?xsec_token=live-token&xsec_source=pc_search"
+            ),
+        }
+    )
+    service = SourceService(SQLiteRepository(tmp_path / "xhs-url.db"), HeatService())
+    candidate = service._to_candidate(normalized, "xiaohongshu-xhs-upsert")
+    service.repository.save_candidate(candidate)
+    service.repository.save_candidate(
+        candidate.model_copy(
+            update={
+                "title": "后续扫描更新标题",
+                "source_url": "https://www.xiaohongshu.com/explore/xhs-upsert",
+            }
+        )
+    )
+
+    saved = service.repository.get_candidate(candidate.video_id)
+
+    assert saved is not None
+    assert saved.title == "后续扫描更新标题"
+    assert "xsec_token=live-token" in str(saved.source_url)
+
+
 def test_reliable_published_at_uses_existing_evidence_and_warnings() -> None:
     now = datetime(2026, 8, 3, 9, tzinfo=timezone.utc)
     provider_item = _provider_item(sampled_at=now)

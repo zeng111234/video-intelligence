@@ -5,33 +5,35 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_CEILING
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from src.adapters.douyin_parser import DouyinParserError
 from src.contracts import TaskRepository
-from src.services.publish_metadata import (
-    publish_draft_fingerprint,
-    suggested_publish_draft,
-    validated_publish_draft,
-)
 from src.models import (
     AvatarTask,
+    CopywritingTask,
     PipelineRunStatus,
     PipelineStage,
-    CopywritingTask,
+    Platform,
     ProductionBatch,
     ProductionBatchItem,
     ProductionBatchItemStatus,
     ProductionBatchStatus,
     ProductionProfile,
     ProductionWorkspaceConfiguration,
-    PublishTask,
     PublishPlatform,
     PublishStatus,
+    PublishTask,
     TaskStatus,
     TranscriptionTask,
+)
+from src.services.publish_metadata import (
+    publish_draft_fingerprint,
+    suggested_publish_draft,
+    validated_publish_draft,
 )
 
 DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
@@ -44,6 +46,40 @@ def _round_up_credits(value: float | Decimal) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_CEILING))
 
 
+def candidate_xiaohongshu_search_keyword(candidate: Any) -> str | None:
+    """Return a bounded keyword for recovering a legacy bare XHS note URL."""
+    if getattr(candidate, "platform", None) != Platform.XIAOHONGSHU:
+        return None
+    values: list[str] = []
+    title = " ".join(str(getattr(candidate, "title", "") or "").split())
+    if title:
+        title_keyword = title.split("｜", 1)[0].split("|", 1)[0].strip()
+        while title_keyword and not title_keyword[0].isalnum():
+            title_keyword = title_keyword[1:].lstrip()
+        if len(title_keyword) > 80:
+            title_keyword = title_keyword[:80].rstrip()
+        if len(title_keyword) >= 2:
+            values.append(title_keyword)
+    values.extend(
+        str(value).strip()
+        for value in getattr(candidate, "matched_by", [])
+        if str(value).strip()
+    )
+    category = str(getattr(candidate, "category", "") or "").strip()
+    if category.startswith("关键词/"):
+        values.append(category.split("/", 1)[1].strip())
+    return next((value for value in values if 2 <= len(value) <= 80), None)
+
+
+def _candidate_has_signed_xiaohongshu_entry(candidate: Any) -> bool:
+    if getattr(candidate, "platform", None) != Platform.XIAOHONGSHU:
+        return False
+    source_url = str(getattr(candidate, "source_url", "") or "")
+    return "xsec_token" in {
+        key.casefold() for key in parse_qs(urlparse(source_url).query)
+    }
+
+
 class IdempotencyConflictError(ValueError):
     """同一个幂等键被用于不同请求。"""
 
@@ -54,6 +90,10 @@ class ProductionService:
     # 数字人服务通常应在三分钟内返回。超过这个时间只提示偏慢并继续
     # 查询原任务，绝不能为了“看起来卡住”而重复提交一次可能收费的生成。
     AVATAR_DELAY_WARNING_SECONDS = 180
+    # 小红书公开搜索经常不返回视频时长。预检不能因此把整批任务判成
+    # “费用未知”；先按常用的 5 分钟上限预留候选转写费用，实际提交仍按
+    # 解析到的真实媒体时长计费。
+    UNKNOWN_CANDIDATE_DURATION_SECONDS = 300.0
 
     def __init__(
         self,
@@ -344,6 +384,11 @@ class ProductionService:
                         "candidate_role": candidate_role,
                         "candidate_platform": (
                             candidate.platform.value if candidate is not None else ""
+                        ),
+                        "search_keyword": (
+                            candidate_xiaohongshu_search_keyword(candidate)
+                            if candidate is not None
+                            else None
                         ),
                         "next_action": "完成批次预检并启动后，后台将按队列执行。",
                     },
@@ -967,7 +1012,10 @@ class ProductionService:
                             # 已登录的本机浏览器解析器，而不是在生产队列中停住。
                             use_candidate_link_fallback = True
                 if candidate is not None and cloud_runtime is not None:
-                    duration_seconds = float(candidate.duration_seconds or 0)
+                    duration_seconds = float(
+                        candidate.duration_seconds
+                        or self.UNKNOWN_CANDIDATE_DURATION_SECONDS
+                    )
                     if asr_unit_cost is None or duration_seconds <= 0:
                         item_cost_known = False
                     else:
@@ -1369,6 +1417,116 @@ class ProductionService:
         self.repository.save_production_batch(updated)
         return updated
 
+    def reconnect_transcription(
+        self,
+        batch_id: str,
+        *,
+        run_id: str,
+        pipeline_service,
+        transcription_service,
+    ) -> ProductionBatch:
+        """Reconnect the original ASR task without creating a replacement task."""
+
+        batch = self._require_batch(batch_id)
+        if not any(item.run_id == run_id for item in batch.items):
+            raise ValueError("该任务不属于当前批次。")
+        run = self.repository.get_pipeline_run(run_id)
+        if run is None:
+            raise ValueError("生产任务不存在。")
+        task = self._transcription_task(run)
+        if not isinstance(task, TranscriptionTask):
+            raise ValueError("找不到可重新连接的转写任务。")
+        source_path = Path(str(task.outputs.get("source_media_path") or ""))
+        recoverable = task.status == TaskStatus.OUTCOME_UNKNOWN and (
+            bool(task.provider_job_id)
+            or (bool(task.provider_object_key) and source_path.is_file())
+        )
+        if not recoverable:
+            raise ValueError("该转写任务没有可证明安全的重新连接入口。")
+
+        run = run.model_copy(
+            update={
+                "config": {
+                    **run.config,
+                    "transcription_task_id": task.task_id,
+                    "outcome_unknown": True,
+                    "recovery_blocked": True,
+                    "recovery_reason": "provider_result_unconfirmed",
+                }
+            }
+        )
+        self.repository.save_pipeline_run(run)
+        try:
+            recovered = transcription_service.reconnect_cloud_task(task.task_id)
+        except Exception:
+            recovered = self.repository.get_task(task.task_id)
+        if not isinstance(recovered, TranscriptionTask):
+            raise ValueError("转写任务记录读取失败，请稍后刷新。")
+
+        if recovered.status == TaskStatus.SUCCEEDED:
+            updated = pipeline_service.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.SUCCEEDED,
+                task_id=recovered.task_id,
+                outputs={
+                    "task_id": recovered.task_id,
+                    "duration_seconds": str(recovered.duration_seconds or ""),
+                    "segment_count": str(len(recovered.segments or [])),
+                    "review_state": "unapproved_asr",
+                    "source": recovered.source_kind,
+                },
+            )
+            next_config = dict(updated.config)
+            for key in (
+                "outcome_unknown",
+                "recovery_blocked",
+                "recovery_reason",
+                "manual_action_required",
+            ):
+                next_config.pop(key, None)
+            next_config["transcription_task_id"] = recovered.task_id
+            updated = updated.model_copy(update={"config": next_config})
+            self.repository.save_pipeline_run(updated)
+            pipeline_service.pause_for_transcript_review(
+                run=updated,
+                transcription=recovered,
+            )
+        elif recovered.status == TaskStatus.OUTCOME_UNKNOWN:
+            message = recovered.error_message or (
+                "云端转写结果仍待确认；原任务和素材已保留，系统没有重复提交。"
+            )
+            paused = pipeline_service.update_stage(
+                run,
+                PipelineStage.TRANSCRIPTION,
+                TaskStatus.OUTCOME_UNKNOWN,
+                task_id=recovered.task_id,
+                outputs={
+                    "task_id": recovered.task_id,
+                    "provider_status": "outcome_unknown",
+                    "review_state": "provider_result_unconfirmed",
+                },
+                error_message=message,
+            )
+            paused = paused.model_copy(
+                update={
+                    "status": PipelineRunStatus.PAUSED,
+                    "current_stage": PipelineStage.TRANSCRIPTION,
+                    "error_message": message,
+                    "config": {
+                        **paused.config,
+                        "transcription_task_id": recovered.task_id,
+                        "outcome_unknown": True,
+                        "recovery_blocked": True,
+                        "recovery_reason": "provider_result_unconfirmed",
+                    },
+                }
+            )
+            self.repository.save_pipeline_run(paused)
+        else:
+            raise ValueError(recovered.error_message or "云端转写明确失败，请重新上传并识别。")
+        return self.sync_batch(batch_id) or batch
+
     def retry_failed(self, batch_id: str, *, pipeline_service) -> ProductionBatch:
         batch = self._require_batch(batch_id)
         now = datetime.now().astimezone()
@@ -1563,6 +1721,19 @@ class ProductionService:
             return None, "文案阶段失败需回到文案确认，不自动重复调用生成服务。"
         if run.current_stage == PipelineStage.TRANSCRIPTION:
             transcription_task = self._transcription_task(run)
+            candidate = (
+                self.repository.get_candidate(str(run.candidate_video_id or ""))
+                if run.candidate_video_id
+                else None
+            )
+            if (
+                transcription_task is None
+                and _candidate_has_signed_xiaohongshu_entry(candidate)
+            ):
+                # Media resolution failed before an ASR task/provider job existed.
+                # The persisted platform entry is a safe restart point and reuses
+                # the batch's already confirmed billing path.
+                return PipelineStage.TRANSCRIPTION, ""
             source_media_path = (
                 Path(str(transcription_task.outputs.get("source_media_path") or ""))
                 if transcription_task is not None
@@ -1994,24 +2165,41 @@ class ProductionService:
         if batch is None:
             return None
         now = datetime.now().astimezone()
-        items = [
-            self._item_from_run(
+        items = []
+        items_changed = False
+        for item in batch.items:
+            synced = self._item_from_run(
                 item, self.repository.get_pipeline_run(item.run_id), now
             )
-            for item in batch.items
-        ]
+            # Reconciliation derives the current item state on every GET. Keep
+            # the persisted timestamp when no business field actually changed;
+            # otherwise polling makes old batches look newly active.
+            if synced.model_dump(mode="json", exclude={"updated_at"}) == item.model_dump(
+                mode="json", exclude={"updated_at"}
+            ):
+                synced = item
+            else:
+                items_changed = True
+            items.append(synced)
         status = self._aggregate_status(items, paused=batch.is_paused)
         terminal = status in {
             ProductionBatchStatus.SUCCEEDED,
             ProductionBatchStatus.FAILED,
             ProductionBatchStatus.PARTIAL,
         }
+        finished_at = batch.finished_at
+        if terminal and finished_at is None:
+            finished_at = now
+        elif not terminal:
+            finished_at = None
+        if not items_changed and status == batch.status and finished_at == batch.finished_at:
+            return batch
         updated = batch.model_copy(
             update={
                 "items": items,
                 "status": status,
                 "updated_at": now,
-                "finished_at": now if terminal else None,
+                "finished_at": finished_at,
             }
         )
         self.repository.save_production_batch(updated)
@@ -2433,6 +2621,16 @@ class ProductionService:
                     "retry_allowed": retry_allowed,
                     "recovery": (
                         {
+                            "kind": "transcription_reconnect",
+                            "task_id": transcript_task.task_id,
+                            "estimated_cost_cny": 0.0,
+                            "currency": "CNY",
+                            "attempts_used": 0,
+                            "max_attempts": 1,
+                        }
+                        if next_action == "reconnect_transcription"
+                        and transcript_task is not None
+                        else {
                             "kind": "transcription_upload_retry",
                             "estimated_cost_cny": transcript_task.estimated_cost_cny,
                             "currency": "CNY",
@@ -2756,6 +2954,14 @@ class ProductionService:
             )
             task_id = step.task_id if step and step.task_id else ""
         task = self.repository.get_task(task_id) if task_id else None
+        if task is None and run.candidate_video_id:
+            candidates = [
+                item
+                for item in self.repository.list_tasks([run.candidate_video_id])
+                if isinstance(item, TranscriptionTask)
+                and item.created_at >= run.created_at
+            ]
+            task = max(candidates, key=lambda item: item.created_at, default=None)
         return task if isinstance(task, TranscriptionTask) else None
 
     def _workspace_processing(self, run, *, now: datetime) -> dict[str, Any] | None:
@@ -2798,6 +3004,27 @@ class ProductionService:
         *,
         batch_paused: bool = False,
     ) -> tuple[str, list[str]]:
+        transcription_task = self._transcription_task(run)
+        transcription_source_path = (
+            Path(str(transcription_task.outputs.get("source_media_path") or ""))
+            if transcription_task is not None
+            else None
+        )
+        if (
+            run is not None
+            and run.current_stage == PipelineStage.TRANSCRIPTION
+            and transcription_task is not None
+            and transcription_task.status == TaskStatus.OUTCOME_UNKNOWN
+            and (
+                bool(transcription_task.provider_job_id)
+                or (
+                    bool(transcription_task.provider_object_key)
+                    and transcription_source_path is not None
+                    and transcription_source_path.is_file()
+                )
+            )
+        ):
+            return "reconnect_transcription", ["reconnect_transcription"]
         if (
             run is not None
             and run.status == PipelineRunStatus.PAUSED

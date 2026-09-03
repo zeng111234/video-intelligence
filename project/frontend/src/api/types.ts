@@ -425,6 +425,7 @@ export interface ProductionWorkspaceItem extends ProductionBatchItem {
   processing?: ProductionWorkspaceProcessing | null;
   recovery?: {
     kind: "transcription_upload_retry" | string;
+    task_id?: string;
     estimated_cost_cny: number | null;
     currency: "CNY" | string;
     attempts_used: number;
@@ -933,6 +934,7 @@ export interface CrawlerCandidateMediaPreviewResponse {
 export interface CrawlerCandidateOriginalMediaResponse {
   candidate_id: string;
   platform: string;
+  share_url: string;
   media_url: string;
 }
 
@@ -2139,6 +2141,8 @@ export interface VideoEditorVisualSpec {
     max_chars_per_line: number;
     font_size: number;
     safe_bottom: number;
+    font_family?: string;
+    font_style?: string;
     outline_width: number;
     shadow: number;
     color: string;

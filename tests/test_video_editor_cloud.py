@@ -1053,10 +1053,56 @@ def test_word_clock_emits_kinetic_spans_and_ass_word_pop_effects():
         output_profile="720p",
         overlay_preview=preview,
     ).decode("utf-8-sig")
-    assert r"\3c&H003A263D&\bord2.4" in ass
+    assert r"Style: Caption,Smiley Sans,52" in ass
+    assert r"\c&H0066D1FF&\3c&H00101010&\bord4.0\shad1" in ass
     assert r"\fscx108\fscy92\frz4" in ass
     assert r"\fscx108\fscy108" in ass
-    assert r"\bord5.0\shad3" in ass
+    assert r"\bord5.0\shad1" in ass
+
+
+def test_benefit_number_uses_burst_caption_motion_and_warm_benefit_color():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 0.8,
+            "text": "先看这个例子",
+            "words": [
+                {"start": 0.0, "end": 0.3, "text": "先看"},
+                {"start": 0.3, "end": 0.8, "text": "这个例子"},
+            ],
+        },
+        {
+            "start": 0.8,
+            "end": 3.2,
+            "text": "充值100送10块",
+            "emphasis_kind": "number",
+            "emphasis_terms": ["10块"],
+            "words": [
+                {"start": 0.8, "end": 1.5, "text": "充值100"},
+                {"start": 1.5, "end": 2.2, "text": "送10块"},
+            ],
+        }
+    ]
+    preview = build_business_talking_head_overlay_preview(
+        segments,
+        title="优惠动效",
+        output_profile="720p",
+        caption_emphasis=[
+            {"segment_index": 1, "term": "10块", "kind": "number"}
+        ],
+    )
+
+    kinetic_cue = next(cue for cue in preview["cues"] if cue["kinetic_words"])
+    assert kinetic_cue["kinetic_style"] == "burst"
+    assert {word["color"] for word in kinetic_cue["kinetic_words"]} == {"#FFD166"}
+
+    ass = build_business_talking_head_ass(
+        segments,
+        title="优惠动效",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+    assert "\\fscx112\\fscy112\\frz2" in ass
 
 
 def test_multiline_cue_uses_kinetic_motion_instead_of_legacy_emphasis_path():
@@ -1084,6 +1130,50 @@ def test_multiline_cue_uses_kinetic_motion_instead_of_legacy_emphasis_path():
 
     assert r"\fscx108\fscy92\frz4" in ass
     assert r"\N" in ass
+
+
+def test_multiline_word_emphasis_keeps_kinetic_span_on_second_line():
+    segments = [
+        {
+            "start": 0.0,
+            "end": 2.4,
+            "text": "普通说明这是重点结果",
+            "emphasis_kind": "result",
+            "emphasis_terms": ["重点结果"],
+            "words": [
+                {"start": 0.0, "end": 0.35, "text": "普通"},
+                {"start": 0.35, "end": 0.75, "text": "说明"},
+                {"start": 0.75, "end": 1.2, "text": "这是"},
+                {"start": 1.2, "end": 1.8, "text": "重点结果"},
+            ],
+        }
+    ]
+    preview = {
+        "title": {"lines": [], "start": 0, "end": 0},
+        "style_fingerprint": {"word_motion": "selective_word_emphasis_v3"},
+        "cues": [
+            {
+                "start": 0.0,
+                "end": 2.4,
+                "lines": ["普通说明这是", "重点结果"],
+                "source_segment_index": 0,
+                "emphasis_range": {"line_index": 1, "start": 0, "end": 4},
+                "emphasis_style": {"color": "#FF8A7A", "duration_ms": 200},
+            }
+        ],
+    }
+
+    ass = build_business_talking_head_ass(
+        segments,
+        title="",
+        output_profile="720p",
+        overlay_preview=preview,
+    ).decode("utf-8-sig")
+
+    assert "\\N" in ass
+    assert "\\fscx108\\fscy108" in ass
+    second_line = ass.split("\\N", 1)[1]
+    assert "\\t(" in second_line
 
 
 def test_ass_backfills_kinetic_motion_for_legacy_cached_preview_cues():
@@ -1120,8 +1210,9 @@ def test_ass_backfills_kinetic_motion_for_legacy_cached_preview_cues():
 
     assert len(caption_dialogues) == len(segments)
     assert r"\t(" in caption_dialogues[0]
-    assert all(r"\t(" not in line for line in caption_dialogues[1:])
+    assert all(r"\t(" in line for line in caption_dialogues)
     assert all(r"\fad(" in line for line in caption_dialogues)
+    assert all(r"\fscx90\fscy90" in line for line in caption_dialogues[1:])
 
 
 def test_ass_rebuilds_stale_v3_kinetic_spans_before_export():
@@ -1353,11 +1444,13 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
     assert spec["subtitle"]["max_lines"] == 1
     assert spec["subtitle"]["max_chars_per_line"] == 11
     assert spec["subtitle"]["font_size"] == 52
-    assert spec["subtitle"]["outline_width"] == 1
+    assert spec["subtitle"]["font_family"] == "Smiley Sans"
+    assert spec["subtitle"]["outline_width"] == 4
+    assert spec["subtitle"]["shadow"] == 1
     assert "Style: Title,Source Han Serif CN Heavy,44" in ass
     assert "Style: Accent,Arial,1" in ass
-    assert "Style: Caption,Source Han Serif CN Heavy,52" in ass
-    assert "&H30000000,&H00000000,-1,0,0,0,100,100,0.12" in ass
+    assert "Style: Caption,Smiley Sans,52" in ass
+    assert "&H10101010,&H00000000,-1,0,0,0,100,100,0.02" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.50,Title" in ass
     assert r"\fscx108\fscy92\frz4" in ass
     assert r"\N" not in ass

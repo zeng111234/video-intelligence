@@ -73,10 +73,13 @@ import {
   preflightProductionBatch,
   preflightProductionBatchPublish,
   recordManualPublishResult,
+  reconnectProductionBatchTranscription,
   resumeProductionBatch,
   retryProductionBatchFailed,
   reviewProductionBatchItems,
   reviewProductionTranscriptWithAI,
+  openCrawlerCandidateOriginalInBrowser,
+  resolveCrawlerCandidateOriginalMedia,
   saveProductionWorkspaceConfiguration,
   startCrawlerBrowserDiscovery,
   startProductionBatch,
@@ -370,11 +373,20 @@ const CRAWLER_QUEUE_TERMINAL_STATUSES = new Set([
   "paused",
 ]);
 
+function crawlerQueueItemFinished(queue: CrawlerKeywordQueueResponse) {
+  if (CRAWLER_QUEUE_TERMINAL_STATUSES.has(queue.status)) return true;
+  const current = queue.items[0];
+  if (!current || !["succeeded", "partial", "failed", "cancelled"].includes(current.status)) {
+    return false;
+  }
+  return !queue.items.slice(1).some((item) => ["queued", "running"].includes(item.status));
+}
+
 function buildPipelineProgressBatch(queue: CrawlerKeywordQueueResponse): CrawlerBatchResponse | null {
   const item = queue.items[0];
   if (!item) return null;
   const candidates = item.progress_candidates || [];
-  const terminal = CRAWLER_QUEUE_TERMINAL_STATUSES.has(queue.status);
+  const terminal = crawlerQueueItemFinished(queue);
   const platformRuns = queue.platforms.map((platform) => {
     const platformCandidates = candidates.filter((candidate) => candidate.platform === platform);
     return {
@@ -428,6 +440,19 @@ function buildPipelineProgressBatch(queue: CrawlerKeywordQueueResponse): Crawler
     total_candidates: candidates.length,
     total_estimated_cost_cny: 0,
   };
+}
+
+async function openPipelineCandidateOriginalMedia(
+  candidate: Pick<CrawlerCandidateResult, "platform" | "video_id" | "source_url">,
+) {
+  if (candidate.platform === "xiaohongshu") {
+    await openCrawlerCandidateOriginalInBrowser(candidate.video_id);
+    return;
+  }
+  const sourceUrl = candidate.source_url?.trim();
+  if (!sourceUrl) throw new Error("该候选没有可用的原视频链接。");
+  const popup = window.open(sourceUrl, "_blank", "noopener,noreferrer");
+  if (!popup) throw new Error("浏览器拦截了新窗口，请允许弹窗后重试。");
 }
 
 function compareCandidateRanking(left: CrawlerCandidateResult, right: CrawlerCandidateResult) {
@@ -545,6 +570,8 @@ export default function PipelinePage() {
   const [searchParams] = useSearchParams();
   const searchParamsKey = searchParams.toString();
   const operationKeys = useRef(new Map<string, string>());
+  const candidatePreparationRef = useRef(new Map<string, Promise<void>>());
+  const preparedCandidateIdsRef = useRef(new Set<string>());
   const reviewContextRef = useRef("");
   const voicePreviewRef = useRef<HTMLAudioElement | null>(null);
   const profileNameManuallyEditedRef = useRef(false);
@@ -564,6 +591,8 @@ export default function PipelinePage() {
   const [sourceValue, setSourceValue] = useState("");
   const [candidates, setCandidates] = useState<CrawlerCandidateResult[]>([]);
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
+  const [preparingCandidateId, setPreparingCandidateId] = useState("");
+  const [preparedCandidateId, setPreparedCandidateId] = useState("");
   const [crawlerReason, setCrawlerReason] = useState<{ kind: string; message: string } | null>(null);
   const [hotWords, setHotWords] = useState<CrawlerHotWordItem[]>([]);
   const [materialSearchProgress, setMaterialSearchProgress] = useState<{
@@ -645,6 +674,37 @@ export default function PipelinePage() {
   const selectedCandidate = useMemo(
     () => candidates.find((candidate) => candidate.video_id === selectedCandidateId) || null,
     [candidates, selectedCandidateId],
+  );
+  const prepareXiaohongshuCandidate = useCallback(
+    (candidate: CrawlerCandidateResult): Promise<void> => {
+      if (candidate.platform !== "xiaohongshu") return Promise.resolve();
+      if (preparedCandidateIdsRef.current.has(candidate.video_id)) {
+        setPreparedCandidateId(candidate.video_id);
+        return Promise.resolve();
+      }
+      const pending = candidatePreparationRef.current.get(candidate.video_id);
+      if (pending) return pending;
+
+      setPreparingCandidateId(candidate.video_id);
+      setPreparedCandidateId("");
+      const preparation = resolveCrawlerCandidateOriginalMedia(candidate.video_id)
+        .then(() => {
+          preparedCandidateIdsRef.current.add(candidate.video_id);
+          setPreparedCandidateId(candidate.video_id);
+        })
+        .catch((error) => {
+          candidatePreparationRef.current.delete(candidate.video_id);
+          throw error;
+        })
+        .finally(() => {
+          setPreparingCandidateId((current) => (
+            current === candidate.video_id ? "" : current
+          ));
+        });
+      candidatePreparationRef.current.set(candidate.video_id, preparation);
+      return preparation;
+    },
+    [],
   );
   const automaticCandidatePool = useMemo(
     () => selectAutomaticCandidates(candidates),
@@ -760,6 +820,9 @@ export default function PipelinePage() {
   const activeReview = activeItem?.reviews;
   const currentBusinessStage = businessStageIndex(currentStage);
   const transcriptionUploadRetry = activeItem?.recovery?.kind === "transcription_upload_retry"
+    ? activeItem.recovery
+    : null;
+  const transcriptionReconnect = activeItem?.recovery?.kind === "transcription_reconnect"
     ? activeItem.recovery
     : null;
   const currentActionHeading = workspace?.status === "outcome_unknown"
@@ -1332,17 +1395,28 @@ export default function PipelinePage() {
         const progressBatch = buildPipelineProgressBatch(queue);
         setMaterialSearchQueue(queue);
         if (progressBatch) setMaterialSearchBatch(progressBatch);
-        if (!CRAWLER_QUEUE_TERMINAL_STATUSES.has(queue.status)) return;
+        if (!crawlerQueueItemFinished(queue)) return;
 
         let finalBatch = progressBatch;
         if (item?.batch_id) {
           try {
-            finalBatch = await getCrawlerBatch(item.batch_id);
+            finalBatch = await Promise.race([
+              getCrawlerBatch(item.batch_id),
+              new Promise<never>((_, reject) => window.setTimeout(
+                () => reject(new Error("最终结果读取超时，已保留当前已找到的素材。")),
+                8_000,
+              )),
+            ]);
           } catch (error) {
-            setCrawlerReason({
-              kind: "结果正在整理",
-              message: `最终结果读取失败，已保留当前已找到的素材：${(error as Error).message || "请稍后重试"}`,
-            });
+            const progressHasCandidates = Boolean(progressBatch?.platform_runs.some(
+              (run) => run.candidates.length > 0 || (run.reference_candidates || []).length > 0,
+            ));
+            if (!progressHasCandidates) {
+              setCrawlerReason({
+                kind: "结果正在整理",
+                message: `最终结果读取失败：${(error as Error).message || "请稍后重试"}`,
+              });
+            }
           }
         }
         if (!active) return;
@@ -1801,6 +1875,15 @@ export default function PipelinePage() {
       const baseCandidate = creationMode === "auto"
         ? automaticCandidatePool[0]
         : selectedCandidate;
+      if (
+        sourceMode === "keyword"
+        && creationMode === "manual"
+        && baseCandidate?.platform === "xiaohongshu"
+      ) {
+        setActionMessage("正在准备原视频，完成后会直接开始转写。");
+        await prepareXiaohongshuCandidate(baseCandidate);
+        setActionMessage("");
+      }
       const item =
         sourceMode === "keyword"
           ? {
@@ -2289,6 +2372,22 @@ export default function PipelinePage() {
         await publishCurrent();
       } else if (nextAction === "resume") {
         await runControl("resume");
+      } else if (nextAction === "reconnect_transcription") {
+        if (!workspace || !activeItem) return;
+        setBusy(true);
+        setActionError("");
+        try {
+          await reconnectProductionBatchTranscription(
+            workspace.batch.batch_id,
+            activeItem.run_id,
+          );
+          setActionMessage("已重新连接原转写任务，未创建第二个任务。");
+          await loadWorkspace(workspace.batch.batch_id);
+        } catch (error) {
+          setActionError((error as Error).message || "重新连接转写任务失败");
+        } finally {
+          setBusy(false);
+        }
       } else if (nextAction === "retry") {
         if (transcriptionUploadRetry) confirmTranscriptionRetry();
         else await runControl("retry");
@@ -2326,6 +2425,7 @@ export default function PipelinePage() {
       publish: "确认并自动发布",
       resume: "继续任务",
       retry: transcriptionUploadRetry ? "重新上传并识别" : "安全重试",
+      reconnect_transcription: "重新连接原转写",
       wait: "刷新实时状态",
       view_result: "查看成片",
       completed: "查看完成结果",
@@ -2896,6 +2996,9 @@ export default function PipelinePage() {
                 )}
 
                 {crawlerReason && (
+                  crawlerReason.kind !== "结果正在整理"
+                  || (candidates.length === 0 && automaticCandidatePool.length === 0)
+                ) && (
                   <div className="search-empty">
                     <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={crawlerReason.message} />
                     <Button
@@ -2949,7 +3052,13 @@ export default function PipelinePage() {
                             type="button"
                             className={`candidate-select${selectedCandidateId === candidate.video_id ? " selected" : ""}`}
                             onClick={() => {
-                              if (creationMode === "manual") setSelectedCandidateId(candidate.video_id);
+                              if (creationMode === "manual") {
+                                setSelectedCandidateId(candidate.video_id);
+                                setActionError("");
+                                void prepareXiaohongshuCandidate(candidate).catch((error) => {
+                                  setActionError((error as Error).message || "原视频准备失败，请确认素材浏览器仍处于登录状态。");
+                                });
+                              }
                             }}
                           >
                             <span className="candidate-rank">#{globalIndex + 1}</span>
@@ -2964,16 +3073,38 @@ export default function PipelinePage() {
                               <small className="candidate-metrics">
                                 点赞 {formatCandidateMetric(candidate.likes)} · 评论 {formatCandidateMetric(candidate.comments)} · 分享 {formatCandidateMetric(candidate.shares)} · 收藏 {formatCandidateMetric(candidate.favorites)}
                               </small>
+                              {preparingCandidateId === candidate.video_id ? (
+                                <small>正在准备原视频，完成后可直接查看和转写。</small>
+                              ) : preparedCandidateId === candidate.video_id ? (
+                                <small>原视频已准备，可直接查看和转写。</small>
+                              ) : null}
                             </span>
                             {creationMode === "auto" || selectedCandidateId === candidate.video_id
                               ? <CheckCircleOutlined />
                               : null}
                           </button>
                           {creationMode === "manual" && (
-                            candidate.source_url ? (
+                            candidate.source_url || candidate.platform === "xiaohongshu" ? (
+                              candidate.platform === "xiaohongshu" ? (
+                                <button
+                                  type="button"
+                                  className="candidate-source-link"
+                                  aria-label={`查看「${candidate.title || "未命名候选"}」原视频`}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void prepareXiaohongshuCandidate(candidate)
+                                      .then(() => openPipelineCandidateOriginalMedia(candidate))
+                                      .catch((error) => {
+                                        setActionError((error as Error).message || "原视频暂时无法打开，请稍后重试。");
+                                      });
+                                  }}
+                                >
+                                  <VideoCameraOutlined /> 原视频
+                                </button>
+                              ) : (
                               <a
                                 className="candidate-source-link"
-                                href={candidate.source_url}
+                                href={candidate.source_url || undefined}
                                 target="_blank"
                                 rel="noreferrer"
                                 aria-label={`查看「${candidate.title || "未命名候选"}」原视频`}
@@ -2981,6 +3112,7 @@ export default function PipelinePage() {
                               >
                                 <VideoCameraOutlined /> 原视频
                               </a>
+                              )
                             ) : (
                               <span className="candidate-source-unavailable">暂无原视频</span>
                             )

@@ -80,6 +80,37 @@ def test_profile_uses_universal_template_when_customer_does_not_choose(tmp_path)
     assert service.list_profiles()[0].edit_template_id == DEFAULT_PRODUCTION_TEMPLATE_ID
 
 
+def test_sync_batch_does_not_rewrite_timestamp_when_state_is_unchanged(tmp_path):
+    repository = MockRepository()
+    candidate = _candidate("candidate-sync-noop")
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="轮询时间戳测试")
+    batch = service.create_batch(
+        name="轮询批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    persisted_before = repository.get_production_batch(batch.batch_id)
+    assert persisted_before is not None
+    save_calls = []
+    original_save = repository.save_production_batch
+
+    def record_save(value):
+        save_calls.append(value)
+        original_save(value)
+
+    repository.save_production_batch = record_save
+
+    synced = service.sync_batch(batch.batch_id)
+
+    assert synced is not None
+    assert synced.updated_at == persisted_before.updated_at
+    assert save_calls == []
+
+
 def test_first_start_bootstraps_bundled_dashu_profile_without_accepting_rights(
     tmp_path,
 ):
@@ -1722,6 +1753,143 @@ def test_retry_failed_allows_one_explicit_retry_when_asr_upload_never_submitted(
     assert queued.config["stage_retry_counts"]["transcription"] == 1
 
 
+def test_outcome_unknown_transcription_reconnects_original_task_without_replacement(
+    tmp_path,
+):
+    candidate = _candidate("candidate-asr-reconnect")
+    repository = MockRepository(candidates=[candidate], tasks=[])
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="转写重连配方")
+    batch = service.create_batch(
+        name="转写重连批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    source = tmp_path / "reconnect-source.mp4"
+    source.write_bytes(b"video")
+    now = datetime.now().astimezone()
+    task = TranscriptionTask(
+        task_id="transcription-reconnect-original",
+        title="原转写任务",
+        status=TaskStatus.OUTCOME_UNKNOWN,
+        progress=40,
+        created_at=now,
+        updated_at=now,
+        media_name="candidate.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        candidate_id=candidate.video_id,
+        provider_name="aliyun_fun_asr",
+        provider_status="outcome_unknown",
+        provider_object_key="asr-input/transcription-reconnect-original/candidate.mp4",
+        outputs={"source_media_path": str(source), "processing_mode": "inline"},
+        error_message="云端提交回执暂时无法确认。",
+    )
+    repository.save_task(task)
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.TRANSCRIPTION,
+                "error_message": task.error_message,
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    workspace = service.workspace(batch.batch_id)
+
+    assert workspace["next_action"] == "reconnect_transcription"
+    assert workspace["items"][0]["recovery"]["task_id"] == task.task_id
+
+    def reconnect(task_id: str):
+        assert task_id == task.task_id
+        completed = task.model_copy(
+            update={
+                "status": TaskStatus.SUCCEEDED,
+                "progress": 100,
+                "provider_job_id": "aliyun-existing-job",
+                "provider_status": "succeeded",
+                "segments": [
+                    TranscriptSegment(start=0, end=1, text="真实转写结果。")
+                ],
+                "error_message": None,
+            }
+        )
+        repository.save_task(completed)
+        return completed
+
+    service.reconnect_transcription(
+        batch.batch_id,
+        run_id=run.run_id,
+        pipeline_service=pipeline_service,
+        transcription_service=SimpleNamespace(reconnect_cloud_task=reconnect),
+    )
+
+    updated = repository.get_pipeline_run(run.run_id)
+    assert updated is not None
+    assert updated.status == PipelineRunStatus.PAUSED
+    assert updated.current_stage == PipelineStage.HUMAN_REVIEW
+    assert updated.config["transcription_task_id"] == task.task_id
+    assert updated.config["review_stage"] == "transcript"
+    assert len(repository.list_tasks([candidate.video_id])) == 1
+
+
+def test_retry_failed_allows_signed_xiaohongshu_media_resolution_before_asr(
+    tmp_path,
+):
+    candidate = _candidate("xiaohongshu-signed-retry").model_copy(
+        update={
+            "platform": Platform.XIAOHONGSHU,
+            "platform_item_id": "signed-retry",
+            "source_url": (
+                "https://www.xiaohongshu.com/explore/signed-retry"
+                "?xsec_token=live-token&xsec_source=pc_search"
+            ),
+        }
+    )
+    repository = MockRepository(candidates=[candidate], tasks=[])
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="小红书解析恢复配方")
+    batch = service.create_batch(
+        name="小红书解析恢复批次",
+        profile_id=profile.profile_id,
+        candidate_ids=[candidate.video_id],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.TRANSCRIPTION,
+                "error_message": "小红书搜索结果中未找到这条作品。",
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    workspace = service.workspace(batch.batch_id)
+    assert workspace["next_action"] == "retry"
+    retried = service.retry_failed(
+        batch.batch_id,
+        pipeline_service=pipeline_service,
+    )
+
+    assert retried.items[0].status == ProductionBatchItemStatus.QUEUED
+    queued = repository.get_pipeline_run(run.run_id)
+    assert queued is not None
+    assert queued.status == PipelineRunStatus.PENDING
+    assert queued.current_stage is None
+    assert queued.config["stage_retry_counts"]["transcription"] == 1
+
+
 def test_retry_repairs_a_legacy_avatar_attempt_that_never_reached_provider(tmp_path):
     repository = MockRepository()
     pipeline_service = PipelineService(repository, None, None, None, None)
@@ -2493,8 +2661,9 @@ def test_non_douyin_candidate_uses_local_link_preflight(tmp_path):
         tmp_path / "production",
         media_resolution_service=_MediaPreview(),
         link_transcription_service=_LocalLinkPreview(),
+        transcription_service=_AlignmentTranscription(),
         copywriting_service=_Copywriting(),
-        avatar_service=_Assets(),
+        avatar_service=_AssetsWithMaximumScript(),
         template_service=_Templates(),
         publish_service=_Publish(),
     )
@@ -2521,6 +2690,7 @@ def test_non_douyin_candidate_uses_local_link_preflight(tmp_path):
     )
 
     assert preflight["ready_count"] == 1
+    assert preflight["cost_known"] is True
     assert preflight["items"][0]["reasons"] == []
 
 
@@ -2611,7 +2781,6 @@ def test_douyin_home_candidate_falls_back_to_its_saved_link(
 
 def test_xiaohongshu_candidate_uses_connected_browser_link_fallback(
     tmp_path,
-    monkeypatch,
 ):
     """已带签名的小红书候选应进入链接解析，不应被旧安全暂停短路。"""
     repository = MockRepository()
@@ -2666,6 +2835,7 @@ def test_xiaohongshu_candidate_uses_connected_browser_link_fallback(
     assert run is not None
     assert run.config["candidate_platform"] == Platform.XIAOHONGSHU.value
     assert run.config["candidate_link_fallback"] is True
+    assert run.config["search_keyword"] == "批量生产候选"
 
     worker = PipelineWorker(
         repository=repository,
@@ -2677,21 +2847,108 @@ def test_xiaohongshu_candidate_uses_connected_browser_link_fallback(
         template_service=None,
         production_service=service,
     )
-    calls: list[str] = []
-    monkeypatch.setattr(
-        worker,
-        "_run_guided_share_link",
-        lambda selected: calls.append(f"link:{selected.run_id}"),
+    class _RecordingLinkService:
+        def __init__(self):
+            self.calls = []
+
+        def transcribe_experimental(self, **kwargs):
+            self.calls.append(kwargs)
+            now = datetime.now().astimezone()
+            return TranscriptionTask(
+                task_id="xhs-worker-transcription",
+                title="小红书转写",
+                status=TaskStatus.SUCCEEDED,
+                progress=100,
+                created_at=now,
+                updated_at=now,
+                media_name="xhs.mp4",
+                media_type="video/mp4",
+                rights_confirmed=True,
+                rights_holder="测试公司",
+                duration_seconds=4,
+                segments=[TranscriptSegment(text="这是可核对的真实口播")],
+                is_mock=True,
+            )
+
+    recording = _RecordingLinkService()
+    worker.douyin_link_transcription_service = recording
+    legacy_run = run.model_copy(
+        update={
+            "config": {
+                key: value
+                for key, value in run.config.items()
+                if key != "search_keyword"
+            }
+        }
     )
-    monkeypatch.setattr(
-        worker,
-        "_pause_for_xiaohongshu_safety",
-        lambda _selected: pytest.fail("小红书不应再被旧暂停逻辑短路"),
+    worker._run_guided_share_link(legacy_run)
+
+    assert len(recording.calls) == 1
+    assert recording.calls[0]["search_keyword"] == "批量生产候选"
+
+
+def test_xiaohongshu_worker_upgrades_legacy_batch_to_saved_signed_entry(tmp_path):
+    repository = MockRepository()
+    bare_url = "https://www.xiaohongshu.com/explore/xhs-upgraded"
+    signed_url = f"{bare_url}?xsec_token=current-token&xsec_source=pc_search"
+    candidate = _candidate("candidate-xhs-upgraded").model_copy(
+        update={
+            "platform": Platform.XIAOHONGSHU,
+            "source_url": signed_url,
+        }
+    )
+    repository.save_candidate(candidate)
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    run = pipeline_service.build_run(
+        keyword="旧批次",
+        config={
+            "workflow": "production_batch_candidate",
+            "share_text": bare_url,
+            "candidate_id": candidate.video_id,
+            "candidate_platform": Platform.XIAOHONGSHU.value,
+        },
+    ).model_copy(update={"candidate_video_id": candidate.video_id})
+    repository.save_pipeline_run(run)
+
+    class _RecordingLinkService:
+        def __init__(self):
+            self.calls = []
+
+        def transcribe_experimental(self, **kwargs):
+            self.calls.append(kwargs)
+            now = datetime.now().astimezone()
+            return TranscriptionTask(
+                task_id="xhs-signed-upgrade-task",
+                title="小红书转写",
+                status=TaskStatus.SUCCEEDED,
+                progress=100,
+                created_at=now,
+                updated_at=now,
+                media_name="xhs.mp4",
+                media_type="video/mp4",
+                rights_confirmed=True,
+                rights_holder="测试公司",
+                duration_seconds=4,
+                segments=[TranscriptSegment(text="已使用当前完整入口")],
+                is_mock=True,
+            )
+
+    recording = _RecordingLinkService()
+    worker = PipelineWorker(
+        repository=repository,
+        pipeline_service=pipeline_service,
+        commercial_search_service=None,
+        avatar_service=None,
+        video_editing_service=None,
+        publish_service=None,
+        template_service=None,
+        douyin_link_transcription_service=recording,
     )
 
-    worker._run_production_batch(run)
+    worker._run_guided_share_link(run)
 
-    assert calls == [f"link:{run.run_id}"]
+    assert len(recording.calls) == 1
+    assert recording.calls[0]["share_text"] == signed_url
 
 
 def test_auto_batch_selects_one_transcript_and_skips_the_other_three(tmp_path):

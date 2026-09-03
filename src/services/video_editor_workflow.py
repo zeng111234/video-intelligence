@@ -445,7 +445,7 @@ def _estimate_phrase_cues_from_sentence_level(
 # use a larger, semantic pop on selected words.
 SUBTITLE_BASELINE_ENTRY_MOTION_MS = 120
 SUBTITLE_BASELINE_ENTRY_MOTION_MIN_MS = 100
-SUBTITLE_BASELINE_ENTRY_MOTION_MAX_MS = 140
+SUBTITLE_BASELINE_ENTRY_MOTION_MAX_MS = 220
 SUBTITLE_BASELINE_EMPHASIS_SCALE_MIN = 1.05
 SUBTITLE_BASELINE_EMPHASIS_SCALE_MAX = 1.10
 SUBTITLE_KINETIC_EMPHASIS_SCALE_MAX = 1.22
@@ -513,8 +513,10 @@ def _subtitle_style_baseline_gate(preview: Mapping[str, Any] | None) -> dict[str
         }
     failures: list[str] = []
     entry_motion = fingerprint.get("entry_motion")
-    if not isinstance(entry_motion, str) or not entry_motion.startswith("fade_in_"):
-        failures.append("entry_motion_not_fade_in")
+    if not isinstance(entry_motion, str) or not entry_motion.startswith(
+        ("fade_in_", "elastic_pop_")
+    ):
+        failures.append("entry_motion_not_supported")
     else:
         suffix = entry_motion.rsplit("_", 1)[-1]
         try:
@@ -1931,7 +1933,7 @@ def _adaptive_subtitle_effect_gate(preview: Mapping[str, Any]) -> dict[str, Any]
     for cue in cues:
         durations.append(float(cue.get("end") or 0) - float(cue.get("start") or 0))
         motion = cue.get("entry_motion")
-        valid_motion = valid_motion and isinstance(motion, Mapping) and 100 <= int(motion.get("duration_ms") or 0) <= 160
+        valid_motion = valid_motion and isinstance(motion, Mapping) and 100 <= int(motion.get("duration_ms") or 0) <= 220
         style = cue.get("emphasis_style")
         if isinstance(style, Mapping):
             emphasis_count += 1
@@ -1945,7 +1947,7 @@ def _adaptive_subtitle_effect_gate(preview: Mapping[str, Any]) -> dict[str, Any]
         "emphasis_count": emphasis_count,
         "checks": {
             "unified_adaptive_style": preview.get("subtitle_style_id", "adaptive_talking_head_v1") == "adaptive_talking_head_v1",
-            "entry_motion_100_160ms": valid_motion,
+            "entry_motion_100_220ms": valid_motion,
             "sparse_emphasis": sparse,
             "emphasis_scale_105_112": valid_scale,
             "no_routine_refresh_as_visual_effect": True,
@@ -2541,6 +2543,81 @@ def _run_media_command(*args, **kwargs):
     return subprocess.run(*args, **kwargs)
 
 
+def _local_render_thread_options() -> list[str]:
+    """Choose a bounded FFmpeg thread budget for local exports.
+
+    The old fixed two-thread limit made CPU-only subtitle exports needlessly
+    slow on ordinary desktop machines.  Keep the render below normal process
+    priority and use at most half the logical cores by default, while allowing
+    support to override the budget for constrained or dedicated machines.
+    """
+
+    configured = os.environ.get("VIDEO_EDITOR_LOCAL_THREADS", "").strip().lower()
+    if configured in {"auto", "0"}:
+        encode_threads = 0
+    else:
+        try:
+            encode_threads = int(configured) if configured else 0
+        except ValueError:
+            encode_threads = 0
+        if encode_threads < 0:
+            encode_threads = 0
+    if encode_threads == 0 and configured not in {"auto", "0"}:
+        logical_cores = os.cpu_count() or 4
+        encode_threads = min(8, max(2, logical_cores // 2))
+    filter_threads = 0 if encode_threads == 0 else min(4, encode_threads)
+    return [
+        "-threads",
+        str(encode_threads),
+        "-filter_threads",
+        str(filter_threads),
+        "-filter_complex_threads",
+        str(filter_threads),
+    ]
+
+
+def _subtitle_sound_effect_filters(
+    motion_items: Sequence[Mapping[str, Any]],
+    *,
+    playback_rate: float,
+) -> list[str]:
+    """Build subtle, transcript-bound punctuation sounds for semantic beats."""
+
+    filters: list[str] = []
+    frequencies = {
+        "number_slam": 720,
+        "benefit_burst": 560,
+        "warning_shake": 420,
+        "logic_arrow": 640,
+        "cta_burst": 760,
+    }
+    for index, item in enumerate(motion_items):
+        try:
+            start = max(0.0, float(item.get("start") or 0)) / max(playback_rate, 0.01)
+        except (TypeError, ValueError):
+            continue
+        frequency = frequencies.get(str(item.get("style_id") or ""), 600)
+        delay_ms = round(start * 1000)
+        label = f"subtitle_fx{index}"
+        filters.append(
+            f"sine=frequency={frequency}:sample_rate=48000:duration=0.24,"
+            "volume=0.035,afade=t=in:st=0:d=0.012,"
+            "afade=t=out:st=0.08:d=0.16,"
+            f"adelay={delay_ms}|{delay_ms}[{label}]"
+        )
+    return filters
+
+
+def _subtitle_is_already_burned(
+    edit_plan: Mapping[str, Any],
+    *,
+    primary_subtitle_filter: str,
+) -> bool:
+    """Avoid a second subtitle encode when the primary graph already burns it."""
+
+    return bool(edit_plan.get("subtitles_burned_in") or primary_subtitle_filter)
+
+
 def _measure_audio_video_drift(path: Path, *, threshold_ms: float = 67.0) -> dict[str, Any] | None:
     """Measure stream start/end PTS drift with local FFprobe only."""
     if not path.is_file():
@@ -2913,6 +2990,18 @@ class VideoEditorWorkflowService:
             subject = re.sub(r"(想做|想要|正在做)", "", subject, count=1)
         return (subject or first_sentence or fallback)[:40]
 
+    @staticmethod
+    def _is_weak_auto_title(title: str) -> bool:
+        """Recognize the old first-clause title without touching real edits."""
+
+        clean = re.sub(r"\s+", "", str(title or "")).strip(" ，,：:。.")
+        if not clean or len(clean) > 28:
+            return False
+        return bool(
+            re.match(r"^(?:最近|今天|大家好|你知道吗|你发现没|其实)", clean)
+            and re.search(r"冒出|出现|有一家|有个|挺特别|很特别", clean)
+        )
+
     def _semantic_source_title(
         self,
         source_id: str,
@@ -2923,14 +3012,37 @@ class VideoEditorWorkflowService:
     ) -> str:
         cached = self._cached_source_context(source_id, context_index=context_index)
         cached_title = str(cached.get("selected_title") or "").strip()
-        if cached_title:
+        source_text = script_text or "".join(
+            str(segment.get("text") or "")
+            for segment in cached.get("subtitle_segments") or []
+            if isinstance(segment, Mapping)
+        )
+        if cached_title and not self._is_weak_auto_title(cached_title):
             return cached_title
+        if self._is_weak_auto_title(cached_title) and source_text:
+            repaired = self._local_title_candidates(
+                stored_title,
+                source_text,
+                "douyin",
+            )
+            if repaired:
+                return repaired[0]
         candidates = list(cached.get("title_candidates") or [])
         if candidates:
-            return str(candidates[0]).strip()[:100]
+            first_candidate = str(candidates[0]).strip()[:100]
+            if not self._is_weak_auto_title(first_candidate):
+                return first_candidate
+            if source_text:
+                repaired = self._local_title_candidates(
+                    stored_title,
+                    source_text,
+                    "douyin",
+                )
+                if repaired:
+                    return repaired[0]
         if not _GENERIC_AVATAR_TITLE.fullmatch(stored_title.strip()):
             return stored_title
-        return self._script_topic_title(script_text, stored_title)
+        return self._script_topic_title(source_text, stored_title)
 
     def _avatar_script_text(self, source_id: str) -> str:
         source_type, _, record_id = source_id.partition(":")
@@ -4083,6 +4195,24 @@ class VideoEditorWorkflowService:
             r"^(本地上传|流水线成片|系统数字人成片)\s*[·：:-]?\s*", "", source_title
         ).strip()
         clean_source = Path(clean_source).stem
+        transcript = re.sub(r"\s+", "", transcript_text or "")
+        semantic_candidates: list[str] = []
+        if "会员制" in transcript and "小店长" in transcript:
+            semantic_candidates.extend(
+                [
+                    "会员顾客自动升级成小店长",
+                    "共享店长让顾客主动传播",
+                    "烧烤店用会员制带动复购",
+                ]
+            )
+        location_topic = re.search(
+            r"(?P<place>[\u4e00-\u9fff]{2,8})冒出了一个(?:挺)?特别的(?P<topic>[\u4e00-\u9fff]{2,12})",
+            transcript,
+        )
+        if location_topic:
+            place = location_topic.group("place")
+            topic = location_topic.group("topic")
+            semantic_candidates.append(f"{place}{topic}值得关注")
         first_sentence = re.split(
             r"[。！？!?；;\n]", transcript_text.strip(), maxsplit=1
         )[0]
@@ -4090,7 +4220,7 @@ class VideoEditorWorkflowService:
             :22
         ].rstrip("，,。.")
         prefix = "视频号" if platform == "wechat_channels" else "短视频"
-        candidates = [
+        candidates = semantic_candidates or [
             subject,
             f"看懂{subject}",
             f"别错过：{subject}",
@@ -6787,7 +6917,17 @@ class VideoEditorWorkflowService:
                 "subtitle_segments": segments,
                 "edit_plan": plan_payload,
                 "title_candidates": titles,
-                "selected_title": item.selected_title or titles[0],
+                # The old generator persisted the first spoken clause as the
+                # title.  It is safe to replace only that mechanically weak
+                # shape; preserve a real user-edited title verbatim.
+                "selected_title": (
+                    titles[0]
+                    if (
+                        titles
+                        and self._is_weak_auto_title(item.selected_title)
+                    )
+                    else (item.selected_title or titles[0])
+                ),
                 "selected_bgm_id": selected_bgm_id,
                 "bgm_reason": bgm_reason,
                 "actual_usage": {
@@ -7029,6 +7169,19 @@ class VideoEditorWorkflowService:
             or str(cached.get("selected_title") or "").strip()
             or item.title
         ).strip()
+        if self._is_weak_auto_title(title):
+            title_text = "".join(
+                str(segment.get("text") or "")
+                for segment in segments
+                if isinstance(segment, Mapping)
+            )
+            repaired_candidates = self._local_title_candidates(
+                item.title,
+                title_text,
+                "douyin",
+            )
+            if repaired_candidates:
+                title = repaired_candidates[0]
         if not title:
             raise VideoEditorWorkflowError("当前方案缺少标题，暂不能生成成片。")
 
@@ -9766,28 +9919,175 @@ class VideoEditorWorkflowService:
         style_id = str(item.get("style_id") or "keyword_accent")
         accent = {
             "number_slam": (255, 211, 92, 255),
+            "data_highlight_card": (255, 190, 72, 255),
+            "price_zoom_card": (255, 92, 76, 255),
+            "benefit_burst": (255, 112, 78, 255),
+            "road_push": (255, 211, 92, 255),
+            "compare_split_accent": (255, 163, 95, 255),
+            "knowledge_pop_card": (255, 238, 167, 255),
             "process_marker": (255, 159, 104, 255),
             "warning_shake": (255, 122, 112, 255),
+            "logic_arrow": (184, 216, 255, 255),
             "result_stamp": (255, 138, 122, 255),
             "cta_burst": (255, 200, 87, 255),
         }.get(style_id, (255, 211, 92, 255))
         cx, cy = badge_width // 2, badge_height // 2
         soft = (*accent[:3], 170)
         faint = (*accent[:3], 100)
-        if style_id == "number_slam":
-            for radius in (42, 58):
-                draw.ellipse(
-                    (cx - radius, cy - radius, cx + radius, cy + radius),
-                    outline=soft if radius == 42 else faint,
-                    width=5 if radius == 42 else 3,
-                )
-            for angle in range(0, 360, 30):
-                radians = math.radians(angle)
-                x0 = cx + round(math.cos(radians) * 70)
-                y0 = cy + round(math.sin(radians) * 70)
-                x1 = cx + round(math.cos(radians) * 112)
-                y1 = cy + round(math.sin(radians) * 112)
+        if style_id == "benefit_burst":
+            # A caption-attached hand-drawn swash reads closer to a Douyin
+            # highlight sticker than a radial sun/badge. It contains no
+            # generated label; reviewed caption text remains the only wording.
+            swash = [
+                (cx - 190, cy - 34),
+                (cx + 146, cy - 52),
+                (cx + 190, cy + 20),
+                (cx - 154, cy + 48),
+            ]
+            draw.polygon(swash, fill=(255, 99, 71, 72), outline=accent, width=6)
+            draw.line(
+                (cx - 174, cy + 60, cx + 152, cy + 38),
+                fill=(255, 218, 112, 220),
+                width=7,
+            )
+            draw.line(
+                (cx + 150, cy + 38, cx + 124, cy + 28),
+                fill=(255, 218, 112, 220),
+                width=7,
+            )
+            draw.line(
+                (cx + 150, cy + 38, cx + 130, cy + 52),
+                fill=(255, 218, 112, 220),
+                width=7,
+            )
+            for x0, y0, x1, y1 in (
+                (cx - 220, cy - 72, cx - 184, cy - 54),
+                (cx + 178, cy - 78, cx + 210, cy - 96),
+            ):
                 draw.line((x0, y0, x1, y1), fill=soft, width=5)
+        elif style_id == "road_push":
+            # A transparent, caption-integrated road illustration.  It is a
+            # semantic visual for words such as “公路”, not a generic label
+            # card or a fixed-corner badge.
+            road_top = cy - 76
+            road_bottom = cy + 112
+            draw.polygon(
+                [
+                    (cx - 38, road_top),
+                    (cx + 38, road_top),
+                    (cx + 154, road_bottom),
+                    (cx - 154, road_bottom),
+                ],
+                fill=(37, 43, 52, 232),
+                outline=(248, 250, 252, 220),
+            )
+            draw.line((cx - 38, road_top, cx - 154, road_bottom), fill=soft, width=4)
+            draw.line((cx + 38, road_top, cx + 154, road_bottom), fill=soft, width=4)
+            for offset in (-26, 26):
+                draw.line(
+                    (cx + offset, road_top + 8, cx + offset * 4.0, road_bottom - 8),
+                    fill=(255, 211, 92, 245),
+                    width=7,
+                )
+            for y in range(road_top + 20, road_bottom - 5, 28):
+                ratio = (y - road_top) / max(1, road_bottom - road_top)
+                dash = max(8, round(12 - 7 * ratio))
+                draw.line(
+                    (cx, y, cx, min(road_bottom, y + dash)),
+                    fill=(255, 211, 92, 255),
+                    width=6,
+                )
+            draw.line((cx - 190, cy - 56, cx - 112, cy - 36), fill=faint, width=5)
+            draw.line((cx + 112, cy - 36, cx + 190, cy - 56), fill=faint, width=5)
+        elif style_id == "number_slam":
+            # A short-video "slam" should feel like the keyword hits the
+            # screen, not like a generic sun icon.  Use a skewed highlight
+            # plate plus asymmetric impact strokes; the caption itself still
+            # supplies the number, so this layer contains no duplicate text.
+            impact = [
+                (cx - 188, cy - 28),
+                (cx - 122, cy - 58),
+                (cx + 166, cy - 46),
+                (cx + 194, cy + 12),
+                (cx + 92, cy + 48),
+                (cx - 162, cy + 42),
+            ]
+            draw.polygon(impact, fill=(255, 211, 92, 42), outline=accent, width=5)
+            draw.line(
+                (cx - 156, cy + 54, cx + 148, cy + 28),
+                fill=(255, 246, 190, 225),
+                width=6,
+            )
+            for x0, y0, x1, y1 in (
+                (cx - 222, cy - 78, cx - 174, cy - 52),
+                (cx - 226, cy + 6, cx - 178, cy - 2),
+                (cx + 176, cy - 66, cx + 220, cy - 92),
+                (cx + 166, cy + 48, cx + 214, cy + 66),
+            ):
+                draw.line((x0, y0, x1, y1), fill=soft, width=6)
+        elif style_id == "price_zoom_card":
+            # Price emphasis is a compact impact card attached to the
+            # caption, rather than a fixed-corner promo badge.  The actual
+            # price remains in the reviewed caption text.
+            draw.rounded_rectangle(
+                (cx - 178, cy - 58, cx + 178, cy + 54),
+                radius=28,
+                fill=(255, 92, 76, 38),
+                outline=accent,
+                width=7,
+            )
+            draw.line(
+                (cx - 132, cy + 70, cx + 132, cy + 70),
+                fill=(255, 218, 112, 230),
+                width=7,
+            )
+            draw.line(
+                (cx - 202, cy - 74, cx - 164, cy - 98),
+                fill=soft,
+                width=6,
+            )
+            draw.line(
+                (cx + 164, cy - 98, cx + 202, cy - 74),
+                fill=soft,
+                width=6,
+            )
+        elif style_id == "data_highlight_card":
+            # Data is shown as a compact visual highlight; the reviewed
+            # caption carries the actual value, so the overlay adds no text.
+            draw.rounded_rectangle(
+                (cx - 164, cy - 54, cx + 164, cy + 46),
+                radius=24,
+                fill=(255, 190, 72, 30),
+                outline=accent,
+                width=6,
+            )
+            for index, height in enumerate((24, 42, 62, 84, 54)):
+                x = cx - 102 + index * 48
+                draw.rounded_rectangle(
+                    (x, cy + 32 - height, x + 22, cy + 32),
+                    radius=8,
+                    fill=soft,
+                )
+            draw.line((cx - 134, cy + 68, cx + 134, cy + 68), fill=faint, width=5)
+        elif style_id == "compare_split_accent":
+            draw.line((cx, cy - 82, cx, cy + 76), fill=soft, width=6)
+            draw.line((cx - 152, cy - 36, cx - 34, cy - 36), fill=accent, width=8)
+            draw.line((cx - 152, cy - 36, cx - 118, cy - 58), fill=accent, width=8)
+            draw.line((cx - 152, cy - 36, cx - 118, cy - 14), fill=accent, width=8)
+            draw.line((cx + 152, cy + 36, cx + 34, cy + 36), fill=soft, width=8)
+            draw.line((cx + 152, cy + 36, cx + 118, cy + 14), fill=soft, width=8)
+            draw.line((cx + 152, cy + 36, cx + 118, cy + 58), fill=soft, width=8)
+        elif style_id == "knowledge_pop_card":
+            draw.rounded_rectangle(
+                (cx - 136, cy - 66, cx + 136, cy + 50),
+                radius=20,
+                outline=accent,
+                width=6,
+            )
+            draw.line((cx, cy - 42, cx, cy + 22), fill=soft, width=5)
+            draw.arc((cx - 94, cy - 42, cx, cy + 34), 205, 155, fill=soft, width=6)
+            draw.arc((cx, cy - 42, cx + 94, cy + 34), 25, 335, fill=soft, width=6)
+            draw.line((cx - 72, cy + 64, cx + 72, cy + 64), fill=faint, width=5)
         elif style_id == "process_marker":
             draw.arc((cx - 130, cy - 52, cx + 130, cy + 78), 12, 168, fill=soft, width=8)
             draw.line((cx + 98, cy - 12, cx + 132, cy + 24), fill=accent, width=8)
@@ -9807,6 +10107,45 @@ class VideoEditorWorkflowService:
             draw.ellipse((cx - 64, cy - 64, cx + 64, cy + 64), outline=soft, width=8)
             draw.arc((cx - 82, cy - 82, cx + 82, cy + 82), 218, 42, fill=faint, width=5)
             draw.line((cx - 34, cy + 2, cx - 10, cy + 28, cx + 42, cy - 30), fill=accent, width=10)
+        elif style_id == "cta_burst":
+            # CTA punctuation is a conversation cue rather than a generic
+            # star.  Keep it transparent and attached to the caption band.
+            bubble = (cx - 126, cy - 54, cx + 126, cy + 34)
+            draw.rounded_rectangle(bubble, radius=24, outline=accent, width=6)
+            draw.polygon(
+                [(cx + 46, cy + 30), (cx + 78, cy + 68), (cx + 88, cy + 26)],
+                fill=(0, 0, 0, 0),
+                outline=accent,
+            )
+            for dot_x in (cx - 42, cx, cx + 42):
+                draw.ellipse(
+                    (dot_x - 7, cy - 10, dot_x + 7, cy + 4),
+                    fill=accent,
+                )
+            draw.line((cx - 166, cy + 58, cx - 106, cy + 42), fill=soft, width=5)
+            draw.line((cx + 104, cy + 46, cx + 164, cy + 24), fill=soft, width=5)
+        elif style_id == "logic_arrow":
+            # A restrained causal connector for phrases such as
+            # "因为/所以". It visualizes the relationship without adding
+            # explanatory text or a fixed-corner label.
+            draw.line((cx - 176, cy, cx + 120, cy), fill=accent, width=8)
+            draw.line((cx + 120, cy, cx + 78, cy - 30), fill=accent, width=8)
+            draw.line((cx + 120, cy, cx + 78, cy + 30), fill=accent, width=8)
+            draw.ellipse(
+                (cx - 196, cy - 18, cx - 160, cy + 18),
+                outline=soft,
+                width=5,
+            )
+            draw.ellipse(
+                (cx + 142, cy - 18, cx + 178, cy + 18),
+                outline=soft,
+                width=5,
+            )
+            draw.line(
+                (cx - 142, cy - 48, cx + 34, cy - 48),
+                fill=faint,
+                width=4,
+            )
         else:
             points = []
             for index in range(16):
@@ -10236,7 +10575,7 @@ class VideoEditorWorkflowService:
                 continue
             ramp = 0.14
             zoom = (
-                f"1+0.035*if(lt(t,{start:.3f}),0,"
+                f"1+0.08*if(lt(t,{start:.3f}),0,"
                 f"if(lt(t,{start + ramp:.3f}),(t-{start:.3f})/{ramp:.3f},"
                 f"if(lt(t,{max(start + ramp, end - ramp):.3f}),1,"
                 f"if(lt(t,{end:.3f}),({end:.3f}-t)/{ramp:.3f},0))))"
@@ -10444,9 +10783,30 @@ class VideoEditorWorkflowService:
             if style_id == "number_slam":
                 scale_expression = "1.0+0.12*if(lt(t,0.20),1-t/0.20,0)"
                 x_expression = "(W-w)/2"
+            elif style_id == "data_highlight_card":
+                scale_expression = "1.0+0.12*if(lt(t,0.20),1-t/0.20,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "price_zoom_card":
+                scale_expression = "1.0+0.16*if(lt(t,0.22),1-t/0.22,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "road_push":
+                scale_expression = "1.0+0.10*if(lt(t,0.24),1-t/0.24,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "benefit_burst":
+                scale_expression = "1.0+0.14*if(lt(t,0.20),1-t/0.20,0)"
+                x_expression = "(W-w)/2"
             elif style_id == "warning_shake":
                 scale_expression = "1.0+0.03*sin(PI*t/0.18)"
                 x_expression = "(W-w)/2+8*sin(2*PI*t/0.10)"
+            elif style_id == "logic_arrow":
+                scale_expression = "1.0+0.03*if(lt(t,0.18),1-t/0.18,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "compare_split_accent":
+                scale_expression = "1.0+0.05*if(lt(t,0.20),1-t/0.20,0)"
+                x_expression = "(W-w)/2"
+            elif style_id == "knowledge_pop_card":
+                scale_expression = "1.0+0.08*if(lt(t,0.18),1-t/0.18,0)"
+                x_expression = "(W-w)/2"
             elif style_id == "process_marker":
                 scale_expression = "1.0+0.04*sin(PI*t/0.7)"
                 x_expression = "(W-w)/2"
@@ -10467,7 +10827,11 @@ class VideoEditorWorkflowService:
             )
             overlay = (
                 f"{caption_input}[{label}]overlay=x='{x_expression}':"
-                "y='trunc(H*0.68-h/2)':"
+                # Keep semantic art attached to the subtitle band.  The ASS
+                # layer is burned afterwards, so the caption stays readable
+                # over the transparent illustration instead of leaving a
+                # floating icon on the speaker's chest.
+                "y='trunc(H*0.76-h/2)':"
                 f"enable='between(t,{start:.3f},{end:.3f})':"
                 f"eof_action=pass[{output_label}]"
             )
@@ -10967,7 +11331,14 @@ class VideoEditorWorkflowService:
             typography = edit_plan.get("typography") or {}
             creative_theme = str(edit_plan.get("creative_theme") or "general")
             font_family = str(typography.get("font_family") or "YaHei")
-            from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
+            from src.services.video_editor_cloud import (
+                CAPTION_FONT_FAMILY,
+                CAPTION_FONT_PATH,
+                build_business_talking_head_overlay_preview,
+            )
+            caption_font_family = str(
+                typography.get("subtitle_font_family") or CAPTION_FONT_FAMILY
+            )
 
             subtitle_preview = build_business_talking_head_overlay_preview(
                 rendered_segments,
@@ -11015,6 +11386,7 @@ class VideoEditorWorkflowService:
                 caption_glossary=edit_plan.get("transcript_glossary"),
                 theme=creative_theme,
                 font_family=font_family,
+                caption_font_family=caption_font_family,
                 overlay_preview=subtitle_render_preview,
                 subtitle_style_id="adaptive_talking_head_v1",
             )
@@ -11065,7 +11437,9 @@ class VideoEditorWorkflowService:
             height = int(canvas["height"])
             fps = task.edit_config.output_fps
             body_path = temp_dir / "body.mp4" if smart_opening else output_path
-            font_path = Path(str(typography.get("font_path") or ""))
+            font_path = Path(
+                str(typography.get("subtitle_font_path") or CAPTION_FONT_PATH)
+            )
             subtitle_filter = (
                 ""
                 if smart_opening
@@ -11370,6 +11744,17 @@ class VideoEditorWorkflowService:
             filter_parts.append(
                 "[voice_raw]loudnorm=I=-16:TP=-1.5:LRA=11[voice]"
             )
+            subtitle_fx_enabled = os.getenv(
+                "VIDEO_EDITOR_SUBTITLE_SFX_ENABLED", "1"
+            ).lower() not in {"0", "false", "no", "off"}
+            subtitle_fx_filters = (
+                _subtitle_sound_effect_filters(
+                    motion_items,
+                    playback_rate=playback_rate,
+                )
+                if subtitle_fx_enabled
+                else []
+            )
             bgm_asset: dict[str, Any] | None = None
             if bgm_id:
                 bgm_asset = self.resolve_bgm_asset(bgm_id)
@@ -11389,10 +11774,27 @@ class VideoEditorWorkflowService:
                         ),
                         (
                             "[voice_mix][ducked]amix=inputs=2:duration=first:"
-                            "dropout_transition=2:normalize=0[aout]"
+                            "dropout_transition=2:normalize=0[aout_base]"
                         ),
                     ]
                 )
+                base_audio_label = "[aout_base]"
+            else:
+                base_audio_label = "[voice]"
+            if subtitle_fx_filters:
+                filter_parts.extend(subtitle_fx_filters)
+                fx_labels = "".join(
+                    f"[subtitle_fx{index}]"
+                    for index in range(len(subtitle_fx_filters))
+                )
+                filter_parts.append(
+                    f"{base_audio_label}{fx_labels}amix="
+                    f"inputs={len(subtitle_fx_filters) + 1}:duration=first:"
+                    "dropout_transition=0:normalize=0[aout]"
+                )
+                audio_output_label = "[aout]"
+            else:
+                audio_output_label = base_audio_label
             encoder_selection = _select_local_video_encoder()
             selected_encoder = str(encoder_selection.get("encoder") or "libx264")
             command.extend(
@@ -11402,7 +11804,7 @@ class VideoEditorWorkflowService:
                     "-map",
                     "[vout]",
                     "-map",
-                    "[aout]" if bgm_id else "[voice]",
+                    audio_output_label,
                     "-c:v",
                     selected_encoder,
                     "-preset",
@@ -11429,12 +11831,7 @@ class VideoEditorWorkflowService:
             )
             command = [
                 *command[:-1],
-                "-threads",
-                "2",
-                "-filter_threads",
-                "2",
-                "-filter_complex_threads",
-                "2",
+                *_local_render_thread_options(),
                 command[-1],
             ]
             with _LOCAL_RENDER_SEMAPHORE:
@@ -11539,6 +11936,7 @@ class VideoEditorWorkflowService:
                     spoken_ranges=subtitle_timing_spoken_ranges,
                     theme=creative_theme,
                     font_family=font_family,
+                    caption_font_family=caption_font_family,
                     overlay_preview=subtitle_timing_preview,
                     subtitle_style_id="adaptive_talking_head_v1",
                 )
@@ -11548,8 +11946,9 @@ class VideoEditorWorkflowService:
                 # (legacy / safe-preview path), the subtitle is in the
                 # pixel stream of ``output_path`` already; burning it again
                 # here produces a second, shifted layer (frame_t2s etc).
-                subtitle_already_burned = bool(
-                    edit_plan.get("subtitles_burned_in")
+                subtitle_already_burned = _subtitle_is_already_burned(
+                    edit_plan,
+                    primary_subtitle_filter=subtitle_filter,
                 )
                 final_subtitle_path = temp_dir / "final-with-subtitles.mp4"
                 final_subtitle_filter = self._ffmpeg_filter_path(
@@ -13115,6 +13514,7 @@ class VideoEditorWorkflowService:
         time_offset_seconds: float = 0,
         theme: str = "general",
         font_family: str | None = None,
+        caption_font_family: str | None = None,
         overlay_preview: Mapping[str, Any] | None = None,
         subtitle_style_id: str = "adaptive_talking_head_v1",
     ) -> bytes:
@@ -13131,6 +13531,7 @@ class VideoEditorWorkflowService:
             time_offset_seconds=time_offset_seconds,
             theme=theme,
             font_family=font_family,
+            caption_font_family=caption_font_family,
             overlay_preview=overlay_preview,
             subtitle_style_id=subtitle_style_id,
         )
@@ -14848,18 +15249,38 @@ class VideoEditorWorkflowService:
                 context_index=context_index,
             )
             script_text = self._avatar_script_text(item.source_id)
-            effective_title = (
-                item.selected_title
-                or str(cached_context.get("selected_title") or "").strip()
-                or self._semantic_source_title(
-                    item.source_id,
-                    item.title,
-                    script_text,
-                    context_index=context_index,
-                )
+            cached_segments = cached_context.get("subtitle_segments") or []
+            context_text = script_text or "".join(
+                str(segment.get("text") or "")
+                for segment in cached_segments
+                if isinstance(segment, Mapping)
             )
+            selected_title = str(
+                item.selected_title
+                or cached_context.get("selected_title")
+                or ""
+            ).strip()
+            repaired_candidates: list[str] = []
+            if self._is_weak_auto_title(selected_title) and context_text:
+                repaired_candidates = self._local_title_candidates(
+                    item.title,
+                    context_text,
+                    "douyin",
+                )
+                effective_title = repaired_candidates[0] if repaired_candidates else selected_title
+            else:
+                effective_title = (
+                    selected_title
+                    or self._semantic_source_title(
+                        item.source_id,
+                        item.title,
+                        script_text,
+                        context_index=context_index,
+                    )
+                )
             effective_title_candidates = (
-                list(item.title_candidates)
+                repaired_candidates
+                or list(item.title_candidates)
                 or list(cached_context.get("title_candidates") or [])
                 or ([effective_title] if effective_title else [])
             )

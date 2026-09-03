@@ -70,6 +70,7 @@ _CAPTION_KINETIC_STYLE_IDS = (
     "slam",
     "bounce",
     "stamp",
+    "burst",
     "marker",
     "underline",
     "shake",
@@ -91,6 +92,8 @@ DEFAULT_VISUAL_STYLE_ID = (
 DEFAULT_PLAYBACK_RATE = 1.15
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BRAND_TITLE_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SourceHanSerifCN-Heavy.otf"
+CAPTION_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "SmileySans-Oblique.ttf"
+CAPTION_FONT_FAMILY = "Smiley Sans"
 _CAPTION_BREAK_CHARACTERS = frozenset("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—")
 _NUMERIC_PUNCTUATION = frozenset(".,:")
 _CAPTION_NUMERIC_ATOM_RE = re.compile(
@@ -361,8 +364,13 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
             "max_chars_per_line": 11,
             "font_size": round(52 * scale),
             "safe_bottom": round(170 * scale),
-            "outline_width": max(1, round(1 * scale)),
-            "shadow": max(1, round(1 * scale)),
+            # Keep the keyline crisp while using only a light shadow.  A large
+            # shadow makes the caption look like a sticker and muddies faces
+            # and busy backgrounds.
+            "font_family": CAPTION_FONT_FAMILY,
+            "font_style": "oblique",
+            "outline_width": max(3, round(4 * scale)),
+            "shadow": max(1, round(0.8 * scale)),
             "color": "#F8FAFC",
             "emphasis_color": "#FFE16A",
         },
@@ -2306,16 +2314,21 @@ _AUTO_EMPHASIS_KEYWORDS = (
     "裂变",
     "回头客",
 )
+_CAPTION_BENEFIT_CONTEXT_PATTERN = re.compile(
+    r"送|优惠|福利|特价|折扣|省下|省钱|奖励|免费|回头客|成交|赚钱|增长|翻倍|爆款|引流|利润"
+)
 
 
 def _automatic_emphasis_term(text: str) -> tuple[str, str] | None:
     clean = _clean_caption_text(text)
     reward = _AUTO_EMPHASIS_PROMOTION_REWARD.search(clean)
     if reward and len(reward.group(1)) <= 6:
-        return reward.group(1), "number"
+        return reward.group(1), "benefit"
     number = _AUTO_EMPHASIS_NUMBER.search(clean)
     if number and len(number.group(0)) <= 6:
-        return number.group(0), "number"
+        return number.group(0), (
+            "benefit" if _caption_benefit_is_near_number(clean) else "number"
+        )
     for keyword in _AUTO_EMPHASIS_KEYWORDS:
         if keyword in clean and len(keyword) <= 6:
             kind = (
@@ -2366,13 +2379,18 @@ _CAPTION_WORD_MOTION_KINDS = {
 
 
 def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
-    """Apply one shared subtitle baseline with sparse semantic accents."""
+    """Apply a short sentence entrance with sparse semantic accents.
+
+    Every cue gets one elastic entrance and then becomes static.  The stronger
+    word-level effects remain reserved for reviewed numbers, conclusions,
+    methods, warnings, and CTAs.
+    """
 
     for index, cue in enumerate(cues):
         cue["entry_motion"] = {
-            "type": "fade_in",
-            "duration_ms": 120,
-            "scale_from": 1.0,
+            "type": "elastic_pop",
+            "duration_ms": 180,
+            "scale_from": 0.90,
         }
         cue["subtitle_style_id"] = "adaptive_talking_head_v1"
         existing_range = cue.get("emphasis_range")
@@ -2419,7 +2437,10 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
         (float(cue.get("end") or 0) for cue in cues),
         default=0.0,
     )
-    total_budget = max(1, math.ceil(max_end / 60 * 4))
+    # Give a one-minute talking-head clip up to five strong beats.  Ordinary
+    # cues remain static; this only prevents a long video from looking flat
+    # after the heavy shadow was removed.
+    total_budget = max(1, math.ceil(max_end / 60 * 5))
     bucket_limit = 5
 
     def emphasis_priority(item: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
@@ -2484,6 +2505,8 @@ def _caption_kinetic_semantic_color(
     text: str,
 ) -> str:
     kind = str(segment.get("emphasis_kind") or "").lower()
+    if kind == "number" and _caption_benefit_is_near_number(text):
+        kind = "benefit"
     automatic = _automatic_emphasis_term(text)
     if kind not in _CAPTION_KINETIC_SEMANTIC_COLORS:
         kind = automatic[1] if automatic else "default"
@@ -2491,6 +2514,16 @@ def _caption_kinetic_semantic_color(
         kind,
         _CAPTION_KINETIC_SEMANTIC_COLORS["default"],
     )
+
+
+def _caption_benefit_is_near_number(text: str) -> bool:
+    """Keep promotion emphasis local; distant words must not recolor numbers."""
+
+    for match in _AUTO_EMPHASIS_NUMBER.finditer(text):
+        context = text[max(0, match.start() - 6) : min(len(text), match.end() + 8)]
+        if _CAPTION_BENEFIT_CONTEXT_PATTERN.search(context):
+            return True
+    return False
 
 
 def _caption_kinetic_words_for_cue(
@@ -2665,17 +2698,31 @@ def _caption_kinetic_style_for_cue(
     emphasis_kind = emphasis_kind.lower()
     automatic = _automatic_emphasis_term(text)
     automatic_kind = automatic[1] if automatic else ""
+    benefit_context = _caption_benefit_is_near_number(text)
     if cue_index == 0:
         return "slam"
     if emphasis_kind == "warning" or automatic_kind == "warning":
         return "shake"
+    if (
+        emphasis_kind == "benefit"
+        or automatic_kind == "benefit"
+        or (
+            benefit_context
+            and (emphasis_kind == "number" or automatic_kind == "number")
+        )
+    ):
+        return "burst"
     if emphasis_kind in {"number", "result"} or automatic_kind == "number":
         return "stamp"
     if emphasis_kind == "method":
         return "underline"
     if emphasis_kind == "cta":
         return "bounce"
-    if emphasis_kind in {"benefit", "keyword"} or automatic_kind == "benefit":
+    if emphasis_kind == "keyword":
+        if any(term in text for term in ("关键", "重点", "核心")):
+            return "stamp"
+        if any(term in text for term in ("为什么", "因为", "所以")):
+            return "underline"
         return "marker"
     if any(term in text for term in ("评论", "留言", "关注", "私信", "领取")):
         return "bounce"
@@ -3633,13 +3680,15 @@ def build_business_talking_head_overlay_preview(
         ),
         "subtitle_style_id": subtitle_style_id,
         "style_fingerprint": {
-            "font_family": "Source Han Serif CN Heavy",
-            "palette_id": "douyin_talking_head_pop_v1",
-            "entry_motion": "fade_in_120ms",
+            "font_family": CAPTION_FONT_FAMILY,
+            "palette_id": "douyin_talking_head_pop_v2_warm_layered",
+            "caption_treatment": "white_base_warm_keyword_black_keyline",
+            "outline": "thick_black_keyline",
+            "entry_motion": "elastic_pop_180ms",
             "word_motion": "selective_word_emphasis_v3",
             "keyword_motion": "semantic_effect_mix_v2",
             "kinetic_styles": list(_CAPTION_KINETIC_STYLE_IDS),
-            "caption_motion_policy": "static_by_default_selective_semantic_emphasis",
+            "caption_motion_policy": "entry_pop_static_after_settle_selective_semantic_emphasis",
             "strong_effect_density": "3_to_5_per_60s",
             "emphasis_scale_range": [1.08, 1.08],
             "emphasis_duration_ms": [180, 240],
@@ -3713,7 +3762,7 @@ def _ass_kinetic_caption_text(
                 f"\\c&H00F8FAFC&\\3c{color}\\bord5.0\\shad3\\blur0.2"
                 f"\\fscx108\\fscy108\\frz-1\\alpha&H00&))"
                 f"\\t({impact_end_ms},{settle_end_ms},"
-                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad2\\blur0"
                 f"\\fscx100\\fscy100\\frz0)"
             )
         elif kinetic_style == "stamp":
@@ -3724,7 +3773,18 @@ def _ass_kinetic_caption_text(
                 f"\\c&H00F8FAFC&\\3c{color}\\bord5.4\\shad3\\blur0.1"
                 f"\\fscx108\\fscy108\\frz2)"
                 f"\\t({impact_end_ms},{settle_end_ms},"
-                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad2\\blur0"
+                f"\\fscx100\\fscy100\\frz0)"
+            )
+        elif kinetic_style == "burst":
+            motion = (
+                f"\\t({word_start_ms},{min(duration_ms, word_start_ms + 1)},"
+                f"\\fscx92\\fscy92\\frz-5\\blur1.6)"
+                f"\\t({min(duration_ms, word_start_ms + 1)},{impact_end_ms},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord6.0\\shad3\\blur0.1"
+                f"\\fscx112\\fscy112\\frz2)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad2\\blur0"
                 f"\\fscx100\\fscy100\\frz0)"
             )
         elif kinetic_style == "marker":
@@ -3735,7 +3795,7 @@ def _ass_kinetic_caption_text(
                 f"\\c&H00F8FAFC&\\3c{color}\\bord5.8\\shad2\\blur0"
                 f"\\fscx108\\fscy108)"
                 f"\\t({impact_end_ms},{settle_end_ms},"
-                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad2"
                 f"\\fscx100\\fscy100)"
             )
         elif kinetic_style == "underline":
@@ -3757,8 +3817,24 @@ def _ass_kinetic_caption_text(
                 f"\\t({shake_start},{shake_mid},\\c&H00F8FAFC&\\3c{color}"
                 f"\\bord4.8\\shad2\\blur0\\fscx108\\fscy108\\frz-2)"
                 f"\\t({shake_mid},{impact_end_ms},\\frz3)"
-                f"\\t({impact_end_ms},{settle_end_ms},\\c&H00F8FAFC&"
-                f"\\3c&H003A263D&\\bord2.8\\shad1\\fscx100\\fscy100\\frz0)"
+                f"\\t({impact_end_ms},{settle_end_ms},\\c{color}"
+                f"\\3c&H00101010&\\bord4.0\\shad2\\fscx100\\fscy100\\frz0)"
+            )
+        elif kinetic_style == "bounce":
+            bounce_start = min(duration_ms, word_start_ms + 1)
+            bounce_mid = min(duration_ms, word_start_ms + 72)
+            motion = (
+                f"\\t({word_start_ms},{bounce_start},"
+                f"\\fscx94\\fscy86\\frz-2\\blur1.1)"
+                f"\\t({bounce_start},{bounce_mid},"
+                f"\\c&H00F8FAFC&\\3c{color}\\bord4.6\\shad1\\blur0.1"
+                f"\\fscx111\\fscy108\\frz1)"
+                f"\\t({bounce_mid},{impact_end_ms},"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad1"
+                f"\\fscx104\\fscy104\\frz0)"
+                f"\\t({impact_end_ms},{settle_end_ms},"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad1\\blur0"
+                f"\\fscx100\\fscy100\\frz0)"
             )
         else:
             motion = (
@@ -3768,12 +3844,16 @@ def _ass_kinetic_caption_text(
                 f"\\c&H00F8FAFC&\\3c{color}\\bord4.2\\shad2\\blur0.2"
                 f"\\fscx108\\fscy108\\frz-1)"
                 f"\\t({impact_end_ms},{settle_end_ms},"
-                f"\\c&H00F8FAFC&\\3c&H003A263D&\\bord2.8\\shad1\\blur0"
+                f"\\c{color}\\3c&H00101010&\\bord4.0\\shad2\\blur0"
                 f"\\fscx100\\fscy100\\frz0)"
             )
+        # Keep all kinetic variants on the same light shadow baseline.  The
+        # style-specific motion may request a stronger legacy shadow, but it
+        # should not overpower the caption or turn emphasis into a sticker.
+        motion = motion.replace(r"\shad3", r"\shad1").replace(r"\shad2", r"\shad1")
         rendered.append(
             "{"
-            f"\\c&H0099A0B0&\\3c&H003A263D&\\bord2.4\\shad1\\fscx94\\fscy94"
+            f"\\c{color}\\3c&H00101010&\\bord4.0\\shad1\\fscx94\\fscy94"
             f"{motion}"
             "}"
             f"{_ass_escape(line[start_offset:end_offset])}"
@@ -3803,9 +3883,15 @@ def _ass_cue_motion_text(
             r"\t(0,200,\fscx108\fscy108\frz2\blur0)"
             r"\t(200,240,\fscx100\fscy100\frz0)}"
         )
+    elif kinetic_style == "burst":
+        tag = (
+            r"{\fad(70,0)\fscx92\fscy92\frz-5\blur1.4"
+            r"\t(0,200,\fscx112\fscy112\frz2\blur0)"
+            r"\t(200,240,\fscx100\fscy100\frz0\bord4\shad1)}"
+        )
     elif kinetic_style == "marker":
         tag = (
-            r"{\fad(100,0)\fscx96\fscy96\bord5.4\shad2\blur1"
+            r"{\fad(100,0)\fscx96\fscy96\bord5.4\shad1\blur1"
             r"\t(0,200,\fscx108\fscy108\blur0)"
             r"\t(200,240,\fscx100\fscy100\bord2.8\shad1)}"
         )
@@ -3847,8 +3933,9 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
         f"{{\\fad({entry_ms},0)}}"
         if entry_type == "fade_in"
         else (
-            f"{{\\fad({entry_ms},0)\\fscx{entry_scale}\\fscy{entry_scale}\\blur1.2"
-            f"\\t(0,{entry_ms},\\fscx100\\fscy100\\blur0)}}"
+            f"{{\\fad({entry_ms},0)\\fscx{entry_scale}\\fscy{entry_scale}"
+            f"\\frz-1\\blur1.4\\t(0,{entry_ms},1.35,"
+            f"\\fscx100\\fscy100\\frz0\\blur0)}}"
         )
     )
     kinetic_mode = str(cue.get("kinetic_mode") or "")
@@ -3894,10 +3981,10 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
             continue
         rendered.append(
             f"{entry_tag}{_ass_escape(line[:start])}"
-            f"{{\\c{colour}\\fscx100\\fscy100\\blur0.8"
+            f"{{\\c{colour}\\3c&H00101010&\\bord4.0\\shad1\\fscx100\\fscy100\\blur0.8"
             f"\\t(0,{duration_ms},\\fscx{scale}\\fscy{scale}\\blur0)}}"
             f"{_ass_escape(line[start:end])}"
-            f"{{\\c&H00F8FAFC&\\fscx100\\fscy100}}"
+            f"{{\\rCaption\\fscx100\\fscy100}}"
             f"{_ass_escape(line[end:])}"
         )
     return r"\N".join(rendered)
@@ -3915,6 +4002,7 @@ def build_business_talking_head_ass(
     time_offset_seconds: float = 0,
     theme: str = "general",
     font_family: str | None = None,
+    caption_font_family: str | None = None,
     overlay_preview: Mapping[str, Any] | None = None,
     subtitle_style_id: str = "adaptive_talking_head_v1",
 ) -> bytes:
@@ -3927,7 +4015,10 @@ def build_business_talking_head_ass(
     caption_style = spec["subtitle"]
     # One adaptive baseline; semantic color and motion are cue-local.
     typography = {"font": "Source Han Serif CN Heavy", "spacing": 0.12, "bold": -1}
-    selected_font = font_family or typography["font"]
+    selected_title_font = font_family or typography["font"]
+    selected_caption_font = caption_font_family or str(
+        caption_style.get("font_family") or CAPTION_FONT_FAMILY
+    )
     overlay_preview = overlay_preview or build_business_talking_head_overlay_preview(
         segments,
         title=title,
@@ -3962,13 +4053,13 @@ def build_business_talking_head_ass(
             and isinstance(segments[segment_index], Mapping)
             else None
         )
-        # Normalize legacy cached cues to the current baseline.  In
-        # particular, ``fade_in_scale`` used to contain a transform
-        # transition; it must not resurrect continuous subtitle movement.
+        # Normalize legacy cached cues to the current baseline.  The only
+        # allowed whole-cue transform is this short entrance; it settles back
+        # to a static caption and cannot resurrect continuous movement.
         cue["entry_motion"] = {
-            "type": "fade_in",
-            "duration_ms": 120,
-            "scale_from": 1.0,
+            "type": "elastic_pop",
+            "duration_ms": 180,
+            "scale_from": 0.90,
         }
         if selective_preview:
             # A persisted v3 preview can still contain kinetic_words written
@@ -4022,9 +4113,9 @@ PlayResY: {canvas["height"]}
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Title,{selected_font},{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
+Style: Title,{selected_title_font},{title_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,-1,0,0,0,100,100,0,0,1,{title_style["outline_width"]},{title_style["shadow"]},7,{title_style["safe_left"]},{title_style["safe_left"]},{title_style["safe_top"]},1
 Style: Accent,Arial,1,&H00ED3A7C,&H00ED3A7C,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
-Style: Caption,{selected_font},{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H30000000,&H00000000,{typography["bold"]},0,0,0,100,100,{typography["spacing"]},0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
+Style: Caption,{selected_caption_font},{caption_style["font_size"]},&H00FCFAF8,&H00FCFAF8,&H10101010,&H00000000,{typography["bold"]},0,0,0,100,100,0.02,0,1,{caption_style["outline_width"]},{caption_style["shadow"]},2,{round(canvas["width"] * 0.08)},{round(canvas["width"] * 0.08)},{caption_style["safe_bottom"]},1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text

@@ -539,6 +539,58 @@ def test_cloud_query_connection_failure_preserves_task_for_reconnect(
     assert completed.error_message is None
 
 
+def test_lost_submit_response_reconnects_same_task_with_idempotent_replay(
+    tmp_path: Path,
+) -> None:
+    repository = MockRepository(candidates=[], tasks=[])
+    runtime = FakeCloudRuntime()
+    original_submit = runtime.submit
+
+    def lose_first_submit_response(asset, *, language: str):
+        runtime.submit = original_submit
+        raise CloudProviderError(
+            "云端提交回执丢失。",
+            kind="connection",
+            outcome_unknown=True,
+        )
+
+    runtime.submit = lose_first_submit_response
+    service = TranscriptionService(
+        repository,
+        command_runner=fake_probe,
+        cloud_runtime=runtime,
+        cloud_storage_directory=tmp_path,
+        cloud_poll_interval_seconds=0,
+    )
+    queued = service.create_task(
+        media_name="owned.mp4",
+        media_type="video/mp4",
+        media_bytes=VIDEO_BYTES,
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        model_name="fun-asr",
+        async_processing=True,
+    )
+
+    with pytest.raises(TranscriptionError) as caught:
+        service.process_cloud_task(queued.task_id)
+
+    preserved = repository.get_task(queued.task_id)
+    assert caught.value.task_id == queued.task_id
+    assert preserved is not None
+    assert preserved.status == TaskStatus.OUTCOME_UNKNOWN
+    assert preserved.provider_job_id is None
+    assert preserved.provider_object_key
+    assert "提交回执" in (preserved.error_message or "")
+
+    completed = service.reconnect_cloud_task(queued.task_id)
+
+    assert completed.task_id == queued.task_id
+    assert completed.status == TaskStatus.SUCCEEDED
+    assert runtime.submissions == 1
+    assert len(repository.list_tasks()) == 1
+
+
 def test_authorization_is_versioned_and_caps_each_task(tmp_path: Path) -> None:
     store = ASRAuthorizationStore(tmp_path / "authorization.json")
     config = CloudEditorConfiguration(

@@ -12,9 +12,10 @@ from __future__ import annotations
 import importlib.util
 import re
 import threading
+import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
 
@@ -23,6 +24,7 @@ from src.adapters.douyin_parser import (
     LocalDouyinBrowserParserClient,
     parse_douyin_share_text,
 )
+from src.adapters.browser_window import reveal_browser_window
 from src.models import Platform
 from src.platforms import platform_label
 
@@ -95,6 +97,7 @@ _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
+_XIAOHONGSHU_BROWSER_MEDIA_MAX_BYTES = 300 * 1024 * 1024
 
 
 class PlatformLinkParserError(DouyinParserError):
@@ -124,6 +127,8 @@ class ParsedPlatformMedia:
     media_url: str
     title: str
     browser_user_agent: str | None = None
+    media_bytes: bytes | None = None
+    media_type: str | None = None
 
     @property
     def media_request_headers(self) -> dict[str, str]:
@@ -193,6 +198,18 @@ def _work_id_from_url(platform: Platform, url: str) -> str | None:
     return None
 
 
+def _is_xiaohongshu_search_page(url: str) -> bool:
+    """Accept both /search_result and /search_result/ browser URL variants."""
+    return urlparse(str(url or "")).path.rstrip("/") == "/search_result"
+
+
+def _xiaohongshu_needs_search_recovery(link: ParsedPlatformLink) -> bool:
+    return bool(
+        link.platform == Platform.XIAOHONGSHU
+        and "xsec_token" not in parse_qs(urlparse(link.share_url).query)
+    )
+
+
 class LocalPlatformLinkParserClient:
     """Single-link parser combining Douyin and dedicated platform browsers."""
 
@@ -208,6 +225,10 @@ class LocalPlatformLinkParserClient:
         self.platform_providers = dict(platform_providers)
         self.timeout_seconds = max(10.0, min(float(timeout_seconds), 60.0))
         self.http_client_factory = http_client_factory
+        self._xiaohongshu_media_cache: dict[
+            str, tuple[float, ParsedPlatformMedia]
+        ] = {}
+        self._xiaohongshu_media_cache_lock = threading.Lock()
 
     def capabilities(self) -> tuple[bool, str | None]:
         try:
@@ -236,11 +257,51 @@ class LocalPlatformLinkParserClient:
             )
         return True, None
 
+    def _ensure_session_for_resolution(
+        self, platform: Platform
+    ) -> tuple[bool, str | None]:
+        """Restart one persisted browser profile once before resolving a link."""
+        available, message = self.capabilities_for(platform)
+        if available or platform == Platform.DOUYIN:
+            return available, message
+        provider = self.platform_providers.get(platform)
+        if provider is None:
+            return available, message
+        status = getattr(provider, "session_status", lambda: None)()
+        if status is None or bool(getattr(status, "running", False)):
+            return available, message
+        start = (
+            getattr(provider, "start_public_browser", None)
+            if bool(getattr(provider, "anonymous_only", False))
+            else getattr(provider, "start_login_browser", None)
+        )
+        if not callable(start):
+            return available, message
+        try:
+            start()
+        except Exception:
+            # The provider status below remains the user-facing source of truth;
+            # never loop browser launches or hide a real login/verification gate.
+            pass
+        return self.capabilities_for(platform)
+
     def parse(self, share_text: str) -> ParsedPlatformLink:
         return parse_platform_share_text(share_text)
 
-    def resolve(self, share_text: str) -> ParsedPlatformMedia:
+    def resolve(
+        self,
+        share_text: str,
+        *,
+        search_keyword: str | None = None,
+        include_media_bytes: bool = False,
+    ) -> ParsedPlatformMedia:
         link = self.parse(share_text)
+        if link.platform == Platform.XIAOHONGSHU and link.work_id:
+            cached = self._get_cached_xiaohongshu_media(link.work_id)
+            if cached is not None and (
+                not include_media_bytes or cached.media_bytes is not None
+            ):
+                return cached
         if link.platform == Platform.DOUYIN:
             media = self.douyin_parser.resolve(share_text)
             return ParsedPlatformMedia(
@@ -257,7 +318,7 @@ class LocalPlatformLinkParserClient:
                 # The visible browser remains a no-cost fallback when B站临时
                 # limits its public metadata endpoint.
                 pass
-        available, message = self.capabilities_for(link.platform)
+        available, message = self._ensure_session_for_resolution(link.platform)
         if not available:
             raise PlatformLinkParserError(
                 message or f"{platform_label(link.platform)}浏览器未就绪。",
@@ -271,9 +332,232 @@ class LocalPlatformLinkParserClient:
                 work_id=link.work_id,
             )
         try:
-            return self._resolve_with_connected_browser(link)
+            return self._resolve_with_connected_browser(
+                link,
+                search_keyword=search_keyword,
+                include_media_bytes=include_media_bytes,
+            )
         finally:
             _BROWSER_LOCK.release()
+
+    def open_in_connected_browser(
+        self, share_text: str, *, search_keyword: str | None = None
+    ) -> ParsedPlatformLink:
+        """Navigate the existing authorized browser to one saved share link.
+
+        This is a viewing action, not media resolution: it reuses the platform
+        browser page, preserves its login session, and leaves the page open for
+        the customer to inspect.  It never creates a separate app popup or
+        returns a signed media URL to the frontend.
+        """
+        link = self.parse(share_text)
+        if link.platform != Platform.XIAOHONGSHU:
+            raise PlatformLinkParserError(
+                "当前浏览器查看入口仅支持小红书候选。",
+                platform=link.platform,
+                work_id=link.work_id,
+            )
+        available, message = self._ensure_session_for_resolution(link.platform)
+        if not available:
+            raise PlatformLinkParserError(
+                message or "小红书素材浏览器未就绪。",
+                platform=link.platform,
+                work_id=link.work_id,
+            )
+        if not _BROWSER_LOCK.acquire(timeout=2):
+            raise PlatformLinkParserError(
+                "已有小红书解析任务正在运行，请稍后再试。",
+                platform=link.platform,
+                work_id=link.work_id,
+            )
+        try:
+            return self._open_xiaohongshu_in_connected_browser(
+                link, search_keyword=search_keyword
+            )
+        finally:
+            _BROWSER_LOCK.release()
+
+    def _open_xiaohongshu_in_connected_browser(
+        self,
+        link: ParsedPlatformLink,
+        *,
+        search_keyword: str | None = None,
+    ) -> ParsedPlatformLink:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+
+        provider = self.platform_providers[Platform.XIAOHONGSHU]
+        endpoint = f"http://127.0.0.1:{provider.debug_port}"
+        page = None
+        owns_page = False
+        try:
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.connect_over_cdp(
+                    endpoint,
+                    timeout=int(self.timeout_seconds * 1000),
+                )
+                if not browser.contexts:
+                    raise PlatformLinkParserError(
+                        "小红书素材浏览器没有可用会话。",
+                        platform=link.platform,
+                        work_id=link.work_id,
+                    )
+                context = browser.contexts[0]
+                captured: dict[str, str] = {}
+
+                def capture_response(response) -> None:
+                    try:
+                        content_type = response.headers.get(
+                            "content-type", ""
+                        ).casefold()
+                        if (
+                            not captured.get("media_url")
+                            and content_type.startswith("video/")
+                            and response.url.startswith("https://")
+                            and ".m3u8" not in response.url.casefold()
+                        ):
+                            captured["media_url"] = response.url
+                        if "json" in content_type or self._is_media_api_url(
+                            Platform.XIAOHONGSHU, response.url
+                        ):
+                            self._capture_media_payload(
+                                response.json(), Platform.XIAOHONGSHU, captured
+                            )
+                    except Exception:
+                        return
+
+                existing_target = self._existing_xiaohongshu_detail_page(
+                    context, link
+                )
+                if existing_target is not None:
+                    page, final_link = existing_target
+                    if self._xiaohongshu_access_error(page) is None:
+                        try:
+                            page.bring_to_front()
+                        except PlaywrightError:
+                            pass
+                        self._cache_xiaohongshu_page_media(
+                            page, final_link, captured
+                        )
+                        reveal_browser_window(provider.debug_port)
+                        return final_link
+                if "xsec_token" not in parse_qs(urlparse(link.share_url).query):
+                    opened_target = self._open_xiaohongshu_search_result(
+                        context,
+                        link,
+                        search_keyword=search_keyword,
+                        response_callback=capture_response,
+                    )
+                    if opened_target is not None:
+                        page, final_link = opened_target
+                        try:
+                            page.bring_to_front()
+                        except PlaywrightError:
+                            pass
+                        self._cache_xiaohongshu_page_media(
+                            page, final_link, captured
+                        )
+                        reveal_browser_window(provider.debug_port)
+                        return final_link
+                    if search_keyword:
+                        raise PlatformLinkParserError(
+                            "小红书搜索结果中未找到这条作品，已停止继续扫描。",
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                # 新抓取候选已经保存平台生成的完整入口时直接打开；只有旧裸链接
+                # 或失效入口才回到搜索上下文恢复一次，避免每次点击都重新扫描。
+                target_url = self._xiaohongshu_context_url(context, link)
+                page_host = str(
+                    getattr(getattr(provider, "spec", None), "page_host", "xiaohongshu.com")
+                ).casefold()
+                search_pages = [
+                    existing_page
+                    for existing_page in list(context.pages)
+                    if _is_xiaohongshu_search_page(str(existing_page.url or ""))
+                ]
+                for existing_page in reversed(list(context.pages)):
+                    current_url = str(existing_page.url or "")
+                    if (
+                        page_host in current_url.casefold()
+                        and existing_page not in search_pages
+                    ):
+                        page = existing_page
+                        break
+                if page is None:
+                    page = context.new_page()
+                    owns_page = True
+                page.set_default_navigation_timeout(
+                    min(int(self.timeout_seconds * 1000), 15_000)
+                )
+                listener_page = page
+                listener_page.on("response", capture_response)
+
+                def navigate_once(url: str) -> ParsedPlatformLink:
+                    response = page.goto(url, wait_until="domcontentloaded")
+                    if response is not None and response.status in {403, 404, 412, 429}:
+                        raise PlatformLinkParserError(
+                            f"小红书页面返回 {response.status}，请在素材浏览器中确认登录状态。",
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    access_error = self._xiaohongshu_access_error(page)
+                    if access_error:
+                        raise PlatformLinkParserError(
+                            access_error,
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    final_link = parse_platform_share_text(str(page.url or url))
+                    if (
+                        final_link.platform != link.platform
+                        or final_link.work_id != link.work_id
+                    ):
+                        raise PlatformLinkParserError(
+                            "小红书页面跳转的作品与所选候选不一致，已停止打开。",
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    return final_link
+
+                try:
+                    final_link = navigate_once(target_url)
+                except PlatformLinkParserError as direct_error:
+                    opened_target = self._open_xiaohongshu_search_result(
+                        context,
+                        link,
+                        search_keyword=search_keyword,
+                        response_callback=capture_response,
+                    )
+                    if opened_target is None:
+                        raise direct_error
+                    page, final_link = opened_target
+                finally:
+                    try:
+                        listener_page.remove_listener("response", capture_response)
+                    except Exception:
+                        pass
+                self._cache_xiaohongshu_page_media(page, final_link, captured)
+                reveal_browser_window(provider.debug_port)
+                return final_link
+        except PlatformLinkParserError:
+            if owns_page and page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+            raise
+        except (PlaywrightError, OSError) as exc:
+            if owns_page and page is not None:
+                try:
+                    page.close()
+                except Exception:
+                    pass
+            raise PlatformLinkParserError(
+                "小红书素材浏览器打开失败，请确认专用浏览器仍在运行。",
+                platform=link.platform,
+                work_id=link.work_id,
+            ) from exc
 
     def _resolve_bilibili_public(
         self,
@@ -368,7 +652,11 @@ class LocalPlatformLinkParserClient:
         )
 
     def _resolve_with_connected_browser(
-        self, link: ParsedPlatformLink
+        self,
+        link: ParsedPlatformLink,
+        *,
+        search_keyword: str | None = None,
+        include_media_bytes: bool = False,
     ) -> ParsedPlatformMedia:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -378,6 +666,9 @@ class LocalPlatformLinkParserClient:
         captured: dict[str, str] = {}
         media_payloads: list[Any] = []
         page = None
+        owns_page = False
+        media_bytes: bytes | None = None
+        media_type: str | None = None
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.connect_over_cdp(
@@ -390,7 +681,70 @@ class LocalPlatformLinkParserClient:
                         platform=link.platform,
                         work_id=link.work_id,
                     )
-                page = browser.contexts[0].new_page()
+                context = browser.contexts[0]
+                def capture_response(response) -> None:
+                    try:
+                        content_type = response.headers.get(
+                            "content-type", ""
+                        ).casefold()
+                        if (
+                            not captured.get("media_url")
+                            and content_type.startswith("video/")
+                            and response.url.startswith("https://")
+                            and ".m3u8" not in response.url.casefold()
+                        ):
+                            captured["media_url"] = response.url
+                        if "json" in content_type or self._is_media_api_url(
+                            link.platform, response.url
+                        ):
+                            payload = response.json()
+                            if link.platform == Platform.KUAISHOU:
+                                if len(media_payloads) < 50:
+                                    media_payloads.append(payload)
+                            else:
+                                self._capture_media_payload(
+                                    payload, link.platform, captured
+                                )
+                    except Exception:
+                        return
+
+                existing_target = None
+                if link.platform == Platform.XIAOHONGSHU:
+                    existing_target = self._existing_xiaohongshu_detail_page(
+                        context, link
+                    )
+                    if (
+                        existing_target is not None
+                        and self._xiaohongshu_access_error(existing_target[0])
+                        is not None
+                    ):
+                        existing_target = None
+                if existing_target is not None:
+                    page, _ = existing_target
+                    target_url = str(page.url)
+                else:
+                    opened_target = None
+                    needs_search_recovery = _xiaohongshu_needs_search_recovery(link)
+                    if needs_search_recovery:
+                        opened_target = self._open_xiaohongshu_search_result(
+                            context,
+                            link,
+                            search_keyword=search_keyword,
+                            response_callback=capture_response,
+                        )
+                    if opened_target is not None:
+                        page, _ = opened_target
+                        target_url = str(page.url)
+                    elif needs_search_recovery and search_keyword:
+                        raise PlatformLinkParserError(
+                            "小红书搜索结果中未找到这条作品，已停止继续扫描。",
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    else:
+                        target_url = self._xiaohongshu_context_url(context, link)
+                        page = context.new_page()
+                        owns_page = True
                 try:
                     timeout_ms = int(self.timeout_seconds * 1000)
                     page.set_default_timeout(timeout_ms)
@@ -399,47 +753,52 @@ class LocalPlatformLinkParserClient:
                         page.evaluate("navigator.userAgent")
                     )
 
-                    def capture_response(response) -> None:
-                        try:
-                            content_type = response.headers.get(
-                                "content-type", ""
-                            ).casefold()
-                            if (
-                                self._may_capture_generic_video_response(link.platform)
-                                and not captured.get("media_url")
-                                and content_type.startswith("video/")
-                                and response.url.startswith("https://")
-                                and ".m3u8" not in response.url.casefold()
-                            ):
-                                captured["media_url"] = response.url
-                            if "json" in content_type or self._is_media_api_url(
-                                link.platform, response.url
-                            ):
-                                payload = response.json()
-                                if link.platform == Platform.KUAISHOU:
-                                    if len(media_payloads) < 50:
-                                        media_payloads.append(payload)
-                                else:
-                                    self._capture_media_payload(
-                                        payload, link.platform, captured
-                                    )
-                        except Exception:
-                            return
-
-                    page.on("response", capture_response)
-                    response = page.goto(link.share_url, wait_until="domcontentloaded")
-                    if response is not None and response.status in {403, 412, 429}:
-                        raise PlatformLinkParserError(
-                            f"{platform_label(link.platform)}返回 {response.status}，已停止解析。",
-                            platform=link.platform,
-                            work_id=link.work_id,
-                        )
-                    # Kuaishou hydrates the detail page after the first DOM event.  Keep
-                    # collecting scoped API payloads for a short initial window, then
-                    # actively wait for the sole detail-player source below.  On normal
-                    # customer networks currentSrc can appear after this five-second
-                    # window even though the exact work page is already loaded.
-                    page.wait_for_timeout(5_000)
+                    response = None
+                    if owns_page:
+                        page.on("response", capture_response)
+                        response = page.goto(target_url, wait_until="domcontentloaded")
+                    blocked_statuses = {403, 412, 429}
+                    if link.platform == Platform.XIAOHONGSHU:
+                        blocked_statuses.add(404)
+                    if response is not None and response.status in blocked_statuses:
+                        if link.platform == Platform.XIAOHONGSHU and owns_page:
+                            opened_target = self._open_xiaohongshu_search_result(
+                                context,
+                                link,
+                                search_keyword=search_keyword,
+                            )
+                            if opened_target is not None:
+                                try:
+                                    page.close()
+                                except PlaywrightError:
+                                    pass
+                                page, _ = opened_target
+                                owns_page = False
+                                captured.clear()
+                                media_payloads.clear()
+                                target_url = str(page.url)
+                                response = None
+                        if response is not None and response.status in blocked_statuses:
+                            raise PlatformLinkParserError(
+                                f"{platform_label(link.platform)}返回 {response.status}，已停止解析。",
+                                platform=link.platform,
+                                work_id=link.work_id,
+                            )
+                    # Kuaishou needs a conservative initial hydration window. For
+                    # Xiaohongshu, continue as soon as its response or player exists;
+                    # retain the same bounded wait only as a slow-network fallback.
+                    if link.platform == Platform.XIAOHONGSHU:
+                        waited_ms = 0
+                        while waited_ms < 5_000 and not captured.get("media_url"):
+                            try:
+                                if page.locator("video").count() > 0:
+                                    break
+                            except PlaywrightError:
+                                pass
+                            page.wait_for_timeout(250)
+                            waited_ms += 250
+                    else:
+                        page.wait_for_timeout(5_000)
                     check_block = getattr(provider, "_raise_for_visible_block", None)
                     if callable(check_block):
                         try:
@@ -463,6 +822,16 @@ class LocalPlatformLinkParserClient:
                     if final_link.platform != link.platform:
                         raise PlatformLinkParserError(
                             "分享链接跳转到了其他平台，已停止解析。",
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    if (
+                        link.platform == Platform.XIAOHONGSHU
+                        and link.work_id
+                        and final_link.work_id != link.work_id
+                    ):
+                        raise PlatformLinkParserError(
+                            "小红书页面跳转的作品与所选候选不一致，已停止转写。",
                             platform=link.platform,
                             work_id=link.work_id,
                         )
@@ -517,11 +886,26 @@ class LocalPlatformLinkParserClient:
                     title = captured.get("title") or self._clean_page_title(
                         page.title(), link.platform
                     )
+                    if include_media_bytes and link.platform == Platform.XIAOHONGSHU:
+                        resolved_media_url = captured.get("media_url")
+                        if not resolved_media_url:
+                            raise PlatformLinkParserError(
+                                "小红书页面已打开，但没有确认可读取的视频流。",
+                                platform=Platform.XIAOHONGSHU,
+                                work_id=work_id,
+                            )
+                        media_bytes, media_type = self._fetch_media_with_browser_context(
+                            context,
+                            resolved_media_url,
+                            final_url,
+                            browser_user_agent,
+                        )
                 finally:
-                    try:
-                        page.close()
-                    except PlaywrightError:
-                        pass
+                    if owns_page:
+                        try:
+                            page.close()
+                        except PlaywrightError:
+                            pass
                     page = None
         except PlatformLinkParserError:
             raise
@@ -556,7 +940,443 @@ class LocalPlatformLinkParserClient:
             media_url=media_url,
             title=(title or f"{platform_label(link.platform)}作品 {work_id}")[:200],
             browser_user_agent=browser_user_agent,
+            media_bytes=media_bytes,
+            media_type=media_type,
         )
+
+    @staticmethod
+    def _fetch_media_with_browser_context(
+        context: Any,
+        media_url: str,
+        referer: str,
+        browser_user_agent: str | None,
+    ) -> tuple[bytes, str]:
+        """Read XHS media with the already authorized browser context.
+
+        A CDN URL captured from a logged-in page is not necessarily readable by
+        a backend urllib request: XHS can require the browser context's
+        cookies/session state in addition to the signed URL.  Browser-context
+        requests reuse that session without exporting cookies to the backend.
+        """
+
+        response = None
+        try:
+            response = context.request.get(
+                media_url,
+                headers={
+                    "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+                    "Referer": referer,
+                    "User-Agent": browser_user_agent or _BROWSER_USER_AGENT,
+                },
+                timeout=60_000,
+                fail_on_status_code=False,
+            )
+            if response.status not in {200, 206}:
+                raise PlatformLinkParserError(
+                    "小红书视频已打开，但登录浏览器读取视频失败，请保持登录后重试。",
+                    platform=Platform.XIAOHONGSHU,
+                )
+            content_type = str(response.headers.get("content-type", "")).split(
+                ";", 1
+            )[0].strip().casefold()
+            if not (
+                content_type.startswith("video/")
+                or content_type in {"audio/mp4", "application/octet-stream"}
+            ):
+                raise PlatformLinkParserError(
+                    "小红书返回的内容不是可识别的视频文件，无法转写。",
+                    platform=Platform.XIAOHONGSHU,
+                )
+            raw_length = str(response.headers.get("content-length", "") or "")
+            try:
+                content_length = int(raw_length)
+            except ValueError:
+                content_length = 0
+            if content_length > _XIAOHONGSHU_BROWSER_MEDIA_MAX_BYTES:
+                raise PlatformLinkParserError(
+                    "小红书视频超过 300MB，无法直接转写。",
+                    platform=Platform.XIAOHONGSHU,
+                )
+            content = response.body()
+            if len(content) > _XIAOHONGSHU_BROWSER_MEDIA_MAX_BYTES:
+                raise PlatformLinkParserError(
+                    "小红书视频超过 300MB，无法直接转写。",
+                    platform=Platform.XIAOHONGSHU,
+                )
+            if not content:
+                raise PlatformLinkParserError(
+                    "小红书视频返回了空文件，无法转写。",
+                    platform=Platform.XIAOHONGSHU,
+                )
+            return content, content_type or "video/mp4"
+        except PlatformLinkParserError:
+            raise
+        except Exception as exc:
+            raise PlatformLinkParserError(
+                "小红书视频已打开，但登录浏览器读取视频失败，请保持登录后重试。",
+                platform=Platform.XIAOHONGSHU,
+            ) from exc
+        finally:
+            if response is not None:
+                try:
+                    response.dispose()
+                except Exception:
+                    pass
+
+    @staticmethod
+    def _xiaohongshu_context_url(
+        context: Any,
+        link: ParsedPlatformLink,
+        *,
+        force_search_context: bool = False,
+    ) -> str:
+        """Recover the tokenized URL by using the visible logged-in search card."""
+        if link.platform != Platform.XIAOHONGSHU or not link.work_id:
+            return link.share_url
+        if (
+            "xsec_token" in parse_qs(urlparse(link.share_url).query)
+            and not force_search_context
+        ):
+            return link.share_url
+        escaped_work_id = link.work_id.replace('"', "")
+        selectors = (
+            f'a[href*="/explore/{escaped_work_id}"]',
+            f'a[href*="/discovery/item/{escaped_work_id}"]',
+        )
+        pages = list(getattr(context, "pages", ()) or ())
+        for existing_page in reversed(pages):
+            current_url = str(getattr(existing_page, "url", "") or "")
+            is_search_page = _is_xiaohongshu_search_page(current_url)
+            # 详情页会保留当前作品的旧授权链接，不能把它当成新的入口。
+            # 测试替身可能没有 URL，因此仅在 URL 已知且明确不是搜索页时跳过。
+            if current_url and not is_search_page:
+                continue
+            if (
+                is_search_page
+                and "xsec_token=" in current_url
+                and not force_search_context
+            ):
+                try:
+                    current_link = parse_platform_share_text(current_url)
+                except PlatformLinkParserError:
+                    current_link = None
+                if current_link is not None and current_link.work_id == link.work_id:
+                    return current_link.share_url
+            if not force_search_context:
+                for selector in selectors:
+                    try:
+                        hrefs = existing_page.locator(selector).evaluate_all(
+                            "nodes => nodes.map(node => node.href || node.getAttribute('href') || '')"
+                        )
+                    except Exception:
+                        continue
+                    for href in hrefs if isinstance(hrefs, list) else ():
+                        if not isinstance(href, str) or "xsec_token=" not in href:
+                            continue
+                        try:
+                            candidate = parse_platform_share_text(href)
+                        except PlatformLinkParserError:
+                            continue
+                        if (
+                            candidate.platform == Platform.XIAOHONGSHU
+                            and candidate.work_id == link.work_id
+                        ):
+                            return candidate.share_url
+            if current_url and not is_search_page:
+                continue
+            for round_index in range(14):
+                for selector in selectors:
+                    try:
+                        anchor = existing_page.locator(selector)
+                        card = existing_page.locator("section.note-item").filter(
+                            has=anchor
+                        )
+                        if card.count() != 1:
+                            continue
+                        previous_url = str(existing_page.url)
+                        card.click(timeout=5_000)
+                        existing_page.wait_for_timeout(800)
+                        routed_url = str(existing_page.url)
+                        try:
+                            routed_link = parse_platform_share_text(routed_url)
+                        except PlatformLinkParserError:
+                            routed_link = None
+                        if previous_url != routed_url:
+                            try:
+                                existing_page.go_back(
+                                    wait_until="domcontentloaded", timeout=5_000
+                                )
+                            except Exception:
+                                pass
+                        if (
+                            routed_link is not None
+                            and routed_link.platform == Platform.XIAOHONGSHU
+                            and routed_link.work_id == link.work_id
+                            and "xsec_token=" in routed_link.share_url
+                        ):
+                            return routed_link.share_url
+                    except Exception:
+                        continue
+                try:
+                    if round_index == 0:
+                        existing_page.evaluate("window.scrollTo(0, 0)")
+                    else:
+                        existing_page.evaluate(
+                            "window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))"
+                        )
+                    existing_page.wait_for_timeout(350)
+                except Exception:
+                    break
+        return link.share_url
+
+    @staticmethod
+    def _existing_xiaohongshu_detail_page(
+        context: Any, link: ParsedPlatformLink
+    ) -> tuple[Any, ParsedPlatformLink] | None:
+        """Return an already-open exact detail page without navigating it again."""
+        if link.platform != Platform.XIAOHONGSHU or not link.work_id:
+            return None
+        for existing_page in reversed(list(getattr(context, "pages", ()) or ())):
+            current_url = str(getattr(existing_page, "url", "") or "")
+            if _is_xiaohongshu_search_page(current_url):
+                continue
+            try:
+                current_link = parse_platform_share_text(current_url)
+            except PlatformLinkParserError:
+                continue
+            if (
+                current_link.platform == Platform.XIAOHONGSHU
+                and current_link.work_id == link.work_id
+            ):
+                return existing_page, current_link
+        return None
+
+    @staticmethod
+    def _open_xiaohongshu_search_result(
+        context: Any,
+        link: ParsedPlatformLink,
+        *,
+        search_keyword: str | None = None,
+        response_callback: Any | None = None,
+    ) -> tuple[Any, ParsedPlatformLink] | None:
+        """Open the exact visible search card and keep that generated page alive."""
+        if link.platform != Platform.XIAOHONGSHU or not link.work_id:
+            return None
+        escaped_work_id = link.work_id.replace('"', "")
+        selectors = (
+            f'a[href*="/explore/{escaped_work_id}"]',
+            f'a[href*="/discovery/item/{escaped_work_id}"]',
+        )
+        search_pages = [
+            page
+            for page in reversed(list(getattr(context, "pages", ()) or ()))
+            if _is_xiaohongshu_search_page(str(getattr(page, "url", "") or ""))
+        ]
+        if not search_pages:
+            # Opening one result turns the material browser's search tab into a
+            # detail page.  For the next candidate, restore that same browser
+            # history entry before considering a fresh keyword search.  This keeps
+            # the already-loaded result set and avoids a new scan on every click.
+            for existing_page in reversed(
+                list(getattr(context, "pages", ()) or ())
+            ):
+                current_url = str(getattr(existing_page, "url", "") or "")
+                try:
+                    current_link = parse_platform_share_text(current_url)
+                except PlatformLinkParserError:
+                    continue
+                if current_link.platform != Platform.XIAOHONGSHU:
+                    continue
+                try:
+                    existing_page.go_back(
+                        wait_until="domcontentloaded", timeout=5_000
+                    )
+                    existing_page.wait_for_timeout(250)
+                except Exception:
+                    continue
+                if _is_xiaohongshu_search_page(
+                    str(getattr(existing_page, "url", "") or "")
+                ):
+                    search_pages.append(existing_page)
+                    break
+        if search_keyword:
+            # Legacy candidates may be opened after the original search tab has
+            # moved elsewhere. Recreate only the recorded keyword search; the
+            # exact work_id check below remains mandatory.
+            keyword = str(search_keyword).strip()[:80]
+            if keyword:
+                search_page = None
+                try:
+                    target_visible = False
+                    for existing_page in search_pages:
+                        for selector in selectors:
+                            anchor = existing_page.locator(selector)
+                            card = existing_page.locator("section.note-item").filter(
+                                has=anchor
+                            )
+                            if card.count() == 1:
+                                target_visible = True
+                                break
+                        if target_visible:
+                            break
+                    if target_visible:
+                        search_page = None
+                    elif search_pages:
+                        search_page = search_pages[0]
+                    else:
+                        search_page = context.new_page()
+                    if search_page is None:
+                        pass
+                    else:
+                        search_page.set_default_navigation_timeout(15_000)
+                        response = search_page.goto(
+                            "https://www.xiaohongshu.com/search_result/?"
+                            f"keyword={quote(keyword, safe='')}&type=51"
+                            "&source=web_search_result_notes",
+                            wait_until="domcontentloaded",
+                        )
+                        if response is None or response.status < 400:
+                            search_page.wait_for_timeout(1_200)
+                            if search_page not in search_pages:
+                                search_pages.append(search_page)
+                        else:
+                            if search_page not in search_pages:
+                                search_page.close()
+                except Exception:
+                    if search_page is not None and search_page not in search_pages:
+                        try:
+                            search_page.close()
+                        except Exception:
+                            pass
+        for search_page in search_pages:
+            if response_callback is not None:
+                search_page.on("response", response_callback)
+            try:
+                for round_index in range(14):
+                    for selector in selectors:
+                        try:
+                            anchor = search_page.locator(selector)
+                            card = search_page.locator("section.note-item").filter(
+                                has=anchor
+                            )
+                            if card.count() != 1:
+                                continue
+                            previous_url = str(search_page.url)
+                            card.click(timeout=5_000)
+                            search_page.wait_for_timeout(
+                                1_200 if response_callback is not None else 800
+                            )
+                            try:
+                                final_link = parse_platform_share_text(
+                                    str(search_page.url)
+                                )
+                            except PlatformLinkParserError:
+                                final_link = None
+                            if (
+                                final_link is not None
+                                and final_link.platform == Platform.XIAOHONGSHU
+                                and final_link.work_id == link.work_id
+                            ):
+                                return search_page, final_link
+                            if str(search_page.url) != previous_url:
+                                try:
+                                    search_page.go_back(
+                                        wait_until="domcontentloaded", timeout=5_000
+                                    )
+                                except Exception:
+                                    return None
+                        except Exception:
+                            continue
+                    try:
+                        if round_index == 0:
+                            search_page.evaluate("window.scrollTo(0, 0)")
+                        else:
+                            search_page.evaluate(
+                                "window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))"
+                            )
+                        search_page.wait_for_timeout(350)
+                    except Exception:
+                        break
+            finally:
+                if response_callback is not None:
+                    try:
+                        search_page.remove_listener("response", response_callback)
+                    except Exception:
+                        pass
+        return None
+
+    def _get_cached_xiaohongshu_media(
+        self, work_id: str
+    ) -> ParsedPlatformMedia | None:
+        now = time.monotonic()
+        with self._xiaohongshu_media_cache_lock:
+            for key, (expires_at, _) in list(
+                self._xiaohongshu_media_cache.items()
+            ):
+                if expires_at <= now:
+                    self._xiaohongshu_media_cache.pop(key, None)
+            cached = self._xiaohongshu_media_cache.get(work_id)
+            return cached[1] if cached is not None else None
+
+    def _cache_xiaohongshu_page_media(
+        self,
+        page: Any,
+        link: ParsedPlatformLink,
+        captured: dict[str, str],
+    ) -> None:
+        if not link.work_id:
+            return
+        if not captured.get("media_url"):
+            self._capture_xiaohongshu_page_state(page, captured)
+        if not captured.get("media_url"):
+            try:
+                video = page.locator("video")
+                if video.count() > 0:
+                    media_url = video.first.evaluate(
+                        "node => node.currentSrc || node.src || ''"
+                    )
+                    if (
+                        isinstance(media_url, str)
+                        and media_url.startswith("https://")
+                        and ".m3u8" not in media_url.casefold()
+                    ):
+                        captured["media_url"] = media_url
+            except Exception:
+                pass
+        media_url = captured.get("media_url")
+        if not media_url:
+            return
+        try:
+            browser_user_agent = self._safe_browser_user_agent(
+                page.evaluate("navigator.userAgent")
+            )
+        except Exception:
+            browser_user_agent = None
+        title = captured.get("title")
+        if not title:
+            try:
+                title = self._clean_page_title(page.title(), Platform.XIAOHONGSHU)
+            except Exception:
+                title = None
+        media = ParsedPlatformMedia(
+            platform=Platform.XIAOHONGSHU,
+            share_url=link.share_url,
+            work_id=link.work_id,
+            media_url=media_url,
+            title=(title or f"小红书作品 {link.work_id}")[:200],
+            browser_user_agent=browser_user_agent,
+        )
+        with self._xiaohongshu_media_cache_lock:
+            if len(self._xiaohongshu_media_cache) >= 32:
+                oldest = min(
+                    self._xiaohongshu_media_cache,
+                    key=lambda key: self._xiaohongshu_media_cache[key][0],
+                )
+                self._xiaohongshu_media_cache.pop(oldest, None)
+            self._xiaohongshu_media_cache[link.work_id] = (
+                time.monotonic() + 120.0,
+                media,
+            )
 
     @staticmethod
     def _safe_browser_user_agent(value: object) -> str | None:

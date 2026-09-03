@@ -266,3 +266,12 @@ def test_brand_title_font_is_served_from_the_same_editor_api():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("font/otf")
     assert len(response.content) > 100_000
+
+
+def test_caption_font_is_served_from_the_same_editor_api():
+    with TestClient(app) as client:
+        response = client.get("/api/v1/video-editor/caption-font")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("font/ttf")
+    assert len(response.content) > 100_000

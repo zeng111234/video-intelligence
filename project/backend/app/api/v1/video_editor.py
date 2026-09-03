@@ -39,6 +39,12 @@ _BRAND_TITLE_FONT = (
     / "fonts"
     / "SourceHanSerifCN-Heavy.otf"
 )
+_CAPTION_FONT = (
+    Path(__file__).resolve().parents[5]
+    / "assets"
+    / "fonts"
+    / "SmileySans-Oblique.ttf"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +338,19 @@ def get_brand_title_font():
         _BRAND_TITLE_FONT,
         media_type="font/otf",
         filename="SourceHanSerifCN-Heavy.otf",
+    )
+
+
+@router.get("/caption-font")
+def get_caption_font():
+    """Serve the bundled display font used by the caption preview and export."""
+
+    if not _CAPTION_FONT.is_file():
+        raise HTTPException(status_code=503, detail="字幕字体暂不可用。")
+    return FileResponse(
+        _CAPTION_FONT,
+        media_type="font/ttf",
+        filename="SmileySans-Oblique.ttf",
     )
 
 

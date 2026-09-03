@@ -33,9 +33,11 @@ import {
   previewCrawlerBatch,
   preflightProductionBatch,
   recordManualPublishResult,
+  resolveCrawlerCandidateOriginalMedia,
   retryProductionBatchFailed,
   reviewProductionBatchItems,
   reviewProductionTranscriptWithAI,
+  openCrawlerCandidateOriginalInBrowser,
   saveProductionWorkspaceConfiguration,
   startCrawlerBrowserDiscovery,
   startProductionBatch,
@@ -85,10 +87,12 @@ vi.mock("../api/client", async () => {
     preflightProductionBatchPublish: vi.fn(),
     previewCrawlerBatch: vi.fn(),
     recordManualPublishResult: vi.fn(),
+    resolveCrawlerCandidateOriginalMedia: vi.fn(),
     resumeProductionBatch: vi.fn(),
     retryProductionBatchFailed: vi.fn(),
     reviewProductionBatchItems: vi.fn(),
     reviewProductionTranscriptWithAI: vi.fn(),
+    openCrawlerCandidateOriginalInBrowser: vi.fn(),
     saveProductionWorkspaceConfiguration: vi.fn(),
     startCrawlerBrowserDiscovery: vi.fn(),
     startProductionBatch: vi.fn(),
@@ -536,6 +540,17 @@ describe("PipelinePage customer workspace", () => {
       default_profile_id: profile.profile_id,
       default_publish_platforms: ["douyin"],
       bundled_compute: true,
+    });
+    vi.mocked(resolveCrawlerCandidateOriginalMedia).mockResolvedValue({
+      candidate_id: "candidate-xhs",
+      platform: "xiaohongshu",
+      share_url: "https://www.xiaohongshu.com/explore/candidate-xhs",
+      media_url: "https://example.com/candidate-xhs.mp4",
+    });
+    vi.mocked(openCrawlerCandidateOriginalInBrowser).mockResolvedValue({
+      candidate_id: "candidate-xhs",
+      platform: "xiaohongshu",
+      opened: true,
     });
     vi.mocked(createCrawlerProgressiveBatch).mockImplementation(async (params) => {
       const batch = await vi.mocked(createCrawlerBatch)(params);
@@ -1241,6 +1256,57 @@ describe("PipelinePage customer workspace", () => {
       expect(screen.getByRole("button", { name: new RegExp(item.title) })).toBeTruthy();
     });
     expect(screen.getAllByText("点赞 4,000 · 评论 100 · 分享 30 · 收藏 80")).toHaveLength(3);
+  });
+
+  it("prepares a selected Xiaohongshu candidate once before opening it", async () => {
+    const xhsCandidate: CrawlerCandidateResult = {
+      ...candidate,
+      video_id: "candidate-xhs",
+      title: "小红书可转写素材",
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      source_url: "https://www.xiaohongshu.com/explore/candidate-xhs",
+    };
+    const response = crawlerBatch([xhsCandidate]);
+    response.platform_runs[0] = {
+      ...response.platform_runs[0],
+      platform: "xiaohongshu",
+      platform_label: "小红书",
+      candidates: [xhsCandidate],
+    };
+    vi.mocked(createCrawlerBatch).mockResolvedValue(response);
+    let finishPreparation!: () => void;
+    vi.mocked(resolveCrawlerCandidateOriginalMedia).mockReturnValue(new Promise((resolve) => {
+      finishPreparation = () => resolve({
+        candidate_id: xhsCandidate.video_id,
+        platform: "xiaohongshu",
+        share_url: "https://www.xiaohongshu.com/explore/candidate-xhs",
+        media_url: "https://example.com/candidate-xhs.mp4",
+      });
+    }));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "小红书素材" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+    const candidateTitles = await screen.findAllByText("小红书可转写素材");
+    const selectCandidate = candidateTitles
+      .map((title) => title.closest("button"))
+      .find((button) => button?.className.includes("candidate-select"));
+    expect(selectCandidate).toBeTruthy();
+    fireEvent.click(selectCandidate!);
+
+    await waitFor(() => expect(resolveCrawlerCandidateOriginalMedia).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("正在准备原视频，完成后可直接查看和转写。")).toBeTruthy();
+    finishPreparation();
+    expect(await screen.findByText("原视频已准备，可直接查看和转写。")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /查看「小红书可转写素材」原视频/ }));
+    await waitFor(() => expect(openCrawlerCandidateOriginalInBrowser).toHaveBeenCalledWith(
+      xhsCandidate.video_id,
+    ));
+    expect(resolveCrawlerCandidateOriginalMedia).toHaveBeenCalledTimes(1);
   });
 
   it("shows unavailable interaction metrics truthfully instead of turning them into zero", async () => {

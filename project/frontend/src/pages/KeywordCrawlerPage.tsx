@@ -43,7 +43,7 @@ import {
   listCrawlerKeywordQueues,
   pauseCrawlerKeywordQueue,
   previewCrawlerCandidateMedia,
-  resolveCrawlerCandidateOriginalMedia,
+  openCrawlerCandidateOriginalInBrowser,
   recheckCrawlerBatchLegacyNoText,
   resumeCrawlerKeywordQueue,
   cancelCrawlerKeywordQueue,
@@ -74,10 +74,7 @@ const { Text, Title, Paragraph } = Typography;
 const RECENT_RESULT_REUSE_MINUTES = 10;
 
 async function openResolvedCandidateOriginalMedia(candidateId: string) {
-  await resolveCrawlerCandidateOriginalMedia(candidateId);
-  window.location.assign(
-    `/api/v1/crawler/candidates/${encodeURIComponent(candidateId)}/original-media`,
-  );
+  await openCrawlerCandidateOriginalInBrowser(candidateId);
 }
 
 function openCandidateOriginalMedia(candidate: Pick<CrawlerCandidateResult, "platform" | "video_id" | "source_url">) {
@@ -648,12 +645,11 @@ export default function KeywordCrawlerPage() {
         if (!active) return;
         const item = queue.items[0];
         const terminal = ["succeeded", "partial", "failed", "cancelled", "paused"].includes(queue.status);
-        // Keep the last running queue visible while the durable terminal batch
-        // is fetched. Publishing the terminal queue first lets the reveal
-        // component finalize the previous in-progress snapshot prematurely.
         if (!terminal) setSingleSearchQueue(queue);
         const progressBatch = item ? buildProgressiveBatch(queue, item) : null;
         const snapshots: CrawlerBatchResponse[] = [];
+        let finalBatchReadFailed = false;
+        let finalBatchReadHadNonTimeoutError = false;
         if (item?.batch_id || item?.partial_batch_ids?.length) {
           const ids = [...new Set(
             item.partial_batch_ids?.length
@@ -662,19 +658,39 @@ export default function KeywordCrawlerPage() {
                 ? [item.batch_id]
                 : [],
           )];
-          const results = await Promise.allSettled(ids.map((id) => getCrawlerBatch(id)));
+          const results = await Promise.allSettled(ids.map((id) => Promise.race([
+            getCrawlerBatch(id),
+            new Promise<never>((_, reject) => window.setTimeout(
+              () => reject(new Error("最终结果读取超时，已保留当前已找到的素材。")),
+              8_000,
+            )),
+          ])));
           results.forEach((result) => {
             if (result.status === "fulfilled") snapshots.push(result.value);
+            if (
+              result.status === "rejected"
+              && !String(result.reason?.message || result.reason).includes("最终结果读取超时")
+            ) {
+              finalBatchReadHadNonTimeoutError = true;
+            }
           });
-          if (results.some((result) => result.status === "rejected")) {
-            setSearchProgressError((current) => current || "部分旧结果已失效，已保留仍能读取的素材。");
-          }
+          finalBatchReadFailed = results.some((result) => result.status === "rejected");
         }
         const partial = mergeCrawlerProgressSnapshots([
           ...(progressBatch ? [progressBatch] : []),
           ...snapshots,
         ]);
         if (active && partial) setSearchResultBatch(partial);
+        const partialHasCandidates = Boolean(partial?.platform_runs.some(
+          (run) => run.candidates.length > 0 || (run.reference_candidates || []).length > 0,
+        ));
+        if ((finalBatchReadFailed && !partialHasCandidates) || finalBatchReadHadNonTimeoutError) {
+          setSearchProgressError((current) => current || (
+            finalBatchReadHadNonTimeoutError
+              ? "部分旧结果已失效，已保留仍能读取的素材。"
+              : "部分旧结果已失效，请重新搜索。"
+          ));
+        }
         if (terminal) {
           setSingleSearchQueue(queue);
           searchInFlightRef.current = false;

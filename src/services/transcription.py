@@ -417,7 +417,15 @@ class TranscriptionService:
             source_kind=source_kind,
             source_url=source_url,
             is_mock=False,
-            outputs={"source_media_path": str(media_path)},
+            outputs={
+                "source_media_path": str(media_path),
+                # Inline callers immediately process this task themselves.  The
+                # background worker must not claim it in the short window between
+                # persistence and process_cloud_task(), otherwise the same task is
+                # processed twice and the second caller can overwrite a recoverable
+                # provider state.
+                "processing_mode": "background" if async_processing else "inline",
+            },
         )
         self._save_task(task, on_progress)
         if async_processing:
@@ -437,6 +445,30 @@ class TranscriptionService:
             return self._process_cloud_task_locked(
                 task_id,
                 on_progress=on_progress,
+            )
+
+    def reconnect_cloud_task(
+        self,
+        task_id: str,
+        *,
+        on_progress: Callable[[TranscriptionTask], None] | None = None,
+    ) -> TranscriptionTask:
+        """Reconnect one persisted task without creating another paid request.
+
+        A provider job id is queried directly.  If the desktop lost the submit
+        response before persisting that id, upload and submit are replayed with the
+        original task id; the control plane's durable idempotency records either
+        return the original response or keep the operation outcome-unknown.
+        """
+
+        lock_index = hashlib.sha256(task_id.encode("utf-8")).digest()[0] % len(
+            self._cloud_task_locks
+        )
+        with self._cloud_task_locks[lock_index]:
+            return self._process_cloud_task_locked(
+                task_id,
+                on_progress=on_progress,
+                allow_idempotent_recovery=True,
             )
 
     def review_completed_cloud_task(self, task_id: str) -> TranscriptionTask:
@@ -491,6 +523,7 @@ class TranscriptionService:
         task_id: str,
         *,
         on_progress: Callable[[TranscriptionTask], None] | None = None,
+        allow_idempotent_recovery: bool = False,
     ) -> TranscriptionTask:
         from src.services.video_editor_cloud import ProviderJobStatus
 
@@ -520,7 +553,15 @@ class TranscriptionService:
                 self._save_task(task, on_progress)
                 snapshot = self.cloud_runtime.query(task.provider_job_id)
             else:
-                if task.status not in {TaskStatus.QUEUED, TaskStatus.FAILED}:
+                recoverable_lost_submit_response = (
+                    allow_idempotent_recovery
+                    and task.status == TaskStatus.OUTCOME_UNKNOWN
+                    and bool(task.provider_object_key)
+                )
+                if (
+                    task.status not in {TaskStatus.QUEUED, TaskStatus.FAILED}
+                    and not recoverable_lost_submit_response
+                ):
                     raise TranscriptionError(
                         "上次云端提交结果无法确认，系统不会自动重复扣费。",
                         code="submission_outcome_unknown",
@@ -748,8 +789,15 @@ class TranscriptionService:
                         else exc.user_message
                         if isinstance(exc, TranscriptionError)
                         else (
-                            "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
-                            "请重新连接查询，系统不会重复提交。"
+                            (
+                                "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
+                                "请重新连接查询，系统不会重复提交。"
+                            )
+                            if task.provider_job_id
+                            else (
+                                "云端转写提交回执暂时无法确认，素材和原任务编号已保留；"
+                                "请重新连接恢复，系统不会创建第二个本地任务。"
+                            )
                             if outcome_unknown
                             else f"阿里云语音识别失败（{_cloud_failure_summary(exc)}），"
                             "素材已保留；请重新上传并识别。"
@@ -764,8 +812,15 @@ class TranscriptionService:
                 raise
             raise TranscriptionError(
                 (
-                    "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
-                    "请重新连接查询，系统不会重复提交。"
+                    (
+                        "阿里云任务状态查询暂时失败（连接异常），素材和任务编号已保留；"
+                        "请重新连接查询，系统不会重复提交。"
+                    )
+                    if task.provider_job_id
+                    else (
+                        "云端转写提交回执暂时无法确认，素材和原任务编号已保留；"
+                        "请重新连接恢复，系统不会创建第二个本地任务。"
+                    )
                     if outcome_unknown
                     else f"阿里云语音识别失败（{_cloud_failure_summary(exc)}），"
                     "素材已保留；请重新上传并识别。"

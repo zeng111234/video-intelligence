@@ -136,6 +136,10 @@ class TranscriptAIReviewRequest(BaseModel):
     run_id: str = Field(..., min_length=1)
 
 
+class TranscriptReconnectRequest(BaseModel):
+    run_id: str = Field(..., min_length=1)
+
+
 def _profile_response(profile) -> dict[str, Any]:
     return profile.model_dump(mode="json")
 
@@ -431,6 +435,28 @@ def resume_batch(batch_id: str, service=Depends(get_production_service)):
 def retry_failed_batch(batch_id: str, service=Depends(get_production_service), pipeline_service=Depends(get_pipeline_service)):
     try:
         return _batch_response(service.retry_failed(batch_id, pipeline_service=pipeline_service), service)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/batches/{batch_id}/reconnect-transcription")
+def reconnect_batch_transcription(
+    batch_id: str,
+    body: TranscriptReconnectRequest,
+    service=Depends(get_production_service),
+    pipeline_service=Depends(get_pipeline_service),
+    transcription_service=Depends(get_transcription_service),
+):
+    try:
+        return _batch_response(
+            service.reconnect_transcription(
+                batch_id,
+                run_id=body.run_id,
+                pipeline_service=pipeline_service,
+                transcription_service=transcription_service,
+            ),
+            service,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

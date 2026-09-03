@@ -53,3 +53,21 @@ def test_transcription_worker_processes_one_task_when_owner_session_is_ready():
 
     assert worker.tick_once() is queued
     assert processed == [queued.task_id]
+
+
+def test_transcription_worker_does_not_claim_inline_task():
+    repository = MockRepository(tasks=[])
+    inline = _queued_cloud_task().model_copy(
+        update={"outputs": {"processing_mode": "inline"}}
+    )
+    repository.save_task(inline)
+    processed: list[str] = []
+    service = SimpleNamespace(
+        repository=repository,
+        process_cloud_task=lambda task_id: processed.append(task_id),
+    )
+
+    worker = TranscriptionWorker(service, can_process=lambda: True)
+
+    assert worker.tick_once() is None
+    assert processed == []

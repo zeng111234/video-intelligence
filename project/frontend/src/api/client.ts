@@ -771,6 +771,16 @@ export function retryProductionBatchFailed(batchId: string): Promise<ProductionB
   return request(`/production/batches/${encodeURIComponent(batchId)}/retry-failed`, { method: "POST" });
 }
 
+export function reconnectProductionBatchTranscription(
+  batchId: string,
+  runId: string,
+): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/reconnect-transcription`, {
+    method: "POST",
+    body: JSON.stringify({ run_id: runId }),
+  });
+}
+
 export function preflightProductionBatchPublish(batchId: string, params: {
   runIds: string[];
   targets?: ProductionPublishTarget[];
@@ -1320,6 +1330,16 @@ export function resolveCrawlerCandidateOriginalMedia(
 ): Promise<CrawlerCandidateOriginalMediaResponse> {
   return request(`/crawler/candidates/${encodeURIComponent(candidateId)}/original-media`, {
     headers: { Accept: "application/json" },
+  });
+}
+
+export function openCrawlerCandidateOriginalInBrowser(candidateId: string): Promise<{
+  candidate_id: string;
+  platform: string;
+  opened: boolean;
+}> {
+  return request(`/crawler/candidates/${encodeURIComponent(candidateId)}/open-original-in-browser`, {
+    method: "POST",
   });
 }
 

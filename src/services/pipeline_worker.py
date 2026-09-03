@@ -7,8 +7,12 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import parse_qsl, urlparse
 from uuid import uuid4
 
+from src.adapters.avatar import AvatarProviderError
+from src.adapters.douyin_parser import DouyinParserError
+from src.adapters.publishers.sandbox import SandboxPublisher
 from src.models import (
     AvatarSubmitRequest,
     AvatarTask,
@@ -22,13 +26,24 @@ from src.models import (
     TaskStatus,
     TranscriptionTask,
 )
-from src.adapters.douyin_parser import DouyinParserError
-from src.adapters.avatar import AvatarProviderError
-from src.adapters.publishers.sandbox import SandboxPublisher
 from src.services.avatar import AvatarServiceUnavailableError
+from src.services.production import candidate_xiaohongshu_search_keyword
 from src.services.publish_metadata import suggested_publish_draft
 
 logger = logging.getLogger(__name__)
+
+
+def _has_xiaohongshu_xsec_token(value: object) -> bool:
+    """Return whether a saved XHS entry is richer than a bare note URL."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    parsed = urlparse(value.strip())
+    host = (parsed.hostname or "").casefold()
+    if host != "xiaohongshu.com" and not host.endswith(".xiaohongshu.com"):
+        return False
+    return "xsec_token" in {
+        key.casefold() for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+    }
 
 
 class PipelineWorker:
@@ -457,6 +472,36 @@ class PipelineWorker:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "分享链接转写服务未配置。")
                 return
             request = dict(run.config.get("candidate_request") or {})
+            search_keyword = (
+                str(
+                    request.get("search_keyword")
+                    or run.config.get("search_keyword")
+                    or ""
+                ).strip()
+                or None
+            )
+            if candidate_platform == Platform.XIAOHONGSHU.value:
+                candidate_id = str(
+                    getattr(run, "candidate_video_id", "")
+                    or run.config.get("candidate_id")
+                    or ""
+                ).strip()
+                candidate = (
+                    self.repository.get_candidate(candidate_id)
+                    if candidate_id
+                    else None
+                )
+                current_source_url = str(getattr(candidate, "source_url", "") or "")
+                # A customer may prepare/open the material after an older production
+                # batch was created.  Always upgrade that stale bare URL to the richer
+                # signed entry now stored on the candidate; never downgrade the reverse.
+                if (
+                    _has_xiaohongshu_xsec_token(current_source_url)
+                    and not _has_xiaohongshu_xsec_token(share_text)
+                ):
+                    share_text = current_source_url
+                if not search_keyword:
+                    search_keyword = candidate_xiaohongshu_search_keyword(candidate)
             if not share_text:
                 self._fail(run, PipelineStage.TRANSCRIPTION, "缺少平台分享链接。")
                 return
@@ -498,9 +543,52 @@ class PipelineWorker:
                                 request.get("model_name") or "large-v3-turbo"
                             ),
                             candidate_id=run.candidate_video_id,
+                            search_keyword=search_keyword,
                         )
                     )
             except DouyinParserError as exc:
+                task_id = str(
+                    getattr(exc, "task_id", "")
+                    or getattr(getattr(exc, "__cause__", None), "task_id", "")
+                    or ""
+                ).strip()
+                task = self.repository.get_task(task_id) if task_id else None
+                if (
+                    isinstance(task, TranscriptionTask)
+                    and task.status == TaskStatus.OUTCOME_UNKNOWN
+                ):
+                    message = task.error_message or (
+                        "云端转写结果暂时无法确认，素材和原任务编号已保留；"
+                        "请重新连接恢复，系统不会创建第二个本地任务。"
+                    )
+                    paused = self.pipeline_service.update_stage(
+                        run,
+                        PipelineStage.TRANSCRIPTION,
+                        TaskStatus.OUTCOME_UNKNOWN,
+                        task_id=task.task_id,
+                        outputs={
+                            "task_id": task.task_id,
+                            "provider_status": "outcome_unknown",
+                            "review_state": "provider_result_unconfirmed",
+                        },
+                        error_message=message,
+                    )
+                    paused = paused.model_copy(
+                        update={
+                            "status": PipelineRunStatus.PAUSED,
+                            "current_stage": PipelineStage.TRANSCRIPTION,
+                            "error_message": message,
+                            "config": {
+                                **paused.config,
+                                "transcription_task_id": task.task_id,
+                                "outcome_unknown": True,
+                                "recovery_blocked": True,
+                                "recovery_reason": "provider_result_unconfirmed",
+                            },
+                        }
+                    )
+                    self.repository.save_pipeline_run(paused)
+                    return
                 self._fail(run, PipelineStage.TRANSCRIPTION, exc.user_message)
                 return
             run = self.pipeline_service.update_stage(
@@ -603,28 +691,6 @@ class PipelineWorker:
             self._run_guided_share_link(run)
         else:
             self._run_production_batch_text(run, source_type)
-
-    def _pause_for_xiaohongshu_safety(self, run: PipelineRun) -> None:
-        """Keep historical XHS items visible while preventing any link automation."""
-        paused = run.model_copy(
-            update={
-                "status": PipelineRunStatus.PAUSED,
-                "current_stage": PipelineStage.HUMAN_REVIEW,
-                "updated_at": datetime.now().astimezone(),
-                "error_message": None,
-                "config": {
-                    **run.config,
-                    "manual_action_required": "小红书安全模式已开启：系统不会打开、解析或抓取该链接。请改为人工整理可见文案，或上传已获授权的本地文件。",
-                },
-            }
-        )
-        paused = self.pipeline_service._event(
-            paused,
-            action="xiaohongshu_manual_only",
-            stage=PipelineStage.HUMAN_REVIEW,
-            message="小红书安全模式：已暂停自动链接处理，等待人工素材。",
-        )
-        self.repository.save_pipeline_run(paused)
 
     def _run_production_batch_text(self, run: PipelineRun, source_type: str) -> None:
         """选题生成或人工成稿都必须进入同一个文案审核阶段。"""

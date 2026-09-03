@@ -33,6 +33,37 @@ def _candidate_xiaohongshu_url(candidate) -> str | None:
     return f"https://www.xiaohongshu.com/explore/{item_id}" if item_id else None
 
 
+def _candidate_xiaohongshu_search_keyword(candidate) -> str | None:
+    """Return a precise bounded keyword for recovering a legacy bare note URL."""
+    if candidate.platform != Platform.XIAOHONGSHU:
+        return None
+    values: list[str] = []
+    title = " ".join(str(getattr(candidate, "title", "") or "").split())
+    if title:
+        # 小红书卡片标题尾部常拼接作者、发布时间和互动数；优先取分隔线
+        # 前的内容，避免用分类词搜索时因平台排序变化找不到旧作品。
+        title_keyword = title.split("｜", 1)[0].split("|", 1)[0].strip()
+        # 去掉标题开头的装饰 emoji/标点，保留真正的可检索词。
+        while title_keyword and not title_keyword[0].isalnum():
+            title_keyword = title_keyword[1:].lstrip()
+        if len(title_keyword) > 80:
+            title_keyword = title_keyword[:80].rstrip()
+        if len(title_keyword) >= 2:
+            values.append(title_keyword)
+    values.extend(
+        str(value).strip()
+        for value in getattr(candidate, "matched_by", [])
+        if str(value).strip()
+    )
+    category = str(getattr(candidate, "category", "") or "").strip()
+    if category.startswith("关键词/"):
+        values.append(category.split("/", 1)[1].strip())
+    for value in values:
+        if 2 <= len(value) <= 80:
+            return value
+    return None
+
+
 def _has_usable_xiaohongshu_share_url(source_url: object) -> bool:
     """Return whether a saved Xiaohongshu note URL can enter the logged browser.
 
@@ -180,6 +211,7 @@ def create_from_candidate(
             rights_confirmed=body.rights_confirmed,
             model_name=body.model_name,
             candidate_id=candidate.video_id,
+            search_keyword=_candidate_xiaohongshu_search_keyword(candidate),
         )
     except DouyinParserError as exc:
         platform = getattr(exc, "platform", candidate.platform)

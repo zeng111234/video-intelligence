@@ -1,5 +1,5 @@
 {
-  "batch_id": "edit-batch-cae62e7ebe03",
+  "batch_id": "edit-batch-c6ce18e46339",
   "status": "awaiting_output_confirmation",
   "target_platform": "douyin",
   "subtitle_enabled": true,
@@ -49,7 +49,9 @@
       "max_chars_per_line": 11,
       "font_size": 52,
       "safe_bottom": 170,
-      "outline_width": 1,
+      "font_family": "Smiley Sans",
+      "font_style": "oblique",
+      "outline_width": 4,
       "shadow": 1,
       "color": "#F8FAFC",
       "emphasis_color": "#FFE16A"
@@ -94,13 +96,13 @@
   },
   "items": [
     {
-      "item_id": "edit-item-b95d46599619",
+      "item_id": "edit-item-e4806e9628ca",
       "source_id": "upload:upload-a88ae01012",
       "title": "本地审核口播",
       "status": "awaiting_output_confirmation",
       "analysis_id": null,
       "subtitle_task_id": null,
-      "edit_task_id": "edit-local-ed75c22c8c",
+      "edit_task_id": "edit-local-6d5ba71938",
       "title_candidates": [
         "最近广州冒出了一个挺特别的餐饮模式",
         "看懂最近广州冒出了一个挺特别的餐饮模式",
@@ -190,7 +192,7 @@
             "subtitle_style_baseline": {
               "passed": true,
               "failures": [],
-              "entry_motion_ms": 120,
+              "entry_motion_ms": 180,
               "emphasis_scale_min": 1.08,
               "emphasis_scale_max": 1.08,
               "preview_unified_style": true,
@@ -231,8 +233,10 @@
               "planned_event_count": 7,
               "rendered_event_count": 7,
               "styles": [
-                "cta_burst",
-                "number_slam"
+                "benefit_burst",
+                "data_highlight_card",
+                "number_slam",
+                "price_zoom_card"
               ],
               "grounded_event_count": 7,
               "fallback": "subtitle_kinetic_emphasis",
@@ -310,8 +314,8 @@
               "phrase_timing_source": "word_timestamps",
               "estimated_phrase_timestamps": false,
               "max_phrase_duration_seconds": 2.36,
-              "cue_manifest_sha256": "a2bff547b500d8bc1ece5385e347ee43359ff7355eaaa5d95cf3c7ca2f97d433",
-              "ass_sha256": "0afaaecfff88d8db19f4bbe768af535fff0a3a013992ab3a9e4c0412a738d164",
+              "cue_manifest_sha256": "f211ac187d01d0a24ea9dc72700ff6a39c7a016752defda4dcafc105a8aecda9",
+              "ass_sha256": "a86146ef371f324b5ee4d33908fd75c3d6c6ac0209b0fc3d4e5d9c8472dc6d30",
               "preview_render_manifest_equal": true,
               "experience_gate": {
                 "passed": true,
@@ -762,7 +766,7 @@
                 "emphasis_count": 7,
                 "checks": {
                   "unified_adaptive_style": true,
-                  "entry_motion_100_160ms": true,
+                  "entry_motion_100_220ms": true,
                   "sparse_emphasis": true,
                   "emphasis_scale_105_112": true,
                   "no_routine_refresh_as_visual_effect": true
@@ -2051,8 +2055,10 @@
             "semantic_visual_layer_count": 0,
             "semantic_motion_event_count": 7,
             "semantic_motion_styles": [
-              "cta_burst",
-              "number_slam"
+              "benefit_burst",
+              "data_highlight_card",
+              "number_slam",
+              "price_zoom_card"
             ],
             "semantic_visual_layer_geometry": {
               "safe": false,
@@ -5495,8 +5501,8 @@
           "motion_events": [
             {
               "event_id": "motion-01",
-              "start": 4.0,
-              "end": 6.8,
+              "start": 7.32,
+              "end": 10.0,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
               "style_id": "number_slam",
@@ -5517,14 +5523,14 @@
             },
             {
               "event_id": "motion-02",
-              "start": 11.04,
-              "end": 13.84,
+              "start": 16.36,
+              "end": 19.16,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "number_slam",
-              "semantic_kind": "number",
+              "style_id": "data_highlight_card",
+              "semantic_kind": "data",
               "semantic_text": "80%",
-              "fact": "80%",
+              "fact": "",
               "anchor": "smart_caption",
               "presentation": "caption_integrated_accent",
               "avoid_zones": [
@@ -5539,14 +5545,14 @@
             },
             {
               "event_id": "motion-03",
-              "start": 19.96,
-              "end": 22.76,
+              "start": 22.96,
+              "end": 25.76,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "number_slam",
-              "semantic_kind": "number",
+              "style_id": "benefit_burst",
+              "semantic_kind": "benefit",
               "semantic_text": "100",
-              "fact": "100",
+              "fact": "",
               "anchor": "smart_caption",
               "presentation": "caption_integrated_accent",
               "avoid_zones": [
@@ -5561,14 +5567,14 @@
             },
             {
               "event_id": "motion-04",
-              "start": 26.28,
-              "end": 29.08,
+              "start": 28.42,
+              "end": 30.96,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "number_slam",
-              "semantic_kind": "number",
+              "style_id": "price_zoom_card",
+              "semantic_kind": "price",
               "semantic_text": "49块",
-              "fact": "49块",
+              "fact": "",
               "anchor": "smart_caption",
               "presentation": "caption_integrated_accent",
               "avoid_zones": [
@@ -5583,14 +5589,36 @@
             },
             {
               "event_id": "motion-05",
-              "start": 41.95,
-              "end": 44.75,
+              "start": 32.34,
+              "end": 35.14,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "number_slam",
-              "semantic_kind": "number",
+              "style_id": "benefit_burst",
+              "semantic_kind": "benefit",
+              "semantic_text": "送",
+              "fact": "",
+              "anchor": "smart_caption",
+              "presentation": "caption_integrated_accent",
+              "avoid_zones": [
+                "face",
+                "subtitle",
+                "subject"
+              ],
+              "source_segment_index": 5,
+              "source_text": "办完马上送一份招牌烧烤，等于白送会员资格，所以大多数人都办了。",
+              "grounded_in_text": true,
+              "fallback": "subtitle_kinetic_emphasis"
+            },
+            {
+              "event_id": "motion-06",
+              "start": 45.3,
+              "end": 46.91,
+              "type": "semantic_motion_badge",
+              "renderer": "procedural_overlay_v2_caption_integrated",
+              "style_id": "benefit_burst",
+              "semantic_kind": "benefit",
               "semantic_text": "6",
-              "fact": "6",
+              "fact": "",
               "anchor": "smart_caption",
               "presentation": "caption_integrated_accent",
               "avoid_zones": [
@@ -5604,15 +5632,15 @@
               "fallback": "subtitle_kinetic_emphasis"
             },
             {
-              "event_id": "motion-06",
-              "start": 53.11,
-              "end": 55.91,
+              "event_id": "motion-07",
+              "start": 57.51,
+              "end": 60.31,
               "type": "semantic_motion_badge",
               "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "number_slam",
-              "semantic_kind": "number",
+              "style_id": "benefit_burst",
+              "semantic_kind": "benefit",
               "semantic_text": "10%",
-              "fact": "10%",
+              "fact": "",
               "anchor": "smart_caption",
               "presentation": "caption_integrated_accent",
               "avoid_zones": [
@@ -5622,28 +5650,6 @@
               ],
               "source_segment_index": 10,
               "source_text": "以后这些粉丝到店消费，每笔小店长都能拿10%的现金奖励，而且秒到账。",
-              "grounded_in_text": true,
-              "fallback": "subtitle_kinetic_emphasis"
-            },
-            {
-              "event_id": "motion-07",
-              "start": 100.16,
-              "end": 102.96,
-              "type": "semantic_motion_badge",
-              "renderer": "procedural_overlay_v2_caption_integrated",
-              "style_id": "cta_burst",
-              "semantic_kind": "cta",
-              "semantic_text": "评论",
-              "fact": "",
-              "anchor": "smart_caption",
-              "presentation": "caption_integrated_accent",
-              "avoid_zones": [
-                "face",
-                "subtitle",
-                "subject"
-              ],
-              "source_segment_index": 20,
-              "source_text": "如果你的店也想用这套系统搞活动，评论区打个小店长就行。",
               "grounded_in_text": true,
               "fallback": "subtitle_kinetic_emphasis"
             }
@@ -12707,9 +12713,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12729,9 +12735,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12751,9 +12757,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12773,9 +12779,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12805,9 +12811,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -12838,9 +12844,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12870,9 +12876,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -12903,9 +12909,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12925,9 +12931,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12947,9 +12953,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12969,9 +12975,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -12991,7 +12997,7 @@
               "end": 8
             },
             "emphasis_style": {
-              "color": "#FFD166",
+              "color": "#FFB86B",
               "scale": 1.08,
               "animation": "scale_overshoot",
               "duration_ms": 200,
@@ -13001,9 +13007,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -13014,12 +13020,12 @@
                 "start": 0.725,
                 "end": 1.285,
                 "text": "10块",
-                "color": "#FFD166",
+                "color": "#FFB86B",
                 "kind": "emphasis"
               }
             ],
             "kinetic_mode": "word_pop",
-            "kinetic_style": "stamp",
+            "kinetic_style": "burst",
             "motion_scope": "keyword"
           },
           {
@@ -13034,9 +13040,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13056,9 +13062,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13078,9 +13084,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13110,9 +13116,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -13143,9 +13149,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13165,9 +13171,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13187,9 +13193,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13209,9 +13215,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13231,9 +13237,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13253,9 +13259,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13275,9 +13281,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13297,9 +13303,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13320,7 +13326,7 @@
               "end": 6
             },
             "emphasis_style": {
-              "color": "#FFD166",
+              "color": "#FFB86B",
               "scale": 1.08,
               "animation": "scale_overshoot",
               "duration_ms": 200,
@@ -13331,9 +13337,9 @@
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "two_line_exception": true,
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13353,9 +13359,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13375,9 +13381,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13397,9 +13403,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13419,9 +13425,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13441,9 +13447,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13463,9 +13469,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13485,9 +13491,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13507,9 +13513,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13529,9 +13535,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13551,9 +13557,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13583,9 +13589,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -13601,7 +13607,7 @@
               }
             ],
             "kinetic_mode": "word_pop",
-            "kinetic_style": "marker",
+            "kinetic_style": "burst",
             "motion_scope": "keyword"
           },
           {
@@ -13616,9 +13622,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13638,9 +13644,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13660,9 +13666,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13682,9 +13688,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13704,9 +13710,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13726,9 +13732,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13758,9 +13764,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [
@@ -13776,7 +13782,7 @@
               }
             ],
             "kinetic_mode": "word_pop",
-            "kinetic_style": "marker",
+            "kinetic_style": "burst",
             "motion_scope": "keyword"
           },
           {
@@ -13791,9 +13797,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13813,9 +13819,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13835,9 +13841,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13857,9 +13863,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13879,9 +13885,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13901,9 +13907,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13923,9 +13929,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13945,9 +13951,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13967,9 +13973,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -13989,9 +13995,9 @@
             "lexical_boundary_exception": null,
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -14013,9 +14019,9 @@
             "word_clock_mapping": "exact_or_reviewed_text_sequence_alignment",
             "two_line_exception": true,
             "entry_motion": {
-              "type": "fade_in",
-              "duration_ms": 120,
-              "scale_from": 1.0
+              "type": "elastic_pop",
+              "duration_ms": 180,
+              "scale_from": 0.9
             },
             "subtitle_style_id": "adaptive_talking_head_v1",
             "kinetic_words": [],
@@ -14028,20 +14034,23 @@
         "phrase_timing_source": "word_timestamps",
         "subtitle_style_id": "adaptive_talking_head_v1",
         "style_fingerprint": {
-          "font_family": "Source Han Serif CN Heavy",
-          "palette_id": "douyin_talking_head_pop_v1",
-          "entry_motion": "fade_in_120ms",
+          "font_family": "Smiley Sans",
+          "palette_id": "douyin_talking_head_pop_v2_warm_layered",
+          "caption_treatment": "white_base_warm_keyword_black_keyline",
+          "outline": "thick_black_keyline",
+          "entry_motion": "elastic_pop_180ms",
           "word_motion": "selective_word_emphasis_v3",
           "keyword_motion": "semantic_effect_mix_v2",
           "kinetic_styles": [
             "slam",
             "bounce",
             "stamp",
+            "burst",
             "marker",
             "underline",
             "shake"
           ],
-          "caption_motion_policy": "static_by_default_selective_semantic_emphasis",
+          "caption_motion_policy": "entry_pop_static_after_settle_selective_semantic_emphasis",
           "strong_effect_density": "3_to_5_per_60s",
           "emphasis_scale_range": [
             1.08,
@@ -14076,7 +14085,7 @@
           "director_plan_version": "director-plan-v3.1"
         }
       },
-      "review_confirmed_at": "2026-09-01T17:55:56.857464+08:00",
+      "review_confirmed_at": "2026-09-02T17:35:38.385854+08:00",
       "result_media_url": null,
       "is_mock": false,
       "publish_allowed": false,
@@ -14084,14 +14093,14 @@
       "confirmed_at": null,
       "analysis": null,
       "job": {
-        "task_id": "edit-local-ed75c22c8c",
+        "task_id": "edit-local-6d5ba71938",
         "status": "succeeded",
         "progress": 100,
         "stage": "本机成片已生成，可直接下载",
         "error_message": null,
-        "result_size_bytes": 53978149,
-        "media_url": "/api/v1/video-editor/jobs/edit-local-ed75c22c8c/media",
-        "download_url": "/api/v1/video-editor/jobs/edit-local-ed75c22c8c/download",
+        "result_size_bytes": 53924485,
+        "media_url": "/api/v1/video-editor/jobs/edit-local-6d5ba71938/media",
+        "download_url": "/api/v1/video-editor/jobs/edit-local-6d5ba71938/download",
         "source_id": "upload:upload-a88ae01012",
         "analysis_id": null,
         "publish_title": "最近广州冒出了一个挺特别的餐饮模式",
@@ -14136,7 +14145,7 @@
           "subtitle_style_baseline": {
             "passed": true,
             "failures": [],
-            "entry_motion_ms": 120,
+            "entry_motion_ms": 180,
             "emphasis_scale_min": 1.08,
             "emphasis_scale_max": 1.08,
             "preview_unified_style": true,
@@ -14177,8 +14186,10 @@
             "planned_event_count": 7,
             "rendered_event_count": 7,
             "styles": [
-              "cta_burst",
-              "number_slam"
+              "benefit_burst",
+              "data_highlight_card",
+              "number_slam",
+              "price_zoom_card"
             ],
             "grounded_event_count": 7,
             "fallback": "subtitle_kinetic_emphasis",
@@ -14256,8 +14267,8 @@
             "phrase_timing_source": "word_timestamps",
             "estimated_phrase_timestamps": false,
             "max_phrase_duration_seconds": 2.36,
-            "cue_manifest_sha256": "a2bff547b500d8bc1ece5385e347ee43359ff7355eaaa5d95cf3c7ca2f97d433",
-            "ass_sha256": "0afaaecfff88d8db19f4bbe768af535fff0a3a013992ab3a9e4c0412a738d164",
+            "cue_manifest_sha256": "f211ac187d01d0a24ea9dc72700ff6a39c7a016752defda4dcafc105a8aecda9",
+            "ass_sha256": "a86146ef371f324b5ee4d33908fd75c3d6c6ac0209b0fc3d4e5d9c8472dc6d30",
             "preview_render_manifest_equal": true,
             "experience_gate": {
               "passed": true,
@@ -14708,7 +14719,7 @@
               "emphasis_count": 7,
               "checks": {
                 "unified_adaptive_style": true,
-                "entry_motion_100_160ms": true,
+                "entry_motion_100_220ms": true,
                 "sparse_emphasis": true,
                 "emphasis_scale_105_112": true,
                 "no_routine_refresh_as_visual_effect": true
@@ -15997,8 +16008,10 @@
           "semantic_visual_layer_count": 0,
           "semantic_motion_event_count": 7,
           "semantic_motion_styles": [
-            "cta_burst",
-            "number_slam"
+            "benefit_burst",
+            "data_highlight_card",
+            "number_slam",
+            "price_zoom_card"
           ],
           "semantic_visual_layer_geometry": {
             "safe": false,
@@ -16767,6 +16780,6 @@
       }
     }
   ],
-  "created_at": "2026-09-01T17:55:56.857464+08:00",
-  "updated_at": "2026-09-01T17:57:53.621506+08:00"
+  "created_at": "2026-09-02T17:35:38.385854+08:00",
+  "updated_at": "2026-09-02T17:37:24.888594+08:00"
 }

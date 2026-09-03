@@ -267,6 +267,15 @@ class LocalPlatformBrowserSearchProvider:
             ) as response:
                 pages = json.loads(response.read().decode("utf-8"))
         except (URLError, OSError, ValueError, json.JSONDecodeError):
+            if self.is_xiaohongshu_login_profile:
+                return BrowserSessionStatus(
+                    True,
+                    False,
+                    False,
+                    False,
+                    "browser_closed",
+                    "小红书素材浏览器已关闭；下次查看、搜索或转写时会使用已保存的登录资料自动重启。",
+                )
             return BrowserSessionStatus(
                 True,
                 False,
@@ -633,6 +642,17 @@ class LocalPlatformBrowserSearchProvider:
                         "kuaishou_duration_bucket", "all"
                     ),
                 ),
+            )
+        elif self.platform == Platform.XIAOHONGSHU and (
+            published_after is None or self._xiaohongshu_time_filter_confirmed
+        ):
+            # Unlimited searches (and searches whose platform time filter was
+            # confirmed) already have a reliable final-row boundary. Do not
+            # keep scanning the large authenticated raw buffer after the user
+            # requested count has been reached.
+            collection_kwargs.update(
+                qualified_target=limit,
+                qualifying_count=lambda rows: len(rows),
             )
         elif self.platform == Platform.BILIBILI and published_after is not None:
             collection_kwargs["prefer_recent"] = True
@@ -1235,6 +1255,15 @@ class LocalPlatformBrowserSearchProvider:
             return
         combined = dict(existing)
         for key, value in row.items():
+            if key == "source_url" and (
+                LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                    value
+                )
+                < LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                    combined.get(key)
+                )
+            ):
+                continue
             if value is not None:
                 combined[key] = value
         rendered_rows[item_id] = combined
@@ -1249,6 +1278,15 @@ class LocalPlatformBrowserSearchProvider:
             base = merged.get(item_id, {})
             combined = dict(base)
             for key, value in row.items():
+                if key == "source_url" and (
+                    LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                        value
+                    )
+                    < LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                        base.get(key)
+                    )
+                ):
+                    continue
                 if key == "source_url" and row.get("source_url_verified") is True:
                     # 网络响应可能没有临时 xsec_token，但 DOM 仍提供了可交给
                     # 已登录浏览器解析的直接 /explore/ 链接。只有新值存在，或
@@ -2231,6 +2269,22 @@ class LocalPlatformBrowserSearchProvider:
         )
 
     @staticmethod
+    def _xiaohongshu_source_url_rank(value: object) -> int:
+        """Prefer the richest reusable XHS entry when duplicate rows are merged."""
+        if not LocalPlatformBrowserSearchProvider._is_actionable_xiaohongshu_source_url(
+            value
+        ):
+            return 0
+        parsed = urlparse(str(value).strip())
+        query = {key.casefold() for key, _ in parse_qsl(parsed.query)}
+        if "xsec_token" in query:
+            return 3
+        host = (parsed.hostname or "").casefold()
+        if host == "xhslink.com" or host.endswith(".xhslink.com"):
+            return 2
+        return 1
+
+    @staticmethod
     def _xiaohongshu_source_url(
         entry: dict[str, Any], card: dict[str, Any], item_id: str
     ) -> str | None:
@@ -2267,7 +2321,17 @@ class LocalPlatformBrowserSearchProvider:
                     candidate = child.strip()
                     if LocalPlatformBrowserSearchProvider._is_actionable_xiaohongshu_source_url(
                         candidate
-                    ) and found_url is None:
+                    ) and (
+                        found_url is None
+                        or LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            candidate
+                        )
+                        > LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            found_url
+                        )
+                    ):
+                        # 一个卡片可能同时带 href(裸链接) 和 share_url(带
+                        # xsec_token)。不能因遍历顺序先遇到裸链接就丢掉后者。
                         found_url = candidate
                 if isinstance(child, dict) and normalized_key in {
                     "url",
@@ -2279,7 +2343,15 @@ class LocalPlatformBrowserSearchProvider:
                     "note",
                 }:
                     direct = walk(child, depth + 1)
-                    if direct and found_url is None:
+                    if direct and (
+                        found_url is None
+                        or LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            direct
+                        )
+                        > LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            found_url
+                        )
+                    ):
                         found_url = direct
                 if normalized_key in {"xsec_token", "xsectoken"} and isinstance(child, str):
                     token = token or child.strip()
@@ -2287,11 +2359,32 @@ class LocalPlatformBrowserSearchProvider:
                     token_source = token_source or child.strip()
                 if isinstance(child, (dict, list)):
                     direct = walk(child, depth + 1)
-                    if direct and found_url is None:
+                    if direct and (
+                        found_url is None
+                        or LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            direct
+                        )
+                        > LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                            found_url
+                        )
+                    ):
                         found_url = direct
             return found_url
 
-        direct_url = walk(entry) or walk(card)
+        direct_url = walk(entry)
+        card_url = walk(card)
+        if card_url and (
+            direct_url is None
+            or LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                card_url
+            )
+            > LocalPlatformBrowserSearchProvider._xiaohongshu_source_url_rank(
+                direct_url
+            )
+        ):
+            # entry 常带裸 href，而 note_card/share_info 才带完整分享地址；
+            # 两个对象分开传入时也必须按丰富度择优，不能被 or 提前截断。
+            direct_url = card_url
         if direct_url and token:
             parsed = urlparse(direct_url)
             query = parse_qsl(parsed.query, keep_blank_values=True)
@@ -2373,7 +2466,14 @@ class LocalPlatformBrowserSearchProvider:
                     "source_url": resolved_source_url,
                     "source_url_verified": bool(
                         resolved_source_url
-                        and "?xsec_token=" in resolved_source_url
+                        and "xsec_token"
+                        in {
+                            key.casefold()
+                            for key, _ in parse_qsl(
+                                urlparse(resolved_source_url).query,
+                                keep_blank_values=True,
+                            )
+                        }
                     ),
                     "title": LocalPlatformBrowserSearchProvider._clean_text(
                         card.get("display_title")

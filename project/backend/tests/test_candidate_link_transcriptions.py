@@ -17,6 +17,7 @@ from project.backend.app.api.v1.crawler import (  # noqa: E402
     _spoken_seed_quality,
 )
 from project.backend.app.api.v1.link_transcriptions import (  # noqa: E402
+    _candidate_xiaohongshu_search_keyword,
     _has_usable_xiaohongshu_share_url,
 )
 from project.backend.app.core import deps as backend_deps  # noqa: E402
@@ -25,6 +26,19 @@ from project.backend.app.main import app  # noqa: E402
 from project.backend.app.core.security import issue_auth_token  # noqa: E402
 from src.models import Platform, TranscriptionTask  # noqa: E402
 from src.repositories import MockRepository  # noqa: E402
+
+
+def test_xiaohongshu_recovery_prefers_title_keyword_over_category():
+    candidate = SimpleNamespace(
+        platform=Platform.XIAOHONGSHU,
+        title="㊙️12经络运行时辰及沟通话术‼️ 老彭｜瘦身产品源头工厂 1小时前 5",
+        matched_by=["美业工厂"],
+        category="关键词/美业工厂",
+    )
+
+    assert _candidate_xiaohongshu_search_keyword(candidate) == (
+        "12经络运行时辰及沟通话术‼️ 老彭"
+    )
 
 
 def _douyin_candidate(repo: MockRepository):
@@ -184,6 +198,8 @@ def test_xiaohongshu_share_link_readiness_accepts_direct_note_links():
 
 
 def test_xiaohongshu_original_media_route_proxies_legacy_candidate(monkeypatch):
+    with crawler_api._original_media_cache_lock:
+        crawler_api._original_media_cache.clear()
     seeded_repo = MockRepository()
     candidate = _douyin_candidate(seeded_repo).model_copy(
         update={
@@ -201,6 +217,7 @@ def test_xiaohongshu_original_media_route_proxies_legacy_candidate(monkeypatch):
             calls.append(share_url)
             return SimpleNamespace(
                 platform=Platform.XIAOHONGSHU,
+                share_url="https://www.xiaohongshu.com/explore/xhs-route-note?xsec_token=test-token",
                 media_url="https://sns-video-ak.xhscdn.com/stream/xhs-route.mp4",
                 media_request_headers={
                     "Referer": "https://www.xiaohongshu.com/",
@@ -294,12 +311,10 @@ def test_xiaohongshu_original_media_route_proxies_legacy_candidate(monkeypatch):
     assert json_response.json() == {
         "candidate_id": "xiaohongshu-xhs-route-note",
         "platform": "xiaohongshu",
+        "share_url": "https://www.xiaohongshu.com/explore/xhs-route-note?xsec_token=test-token",
         "media_url": "https://sns-video-ak.xhscdn.com/stream/xhs-route.mp4",
     }
-    assert calls == [
-        "https://www.xiaohongshu.com/explore/xhs-route-note",
-        "https://www.xiaohongshu.com/explore/xhs-route-note",
-    ]
+    assert calls == ["https://www.xiaohongshu.com/explore/xhs-route-note"]
 
 
 def test_spoken_seed_quality_matches_the_user_visible_rules():

@@ -193,7 +193,9 @@ const DEFAULT_VISUAL_SPEC: VideoEditorVisualSpec = {
     max_chars_per_line: 11,
     font_size: 52,
     safe_bottom: 170,
-    outline_width: 1,
+    font_family: "Smiley Sans",
+    font_style: "oblique",
+    outline_width: 4,
     shadow: 1,
     color: "#F8FAFC",
     emphasis_color: "#FFE16A",
@@ -1174,7 +1176,7 @@ function sparsePreviewCaptionEmphasis(
     .filter(({ cue }) => Boolean(cue.emphasis_range));
   if (!candidates.length) return cues;
   const maxEnd = Math.max(...cues.map((cue) => cue.end), 0);
-  const totalBudget = Math.max(1, Math.ceil((maxEnd / 60) * 4));
+  const totalBudget = Math.max(1, Math.ceil((maxEnd / 60) * 5));
   const selected: number[] = [];
   const bucketCounts = new Map<number, number>();
   const ranked = [...candidates].sort((left, right) => {
@@ -1309,6 +1311,8 @@ function renderOverlayLine(
                   ? "translateY(-2px) scale(1.08)"
                   : effect === "shake"
                     ? "translateY(-2px) scale(1.08) rotate(-2deg)"
+                    : effect === "bounce"
+                      ? "translateY(-5px) scale(1.12)"
                     : "translateY(-2px) scale(1.08)";
           return (
             <Fragment key={`${word.text || "word"}-${index}`}>
@@ -1320,18 +1324,12 @@ function renderOverlayLine(
                   transform: isBefore
                     ? "translateY(6px) scale(.96)"
                     : (isActive ? activeTransform : "translateY(0) scale(1)"),
-                  backgroundColor: isActive && (effect === "marker" || effect === "stamp")
-                    ? word.color
-                    : undefined,
-                  borderRadius: isActive && (effect === "marker" || effect === "stamp")
-                    ? "0.18em"
-                    : undefined,
-                  padding: isActive && (effect === "marker" || effect === "stamp")
-                    ? "0 .08em"
-                    : undefined,
-                  color: isActive ? "#111827" : (isBefore ? "rgba(248,250,252,.55)" : "#F8FAFC"),
+                  backgroundColor: "transparent",
+                  color: isActive
+                    ? "#FFF7E7"
+                    : (isBefore ? "rgba(248,250,252,.55)" : word.color),
                   textShadow: isActive
-                    ? `0 0 ${effect === "slam" ? 26 : 18}px ${word.color}, 0 2px 4px rgba(0,0,0,.72)`
+                    ? `0 0 ${effect === "slam" ? 12 : 8}px ${word.color}, 0 1px 3px rgba(0,0,0,.42)`
                     : undefined,
                   textDecorationLine: isActive && effect === "underline" ? "underline" : undefined,
                   textDecorationColor: isActive && effect === "underline" ? word.color : undefined,
@@ -1355,10 +1353,12 @@ function renderOverlayLine(
       ? "translateY(0) scale(1) rotate(0)"
       : effect === "slam"
         ? "translateY(-10px) scale(.72) rotate(5deg)"
-        : effect === "stamp"
-          ? "translateY(-3px) scale(.84) rotate(-7deg)"
+          : effect === "stamp"
+            ? "translateY(-3px) scale(.84) rotate(-7deg)"
           : effect === "shake"
             ? "translateY(0) scale(.9) rotate(-4deg)"
+          : effect === "bounce"
+            ? "translateY(8px) scale(.78)"
             : "translateY(5px) scale(.88)";
     return (
       <span
@@ -2230,6 +2230,7 @@ export default function VideoEditorPage() {
   const subtitleOverlayStyle = {
     "--video-editor-subtitle-font-size": `${visualSpec.subtitle.font_size / visualSpec.canvas.width * 100}cqw`,
     "--video-editor-subtitle-line-height": "1.28",
+    "--video-editor-subtitle-entry-duration": "180ms",
     "--video-editor-subtitle-outline": `${visualSpec.subtitle.outline_width / visualSpec.canvas.width * 100}cqw`,
     left: "7.5%",
     right: "7.5%",
@@ -2503,7 +2504,10 @@ export default function VideoEditorPage() {
                 {previewMode === "plan" && previewCaption?.lines.length && (
                   <div className="video-editor-subtitle-overlay" style={subtitleOverlayStyle}>
                     {previewCaption.lines.map((line, index) => (
-                      <span className="video-editor-overlay-line" key={`${line}-${index}`}>
+                      <span
+                        className={`video-editor-overlay-line ${previewCaption.kinetic_mode === "static" ? "video-editor-subtitle-line-entry" : ""}`}
+                        key={`${line}-${index}`}
+                      >
                         {renderOverlayLine(
                           line,
                           index,
@@ -3281,14 +3285,17 @@ export default function VideoEditorPage() {
         .video-editor-phone-preview video{width:100%;height:100%;object-fit:contain;background:#030712}
         .video-editor-phone-preview video.video-editor-plan-video{object-fit:contain}
         @font-face{font-family:"VideoInsight Title Serif";src:url("/api/v1/video-editor/brand-title-font") format("opentype");font-display:swap;font-style:normal;font-weight:900}
+        @font-face{font-family:"VideoInsight Caption Pop";src:url("/api/v1/video-editor/caption-font") format("truetype");font-style:oblique;font-weight:700 900;font-display:swap}
         .video-editor-title-overlay{position:absolute;width:76%;font-family:"VideoInsight Title Serif","Microsoft YaHei UI",serif;font-size:var(--video-editor-title-font-size);font-weight:900;line-height:var(--video-editor-title-line-height);letter-spacing:.01em;text-align:left;white-space:normal;-webkit-text-stroke:var(--video-editor-title-outline) rgba(0,0,0,.72);paint-order:stroke fill;text-shadow:0 2px 7px rgba(0,0,0,.42),0 1px 2px rgba(0,0,0,.62);pointer-events:none;transition:opacity .12s linear}
         .video-editor-title-accent{position:absolute;border-radius:999px;pointer-events:none;transition:opacity .12s linear}
-        .video-editor-subtitle-overlay{position:absolute;font-family:"Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:700;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.035em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.64);paint-order:stroke fill;text-shadow:0 1px 1px rgba(0,0,0,.58),0 2px 3px rgba(0,0,0,.22);pointer-events:none}
+        .video-editor-subtitle-overlay{position:absolute;font-family:"VideoInsight Caption Pop","Smiley Sans","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;font-size:var(--video-editor-subtitle-font-size);font-weight:900;font-style:oblique;line-height:var(--video-editor-subtitle-line-height);letter-spacing:.01em;text-align:center;white-space:nowrap;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.88);paint-order:stroke fill;text-shadow:0 1px 0 rgba(0,0,0,.72),0 2px 4px rgba(0,0,0,.22);pointer-events:none}
         .video-editor-overlay-line{display:block}
-        .video-editor-subtitle-kinetic-word{display:inline-block;transform-origin:center bottom;transition:transform 90ms cubic-bezier(.2,.9,.3,1.18),color 110ms ease,opacity 110ms ease,background-color 110ms ease,text-shadow 110ms ease;will-change:transform,color,opacity,background-color}
-        .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.08) * 1em);line-height:1;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.76);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,200ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
+        .video-editor-subtitle-line-entry{animation:video-editor-subtitle-line-entry var(--video-editor-subtitle-entry-duration,180ms) cubic-bezier(.18,.9,.28,1.18) both;transform-origin:center bottom}
+        .video-editor-subtitle-kinetic-word{display:inline-block;transform-origin:center bottom;transition:transform 90ms cubic-bezier(.2,.9,.3,1.18),color 110ms ease,opacity 110ms ease,text-shadow 110ms ease;will-change:transform,color,opacity,text-shadow;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.94);paint-order:stroke fill}
+        .video-editor-subtitle-emphasis{display:inline-block;color:var(--video-editor-subtitle-emphasis);font-size:calc(var(--video-editor-emphasis-size,1.08) * 1em);line-height:1;vertical-align:baseline;-webkit-text-stroke:var(--video-editor-subtitle-outline) rgba(0,0,0,.88);paint-order:stroke fill;text-shadow:0 1px 0 rgba(0,0,0,.72),0 2px 4px rgba(0,0,0,.22);animation:video-editor-emphasis-pop var(--video-editor-emphasis-duration,200ms) cubic-bezier(.2,.9,.3,1.18) both;transform-origin:center bottom}
+        @keyframes video-editor-subtitle-line-entry{0%{opacity:0;filter:blur(1.4px);transform:translateY(10px) scale(.9) rotate(-1deg)}68%{opacity:1;filter:blur(0);transform:translateY(-2px) scale(1.025) rotate(.3deg)}100%{opacity:1;filter:blur(0);transform:translateY(0) scale(1) rotate(0)}}
         @keyframes video-editor-emphasis-pop{0%{transform:scale(.98)}68%{transform:scale(1.08)}100%{transform:scale(1)}}
-        .video-editor-motion-accent{position:absolute;z-index:3;left:50%;top:68%;width:74%;height:22%;pointer-events:none;transform:translate(-50%,-50%);opacity:.94;filter:drop-shadow(0 5px 8px rgba(0,0,0,.28));animation:video-editor-motion-accent-in 220ms cubic-bezier(.2,.9,.3,1.18) both}
+        .video-editor-motion-accent{position:absolute;z-index:3;left:50%;top:76%;width:74%;height:22%;pointer-events:none;transform:translate(-50%,-50%);opacity:.94;filter:drop-shadow(0 5px 8px rgba(0,0,0,.28));animation:video-editor-motion-accent-in 220ms cubic-bezier(.2,.9,.3,1.18) both}
         .video-editor-motion-accent::before,.video-editor-motion-accent::after{position:absolute;content:"";border-radius:999px;background:var(--motion-accent-color,#FFD166)}
         .video-editor-motion-accent::before{left:16%;right:16%;bottom:10%;height:3px;transform:rotate(-2deg);box-shadow:0 7px 0 rgba(255,255,255,.72)}
         .video-editor-motion-accent::after{left:50%;top:14%;width:15%;height:15%;transform:translate(-50%,-50%) rotate(45deg);opacity:.88}
@@ -3296,6 +3303,9 @@ export default function VideoEditorPage() {
         .video-editor-motion-accent .motion-ray:nth-child(1){transform:rotate(-32deg) translateX(66%)}
         .video-editor-motion-accent .motion-ray:nth-child(2){transform:rotate(28deg) translateX(66%)}
         .video-editor-motion-accent .motion-ray:nth-child(3){transform:rotate(0deg) translateX(66%);width:22%}
+        .video-editor-motion-road_push::before{left:35%;right:35%;top:10%;bottom:0;height:auto;background:linear-gradient(90deg,#252b34 0 43%,#ffd35c 43% 46%,#252b34 46% 54%,#ffd35c 54% 57%,#252b34 57%);clip-path:polygon(38% 0,62% 0,100% 100%,0 100%);border:2px solid rgba(248,250,252,.8);box-shadow:none;transform:none}
+        .video-editor-motion-road_push::after{left:49%;top:16%;width:2%;height:76%;background:repeating-linear-gradient(to bottom,#ffd35c 0 10%,transparent 10% 19%);transform:none;opacity:1}
+        .video-editor-motion-road_push .motion-ray{background:#ff9f68}
         .video-editor-motion-number_slam{--motion-accent-color:#FFD166;animation-name:video-editor-motion-slam}
         .video-editor-motion-process_marker{--motion-accent-color:#FF9F68;animation-name:video-editor-motion-marker}
         .video-editor-motion-warning_shake{--motion-accent-color:#FF7A70;animation-name:video-editor-motion-shake}

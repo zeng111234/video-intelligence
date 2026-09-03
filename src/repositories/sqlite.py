@@ -1010,7 +1010,14 @@ class SQLiteRepository:
                     category = excluded.category,
                     published_at = excluded.published_at,
                     duration_seconds = COALESCE(excluded.duration_seconds, candidates.duration_seconds),
-                    source_url = excluded.source_url,
+                    source_url = CASE
+                        WHEN excluded.source_url = '' THEN candidates.source_url
+                        WHEN candidates.platform = 'xiaohongshu'
+                             AND instr(candidates.source_url, 'xsec_token=') > 0
+                             AND instr(excluded.source_url, 'xsec_token=') = 0
+                        THEN candidates.source_url
+                        ELSE excluded.source_url
+                    END,
                     source_type = excluded.source_type,
                     rights_status = excluded.rights_status,
                     matched_by_json = excluded.matched_by_json,

@@ -43,6 +43,11 @@ $env:VIDEOINSIGHT_CONTROL_PLANE_URL = ""
 $env:VIDEOINSIGHT_RUNTIME_ROOT = $projectRoot
 $backendDir = Join-Path $projectRoot "project\backend"
 $pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$serviceLogDirectory = Join-Path $projectRoot "data\logs\services"
+New-Item -ItemType Directory -Force -Path $serviceLogDirectory | Out-Null
+$logTimestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$stdoutLogPath = Join-Path $serviceLogDirectory "fastapi-backend-restart-$logTimestamp.stdout.log"
+$stderrLogPath = Join-Path $serviceLogDirectory "fastapi-backend-restart-$logTimestamp.stderr.log"
 
 if (-not (Test-Path -LiteralPath $pythonCommand)) {
     $setupScript = Join-Path $projectRoot "scripts\setup_windows.ps1"
@@ -57,7 +62,11 @@ Write-Host "[INFO] Starting FastAPI backend..."
 Start-Process -FilePath $pythonCommand `
     -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001", "--no-proxy-headers") `
     -WorkingDirectory $backendDir `
-    -WindowStyle Hidden
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $stdoutLogPath `
+    -RedirectStandardError $stderrLogPath
+
+Write-Host "[INFO] Backend logs: $stdoutLogPath / $stderrLogPath"
 
 Start-Sleep -Seconds 4
 

@@ -8,6 +8,7 @@ from src.adapters.platform_link_parser import (
     LocalPlatformLinkParserClient,
     ParsedPlatformMedia,
     PlatformLinkParserError,
+    _xiaohongshu_needs_search_recovery,
     parse_platform_share_text,
 )
 from src.models import Platform
@@ -66,6 +67,566 @@ def test_wechat_channels_link_keeps_the_manual_upload_boundary():
 
 def test_xiaohongshu_link_parser_uses_the_connected_browser():
     assert _client().capabilities_for(Platform.XIAOHONGSHU) == (True, None)
+
+
+def test_xiaohongshu_complete_link_is_used_without_search_recovery():
+    class _Context:
+        @property
+        def pages(self):
+            raise AssertionError("complete signed link must not scan browser pages")
+
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+        "?xsec_token=live-token&xsec_source=pc_search"
+    )
+
+    target_url = _client()._xiaohongshu_context_url(_Context(), link)
+
+    assert target_url == link.share_url
+
+
+def test_xiaohongshu_signed_link_does_not_fall_back_to_keyword_search():
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+        "?xsec_token=live-token&xsec_source=pc_search"
+    )
+
+    assert _xiaohongshu_needs_search_recovery(link) is False
+
+
+@pytest.mark.parametrize(
+    "platform",
+    [Platform.XIAOHONGSHU, Platform.KUAISHOU, Platform.BILIBILI],
+)
+def test_link_resolution_restarts_one_closed_persisted_browser_profile(platform):
+    class _Provider:
+        anonymous_only = False
+
+        def __init__(self):
+            self.running = False
+            self.start_count = 0
+
+        def session_status(self):
+            return SimpleNamespace(
+                running=self.running,
+                ready_to_crawl=self.running,
+                message="已恢复" if self.running else "浏览器已关闭",
+            )
+
+        def start_login_browser(self):
+            self.start_count += 1
+            self.running = True
+            return self.session_status()
+
+    provider = _Provider()
+    client = LocalPlatformLinkParserClient(
+        douyin_parser=LocalDouyinBrowserParserClient(enabled=True),
+        platform_providers={platform: provider},
+    )
+
+    assert client._ensure_session_for_resolution(platform) == (True, None)
+    assert provider.start_count == 1
+
+
+def test_xiaohongshu_bare_link_recovers_tokenized_href_from_search_page():
+    class _Locator:
+        def __init__(self, hrefs):
+            self.hrefs = hrefs
+
+        def evaluate_all(self, _script):
+            return self.hrefs
+
+    class _Page:
+        def locator(self, selector):
+            if "/explore/targetnote" in selector:
+                return _Locator(
+                    [
+                        "https://www.xiaohongshu.com/explore/othernote?xsec_token=wrong",
+                        "https://www.xiaohongshu.com/explore/targetnote?xsec_token=live-token&xsec_source=pc_search",
+                    ]
+                )
+            return _Locator([])
+
+    context = SimpleNamespace(pages=[_Page()])
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    recovered = _client()._xiaohongshu_context_url(context, link)
+
+    assert recovered.endswith(
+        "/targetnote?xsec_token=live-token&xsec_source=pc_search"
+    )
+
+
+def test_xiaohongshu_context_recovery_does_not_substitute_another_note():
+    class _Locator:
+        @staticmethod
+        def evaluate_all(_script):
+            return [
+                "https://www.xiaohongshu.com/explore/othernote?xsec_token=wrong"
+            ]
+
+    class _Page:
+        @staticmethod
+        def locator(_selector):
+            return _Locator()
+
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    recovered = _client()._xiaohongshu_context_url(
+        SimpleNamespace(pages=[_Page()]), link
+    )
+
+    assert recovered == link.share_url
+
+
+def test_xiaohongshu_force_recovery_does_not_reuse_detail_page_token():
+    search_url = "https://www.xiaohongshu.com/search_result/?keyword=test"
+
+    class _Anchor:
+        @staticmethod
+        def evaluate_all(_script):
+            return [
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=fresh-token&xsec_source=pc_search"
+            ]
+
+    class _DetailPage:
+        url = (
+            "https://www.xiaohongshu.com/explore/targetnote"
+            "?xsec_token=expired-token&xsec_source=pc_search"
+        )
+
+        @staticmethod
+        def locator(_selector):
+            raise AssertionError("detail page must not be used for token recovery")
+
+    class _Card:
+        def __init__(self, page):
+            self.page = page
+
+        @staticmethod
+        def count():
+            return 1
+
+        def click(self, *, timeout):
+            assert timeout == 5_000
+            self.page.url = (
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=fresh-token&xsec_source=pc_search"
+            )
+
+    class _Cards:
+        def __init__(self, page):
+            self.page = page
+
+        def filter(self, *, has):
+            assert isinstance(has, _Anchor)
+            return _Card(self.page)
+
+    class _SearchPage:
+        url = search_url
+
+        def locator(self, selector):
+            if selector == "section.note-item":
+                return _Cards(self)
+            return _Anchor()
+
+        @staticmethod
+        def wait_for_timeout(timeout):
+            assert timeout == 800
+
+        def go_back(self, *, wait_until, timeout):
+            assert wait_until == "domcontentloaded"
+            assert timeout == 5_000
+            self.url = search_url
+
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+        "?xsec_token=expired-token"
+    )
+
+    recovered = _client()._xiaohongshu_context_url(
+        SimpleNamespace(pages=[_SearchPage(), _DetailPage()]),
+        link,
+        force_search_context=True,
+    )
+
+    assert "xsec_token=fresh-token" in recovered
+    assert "expired-token" not in recovered
+
+
+def test_xiaohongshu_existing_detail_page_is_reused_without_navigation():
+    target_page = SimpleNamespace(
+        url=(
+            "https://www.xiaohongshu.com/explore/targetnote"
+            "?xsec_token=current-token&xsec_source=pc_search"
+        )
+    )
+    other_page = SimpleNamespace(
+        url=(
+            "https://www.xiaohongshu.com/explore/othernote"
+            "?xsec_token=other-token&xsec_source=pc_search"
+        )
+    )
+    search_page = SimpleNamespace(
+        url="https://www.xiaohongshu.com/search_result/?keyword=test"
+    )
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    matched = _client()._existing_xiaohongshu_detail_page(
+        SimpleNamespace(pages=[target_page, search_page, other_page]), link
+    )
+
+    assert matched is not None
+    assert matched[0] is target_page
+    assert matched[1].work_id == "targetnote"
+
+
+def test_xiaohongshu_search_card_open_stays_on_generated_detail_page():
+    class _Anchor:
+        pass
+
+    class _Card:
+        def __init__(self, page):
+            self.page = page
+
+        @staticmethod
+        def count():
+            return 1
+
+        def click(self, *, timeout):
+            assert timeout == 5_000
+            self.page.url = (
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=generated-token&xsec_source=pc_search"
+            )
+
+    class _Cards:
+        def __init__(self, page):
+            self.page = page
+
+        def filter(self, *, has):
+            assert isinstance(has, _Anchor)
+            return _Card(self.page)
+
+    class _SearchPage:
+        def __init__(self):
+            self.url = "https://www.xiaohongshu.com/search_result/?keyword=test"
+            self.went_back = False
+
+        def locator(self, selector):
+            if selector == "section.note-item":
+                return _Cards(self)
+            return _Anchor()
+
+        @staticmethod
+        def wait_for_timeout(timeout):
+            assert timeout == 800
+
+        def go_back(self, **_kwargs):
+            self.went_back = True
+
+    page = _SearchPage()
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    opened = _client()._open_xiaohongshu_search_result(
+        SimpleNamespace(pages=[page]), link
+    )
+
+    assert opened is not None
+    assert opened[0] is page
+    assert opened[1].work_id == "targetnote"
+    assert page.went_back is False
+    assert "/explore/targetnote" in page.url
+
+
+def test_xiaohongshu_next_card_restores_search_history_without_new_scan():
+    search_url = "https://www.xiaohongshu.com/search_result/?keyword=test"
+
+    class _Anchor:
+        pass
+
+    class _Card:
+        def __init__(self, page):
+            self.page = page
+
+        @staticmethod
+        def count():
+            return 1
+
+        def click(self, *, timeout):
+            assert timeout == 5_000
+            self.page.url = (
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=generated-token&xsec_source=pc_search"
+            )
+
+    class _Cards:
+        def __init__(self, page):
+            self.page = page
+
+        def filter(self, *, has):
+            assert isinstance(has, _Anchor)
+            return _Card(self.page)
+
+    class _DetailPage:
+        def __init__(self):
+            self.url = (
+                "https://www.xiaohongshu.com/explore/previousnote"
+                "?xsec_token=previous-token&xsec_source=pc_search"
+            )
+            self.history_restored = 0
+
+        def go_back(self, *, wait_until, timeout):
+            assert wait_until == "domcontentloaded"
+            assert timeout == 5_000
+            self.history_restored += 1
+            self.url = search_url
+
+        @staticmethod
+        def wait_for_timeout(timeout):
+            assert timeout in {250, 800}
+
+        def locator(self, selector):
+            if selector == "section.note-item":
+                return _Cards(self)
+            return _Anchor()
+
+    class _Context:
+        def __init__(self, page):
+            self.pages = [page]
+
+        @staticmethod
+        def new_page():
+            raise AssertionError("browser history should avoid a fresh search page")
+
+    page = _DetailPage()
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    opened = _client()._open_xiaohongshu_search_result(
+        _Context(page), link, search_keyword="test"
+    )
+
+    assert opened is not None
+    assert opened[0] is page
+    assert opened[1].work_id == "targetnote"
+    assert page.history_restored == 1
+    assert "/explore/targetnote" in page.url
+
+
+def test_xiaohongshu_opened_video_media_is_reused_by_transcription():
+    class _Page:
+        @staticmethod
+        def evaluate(script):
+            assert script == "navigator.userAgent"
+            return "Test Browser"
+
+        @staticmethod
+        def title():
+            return "目标作品 - 小红书"
+
+    client = _client()
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+        "?xsec_token=generated-token&xsec_source=pc_search"
+    )
+    client._cache_xiaohongshu_page_media(
+        _Page(),
+        link,
+        {
+            "media_url": "https://sns-video.example/target.mp4",
+            "title": "目标作品",
+        },
+    )
+
+    media = client.resolve("https://www.xiaohongshu.com/explore/targetnote")
+
+    assert media.work_id == "targetnote"
+    assert media.media_url == "https://sns-video.example/target.mp4"
+    assert media.browser_user_agent == "Test Browser"
+
+
+def test_xiaohongshu_media_is_read_through_authorized_browser_context():
+    calls: list[dict[str, object]] = []
+
+    class _Response:
+        status = 206
+        headers = {"content-type": "video/mp4", "content-length": "4"}
+
+        @staticmethod
+        def body():
+            return b"video"
+
+        @staticmethod
+        def dispose():
+            pass
+
+    class _Request:
+        def get(self, url, **kwargs):
+            calls.append({"url": url, **kwargs})
+            return _Response()
+
+    context = SimpleNamespace(request=_Request())
+    content, media_type = _client()._fetch_media_with_browser_context(
+        context,
+        "https://sns-video.example/target.mp4?sig=redacted",
+        "https://www.xiaohongshu.com/explore/targetnote?xsec_token=redacted",
+        "Test Browser",
+    )
+
+    assert content == b"video"
+    assert media_type == "video/mp4"
+    assert calls[0]["headers"] == {
+        "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.1",
+        "Referer": "https://www.xiaohongshu.com/explore/targetnote?xsec_token=redacted",
+        "User-Agent": "Test Browser",
+    }
+
+
+def test_xiaohongshu_context_recovery_clicks_visible_card_for_platform_token():
+    search_url = "https://www.xiaohongshu.com/search_result/?keyword=test"
+
+    class _Anchor:
+        @staticmethod
+        def evaluate_all(_script):
+            return ["https://www.xiaohongshu.com/explore/targetnote"]
+
+    class _Card:
+        @staticmethod
+        def count():
+            return 1
+
+        def __init__(self, page):
+            self.page = page
+
+        def click(self, *, timeout):
+            assert timeout == 5_000
+            self.page.url = (
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=live-token&xsec_source=pc_search"
+            )
+
+    class _Cards:
+        def __init__(self, page):
+            self.page = page
+
+        def filter(self, *, has):
+            assert isinstance(has, _Anchor)
+            return _Card(self.page)
+
+    class _Page:
+        def __init__(self):
+            self.url = search_url
+
+        def locator(self, selector):
+            if selector == "section.note-item":
+                return _Cards(self)
+            return _Anchor()
+
+        @staticmethod
+        def wait_for_timeout(timeout):
+            assert timeout == 800
+
+        def go_back(self, *, wait_until, timeout):
+            assert wait_until == "domcontentloaded"
+            assert timeout == 5_000
+            self.url = search_url
+
+    page = _Page()
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    recovered = _client()._xiaohongshu_context_url(
+        SimpleNamespace(pages=[page]), link
+    )
+
+    assert "xsec_token=live-token" in recovered
+    assert page.url == search_url
+
+
+def test_xiaohongshu_context_recovery_starts_at_top_when_search_page_is_scrolled():
+    search_url = "https://www.xiaohongshu.com/search_result/?keyword=test"
+
+    class _Anchor:
+        def __init__(self, page):
+            self.page = page
+
+        def evaluate_all(self, _script):
+            if self.page.at_top:
+                return ["https://www.xiaohongshu.com/explore/targetnote"]
+            return []
+
+    class _Card:
+        def __init__(self, page):
+            self.page = page
+
+        @staticmethod
+        def count():
+            return 1
+
+        def click(self, *, timeout):
+            assert timeout == 5_000
+            self.page.url = (
+                "https://www.xiaohongshu.com/explore/targetnote"
+                "?xsec_token=live-token"
+            )
+
+    class _Cards:
+        def __init__(self, page):
+            self.page = page
+
+        def filter(self, *, has):
+            assert isinstance(has, _Anchor)
+            return _Card(self.page)
+
+    class _Page:
+        def __init__(self):
+            self.url = search_url
+            self.at_top = False
+            self.scroll_rounds = 0
+
+        def locator(self, selector):
+            if selector == "section.note-item":
+                return _Cards(self)
+            return _Anchor(self)
+
+        def evaluate(self, script):
+            if "scrollTo" in script:
+                self.at_top = True
+            else:
+                self.scroll_rounds += 1
+
+        @staticmethod
+        def wait_for_timeout(timeout):
+            assert timeout in {350, 800}
+
+        def go_back(self, *, wait_until, timeout):
+            assert wait_until == "domcontentloaded"
+            assert timeout == 5_000
+            self.url = search_url
+
+    page = _Page()
+    link = parse_platform_share_text(
+        "https://www.xiaohongshu.com/explore/targetnote"
+    )
+
+    recovered = _client()._xiaohongshu_context_url(
+        SimpleNamespace(pages=[page]), link
+    )
+
+    assert "xsec_token=live-token" in recovered
+    assert page.scroll_rounds == 0
 
 
 def test_xiaohongshu_300031_is_actionable():

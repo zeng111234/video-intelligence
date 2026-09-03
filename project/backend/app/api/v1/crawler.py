@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import csv
+import inspect
 import io
 import logging
 import subprocess
@@ -13,10 +14,12 @@ import shutil
 import re
 import hashlib
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
+from urllib.parse import parse_qsl, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
@@ -51,7 +54,10 @@ from project.backend.app.core.deps import (
 )
 from project.backend.app.core import config as backend_config
 from project.backend.app.core.config import ASRMode
-from project.backend.app.api.v1.link_transcriptions import _candidate_xiaohongshu_url
+from project.backend.app.api.v1.link_transcriptions import (
+    _candidate_xiaohongshu_search_keyword,
+    _candidate_xiaohongshu_url,
+)
 from project.backend.app.schemas.responses import TranscriptionResponse
 from src.models import (
     CopySource,
@@ -97,6 +103,35 @@ from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/crawler", tags=["crawler"])
 logger = logging.getLogger(__name__)
+
+_ORIGINAL_MEDIA_CACHE_TTL_SECONDS = 120.0
+_ORIGINAL_MEDIA_CACHE_MAX_ITEMS = 64
+_original_media_cache: dict[str, tuple[float, Any]] = {}
+_original_media_cache_lock = threading.Lock()
+
+
+def _get_cached_original_media(candidate_id: str):
+    now = time.monotonic()
+    with _original_media_cache_lock:
+        for key, (expires_at, _) in list(_original_media_cache.items()):
+            if expires_at <= now:
+                _original_media_cache.pop(key, None)
+        cached = _original_media_cache.get(candidate_id)
+        return cached[1] if cached else None
+
+
+def _cache_original_media(candidate_id: str, media: Any) -> None:
+    with _original_media_cache_lock:
+        if len(_original_media_cache) >= _ORIGINAL_MEDIA_CACHE_MAX_ITEMS:
+            oldest = min(
+                _original_media_cache,
+                key=lambda key: _original_media_cache[key][0],
+            )
+            _original_media_cache.pop(oldest, None)
+        _original_media_cache[candidate_id] = (
+            time.monotonic() + _ORIGINAL_MEDIA_CACHE_TTL_SECONDS,
+            media,
+        )
 
 _CRAWLER_QUEUE_MAX_ITEMS = 20
 _CRAWLER_QUEUE_EXECUTOR = ThreadPoolExecutor(max_workers=1)
@@ -4629,12 +4664,16 @@ def open_candidate_original_media(
     source_url = source_url or _candidate_xiaohongshu_url(candidate)
     if not source_url:
         raise HTTPException(status_code=400, detail="小红书候选缺少可解析的作品编号。")
-    try:
-        media = service.parser.resolve(source_url)
-    except PlatformLinkParserError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    media = _get_cached_original_media(candidate_id)
+    if media is None:
+        try:
+            media = _call_candidate_parser(service.parser.resolve, source_url, candidate)
+        except PlatformLinkParserError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _cache_original_media(candidate_id, media)
     if media.platform != Platform.XIAOHONGSHU or not media.media_url:
         raise HTTPException(status_code=422, detail="未能解析到该小红书作品的视频流。")
+    _persist_candidate_xiaohongshu_entry(repo, candidate, str(media.share_url or ""))
     if "application/json" in accept.casefold():
         # API 客户端能携带自定义登录头，但后续 video GET 只能依赖
         # HttpOnly Cookie；把已通过中间件校验的会话同步到媒体 Cookie。
@@ -4659,6 +4698,7 @@ def open_candidate_original_media(
         return {
             "candidate_id": candidate_id,
             "platform": media.platform.value,
+            "share_url": media.share_url,
             "media_url": str(media.media_url),
         }
 
@@ -4713,6 +4753,68 @@ def open_candidate_original_media(
         media_type=upstream.headers.get("content-type", "video/mp4"),
         headers=response_headers,
     )
+
+
+def _call_candidate_parser(method, source_url: str, candidate):
+    """Call old parser doubles and the keyword-aware parser compatibly."""
+    keyword = _candidate_xiaohongshu_search_keyword(candidate)
+    if keyword:
+        try:
+            parameters = inspect.signature(method).parameters.values()
+            accepts_keyword = any(
+                parameter.name == "search_keyword"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+        except (TypeError, ValueError):
+            accepts_keyword = True
+        if accepts_keyword:
+            return method(source_url, search_keyword=keyword)
+    return method(source_url)
+
+
+def _persist_candidate_xiaohongshu_entry(repo, candidate, source_url: str | None) -> None:
+    """Persist a freshly resolved signed note entry for the next user action."""
+    if candidate.platform != Platform.XIAOHONGSHU or not source_url:
+        return
+    query_keys = {
+        key.casefold()
+        for key, _ in parse_qsl(urlparse(source_url).query, keep_blank_values=True)
+    }
+    if "xsec_token" not in query_keys:
+        return
+    if str(candidate.source_url or "") == source_url:
+        return
+    save_candidate = getattr(repo, "save_candidate", None)
+    if not callable(save_candidate):
+        return
+    save_candidate(candidate.model_copy(update={"source_url": source_url}))
+
+
+@router.post("/candidates/{candidate_id}/open-original-in-browser")
+def open_candidate_original_in_browser(
+    candidate_id: str,
+    repo=Depends(get_repository),
+    service=Depends(get_douyin_link_transcription_service),
+):
+    """Open a Xiaohongshu candidate in the already connected material browser."""
+    candidate = repo.get_candidate(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="候选不存在。")
+    if candidate.platform != Platform.XIAOHONGSHU:
+        raise HTTPException(status_code=400, detail="该入口仅用于打开小红书原视频。")
+    source_url = str(candidate.source_url) if candidate.source_url else None
+    source_url = source_url or _candidate_xiaohongshu_url(candidate)
+    if not source_url:
+        raise HTTPException(status_code=400, detail="小红书候选缺少可解析的作品编号。")
+    try:
+        opened_link = _call_candidate_parser(
+            service.parser.open_in_connected_browser, source_url, candidate
+        )
+    except PlatformLinkParserError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _persist_candidate_xiaohongshu_entry(repo, candidate, str(opened_link.share_url or ""))
+    return {"candidate_id": candidate_id, "platform": Platform.XIAOHONGSHU.value, "opened": True}
 
 
 @router.get(

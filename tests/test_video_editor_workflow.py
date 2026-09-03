@@ -679,10 +679,26 @@ def test_adaptive_reframe_filter_uses_safe_camera_motion_without_cards():
         source_height=1280,
     )
 
-    assert "scale=w='trunc(720*(1+0.035*if(lt(t,3.000)" in rendered
+    assert "scale=w='trunc(720*(1+0.08*if(lt(t,3.000)" in rendered
     assert "crop=720:1280:(iw-ow)/2:0" in rendered
     assert "beatcard" not in rendered
     assert "subtitles='approved.ass'" in rendered
+
+
+def test_subtitle_sound_effects_are_delayed_to_semantic_beats():
+    rendered = workflow_module._subtitle_sound_effect_filters(
+        [
+            {"start": 2.4, "end": 3.4, "style_id": "number_slam"},
+            {"start": 8.0, "end": 9.0, "style_id": "cta_burst"},
+        ],
+        playback_rate=1.0,
+    )
+
+    assert len(rendered) == 2
+    assert "frequency=720" in rendered[0]
+    assert "adelay=2400|2400" in rendered[0]
+    assert "frequency=760" in rendered[1]
+    assert "adelay=8000|8000" in rendered[1]
 
 
 def test_local_export_quality_report_requires_audio_and_expected_canvas():
@@ -2261,6 +2277,54 @@ def test_default_local_filter_has_no_broll_overlay(tmp_path: Path):
     assert "subtitles='approved.ass'" in rendered
 
 
+def test_local_render_thread_options_are_bounded_and_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VIDEO_EDITOR_LOCAL_THREADS", raising=False)
+    monkeypatch.setattr(workflow_module.os, "cpu_count", lambda: 16)
+
+    assert workflow_module._local_render_thread_options() == [
+        "-threads",
+        "8",
+        "-filter_threads",
+        "4",
+        "-filter_complex_threads",
+        "4",
+    ]
+
+    monkeypatch.setenv("VIDEO_EDITOR_LOCAL_THREADS", "2")
+    assert workflow_module._local_render_thread_options() == [
+        "-threads",
+        "2",
+        "-filter_threads",
+        "2",
+        "-filter_complex_threads",
+        "2",
+    ]
+
+    monkeypatch.setenv("VIDEO_EDITOR_LOCAL_THREADS", "auto")
+    assert workflow_module._local_render_thread_options() == [
+        "-threads",
+        "0",
+        "-filter_threads",
+        "0",
+        "-filter_complex_threads",
+        "0",
+    ]
+
+
+def test_primary_subtitle_graph_avoids_a_second_burn() -> None:
+    assert workflow_module._subtitle_is_already_burned(
+        {}, primary_subtitle_filter="approved.ass"
+    )
+    assert workflow_module._subtitle_is_already_burned(
+        {"subtitles_burned_in": True}, primary_subtitle_filter=""
+    )
+    assert not workflow_module._subtitle_is_already_burned(
+        {}, primary_subtitle_filter=""
+    )
+
+
 def test_release_filter_supports_multiple_pip_and_full_visual_events(
     tmp_path: Path,
 ):
@@ -2393,8 +2457,8 @@ def test_release_filter_renders_semantic_motion_badges_before_subtitles(
     )
 
     assert "scale=w='trunc(518*(1.0+0.12*if(lt(t,0.20),1-t/0.20,0))/2)*2'" in rendered
-    assert "overlay=x='(W-w)/2':y='trunc(H*0.68-h/2)'" in rendered
-    assert "overlay=x='(W-w)/2+8*sin(2*PI*t/0.10)':y='trunc(H*0.68-h/2)'" in rendered
+    assert "overlay=x='(W-w)/2':y='trunc(H*0.76-h/2)'" in rendered
+    assert "overlay=x='(W-w)/2+8*sin(2*PI*t/0.10)':y='trunc(H*0.76-h/2)'" in rendered
     assert rendered.index("[with_motion1]") < rendered.index("subtitles='approved.ass'")
 
 
@@ -2582,6 +2646,21 @@ def test_local_title_candidates_are_zero_config_and_grounded():
         "看懂普通人练习台球时，先把站姿稳定下来",
         "别错过：普通人练习台球时，先把站姿稳定下来",
     ]
+
+
+def test_local_title_candidates_remove_oral_filler_for_food_membership_script():
+    titles = VideoEditorWorkflowService._local_title_candidates(
+        "本地上传 · 本地审核口播.mp4",
+        "最近广州冒出了一个挺特别的餐饮模式街上有家烧烤店会员制让顾客自动升级成小店长",
+        "douyin",
+    )
+
+    assert titles == [
+        "会员顾客自动升级成小店长",
+        "共享店长让顾客主动传播",
+        "烧烤店用会员制带动复购",
+    ]
+    assert "最近广州冒出来" not in titles[0]
 
 
 def test_authorized_bgm_is_added_to_batch_render(

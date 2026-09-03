@@ -33,6 +33,31 @@ def test_local_debug_status_bypasses_environment_proxies():
     )
 
 
+def test_closed_xiaohongshu_login_profile_is_not_reported_as_logged_out(
+    tmp_path, monkeypatch
+):
+    class _ClosedOpener:
+        @staticmethod
+        def open(*_args, **_kwargs):
+            raise OSError("closed")
+
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=tmp_path / "xiaohongshu-login",
+        debug_port=29993,
+        allow_xiaohongshu_login=True,
+    )
+    monkeypatch.setattr(provider, "_missing_prerequisites", lambda: [])
+    monkeypatch.setattr(platform_browser_module, "_LOCAL_DEBUG_OPENER", _ClosedOpener())
+
+    status = provider.session_status()
+
+    assert status.phase == "browser_closed"
+    assert status.login_required is False
+    assert "已保存的登录资料" in status.message
+
+
 class _TextPage:
     def __init__(self, text: str) -> None:
         self.text = text
@@ -635,6 +660,39 @@ def test_xiaohongshu_payload_finds_nested_share_url_and_token():
     assert rows[0]["source_url_verified"] is True
 
 
+def test_xiaohongshu_payload_prefers_nested_signed_url_over_bare_href():
+    """卡片同时给裸 href 和带授权参数的分享链接时，必须保留后者。"""
+    provider = _provider(Platform.XIAOHONGSHU)
+    payload = {
+        "data": {
+            "items": [
+                {
+                    "id": "xhs-bare-before-signed",
+                    "href": "https://www.xiaohongshu.com/explore/xhs-bare-before-signed",
+                    "note_card": {
+                        "type": "video",
+                        "display_title": "同时存在两种入口",
+                        "share_info": {
+                            "shareUrl": (
+                                "https://www.xiaohongshu.com/explore/"
+                                "xhs-bare-before-signed?foo=1&xsec_token=signed-token"
+                            )
+                        },
+                    },
+                }
+            ]
+        }
+    }
+
+    rows = provider._rows_from_payload(payload)
+
+    assert rows[0]["source_url"] == (
+        "https://www.xiaohongshu.com/explore/xhs-bare-before-signed"
+        "?foo=1&xsec_token=signed-token"
+    )
+    assert rows[0]["source_url_verified"] is True
+
+
 def test_rendered_xiaohongshu_card_keeps_dom_xsec_token():
     provider = _provider(Platform.XIAOHONGSHU)
 
@@ -665,6 +723,52 @@ def test_rendered_xiaohongshu_card_keeps_dom_xsec_token():
         "https://www.xiaohongshu.com/explore/xhs-dom-token"
         "?xsec_token=dom-token&xsec_source=pc_search"
     )
+
+
+def test_xiaohongshu_unlimited_search_stops_at_requested_count(monkeypatch):
+    provider = LocalPlatformBrowserSearchProvider(
+        platform=Platform.XIAOHONGSHU,
+        enabled=True,
+        profile_dir=Path("data/test-browser-profile"),
+        debug_port=19999,
+        clock=lambda: datetime(2026, 7, 30, 12, tzinfo=timezone.utc),
+        allow_xiaohongshu_login=True,
+    )
+    monkeypatch.setattr(
+        provider,
+        "session_status",
+        lambda: BrowserSessionStatus(True, True, False, True, "ready", "已连接"),
+    )
+    captured: dict[str, object] = {}
+
+    def collect(_keyword, *, target, **options):
+        captured.update(options)
+        assert target == 300
+        return [
+            {
+                "item_id": f"xhs-{index}",
+                "title": "通用小红书视频",
+                "source_url": f"https://www.xiaohongshu.com/explore/xhs-{index}",
+                "evidence": "browser_search_response",
+            }
+            for index in range(2)
+        ]
+
+    monkeypatch.setattr(provider, "_collect_rows", collect)
+
+    page = provider.search(
+        Platform.XIAOHONGSHU,
+        "餐饮获客",
+        None,
+        2,
+        "xhs-early-stop",
+    )
+
+    assert captured["qualified_target"] == 2
+    assert captured["qualifying_count"](  # type: ignore[operator]
+        [{"item_id": "xhs-0"}, {"item_id": "xhs-1"}]
+    ) == 2
+    assert page.crawl_stop_reason == "target_reached"
 
 
 def test_xiaohongshu_payload_rejects_items_without_video_type():
@@ -2303,6 +2407,26 @@ def test_merge_rendered_row_keeps_existing_metrics():
     assert rendered["BV1"]["likes"] == 5
 
 
+def test_merge_rendered_row_keeps_tokenized_xiaohongshu_url():
+    rendered = {}
+    tokenized = (
+        "https://www.xiaohongshu.com/explore/xhs-1?xsec_token=live-token"
+    )
+    LocalPlatformBrowserSearchProvider._merge_rendered_row(
+        rendered,
+        {"item_id": "xhs-1", "source_url": tokenized},
+    )
+    LocalPlatformBrowserSearchProvider._merge_rendered_row(
+        rendered,
+        {
+            "item_id": "xhs-1",
+            "source_url": "https://www.xiaohongshu.com/explore/xhs-1",
+        },
+    )
+
+    assert rendered["xhs-1"]["source_url"] == tokenized
+
+
 def test_merge_collected_rows_network_none_does_not_clobber():
     """网络行指标为 None 时不应覆盖 DOM 行已有指标。"""
     from src.adapters.platform_browser_search import (
@@ -2316,6 +2440,26 @@ def test_merge_collected_rows_network_none_does_not_clobber():
     assert row["plays"] == 110
     assert row["likes"] == 5
     assert row["extra"] == "x"
+
+
+def test_merge_collected_rows_keeps_richer_xiaohongshu_url():
+    tokenized = (
+        "https://www.xiaohongshu.com/explore/xhs-1?xsec_token=live-token"
+    )
+    rendered = {"xhs-1": {"item_id": "xhs-1", "source_url": tokenized}}
+    network = {
+        "xhs-1": {
+            "item_id": "xhs-1",
+            "source_url": "https://www.xiaohongshu.com/explore/xhs-1",
+            "source_url_verified": True,
+        }
+    }
+
+    merged = LocalPlatformBrowserSearchProvider._merge_collected_rows(
+        network, rendered
+    )
+
+    assert merged[0]["source_url"] == tokenized
 
 
 def test_xiaohongshu_verified_network_row_keeps_direct_rendered_link():

@@ -76,6 +76,7 @@ class TranscriptionWorker:
                     TaskStatus.RUNNING,
                 }
                 and item.provider_name == "aliyun_fun_asr"
+                and item.outputs.get("processing_mode") != "inline"
             ),
             None,
         )

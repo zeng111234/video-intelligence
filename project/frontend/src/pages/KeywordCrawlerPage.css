@@ -303,6 +303,14 @@
   border-top: 1px solid var(--border-default);
 }
 
+.crawler-original-media-preview {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+  border-radius: 8px;
+}
+
 @media (max-width: 1180px) {
   .crawler-workspace {
     grid-template-columns: 238px minmax(0, 1fr);

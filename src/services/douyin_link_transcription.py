@@ -16,7 +16,7 @@ from src.adapters.platform_link_parser import (
 from src.models import Platform, TranscriptionTask
 from src.platforms import platform_label
 from src.services.transcription import MAX_PROVIDER_MEDIA_BYTES, TranscriptionError
-from src.services.video_source import VideoSourceError, fetch_authorized_video
+from src.services.video_source import DirectVideo, VideoSourceError, fetch_authorized_video
 
 
 @dataclass(frozen=True)
@@ -67,8 +67,13 @@ class DouyinLinkTranscriptionService:
         rights_confirmed: bool,
         model_name: str = "large-v3-turbo",
         candidate_id: str | None = None,
+        search_keyword: str | None = None,
     ) -> TranscriptionTask:
-        media = self.parser.resolve(share_text)
+        media = self.parser.resolve(
+            share_text,
+            search_keyword=search_keyword,
+            include_media_bytes=True,
+        )
         return self._create_task(
             platform=media.platform,
             media_url=media.media_url,
@@ -78,6 +83,8 @@ class DouyinLinkTranscriptionService:
             source_url=media.share_url,
             source_kind=f"{media.platform.value}_local_browser",
             media_request_headers=media.media_request_headers,
+            media_bytes=media.media_bytes,
+            media_type=media.media_type,
             rights_holder=rights_holder,
             rights_confirmed=rights_confirmed,
             model_name=model_name,
@@ -132,19 +139,28 @@ class DouyinLinkTranscriptionService:
         source_url: str,
         source_kind: str,
         media_request_headers: dict[str, str] | None,
+        media_bytes: bytes | None = None,
+        media_type: str | None = None,
         rights_holder: str,
         rights_confirmed: bool,
         model_name: str,
         candidate_id: str | None = None,
     ) -> TranscriptionTask:
         try:
-            video = fetch_authorized_video(
-                media_url,
-                require_extension=False,
-                max_bytes=MAX_PROVIDER_MEDIA_BYTES,
-                fallback_name=media_name,
-                request_headers=media_request_headers,
-            )
+            if media_bytes is not None:
+                video = DirectVideo(
+                    name=media_name,
+                    media_type=media_type or "video/mp4",
+                    content=media_bytes,
+                )
+            else:
+                video = fetch_authorized_video(
+                    media_url,
+                    require_extension=False,
+                    max_bytes=MAX_PROVIDER_MEDIA_BYTES,
+                    fallback_name=media_name,
+                    request_headers=media_request_headers,
+                )
             task = self.transcription_service.create_task(
                 media_name=video.name,
                 media_type=video.media_type,
@@ -158,11 +174,14 @@ class DouyinLinkTranscriptionService:
                 source_url=source_url,
             )
         except (VideoSourceError, TranscriptionError) as exc:
-            raise PlatformLinkParserError(
+            error = PlatformLinkParserError(
                 getattr(exc, "user_message", str(exc)),
                 platform=platform,
                 work_id=work_id,
-            ) from exc
+            )
+            if isinstance(exc, TranscriptionError):
+                error.task_id = exc.task_id
+            raise error from exc
         return task
 
     def _fallback_price(self, platform: Platform = Platform.DOUYIN) -> float | None:
