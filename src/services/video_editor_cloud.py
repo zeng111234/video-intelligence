@@ -318,8 +318,20 @@ _CAPTION_MIN_DURATION_SECONDS = 0.9
 _CAPTION_MAX_DURATION_SECONDS = 2.4
 
 
-def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
-    """Return the public layout contract shared by preview and cloud render."""
+def visual_style_spec(
+    output_profile: str | "OutputProfile",
+    *,
+    style_preset: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return the public layout contract shared by preview and cloud render.
+
+    The optional ``style_preset`` argument is a defensive copy from
+    :mod:`src.services.style_presets`; it lets a caller override the
+    playback rate, emphasis palette, top-of-frame brand header and
+    centred large-emphasis card without touching the legacy baseline.
+    When the argument is ``None`` the contract is byte-identical to the
+    pre-preset customer experience.
+    """
 
     profile = str(output_profile)
     if profile.startswith("OutputProfile."):
@@ -331,9 +343,39 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
     else:
         raise CloudEditorError("输出档位仅支持 720p 或 1080p。")
     scale = width / 720
+    rhythm: dict[str, Any] = {}
+    emphasis_palette: dict[str, Any] = {}
+    top_brand_header: Any = None
+    big_emphasis_layer: Any = None
+    preset_id = DEFAULT_VISUAL_STYLE_ID
+    if isinstance(style_preset, Mapping):
+        candidate_id = str(style_preset.get("preset_id") or "").strip()
+        if candidate_id:
+            preset_id = candidate_id
+        rhythm_raw = style_preset.get("rhythm")
+        if isinstance(rhythm_raw, Mapping):
+            rhythm = {key: value for key, value in rhythm_raw.items() if value is not None}
+        palette_raw = style_preset.get("emphasis_palette")
+        if isinstance(palette_raw, Mapping):
+            emphasis_palette = {
+                str(key): str(value)
+                for key, value in palette_raw.items()
+                if isinstance(value, str) and value
+            }
+        if style_preset.get("top_brand_header") is not None:
+            top_brand_header = style_preset.get("top_brand_header")
+        if style_preset.get("big_emphasis_layer") is not None:
+            big_emphasis_layer = style_preset.get("big_emphasis_layer")
+    playback_rate = float(rhythm.get("playback_rate") or DEFAULT_PLAYBACK_RATE)
     return {
+        # ``style_id`` stays byte-identical with the pre-preset contract so
+        # downstream consumers (review manifest, render manifest) that read
+        # ``visual_style_spec(... )["style_id"]`` keep their previous value.
         "style_id": DEFAULT_VISUAL_STYLE_ID,
-        "playback_rate": DEFAULT_PLAYBACK_RATE,
+        # ``preset_id`` is the per-task style preset selector; it is unset
+        # (None) when the caller did not opt into a preset.
+        "preset_id": preset_id if isinstance(style_preset, Mapping) else None,
+        "playback_rate": playback_rate,
         "canvas": {"width": width, "height": height, "pixel_aspect_ratio": "1:1"},
         "title": {
             "visible_seconds": 2.5,
@@ -376,6 +418,10 @@ def visual_style_spec(output_profile: str | "OutputProfile") -> dict[str, Any]:
             "color": "#F8FAFC",
             "emphasis_color": "#FFE16A",
         },
+        "rhythm": rhythm,
+        "emphasis_palette": emphasis_palette,
+        "top_brand_header": top_brand_header,
+        "big_emphasis_layer": big_emphasis_layer,
     }
 
 
@@ -2850,10 +2896,17 @@ def build_business_talking_head_overlay_preview(
     spoken_ranges: object = None,
     caption_glossary: object = None,
     subtitle_style_id: str = "adaptive_talking_head_v1",
+    style_preset: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Normalize title/caption lines once for browser preview and ASS rendering."""
+    """Normalize title/caption lines once for browser preview and ASS rendering.
 
-    spec = visual_style_spec(output_profile)
+    The optional ``style_preset`` argument forwards a preset copy from
+    :mod:`src.services.style_presets`; the preset is recorded in the
+    returned preview's ``style_fingerprint`` so downstream consumers can
+    audit which preset produced a given cue set.
+    """
+
+    spec = visual_style_spec(output_profile, style_preset=style_preset)
     title_style = spec["title"]
     caption_style = spec["subtitle"]
     normalized_caption_glossary = _normalize_caption_glossary(caption_glossary)
@@ -4007,10 +4060,16 @@ def build_business_talking_head_ass(
     caption_font_family: str | None = None,
     overlay_preview: Mapping[str, Any] | None = None,
     subtitle_style_id: str = "adaptive_talking_head_v1",
+    style_preset: Mapping[str, Any] | None = None,
 ) -> bytes:
-    """Create one approved ASS overlay for the title and manually reviewed captions."""
+    """Create one approved ASS overlay for the title and manually reviewed captions.
 
-    spec = visual_style_spec(output_profile)
+    The optional ``style_preset`` argument is forwarded to
+    :func:`visual_style_spec`; when omitted, the legacy baseline contract
+    is preserved byte-for-byte.
+    """
+
+    spec = visual_style_spec(output_profile, style_preset=style_preset)
     canvas = spec["canvas"]
     title_style = spec["title"]
     accent_style = spec["accent"]
@@ -4030,6 +4089,7 @@ def build_business_talking_head_ass(
         spoken_ranges=spoken_ranges,
         caption_glossary=caption_glossary,
         subtitle_style_id=subtitle_style_id,
+        style_preset=style_preset,
     )
     # A cached review snapshot can predate the selective-motion contract.  Do
     # not replay its old "every cue pops" fields: only a new preview carrying

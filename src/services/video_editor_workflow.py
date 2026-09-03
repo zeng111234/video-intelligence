@@ -11080,6 +11080,28 @@ class VideoEditorWorkflowService:
             playback_rate = float(
                 task.outputs.get("playback_rate") or _LOCAL_PREVIEW_PLAYBACK_RATE
             )
+            # Resolve the renderer style preset from the director plan (or the
+            # environment) so the per-task visual contract stays in lock-step
+            # with the brand-emphasis workstream.  The default preset is a
+            # byte-identical alias for the legacy ``adaptive_talking_head_v1``
+            # contract, so existing tasks see no behaviour change.
+            from src.services.style_presets import (
+                get_style_preset,
+                merge_top_brand_header_overrides,
+                resolve_style_preset_id,
+            )
+
+            preset_id = resolve_style_preset_id(edit_plan)
+            style_preset = get_style_preset(preset_id)
+            brand_header_overrides = (
+                edit_plan.get("top_brand_header_overrides")
+                if isinstance(edit_plan, Mapping)
+                else None
+            )
+            if isinstance(brand_header_overrides, Mapping):
+                style_preset = merge_top_brand_header_overrides(
+                    style_preset, brand_header_overrides
+                )
             source_caption_mode = str(
                 source_caption_detection.get("mode")
                 if source_caption_detection.get("detected")
@@ -11379,7 +11401,8 @@ class VideoEditorWorkflowService:
                 caption_emphasis=edit_plan.get("caption_emphasis"),
                 spoken_ranges=rendered_spoken_ranges,
                 caption_glossary=edit_plan.get("transcript_glossary"),
-                subtitle_style_id="adaptive_talking_head_v1",
+                subtitle_style_id=preset_id,
+                style_preset=style_preset,
             )
             # Keep the reviewed wording, but align cue edges to the same real
             # ASR word clock used by the source audio before writing both ASS
@@ -11419,7 +11442,8 @@ class VideoEditorWorkflowService:
                 font_family=font_family,
                 caption_font_family=caption_font_family,
                 overlay_preview=subtitle_render_preview,
-                subtitle_style_id="adaptive_talking_head_v1",
+                subtitle_style_id=preset_id,
+                style_preset=style_preset,
             )
             ass_path.write_bytes(ass_bytes)
             subtitle_manifest = {
@@ -13548,6 +13572,7 @@ class VideoEditorWorkflowService:
         caption_font_family: str | None = None,
         overlay_preview: Mapping[str, Any] | None = None,
         subtitle_style_id: str = "adaptive_talking_head_v1",
+        style_preset: object = None,
     ) -> bytes:
         from src.services.video_editor_cloud import build_business_talking_head_ass
 
@@ -13565,6 +13590,7 @@ class VideoEditorWorkflowService:
             caption_font_family=caption_font_family,
             overlay_preview=overlay_preview,
             subtitle_style_id=subtitle_style_id,
+            style_preset=style_preset,
         )
 
     @staticmethod
