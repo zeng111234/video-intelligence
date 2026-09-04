@@ -25,6 +25,51 @@ $serviceLogDirectory = Join-Path $projectRoot "data\logs\services"
 $pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $runtimeRoot = $projectRoot
 $companyServerOrigin = ""
+$projectEnvPath = Join-Path $projectRoot ".env"
+$backendEnvPath = Join-Path $projectRoot "project\backend\.env"
+
+function Import-ProjectEnvironment {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+
+    foreach ($rawLine in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $line = ([string]$rawLine).Trim()
+        if (-not $line -or $line.StartsWith("#") -or $line.IndexOf("=") -lt 1) {
+            continue
+        }
+        $parts = $line -split "=", 2
+        $key = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        if ($key -notmatch "^[A-Za-z_][A-Za-z0-9_]*$") {
+            continue
+        }
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        # The source launcher must use the checked-in project's local .env,
+        # including when a stale parent shell exported sandbox values.
+        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+    }
+}
+
+function Write-ConfiguredModeSummary {
+    $modeNames = @(
+        @{ Key = "ASR_MODE"; Label = "转写" },
+        @{ Key = "VIDEO_EDITOR_PROVIDER_MODE"; Label = "剪辑" },
+        @{ Key = "CRAWLER_PROVIDER_MODE"; Label = "素材发现" },
+        @{ Key = "COPYWRITING_MODE"; Label = "文案" },
+        @{ Key = "AVATAR_PROVIDER_MODE"; Label = "数字人" }
+    )
+    $summary = @($modeNames | ForEach-Object {
+        $value = [Environment]::GetEnvironmentVariable($_.Key, "Process")
+        if ([string]::IsNullOrWhiteSpace($value)) { $value = "未配置" }
+        "$($_.Label)=$value"
+    }) -join "，"
+    Write-Log "源码实际运行模式：$summary" "INFO"
+}
 
 if ($UseCompanyServer) {
     try {
@@ -251,6 +296,15 @@ function Install-Dependencies {
         Write-Log "运行环境尚未准备好。请按上面的提示处理后重新运行 start.bat。" "ERROR"
         return $false
     }
+    $envPath = if (Test-Path -LiteralPath $projectEnvPath -PathType Leaf) {
+        $projectEnvPath
+    } elseif (Test-Path -LiteralPath $backendEnvPath -PathType Leaf) {
+        $backendEnvPath
+    } else {
+        $projectEnvPath
+    }
+    Import-ProjectEnvironment -Path $envPath
+    Write-ConfiguredModeSummary
     return Test-Path -LiteralPath $pythonCommand
 }
 
@@ -373,7 +427,8 @@ function Show-ServiceInfo {
         Write-Host "  Company authentication: $companyServerOrigin" -ForegroundColor Green
         Write-Host "  This preview does not reuse the normal source workspace's local media or login binding." -ForegroundColor Yellow
     } else {
-        Write-Host "  Company authentication: disabled (local demo mode)" -ForegroundColor Yellow
+        Write-Host "  Company authentication: disabled (local desktop workspace)" -ForegroundColor Yellow
+        Write-Host "  Provider modes come from .env; see the mode summary above." -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Gray

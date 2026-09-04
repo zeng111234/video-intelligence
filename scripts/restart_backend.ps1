@@ -34,6 +34,42 @@ Write-Host "[SUCCESS] Port 2001 is now free"
 
 # Start backend from this script's repository, regardless of user name or drive.
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$projectEnvPath = Join-Path $projectRoot ".env"
+$backendEnvPath = Join-Path $projectRoot "project\backend\.env"
+
+function Import-ProjectEnvironment {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+
+    foreach ($rawLine in Get-Content -LiteralPath $Path -Encoding UTF8) {
+        $line = ([string]$rawLine).Trim()
+        if (-not $line -or $line.StartsWith("#") -or $line.IndexOf("=") -lt 1) {
+            continue
+        }
+        $parts = $line -split "=", 2
+        $key = $parts[0].Trim()
+        $value = $parts[1].Trim()
+        if ($key -notmatch "^[A-Za-z_][A-Za-z0-9_]*$") {
+            continue
+        }
+        if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+    }
+}
+
+$envPath = if (Test-Path -LiteralPath $projectEnvPath -PathType Leaf) {
+    $projectEnvPath
+} elseif (Test-Path -LiteralPath $backendEnvPath -PathType Leaf) {
+    $backendEnvPath
+} else {
+    $projectEnvPath
+}
+Import-ProjectEnvironment -Path $envPath
 $env:PYTHONPATH = $projectRoot
 $env:VIDEOINSIGHT_DESKTOP_CLIENT = "true"
 $env:VIDEOINSIGHT_DESKTOP_DEMO = "true"
