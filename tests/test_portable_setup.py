@@ -59,6 +59,9 @@ def test_windows_setup_uses_project_local_and_locked_dependencies() -> None:
     assert "--disable-interactivity" in setup
     assert '".venv\\Scripts\\python.exe"' in startup
     assert 'StartCommand = "python"' not in startup
+    assert 'requirements.txt' in setup
+    assert 'project\\backend\\requirements.txt' in setup
+    assert 'faster_whisper' in setup
 
 
 def test_frontend_manifest_and_lockfile_stay_in_sync() -> None:

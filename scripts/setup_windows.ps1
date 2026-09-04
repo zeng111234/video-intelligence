@@ -9,13 +9,14 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$runtimeRequirements = Join-Path $projectRoot "requirements.txt"
 $backendRequirements = Join-Path $projectRoot "project\backend\requirements.txt"
 $frontendDirectory = Join-Path $projectRoot "project\frontend"
 $frontendLockFile = Join-Path $frontendDirectory "package-lock.json"
 $venvDirectory = Join-Path $projectRoot ".venv"
 $venvPython = Join-Path $venvDirectory "Scripts\python.exe"
 $setupStateDirectory = Join-Path $projectRoot ".setup"
-$pythonStamp = Join-Path $setupStateDirectory "backend-requirements.sha256"
+$pythonStamp = Join-Path $setupStateDirectory "python-runtime-requirements.sha256"
 $frontendStamp = Join-Path $setupStateDirectory "frontend-lock.sha256"
 
 function Write-Step {
@@ -50,7 +51,7 @@ function Test-BackendImports {
     }
     Push-Location $projectRoot
     try {
-        & $venvPython -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba; import playwright.sync_api; import src.resources" 2>$null
+        & $venvPython -c "import fastapi, uvicorn, pydantic, httpx, multipart, PIL, jieba, pandas, openpyxl, faster_whisper, edge_tts; import playwright.sync_api; import src.resources" 2>$null
         return $LASTEXITCODE -eq 0
     }
     finally {
@@ -205,7 +206,10 @@ $nodeCommand = $nodeRuntime.Node
 $npmCommand = $nodeRuntime.Npm
 Write-Step "Node.js $($nodeRuntime.Version) 可用。" "OK"
 
-$requirementsHash = Get-FileHashValue -Path $backendRequirements
+$requirementsHash = @(
+    (Get-FileHashValue -Path $runtimeRequirements)
+    (Get-FileHashValue -Path $backendRequirements)
+) -join ":"
 $frontendHash = Get-FileHashValue -Path $frontendLockFile
 $backendReady = (Test-BackendImports) -and ((Get-SavedHash -Path $pythonStamp) -eq $requirementsHash)
 $frontendReady = (Test-FrontendInstall) -and ((Get-SavedHash -Path $frontendStamp) -eq $frontendHash)
@@ -234,14 +238,17 @@ if (-not (Test-Path -LiteralPath $venvPython)) {
 }
 
 if (-not $backendReady) {
-    Write-Step "正在安装后端依赖，首次安装需要几分钟..."
-    & $venvPython -m pip install --disable-pip-version-check --no-input -r $backendRequirements
-    if ($LASTEXITCODE -ne 0) {
-        Write-Step "当前 pip 下载源不可用，正在改用官方 PyPI 重试一次..." "WARN"
-        & $venvPython -m pip install --disable-pip-version-check --no-input --index-url "https://pypi.org/simple" -r $backendRequirements
+    Write-Step "正在安装 Python 运行依赖，首次安装需要几分钟..."
+    foreach ($requirementsPath in @($runtimeRequirements, $backendRequirements)) {
+        Write-Step "正在安装 $(Split-Path -Leaf $requirementsPath)..."
+        & $venvPython -m pip install --disable-pip-version-check --no-input -r $requirementsPath
         if ($LASTEXITCODE -ne 0) {
-            Write-Step "后端依赖安装仍然失败。请检查网络后再运行一次 start.bat。" "ERROR"
-            exit 1
+            Write-Step "当前 pip 下载源不可用，正在改用官方 PyPI 重试一次..." "WARN"
+            & $venvPython -m pip install --disable-pip-version-check --no-input --index-url "https://pypi.org/simple" -r $requirementsPath
+            if ($LASTEXITCODE -ne 0) {
+                Write-Step "$(Split-Path -Leaf $requirementsPath) 安装失败。请检查网络后再运行一次 start.bat。" "ERROR"
+                exit 1
+            }
         }
     }
     if (-not (Test-BackendImports)) {
