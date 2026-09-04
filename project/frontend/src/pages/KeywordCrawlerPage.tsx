@@ -1568,14 +1568,17 @@ function BatchDetail({
 }
 
 function emptyRunSummary(run: CrawlerPlatformRun) {
-  const stopMessage = crawlShortfallSummary(run);
-  if (stopMessage) return stopMessage;
   if (run.error) {
     if (run.provider.startsWith("douyin_public_browser")) {
       return `抖音登录搜索已暂停：${run.error}。`;
     }
     return `${run.platform_label}本次没有完成：${run.error}`;
   }
+  if (run.result_state === "all_invalid" && (run.parsed_item_count ?? 0) > 0) {
+    return `${run.platform_label}已扫描 ${run.parsed_item_count} 条页面结果，但筛选页没有成功交回可用标题或链接；系统已停止继续加载，建议刷新后重试。`;
+  }
+  const stopMessage = crawlShortfallSummary(run);
+  if (stopMessage) return stopMessage;
   if ((run.raw_discovered ?? run.raw_item_count) > 0) {
     return `${run.platform_label}${crawlerFunnelSummary(run)}，详细原因见下方诊断。`;
   }

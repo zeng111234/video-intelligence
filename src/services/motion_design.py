@@ -46,6 +46,11 @@ _ROAD_PATTERN = re.compile(r"高速公路|公路|道路|路上|修建|通道|路
 _BENEFIT_PATTERN = re.compile(
     r"优惠|福利|特价|折扣|送|省下|省钱|奖励|免费|回头客|成交|赚钱|增长|翻倍|爆款|引流|利润|成本"
 )
+_KEYWORD_STOPWORDS = {
+    "这个", "那个", "一个", "一些", "我们", "你们", "他们", "就是",
+    "然后", "但是", "因为", "所以", "可以", "可能", "还是", "已经",
+    "自己", "什么", "怎么", "这样", "那样", "今天", "现在", "大家",
+}
 
 
 def _compact(value: object) -> str:
@@ -159,6 +164,34 @@ def _classify(text: str) -> tuple[str, str, int] | None:
     return None
 
 
+def _keyword_payload(text: str) -> str:
+    """Extract one reusable visual keyword from the current spoken segment.
+
+    This is a fallback for unfamiliar customer domains.  The returned word is
+    always present in the transcript; no sample sentence or invented label is
+    allowed into the visual plan.
+    """
+
+    candidates: list[str] = []
+    try:
+        import jieba.analyse  # type: ignore[import-untyped]
+
+        candidates.extend(jieba.analyse.extract_tags(text, topK=6, withWeight=False))
+    except (ImportError, AttributeError, TypeError, ValueError):
+        pass
+    candidates.extend(re.findall(r"[\u4e00-\u9fff]{2,6}", text))
+    for raw in candidates:
+        token = _compact(raw).strip("，。！？；：、,.!?;:")
+        if (
+            2 <= len(token) <= 6
+            and token not in _KEYWORD_STOPWORDS
+            and token in text
+            and re.search(r"[\u4e00-\u9fff]", token)
+        ):
+            return token
+    return ""
+
+
 _STYLE_BY_KIND = {
     "number": "number_slam",
     "data": "data_highlight_card",
@@ -172,6 +205,39 @@ _STYLE_BY_KIND = {
     "logic": "logic_arrow",
     "result": "result_stamp",
     "cta": "cta_burst",
+    "keyword": "keyword_pop",
+}
+
+_SYMBOL_BY_KIND = {
+    "number": "number_badge",
+    "data": "highlight_box",
+    "price": "burst_lines",
+    "benefit": "green_check",
+    "road": "arrow",
+    "compare": "comparison_vs",
+    "knowledge": "question",
+    "process": "underline",
+    "warning": "warning",
+    "logic": "arrow",
+    "result": "green_check",
+    "cta": "circle",
+    "keyword": "highlight_box",
+}
+
+_CAMERA_BY_KIND = {
+    "number": "punch_in_medium",
+    "data": "punch_in_soft",
+    "price": "punch_in_medium",
+    "benefit": "slow_push",
+    "road": "reframe_right",
+    "compare": "reframe_left",
+    "knowledge": "punch_in_soft",
+    "process": "slow_push",
+    "warning": "punch_in_medium",
+    "logic": "reframe_right",
+    "result": "punch_in_soft",
+    "cta": "slow_push",
+    "keyword": "punch_in_soft",
 }
 
 
@@ -200,7 +266,10 @@ def build_semantic_motion_events(
         start, end = clock
         semantic = _classify(text)
         if semantic is None:
-            continue
+            keyword = _keyword_payload(text)
+            if not keyword:
+                continue
+            semantic = ("keyword", keyword, 60)
         kind, payload, priority = semantic
         style_id = _STYLE_BY_KIND[kind]
         event_start = _semantic_event_start(
@@ -231,6 +300,10 @@ def build_semantic_motion_events(
                 "source_text": text,
                 "grounded_in_text": True,
                 "fallback": "subtitle_kinetic_emphasis",
+                "action": "symbol_overlay",
+                "symbol": _SYMBOL_BY_KIND.get(kind, "highlight_box"),
+                "camera_action": _CAMERA_BY_KIND.get(kind, "punch_in_soft"),
+                "text_emphasis": kind in {"number", "data", "price", "warning", "cta"},
                 "priority": priority,
             }
         )

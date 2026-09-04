@@ -1062,6 +1062,49 @@ def test_bilibili_comprehensive_sort_keeps_date_filter_without_clicking_newest(
     assert notes == ["使用B站综合排序", "已选择B站发布时间“最近一周”"]
 
 
+def test_bilibili_date_filter_reload_keeps_initial_rows_when_no_cards_return():
+    network_rows = {
+        "BVinitial": {
+            "item_id": "BVinitial",
+            "title": "餐饮获客方法",
+        }
+    }
+
+    restored = LocalPlatformBrowserSearchProvider._restore_bilibili_initial_rows(
+        {}, network_rows
+    )
+
+    assert restored is True
+    assert network_rows == {
+        "BVinitial": {
+            "item_id": "BVinitial",
+            "title": "餐饮获客方法",
+        }
+    }
+
+
+def test_bilibili_date_filter_reload_does_not_overwrite_new_rows():
+    network_rows = {
+        "BVfiltered": {
+            "item_id": "BVfiltered",
+            "title": "筛选后的餐饮获客视频",
+        }
+    }
+    initial_rows = {
+        "BVinitial": {
+            "item_id": "BVinitial",
+            "title": "首屏结果",
+        }
+    }
+
+    restored = LocalPlatformBrowserSearchProvider._restore_bilibili_initial_rows(
+        network_rows, initial_rows
+    )
+
+    assert restored is False
+    assert list(network_rows) == ["BVfiltered"]
+
+
 def test_xiaohongshu_public_metric_aliases_keep_explicit_zero_values():
     provider = _provider(Platform.XIAOHONGSHU)
     payload = {

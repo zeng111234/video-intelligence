@@ -348,6 +348,37 @@ def test_xiaohongshu_search_card_open_stays_on_generated_detail_page():
     assert "/explore/targetnote" in page.url
 
 
+def test_xiaohongshu_blank_detail_page_is_not_reported_as_open():
+    class _Videos:
+        @staticmethod
+        def count():
+            return 0
+
+    class _Body:
+        @staticmethod
+        def inner_text(*, timeout):
+            assert timeout == 1000
+            return ""
+
+    class _Page:
+        url = "https://www.xiaohongshu.com/explore/targetnote?xsec_token=token"
+
+        @staticmethod
+        def locator(selector):
+            return _Videos() if selector == "video" else _Body()
+
+        @staticmethod
+        def wait_for_timeout(_timeout):
+            return None
+
+    assert (
+        LocalPlatformLinkParserClient._wait_xiaohongshu_page_content(
+            _Page(), timeout_ms=0
+        )
+        is False
+    )
+
+
 def test_xiaohongshu_next_card_restores_search_history_without_new_scan():
     search_url = "https://www.xiaohongshu.com/search_result/?keyword=test"
 

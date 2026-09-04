@@ -30,6 +30,7 @@ from src.services.video_editor_workflow import (
     VideoEditorWorkflowService,
 )
 import src.services.video_editor_workflow as workflow_module
+import src.services.style_presets as style_presets_module
 
 
 def test_visual_gate_policy_is_template_adaptive() -> None:
@@ -49,6 +50,22 @@ def test_visual_gate_policy_is_template_adaptive() -> None:
     assert story["max_coverage_ratio"] == pytest.approx(0.18)
     assert tutorial["pip_required"] is False
     assert story["pip_required"] is False
+
+
+def test_local_grammar_v2_is_a_roll_first_and_does_not_require_broll() -> None:
+    policy = workflow_module._visual_gate_policy_for_template(
+        "talking-head-local-grammar-v2",
+        visual_density="local_grammar_v2",
+    )
+
+    assert policy["min_real_events"] == 0
+    assert policy["max_real_events"] == 0
+    assert policy["min_coverage_ratio"] == pytest.approx(0.0)
+    assert policy["max_coverage_ratio"] == pytest.approx(0.0)
+    assert policy["pip_required"] is False
+    assert policy["full_required"] is False
+    assert policy["min_camera_events"] == 1
+    assert policy["min_symbol_events"] == 1
 
 
 def test_frozen_media_manifest_is_read_next_to_bundled_tools(
@@ -275,7 +292,7 @@ def test_long_semantic_binding_can_use_eight_distinct_cached_clusters(
         ],
     }
     text_by_index = (
-        "烧烤店顾客成为回头客",
+        "餐厅顾客完成复购",
         "客户会面沟通关系",
         "客户数据库持续管理",
         "会员优惠券和口碑传播",
@@ -462,13 +479,13 @@ def test_avatar_filename_never_overrides_cached_copy_topic_or_preview_subtitles(
             "avatar-copy-topic",
             video,
             title="数字人视频4",
-            script_text="最近广州有一家烧烤店，用会员和共享店长做裂变。",
+            script_text="社区推出了新的预约流程，用户可以按步骤完成办理。",
         )
     )
     service = VideoEditorWorkflowService(repo, None, _TranscriptionStub(), None)
 
     uncached_source = service.resolve_source(source_id)
-    assert uncached_source["title"] == "广州有一家烧烤店，用会员和共享店长做裂变"
+    assert uncached_source["title"] == "社区推出了新的预约流程，用户可以按步骤完成办理"
 
     previous = VideoEditorBatch(
         provider_mode="aliyun",
@@ -478,13 +495,13 @@ def test_avatar_filename_never_overrides_cached_copy_topic_or_preview_subtitles(
                 source_id=source_id,
                 title="数字人视频4",
                 status="outcome_unknown",
-                selected_title="49元变小店长，吃烧烤还能赚钱？",
+                selected_title="3步预约，办理更省心？",
                 title_candidates=[
-                    "49元变小店长，吃烧烤还能赚钱？",
-                    "广州烧烤店的会员裂变玩法",
+                    "3步预约，办理更省心？",
+                    "社区预约流程的办理方法",
                 ],
                 subtitle_segments=[
-                    {"start": 0.4, "end": 2.8, "text": "最近广州有一家烧烤店"}
+                    {"start": 0.4, "end": 2.8, "text": "社区推出了新的预约流程"}
                 ],
                 provider_payload={"media": {"duration_seconds": 60}},
             )
@@ -509,10 +526,10 @@ def test_avatar_filename_never_overrides_cached_copy_topic_or_preview_subtitles(
     payload = service.get_batch(latest.batch_id)
     item = payload["items"][0]
 
-    assert item["selected_title"] == "49元变小店长，吃烧烤还能赚钱？"
-    assert item["title_candidates"][0] == "49元变小店长，吃烧烤还能赚钱？"
+    assert item["selected_title"] == "3步预约，办理更省心？"
+    assert item["title_candidates"][0] == "3步预约，办理更省心？"
     assert item["subtitle_segments"] == []
-    assert item["preview_subtitle_segments"][0]["text"] == "最近广州有一家烧烤店"
+    assert item["preview_subtitle_segments"][0]["text"] == "社区推出了新的预约流程"
     assert item["subtitle_preview_source"] == "cached_asr"
     assert item["overlay_preview"]["title"]["lines"][0] != "数字人视频4"
     assert item["overlay_preview"]["cues"]
@@ -541,9 +558,9 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
                 source_id=source_id,
                 title="数字人视频4",
                 status="outcome_unknown",
-                selected_title="49元变小店长，吃烧烤还能赚钱？",
+                selected_title="3步预约，办理更省心？",
                 subtitle_segments=[
-                    {"start": 0.4, "end": 2.8, "text": "最近广州有一家烧烤店"}
+                    {"start": 0.4, "end": 2.8, "text": "社区推出了新的预约流程"}
                 ],
                 review_snapshot={"confirmed": True},
                 enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
@@ -605,7 +622,7 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert item["status"] == "rendering"
     assert item["provider_stage"] == "local_export_rendering"
     assert item["provider_payload"]["local_export"]["cost_cny"] == "0"
-    assert item["selected_title"] == "49元变小店长，吃烧烤还能赚钱？"
+    assert item["selected_title"] == "3步预约，办理更省心？"
     task = repo.get_task(item["edit_task_id"])
     assert isinstance(task, VideoEditTask)
     assert task.outputs["workflow"] == "local_preview_export"
@@ -614,11 +631,11 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
         == "business_talking_head_v11.8-adaptive-reframe-no-text-cards-final-output-clock"
     )
     assert task.outputs["playback_rate"] == "1.15"
-    assert "最近广州有一家烧烤店" in task.outputs["subtitle_segments_json"]
+    assert "社区推出了新的预约流程" in task.outputs["subtitle_segments_json"]
     assert "smart_opening" in item["enabled_plan_step_ids"]
     opening = json.loads(task.outputs["smart_opening_json"])
     assert opening["style_id"] == "number_focus"
-    assert opening["hook_text"] == "49元变小店长吃烧烤还能赚钱"[:14]
+    assert opening["hook_text"] == "3步预约办理更省心"[:14]
     assert submitted == [task.task_id]
 
 
@@ -695,10 +712,26 @@ def test_subtitle_sound_effects_are_delayed_to_semantic_beats():
     )
 
     assert len(rendered) == 2
-    assert "frequency=720" in rendered[0]
+    assert "anoisesrc=color=brown" in rendered[0]
     assert "adelay=2400|2400" in rendered[0]
-    assert "frequency=760" in rendered[1]
+    assert "frequency=1040" in rendered[1]
     assert "adelay=8000|8000" in rendered[1]
+
+
+def test_local_sound_effect_library_is_bound_when_asset_exists():
+    item = {"start": 2.4, "end": 3.4, "style_id": "number_slam"}
+    asset = workflow_module._resolve_local_sound_effect(item, event_index=0)
+
+    assert asset is not None
+    assert asset.name == "sfx-boom.wav"
+
+    rendered = workflow_module._subtitle_sound_effect_filters(
+        [item], playback_rate=1.0, input_indices={0: 2}
+    )
+    assert len(rendered) == 1
+    assert rendered[0].startswith("[2:a]aresample=48000")
+    assert "adelay=2400|2400" in rendered[0]
+    assert "anoisesrc" not in rendered[0]
 
 
 def test_local_export_quality_report_requires_audio_and_expected_canvas():
@@ -965,11 +998,11 @@ def test_short_reviewed_phrase_uses_exact_word_clock_with_explicit_dwell_excepti
     segment = {
         "start": 0.0,
         "end": 1.2,
-        "text": "普通烧烤店",
+        "text": "普通家用设备",
         "words": [
             {"start": 0.4, "end": 0.56, "text": "通"},
-            {"start": 0.56, "end": 0.78, "text": "烧烤"},
-            {"start": 0.78, "end": 1.14, "text": "店"},
+            {"start": 0.56, "end": 0.78, "text": "家用"},
+            {"start": 0.78, "end": 1.14, "text": "设备"},
         ],
     }
     preview = {
@@ -979,7 +1012,7 @@ def test_short_reviewed_phrase_uses_exact_word_clock_with_explicit_dwell_excepti
                 "source_segment_index": 0,
                 "start": 0.0,
                 "end": 1.2,
-                "lines": ["普通烧烤店"],
+                "lines": ["普通家用设备"],
             }
         ],
     }
@@ -1009,10 +1042,10 @@ def test_long_raw_word_pause_does_not_reinflate_readable_phrase_clock():
     segment = {
         "start": 0.0,
         "end": 3.0,
-        "text": "普通烧烤店搞充值活动",
+        "text": "普通家用设备搞充值活动",
         "words": [
             {"start": 0.0, "end": 0.25, "text": "普通"},
-            {"start": 0.25, "end": 0.55, "text": "烧烤店"},
+            {"start": 0.25, "end": 0.55, "text": "家用设备"},
             {"start": 0.55, "end": 1.0, "text": "搞"},
             {"start": 1.0, "end": 3.0, "text": "充值活动"},
         ],
@@ -1024,7 +1057,7 @@ def test_long_raw_word_pause_does_not_reinflate_readable_phrase_clock():
                 "source_segment_index": 0,
                 "start": 0.0,
                 "end": 2.3,
-                "lines": ["普通烧烤店搞充值活动"],
+                "lines": ["普通家用设备搞充值活动"],
             }
         ],
     }
@@ -1762,6 +1795,26 @@ def test_release_broll_placement_caps_each_event_for_coverage_gate():
     ]
 
 
+def test_long_form_broll_holds_semantic_asset_to_bounded_release_limit():
+    placements = VideoEditorWorkflowService._shot_broll_placements(
+        {
+            "timeline_duration_seconds": 60.0,
+            "shots": [
+                {
+                    "shot_id": "shot-long",
+                    "role": "B-roll",
+                    "asset_id": "broll-bbbbbbbbbb",
+                    "timeline_start": 2.0,
+                    "timeline_end": 4.0,
+                    "overlay_mode": "pip",
+                }
+            ],
+        }
+    )
+    assert placements[0]["start"] == 2.0
+    assert placements[0]["end"] == 7.0
+
+
 def test_rich_release_keeps_third_semantic_cluster_but_bounds_short_events():
     placements = [
         {"asset_id": f"broll-{index}", "start": start, "end": end, "mode": "full"}
@@ -2460,7 +2513,7 @@ def test_release_filter_renders_semantic_motion_badges_before_subtitles(
 
     assert "scale=w='trunc(518*(1.0+0.12*if(lt(t,0.20),1-t/0.20,0))/2)*2'" in rendered
     assert "overlay=x='(W-w)/2':y='trunc(H*0.76-h/2)'" in rendered
-    assert "overlay=x='(W-w)/2+8*sin(2*PI*t/0.10)':y='trunc(H*0.76-h/2)'" in rendered
+    assert "overlay=x='(W-w)/2+8*sin(2*PI*t/0.10)':y='trunc(H*0.30-h/2)'" in rendered
     assert rendered.index("[with_motion1]") < rendered.index("subtitles='approved.ass'")
 
 
@@ -2650,19 +2703,16 @@ def test_local_title_candidates_are_zero_config_and_grounded():
     ]
 
 
-def test_local_title_candidates_remove_oral_filler_for_food_membership_script():
+def test_local_title_candidates_keep_unfamiliar_script_topic():
     titles = VideoEditorWorkflowService._local_title_candidates(
         "本地上传 · 本地审核口播.mp4",
-        "最近广州冒出了一个挺特别的餐饮模式街上有家烧烤店会员制让顾客自动升级成小店长",
+        "社区出现了一种便民服务模式用户可以按步骤完成预约",
         "douyin",
     )
 
-    assert titles == [
-        "会员顾客自动升级成小店长",
-        "共享店长让顾客主动传播",
-        "烧烤店用会员制带动复购",
-    ]
-    assert "最近广州冒出来" not in titles[0]
+    assert titles
+    assert len(titles) <= 3
+    assert "便民服务模式" in titles[0]
 
 
 def test_authorized_bgm_is_added_to_batch_render(
@@ -3045,11 +3095,12 @@ def test_full_review_transcript_corrects_homophones_without_changing_word_clock(
     raw = {
         "start": 26.12,
         "end": 55.02,
-        "text": "这家店推出了会员质,花49块,就能半个尊贵会员,半完马上送一份招牌烧烤,等于百送会员资格,但中头戏是后面的共享店长活动,立刻拿到六张无门槛又会劝,小店长把劝发到朋友圈或者群里",
-        "reviewed_text": "这家店推出了会员制,花49块,就能办个尊贵会员,办完马上送一份招牌烧烤,等于白送会员资格,但重头戏是后面的共享店长活动,立刻拿到六张无门槛优惠券,小店长把券发到朋友圈或者群里",
+        "text": "这份方案的价质,花49块,就能半个学习账号,半完马上拿到一份资料,等于百送学习资格,但中头戏是后面的练习活动,立刻拿到六张无门槛又会劝,学员把劝发到群里或者同学",
+        "reviewed_text": "这份方案的价值,花49元,就能办个学习账号,办完马上拿到一份资料,等于白送学习资格,但重头戏是后面的练习活动,立刻拿到六张无门槛优惠券,学员把券发到群里或者同学",
         "reviewed_text_corrections": [
-            {"from": "会员质", "to": "会员制", "reason": "human_listening_review"},
-            {"from": "半个尊贵会员", "to": "办个尊贵会员", "reason": "human_listening_review"},
+            {"from": "价质", "to": "价值", "reason": "human_listening_review"},
+            {"from": "49块", "to": "49元", "reason": "human_listening_review"},
+            {"from": "半个学习账号", "to": "办个学习账号", "reason": "human_listening_review"},
             {"from": "半完马上", "to": "办完马上", "reason": "human_listening_review"},
             {"from": "等于百送", "to": "等于白送", "reason": "human_listening_review"},
             {"from": "中头戏", "to": "重头戏", "reason": "human_listening_review"},
@@ -3057,27 +3108,27 @@ def test_full_review_transcript_corrects_homophones_without_changing_word_clock(
             {"from": "把劝发到", "to": "把券发到", "reason": "human_listening_review"},
         ],
         "words": [
-            {"start": 26.12, "end": 26.3, "word": "会员质"},
+            {"start": 26.12, "end": 26.3, "word": "价质"},
             {"start": 26.3, "end": 26.5, "word": ","},
             {"start": 26.5, "end": 26.7, "word": "花"},
             {"start": 26.7, "end": 26.9, "word": "49"},
             {"start": 26.9, "end": 27.1, "word": "块"},
-            {"start": 27.1, "end": 27.4, "word": "半个尊贵会员"},
+            {"start": 27.1, "end": 27.4, "word": "半个学习账号"},
             {"start": 27.4, "end": 27.8, "word": "半完马上"},
-            {"start": 27.8, "end": 28.2, "word": "送一份招牌烧烤"},
+            {"start": 27.8, "end": 28.2, "word": "送一份资料"},
             {"start": 28.2, "end": 28.6, "word": "等于百送"},
-            {"start": 28.6, "end": 29.0, "word": "会员资格"},
+            {"start": 28.6, "end": 29.0, "word": "学习资格"},
             {"start": 29.0, "end": 29.4, "word": "中头戏"},
             {"start": 29.4, "end": 30.0, "word": "立刻拿到六张无门槛又会劝"},
-            {"start": 30.0, "end": 30.6, "word": "小店长把劝发到"},
-            {"start": 30.6, "end": 31.0, "word": "朋友圈或者群里"},
+            {"start": 30.0, "end": 30.6, "word": "学员把劝发到"},
+            {"start": 30.6, "end": 31.0, "word": "群里或者同学"},
         ],
     }
     reviewed, corrections = workflow_module._review_transcript_segments([raw])
     assert len(reviewed) == 1
     text = reviewed[0]["text"]
-    assert "会员制" in text
-    assert "办个尊贵会员" in text
+    assert "价值" in text
+    assert "办个学习账号" in text
     assert "优惠券" in text
     assert "中头戏" not in text
     assert len(corrections) >= 6
@@ -3119,6 +3170,33 @@ def test_subtitle_audio_activity_gate_rejects_uncovered_speech_gap():
     )
     assert result["passed"] is False
     assert result["uncovered_ranges"] == [{"start": 2.0, "end": 7.0}]
+
+
+def test_word_timestamps_bound_audio_activity_away_from_pause_noise():
+    active = [{"start": 0.0, "end": 2.0}]
+    word_ranges = [
+        {"start": 0.0, "end": 0.8},
+        {"start": 1.2, "end": 2.0},
+    ]
+    bounded = workflow_module.VideoEditorWorkflowService._intersect_audio_activity_with_spoken_ranges(
+        active, word_ranges
+    )
+    result = workflow_module.VideoEditorWorkflowService._subtitle_audio_activity_gate(
+        [{"start": 0.0, "end": 0.8}, {"start": 1.2, "end": 2.0}], bounded
+    )
+    assert result["passed"] is True
+
+
+def test_v2_local_export_metadata_does_not_fall_back_to_legacy_template():
+    preset = style_presets_module.get_style_preset("talking-head-local-grammar-v2")
+    assert preset["phase"] == "phase_1_local_only"
+    assert preset["external_visuals"] == {
+        "allow_broll_video": False,
+        "allow_ai_video": False,
+        "allow_generated_images": False,
+        "allow_network_search": False,
+        "allow_bgm": False,
+    }
 
 
 def test_subtitle_text_integrity_gate_rejects_duplicate_or_missing_text():
@@ -3166,13 +3244,13 @@ def test_adaptive_visual_intents_are_generic_and_not_sample_answers():
     assert all(item["mode"] == "full" for item in intents)
     assert all(item["position"] == "full_cutaway" for item in intents)
     source = Path("src/services/video_editor_workflow.py").read_text(encoding="utf-8")
-    assert "广州烧烤店" not in source
+    assert "广州" not in source
     assert "客户数据库" not in source
 
 
 def test_visual_card_rejects_scene_descriptions_and_empty_or_repeated_cards():
     scene = [
-        {"start": 0.0, "end": 3.0, "text": "广州出现一种特别的餐饮模式"},
+        {"start": 0.0, "end": 3.0, "text": "城市出现一种特别的服务模式"},
     ]
     assert workflow_module._build_adaptive_visual_intents(scene) == []
 
@@ -3455,11 +3533,11 @@ def test_truthful_transcript_timing_source_refuses_to_lie_without_words():
     """The truthful helper MUST downgrade to ``sentence_timestamps`` when the
     underlying ASR only returned sentence-level segments, even if the
     caller asks for ``word_timestamps``."""
-    segments = [{"text": "广州烧烤店", "start": 0.0, "end": 3.0}]
+    segments = [{"text": "城市服务团队", "start": 0.0, "end": 3.0}]
     assert workflow_module._truthful_transcript_timing_source(segments) == "sentence_timestamps"
     with_words = [
-        {"text": "广州烧烤店", "start": 0.0, "end": 3.0,
-         "words": [{"word": "广州", "start": 0.0, "end": 1.5}]}
+        {"text": "城市服务团队", "start": 0.0, "end": 3.0,
+         "words": [{"word": "城市", "start": 0.0, "end": 1.5}]}
     ]
     assert workflow_module._truthful_transcript_timing_source(with_words) == "word_timestamps"
 
@@ -3519,7 +3597,7 @@ def test_jieba_estimate_phrase_cues_never_escapes_segment_window():
     must mark each cue with ``estimated_phrase_timestamps: true`` so
     downstream gates can tell the synthetic words apart from real ones."""
     segments = [
-        {"text": "最近广州出现了一种挺特别的参与模式", "start": 0.0, "end": 5.0},
+        {"text": "课程介绍了一种清晰的学习方法", "start": 0.0, "end": 5.0},
     ]
     cues = workflow_module._estimate_phrase_cues_from_sentence_level(segments)
     assert cues, "jieba must produce at least one cue"
@@ -3561,7 +3639,7 @@ def test_emphasis_color_for_classifies_by_intent():
     assert color_method == workflow_module.SUBTITLE_EMPHASIS_COLOR_METHOD
     color_conflict = workflow_module._emphasis_color_for("充一百送十块早就过时了")
     assert color_conflict == workflow_module.SUBTITLE_EMPHASIS_COLOR_CONFLICT
-    color_default = workflow_module._emphasis_color_for("街上有家烧烤店")
+    color_default = workflow_module._emphasis_color_for("街上有家普通店铺")
     assert color_default == workflow_module.SUBTITLE_EMPHASIS_COLOR_DEFAULT
     # Number precedence over method (e.g. "49元就能办" must be yellow).
     color_num_method = workflow_module._emphasis_color_for("49元就能办尊贵会员")
@@ -3598,6 +3676,20 @@ def test_subtitle_style_baseline_gate_passes_on_baseline_compliant_preview():
     result = workflow_module._subtitle_style_baseline_gate(preview)
     assert result["passed"] is True
     assert result["failures"] == []
+
+
+def test_subtitle_style_baseline_gate_accepts_current_white_base_renderer():
+    preview = {
+        "subtitle_style_id": "adaptive_white_base",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_120ms",
+            "emphasis_scale_range": [1.05, 1.10],
+        },
+        "cues": [],
+    }
+    result = workflow_module._subtitle_style_baseline_gate(preview)
+    assert result["passed"] is True
+    assert result["preview_unified_style"] is True
 
 
 def test_subtitle_style_gate_allows_versioned_kinetic_v2_scale_range():

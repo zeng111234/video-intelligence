@@ -55,15 +55,15 @@ def test_classify_visual_intent_for_window_uses_generic_rules(
 
 
 def test_classify_does_not_match_specific_sample_topics() -> None:
-    """禁止为具体样片（烧烤店 / 金鱼）写硬编码分类。
+    """禁止为具体样片写硬编码分类。
 
     重点检查不触发任何通用规则的样片文本 — 这才是"硬编码"风险。
     触发通用规则（如"方法"）的样片不视为硬编码，是规则行为。
     """
     for text in [
-        "广州冒出了一个挺特别的参与模式",
-        "金鱼养殖技巧",
-        "手机支架选购指南",
+        "社区出现一种新服务模式",
+        "水族养护技巧",
+        "设备选购指南",
     ]:
         intent = _classify_visual_intent_for_window(text)
         assert intent == "spoken_point", f"样片硬编码：{text} → {intent}"
@@ -163,7 +163,7 @@ def test_build_director_plan_includes_visual_window_plan() -> None:
         {
             "start": 0.0,
             "end": 5.0,
-            "text": "今天聊聊烧烤店",
+            "text": "今天聊聊一个新服务",
             "words": [],
         },
         {
@@ -201,12 +201,12 @@ def test_build_director_plan_includes_visual_window_plan() -> None:
 
 
 def test_build_director_plan_does_not_embed_specific_sample_text() -> None:
-    """回归样片文本不应作为硬编码出现在生产代码。"""
+    """回归样片原句不应作为硬编码出现在生产代码。"""
     forbidden_substrings = [
-        "广州烧烤店回头客",
-        "二手车评估",
-        "金鱼养殖",
-        "手机支架",
+        "固定样片原句",
+        "参考视频标题",
+        "某个具体行业答案",
+        "样片专用文案",
     ]
     # 完整 source 字符串 + 把所有 plan JSON 化检查
     import json

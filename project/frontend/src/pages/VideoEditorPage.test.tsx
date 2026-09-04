@@ -334,9 +334,24 @@ describe("VideoEditorPage cloud-light workflow", () => {
         bgmEnabled: false,
         bgmId: undefined,
         bgmVolume: 0.18,
+        stylePresetId: "talking-head-grammar-only-v1",
       }));
     });
     expect(createVideoEditorBatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("labels local analysis without claiming it runs in the cloud", async () => {
+    const batch = sandboxBatch("analyzing");
+    batch.provider_mode = "local_ffmpeg";
+    batch.is_mock = false;
+    batch.items.forEach((item) => { item.is_mock = false; });
+    vi.mocked(getVideoCapabilities).mockResolvedValue({
+      ...sandboxCapabilities, provider_mode: "local_ffmpeg", is_mock: false, live_ready: true,
+    });
+    vi.mocked(listVideoEditorBatches).mockResolvedValue({ items: [batch], total: 1 });
+    renderPage();
+    expect((await screen.findAllByText("本机分析中")).length).toBeGreaterThan(0);
+    expect(screen.queryByText("云端分析中")).toBeNull();
   });
 
   it("refreshes the quote when switching from 720P to 1080P", async () => {
@@ -670,7 +685,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
     expect(screen.getByText("来源：Pixabay")).toBeTruthy();
   });
 
-  it("preselects a matching BGM when an older task enabled the BGM step but stored no selection", async () => {
+  it("keeps original audio when an older task enabled the BGM step but stored no selection", async () => {
     const batch = sandboxBatch();
     batch.items[0].edit_plan!.enabled_steps = [
       ...(batch.items[0].edit_plan!.enabled_steps || []),
@@ -686,9 +701,9 @@ describe("VideoEditorPage cloud-light workflow", () => {
     const drawer = await screen.findByRole("dialog", { name: "字幕与方案体验" });
     fireEvent.click(within(drawer).getByRole("tab", { name: "标题与配乐" }));
 
-    expect(await screen.findByText("当前任务原先未选配乐，已根据文案预选《Sci-Fi Score》；请试听后再确认生成。")).toBeTruthy();
-    const audio = screen.getByLabelText("试听背景音乐：Sci-Fi Score");
-    expect(audio.getAttribute("src")).toBe(bgm.media_url);
+    expect(await screen.findByText("本次保持原声")).toBeTruthy();
+    expect(screen.queryByText("当前任务原先未选配乐，已根据文案预选《Sci-Fi Score》；请试听后再确认生成。")).toBeNull();
+    expect(screen.queryByLabelText("试听背景音乐：Sci-Fi Score")).toBeNull();
   });
 
 });

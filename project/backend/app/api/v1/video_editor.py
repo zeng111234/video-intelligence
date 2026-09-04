@@ -173,6 +173,10 @@ class BatchCreateRequest(BaseModel):
         description="新云工作台唯一权威输出档位；旧调用可不传。",
     )
     quote_id: str | None = None
+    style_preset_id: str = Field(
+        "talking-head-grammar-only-v1",
+        pattern="^(talking-head-pure-adaptive-v1|talking-head-brand-emphasis-v1|talking-head-local-grammar-v2|talking-head-grammar-only-v1)$",
+    )
     billing_confirmation: BillingConfirmationRequest | None = None
 
 
@@ -567,6 +571,7 @@ def create_batch(
                 bgm_enabled=body.bgm_enabled,
                 bgm_id=body.bgm_id,
                 bgm_volume=body.bgm_volume,
+                style_preset_id=body.style_preset_id,
             )
         return workflow.create_batch(
             source_ids=body.source_ids,
@@ -581,6 +586,7 @@ def create_batch(
             bgm_enabled=body.bgm_enabled,
             bgm_id=body.bgm_id,
             bgm_volume=body.bgm_volume,
+            style_preset_id=body.style_preset_id,
         )
     except (VideoEditorWorkflowError, ValueError) as exc:
         raise _workflow_error(VideoEditorWorkflowError(str(exc))) from exc

@@ -116,6 +116,9 @@ def test_cloud_api_preflight_create_review_and_publish_guard(tmp_path: Path):
             assert debit_calls == []
             item = created["items"][0]
             assert item["status"] == "awaiting_subtitle_review"
+            assert item["provider_payload"]["style_preset_id"] == (
+                "talking-head-local-grammar-v2"
+            )
 
             reviewed_response = client.post(
                 (

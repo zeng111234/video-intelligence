@@ -2160,6 +2160,7 @@ export function createVideoEditorBatch(params: {
   bgmId?: string;
   bgmVolume?: number;
   outputProfile?: VideoEditorOutputProfile;
+  stylePresetId?: "talking-head-pure-adaptive-v1" | "talking-head-brand-emphasis-v1" | "talking-head-local-grammar-v2";
   quoteId?: string;
   billingConfirmation?: {
     confirmed: boolean;
@@ -2187,6 +2188,7 @@ export function createVideoEditorBatch(params: {
       bgm_id: params.bgmId || null,
       bgm_volume: params.bgmVolume ?? 0.18,
       output_profile: params.outputProfile || null,
+      style_preset_id: params.stylePresetId || "talking-head-local-grammar-v2",
       quote_id: params.quoteId || null,
       billing_confirmation: params.billingConfirmation
         ? {

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.adapters.douyin_browser_search import LocalDouyinBrowserSearchProvider
 from src.adapters.licensed import LicensedProviderError, SandboxLicensedSearchProvider
 from src.models import (
     DataSource,
@@ -999,6 +1000,90 @@ def test_bilibili_normalization_keeps_high_and_review_statuses() -> None:
         normalized[1].eligibility_status
         == EligibilityStatus.PENDING_REVIEW
     )
+
+
+def test_local_bilibili_search_keeps_irrelevant_cards_as_bounded_review_fallback() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    page = ProviderSearchPage(
+        platform=Platform.BILIBILI,
+        provider="bilibili_local_browser",
+        items=[
+            ProviderSearchItem(
+                platform=Platform.BILIBILI,
+                platform_item_id=f"BV-fallback-{index}",
+                title=f"平台搜索结果 {index}",
+                author_id=f"author-fallback-{index}",
+                author_name="作者",
+                published_at=now,
+                source_url=f"https://www.bilibili.com/video/BV-fallback-{index}",
+                provider_rank=index,
+                metrics={
+                    "item_id": f"BV-fallback-{index}",
+                    "sampled_at": now,
+                    "confidence": 0.9,
+                },
+            )
+            for index in range(1, 4)
+        ],
+        observed_at=now,
+        request_id="bilibili-review-fallback",
+    )
+
+    normalized, errors, counts = CommercialSearchService._normalize_page(
+        page,
+        platform=Platform.BILIBILI,
+        keyword="美业工厂",
+        provider="bilibili_local_browser",
+        source_type=DataSource.PUBLIC_RESEARCH,
+        published_after=None,
+        limit=30,
+    )
+
+    assert errors == []
+    assert normalized == []
+    assert [item.platform_item_id for item in counts["reference_items"]] == [
+        "BV-fallback-1",
+        "BV-fallback-2",
+        "BV-fallback-3",
+    ]
+    assert all(
+        item.eligibility_status == EligibilityStatus.PENDING_REVIEW
+        for item in counts["reference_items"]
+    )
+    assert counts["irrelevant_count"] == 0
+
+
+def test_local_douyin_search_keeps_top_cards_for_review_when_all_are_weak_matches() -> None:
+    now = datetime(2026, 7, 18, 10, tzinfo=timezone.utc)
+    rows = [
+        {
+            "item_id": f"weak-{index}",
+            "href": f"https://www.douyin.com/video/weak-{index}",
+            "title": f"日常记录 {index}",
+            "published_text": "昨天",
+        }
+        for index in range(1, 4)
+    ]
+
+    items, errors, counts, published_filtered_count = (
+        LocalDouyinBrowserSearchProvider._to_public_search_items(
+            rows,
+            keyword="餐饮获客",
+            observed_at=now,
+            published_after=None,
+            limit=30,
+        )
+    )
+
+    assert errors == []
+    assert published_filtered_count == 0
+    assert [item.platform_item_id for item in items] == [
+        "weak-1",
+        "weak-2",
+        "weak-3",
+    ]
+    assert counts["relevance"] == 0
+    assert all("关键词待确认=1" in (item.evidence or "") for item in items)
 
 
 def test_bilibili_adapter_direct_match_marker_keeps_description_match() -> None:

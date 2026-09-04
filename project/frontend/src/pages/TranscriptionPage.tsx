@@ -127,15 +127,6 @@ function transcriptTopic(task: TranscriptionResponse) {
     .join(" ");
   if (!transcript) return "";
 
-  if (/贴标机/.test(transcript)) {
-    const machine = transcript.match(/(?:平面|立式|全自动|半自动|自动)?贴标机/)?.[0] || "贴标机";
-    return `${machine} · 操作说明`;
-  }
-  if (/(餐饮|烧烤店)/.test(transcript) && /(共享|会员|店长)/.test(transcript)) return "餐饮门店 · 共享会员模式";
-  if (/机器人/.test(transcript) && /(工人|工厂|失业)/.test(transcript)) return "工业机器人 · 替代人工";
-  if (/(键盘|手感)/.test(transcript) && /(游戏|手游)/.test(transcript)) return "手游操作 · 键位与手感";
-  if (/发作品/.test(transcript) && /播放量/.test(transcript)) return "短视频运营 · 提升播放量";
-
   const firstSentence = transcript.split(/[。！？!?]/)[0] || "";
   const opening = firstSentence
     .trim()

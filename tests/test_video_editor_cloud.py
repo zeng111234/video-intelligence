@@ -677,7 +677,7 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
         {
             "start": 4,
             "end": 8,
-            "text": "附近5公里的居民基本都成了回头客。",
+            "text": "共有5个服务点都完成复购。",
         },
     ]
 
@@ -703,8 +703,8 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
                                     {
                                         "segment_index": 1,
                                         "parts": [
-                                            "附近5公里的居民",
-                                            "基本都成了回头客",
+                                            "共有5个服务点",
+                                            "都完成复购",
                                         ],
                                     },
                                 ],
@@ -741,14 +741,14 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
     assert plan.caption_group_source == "qwen_semantic"
     assert [group.parts for group in plan.caption_groups] == [
         ["80%的顾客", "还主动加了", "店里的私域"],
-        ["附近5公里的居民", "基本都成了回头客"],
+        ["共有5个服务点", "都完成复购"],
     ]
     assert [cue["lines"][0] for cue in preview["cues"]] == [
         "80%的顾客",
         "还主动加了",
         "店里的私域",
-        "附近5公里的居民",
-        "基本都成了回头客",
+        "共有5个服务点",
+        "都完成复购",
     ]
     assert preview["caption_group_source"] == "qwen_semantic"
     assert [item.model_dump() for item in plan.caption_emphasis] == [
@@ -788,27 +788,27 @@ def test_qwen_caption_groups_reject_changed_text_and_mid_word_breaks():
 def test_caption_emphasis_is_sparse_exact_and_kept_inside_one_caption_part():
     segments = [
         {"start": 0, "end": 2, "text": "只需要49元就能参加活动。"},
-        {"start": 2, "end": 4, "text": "附近5公里都可以使用。"},
+        {"start": 2, "end": 4, "text": "覆盖5个网点都可以使用。"},
         {"start": 4, "end": 6, "text": "这就是今天的核心结论。"},
         {"start": 6, "end": 8, "text": "千万不要错过最后一天。"},
     ]
     groups = [
         {"segment_index": 0, "parts": ["只需要49元", "就能参加活动"]},
-        {"segment_index": 1, "parts": ["附近5公里", "都可以使用"]},
+        {"segment_index": 1, "parts": ["覆盖5个网点", "都可以使用"]},
         {"segment_index": 2, "parts": ["这就是今天的", "核心结论"]},
         {"segment_index": 3, "parts": ["千万不要错过", "最后一天"]},
     ]
     emphasis = validated_caption_emphasis(
         [
             {"segment_index": 0, "term": "49元", "kind": "number"},
-            {"segment_index": 1, "term": "5公里", "kind": "number"},
+            {"segment_index": 1, "term": "5个", "kind": "number"},
             {"segment_index": 2, "term": "核心结论", "kind": "benefit"},
         ],
         segments,
         caption_groups=groups,
     )
 
-    assert [item.term for item in emphasis] == ["49元", "5公里"]
+    assert [item.term for item in emphasis] == ["49元", "5个"]
     assert (
         validated_caption_emphasis(
             [{"segment_index": 0, "term": "49元就能", "kind": "number"}],
@@ -947,7 +947,7 @@ def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
             {
                 "start": 19.96,
                 "end": 25.76,
-                "text": "普通烧烤店搞充值活动，充100送10块，充200送30，早就过时了。",
+                "text": "普通设备搞充值活动，充100送10块，充200送30，早就过时了。",
             }
         ],
         title="充值活动",
@@ -961,7 +961,7 @@ def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():
     )
 
     assert [cue["lines"][0] for cue in preview["cues"]] == [
-        "普通烧烤店搞充值活动",
+        "普通设备搞充值活动",
         "充100送10块",
         "充200送30",
         "早就过时了",
@@ -1459,7 +1459,7 @@ def test_business_talking_head_ass_uses_portrait_canvas_safe_caption_area():
 
 def test_business_talking_head_ass_offsets_title_and_subtitles_for_opening():
     ass = build_business_talking_head_ass(
-        [{"start": 0.2, "end": 2.2, "text": "最近广州出了一个活动"}],
+        [{"start": 0.2, "end": 2.2, "text": "最近社区推出一个活动"}],
         title="活动说明",
         output_profile="720p",
         time_offset_seconds=1.4,
@@ -1481,8 +1481,8 @@ def test_business_talking_head_title_png_uses_brand_font_and_profile_size():
 
 def test_title_preview_uses_short_single_line_without_ellipsis():
     preview = build_business_talking_head_overlay_preview(
-        [{"start": 0, "end": 2, "text": "最近广州冒出了一个挺特别的参与模式"}],
-        title="最近广州冒出了一个挺特别的参与模式",
+        [{"start": 0, "end": 2, "text": "课程介绍了一种清晰的参与方法"}],
+        title="课程介绍了一种清晰的参与方法",
         output_profile="720p",
     )
     title_lines = preview["title"]["lines"]
@@ -1855,22 +1855,22 @@ def test_caption_keeps_basic_together_and_prefers_the_phrase_boundary():
                 "start": 4,
                 "end": 10,
                 "text": (
-                    "街上有家烧烤店，才开一个月，附近5公里的居民基本都成了他的回头客。"
+                    "社区有项服务，刚上线一个月，覆盖5个网点的用户基本都完成了预约。"
                 ),
             },
         ],
-        title="烧烤店的回头客秘密",
+        title="服务上线后的预约效果",
         output_profile="720p",
     )
 
     lines = [cue["lines"][0] for cue in preview["cues"]]
     assert lines == [
-        "街上有家烧烤店",
-        "才开一个月",
-        "附近5公里的居民",
-        "基本都成了他的回头客",
+        "社区有项服务",
+        "刚上线一个月",
+        "覆盖5个网点的用户",
+        "基本都完成了预约",
     ]
-    assert all("居民基" not in line and not line.startswith("本都") for line in lines)
+    assert all("用户基" not in line and not line.startswith("本都") for line in lines)
 
 
 def test_caption_uses_chinese_word_boundaries_instead_of_splitting_active():

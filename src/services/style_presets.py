@@ -19,16 +19,22 @@ the renderer.
 
 from __future__ import annotations
 
+import copy
 import os
 from typing import Any, Mapping
 
 
 PRESET_PURE_ADAPTIVE = "talking-head-pure-adaptive-v1"
 PRESET_BRAND_EMPHASIS = "talking-head-brand-emphasis-v1"
+PRESET_LOCAL_GRAMMAR_V2 = "talking-head-local-grammar-v2"
+PRESET_GRAMMAR_ONLY = "talking-head-grammar-only-v1"
+JY_ROUGH_CUT_SUBTITLE_PRESET = "JY_ROUGH_CUT_SUBTITLE_PRESET"
 DEFAULT_PRESET_ID = PRESET_PURE_ADAPTIVE
 LEGACY_STYLE_ID_ALIAS = "adaptive_talking_head_v1"
 
-_VALID_PRESET_IDS = frozenset({PRESET_PURE_ADAPTIVE, PRESET_BRAND_EMPHASIS})
+_VALID_PRESET_IDS = frozenset(
+    {PRESET_PURE_ADAPTIVE, PRESET_BRAND_EMPHASIS, PRESET_LOCAL_GRAMMAR_V2, PRESET_GRAMMAR_ONLY}
+)
 
 
 def _pure_adaptive() -> dict[str, Any]:
@@ -61,48 +67,47 @@ def _pure_adaptive() -> dict[str, Any]:
 def _brand_emphasis() -> dict[str, Any]:
     return {
         "preset_id": PRESET_BRAND_EMPHASIS,
-        "display_name": "品牌头 + 大号强调",
+        "display_name": "动态口播精剪",
         "source": "user_target_video_reference",
-        "top_brand_header": {
-            "text": "",
-            "position": "left-top",
-            "orientation": "vertical",
-            "style": "white-on-dark",
-            "font_size_pt": 36,
-            "present_throughout": True,
-        },
-        "big_emphasis_layer": {
-            "min_duration_seconds": 1.4,
-            "max_duration_seconds": 3.6,
-            "max_per_minute": 4,
-            "styles": {
-                "white_on_dark": {
-                    "bg": "transparent",
-                    "fg": "#FFFFFF",
-                    "font_size_pt": 96,
-                    "padding_px": 32,
-                    "line_gap_px": 16,
-                },
-                "dark_on_white": {
-                    "bg": "#FFFFFF",
-                    "fg": "#0A0A0A",
-                    "font_size_pt": 96,
-                    "padding_px": 32,
-                    "line_gap_px": 16,
-                },
-            },
-            "trigger_semantic_kinds": {
-                "knowledge",
-                "process",
-                "result",
-                "warning",
-                "logic",
-            },
-            "fall_back_to_subtitle": True,
-        },
+        "top_brand_header": None,
+        "big_emphasis_layer": None,
         "themed_decoration_cards": [],
         "evidence_overlay": None,
         "interaction_endcard": None,
+        "caption": {
+            "max_lines": 1,
+            "max_chars_per_line": 11,
+            "font_size": 54,
+            "safe_bottom": 218,
+            "font_style": "normal",
+            "outline_width": 5,
+            "shadow": 1,
+            "color": "#FFFFFF",
+            "emphasis_color": "#FFD54A",
+        },
+        "semantic_stickers": {
+            "enabled": True,
+            "source_order": [
+                "licensed_vector_library",
+                "transcript_grounded_generated_visual",
+                "procedural_fallback",
+            ],
+            "target_per_minute": 4,
+            "max_per_minute": 5,
+            "require_transcript_grounding": True,
+        },
+        "sound_effects": {
+            "enabled": True,
+            "source_order": ["licensed_library", "procedural_fallback"],
+            "voice_safe_volume": 0.045,
+            "max_per_minute": 5,
+        },
+        "broll_policy": {
+            "library_first": True,
+            "allow_generated_images_for_gaps": True,
+            "require_semantic_match": True,
+            "never_count_stickers_as_broll": True,
+        },
         "rhythm": {
             "playback_rate": 1.08,
             "active_ranges_from_audio_analysis": True,
@@ -120,9 +125,183 @@ def _brand_emphasis() -> dict[str, Any]:
     }
 
 
+def _local_grammar_v2() -> dict[str, Any]:
+    """A-roll-first grammar for the zero-external-asset phase.
+
+    This is intentionally a separate preset.  It does not inherit the rich
+    release contract, so a no-B-roll export cannot accidentally enter the old
+    B-roll coverage gate or trigger provider/image discovery.
+    """
+
+    return {
+        "preset_id": PRESET_LOCAL_GRAMMAR_V2,
+        "display_name": "动态口播精剪 V2（本地）",
+        "source": "local_editing_grammar_v2",
+        "phase": "phase_1_local_only",
+        "top_brand_header": None,
+        "big_emphasis_layer": None,
+        "themed_decoration_cards": [],
+        "evidence_overlay": None,
+        "interaction_endcard": None,
+        "caption": {
+            "max_lines": 1,
+            "max_chars_per_line": 11,
+            "font_size": 58,
+            "safe_bottom": 220,
+            "font_style": "bold",
+            "outline_width": 5,
+            "shadow": 2,
+            "color": "#FFFFFF",
+            "emphasis_color": "#FFD54A",
+        },
+        "camera_grammar": {
+            "allowed": [
+                "static",
+                "punch_in_soft",
+                "punch_in_medium",
+                "slow_push",
+                "reframe_left",
+                "reframe_right",
+            ],
+            "ordinary_zoom": [1.03, 1.06],
+            "strong_zoom": [1.06, 1.10],
+            "max_changes_per_minute": 10,
+        },
+        "semantic_symbols": {
+            "allowed": [
+                "red_x",
+                "green_check",
+                "warning",
+                "question",
+                "arrow",
+                "underline",
+                "circle",
+                "highlight_box",
+                "burst_lines",
+                "number_badge",
+                "comparison_vs",
+            ],
+            "max_per_minute": 6,
+            "max_text_emphasis_per_minute": 4,
+        },
+        "sound_effects": {
+            "enabled": True,
+            "source_order": ["generated_local", "approved_local_library"],
+            "profiles": [
+                "pop_soft",
+                "click",
+                "tick",
+                "whoosh_soft",
+                "impact_soft",
+                "success_ping",
+                "error_tick",
+            ],
+            "max_per_minute": 5,
+            "voice_safe_volume": 0.04,
+        },
+        "external_visuals": {
+            "allow_broll_video": False,
+            "allow_ai_video": False,
+            "allow_generated_images": False,
+            "allow_network_search": False,
+            "allow_bgm": False,
+        },
+        "rhythm": {
+            "playback_rate": 1.08,
+            "active_ranges_from_audio_analysis": False,
+            "silence_threshold_db": -38.0,
+            "min_silence_cut_ms": 280,
+        },
+        "emphasis_palette": {
+            "white_on_dark": "#FCFAF8",
+            "dark_on_white": "#0A0A0A",
+            "warm_yellow": "#FFD166",
+            "warm_orange": "#FF9F68",
+            "warm_red": "#FB7185",
+            "warm_pink": "#ED3A7C",
+        },
+    }
+
+
+def _grammar_only() -> dict[str, Any]:
+    """Strict A-roll grammar: no provider, stock, image, B-roll or PiP."""
+
+    return {
+        "preset_id": PRESET_GRAMMAR_ONLY,
+        "display_name": "动态口播语法剪辑（无外部素材）",
+        "source": "local_style_engine",
+        "phase": "grammar_only_v1",
+        "grammar_mode": "JY_CLONE_GRAMMAR_ONLY",
+        "subtitle_preset_id": JY_ROUGH_CUT_SUBTITLE_PRESET,
+        "top_brand_header": None,
+        "big_emphasis_layer": None,
+        "themed_decoration_cards": [],
+        "evidence_overlay": None,
+        "interaction_endcard": None,
+        "caption": {
+            "max_lines": 1,
+            "max_chars_per_line": 11,
+            "font_size": 72,
+            "safe_bottom": 224,
+            "font_style": "bold",
+            # 720x1280 grammar polish baseline: a strong white caption with
+            # a light keyline, never a heavy sticker-like outline.
+            "outline_width": 2.5,
+            "shadow": 1,
+            "color": "#FFFFFF",
+            "emphasis_color": "#FFD54A",
+        },
+        "camera_grammar": {
+            "allowed": ["neutral", "punch_in_soft", "punch_in_medium", "slow_push", "reset"],
+            "max_changes_per_minute": 12,
+        },
+        "text_emphasis": {"min_chars": 2, "max_chars": 8, "max_per_minute": 4},
+        "semantic_symbols": {
+            "allowed": ["red_x", "green_check", "question", "warning", "arrow", "underline", "burst_lines"],
+            "require_semantic_binding": True,
+            "max_per_minute": 5,
+        },
+        "sound_effects": {
+            "enabled": True,
+            "source_order": ["approved_local_library", "generated_local"],
+            "profiles": ["pop_soft", "tick_soft", "whoosh_soft", "impact_soft", "success_ping", "warning_tick"],
+            "max_per_minute": 9,
+            "voice_safe_volume": 0.04,
+        },
+        "external_visuals": {
+            "allow_broll_video": False,
+            "allow_pip": False,
+            "allow_stock_video": False,
+            "allow_stock_image": False,
+            "allow_network_search": False,
+            "allow_generated_images": False,
+            "allow_minimax": False,
+            "allow_ai_video": False,
+            "allow_bgm": False,
+        },
+        "rhythm": {
+            "playback_rate": 1.08,
+            "active_ranges_from_audio_analysis": False,
+            "silence_threshold_db": -38.0,
+            "min_silence_cut_ms": 280,
+        },
+        "emphasis_palette": {
+            "white_on_dark": "#FCFAF8",
+            "dark_on_white": "#0A0A0A",
+            "warm_yellow": "#FFD166",
+            "warm_orange": "#FF9F68",
+            "warm_red": "#FB7185",
+            "warm_green": "#69DBA8",
+            "warm_pink": "#ED3A7C",
+        },
+    }
+
+
 _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
     PRESET_PURE_ADAPTIVE: _pure_adaptive(),
     PRESET_BRAND_EMPHASIS: _brand_emphasis(),
+    PRESET_LOCAL_GRAMMAR_V2: _local_grammar_v2(),
+    PRESET_GRAMMAR_ONLY: _grammar_only(),
 }
 
 
@@ -145,11 +324,7 @@ def get_style_preset(preset_id: str | None) -> dict[str, Any]:
         requested = DEFAULT_PRESET_ID
     if requested not in _BUILTIN_PRESETS:
         requested = DEFAULT_PRESET_ID
-    base = _BUILTIN_PRESETS[requested]
-    return {
-        key: (dict(value) if isinstance(value, dict) else value)
-        for key, value in base.items()
-    }
+    return copy.deepcopy(_BUILTIN_PRESETS[requested])
 
 
 def resolve_style_preset_id(

@@ -26,6 +26,11 @@ models/
 *.mp3
 *.wav
 *.srt
+*.ass
+*.m4a
+*.mkv
+*.webm
+v4-frame-*.png
 
 # Python
 __pycache__/

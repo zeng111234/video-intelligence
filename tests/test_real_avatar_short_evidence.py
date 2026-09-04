@@ -17,8 +17,8 @@ def test_rendered_ass_does_not_add_a_leading_comma_to_subtitle_text(
             {
                 "start": 0.0,
                 "end": 1.2,
-                "text": "最近广州冒出了",
-                "emphasis": "广州",
+                "text": "最近完成了一个新计划",
+                "emphasis": "计划",
             }
         ]
     )

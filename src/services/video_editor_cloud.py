@@ -345,6 +345,7 @@ def visual_style_spec(
     scale = width / 720
     rhythm: dict[str, Any] = {}
     emphasis_palette: dict[str, Any] = {}
+    caption_overrides: dict[str, Any] = {}
     top_brand_header: Any = None
     big_emphasis_layer: Any = None
     preset_id = DEFAULT_VISUAL_STYLE_ID
@@ -362,11 +363,35 @@ def visual_style_spec(
                 for key, value in palette_raw.items()
                 if isinstance(value, str) and value
             }
+        caption_raw = style_preset.get("caption")
+        if isinstance(caption_raw, Mapping):
+            caption_overrides = {
+                str(key): value
+                for key, value in caption_raw.items()
+                if value is not None
+            }
         if style_preset.get("top_brand_header") is not None:
             top_brand_header = style_preset.get("top_brand_header")
         if style_preset.get("big_emphasis_layer") is not None:
             big_emphasis_layer = style_preset.get("big_emphasis_layer")
     playback_rate = float(rhythm.get("playback_rate") or DEFAULT_PLAYBACK_RATE)
+    subtitle_style = {
+        "max_lines": 1,
+        "max_chars_per_line": 11,
+        "font_size": round(52 * scale),
+        "safe_bottom": round(230 * scale),
+        "font_family": CAPTION_FONT_FAMILY,
+        "font_style": "oblique",
+        "outline_width": max(3, round(4 * scale)),
+        "shadow": max(1, round(0.8 * scale)),
+        "color": "#F8FAFC",
+        "emphasis_color": "#FFE16A",
+    }
+    for key, value in caption_overrides.items():
+        if key in {"font_size", "safe_bottom", "outline_width", "shadow"}:
+            subtitle_style[key] = max(0, round(float(value) * scale))
+        elif key in subtitle_style:
+            subtitle_style[key] = value
     return {
         # ``style_id`` stays byte-identical with the pre-preset contract so
         # downstream consumers (review manifest, render manifest) that read
@@ -401,25 +426,24 @@ def visual_style_spec(
             "height": 0,
             "gap": 0,
         },
-        "subtitle": {
-            "max_lines": 1,
-            "max_chars_per_line": 11,
-            "font_size": round(52 * scale),
-            # Leave a larger lower safe area for platform action bars and
-            # title overlays; captions sit visibly above the bottom UI.
-            "safe_bottom": round(230 * scale),
-            # Keep the keyline crisp while using only a light shadow.  A large
-            # shadow makes the caption look like a sticker and muddies faces
-            # and busy backgrounds.
-            "font_family": CAPTION_FONT_FAMILY,
-            "font_style": "oblique",
-            "outline_width": max(3, round(4 * scale)),
-            "shadow": max(1, round(0.8 * scale)),
-            "color": "#F8FAFC",
-            "emphasis_color": "#FFE16A",
-        },
+        "subtitle": subtitle_style,
         "rhythm": rhythm,
         "emphasis_palette": emphasis_palette,
+        "semantic_stickers": (
+            dict(style_preset.get("semantic_stickers") or {})
+            if isinstance(style_preset, Mapping)
+            else {}
+        ),
+        "sound_effects": (
+            dict(style_preset.get("sound_effects") or {})
+            if isinstance(style_preset, Mapping)
+            else {}
+        ),
+        "broll_policy": (
+            dict(style_preset.get("broll_policy") or {})
+            if isinstance(style_preset, Mapping)
+            else {}
+        ),
         "top_brand_header": top_brand_header,
         "big_emphasis_layer": big_emphasis_layer,
     }
@@ -3808,7 +3832,14 @@ def build_business_talking_head_overlay_preview(
             "font_family": CAPTION_FONT_FAMILY,
             "palette_id": "douyin_talking_head_pop_v2_warm_layered",
             "caption_treatment": "white_base_warm_keyword_black_keyline",
-            "outline": "thick_black_keyline",
+            "outline": (
+                "light_black_keyline"
+                if isinstance(style_preset, Mapping)
+                and style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY"
+                else "thick_black_keyline"
+            ),
+            "outline_px": [2.0, 2.5] if isinstance(style_preset, Mapping) and style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY" else [4.0, 6.0],
+            "shadow_px": [1.0, 1.5] if isinstance(style_preset, Mapping) and style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY" else [1.0, 3.0],
             "entry_motion": "elastic_pop_180ms",
             "word_motion": "selective_word_emphasis_v3",
             "keyword_motion": "semantic_effect_mix_v2",
@@ -3836,6 +3867,7 @@ def _ass_kinetic_caption_text(
     line_index: int = 0,
     cue_start: float,
     cue_end: float,
+    light_keyline: bool = False,
 ) -> str | None:
     spans = [
         item
@@ -3976,9 +4008,12 @@ def _ass_kinetic_caption_text(
         # style-specific motion may request a stronger legacy shadow, but it
         # should not overpower the caption or turn emphasis into a sticker.
         motion = motion.replace(r"\shad3", r"\shad1").replace(r"\shad2", r"\shad1")
+        if light_keyline:
+            for legacy_outline in ("\\bord6.0", "\\bord5.8", "\\bord5.4", "\\bord5.0", "\\bord4.8", "\\bord4.6", "\\bord4.2", "\\bord4.0", "\\bord3.4", "\\bord2.8"):
+                motion = motion.replace(legacy_outline, "\\bord2.5")
         rendered.append(
             "{"
-            f"\\c{color}\\3c&H00101010&\\bord4.0\\shad1\\fscx94\\fscy94"
+            f"\\c{color}\\3c&H00101010&\\bord{2.5 if light_keyline else 4.0}\\shad1\\fscx94\\fscy94"
             f"{motion}"
             "}"
             f"{_ass_escape(line[start_offset:end_offset])}"
@@ -3993,6 +4028,7 @@ def _ass_cue_motion_text(
     lines: Sequence[str],
     *,
     kinetic_style: str,
+    light_keyline: bool = False,
 ) -> str:
     """Give multi-line and clock-less cues the same motion language."""
 
@@ -4038,10 +4074,17 @@ def _ass_cue_motion_text(
             r"\t(0,200,\fscx108\fscy108\frz0\blur0)"
             r"\t(200,240,\fscx100\fscy100)}"
         )
+    if light_keyline:
+        tag = tag.replace(r"\bord5.4", r"\bord2.5").replace(r"\bord4", r"\bord2.5")
     return tag + _wrap_ass_lines(lines)
 
 
-def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
+def _ass_caption_text(
+    cue: Mapping[str, Any],
+    *,
+    emphasis_colour: str,
+    light_keyline: bool = False,
+) -> str:
     lines = [str(line) for line in cue.get("lines") or []]
     entry = cue.get("entry_motion")
     entry_ms = 120
@@ -4073,6 +4116,7 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
                 line_index=index,
                 cue_start=float(cue.get("start") or 0),
                 cue_end=float(cue.get("end") or 0),
+                light_keyline=light_keyline,
             ) or _ass_escape(line)
             for index, line in enumerate(lines)
         ]
@@ -4085,7 +4129,11 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
         ):
             return entry_tag + r"\N".join(kinetic_lines)
     if kinetic_mode == "cue_pop" and kinetic_style:
-        return _ass_cue_motion_text(lines, kinetic_style=kinetic_style)
+        return _ass_cue_motion_text(
+            lines,
+            kinetic_style=kinetic_style,
+            light_keyline=light_keyline,
+        )
     emphasis = cue.get("emphasis_range")
     if not isinstance(emphasis, Mapping):
         return entry_tag + _wrap_ass_lines(lines)
@@ -4106,7 +4154,7 @@ def _ass_caption_text(cue: Mapping[str, Any], *, emphasis_colour: str) -> str:
             continue
         rendered.append(
             f"{entry_tag}{_ass_escape(line[:start])}"
-            f"{{\\c{colour}\\3c&H00101010&\\bord4.0\\shad1\\fscx100\\fscy100\\blur0.8"
+            f"{{\\c{colour}\\3c&H00101010&\\bord{2.5 if light_keyline else 4.0}\\shad1\\fscx100\\fscy100\\blur0.8"
             f"\\t(0,{duration_ms},\\fscx{scale}\\fscy{scale}\\blur0)}}"
             f"{_ass_escape(line[start:end])}"
             f"{{\\rCaption\\fscx100\\fscy100}}"
@@ -4144,6 +4192,9 @@ def build_business_talking_head_ass(
     title_style = spec["title"]
     accent_style = spec["accent"]
     caption_style = spec["subtitle"]
+    light_keyline = isinstance(style_preset, Mapping) and (
+        style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY"
+    )
     # One adaptive baseline; semantic color and motion are cue-local.
     typography = {"font": "Source Han Serif CN Heavy", "spacing": 0.12, "bold": -1}
     selected_title_font = font_family or typography["font"]
@@ -4352,7 +4403,7 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
         lines.append(
             f"Dialogue: 0,{_ass_timestamp(float(cue['start']) + time_offset_seconds)},"
             f"{_ass_timestamp(float(cue['end']) + time_offset_seconds)},Caption,,0,0,0,,"
-            f"{_ass_caption_text(cue, emphasis_colour='&H006AE1FF&')}"
+            f"{_ass_caption_text(cue, emphasis_colour='&H006AE1FF&', light_keyline=light_keyline)}"
         )
     if has_top_brand and top_brand_header_cues:
         # TopBrand cues carry their own start/end/anchor/text; the renderer

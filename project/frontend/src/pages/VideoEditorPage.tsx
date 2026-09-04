@@ -251,6 +251,7 @@ const RESULT_SUMMARY_ITEMS = [
 const STATUS_META: Record<string, { color: string; label: string; progress: number }> = {
   queued: { color: "default", label: "等待分析", progress: 5 },
   analyzing: { color: "processing", label: "云端分析中", progress: 35 },
+  local_analyzing: { color: "processing", label: "本机分析中", progress: 35 },
   awaiting_subtitle_review: { color: "gold", label: "待人工复核", progress: 58 },
   ready_to_render: { color: "processing", label: "准备渲染", progress: 66 },
   rendering: { color: "processing", label: "正式成片生成中", progress: 82 },
@@ -1621,10 +1622,12 @@ export default function VideoEditorPage() {
     || providerMode === "sandbox",
   );
   const missingConfiguration = capabilities?.missing_configuration || [];
-  const displayStatus = isSandbox && currentStatus === "configuration_required"
+  const localRenderer = providerMode === "local_ffmpeg" || capabilities?.renderer_mode === "local_ffmpeg";
+  const displayStatus = localRenderer && currentStatus === "analyzing"
+    ? "local_analyzing"
+    : isSandbox && currentStatus === "configuration_required"
     ? "sandbox_completed"
     : currentStatus;
-  const localRenderer = providerMode === "local_ffmpeg" || capabilities?.renderer_mode === "local_ffmpeg";
   const configurationBlocked = !isSandbox && !localRenderer && (
     activeBatch?.provider_mode !== "legacy"
     && (
@@ -1756,7 +1759,7 @@ export default function VideoEditorPage() {
         ...items.filter((item) => !response.items.some((next) => next.source_id === item.source_id)),
       ]);
       if (uploaded) selectSource(uploaded.source_id);
-      message.success("素材已上传，客户端不会运行本地转码或识别模型");
+      message.success("素材已上传，请确认方案后开始处理");
     } catch (error) {
       message.error((error as Error).message || "视频素材上传失败");
     } finally {
@@ -1801,6 +1804,7 @@ export default function VideoEditorPage() {
         sourceIds: [selectedSourceId],
         targetPlatform: platform,
         outputProfile,
+        stylePresetId: "talking-head-grammar-only-v1",
         quoteId: quote.quote_id,
         billingConfirmation: {
           confirmed: true,
@@ -1826,7 +1830,7 @@ export default function VideoEditorPage() {
       message.success(
         isSandbox
           ? "免费体验已开始：不会调用真实识别、出片或发布"
-          : "已确认费用，开始云端分析",
+          : localRenderer ? "已开始本机分析，完成后请确认字幕与方案" : "已确认费用，开始云端分析",
       );
     } catch (error) {
       if (!handleCreditsError(error, () => navigate("/admin"))) {
@@ -1856,10 +1860,9 @@ export default function VideoEditorPage() {
     const bgmWasReviewed = Boolean(item.review_snapshot?.bgm_confirmed);
     const nextBgmId = bgmWasReviewed
       ? (item.selected_bgm_id || null)
-      : reviewBgmId
+        : reviewBgmId
         || item.selected_bgm_id
         || bgmId
-        || recommendReviewBgm(item, bgmAssets)?.asset_id
         || null;
     setReviewBgmId(nextBgmId);
     const rawBroll = item.review_snapshot?.broll;

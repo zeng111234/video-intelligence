@@ -1261,7 +1261,67 @@ class CommercialSearchService:
             )
         normalized: list[NormalizedCandidate] = []
         reference_items: list[NormalizedCandidate] = []
+        bilibili_review_fallback_items: list[ProviderSearchItem] = []
         seen: set[str] = set()
+
+        def build_candidate(
+            item: ProviderSearchItem,
+            *,
+            is_bilibili_related: bool,
+            pending_review: bool = False,
+            extra_warning: str | None = None,
+        ) -> NormalizedCandidate:
+            warnings = list(item.data_quality_warnings)
+            if is_bilibili_related:
+                warnings.append(
+                    f"B站按行业/对象相关性放宽匹配“{keyword}”；请人工确认后再使用。"
+                )
+            if extra_warning:
+                warnings.append(extra_warning)
+            return NormalizedCandidate(
+                platform_item_id=item.platform_item_id,
+                title=item.title,
+                author_id=item.author_id,
+                author_name=item.author_name,
+                platform=platform,
+                category=(
+                    f"关键词相关/{keyword}"
+                    if is_bilibili_related
+                    else f"关键词/{keyword}"
+                ),
+                published_at=item.published_at,
+                duration_seconds=item.duration_seconds,
+                source_url=item.source_url,
+                source_type=source_type,
+                metrics=item.metrics,
+                matched_by=[keyword],
+                cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
+                eligibility_status=(
+                    EligibilityStatus.PENDING_REVIEW
+                    if is_bilibili_related or pending_review
+                    else EligibilityStatus.AUTO_MATCHED
+                ),
+                evidence=item.evidence,
+                official_hot=(
+                    provider == "douyin_local_browser"
+                    and (item.evidence or "").startswith("hotspot:")
+                ),
+                official_rank=(
+                    item.provider_rank
+                    if provider == "douyin_local_browser"
+                    and (item.evidence or "").startswith("hotspot:")
+                    else None
+                ),
+                official_hot_value=(
+                    float(item.metrics.plays)
+                    if provider == "douyin_local_browser"
+                    and (item.evidence or "").startswith("hotspot:")
+                    and item.metrics.plays is not None
+                    else None
+                ),
+                data_quality_warnings=warnings,
+            )
+
         for index, item in enumerate(page.items):
             reason = None
             if item.platform != platform:
@@ -1316,6 +1376,19 @@ class CommercialSearchService:
                     evidence=item.evidence,
                 )
             seen.add(item.platform_item_id)
+            if "关键词待确认=1" in (item.evidence or ""):
+                reference_items.append(
+                    build_candidate(
+                        item,
+                        is_bilibili_related=False,
+                        pending_review=True,
+                        extra_warning=(
+                            f"标题未直接命中“{keyword}”；已保留为待确认素材，"
+                            "避免本次搜索直接变成 0 条。"
+                        ),
+                    )
+                )
+                continue
             # B 站整页 DOM 容易混入推荐位或弹幕等非搜索卡片。完全无查询
             # 维度命中仍丢弃；单一行业/对象命中进入候选列表，但保留待确认
             # 状态，供人工挑选而不是自动送入智能创作。
@@ -1324,67 +1397,46 @@ class CommercialSearchService:
                 and relevance_tier == _BILIBILI_IRRELEVANT_RELEVANCE
             ):
                 counts["irrelevant_count"] += 1
+                if provider.endswith("_local_browser"):
+                    bilibili_review_fallback_items.append(item)
                 continue
-            warnings = list(item.data_quality_warnings)
             is_bilibili_related = (
                 platform == Platform.BILIBILI
                 and relevance_tier == _BILIBILI_REVIEW_RELEVANCE
             )
-            if is_bilibili_related:
-                warnings.append(
-                    f"B站按行业/对象相关性放宽匹配“{keyword}”；请人工确认后再使用。"
-                )
-            elif not direct_keyword_match:
-                warnings.append(
-                    f"标题未直接命中“{keyword}”；这是平台搜索返回的候选，请人工判断相关性。"
-                )
             normalized.append(
-                NormalizedCandidate(
-                    platform_item_id=item.platform_item_id,
-                    title=item.title,
-                    author_id=item.author_id,
-                    author_name=item.author_name,
-                    platform=platform,
-                    category=(
-                        f"关键词相关/{keyword}"
-                        if is_bilibili_related
-                        else f"关键词/{keyword}"
+                build_candidate(
+                    item,
+                    is_bilibili_related=is_bilibili_related,
+                    extra_warning=(
+                        None
+                        if is_bilibili_related or direct_keyword_match
+                        else f"标题未直接命中“{keyword}”；这是平台搜索返回的候选，请人工判断相关性。"
                     ),
-                    published_at=item.published_at,
-                    duration_seconds=item.duration_seconds,
-                    source_url=item.source_url,
-                    source_type=source_type,
-                    metrics=item.metrics,
-                    matched_by=[keyword],
-                    cohort_key=f"{provider}:{platform.value}:keyword:{keyword.casefold()}",
-                    eligibility_status=(
-                        EligibilityStatus.PENDING_REVIEW
-                        if is_bilibili_related
-                        else EligibilityStatus.AUTO_MATCHED
-                    ),
-                    evidence=item.evidence,
-                    official_hot=(
-                        provider == "douyin_local_browser"
-                        and (item.evidence or "").startswith("hotspot:")
-                    ),
-                    official_rank=(
-                        item.provider_rank
-                        if provider == "douyin_local_browser"
-                        and (item.evidence or "").startswith("hotspot:")
-                        else None
-                    ),
-                    official_hot_value=(
-                        float(item.metrics.plays)
-                        if provider == "douyin_local_browser"
-                        and (item.evidence or "").startswith("hotspot:")
-                        and item.metrics.plays is not None
-                        else None
-                    ),
-                    data_quality_warnings=warnings,
                 )
             )
             if len(normalized) >= limit:
                 break
+        if (
+            platform == Platform.BILIBILI
+            and provider.endswith("_local_browser")
+            and not normalized
+            and bilibili_review_fallback_items
+        ):
+            fallback_items = bilibili_review_fallback_items[
+                :BILIBILI_REFERENCE_FALLBACK_LIMIT
+            ]
+            reference_items.extend(
+                build_candidate(
+                    item,
+                    is_bilibili_related=True,
+                    extra_warning="未命中完整关键词，已保留为待确认素材，避免本次搜索直接变成 0 条。",
+                )
+                for item in fallback_items
+            )
+            counts["irrelevant_count"] = max(
+                0, counts["irrelevant_count"] - len(fallback_items)
+            )
         counts["reference_items"] = reference_items
         return normalized, errors, counts
 

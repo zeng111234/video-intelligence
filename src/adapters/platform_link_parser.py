@@ -439,8 +439,9 @@ class LocalPlatformLinkParserClient:
                         self._cache_xiaohongshu_page_media(
                             page, final_link, captured
                         )
-                        reveal_browser_window(provider.debug_port)
-                        return final_link
+                        if self._wait_xiaohongshu_page_content(page, captured):
+                            reveal_browser_window(provider.debug_port)
+                            return final_link
                 if "xsec_token" not in parse_qs(urlparse(link.share_url).query):
                     opened_target = self._open_xiaohongshu_search_result(
                         context,
@@ -505,6 +506,12 @@ class LocalPlatformLinkParserClient:
                     if access_error:
                         raise PlatformLinkParserError(
                             access_error,
+                            platform=link.platform,
+                            work_id=link.work_id,
+                        )
+                    if not self._wait_xiaohongshu_page_content(page, captured):
+                        raise PlatformLinkParserError(
+                            "小红书详情页没有加载出视频内容，请保持登录后重试。",
                             platform=link.platform,
                             work_id=link.work_id,
                         )
@@ -1259,10 +1266,16 @@ class LocalPlatformLinkParserClient:
                             card = search_page.locator("section.note-item").filter(
                                 has=anchor
                             )
-                            if card.count() != 1:
-                                continue
+                            if card.count() == 1:
+                                clickable = card
+                            else:
+                                # 小红书改版后可能保留精确链接，但不再使用
+                                # section.note-item 外层容器；此时直接点该链接。
+                                if anchor.count() < 1:
+                                    continue
+                                clickable = anchor.first
                             previous_url = str(search_page.url)
-                            card.click(timeout=5_000)
+                            clickable.click(timeout=5_000)
                             search_page.wait_for_timeout(
                                 1_200 if response_callback is not None else 800
                             )
@@ -1277,7 +1290,17 @@ class LocalPlatformLinkParserClient:
                                 and final_link.platform == Platform.XIAOHONGSHU
                                 and final_link.work_id == link.work_id
                             ):
-                                return search_page, final_link
+                                if LocalPlatformLinkParserClient._wait_xiaohongshu_page_content(
+                                    search_page
+                                ):
+                                    return search_page, final_link
+                                try:
+                                    search_page.go_back(
+                                        wait_until="domcontentloaded", timeout=5_000
+                                    )
+                                except Exception:
+                                    pass
+                                return None
                             if str(search_page.url) != previous_url:
                                 try:
                                     search_page.go_back(
@@ -1304,6 +1327,41 @@ class LocalPlatformLinkParserClient:
                     except Exception:
                         pass
         return None
+
+    @staticmethod
+    def _wait_xiaohongshu_page_content(
+        page: Any,
+        captured: dict[str, str] | None = None,
+        *,
+        timeout_ms: int = 5_000,
+    ) -> bool:
+        """Wait for a video/detail page instead of treating a bare URL as success."""
+        captured = captured or {}
+        deadline = time.monotonic() + max(0, timeout_ms) / 1000
+        video_probe_supported = False
+        while True:
+            if captured.get("media_url"):
+                return True
+            if LocalPlatformLinkParserClient._xiaohongshu_access_error(page):
+                return False
+            try:
+                videos = page.locator("video")
+                video_count = videos.count()
+                video_probe_supported = True
+                if video_count > 0:
+                    return True
+            except Exception:
+                pass
+            if not video_probe_supported:
+                # Keep compatibility with lightweight browser test doubles and
+                # older adapters that only expose URL navigation.
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                page.wait_for_timeout(250)
+            except Exception:
+                return False
 
     def _get_cached_xiaohongshu_media(
         self, work_id: str

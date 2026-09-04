@@ -368,14 +368,14 @@ describe("TranscriptionPage", () => {
       media_name: opaqueFilename,
       source_kind: "kuaishou_local_browser",
       created_at: "2026-07-31T18:01:24+08:00",
-      segments: [{ ...autoReviewedTask.segments[0], text: "大家好，咱们来看一下这款平面贴标机。" }],
+      segments: [{ ...autoReviewedTask.segments[0], text: "大家好，咱们来看一下这款设备的安装方法。" }],
     }, {
       ...autoReviewedTask,
       task_id: "transcript-restaurant",
       title: "input.mp4",
       media_name: "input.mp4",
       source_kind: "kuaishou_local_browser",
-      segments: [{ ...autoReviewedTask.segments[0], text: "这家烧烤店采用独特的共享模式和会员制度。" }],
+      segments: [{ ...autoReviewedTask.segments[0], text: "这套服务采用清晰的协作流程。" }],
     }]);
 
     render(
@@ -385,15 +385,15 @@ describe("TranscriptionPage", () => {
     );
 
     fireEvent.click(await screen.findByRole("button", { name: /转写历史/ }));
-    expect(await screen.findByText("平面贴标机 · 操作说明")).toBeTruthy();
-    expect(screen.getByText("餐饮门店 · 共享会员模式")).toBeTruthy();
+    expect(await screen.findByText("主题 · 这款设备的安装方法")).toBeTruthy();
+    expect(screen.getByText("主题 · 这套服务采用清晰的协作流程")).toBeTruthy();
     expect(screen.queryByText(opaqueFilename)).toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText("搜索视频名称、来源或任务 ID"), {
-      target: { value: "共享会员" },
+      target: { value: "协作流程" },
     });
-    expect(screen.getByText("餐饮门店 · 共享会员模式")).toBeTruthy();
-    expect(screen.queryByText("平面贴标机 · 操作说明")).toBeNull();
+    expect(screen.getByText("主题 · 这套服务采用清晰的协作流程")).toBeTruthy();
+    expect(screen.queryByText("主题 · 这款设备的安装方法")).toBeNull();
   });
 
   it("shows real LLM-rewritten segments as the default voiceover draft", async () => {

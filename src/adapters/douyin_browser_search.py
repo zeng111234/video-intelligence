@@ -112,6 +112,7 @@ _PUBLIC_SEARCH_INPUT_SETTLE_MS = 250
 _PUBLIC_SEARCH_MIN_RAW_SCAN_LIMIT = 200
 _PUBLIC_SEARCH_MAX_RAW_SCAN_LIMIT = 200
 _PUBLIC_SEARCH_RAW_SCAN_MULTIPLIER = 3
+_PUBLIC_SEARCH_REVIEW_FALLBACK_LIMIT = 30
 _MIN_QUALIFYING_LIKES = 100
 _MIN_QUALIFYING_LIKES_PER_DAY = 1.0
 _HOTSPOT_PAGE_SETTLE_RANGE_MS = (3_500, 5_500)
@@ -677,7 +678,9 @@ class LocalDouyinBrowserSearchProvider:
             parsed_item_count=parsed_count,
             raw_discovered_count=len(raw_rows),
             deduped_item_count=len({str(row.get("item_id") or "") for row in raw_rows if row.get("item_id")}),
-            direct_match_count=len(items),
+            direct_match_count=sum(
+                "关键词待确认=1" not in (item.evidence or "") for item in items
+            ),
             out_of_window_count=published_filtered_count,
             invalid_count=max(0, len(raw_rows) - parsed_count),
             relevance_filtered_count=filter_counts["relevance"],
@@ -2874,6 +2877,7 @@ class LocalDouyinBrowserSearchProvider:
     ]:
         """Keep readable public-search cards that fit the page-known time window."""
         items: list[ProviderSearchItem] = []
+        review_rows: list[tuple[dict[str, Any], str, str, int | None, datetime | None]] = []
         errors: list[ProviderSearchError] = []
         filter_counts = {"duration": 0, "relevance": 0}
         published_filtered_count = 0
@@ -2909,9 +2913,6 @@ class LocalDouyinBrowserSearchProvider:
             # 官网搜索卡片会同时露出作者名；匹配只使用标题、描述和话题。
             # 关键词可拆开命中，但不会因为作者昵称命中而放入无关视频。
             match_mode = _public_search_keyword_match(row, keyword)
-            if match_mode is None:
-                filter_counts["relevance"] += 1
-                continue
             duration_seconds = LocalDouyinBrowserSearchProvider._as_int(
                 row.get("duration")
             )
@@ -2926,6 +2927,13 @@ class LocalDouyinBrowserSearchProvider:
                 published_filtered_count += 1
                 continue
             seen.add(item_id)
+            if match_mode is None:
+                filter_counts["relevance"] += 1
+                if len(review_rows) < _PUBLIC_SEARCH_REVIEW_FALLBACK_LIMIT:
+                    review_rows.append(
+                        (row, item_id, title, duration_seconds, published_at)
+                    )
+                continue
             row = {**row, "keyword_match_mode": match_mode}
             items.append(
                 LocalDouyinBrowserSearchProvider._to_public_provider_item(
@@ -2941,6 +2949,29 @@ class LocalDouyinBrowserSearchProvider:
             )
             if len(items) >= limit:
                 break
+        # 公开搜索偶尔会把可读卡片全部判为“非精确命中”，导致用户等待后看到
+        # 0 条。仅在本轮没有任何命中时保留一小批搜索排序靠前的卡片，并标记
+        # 为待确认；一旦有精确命中，仍保持原来的严格结果。
+        if not items and review_rows:
+            fallback_items = review_rows[: min(limit, _PUBLIC_SEARCH_REVIEW_FALLBACK_LIMIT)]
+            filter_counts["relevance"] = max(
+                0, filter_counts["relevance"] - len(fallback_items)
+            )
+            for row, item_id, title, duration_seconds, published_at in fallback_items:
+                seen.add(item_id)
+                review_row = {**row, "keyword_match_mode": "review"}
+                items.append(
+                    LocalDouyinBrowserSearchProvider._to_public_provider_item(
+                        row=review_row,
+                        item_id=item_id,
+                        title=title,
+                        duration_seconds=duration_seconds,
+                        observed_at=observed_at,
+                        published_at=published_at,
+                        keyword=keyword,
+                        provider_rank=len(items) + 1,
+                    )
+                )
         return items, errors, filter_counts, published_filtered_count
 
     @staticmethod
@@ -3005,6 +3036,7 @@ class LocalDouyinBrowserSearchProvider:
             ),
             evidence=(
                 f"douyin_public_search:关键词={keyword};来源=browser_rendered;"
+                f"关键词待确认={'1' if row.get('keyword_match_mode') == 'review' else '0'};"
                 f"关键词联合命中={'1' if row.get('keyword_match_mode') == 'token_union' else '0'};"
                 f"布局={'多列' if layout_mode == 'multi_column' else '单列' if layout_mode == 'single_column' else '未确认'};"
                 f"发布时间筛选={time_filter_receipt};"

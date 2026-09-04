@@ -24,20 +24,20 @@ from src.services.video_editor_workflow import (
 
 def test_detect_known_errors_when_raw_equals_reviewed() -> None:
     """raw ASR 等于 reviewed → 假阳性检测。"""
-    text = "今天聊聊烧烤店"
+    text = "今天聊聊一个新服务"
     errors = _detect_known_transcript_errors(text, raw_asr_text=text)
     assert "raw_asr_equals_reviewed_no_human_review" in errors
 
 
 def test_detect_known_errors_when_reviewed_differs() -> None:
     """raw ≠ reviewed → 不假阳性。"""
-    text = "今天聊聊烧烤店"
+    text = "今天聊聊一个新服务"
     errors = _detect_known_transcript_errors(text, raw_asr_text="完全不同")
     assert "raw_asr_equals_reviewed_no_human_review" not in errors
 
 
 def test_human_confirmed_review_allows_unchanged_asr_text() -> None:
-    text = "今天聊聊烧烤店"
+    text = "今天聊聊一个新服务"
     errors = _detect_known_transcript_errors(
         text,
         raw_asr_text=text,
@@ -47,14 +47,14 @@ def test_human_confirmed_review_allows_unchanged_asr_text() -> None:
 
 
 def test_normal_fullwidth_punctuation_is_not_an_anomaly() -> None:
-    errors = _detect_known_transcript_errors("今天聊聊，烧烤店。")
+    errors = _detect_known_transcript_errors("今天聊聊，一个新服务。")
     assert "anomaly_symbol_in_transcript" not in errors
 
 
 def test_detect_known_errors_finds_r8_patterns() -> None:
     """r8 报告中的通用错词 token 模式被检测。"""
     # 这些是用户列出的"明显错词"，是 ASR 通用错位的表现
-    # 不依赖具体样片（不是"广州烧烤店"等具体词）
+    # 不依赖具体样片词汇。
     text = "会员质半完中头戏又把劝秒道账身仙找班"
     errors = _detect_known_transcript_errors(text)
     assert any("suspicious_run" in e for e in errors), errors
@@ -112,8 +112,8 @@ def test_human_review_warnings_ignores_safe_text() -> None:
 
 
 def test_human_review_warnings_does_not_use_specific_sample_words() -> None:
-    """禁止为具体样片（烧烤店 / 金鱼 / 二手车）写硬编码警告词。"""
-    forbidden = ["烧烤店", "金鱼", "二手车", "广州", "回头客"]
+    """禁止为具体样片写硬编码警告词。"""
+    forbidden = ["固定样片文案", "参考视频原句", "某个具体标题"]
     for sample in [
         "今天聊聊一种新的营销模式",
         "今天的分享希望对你有帮助",

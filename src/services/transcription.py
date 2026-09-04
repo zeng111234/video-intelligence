@@ -239,6 +239,7 @@ class TranscriptionService:
             stage="视频检查",
             media_sha256=hashlib.sha256(media_bytes).hexdigest(),
             model_name=model_name,
+            provider_name="faster_whisper_local",
             asr_hotwords=normalized_hotwords or None,
             source_kind=source_kind,
             source_url=source_url,

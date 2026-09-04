@@ -993,6 +993,10 @@ class LocalPlatformBrowserSearchProvider:
                         minimize_browser_window(self.debug_port)
                         self._raise_for_search_response(response)
                         if page_number == 1 and prefer_recent:
+                            # B 站的日期筛选有时只更新页面地址，刷新后的
+                            # 接口响应并不会再次返回搜索卡片。保留首屏快照，
+                            # 避免“已经扫描到结果”在筛选刷新失败时变成 0 条。
+                            initial_network_rows = dict(network_rows)
                             network_rows.clear()
                             rendered_rows.clear()
                             bilibili_search_response_seen = False
@@ -1015,6 +1019,18 @@ class LocalPlatformBrowserSearchProvider:
                                 )
                                 minimize_browser_window(self.debug_port)
                                 self._raise_for_search_response(response)
+                                if self._restore_bilibili_initial_rows(
+                                    network_rows, initial_network_rows
+                                ):
+                                    self._collection_filter_notes.append(
+                                        "B站时间筛选页未返回新的搜索卡片，已保留首屏结果并继续按发布时间校验。"
+                                    )
+                            elif self._restore_bilibili_initial_rows(
+                                network_rows, initial_network_rows
+                            ):
+                                self._collection_filter_notes.append(
+                                    "B站未确认日期筛选已生效，已保留首屏结果并改用本地发布时间校验。"
+                                )
                         # 接口响应可能缺少发布时间；始终读取同页可见卡片，
                         # 按 BV 号合并后用页面日期补齐接口字段。
                         self._wait_for_bilibili_cards_ready(page)
@@ -1314,6 +1330,17 @@ class LocalPlatformBrowserSearchProvider:
                     combined[key] = value
             merged[item_id] = combined
         return list(merged.values())
+
+    @staticmethod
+    def _restore_bilibili_initial_rows(
+        network_rows: dict[str, dict[str, Any]],
+        initial_network_rows: dict[str, dict[str, Any]],
+    ) -> bool:
+        """Keep the first response when a date-filter reload returns no cards."""
+        if network_rows or not initial_network_rows:
+            return False
+        network_rows.update(initial_network_rows)
+        return True
 
     def _search_url(
         self,
