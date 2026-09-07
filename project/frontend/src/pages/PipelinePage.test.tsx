@@ -1275,6 +1275,13 @@ describe("PipelinePage customer workspace", () => {
       candidates: [xhsCandidate],
     };
     vi.mocked(createCrawlerBatch).mockResolvedValue(response);
+    vi.mocked(createCrawlerProgressiveBatch).mockImplementation(async (params) => {
+      const batch = await vi.mocked(createCrawlerBatch)(params);
+      const queue = progressiveQueue(batch);
+      vi.mocked(getCrawlerKeywordQueue).mockResolvedValue(queue);
+      vi.mocked(getCrawlerBatch).mockResolvedValue(batch);
+      return { progressive_task: true, queue, queue_id: queue.queue_id };
+    });
     let finishPreparation!: () => void;
     vi.mocked(resolveCrawlerCandidateOriginalMedia).mockReturnValue(new Promise((resolve) => {
       finishPreparation = () => resolve({
@@ -1290,12 +1297,14 @@ describe("PipelinePage customer workspace", () => {
       target: { value: "小红书素材" },
     });
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
-    const candidateTitles = await screen.findAllByText("小红书可转写素材");
-    const selectCandidate = candidateTitles
-      .map((title) => title.closest("button"))
-      .find((button) => button?.className.includes("candidate-select"));
-    expect(selectCandidate).toBeTruthy();
-    fireEvent.click(selectCandidate!);
+    const selectCandidate = await waitFor(() => {
+      const candidate = screen.getAllByText("小红书可转写素材")
+        .map((title) => title.closest<HTMLButtonElement>("button.candidate-select"))
+        .find((button): button is HTMLButtonElement => button !== null);
+      expect(candidate).toBeDefined();
+      return candidate!;
+    });
+    fireEvent.click(selectCandidate);
 
     await waitFor(() => expect(resolveCrawlerCandidateOriginalMedia).toHaveBeenCalledTimes(1));
     expect(screen.getByText("正在准备原视频，完成后可直接查看和转写。")).toBeTruthy();
