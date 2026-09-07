@@ -974,7 +974,7 @@ function Assert-WindowsReleasePayloadAuthoritative {
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $releasePython = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
-$unpacked = Join-Path $repositoryRoot "project\frontend\release\win-unpacked"
+$unpacked = Join-Path $repositoryRoot "project\frontend\release\win-unpacked-fresh"
 $releaseRegistryRelativePath = "deploy/control-plane/release_versions.json"
 $releaseRegistryPath = Join-Path $repositoryRoot "deploy\control-plane\release_versions.json"
 $registryLockPath = "$releaseRegistryPath.lock"

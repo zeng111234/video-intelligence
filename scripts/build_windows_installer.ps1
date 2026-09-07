@@ -181,12 +181,18 @@ finally {
 
 Push-Location $frontendRoot
 try {
+    # Workaround: write electron-builder output to a fresh directory so that
+    # the existing (potentially AV-locked) win-unpacked resources/*.asar are
+    # never touched. The downstream scripts (build_final_windows_release.ps1
+    # and build_offline_windows_installer.ps1) read the matching `$unpacked`
+    # value, so this stays consistent across the release flow.
+    $freshOutput = "release\win-unpacked-fresh"
     if ($DirectoryOnly) {
-        & npx electron-builder --dir "--config.extraMetadata.version=$Version"
+        & npx electron-builder --dir "--config.extraMetadata.version=$Version" "--config.directories.output=$freshOutput"
         if ($LASTEXITCODE -ne 0) { throw "Windows 目录版生成失败" }
     }
     else {
-        & npx electron-builder --win nsis "--config.extraMetadata.version=$Version"
+        & npx electron-builder --win nsis "--config.extraMetadata.version=$Version" "--config.directories.output=$freshOutput"
         if ($LASTEXITCODE -ne 0) { throw "Windows 安装包生成失败" }
     }
 }
@@ -194,4 +200,4 @@ finally {
     Pop-Location
 }
 
-Write-Host "Windows 构建已生成：$frontendRoot\release"
+Write-Host "Windows 构建已生成：$frontendRoot\release\win-unpacked-fresh"
