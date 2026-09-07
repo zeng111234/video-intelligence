@@ -290,7 +290,6 @@ def render_editorial_sticker(event: Mapping[str, Any], output_path: Path) -> Non
     red = (255, 100, 96, 255)
     green = (88, 208, 142, 255)
     blue = (132, 202, 255, 255)
-    cx, cy = width // 2, height // 2
     if kind == "offer_compare":
         # The subtitle carries the actual values. This vector only expresses
         # the input -> bonus relationship without repeating sample copy.

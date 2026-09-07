@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from src.services.semantic_stickers import build_sticker_events, supplement_motion_events, render_sticker
 from src.services.video_editor_workflow import (
     _select_sparse_sfx_items, _resolve_local_sound_effect, VideoEditorWorkflowService,

@@ -13705,7 +13705,6 @@ class VideoEditorWorkflowService:
                     # final file and continue the quality-report stage.
                     final_subtitle_path = output_path
                     final_subtitle_result = None
-                    final_subtitle_returncode = 0
                 else:
                     final_subtitle_result = _run_media_command(
                     [
