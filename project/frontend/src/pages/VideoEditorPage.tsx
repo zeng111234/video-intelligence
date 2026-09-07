@@ -474,43 +474,6 @@ function normalizePlan(item?: CloudBatchItem | null): EditPlanStep[] {
   return normalized.length ? normalized : DEFAULT_PLAN;
 }
 
-function recommendReviewBgm(
-  item: CloudBatchItem,
-  assets: VideoEditorBgmAsset[],
-): VideoEditorBgmAsset | null {
-  const usableAssets = assets.filter((asset) => asset.content_id_risk !== "registered");
-  if (!usableAssets.length) return null;
-
-  const plan = item.edit_plan as unknown as Record<string, unknown> | null | undefined;
-  const planCategory = typeof plan?.bgm_category === "string"
-    ? plan.bgm_category.trim()
-    : "";
-  const transcript = (item.subtitle_segments || []).map((segment) => segment.text).join(" ");
-  const text = `${item.selected_title || ""} ${item.title || ""} ${transcript} ${
-    typeof plan?.explanation === "string" ? plan.explanation : ""
-  }`;
-  const inferredCategory = planCategory
-    || (/人工智能|AI|机器人|科技|智能|数智/i.test(text)
-      ? "科技未来"
-      : /商业|企业|老板|品牌|营销|获客|客户|市场|销售/.test(text)
-        ? "商业表达"
-        : /情绪|共鸣|焦虑|治愈|温柔/.test(text)
-          ? "情绪共鸣"
-          : /故事|经历|曾经|后来|回忆/.test(text)
-            ? "故事叙事"
-            : /成长|励志|坚持|成功/.test(text)
-              ? "励志成长"
-              : /真相|揭秘|为什么|竟然/.test(text)
-                ? "悬念揭秘"
-                : /日常|生活|轻松/.test(text)
-                  ? "轻松日常"
-                  : "理性干货");
-
-  return usableAssets.find((asset) => asset.voiceover_category === inferredCategory)
-    || usableAssets.find((asset) => asset.voiceover_category === "通用口播")
-    || usableAssets[0];
-}
-
 function normalizeSubtitleSegments(item?: CloudBatchItem | null): TranscriptSegment[] {
   if (!item || !Array.isArray(item.subtitle_segments)) return [];
   const emphasisBySegment = new Map(

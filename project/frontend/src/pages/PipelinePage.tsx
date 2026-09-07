@@ -822,9 +822,6 @@ export default function PipelinePage() {
   const transcriptionUploadRetry = activeItem?.recovery?.kind === "transcription_upload_retry"
     ? activeItem.recovery
     : null;
-  const transcriptionReconnect = activeItem?.recovery?.kind === "transcription_reconnect"
-    ? activeItem.recovery
-    : null;
   const currentActionHeading = workspace?.status === "outcome_unknown"
     ? "转写结果待核对"
     : transcriptionUploadRetry
