@@ -500,7 +500,7 @@ function Try-RecoverCommittedOfflineArtifact {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$unpacked = Join-Path $repoRoot "project\frontend\release\win-unpacked-fresh"
+$unpacked = Join-Path $repoRoot "project\frontend\release\win-unpacked-fresh\win-unpacked"
 $buildRoot = Join-Path $repoRoot "build"
 $workspace = Join-Path $buildRoot ("offline-installer-{0}-{1}" -f $Version, [guid]::NewGuid().ToString("N"))
 $appIcon = Join-Path $repoRoot "project\frontend\desktop\icon.ico"
