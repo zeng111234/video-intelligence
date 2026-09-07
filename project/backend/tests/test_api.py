@@ -999,6 +999,9 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_licensed_search_provider] = lambda: (
             provider
         )
+        app.dependency_overrides[backend_deps.get_discovery_search_provider] = lambda: (
+            provider
+        )
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
         )
@@ -1054,6 +1057,10 @@ class TestCrawlerBatches:
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
             backend_deps.get_licensed_search_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_discovery_search_provider,
             None,
         )
         app.dependency_overrides.pop(
@@ -2161,11 +2168,16 @@ class TestEditingTemplatesAndSubtitles:
         resp = client.get("/api/v1/subtitles/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["provider_name"] == "阿里云 Fun-ASR"
-        assert data["default_model"] == "fun-asr"
+        if data["asr_mode"] == "cloud":
+            assert data["provider_name"] == "阿里云 Fun-ASR"
+            assert data["default_model"] == "fun-asr"
+            assert data["supported_models"] == ["fun-asr"]
+        else:
+            assert data["provider_name"] == "faster-whisper"
+            assert data["default_model"] == "large-v3-turbo"
+            assert data["supported_models"] == ["large-v3-turbo", "base"]
         assert data["whisper_available"] is True
         assert data["supported_formats"] == ["srt", "ass"]
-        assert data["supported_models"] == ["fun-asr"]
 
 
 # ---------------------------------------------------------------------------
