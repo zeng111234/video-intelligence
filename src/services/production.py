@@ -29,6 +29,7 @@ from src.models import (
     PublishTask,
     TaskStatus,
     TranscriptionTask,
+    VideoEditTask,
 )
 from src.services.publish_metadata import (
     publish_draft_fingerprint,
@@ -181,6 +182,19 @@ class ProductionService:
             None,
         )
 
+    def _effective_batch_profile(self, batch: ProductionBatch) -> ProductionProfile | None:
+        """Return the profile snapshot selected for this batch, including per-task speed."""
+        profile = self.get_profile(batch.profile_id)
+        if profile is None:
+            return None
+        snapshot = batch.execution_config.get("profile")
+        if not isinstance(snapshot, dict) or snapshot.get("profile_id") != profile.profile_id:
+            return profile
+        raw_rate = snapshot.get("speech_rate")
+        if raw_rate is None:
+            return profile
+        return profile.model_copy(update={"speech_rate": float(raw_rate)})
+
     def get_workspace_configuration(self) -> ProductionWorkspaceConfiguration | None:
         """读取客户首次设置；不存在时明确返回未设置，绝不默认授权。"""
         if not self._workspace_configuration_path.exists():
@@ -267,6 +281,7 @@ class ProductionService:
         script_style: str = "",
         avatar_id: str | None = None,
         voice_id: str | None = None,
+        speech_rate: float = 1.0,
         edit_template_id: str | None = None,
         tags: list[str] | None = None,
     ) -> ProductionProfile:
@@ -282,6 +297,7 @@ class ProductionService:
             script_style=script_style.strip(),
             avatar_id=avatar_id or None,
             voice_id=voice_id or None,
+            speech_rate=speech_rate,
             edit_template_id=edit_template_id or DEFAULT_PRODUCTION_TEMPLATE_ID,
             tags=[tag.strip() for tag in (tags or []) if tag.strip()],
         )
@@ -666,7 +682,7 @@ class ProductionService:
         if max_total_cost_cny is not None and max_total_cost_cny < 0:
             raise ValueError("费用上限不能小于 0。")
         workspace_configuration = self.get_workspace_configuration()
-        profile = self.get_profile(batch.profile_id)
+        profile = self._effective_batch_profile(batch)
         shared: list[str] = []
         platforms: list[PublishPlatform] = []
         assets_by_id: dict[str, Any] = {}
@@ -753,7 +769,7 @@ class ProductionService:
                             try:
                                 quote = billing_quote(
                                     script_text="字" * max(1, expected_characters),
-                                    speech_rate=1.0,
+                                    speech_rate=profile.speech_rate,
                                 )
                                 avatar_cost = float(quote.reservation_credits)
                                 avatar_estimated_seconds = int(
@@ -1179,7 +1195,7 @@ class ProductionService:
             preflight = self.preflight_batch(batch_id, **options)
             if preflight["cost_blocked"]:
                 raise ValueError("；".join(preflight["cost_issues"]))
-            profile = self.get_profile(batch.profile_id)
+            profile = self._effective_batch_profile(batch)
             assert profile is not None
             by_run = {item["run_id"]: item for item in preflight["items"]}
             now = datetime.now().astimezone()
@@ -1388,6 +1404,119 @@ class ProductionService:
         self.repository.save_production_batch(updated)
         return updated
 
+    def change_batch_profile(
+        self,
+        batch_id: str,
+        *,
+        profile_id: str,
+    ) -> ProductionBatch:
+        """Replace the avatar/voice combination before any avatar job exists.
+
+        A batch stores its own profile snapshot so later edits to the workspace
+        default cannot silently change a video already in production.
+        """
+        batch = self._require_batch(batch_id)
+        profile = self.get_profile(profile_id)
+        if profile is None:
+            raise ValueError("所选 IP 配方不存在。")
+        if not profile.avatar_id or not profile.voice_id:
+            raise ValueError("所选 IP 配方缺少形象或声音，不能用于本条视频。")
+        if batch.profile_id == profile.profile_id:
+            return batch
+
+        runs = []
+        for item in batch.items:
+            run = self.repository.get_pipeline_run(item.run_id)
+            if run is None:
+                raise ValueError("生产任务不存在，无法更换出镜人。")
+            if run.avatar_task_id or run.current_stage in {
+                PipelineStage.AVATAR_GENERATION,
+                PipelineStage.VIDEO_EDITING,
+                PipelineStage.PUBLISHING,
+            }:
+                raise ValueError("数字人已开始制作，不能更换本条视频的出镜人。")
+            item_profile = {
+                **profile.model_dump(mode="json"),
+                **dict(item.profile_overrides or {}),
+            }
+            runs.append(
+                run.model_copy(
+                    update={
+                        "updated_at": datetime.now().astimezone(),
+                        "config": {**run.config, "profile": item_profile},
+                    }
+                )
+            )
+
+        now = datetime.now().astimezone()
+        execution_config = dict(batch.execution_config or {})
+        if execution_config:
+            execution_config["profile"] = profile.model_dump(mode="json")
+        updated = batch.model_copy(
+            update={
+                "profile_id": profile.profile_id,
+                "profile_name": profile.name,
+                "execution_config": execution_config,
+                "updated_at": now,
+            }
+        )
+        for run in runs:
+            self.repository.save_pipeline_run(run)
+        self.repository.save_production_batch(updated)
+        return updated
+
+    def change_batch_speech_rate(
+        self,
+        batch_id: str,
+        *,
+        speech_rate: float,
+    ) -> ProductionBatch:
+        """Adjust only this batch's voice speed before digital-human submission."""
+        if not 0.8 <= speech_rate <= 1.2:
+            raise ValueError("语速只能设置在 0.8 倍到 1.2 倍之间。")
+        batch = self._require_batch(batch_id)
+        profile = self.get_profile(batch.profile_id)
+        if profile is None:
+            raise ValueError("当前 IP 配方不存在，无法调整语速。")
+
+        runs = []
+        for item in batch.items:
+            run = self.repository.get_pipeline_run(item.run_id)
+            if run is None:
+                raise ValueError("生产任务不存在，无法调整语速。")
+            if run.avatar_task_id or run.current_stage in {
+                PipelineStage.AVATAR_GENERATION,
+                PipelineStage.VIDEO_EDITING,
+                PipelineStage.PUBLISHING,
+            }:
+                raise ValueError("数字人已开始制作，语速不能再修改。")
+            run_profile = {
+                **profile.model_dump(mode="json"),
+                **dict(item.profile_overrides or {}),
+                "speech_rate": speech_rate,
+            }
+            runs.append(
+                run.model_copy(
+                    update={
+                        "updated_at": datetime.now().astimezone(),
+                        "config": {**run.config, "profile": run_profile},
+                    }
+                )
+            )
+
+        now = datetime.now().astimezone()
+        execution_config = dict(batch.execution_config or {})
+        execution_config["profile"] = profile.model_copy(
+            update={"speech_rate": speech_rate}
+        ).model_dump(mode="json")
+        updated = batch.model_copy(
+            update={"execution_config": execution_config, "updated_at": now}
+        )
+        for run in runs:
+            self.repository.save_pipeline_run(run)
+        self.repository.save_production_batch(updated)
+        return updated
+
     def resume_batch(self, batch_id: str) -> ProductionBatch:
         batch = self._require_batch(batch_id)
         has_execution_config = any(
@@ -1560,7 +1689,70 @@ class ProductionService:
                 )
                 continue
             retry_counts = dict(run.config.get("stage_retry_counts") or {})
-            stage_key = retry_stage.value if retry_stage else "source"
+            current_avatar_task = self.repository.get_task(run.avatar_task_id or "")
+            resume_existing_avatar = (
+                run.current_stage == PipelineStage.VIDEO_EDITING
+                and retry_stage == PipelineStage.AVATAR_GENERATION
+                and bool(run.avatar_task_id)
+                and current_avatar_task is not None
+                and current_avatar_task.status == TaskStatus.SUCCEEDED
+            )
+            # One narrowly-scoped recovery is allowed for the known
+            # production alignment defect: the local edit failed only at the
+            # subtitle timeline gate because the avatar caption task was
+            # created without word timestamps.  This does not reopen a
+            # general edit retry loop or bypass any quality gate.
+            subtitle_alignment_recovery = False
+            if resume_existing_avatar:
+                caption_task = self.repository.get_task(
+                    str(run.config.get("caption_timing_task_id") or "")
+                )
+                caption_has_words = bool(
+                    caption_task is not None
+                    and any(
+                        bool(getattr(segment, "words", None))
+                        for segment in getattr(caption_task, "segments", [])
+                    )
+                )
+                latest_edit = None
+                for candidate_task in self.repository.list_tasks():
+                    if not isinstance(candidate_task, VideoEditTask):
+                        continue
+                    if getattr(candidate_task, "source_avatar_task_id", None) != run.avatar_task_id:
+                        continue
+                    if latest_edit is None or candidate_task.updated_at > latest_edit.updated_at:
+                        latest_edit = candidate_task
+                if latest_edit is not None:
+                    try:
+                        quality = json.loads(
+                            latest_edit.outputs.get("quality_report") or "{}"
+                        )
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        quality = {}
+                    false_checks = {
+                        key
+                        for key, passed in (quality.get("checks") or {}).items()
+                        if passed is False
+                    }
+                    subtitle_alignment_recovery = bool(
+                        not caption_has_words
+                        and false_checks <= {"subtitle_timeline"}
+                        and "subtitle_timeline" in false_checks
+                        and quality.get("subtitle_sync_passed") is False
+                    )
+            # A failed local edit is a separate, non-billing recovery point.
+            # Do not consume the one safe avatar retry that was already used
+            # to create the existing successful avatar result.
+            stage_key = (
+                "video_editing_subtitle_alignment"
+                if subtitle_alignment_recovery
+                else
+                PipelineStage.VIDEO_EDITING.value
+                if resume_existing_avatar
+                else retry_stage.value
+                if retry_stage
+                else "source"
+            )
             retry_number = int(retry_counts.get(stage_key) or 0)
             # Older workers accidentally reused the first avatar request's
             # idempotency key.  In that case the customer's first retry never
@@ -1575,7 +1767,6 @@ class ProductionService:
                     for task in self.repository.list_tasks()
                 )
             )
-            current_avatar_task = self.repository.get_task(run.avatar_task_id or "")
             provider_rejected_without_job = (
                 retry_stage == PipelineStage.AVATAR_GENERATION
                 and retry_number == 1
@@ -1606,11 +1797,6 @@ class ProductionService:
                 retry_counts[stage_key] = 1
             elif provider_rejected_without_job:
                 retry_counts[stage_key] = 2
-            resume_existing_avatar = (
-                run.current_stage == PipelineStage.VIDEO_EDITING
-                and retry_stage == PipelineStage.AVATAR_GENERATION
-                and bool(run.avatar_task_id)
-            )
             retrying_transcription_upload = retry_stage == PipelineStage.TRANSCRIPTION
             retry_config = {
                 **run.config,
@@ -1661,6 +1847,8 @@ class ProductionService:
                 message=(
                     "已确认重新提交转写；将复用已解析素材并只创建一个新的云端识别任务。"
                     if retrying_transcription_upload
+                    else "已从视频剪辑阶段恢复，将复用已生成的数字人和转写，只重新执行本地剪辑。"
+                    if resume_existing_avatar
                     else f"已从 {stage_key} 安全恢复，已成功的付费阶段不会重提。"
                 ),
             )
@@ -2524,7 +2712,7 @@ class ProductionService:
         if batch is None:
             raise ValueError("生产批次不存在。")
         now = datetime.now().astimezone()
-        profile = self.get_profile(batch.profile_id)
+        profile = self._effective_batch_profile(batch)
         item_costs = dict(batch.execution_config.get("item_costs") or {})
         publish_capabilities = {
             str(capability.get("platform") or ""): capability

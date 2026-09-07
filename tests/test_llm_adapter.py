@@ -474,6 +474,35 @@ class TestCopywritingRiskRules:
         assert engine.last_usage["total_tokens"] == 15
 
     @patch("src.adapters.llm.urlopen")
+    def test_minimax_m3_uses_native_endpoint_and_stable_payload(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": '{"variants":["结果"]}'}}]}
+        ).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_response
+
+        engine = OpenAICompatibleCopywritingEngine(
+            api_key="minimax-test",
+            base_url="https://api.minimax.cn/v1/text",
+            model="MiniMax-M3",
+        )
+        assert engine.capabilities()["provider_name"] == "minimax"
+        assert engine._completion_url() == (
+            "https://api.minimax.cn/v1/text/chatcompletion_v2"
+        )
+        assert engine.rewrite("原始文案") == ["结果"]
+        sent = json.loads(mock_urlopen.call_args.args[0].data.decode("utf-8"))
+        assert sent == {
+            "model": "MiniMax-M3",
+            "messages": [
+                {"role": "system", "content": sent["messages"][0]["content"]},
+                {"role": "user", "content": sent["messages"][1]["content"]},
+            ],
+        }
+
+    @patch("src.adapters.llm.urlopen")
     def test_rewrite_exposes_attention_terms_from_model_json(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.read.return_value = json.dumps(

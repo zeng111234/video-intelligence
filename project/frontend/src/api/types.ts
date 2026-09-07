@@ -220,6 +220,7 @@ export interface ProductionProfile {
   script_style: string;
   avatar_id: string | null;
   voice_id: string | null;
+  speech_rate: number;
   edit_template_id: string | null;
   tags: string[];
   created_at: string;

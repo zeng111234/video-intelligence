@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
@@ -197,6 +198,117 @@ def test_profile_and_batch_plan_persist_without_executing_generation(tmp_path):
         "succeeded": 0,
         "failed": 0,
     }
+
+
+def test_change_batch_profile_updates_unstarted_run_snapshot(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    original = service.create_profile(
+        name="原出镜人",
+        avatar_id="avatar-original",
+        voice_id="voice-original",
+    )
+    replacement = service.create_profile(
+        name="新出镜人",
+        avatar_id="avatar-replacement",
+        voice_id="voice-replacement",
+    )
+    batch = service.create_batch(
+        name="待确认脚本",
+        profile_id=original.profile_id,
+        source_items=[{"source_type": "script", "source_value": "一段待制作口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+
+    updated = service.change_batch_profile(
+        batch.batch_id,
+        profile_id=replacement.profile_id,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+
+    assert updated.profile_id == replacement.profile_id
+    assert updated.profile_name == "新出镜人"
+    assert run is not None
+    assert run.config["profile"]["avatar_id"] == "avatar-replacement"
+    assert run.config["profile"]["voice_id"] == "voice-replacement"
+
+
+def test_change_batch_profile_rejects_after_avatar_stage_starts(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    original = service.create_profile(
+        name="原出镜人",
+        avatar_id="avatar-original",
+        voice_id="voice-original",
+    )
+    replacement = service.create_profile(
+        name="新出镜人",
+        avatar_id="avatar-replacement",
+        voice_id="voice-replacement",
+    )
+    batch = service.create_batch(
+        name="已开始合成",
+        profile_id=original.profile_id,
+        source_items=[{"source_type": "script", "source_value": "一段待制作口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    repository.save_pipeline_run(
+        run.model_copy(update={"current_stage": PipelineStage.AVATAR_GENERATION})
+    )
+
+    with pytest.raises(ValueError, match="数字人已开始制作"):
+        service.change_batch_profile(batch.batch_id, profile_id=replacement.profile_id)
+
+
+def test_change_batch_speech_rate_updates_profile_and_unstarted_run(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(
+        name="可调速出镜人",
+        avatar_id="avatar-speed",
+        voice_id="voice-speed",
+        speech_rate=0.9,
+    )
+    batch = service.create_batch(
+        name="语速调整批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "一段待制作口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+
+    updated = service.change_batch_speech_rate(batch.batch_id, speech_rate=1.1)
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+
+    assert updated.execution_config["profile"]["speech_rate"] == 1.1
+    assert run is not None
+    assert run.config["profile"]["speech_rate"] == 1.1
+    assert service.workspace(batch.batch_id)["profile"]["speech_rate"] == 1.1
+
+
+def test_change_batch_speech_rate_rejects_after_avatar_stage_starts(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="已开始制作", avatar_id="avatar", voice_id="voice")
+    batch = service.create_batch(
+        name="锁定语速批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "一段待制作口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    repository.save_pipeline_run(
+        run.model_copy(update={"current_stage": PipelineStage.AVATAR_GENERATION})
+    )
+
+    with pytest.raises(ValueError, match="数字人已开始制作"):
+        service.change_batch_speech_rate(batch.batch_id, speech_rate=1.1)
 
 
 def test_production_api_creates_profile_and_pending_batch(tmp_path):
@@ -522,6 +634,7 @@ class _LocalBrowserPublish:
 class _Copywriting:
     def __init__(self):
         self.rewrite_calls = 0
+        self.last_rewrite_kwargs = {}
 
     def capabilities(self):
         return {
@@ -538,6 +651,7 @@ class _Copywriting:
 
     def rewrite(self, **kwargs):
         self.rewrite_calls += 1
+        self.last_rewrite_kwargs = kwargs
         now = datetime.now().astimezone()
         source_text = kwargs["source_text"]
         result = f"改写稿：{source_text}"
@@ -1103,6 +1217,7 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
                         {
                             "run_id": run.run_id,
                             "approved_text": "确认后的真实转写",
+                            "note": "改得更适合本地餐饮老板，保留原文事实",
                         }
                     ],
                 },
@@ -1156,6 +1271,9 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     assert transcript_review.json()["results"][0]["ok"] is True
     assert repeated_transcript_review.json()["results"][0]["ok"] is True
     assert copywriting.rewrite_calls == 1
+    assert "改得更适合本地餐饮老板，保留原文事实" in copywriting.last_rewrite_kwargs[
+        "rewrite_goal"
+    ]
     assert script_workspace.status_code == 200, script_workspace.text
     assert script_workspace.json()["items"][0]["reviews"]["script"]["ai_audit"] == {
         "status": "completed",
@@ -1974,6 +2092,110 @@ def test_retry_repairs_a_legacy_avatar_attempt_that_never_reached_provider(tmp_p
     corrected_run = repository.get_pipeline_run(run.run_id)
     assert corrected_run is not None
     assert corrected_run.config["stage_retry_counts"]["avatar_generation"] == 2
+
+
+def test_retry_reuses_successful_avatar_after_local_edit_failure(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="本地剪辑恢复配方")
+    batch = service.create_batch(
+        name="本地剪辑恢复批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "确认后的口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    avatar = AvatarTask(
+        task_id="avatar-local-edit-source",
+        title="已成功数字人",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        script_text="确认后的口播稿",
+        avatar_id="avatar-a",
+        avatar_name="形象",
+        voice_id="voice-a",
+        voice_name="音色",
+        rights_holder="测试公司",
+        rights_confirmed_at=now,
+        idempotency_key=f"worker-avatar-{run.run_id}-retry-1",
+        provider_name="shuying_legacy_cloud",
+        result_path=str(tmp_path / "avatar.mp4"),
+    )
+    repository.save_task(avatar)
+    caption_task = TranscriptionTask(
+        task_id="caption-without-word-clock",
+        title="数字人字幕对齐",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        media_name="avatar.mp4",
+        media_type="video/mp4",
+        rights_confirmed=True,
+        rights_holder="测试公司",
+        candidate_id=avatar.task_id,
+        provider_name="faster_whisper_local",
+        source_kind="avatar_caption_alignment",
+        segments=[TranscriptSegment(start=0.0, end=2.0, text="确认后的口播稿")],
+    )
+    repository.save_task(caption_task)
+    failed_edit = VideoEditTask(
+        task_id="edit-subtitle-only-failed",
+        title="字幕门禁失败成片",
+        status=TaskStatus.FAILED,
+        progress=95,
+        created_at=now,
+        updated_at=now,
+        source_video_path=str(tmp_path / "avatar.mp4"),
+        source_avatar_task_id=avatar.task_id,
+        outputs={
+            "quality_report": json.dumps(
+                {
+                    "checks": {"subtitle_timeline": False},
+                    "subtitle_sync_passed": False,
+                }
+            )
+        },
+    )
+    repository.save_task(failed_edit)
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.VIDEO_EDITING,
+                "avatar_task_id": avatar.task_id,
+                "error_message": "本机成片质量校验失败",
+                "config": {
+                    **run.config,
+                    "stage_retry_counts": {
+                        "avatar_generation": 1,
+                        "video_editing": 1,
+                    },
+                    "caption_timing_task_id": caption_task.task_id,
+                },
+            }
+        )
+    )
+    service.sync_batch(batch.batch_id)
+
+    retried = service.retry_failed(batch.batch_id, pipeline_service=pipeline_service)
+
+    assert retried.items[0].status == ProductionBatchItemStatus.QUEUED
+    resumed = repository.get_pipeline_run(run.run_id)
+    assert resumed is not None
+    assert resumed.status == PipelineRunStatus.RUNNING
+    assert resumed.current_stage == PipelineStage.AVATAR_GENERATION
+    assert resumed.avatar_task_id == avatar.task_id
+    assert resumed.config["stage_retry_counts"] == {
+        "avatar_generation": 1,
+        "video_editing": 1,
+        "video_editing_subtitle_alignment": 1,
+    }
 
 
 def test_retry_resumes_avatar_pause_before_supplier_submission(tmp_path):

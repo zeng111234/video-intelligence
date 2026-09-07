@@ -64,8 +64,9 @@ vi.mock("../api/client", async () => {
     createCrawlerBatch: vi.fn(),
     createCrawlerProgressiveBatch: vi.fn(),
     createPublishAccount: vi.fn(),
-    createProductionBatch: vi.fn(),
-    createProductionProfile: vi.fn(),
+  createProductionBatch: vi.fn(),
+  createProductionProfile: vi.fn(),
+    changeProductionBatchSpeechRate: vi.fn(),
     getAvatarCapabilities: vi.fn(),
     getCrawlerBrowserDiscoveryCapabilities: vi.fn(),
     getCrawlerBatch: vi.fn(),
@@ -112,6 +113,7 @@ const profile: ProductionProfile = {
   avatar_id: "avatar-ready",
   voice_id: "voice-ready",
   edit_template_id: "template-ready",
+  speech_rate: 1,
   tags: [],
   created_at: "2026-07-28T09:00:00+08:00",
   updated_at: "2026-07-28T09:00:00+08:00",
@@ -875,6 +877,8 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByText("上传人脸训练视频")).toBeTruthy();
     expect(screen.getAllByAltText("企业主形象 形象预览").length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText("大树1 形象预览").length).toBeGreaterThan(0);
+    fireEvent.error(screen.getAllByAltText("企业主形象 形象预览")[0]);
+    expect(screen.getAllByText("暂无预览").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("形象选择列表")).toBeTruthy();
     expect(screen.getByText("试听").closest("button")).toBeTruthy();
     expect(screen.getByLabelText("声音试听：企业主音色").getAttribute("src"))
@@ -1336,6 +1340,35 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "找素材" }));
 
     expect(await screen.findByText("点赞 4,000 · 评论 平台未提供 · 分享 平台未提供 · 收藏 平台未提供")).toBeTruthy();
+  });
+
+  it("sorts the loaded material list by likes or comments without changing the search", async () => {
+    const sortCandidates = [
+      { ...candidate, video_id: "sort-low-likes", title: "点赞较少但评论较多", likes: 100, comments: 900, shares: 80 },
+      { ...candidate, video_id: "sort-high-likes", title: "点赞较多但评论较少", likes: 9_000, comments: 10, shares: 20 },
+      { ...candidate, video_id: "sort-high-comments", title: "评论最多的素材", likes: 500, comments: 1_200, shares: 300 },
+    ];
+    vi.mocked(createCrawlerBatch).mockResolvedValue(crawlerBatch(sortCandidates));
+    renderPage();
+
+    fireEvent.change(await screen.findByPlaceholderText("例如：餐饮老板获客、汽修店避坑"), {
+      target: { value: "餐饮老板获客" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "找素材" }));
+
+    expect(await screen.findByText("本次找到的全部素材（3）")).toBeTruthy();
+    const visibleTitles = () => Array.from(document.querySelectorAll("button.candidate-select strong"))
+      .map((element) => element.textContent);
+
+    fireEvent.click(screen.getByRole("button", { name: "按点赞数" }));
+    expect(visibleTitles()).toEqual(["点赞较多但评论较少", "评论最多的素材", "点赞较少但评论较多"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "按评论数" }));
+    expect(visibleTitles()).toEqual(["评论最多的素材", "点赞较少但评论较多", "点赞较多但评论较少"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "按分享数" }));
+    expect(visibleTitles()).toEqual(["评论最多的素材", "点赞较少但评论较多", "点赞较多但评论较少"]);
+    expect(createCrawlerBatch).toHaveBeenCalledTimes(1);
   });
 
   it("shows each platform actual count and a plain-language partial reason", async () => {
@@ -1819,8 +1852,12 @@ describe("PipelinePage customer workspace", () => {
 
     const creativePlanDetails = (await screen.findByText("查看创作拆解")).closest("details") as HTMLDetailsElement;
     expect(creativePlanDetails.open).toBe(false);
-    expect(screen.getByText("只需确认这一份，系统会自动带入后续制作")).toBeTruthy();
-    expect(screen.getByText("AI 文案审核提示需核对")).toBeTruthy();
+    expect(screen.getByText("确认后开始制作；需要换出镜人可在下方 IP 配方中更换")).toBeTruthy();
+    expect(screen.getByText("文案检查结果")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /当前 IP 配方/ }));
+    expect(screen.getAllByLabelText("更换本条视频的出镜人").length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText("本条视频语速").length).toBeGreaterThan(0);
+    expect(screen.getByText("添加形象或声音")).toBeTruthy();
     expect(screen.getByText("请确认效果表述有依据。", { exact: false })).toBeTruthy();
     expect((screen.getByLabelText("开头吸引点") as HTMLInputElement).value).toBe("先说客户最关心的问题。");
     expect((screen.getByLabelText("三个画面段落") as HTMLTextAreaElement).value).toContain("开场：");

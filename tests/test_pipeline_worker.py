@@ -172,6 +172,7 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
                     "avatar_id": "avatar-a",
                     "voice_id": "voice-a",
                     "edit_template_id": "template-a",
+                    "speech_rate": 1.1,
                 },
                 "rights_holder": "测试公司",
                 "stage_retry_counts": {"avatar_generation": 1},
@@ -216,6 +217,7 @@ def test_synchronously_completed_avatar_continues_without_waiting_for_next_tick(
     assert continued[0].avatar_task_id == "avatar-sync"
     assert continued[0].current_stage == PipelineStage.AVATAR_GENERATION
     assert submitted_requests[0].background == "solid"
+    assert submitted_requests[0].speech_rate == 1.1
     assert submitted_requests[0].idempotency_key.endswith("-retry-1")
 
 
@@ -432,6 +434,7 @@ def test_production_edit_uses_current_smart_template_and_never_legacy_editor(tmp
     assert smart_calls[0]["avatar_task"] == avatar_task
     assert smart_calls[0]["script_text"] == copy_task.result_text
     assert smart_calls[0]["subtitle_segments"] == subtitle_segments
+    assert smart_calls[0]["subtitle_task_id"] is None
     stored = repository.get_pipeline_run(run.run_id)
     assert stored is not None
     assert stored.status == PipelineRunStatus.SUCCEEDED
@@ -552,6 +555,7 @@ def test_avatar_success_reuses_persisted_asr_timing_before_smart_render(tmp_path
     assert submitted_segments[0]["start"] == 0.8
     assert submitted_segments[0]["end"] == 3.2
     assert submitted_segments[0]["text"] == script
+    assert smart_calls[0]["subtitle_task_id"] == caption_task.task_id
     stored = repository.get_pipeline_run(run.run_id)
     assert stored is not None
     assert stored.status == PipelineRunStatus.SUCCEEDED

@@ -3632,6 +3632,19 @@ class VideoEditorWorkflowService:
                     str(segment.get("text") or ""),
                     flags=re.UNICODE,
                 ),
+                "words": [
+                    {
+                        "start": float(word.get("start", 0)),
+                        "end": float(word.get("end", 0)),
+                        "text": str(
+                            word.get("text") or word.get("word") or ""
+                        ).strip(),
+                    }
+                    for word in (segment.get("words") or [])
+                    if isinstance(word, Mapping)
+                    and str(word.get("text") or word.get("word") or "").strip()
+                    and float(word.get("end", 0)) > float(word.get("start", 0))
+                ],
             }
             for segment in asr_segments
             if str(segment.get("text") or "").strip()
@@ -3674,13 +3687,20 @@ class VideoEditorWorkflowService:
             )
             text = approved[target_cursor:target_end]
             if text:
-                projected.append(
-                    {
-                        "start": segment["start"],
-                        "end": segment["end"],
-                        "text": text,
-                    }
-                )
+                projected_segment = {
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "text": text,
+                }
+                # Preserve the provider's real word clock while replacing
+                # only the displayed wording with the approved script.  The
+                # downstream caption mapper already handles same-length
+                # homophone corrections against this clock.
+                if segment["words"]:
+                    projected_segment["words"] = [
+                        dict(word) for word in segment["words"]
+                    ]
+                projected.append(projected_segment)
             target_cursor = target_end
         if target_cursor != len(approved):
             raise VideoEditorWorkflowError(
@@ -10404,6 +10424,7 @@ class VideoEditorWorkflowService:
         script_text: str,
         publish_title: str,
         subtitle_segments: Sequence[Mapping[str, Any]] | None = None,
+        subtitle_task_id: str | None = None,
     ) -> VideoEditTask:
         """Render an approved production avatar through the release director path.
 
@@ -10433,6 +10454,7 @@ class VideoEditorWorkflowService:
         title = self._script_topic_title(script, title)
 
         from src.services.video_editor_cloud import build_smart_opening
+        from src.services.style_presets import PRESET_LOCAL_GRAMMAR_V2
 
         approved_opening = build_smart_opening(script, [title])
         if approved_opening is not None:
@@ -10476,13 +10498,18 @@ class VideoEditorWorkflowService:
             review_snapshot={"confirmed": True, "source": timing_source},
             review_confirmed_at=now,
             enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
-            edit_plan={"remove_ranges": []},
+            edit_plan={
+                "remove_ranges": [],
+                "style_preset_id": PRESET_LOCAL_GRAMMAR_V2,
+            },
+            subtitle_task_id=subtitle_task_id,
             provider_stage="production_local_export_ready",
             publish_allowed=False,
             provider_payload={
                 "requested_pipeline": "adaptive_fine_cut_v1",
                 "renderer_mode": _LOCAL_RENDER_MODE,
                 "route": "production_release_director",
+                "style_preset_id": PRESET_LOCAL_GRAMMAR_V2,
             },
             updated_at=now,
         )
@@ -14142,10 +14169,17 @@ class VideoEditorWorkflowService:
                 not strict_word_timing
                 or not has_real_word_clock
                 or (
-                    word_timing_quality.get("verified")
+                    word_timing_quality.get("verified") is True
                     and word_timing_checks.get("word_p95_le_150ms") is True
                     and word_timing_checks.get("mapping_le_1_frame") is True
                 )
+                # faster-whisper's Chinese output can be genuine timestamped
+                # character tokens rather than multi-character lexical words.
+                # The helper marks that case as structurally timed but does
+                # not claim a lexical-word precision score.  Accept it for
+                # subtitle sync while keeping the truthful precision status
+                # in the quality report.
+                or word_timing_quality.get("timing_gate_passed") is True
             )
             subtitle_quality["passed"] = (
                 subtitle_quality["passed"]
@@ -15305,9 +15339,12 @@ class VideoEditorWorkflowService:
                 word_timing_for_gate, Mapping
             ) else {}
             transcript_timing_passed = bool(
-                word_timing_for_gate.get("verified") is True
-                and timing_checks.get("word_p95_le_150ms") is True
-                and timing_checks.get("mapping_le_1_frame") is True
+                (
+                    word_timing_for_gate.get("verified") is True
+                    and timing_checks.get("word_p95_le_150ms") is True
+                    and timing_checks.get("mapping_le_1_frame") is True
+                )
+                or word_timing_for_gate.get("timing_gate_passed") is True
             )
             transcript_timing_gate = {
                 "passed": transcript_timing_passed,

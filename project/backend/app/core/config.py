@@ -386,9 +386,6 @@ _copywriting_mode_value = _secret("COPYWRITING_MODE", "production") or "producti
 COPYWRITING_MODE: CopywritingProviderMode = CopywritingProviderMode(
     _copywriting_mode_value
 )
-COPYWRITING_API_KEY: str = (
-    _secret("COPYWRITING_API_KEY") or _secret("OPENAI_API_KEY")
-)
 COPYWRITING_BASE_URL: str = (
     _secret("COPYWRITING_BASE_URL")
     or _secret("OPENAI_BASE_URL")
@@ -399,6 +396,20 @@ COPYWRITING_MODEL: str = (
     or _secret("COPYWRITING_LLM_MODEL")
     or "deepseek-v4-flash"
 )
+if any(
+    domain in COPYWRITING_BASE_URL.casefold()
+    for domain in ("minimax.cn", "minimaxi.com", "minimax.io")
+):
+    COPYWRITING_API_KEY: str = (
+        _secret("MINIMAX_TEXT_API_KEY")
+        or _secret("MINIMAX_TOKEN_PLAN_KEY")
+        or _secret("COPYWRITING_API_KEY")
+        or _secret("OPENAI_API_KEY")
+    )
+else:
+    COPYWRITING_API_KEY: str = (
+        _secret("COPYWRITING_API_KEY") or _secret("OPENAI_API_KEY")
+    )
 _copywriting_estimated_cost_raw = _secret(
     "COPYWRITING_ESTIMATED_REQUEST_COST_CNY"
 )

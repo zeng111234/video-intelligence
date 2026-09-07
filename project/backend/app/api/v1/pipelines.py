@@ -60,6 +60,32 @@ class GuidedPipelineRequest(BaseModel):
     paid_fallback_confirmed: bool = False
 
 
+def _resolve_candidate_for_request(repository, candidate_id: str | None):
+    """Resolve both durable and provider-style candidate IDs.
+
+    Progressive crawler results may briefly expose a bare platform item ID.
+    Accept it at the production boundary as long as it maps to exactly one
+    saved candidate, keeping older browser state compatible with the durable
+    repository ID used by the production workflow.
+    """
+    requested_id = str(candidate_id or "").strip()
+    if not requested_id:
+        return None, requested_id
+    candidate = repository.get_candidate(requested_id)
+    if candidate is not None:
+        return candidate, requested_id
+    resolver = getattr(repository, "resolve_candidate_id", None)
+    if not callable(resolver):
+        return None, requested_id
+    for platform in Platform:
+        canonical_id = resolver(platform.value, requested_id)
+        if canonical_id:
+            resolved = repository.get_candidate(canonical_id)
+            if resolved is not None:
+                return resolved, canonical_id
+    return None, requested_id
+
+
 def _to_response(run) -> PipelineResponse:
     stages = [
         {
@@ -133,7 +159,9 @@ def _guided_preflight(
         if not body.candidate_id:
             missing.append("请选择一条候选视频")
         else:
-            candidate = repository.get_candidate(body.candidate_id)
+            candidate, _canonical_id = _resolve_candidate_for_request(
+                repository, body.candidate_id
+            )
             if candidate is None:
                 missing.append("所选候选不存在")
             elif candidate.platform != Platform.DOUYIN:
@@ -253,7 +281,11 @@ def create_guided_pipeline(
         raise HTTPException(status_code=400, detail="；".join(preflight["missing"]))
     profile = production_service.get_profile(body.profile_id)
     assert profile is not None
-    candidate = repository.get_candidate(body.candidate_id) if body.candidate_id else None
+    candidate, canonical_candidate_id = _resolve_candidate_for_request(
+        repository, body.candidate_id
+    )
+    if candidate is not None and canonical_candidate_id != body.candidate_id:
+        body = body.model_copy(update={"candidate_id": canonical_candidate_id})
     keyword = candidate.title if candidate is not None else str(preflight["source"].get("share_url") or "抖音分享视频")
     run = service.start_guided_run(
         source_type=body.source_type,

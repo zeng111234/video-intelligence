@@ -3907,7 +3907,19 @@ def _crawler_batch_failure_message(result: CrawlerBatchResponse) -> str:
     return "；".join(unique_messages) or "本次找素材未完成，请检查平台状态后再试。"
 
 
-def _progress_candidates(item: CrawlerKeywordQueueItem) -> list[CrawlerCandidateResult]:
+def _progress_candidates(
+    item: CrawlerKeywordQueueItem,
+    repo=None,
+) -> list[CrawlerCandidateResult]:
+    """Return progress candidates with the repository's canonical IDs.
+
+    Browser progress callbacks can arrive before the completed search batch is
+    rendered.  Providers identify a Douyin item by its bare platform item ID,
+    while the repository stores the durable ID as ``platform-item_id``.  The
+    old progress path exposed the provisional ID unchanged, so a user clicking
+    transcription during the short final-detail timeout received a false
+    ``candidate not found`` error.
+    """
     candidates: list[CrawlerCandidateResult] = []
     seen: set[str] = set()
     for payload in item.progress_candidates:
@@ -3915,6 +3927,15 @@ def _progress_candidates(item: CrawlerKeywordQueueItem) -> list[CrawlerCandidate
             candidate = CrawlerCandidateResult.model_validate(payload)
         except Exception:
             continue
+        if repo is not None:
+            resolver = getattr(repo, "resolve_candidate_id", None)
+            if callable(resolver):
+                try:
+                    canonical_id = resolver(candidate.platform, candidate.video_id)
+                except Exception:
+                    canonical_id = None
+                if canonical_id:
+                    candidate = candidate.model_copy(update={"video_id": canonical_id})
         if candidate.video_id in seen:
             continue
         seen.add(candidate.video_id)
@@ -3976,7 +3997,7 @@ def _crawler_queue_response(
                 scanned_count=item.scanned_count,
                 parsed_count=item.parsed_count,
                 retained_count=item.retained_count,
-                progress_candidates=_progress_candidates(item),
+                progress_candidates=_progress_candidates(item, repo),
                 started_at=item.started_at,
                 finished_at=item.finished_at,
             )

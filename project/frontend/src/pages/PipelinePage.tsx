@@ -12,6 +12,7 @@ import {
   Progress,
   Segmented,
   Select,
+  Slider,
   Space,
   Tag,
   Timeline,
@@ -29,6 +30,7 @@ import {
   LinkOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
+  PlusOutlined,
   RightOutlined,
   RocketOutlined,
   SafetyCertificateOutlined,
@@ -48,6 +50,8 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   confirmPublishTaskAuto,
   confirmProductionBatchPublish,
+  changeProductionBatchProfile,
+  changeProductionBatchSpeechRate,
   connectPublishAccount,
   createCrawlerProgressiveBatch,
   createPublishAccount,
@@ -119,6 +123,7 @@ type ReviewStage = "transcript" | "script" | "output" | "publish";
 type BrowserPlatform = "douyin" | "xiaohongshu" | "kuaishou" | "bilibili";
 type MaterialCount = 30 | 50 | 100;
 type PublishedWindowDays = CrawlerSearchRequest["published_window_days"];
+type CandidateSortMode = "default" | "likes" | "comments" | "shares";
 
 const PROFILE_STORAGE_KEY = "pipeline.lastProfileId";
 const CANDIDATE_LIST_PREVIEW_LIMIT = 10;
@@ -152,6 +157,11 @@ const PUBLISHED_WINDOW_OPTIONS: Array<{ label: string; value: PublishedWindowDay
   { label: "一周内", value: 7 },
   { label: "半年内", value: 180 },
 ];
+
+const SPEECH_RATE_MIN = 0.8;
+const SPEECH_RATE_MAX = 1.2;
+const SPEECH_RATE_STEP = 0.05;
+const SPEECH_RATE_MARKS = { 0.8: "0.8×", 1: "1.0×", 1.2: "1.2×" };
 
 function sourcePlatformIcon(platform: BrowserPlatform) {
   if (platform === "douyin") return <SiTiktok aria-hidden />;
@@ -308,6 +318,26 @@ function formatCandidateMetric(value: number | null | undefined) {
   if (value >= 100_000_000) return `${Number((value / 100_000_000).toFixed(1))}亿`;
   if (value >= 10_000) return `${Number((value / 10_000).toFixed(1))}万`;
   return value.toLocaleString("zh-CN");
+}
+
+function sortCandidatesByMetric(
+  candidates: CrawlerCandidateResult[],
+  mode: CandidateSortMode,
+) {
+  if (mode === "default") return candidates;
+  const metric = mode === "likes" ? "likes" : mode === "comments" ? "comments" : "shares";
+  return candidates
+    .map((candidate, index) => ({ candidate, index }))
+    .sort((left, right) => {
+      const leftValue = left.candidate[metric];
+      const rightValue = right.candidate[metric];
+      if (leftValue === null || leftValue === undefined) {
+        return rightValue === null || rightValue === undefined ? left.index - right.index : 1;
+      }
+      if (rightValue === null || rightValue === undefined) return -1;
+      return rightValue - leftValue || left.index - right.index;
+    })
+    .map(({ candidate }) => candidate);
 }
 
 function formatWorkbenchTime(iso: string | null | undefined): string {
@@ -615,6 +645,7 @@ export default function PipelinePage() {
   const [profileName, setProfileName] = useState("我的短视频 IP");
   const [avatarId, setAvatarId] = useState("");
   const [voiceId, setVoiceId] = useState("");
+  const [speechRate, setSpeechRate] = useState(1);
 
   const [platforms, setPlatforms] = useState<PublishPlatformCapability[]>([]);
   const [accounts, setAccounts] = useState<PublishAccount[]>([]);
@@ -646,6 +677,7 @@ export default function PipelinePage() {
   const [creativePlan, setCreativePlan] = useState<ProductionCreativePlan | null>(null);
   const [creativePlanExpanded, setCreativePlanExpanded] = useState(false);
   const [candidatePage, setCandidatePage] = useState(1);
+  const [candidateSortMode, setCandidateSortMode] = useState<CandidateSortMode>("default");
   const candidatePageSize = CANDIDATE_LIST_PREVIEW_LIMIT;
   const [publishTitle, setPublishTitle] = useState("");
   const [publishDescription, setPublishDescription] = useState("");
@@ -709,6 +741,14 @@ export default function PipelinePage() {
   const automaticCandidatePool = useMemo(
     () => selectAutomaticCandidates(candidates),
     [candidates],
+  );
+  const sortedCandidates = useMemo(
+    () => sortCandidatesByMetric(candidates, candidateSortMode),
+    [candidateSortMode, candidates],
+  );
+  const sortedAutomaticCandidatePool = useMemo(
+    () => sortCandidatesByMetric(automaticCandidatePool, candidateSortMode),
+    [automaticCandidatePool, candidateSortMode],
   );
   const readySourceCount = browserDiscoveries.filter(sourcePlatformReady).length;
   const sourcePlatformNames = browserDiscoveries
@@ -838,6 +878,12 @@ export default function PipelinePage() {
   const activeProfile = workspace?.profile || selectedProfile;
   const profileAvatar = assets.find((asset) => asset.asset_id === activeProfile?.avatar_id);
   const profileVoice = assets.find((asset) => asset.asset_id === activeProfile?.voice_id);
+  useEffect(() => {
+    setSpeechRate(activeProfile?.speech_rate ?? 1);
+  }, [activeProfile?.profile_id, activeProfile?.speech_rate]);
+  const workspaceProfileLocked = Boolean(
+    workspace?.items.some((item) => ["avatar", "editing", "output", "publish", "completed"].includes(item.stage || "")),
+  );
   const pendingWorkbenchBatches = useMemo(
     () => batches
       .filter((batch) => !isFinishedBatch(batch))
@@ -1470,12 +1516,20 @@ export default function PipelinePage() {
         script_style: "",
         avatar_id: avatarId,
         voice_id: voiceId,
+        speech_rate: speechRate,
         tags: [],
       });
       setProfiles((current) => [created, ...current]);
       setProfileId(created.profile_id);
       localStorage.setItem(PROFILE_STORAGE_KEY, created.profile_id);
       setProfileCreateOpen(false);
+      if (workspace) {
+        await changeProductionBatchProfile(workspace.batch.batch_id, created.profile_id);
+        await loadWorkspace(workspace.batch.batch_id);
+        setSetupOpen(false);
+        setActionMessage(`本条视频已添加并改用“${created.name}”的形象和声音。`);
+        return;
+      }
       setSetupOpen(true);
       setActionMessage(
         savedName === requestedName
@@ -1496,6 +1550,7 @@ export default function PipelinePage() {
     setProfileName("新出镜人");
     setAvatarId("");
     setVoiceId(selectedProfile?.voice_id || "");
+    setSpeechRate(1);
     setVoicePreviewError("");
     setVoiceUploadOpen(false);
     setSetupOpen(false);
@@ -1522,6 +1577,43 @@ export default function PipelinePage() {
     setProfileCreateOpen(false);
     setSetupOpen(true);
     setActionMessage(`已切换到“${profile.name}”。`);
+  };
+
+  const changeWorkspaceProfile = async (nextProfileId: string) => {
+    if (!workspace || nextProfileId === workspace.batch.profile_id) return;
+    const nextProfile = completeProfiles.find((profile) => profile.profile_id === nextProfileId);
+    if (!nextProfile) {
+      setActionError("所选出镜人尚未准备好，请选择已完成授权的形象和声音。");
+      return;
+    }
+    setBusy(true);
+    setActionError("");
+    try {
+      await changeProductionBatchProfile(workspace.batch.batch_id, nextProfileId);
+      setProfileId(nextProfileId);
+      localStorage.setItem(PROFILE_STORAGE_KEY, nextProfileId);
+      await loadWorkspace(workspace.batch.batch_id);
+      setActionMessage(`本条视频已改用“${nextProfile.name}”的形象和声音。`);
+    } catch (error) {
+      setActionError((error as Error).message || "暂时无法更换本条视频的出镜人。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeWorkspaceSpeechRate = async (nextSpeechRate: number) => {
+    if (!workspace || workspaceProfileLocked || nextSpeechRate === (activeProfile?.speech_rate ?? 1)) return;
+    setBusy(true);
+    setActionError("");
+    try {
+      await changeProductionBatchSpeechRate(workspace.batch.batch_id, nextSpeechRate);
+      await loadWorkspace(workspace.batch.batch_id);
+      setActionMessage(`本条视频语速已调整为 ${nextSpeechRate.toFixed(2)} 倍，生成数字人时生效。`);
+    } catch (error) {
+      setActionError((error as Error).message || "暂时无法调整本条视频语速。 ");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const selectProfileAvatar = (asset: AvatarAsset) => {
@@ -2487,65 +2579,154 @@ export default function PipelinePage() {
 
   const renderProfileContent = () => activeProfile ? (
         <div className="profile-summary">
-          <div className="profile-summary-details" aria-label="当前 IP 信息">
-            <button
-              type="button"
-              className="profile-setting-row"
-              aria-label={`修改出镜人设置：${profileAvatar?.name || activeProfile.name}`}
-              onClick={() => setSetupOpen(true)}
-            >
-              <span className="profile-setting-label"><UserOutlined />出镜人</span>
-              <strong>{profileAvatar?.name || activeProfile.name}</strong>
-              <RightOutlined aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="profile-setting-row"
-              aria-label={`修改音色设置：${profileVoice?.name || activeProfile.voice_id}`}
-              onClick={() => setSetupOpen(true)}
-            >
-              <span className="profile-setting-label"><AudioOutlined />音色</span>
-              <strong>{profileVoice?.name || activeProfile.voice_id}</strong>
-              <RightOutlined aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="profile-setting-row"
-              aria-label={`修改素材网站设置：${sourcePlatformNames}`}
-              onClick={() => setSetupOpen(true)}
-            >
-              <span className="profile-setting-label"><GlobalOutlined />素材网站</span>
-              <strong>{sourcePlatformNames}</strong>
-              <RightOutlined aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="profile-setting-row"
-              aria-label={`修改发布网站设置：${publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}`}
-              onClick={() => setSetupOpen(true)}
-            >
-              <span className="profile-setting-label"><RocketOutlined />发布到</span>
-              <strong>{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</strong>
-              <RightOutlined aria-hidden />
-            </button>
-          </div>
-          <div className="profile-avatar-preview" aria-label="当前 IP 出镜人预览">
-            {profileAvatar?.preview_url ? (
-              profileAvatar.preview_type === "video" ? (
-                <video
-                  src={profileAvatar.preview_url}
-                  muted
-                  playsInline
-                  preload="auto"
-                  onLoadedMetadata={(event) => {
-                    if (event.currentTarget.currentTime === 0) {
-                      event.currentTarget.currentTime = 0.01;
-                    }
-                  }}
-                />
-              ) : <img src={profileAvatar.preview_url} alt={`${profileAvatar.name} 形象预览`} />
-            ) : <SafetyCertificateOutlined />}
-          </div>
+          {workspace ? (
+            <>
+              <div className="workspace-profile-main">
+                <div className="workspace-profile-avatar" aria-label="当前 IP 出镜人预览">
+                  {profileAvatar?.preview_url ? (
+                    profileAvatar.preview_type === "video" ? (
+                      <video
+                        src={profileAvatar.preview_url}
+                        muted
+                        playsInline
+                        preload="metadata"
+                      />
+                    ) : <img src={profileAvatar.preview_url} alt={`${profileAvatar.name} 形象预览`} />
+                  ) : <SafetyCertificateOutlined />}
+                </div>
+                <div className="workspace-profile-main-copy">
+                  <div className="workspace-profile-main-heading">
+                    <div>
+                      <Text strong>{profileAvatar?.name || activeProfile.name}</Text>
+                      <Text type="secondary">本条视频的出镜配置</Text>
+                    </div>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<PlusOutlined />}
+                      disabled={workspaceProfileLocked || busy}
+                      onClick={openProfileCreator}
+                    >
+                      添加形象或声音
+                    </Button>
+                  </div>
+                  <div className="workspace-profile-switcher">
+                    <div>
+                      <Text type="secondary">切换已保存的出镜配置</Text>
+                      <Text type="secondary">
+                        {workspaceProfileLocked ? "数字人已开始制作，不能再更换。" : "形象和声音会一起切换。"}
+                      </Text>
+                    </div>
+                    <Select
+                      aria-label="更换本条视频的出镜人"
+                      value={activeProfile.profile_id}
+                      disabled={workspaceProfileLocked || busy}
+                      loading={busy}
+                      options={completeProfiles.map((profile) => ({
+                        value: profile.profile_id,
+                        label: profile.name,
+                      }))}
+                      onChange={(value) => void changeWorkspaceProfile(value)}
+                    />
+                  </div>
+                  <div className="workspace-profile-speed">
+                    <div>
+                      <Text strong>数字人语速</Text>
+                      <Text type="secondary">
+                        {workspaceProfileLocked
+                          ? "数字人已开始制作，需要重新生成后才能调整。"
+                          : "拖动调整，生成开始后不能修改。"}
+                      </Text>
+                    </div>
+                    <Slider
+                      ariaLabelForHandle="本条视频语速"
+                      min={SPEECH_RATE_MIN}
+                      max={SPEECH_RATE_MAX}
+                      step={SPEECH_RATE_STEP}
+                      marks={SPEECH_RATE_MARKS}
+                      value={activeProfile.speech_rate ?? 1}
+                      disabled={workspaceProfileLocked || busy}
+                      tooltip={{
+                        formatter: (value) =>
+                          typeof value === "number" ? `${value.toFixed(2)} 倍` : "",
+                      }}
+                      onChangeComplete={(value) => {
+                        const next = Array.isArray(value) ? value[0] : value;
+                        if (typeof next === "number") void changeWorkspaceSpeechRate(next);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="workspace-profile-facts" aria-label="当前 IP 信息">
+                <span><UserOutlined aria-hidden /><small>形象</small><strong>{profileAvatar?.name || activeProfile.name}</strong></span>
+                <span><AudioOutlined aria-hidden /><small>声音</small><strong>{profileVoice?.name || activeProfile.voice_id}</strong></span>
+              </div>
+            </>
+          ) : null}
+          {!workspace ? (
+            <div className="profile-summary-details" aria-label="当前 IP 信息">
+              <button
+                type="button"
+                className="profile-setting-row"
+                aria-label={`修改出镜人设置：${profileAvatar?.name || activeProfile.name}`}
+                onClick={() => setSetupOpen(true)}
+              >
+                <span className="profile-setting-label"><UserOutlined />出镜人</span>
+                <strong>{profileAvatar?.name || activeProfile.name}</strong>
+                <RightOutlined aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="profile-setting-row"
+                aria-label={`修改音色设置：${profileVoice?.name || activeProfile.voice_id}`}
+                onClick={() => setSetupOpen(true)}
+              >
+                <span className="profile-setting-label"><AudioOutlined />音色</span>
+                <strong>{profileVoice?.name || activeProfile.voice_id}</strong>
+                <RightOutlined aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="profile-setting-row"
+                aria-label={`修改素材网站设置：${sourcePlatformNames}`}
+                onClick={() => setSetupOpen(true)}
+              >
+                <span className="profile-setting-label"><GlobalOutlined />素材网站</span>
+                <strong>{sourcePlatformNames}</strong>
+                <RightOutlined aria-hidden />
+              </button>
+              <button
+                type="button"
+                className="profile-setting-row"
+                aria-label={`修改发布网站设置：${publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}`}
+                onClick={() => setSetupOpen(true)}
+              >
+                <span className="profile-setting-label"><RocketOutlined />发布到</span>
+                <strong>{publishPlatforms.map((item) => PLATFORM_LABELS[item] || item).join("、")}</strong>
+                <RightOutlined aria-hidden />
+              </button>
+            </div>
+          ) : null}
+          {!workspace ? (
+            <div className="profile-avatar-preview" aria-label="当前 IP 出镜人预览">
+              {profileAvatar?.preview_url ? (
+                profileAvatar.preview_type === "video" ? (
+                  <video
+                    src={profileAvatar.preview_url}
+                    muted
+                    playsInline
+                    preload="auto"
+                    onLoadedMetadata={(event) => {
+                      if (event.currentTarget.currentTime === 0) {
+                        event.currentTarget.currentTime = 0.01;
+                      }
+                    }}
+                  />
+                ) : <img src={profileAvatar.preview_url} alt={`${profileAvatar.name} 形象预览`} />
+              ) : <SafetyCertificateOutlined />}
+            </div>
+          ) : null}
         </div>
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无完整 IP 配方" />
@@ -3022,6 +3203,57 @@ export default function PipelinePage() {
                           ? `自动创作素材（${automaticCandidatePool.length}）`
                           : `本次找到的全部素材（${candidates.length}）`}
                       </Text>
+                      <Space
+                        size={6}
+                        className="candidate-sort-controls"
+                        role="group"
+                        aria-label="素材排序"
+                      >
+                        <Button
+                          size="small"
+                          type={candidateSortMode === "default" ? "primary" : "default"}
+                          aria-pressed={candidateSortMode === "default"}
+                          onClick={() => {
+                            setCandidateSortMode("default");
+                            setCandidatePage(1);
+                          }}
+                        >
+                          默认排序
+                        </Button>
+                        <Button
+                          size="small"
+                          type={candidateSortMode === "likes" ? "primary" : "default"}
+                          aria-pressed={candidateSortMode === "likes"}
+                          onClick={() => {
+                            setCandidateSortMode("likes");
+                            setCandidatePage(1);
+                          }}
+                        >
+                          按点赞数
+                        </Button>
+                        <Button
+                          size="small"
+                          type={candidateSortMode === "comments" ? "primary" : "default"}
+                          aria-pressed={candidateSortMode === "comments"}
+                          onClick={() => {
+                            setCandidateSortMode("comments");
+                            setCandidatePage(1);
+                          }}
+                        >
+                          按评论数
+                        </Button>
+                        <Button
+                          size="small"
+                          type={candidateSortMode === "shares" ? "primary" : "default"}
+                          aria-pressed={candidateSortMode === "shares"}
+                          onClick={() => {
+                            setCandidateSortMode("shares");
+                            setCandidatePage(1);
+                          }}
+                        >
+                          按分享数
+                        </Button>
+                      </Space>
                     </div>
                     {materialSearchBatch?.platform_runs?.length ? (
                       <div className="candidate-platform-summary" aria-label="各平台素材数量">
@@ -3034,7 +3266,9 @@ export default function PipelinePage() {
                     ) : null}
                     <div className="candidate-stack">
                       {(() => {
-                        const allCandidates = creationMode === "auto" ? automaticCandidatePool : candidates;
+                        const allCandidates = creationMode === "auto"
+                          ? sortedAutomaticCandidatePool
+                          : sortedCandidates;
                         const startIndex = (candidatePage - 1) * candidatePageSize;
                         const endIndex = startIndex + candidatePageSize;
                         const currentPageCandidates = allCandidates.slice(startIndex, endIndex);
@@ -3253,54 +3487,46 @@ export default function PipelinePage() {
                         )}
                       </>
                     )}
-                    {nextAction === "review_script" && activeReview?.script.compliance_status && (
-                      <>
-                        <Alert
-                          type={activeReview.script.compliance_status === "passed" ? "success" : "warning"}
-                          showIcon
-                          message={`风险检查：${activeReview.script.compliance_status}`}
-                          description={activeReview.script.compliance_notes?.join("；") || "请人工核对事实、承诺和平台规则。"}
-                        />
-                        {(activeReview.script.attention_terms?.length || 0) > 0 && (
-                          <Space wrap>
-                            <Text type="secondary">重点核对：</Text>
-                            {activeReview.script.attention_terms?.map((term) => <Tag color="warning" key={term}>{term}</Tag>)}
-                          </Space>
-                        )}
-                      </>
-                    )}
-                    {nextAction === "review_script" && activeReview?.script.ai_audit && (
-                      <Alert
-                        type={activeReview.script.ai_audit.status === "completed" && activeReview.script.ai_audit.approved ? "success" : "warning"}
-                        showIcon
-                        message={
-                          activeReview.script.ai_audit.status === "mock"
-                            ? "AI 文案审核：演示结果"
-                            : activeReview.script.ai_audit.status === "unavailable"
-                              ? "AI 文案审核未完成"
-                              : activeReview.script.ai_audit.approved
-                                ? "AI 文案审核通过"
-                                : "AI 文案审核提示需核对"
-                        }
-                        description={
-                          <Space direction="vertical" size={2}>
-                            <span>{activeReview.script.ai_audit.summary}</span>
-                            {(activeReview.script.ai_audit.issues || []).map((issue, index) => (
-                              <span key={`${issue.category}-${index}`}>
-                                {issue.severity === "block" ? "需修改" : "建议"} · {issue.category}：{issue.message}
-                              </span>
-                            ))}
-                          </Space>
-                        }
-                      />
+                    {nextAction === "review_script" && (activeReview?.script.compliance_status || activeReview?.script.ai_audit) && (
+                      <details
+                        className="review-check-details"
+                        open={Boolean(activeReview?.script.ai_audit?.issues?.some((issue) => issue.severity === "block"))}
+                      >
+                        <summary>
+                          <span>文案检查结果</span>
+                          <small>
+                            {activeReview?.script.ai_audit?.issues?.length
+                              ? `有 ${activeReview.script.ai_audit.issues.length} 条建议可查看`
+                              : "已完成检查"}
+                          </small>
+                        </summary>
+                        <div className="review-check-details-body">
+                          <Text type="secondary">
+                            {activeReview?.script.ai_audit?.summary
+                              || activeReview?.script.compliance_notes?.join("；")
+                              || "请确认事实、承诺和平台规则。"}
+                          </Text>
+                          {(activeReview?.script.attention_terms?.length || 0) > 0 && (
+                            <Space wrap>
+                              <Text type="secondary">重点核对：</Text>
+                              {activeReview?.script.attention_terms?.map((term) => <Tag color="warning" key={term}>{term}</Tag>)}
+                            </Space>
+                          )}
+                          {(activeReview?.script.ai_audit?.issues || []).map((issue, index) => (
+                            <Text key={`${issue.category}-${index}`} type={issue.severity === "block" ? "danger" : "secondary"}>
+                              {issue.severity === "block" ? "需修改" : "建议"} · {issue.category}：{issue.message}
+                            </Text>
+                          ))}
+                        </div>
+                      </details>
                     )}
                     <div className="review-primary-editor">
                       <div className="review-editor-heading">
-                        <Text strong>{nextAction === "review_transcript" ? "AI 校对后的转写" : "最终口播稿"}</Text>
+                        <Text strong>{nextAction === "review_transcript" ? "AI 校对后的转写" : "确认口播稿"}</Text>
                         <Text type="secondary">
                           {nextAction === "review_transcript"
                             ? "不用逐字修正，只需确认事实没有被改动"
-                            : "只需确认这一份，系统会自动带入后续制作"}
+                            : "确认后开始制作；需要换出镜人可在下方 IP 配方中更换"}
                         </Text>
                       </div>
                       <TextArea
@@ -3374,7 +3600,7 @@ export default function PipelinePage() {
                       <Input
                         value={reviewNote}
                         onChange={(event) => setReviewNote(event.target.value)}
-                        placeholder="复核备注（可选）"
+                        placeholder="给 AI 的改写要求（可选）"
                       />
                     )}
                   </>
@@ -4107,21 +4333,34 @@ export default function PipelinePage() {
                     onClick={() => selectProfileAvatar(asset)}
                   >
                     <span className="profile-avatar-card-media">
-                      {asset.preview_url ? (
-                        asset.preview_type === "video" ? (
-                          <video
-                            src={asset.preview_url}
-                            aria-label={`${asset.name} 形象预览`}
-                            muted
-                            playsInline
-                            preload="metadata"
-                          />
-                        ) : (
-                          <img src={asset.preview_url} alt={`${asset.name} 形象预览`} />
-                        )
+                      <span className="profile-avatar-card-placeholder" aria-hidden={Boolean(asset.preview_url)}>
+                        <UserOutlined aria-hidden />
+                        <em>暂无预览</em>
+                      </span>
+                      {asset.preview_url && (asset.preview_type === "video" ? (
+                        <video
+                          className="profile-avatar-card-preview"
+                          src={asset.preview_url}
+                          aria-label={`${asset.name} 形象预览`}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          onError={(event) => {
+                            event.currentTarget.style.display = "none";
+                            event.currentTarget.previousElementSibling?.removeAttribute("aria-hidden");
+                          }}
+                        />
                       ) : (
-                        <SafetyCertificateOutlined />
-                      )}
+                        <img
+                          className="profile-avatar-card-preview"
+                          src={asset.preview_url}
+                          alt={`${asset.name} 形象预览`}
+                          onError={(event) => {
+                            event.currentTarget.style.display = "none";
+                            event.currentTarget.previousElementSibling?.removeAttribute("aria-hidden");
+                          }}
+                        />
+                      ))}
                     </span>
                     <strong>{asset.name}</strong>
                     <small>{asset.asset_id === avatarId ? "已选择" : "点击选择"}</small>
@@ -4170,6 +4409,23 @@ export default function PipelinePage() {
               ＋ 添加
             </Button>
           </Space.Compact>
+          <div className="profile-speed-field">
+            <Text strong>数字人语速</Text>
+            <Slider
+              ariaLabelForHandle="新增出镜人语速"
+              min={SPEECH_RATE_MIN}
+              max={SPEECH_RATE_MAX}
+              step={SPEECH_RATE_STEP}
+              marks={SPEECH_RATE_MARKS}
+              value={speechRate}
+              onChange={setSpeechRate}
+              tooltip={{
+                formatter: (value) =>
+                  typeof value === "number" ? `${value.toFixed(2)} 倍` : "",
+              }}
+            />
+            <Text type="secondary">保存到这个出镜配置，之后可在每条视频里再微调。</Text>
+          </div>
           <audio
             ref={voicePreviewRef}
             src={voicePreviewSrc || undefined}
@@ -4672,6 +4928,14 @@ export default function PipelinePage() {
           gap: 12px;
           margin-bottom: 10px;
         }
+        .candidate-sort-controls {
+          flex-shrink: 0;
+        }
+        .candidate-sort-controls .ant-btn {
+          height: 28px;
+          padding: 0 9px;
+          font-size: 12px;
+        }
         .candidate-stack { display: flex; flex-direction: column; gap: 9px; }
         .candidate-legend {
           display: block;
@@ -4885,6 +5149,96 @@ export default function PipelinePage() {
           flex-direction: column;
           gap: 14px;
         }
+        .workspace-profile-switcher {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+          gap: 12px;
+          align-items: center;
+          padding: 12px;
+          border: 1px solid #ece8f8;
+          border-radius: 10px;
+          background: #faf9ff;
+        }
+        .workspace-profile-switcher > div {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .workspace-profile-switcher .ant-select { width: 100%; }
+        .workspace-profile-main {
+          display: grid;
+          grid-template-columns: 78px minmax(0, 1fr);
+          gap: 14px;
+          align-items: stretch;
+          padding: 12px;
+          border: 1px solid #e8e3f6;
+          border-radius: 12px;
+          background: #fbfaff;
+        }
+        .workspace-profile-avatar {
+          display: grid;
+          place-items: center;
+          overflow: hidden;
+          min-height: 108px;
+          border-radius: 10px;
+          background: #eee9ff;
+          color: #7252dc;
+        }
+        .workspace-profile-avatar img,
+        .workspace-profile-avatar video {
+          display: block;
+          width: 100%;
+          height: 100%;
+          min-height: 108px;
+          object-fit: cover;
+          object-position: center top;
+        }
+        .workspace-profile-main-copy {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .workspace-profile-main-heading {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .workspace-profile-main-heading > div {
+          display: flex;
+          min-width: 0;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .workspace-profile-main-heading .ant-btn {
+          flex: 0 0 auto;
+          padding-inline: 0;
+        }
+        .workspace-profile-facts {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .workspace-profile-facts > span {
+          display: grid;
+          grid-template-columns: auto auto minmax(0, 1fr);
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          padding: 9px 10px;
+          border-radius: 9px;
+          background: #f7f5fc;
+        }
+        .workspace-profile-facts .anticon { color: #7252dc; }
+        .workspace-profile-facts small { color: #858b99; }
+        .workspace-profile-facts strong {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         .profile-summary-details {
           display: grid;
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4926,6 +5280,33 @@ export default function PipelinePage() {
         .profile-setting-row > .anticon {
           color: #a3a9b7;
           font-size: 12px;
+        }
+        .workspace-grid.has-workspace .profile-setting-row {
+          cursor: default;
+          pointer-events: none;
+        }
+        .review-check-details {
+          border: 1px solid #ece8f8;
+          border-radius: 10px;
+          background: #faf9ff;
+        }
+        .review-check-details summary {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 11px 13px;
+          cursor: pointer;
+          color: #3e4260;
+          font-weight: 600;
+        }
+        .review-check-details summary small { color: #858b99; font-weight: 400; }
+        .review-check-details-body {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 0 13px 13px;
+          line-height: 1.65;
         }
         .workspace-grid.is-start .profile-avatar-preview {
           display: none;
@@ -5295,6 +5676,34 @@ export default function PipelinePage() {
           gap: 6px;
         }
         .profile-name-field .ant-typography-secondary { font-size: 12px; }
+        .workspace-profile-speed,
+        .profile-speed-field {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-top: 10px;
+          padding: 10px 12px;
+          border: 1px solid #eee9f8;
+          border-radius: 10px;
+          background: #fff;
+        }
+        .workspace-profile-speed > div,
+        .profile-speed-field > div {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+        }
+        .workspace-profile-speed .ant-typography-secondary,
+        .profile-speed-field .ant-typography-secondary {
+          font-size: 12px;
+        }
+        .workspace-profile-speed .ant-slider,
+        .profile-speed-field .ant-slider {
+          flex: 1;
+          min-width: 180px;
+          margin: 8px 8px 20px;
+        }
         .profile-avatar-card {
           display: flex;
           flex-direction: column;
@@ -5324,6 +5733,7 @@ export default function PipelinePage() {
         }
         .profile-avatar-card small { color: #7b8190; }
         .profile-avatar-card-media {
+          position: relative;
           display: grid;
           place-items: center;
           width: 100%;
@@ -5333,9 +5743,27 @@ export default function PipelinePage() {
           color: #7652e8;
           font-size: 28px;
         }
+        .profile-avatar-card-placeholder {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-content: center;
+          justify-items: center;
+          gap: 4px;
+          color: #7652e8;
+        }
+        .profile-avatar-card-placeholder .anticon { font-size: 26px; }
+        .profile-avatar-card-placeholder em {
+          color: #85809a;
+          font-size: 12px;
+          font-style: normal;
+          line-height: 1;
+        }
         .profile-avatar-card-media img,
         .profile-avatar-card-media video {
           display: block;
+          position: relative;
+          z-index: 1;
           width: 100%;
           height: 108px !important;
           min-height: 108px;
@@ -5591,6 +6019,17 @@ export default function PipelinePage() {
           .start-process > :nth-child(7) { grid-area: 2 / 3; }
         }
         @media (max-width: 768px) {
+          .workspace-profile-switcher { grid-template-columns: 1fr; }
+          .workspace-profile-main { grid-template-columns: 64px minmax(0, 1fr); gap: 10px; }
+          .workspace-profile-avatar,
+          .workspace-profile-avatar img,
+          .workspace-profile-avatar video { min-height: 92px; }
+          .workspace-profile-main-heading { flex-direction: column; gap: 4px; }
+          .workspace-profile-facts { grid-template-columns: 1fr; }
+          .workspace-profile-speed,
+          .profile-speed-field { align-items: flex-start; flex-direction: column; }
+          .workspace-profile-speed .ant-slider,
+          .profile-speed-field .ant-slider { width: 100%; min-width: 0; margin: 8px 0 20px; }
           .workspace-hero { align-items: flex-start; padding: 0; }
           .workspace-hero { flex-direction: column; }
           .workspace-hero h1 { font-size: 32px; }

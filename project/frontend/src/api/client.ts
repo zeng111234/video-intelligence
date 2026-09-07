@@ -688,6 +688,26 @@ export function getProductionBatchWorkspace(batchId: string): Promise<Production
   return request(`/production/batches/${encodeURIComponent(batchId)}/workspace`);
 }
 
+export function changeProductionBatchProfile(
+  batchId: string,
+  profileId: string,
+): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/profile`, {
+    method: "PUT",
+    body: JSON.stringify({ profile_id: profileId }),
+  });
+}
+
+export function changeProductionBatchSpeechRate(
+  batchId: string,
+  speechRate: number,
+): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/speech-rate`, {
+    method: "PUT",
+    body: JSON.stringify({ speech_rate: speechRate }),
+  });
+}
+
 export function reviewProductionBatchItems(
   batchId: string,
   params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },

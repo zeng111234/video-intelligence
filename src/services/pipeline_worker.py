@@ -790,6 +790,7 @@ class PipelineWorker:
             source_task_id=copy_task.task_id,
             avatar_id=avatar.asset_id,
             voice_id=voice.asset_id,
+            speech_rate=float(profile.get("speech_rate", 1.0)),
             # The legacy company gateway accepts the same safe default used by
             # the standalone avatar entry.  Its transparent-background option
             # is not supported by every configured avatar model.
@@ -887,16 +888,39 @@ class PipelineWorker:
                 "真实语音字幕对齐服务未配置，已停止避免生成错位字幕。",
             )
             return
+        caption_candidates = [
+            candidate
+            for candidate in self.repository.list_tasks()
+            if isinstance(candidate, TranscriptionTask)
+            and candidate.candidate_id == task.task_id
+            and candidate.source_kind == "avatar_caption_alignment"
+        ]
+        requested_caption_retry_id = str(
+            run.config.get("caption_word_timestamps_retry_task_id") or ""
+        )
         caption_task = next(
             (
                 candidate
-                for candidate in self.repository.list_tasks()
-                if isinstance(candidate, TranscriptionTask)
-                and candidate.candidate_id == task.task_id
-                and candidate.source_kind == "avatar_caption_alignment"
+                for candidate in reversed(caption_candidates)
+                if candidate.task_id == requested_caption_retry_id
             ),
             None,
         )
+        if caption_task is None:
+            caption_task = next(
+                (
+                    candidate
+                    for candidate in reversed(caption_candidates)
+                    if bool(candidate.word_timestamps_available)
+                    or any(
+                        bool(getattr(segment, "words", None))
+                        for segment in candidate.segments
+                    )
+                ),
+                None,
+            )
+        if caption_task is None and caption_candidates:
+            caption_task = caption_candidates[-1]
         if caption_task is None:
             source_path = Path(task.result_path)
             caption_task = transcription_service.create_task(
@@ -909,6 +933,10 @@ class PipelineWorker:
                 language="zh",
                 source_kind="avatar_caption_alignment",
                 async_processing=True,
+                # The production editor has a hard word-clock gate.  Keep
+                # this alignment task on the same real word timeline as the
+                # avatar audio instead of falling back to sentence estimates.
+                include_word_timestamps=True,
             )
             updated = run.model_copy(
                 update={
@@ -936,6 +964,53 @@ class PipelineWorker:
                 caption_task.error_message or "真实语音字幕对齐失败。",
             )
             return
+        caption_has_words = bool(
+            caption_task.word_timestamps_available
+            or any(
+                bool(getattr(segment, "words", None))
+                for segment in caption_task.segments
+            )
+        )
+        if (
+            not caption_has_words
+            and caption_task.provider_name == "faster_whisper_local"
+            and not requested_caption_retry_id
+        ):
+            # Older production runs created this local alignment task without
+            # word timestamps. Recreate it once with the real word-clock
+            # option, retaining all existing avatar/output state.
+            source_path = Path(task.result_path)
+            refreshed_caption_task = transcription_service.create_task(
+                media_name=source_path.name,
+                media_type="video/mp4",
+                media_bytes=source_path.read_bytes(),
+                rights_confirmed=True,
+                rights_holder=task.rights_holder,
+                candidate_id=task.task_id,
+                language="zh",
+                source_kind="avatar_caption_alignment",
+                async_processing=True,
+                include_word_timestamps=True,
+            )
+            updated = run.model_copy(
+                update={
+                    "updated_at": datetime.now().astimezone(),
+                    "config": {
+                        **run.config,
+                        "caption_timing_task_id": refreshed_caption_task.task_id,
+                        "caption_word_timestamps_retry_task_id": refreshed_caption_task.task_id,
+                        "caption_timing_source": "word_timestamps_retry",
+                    },
+                }
+            )
+            self.repository.save_pipeline_run(updated)
+            if refreshed_caption_task.status in {
+                TaskStatus.QUEUED,
+                TaskStatus.SUBMITTED,
+                TaskStatus.RUNNING,
+            }:
+                return
+            caption_task = refreshed_caption_task
         script = str(run.config.get("approved_script_text") or task.script_text or "")
         timed_segments = (
             self.video_editor_workflow_service.approved_script_segments_from_asr(
@@ -943,7 +1018,12 @@ class PipelineWorker:
                 [segment.model_dump(mode="json") for segment in caption_task.segments],
             )
         )
-        self._edit_and_package(run, task, subtitle_segments=timed_segments)
+        self._edit_and_package(
+            run,
+            task,
+            subtitle_segments=timed_segments,
+            subtitle_task_id=caption_task.task_id,
+        )
 
     def _pause_avatar_submission(self, run: PipelineRun, message: str) -> None:
         """Keep an unsubmitted avatar stage recoverable after readiness changes."""
@@ -978,6 +1058,7 @@ class PipelineWorker:
         avatar_task: AvatarTask,
         *,
         subtitle_segments: list[dict[str, object]] | None = None,
+        subtitle_task_id: str | None = None,
     ) -> None:
         profile = dict(run.config.get("profile") or {})
         copy_task = self.repository.get_task(run.copywriting_task_id or "")
@@ -1011,6 +1092,7 @@ class PipelineWorker:
                 script_text=script,
                 publish_title=draft["title"],
                 subtitle_segments=subtitle_segments,
+                subtitle_task_id=subtitle_task_id,
             )
         except Exception as exc:
             self._fail(

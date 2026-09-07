@@ -1574,6 +1574,8 @@ class ProductionProfile(BaseModel):
     script_style: str = Field(default="", max_length=500)
     avatar_id: str | None = None
     voice_id: str | None = None
+    # 每个出镜配置可有自己的语速；旧配置缺省为正常速度。
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     edit_template_id: str | None = None
     tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())

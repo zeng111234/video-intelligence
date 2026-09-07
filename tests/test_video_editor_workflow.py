@@ -1261,10 +1261,12 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     )
     assert task.outputs["workflow"] == "local_preview_export"
     assert task.outputs["requested_pipeline"] == "adaptive_fine_cut_v1"
-    assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "rich"
+    assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "local_grammar_v2"
     assert task.outputs["publish_title"] == "餐饮门店同城获客"
     assert json.loads(task.outputs["subtitle_segments_json"])[0]["start"] == 0.8
     batch = repo.list_video_editor_batches(limit=1)[0]
+    assert batch.items[0].edit_plan["style_preset_id"] == "talking-head-local-grammar-v2"
+    assert batch.items[0].provider_payload["style_preset_id"] == "talking-head-local-grammar-v2"
     assert batch.items[0].review_snapshot["source"] == "approved_avatar_asr"
     preview = service._batch_payload(batch)["items"][0]["overlay_preview"]
     assert preview is not None
@@ -1346,6 +1348,30 @@ def test_approved_script_segments_keep_real_asr_pauses_without_asr_word_drift():
     )
     assert "稳定地" in "".join(segment["text"] for segment in segments)
     assert "七天" in segments[-1]["text"]
+
+
+def test_approved_script_segments_preserve_real_word_clock():
+    script = "门店连续测试七天"
+    asr_segments = [
+        {
+            "start": 0.4,
+            "end": 2.8,
+            "text": "门店连续测试7天",
+            "words": [
+                {"start": 0.4, "end": 0.8, "text": "门店"},
+                {"start": 0.8, "end": 1.2, "text": "连续"},
+                {"start": 1.2, "end": 2.0, "text": "测试7"},
+                {"start": 2.0, "end": 2.8, "text": "天"},
+            ],
+        }
+    ]
+
+    segments = VideoEditorWorkflowService.approved_script_segments_from_asr(
+        script, asr_segments
+    )
+
+    assert segments[0]["text"] == "门店连续测试七天"
+    assert segments[0]["words"] == asr_segments[0]["words"]
 
 
 def test_approved_script_segments_reject_unrelated_recognition():

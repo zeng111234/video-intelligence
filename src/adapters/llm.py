@@ -333,13 +333,14 @@ class OpenAICompatibleCopywritingEngine:
 
     @classmethod
     def from_env(cls) -> OpenAICompatibleCopywritingEngine:
+        base_url = (
+            os.getenv("COPYWRITING_BASE_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or "https://api.deepseek.com"
+        )
         return cls(
-            api_key=os.getenv("COPYWRITING_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
-            base_url=(
-                os.getenv("COPYWRITING_BASE_URL")
-                or os.getenv("OPENAI_BASE_URL")
-                or "https://api.deepseek.com"
-            ),
+            api_key=_copywriting_api_key(base_url),
+            base_url=base_url,
             model=(
                 os.getenv("COPYWRITING_MODEL")
                 or os.getenv("COPYWRITING_LLM_MODEL")
@@ -763,6 +764,8 @@ class OpenAICompatibleCopywritingEngine:
     def _provider_name(self) -> str:
         if "deepseek.com" in self.base_url.lower():
             return "deepseek"
+        if _is_minimax_base_url(self.base_url):
+            return "minimax"
         return "openai_compatible"
 
     def _build_system_prompt(
@@ -854,16 +857,24 @@ class OpenAICompatibleCopywritingEngine:
         return variants[:count]
 
     def _chat_completion(self, system_prompt: str, user_prompt: str) -> str:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
         payload: dict[str, Any] = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.8,
-            "max_tokens": 2400,
-            "response_format": {"type": "json_object"},
+            "messages": messages,
         }
+        if self._provider_name() != "minimax":
+            payload.update(
+                {
+                    "temperature": 0.8,
+                    "max_tokens": 2400,
+                    "response_format": {"type": "json_object"},
+                }
+            )
+        # MiniMax M3 使用原生 text/chatcompletion_v2 接口；保持请求体
+        # 只包含官方示例中的稳定字段，JSON 输出由提示词约束。
         if self._provider_name() == "deepseek":
             payload["thinking"] = {"type": "disabled"}
 
@@ -872,7 +883,7 @@ class OpenAICompatibleCopywritingEngine:
             "Content-Type": "application/json; charset=utf-8",
             "Authorization": f"Bearer {self.api_key}",
         }
-        url = f"{self.base_url}/chat/completions"
+        url = self._completion_url()
         request = Request(url, data=body, headers=headers, method="POST")  # noqa: S310
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
@@ -898,6 +909,15 @@ class OpenAICompatibleCopywritingEngine:
         if not choices:
             return ""
         return str(choices[0].get("message", {}).get("content", "")).strip()
+
+    def _completion_url(self) -> str:
+        if self._provider_name() != "minimax":
+            return f"{self.base_url}/chat/completions"
+        if self.base_url.endswith("/v1/text") or self.base_url.endswith("/text"):
+            return f"{self.base_url}/chatcompletion_v2"
+        if self.base_url.endswith("/v1"):
+            return f"{self.base_url}/text/chatcompletion_v2"
+        return f"{self.base_url}/v1/text/chatcompletion_v2"
 
     @staticmethod
     def _http_error_message(exc: HTTPError) -> str:
@@ -979,14 +999,12 @@ def build_copywriting_engine(secrets: dict[str, Any] | None = None):
     if mode == "sandbox":
         return SandboxCopywritingEngine()
 
-    api_key = _setting("COPYWRITING_API_KEY", secrets) or _setting(
-        "OPENAI_API_KEY", secrets
-    )
     base_url = (
         _setting("COPYWRITING_BASE_URL", secrets)
         or _setting("OPENAI_BASE_URL", secrets)
         or "https://api.deepseek.com"
     )
+    api_key = _copywriting_api_key(base_url, secrets)
     model = (
         _setting("COPYWRITING_MODEL", secrets)
         or _setting("COPYWRITING_LLM_MODEL", secrets)
@@ -1012,6 +1030,30 @@ def _setting(key: str, secrets: dict[str, Any] | None = None, default: str = "")
     if not value and secrets:
         value = str(secrets.get(key, ""))
     return (value or default).strip()
+
+
+def _is_minimax_base_url(base_url: str) -> bool:
+    host = base_url.casefold()
+    return any(domain in host for domain in ("minimax.cn", "minimaxi.com", "minimax.io"))
+
+
+def _copywriting_api_key(
+    base_url: str,
+    secrets: dict[str, Any] | None = None,
+) -> str:
+    """Select a key matching the configured copywriting provider.
+
+    Existing DeepSeek/OpenAI configuration remains available for those URLs;
+    MiniMax uses its explicit text key first, then the configured Token Plan key.
+    """
+    explicit = _setting("COPYWRITING_API_KEY", secrets)
+    if _is_minimax_base_url(base_url):
+        return (
+            _setting("MINIMAX_TEXT_API_KEY", secrets)
+            or _setting("MINIMAX_TOKEN_PLAN_KEY", secrets)
+            or explicit
+        )
+    return explicit or _setting("OPENAI_API_KEY", secrets)
 
 
 def _optional_nonnegative_float(value: str | None) -> float | None:

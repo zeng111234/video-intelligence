@@ -29,6 +29,7 @@ class ProfileCreateRequest(BaseModel):
     script_style: str = Field("", max_length=500)
     avatar_id: str | None = None
     voice_id: str | None = None
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     edit_template_id: str | None = DEFAULT_PRODUCTION_TEMPLATE_ID
     tags: list[str] = Field(default_factory=list, max_length=20)
 
@@ -65,6 +66,14 @@ class BatchExecutionRequest(BaseModel):
     max_total_cost_cny: float | None = Field(default=None, ge=0)
     paid_actions_confirmed: bool = False
     automation_mode: Literal["manual", "auto"] = "manual"
+
+
+class BatchProfileChangeRequest(BaseModel):
+    profile_id: str = Field(..., min_length=1)
+
+
+class BatchSpeechRateChangeRequest(BaseModel):
+    speech_rate: float = Field(..., ge=0.8, le=1.2)
 
 
 class WorkspaceConfigurationRequest(BaseModel):
@@ -241,6 +250,36 @@ def get_batch_workspace(batch_id: str, service=Depends(get_production_service)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.put("/batches/{batch_id}/profile")
+def change_batch_profile(
+    batch_id: str,
+    body: BatchProfileChangeRequest,
+    service=Depends(get_production_service),
+):
+    try:
+        return _batch_response(
+            service.change_batch_profile(batch_id, profile_id=body.profile_id),
+            service,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/batches/{batch_id}/speech-rate")
+def change_batch_speech_rate(
+    batch_id: str,
+    body: BatchSpeechRateChangeRequest,
+    service=Depends(get_production_service),
+):
+    try:
+        return _batch_response(
+            service.change_batch_speech_rate(batch_id, speech_rate=body.speech_rate),
+            service,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/batches", status_code=201)
 def create_batch(
     body: BatchCreateRequest,
@@ -297,6 +336,7 @@ def review_batch_items(
                     run_id=item.run_id,
                     reviewer=body.reviewer,
                     note=item.note,
+                    rewrite_request=item.note,
                     approved_text=item.approved_text,
                 )
                 entered_script_review = (
