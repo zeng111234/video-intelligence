@@ -47,15 +47,8 @@
     "0.2.8",
     "0.2.9"
   ],
-  "current_candidate": null,
-  "release_in_progress": {
-    "version": "0.2.45",
-    "source_commit": "4fd49152a809875950311b12db866b51feb194c9",
-    "server_state": "ready",
-    "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
-    "windows_state": "attempted",
-    "installer_sha256": null
-  },
+  "current_candidate": "0.2.46",
+  "release_in_progress": null,
   "completed_releases": [
     {
       "version": "0.2.23",
@@ -155,6 +148,17 @@
     }
   ],
   "superseded_releases": [
+    {
+      "version": "0.2.45",
+      "source_commit": "4fd49152a809875950311b12db866b51feb194c9",
+      "server_state": "ready",
+      "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
+      "windows_state": "attempted",
+      "installer_sha256": null,
+      "superseded_by": "0.2.46",
+      "reason": "0.2.45 控制层已准备但 Windows 客户端阶段未完成；由包含当前工作区改动的 0.2.46 统一替代。",
+      "superseded_at": "2026-09-08T00:13:20+08:00"
+    },
     {
       "version": "0.2.43",
       "source_commit": "8fe6cd673edbe4d777d8620dfb68c6af5ed815c8",
