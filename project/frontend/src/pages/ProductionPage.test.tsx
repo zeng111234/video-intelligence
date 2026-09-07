@@ -27,7 +27,7 @@ vi.mock("../api/client", async () => {
 
 const profile: ProductionProfile = {
   profile_id: "ip-1", name: "企业口播", description: "", target_audience: "", platform: "douyin", script_style: "",
-  avatar_id: "avatar-1", voice_id: "voice-1", edit_template_id: "template-1", tags: [],
+  avatar_id: "avatar-1", voice_id: "voice-1", speech_rate: 1, edit_template_id: "template-1", tags: [],
   created_at: "2026-07-28T09:00:00+08:00", updated_at: "2026-07-28T09:00:00+08:00",
 };
 
